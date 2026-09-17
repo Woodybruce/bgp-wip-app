@@ -15,6 +15,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { safeParseJSON } from "./utils/anthropic-client";
 import crypto from "crypto";
 import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
+import { BRAND_BRIEF_POLICY_VERSION, BRAND_BRIEF_EVIDENCE_RULES, brandActionEvidence, brandBriefWithoutEvidence, brandLegalEvidenceContext } from "./brand-brief-evidence";
+import { isBrandNewsRelevant, isBrandSignalRelevant } from "./brand-news-relevance";
 
 const router = Router();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -37,26 +39,29 @@ function dataHash(obj: any): string {
 
 async function loadBrandSlice(companyId: string) {
   const { rows } = await pool.query(
-    `SELECT name, description, brand_analysis, concept_pitch, store_count, rollout_status,
-            backers, employee_count, founded_year, industry, hunter_flag,
-            ai_generated_fields, parent_company_id
+    `SELECT id, name, description, concept_pitch, industry, domain, domain_url, website,
+            uk_entity_name, trading_entities, ai_generated_fields
        FROM crm_companies WHERE id = $1`,
     [companyId]
   );
   if (!rows[0]) return null;
-  const r = rows[0];
-  let parent: string | null = null;
-  if (r.parent_company_id) {
-    const p = await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [r.parent_company_id]);
-    parent = p.rows[0]?.name || null;
-  }
-  return { ...r, parent_name: parent, backers_detail: r.ai_generated_fields?.backers_detail || null };
+  const [requirements, signals] = await Promise.all([
+    pool.query(`SELECT id, name, status, "use", size, requirement_locations, requirement_date, updated_at, sources
+      FROM crm_requirements_leasing WHERE company_id = $1 AND LOWER(TRIM(COALESCE(status, ''))) = 'active'
+      ORDER BY updated_at DESC NULLS LAST, id LIMIT 8`, [companyId]),
+    pool.query(`SELECT id, signal_type, headline, detail, signal_date, source, confidence, geography, ai_relevant
+      FROM brand_signals WHERE brand_company_id = $1 AND ai_relevant IS DISTINCT FROM FALSE
+        AND signal_type IN ('opening', 'closure', 'requirement')
+        AND signal_date BETWEEN now() - interval '180 days' AND now()
+      ORDER BY signal_date DESC, id LIMIT 12`, [companyId]),
+  ]);
+  return brandActionEvidence(rows[0], requirements.rows, signals.rows);
 }
 
 async function loadUkSlice(companyId: string) {
   const { rows } = await pool.query(
     `SELECT name, uk_entity_name, companies_house_number, companies_house_data,
-            kyc_status, aml_risk_level
+            kyc_status, kyc_expires_at, aml_pep_status, aml_risk_level, ai_generated_fields
        FROM crm_companies WHERE id = $1`,
     [companyId]
   );
@@ -64,10 +69,11 @@ async function loadUkSlice(companyId: string) {
   const r = rows[0];
   const ch = r.companies_house_data || {};
   const profile = ch.profile || {};
+  const legalContext = brandLegalEvidenceContext(r);
   // House covenant score (free-data replacement for Experian/Red Flag) — cached
   // in covenant_reports by the covenant engine; read-only here, never computed inline.
   let covenant: any = null;
-  if (r.companies_house_number) {
+  if (!legalContext.needs_review) {
     const cov = await pool.query(
       `SELECT grade, score, report->'flags' AS flags, report->>'verdict' AS verdict, computed_at
          FROM covenant_reports WHERE company_number = $1`,
@@ -85,12 +91,13 @@ async function loadUkSlice(companyId: string) {
     name: r.name,
     uk_entity: r.uk_entity_name,
     ch_number: r.companies_house_number,
-    ch_status: profile.company_status || profile.companyStatus || null,
-    incorporation_date: profile.date_of_creation || profile.incorporationDate || null,
-    accounts_overdue: !!profile.accounts?.overdue,
-    has_charges: !!ch.has_charges,
-    insolvency_history: !!ch.has_insolvency_history,
-    turnover_history: turnoverRows.rows,
+    legal_entity_context: legalContext,
+    ch_status: legalContext.needs_review ? null : profile.company_status || profile.companyStatus || null,
+    incorporation_date: legalContext.needs_review ? null : profile.date_of_creation || profile.incorporationDate || null,
+    accounts_overdue: !legalContext.needs_review && typeof profile.accounts?.overdue === "boolean" ? profile.accounts.overdue : null,
+    has_charges: !legalContext.needs_review && typeof ch.has_charges === "boolean" ? ch.has_charges : null,
+    insolvency_history: !legalContext.needs_review && typeof ch.has_insolvency_history === "boolean" ? ch.has_insolvency_history : null,
+    turnover_history: legalContext.needs_review ? [] : turnoverRows.rows,
     kyc_status: r.kyc_status,
     aml_risk: r.aml_risk_level,
     covenant: covenant ? {
@@ -98,6 +105,7 @@ async function loadUkSlice(companyId: string) {
       score: covenant.score,
       flags: (covenant.flags || []).map((f: any) => f.label),
       verdict: covenant.verdict,
+      computed_at: covenant.computed_at,
     } : null,
   };
 }
@@ -149,14 +157,14 @@ async function loadIntelSlice(companyId: string) {
   );
   if (!company.rows[0]) return null;
   const signals = await pool.query(
-    `SELECT signal_type, headline, signal_date, magnitude, sentiment, source
+    `SELECT signal_type, headline, detail, signal_date, magnitude, sentiment, source
        FROM brand_signals WHERE brand_company_id = $1
         AND ai_relevant IS DISTINCT FROM FALSE
       ORDER BY COALESCE(signal_date, created_at) DESC LIMIT 10`,
     [companyId]
   );
   const news = await pool.query(
-    `SELECT n.title, n.source_name, n.published_at
+    `SELECT n.title, n.summary, n.url, n.source_name, n.published_at
        FROM news_articles n,
             (SELECT name FROM crm_companies WHERE id = $1) AS co
       WHERE (n.title ILIKE '%' || co.name || '%' OR n.summary ILIKE '%' || co.name || '%'
@@ -178,20 +186,23 @@ async function loadIntelSlice(companyId: string) {
     pool.query(`SELECT employee_count, industry, store_count FROM crm_companies WHERE id = $1`, [companyId]).catch(() => ({ rows: [] as any[] })),
   ]);
   const daysOld = (t: any) => t ? Math.floor((Date.now() - new Date(t).getTime()) / 86400000) : null;
+  const legalContext = brandLegalEvidenceContext(company.rows[0]);
   return {
     name: company.rows[0].name,
     hunter_flagged: company.rows[0].hunter_flag,
     rollout: company.rows[0].rollout_status,
     store_count: company.rows[0].store_count,
-    signals: signals.rows.filter((signal: any) => signal.source !== "apollo" || !!publicBrandProviderPayload(company.rows[0], apollo.rows[0]?.payload)),
-    news_headlines: news.rows.slice(0, 5).map((r: any) => ({
+    legal_entity_context: legalContext,
+    signals: signals.rows.filter((signal: any) => (signal.source !== "apollo" || !!publicBrandProviderPayload(company.rows[0], apollo.rows[0]?.payload))
+      && isBrandSignalRelevant(company.rows[0], signal)),
+    news_headlines: news.rows.filter((article: any) => isBrandNewsRelevant(company.rows[0], article)).slice(0, 5).map((r: any) => ({
       title: r.title, source: r.source_name,
       days_ago: r.published_at ? Math.floor((Date.now() - new Date(r.published_at).getTime()) / 86400000) : null,
     })),
     api_feeds: {
       apollo: publicBrandProviderPayload(company.rows[0], apollo.rows[0]?.payload) ? { ...publicBrandProviderPayload(company.rows[0], apollo.rows[0].payload), days_old: daysOld(apollo.rows[0].fetched_at) } : "no verified source match",
       rocketreach: publicBrandProviderPayload(company.rows[0], rocketreach.rows[0]?.payload) ? { ...publicBrandProviderPayload(company.rows[0], rocketreach.rows[0].payload), days_old: daysOld(rocketreach.rows[0].fetched_at) } : "no verified source match",
-      covenant: covenant.rows[0] ? { grade: covenant.rows[0].grade, days_old: daysOld(covenant.rows[0].computed_at) } : "no covenant report",
+      covenant: legalContext.needs_review ? "Legal entity needs review; linked covenant withheld" : covenant.rows[0] ? { grade: covenant.rows[0].grade, days_old: daysOld(covenant.rows[0].computed_at) } : "no covenant report",
       crm_record: expansion.rows[0] || null,
     },
   };
@@ -203,34 +214,38 @@ function brandPrompt(d: any): string {
   // This complements the factual overview with evidence and a next action.
   return `You are a senior BGP retail-property broker writing a one-paragraph internal read on a brand for our team.
 
-Data — NOTE: the "description" field is displayed separately in the factual overview. Treat it as context only; do NOT repeat, paraphrase or summarise it (no founding story, no positioning recap, no site count unless it's the evidence for your point):
+${BRAND_BRIEF_EVIDENCE_RULES}
+
+Data — profile_context is displayed separately in the factual overview. Do not repeat it or treat a previous AI narrative, rollout label or static company size as evidence of current demand:
 ${JSON.stringify(d, null, 2)}
 
-Write a single 60-90 word paragraph that adds what the description doesn't say:
-- Their trajectory RIGHT NOW (scaling / consolidating / contracting / entering the UK) and the evidence for that call
-- The BGP angle: what we should pitch, to whom, and why the timing works (or doesn't)
-- One concrete next step for the team
+Write a short action brief grounded in the recorded requirements and dated site events:
+- State the strongest recorded property-demand evidence and its limits; if strategy is unconfirmed, say so instead of choosing a trajectory
+- Use a recorded active requirement's stated size, use and locations to suggest a suitable next check or shortlist; do not broaden its geography or assume a live mandate
+- Propose one concrete next step. Checking current requirements/contact is a useful action when the evidence is insufficient
 
 Never open by describing who they are — the reader just read that. Tone: punchy, specific, broker-to-broker. No fluff, no generic phrases.
 
 FORMAT (the app renders this as a styled card — follow it exactly):
 - Line 1: one bold headline sentence in **double asterisks** — the read in a nutshell.
 - Then 3 short bullets, each starting "- **Label:** " where Label is a 1-3 word lead-in (e.g. **Trajectory:**, **BGP angle:**, **Verdict:**, **Signal:**, **Risk:**, **Next step:**). One sentence each, max ~25 words.
-- The last bullet MUST be "- **Next step:** …" — who does what, why now.
-- Name people, deals, properties and companies EXACTLY as they appear in the data (the app links them). No markdown headings, no numbered lists, no citations, nothing else.
+- The last bullet MUST be "- **Next step:** …" — a concrete check or proposed action, with timing only if recorded evidence supports it.
+- Name people, deals, properties and companies EXACTLY as they appear in the data (the app links them). Attribute evidence briefly in the bullet, such as "CRM requirement dated …" or "reported opening, source, date". No markdown headings or numbered lists.
 Total under 110 words.`;
 }
 
 function ukPrompt(d: any): string {
   return `You are a senior BGP retail-property broker writing a one-paragraph covenant verdict on a UK tenant for our team.
 
+${BRAND_BRIEF_EVIDENCE_RULES}
+
 Data:
 ${JSON.stringify(d, null, 2)}
 
 Write a single 60-90 word paragraph covering:
-- The covenant verdict (strong / acceptable with conditions / weak)
+- The covenant verdict supported by the supplied financial evidence, or "not established" when it is missing
 - Key financial signal driving that verdict (the house covenant grade A-E and its flags if present, turnover trajectory, parent guarantee need, CCJs, etc.)
-- A practical recommendation for landlord pitches (e.g. "insist on parent guarantee", "rent cap at X% of turnover", "fine for prime rents")
+- A practical next verification step for landlord pitches; recommend financial terms only if the supplied evidence supports them
 
 Tone: direct, broker-to-broker, decisive. Use £ for sterling.
 
@@ -244,6 +259,8 @@ Total under 110 words.`;
 
 function activityPrompt(d: any): string {
   return `You are a senior BGP retail-property broker writing a one-paragraph relationship read on a tenant for our team.
+
+${BRAND_BRIEF_EVIDENCE_RULES}
 
 Data:
 ${JSON.stringify(d, null, 2)}
@@ -266,13 +283,15 @@ Total under 110 words.`;
 function intelPrompt(d: any): string {
   return `You are a senior BGP retail-property broker writing a short intel read on a tracked brand for our team. You are also the data steward: the api_feeds block shows what each of our paid data feeds (Apollo firmographics, RocketReach, covenant engine) currently holds and how old it is.
 
+${BRAND_BRIEF_EVIDENCE_RULES}
+
 Data:
 ${JSON.stringify(d, null, 2)}
 
 Write ONE 60-90 word paragraph covering:
 - What changed about this brand recently (signals + news + firmographic momentum like headcount growth or funding)
-- The pattern (expansion mode / quiet / contracting / leadership shake-up)
-- What it means for BGP (e.g. "good moment to pitch new sites", "watch for distressed exits")
+- The pattern only where directly supported by dated events; distinguish a reported signal from an established strategy
+- A proposed BGP action supported by that evidence. Headcount movement or funding alone does not establish site demand or distressed exits
 
 Then, ONLY if warranted, add one final sentence starting "Data note:" flagging the single most important data problem — sources that disagree (e.g. Apollo employee count vs the CRM record), or a feed that is stale (90+ days) or never fetched. If the feeds agree and are fresh, no Data note.
 
@@ -318,6 +337,7 @@ export async function readPreparedBrandAiTake(companyId: string, tab: Tab) {
   if (company.ai_generated_fields?.brand_identity?.previousFactsNeedReview) return { text: "", cached: true, generatedAt: 0, pending: true, reason: "Review the retained brand facts before using the BGP brief" };
   const saved = (await pool.query("SELECT value FROM system_settings WHERE key=$1", [takeKey(companyId, tab)])).rows[0]?.value;
   if (!saved?.text || saved.fingerprint !== identity.fingerprint) return { text: "", cached: true, generatedAt: 0, pending: true };
+  if (saved.policyVersion !== BRAND_BRIEF_POLICY_VERSION) return { text: "", cached: true, generatedAt: 0, pending: true, reason: "Refresh the BGP brief to use the current evidence checks" };
   return { text: saved.text as string, cached: true, generatedAt: Number(saved.generatedAt), stale: Date.now() > saved.expiresAt };
 }
 
@@ -341,10 +361,10 @@ export async function prepareBrandAiTake(companyId: string, tab: Tab = "brand") 
 
   const hash = dataHash(slice);
   const saved = (await pool.query("SELECT value FROM system_settings WHERE key=$1", [takeKey(companyId, tab)])).rows[0]?.value;
-  if (saved?.text && saved.fingerprint === identity.fingerprint && saved.dataHash === hash && Date.now() < saved.expiresAt) {
+  if (saved?.text && saved.policyVersion === BRAND_BRIEF_POLICY_VERSION && saved.fingerprint === identity.fingerprint && saved.dataHash === hash && Date.now() < saved.expiresAt) {
     return { text: saved.text as string, cached: true, generatedAt: Number(saved.generatedAt) };
   }
-  const text = await callClaude(prompt);
+  const text = (tab === "brand" ? brandBriefWithoutEvidence(slice) : null) || await callClaude(prompt);
   const now = Date.now();
   const client = await pool.connect();
   try {
@@ -353,7 +373,7 @@ export async function prepareBrandAiTake(companyId: string, tab: Tab = "brand") 
     if (getBrandIdentity(current).fingerprint !== identity.fingerprint || getBrandIdentity(current).status !== "verified" || current.brief_revision !== company.brief_revision) throw new Error("Brand identity changed during research; the brief was not published");
     await client.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ($1,$2::jsonb,now())
       ON CONFLICT(key) DO UPDATE SET value=$2::jsonb,updated_at=now()`,
-    [takeKey(companyId, tab), JSON.stringify({ text, fingerprint: identity.fingerprint, dataHash: hash, generatedAt: now, expiresAt: now + CACHE_TTL_MS })]);
+    [takeKey(companyId, tab), JSON.stringify({ text, policyVersion: BRAND_BRIEF_POLICY_VERSION, fingerprint: identity.fingerprint, dataHash: hash, generatedAt: now, expiresAt: now + CACHE_TTL_MS })]);
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; }
   finally { client.release(); }
@@ -519,7 +539,7 @@ router.post("/api/brand/:companyId/refresh-intel", requireAuth, async (req: Requ
 
     // 1. Get brand
     const brandQ = await pool.query(
-      `SELECT name, industry FROM crm_companies WHERE id = $1`,
+      `SELECT id, name, industry, domain, domain_url, website, uk_entity_name, trading_entities, ai_generated_fields FROM crm_companies WHERE id = $1`,
       [companyId]
     );
     if (!brandQ.rows[0]) return res.status(404).json({ error: "not found" });
@@ -596,6 +616,7 @@ router.post("/api/brand/:companyId/refresh-intel", requireAuth, async (req: Requ
         "i"
       );
       if (!re.test(hay)) continue;
+      if (!isBrandNewsRelevant(brandQ.rows[0], { title: a.title, summary: a.summary, url: a.url })) continue;
       candidates.push({ id: articleId, title: a.title, summary: a.summary, url: a.url, published_at: a.published_at });
     }
 

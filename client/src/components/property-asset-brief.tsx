@@ -17,6 +17,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -743,9 +744,8 @@ function UnresolvedTenantsDialog({ propertyId, onClose }: { propertyId: string; 
 
 // Duplicate units on the tenancy spine — same unit_number normalised
 // to the same key. Lets the team pick a primary and merge the rest
-// into it (moves FKs from leasing/available/deals → primary, deletes
-// secondaries). One round of click-merging usually cleans up an
-// imported Landsec schedule.
+// into it when the tenancy facts agree. Plan, deal and board links
+// transfer together; conflicting facts must be reviewed first.
 function DuplicateUnitsDialog({ propertyId, onClose }: { propertyId: string; onClose: () => void }) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -759,29 +759,15 @@ function DuplicateUnitsDialog({ propertyId, onClose }: { propertyId: string; onC
   });
   const [busy, setBusy] = useState<string | null>(null);
 
-  const merge = async (primaryId: string, secondaryId: string, force = false) => {
+  const merge = async (primaryId: string, secondaryId: string) => {
     setBusy(secondaryId);
     try {
       const r = await fetch(`/api/properties/${propertyId}/merge-tenancy-units`, {
         method: "POST",
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ primaryId, secondaryId, force }),
+        body: JSON.stringify({ primaryId, secondaryId }),
       });
-      // 409 brand_mismatch — primary and secondary resolve to
-      // different brands. Confirm with the team before forcing.
-      if (r.status === 409) {
-        const body = await r.json().catch(() => ({}));
-        if (body?.error === "brand_mismatch") {
-          const confirmed = window.confirm(
-            `${body.message}\n\nClick OK to merge anyway (secondary's brand link will be replaced).`
-          );
-          if (confirmed) {
-            await merge(primaryId, secondaryId, true);
-          }
-          return;
-        }
-      }
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
         throw new Error(body.error || `HTTP ${r.status}`);
@@ -790,11 +776,13 @@ function DuplicateUnitsDialog({ propertyId, onClose }: { propertyId: string; onC
       const m = j.moved || { deals: 0, leasing: 0, available: 0 };
       toast({
         title: "Merged",
-        description: `${m.deals || 0} deal · ${m.leasing || 0} leasing · ${m.available || 0} vacant links moved to primary.`,
+        description: `${m.deals || 0} deal · ${m.leasing || 0} leasing · ${m.available || 0} vacant · ${(m.evidencePlans || 0) + (m.propertyPlans || 0)} plan links moved to primary.`,
       });
       qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "duplicate-units"] });
       qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "linkage-audit"] });
       qc.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      qc.invalidateQueries({ queryKey: ["/api/plans"] });
+      qc.invalidateQueries({ queryKey: ["/api/evidence-plans"] });
     } catch (e: any) {
       toast({ title: "Merge failed", description: e.message, variant: "destructive" });
     } finally {
@@ -810,11 +798,11 @@ function DuplicateUnitsDialog({ propertyId, onClose }: { propertyId: string; onC
       <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-base flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-rose-600" />
+            <AlertTriangle className="w-4 h-4 text-destructive" />
             Duplicate unit numbers
           </DialogTitle>
           <DialogDescription className="text-xs">
-            These tenancy rows share a unit name. Pick the primary (the one to keep), then click Merge on the others — their downstream deals / leasing / vacant links transfer over and the duplicate row is deleted.
+            These tenancy rows share a unit name. Pick the primary to keep. A merge transfers their plan, deal and board links together, then removes the duplicate. Conflicting or missing facts must be resolved in the tenancy schedule first.
           </DialogDescription>
         </DialogHeader>
         {isLoading ? <Skeleton className="h-32 w-full" /> :
@@ -840,7 +828,7 @@ function DuplicateCluster({
   return (
     <div className="border rounded-md p-2 space-y-1.5">
       <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-        "{cluster[0].unit_number}" — {cluster.length} rows
+        "{cluster[0].unit_number}" — <span className="font-mono tabular-nums">{cluster.length}</span> rows
       </div>
       <div className="space-y-1">
         {cluster.map(r => {
@@ -848,7 +836,7 @@ function DuplicateCluster({
           return (
             <div
               key={r.id}
-              className={`flex items-center gap-2 text-xs border rounded px-2 py-1 ${isPrimary ? "border-primary bg-primary/5" : "bg-white"}`}
+              className={`flex items-center gap-2 text-xs border rounded px-2 py-1 ${isPrimary ? "border-primary bg-primary/5" : "bg-card"}`}
             >
               <label className="flex items-center gap-1 cursor-pointer">
                 <input
@@ -857,16 +845,16 @@ function DuplicateCluster({
                   onChange={() => setPrimaryId(String(r.id))}
                   className="w-3 h-3"
                 />
-                <span className="text-[10px] text-muted-foreground">{isPrimary ? "Primary" : "Merge in"}</span>
+                <span className="text-[11px] text-muted-foreground">{isPrimary ? "Primary" : "Merge in"}</span>
               </label>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className="font-medium truncate">{r.tenant_name || r.trading_name || "—"}</span>
                   {r.tenant_company_id && (
-                    <Badge variant="outline" className="text-[9px]">linked</Badge>
+                    <Pill disabled>Linked</Pill>
                   )}
                 </div>
-                <div className="text-[10px] text-muted-foreground">
+                <div className="text-[11px] text-muted-foreground">
                   {r.status || "—"}
                   {r.nia_sqft && ` · ${Math.round(Number(r.nia_sqft)).toLocaleString()} sqft`}
                   {r.passing_rent_pa && ` · £${Math.round(Number(r.passing_rent_pa)).toLocaleString()} pa`}
@@ -875,7 +863,7 @@ function DuplicateCluster({
               </div>
               {!isPrimary && (
                 <Button
-                  size="sm" variant="outline" className="h-5 text-[10px] px-1.5 text-rose-700 border-rose-300 hover:bg-rose-50"
+                  size="sm" variant="outline"
                   onClick={() => onMerge(primaryId, String(r.id))}
                   disabled={busy === String(r.id)}
                 >

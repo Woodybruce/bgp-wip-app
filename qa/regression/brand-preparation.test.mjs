@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { Router } from 'express';
 import { getBrandIdentity } from '../../server/brand-identity.ts';
+import { BRAND_BRIEF_POLICY_VERSION } from '../../server/brand-brief-evidence.ts';
 import { BRAND_PREPARATION_STAGES, nextPreparationState, summarizeBrandPreparation } from '../../server/brand-preparation-jobs.ts';
 const require = createRequire(import.meta.url);
 const { source, find, evaluate, ts } = require('./source-harness.cjs');
@@ -51,12 +52,14 @@ test('ordinary BGP take reads only persisted matching-identity output and never 
   let saved; const queries = [];
   const code = find('server/brand-ai-take.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'readPreparedBrandAiTake');
   const { readPreparedBrandAiTake } = evaluate(code, {
-    getBrandIdentity, takeKey: (id, tab) => `brand-prepared-take:${id}:${tab}`,
+    getBrandIdentity, BRAND_BRIEF_POLICY_VERSION, takeKey: (id, tab) => `brand-prepared-take:${id}:${tab}`,
     pool: { query: async (sql, values) => { queries.push({ sql, values }); return { rows: sql.includes('crm_companies') ? [company] : saved ? [{ value: saved }] : [] }; } },
     callClaude: () => { throw new Error('Ordinary profile open must not call an AI provider'); },
   });
   const pending = await readPreparedBrandAiTake('brand', 'brand'); assert.equal(pending.pending, true); assert.equal(pending.text, '');
   saved = { text: 'Prepared action brief', fingerprint: getBrandIdentity(company).fingerprint, generatedAt: 100, expiresAt: Date.now() + 10000 };
+  const oldPolicy = await readPreparedBrandAiTake('brand', 'brand'); assert.equal(oldPolicy.text, ''); assert.equal(oldPolicy.pending, true);
+  saved.policyVersion = BRAND_BRIEF_POLICY_VERSION;
   const cached = await readPreparedBrandAiTake('brand', 'brand'); assert.equal(cached.text, saved.text); assert.equal(cached.cached, true);
   company.ai_generated_fields.brand_identity.previousFactsNeedReview = true;
   const unreviewed = await readPreparedBrandAiTake('brand', 'brand'); assert.equal(unreviewed.text, ''); assert.equal(unreviewed.pending, true); assert.match(unreviewed.reason, /retained brand facts/);

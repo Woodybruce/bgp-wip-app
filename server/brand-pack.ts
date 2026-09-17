@@ -16,6 +16,7 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { isBrandSignalRelevant } from "./brand-news-relevance";
 import * as path from "path";
 import * as fs from "fs";
 
@@ -46,7 +47,7 @@ async function loadBrandPackData(companyId: string) {
     `SELECT id, name, domain, domain_url, website, description, concept_pitch, store_count,
             rollout_status, backers, instagram_handle, industry, founded_year,
             employee_count, annual_revenue, logo_url, uk_entity_name, companies_house_number,
-            brand_analysis
+            brand_analysis, ai_generated_fields
        FROM crm_companies WHERE id = $1`,
     [companyId]
   );
@@ -101,11 +102,10 @@ async function loadBrandPackData(companyId: string) {
   // arrive from several publishers ("Bill's opens at Heathrow" x3).
   let cleanSignals: any[] = [];
   try {
-    const { articleLooksRelevantForBrand } = await import("./news-brand-linking");
     const seen = new Set<string>();
     for (const s of signals.rows) {
       const headline = String(s.headline || "");
-      if (!articleLooksRelevantForBrand(company.rows[0].name, company.rows[0].industry, headline, s.detail || null)) continue;
+      if (!isBrandSignalRelevant(company.rows[0], s)) continue;
       const norm = headline.replace(/\s+-\s+[^-]+$/, "").toLowerCase().replace(/[^a-z0-9]/g, "");
       if (seen.has(norm)) continue;
       seen.add(norm);
@@ -113,7 +113,7 @@ async function loadBrandPackData(companyId: string) {
       if (cleanSignals.length >= 4) break;
     }
   } catch {
-    cleanSignals = signals.rows.slice(0, 4);
+    cleanSignals = [];
   }
 
   // Covenant snapshot rides the CH number when we have one.

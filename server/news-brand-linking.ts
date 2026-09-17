@@ -5,6 +5,7 @@ import { crmCompanies, newsSources, newsArticles, brandSignals } from "@shared/s
 import { eq, and, sql, desc, isNotNull, ilike } from "drizzle-orm";
 import { googleNewsRssUrl, createRssAppFeed, rssappHealth } from "./rssapp";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
+import { isBrandNewsRelevant } from "./brand-news-relevance";
 
 type SignalType = "opening" | "closure" | "funding" | "exec_change" | "sector_move" | "news" | "rumour";
 type Magnitude = "small" | "medium" | "large";
@@ -121,43 +122,10 @@ function googleNewsQueryForBrand(brandName: string, industry?: string | null): s
   return `"${trimmed}" UK${industryHint}${exclusion}`;
 }
 
-// Article-level relevance filter for per-brand Google News feeds. Returns
-// false for headlines that are obvious cross-topic noise (US Supreme Court
-// matched on "Supreme", football "Coach", etc.) so they don't end up in the
-// brand's signal list. Exported so the brand-profile API can re-apply it
-// at read time to historical signals without a migration.
+// Compatibility for callers with only a name and industry. New ingestion and
+// profile reads pass the full company identity to isBrandNewsRelevant.
 export function articleLooksRelevantForBrand(brandName: string, industry: string | null | undefined, title: string, summary: string | null): boolean {
-  const lcBrand = brandName.toLowerCase().trim();
-  const txt = `${title} ${summary || ""}`.toLowerCase();
-  const ind = (industry || "").toLowerCase();
-  const isFashionBrand = /fashion|apparel|retail|streetwear|luxury|denim|footwear|jewell|leather/.test(ind);
-  const isFnbBrand = /food|restaurant|qsr|hospitality|coffee|cafe|bar|pub/.test(ind);
-
-  // Hard exclusion lists per ambiguous token. If brand token matches AND text
-  // contains any of these phrases, drop the article.
-  const drop: Record<string, RegExp> = {
-    supreme: /\bsupreme court\b|\bjustice\b|\bjudge\b|\bjudges\b|\bruling\b|\bscotus\b|\bjudicial\b/,
-    apple: /\biphone\b|\bipad\b|\bmacbook\b|\bios\b|\btim cook\b/,
-    coach: /\bfootball\b|\bmanager\b|\bcoach hire\b|\bcoachway\b|\bbus\b/,
-    monsoon: /\bmonsoon season\b|\bindia\b.*\bweather\b|\brain\b.*\bforecast\b/,
-    next: /\bnext (week|month|year)\b|\bwhat'?s next\b/,
-    boots: /\bfootball boots\b|\bwellington boots\b|\bworking boots\b/,
-    pandora: /\bspotify\b|\bpandora radio\b|\bstreaming\b/,
-    river: /\bthames\b|\bnile\b|\bflood\b|\briverbank\b/,
-    bills: /\b(food|energy|tax|household|utility|utilities|vet|medical|grocery|water|gas|electricity|phone|fuel|shopping|rising|heating) bills?\b|\bbills? (rise|rising|soar|surge|jump|hike)\b|\bbritish gas\b|\bcost of living\b|\bmartin lewis\b|\bheating or eating\b|\bbuffalo\b|\bbills (vs|at|@|gm|qb|wr|rb|te|coach|roster|draft|offense|defense)\b|\bespn\b|\bnfl\b|\bquarterback\b|\btouchdown\b|\bkeon coleman\b|\bjosh allen\b|\btrump\b|\bpresident\b|\bcongress\b|\bsenate\b/,
-    "bill's": /\b(food|energy|tax|household|utility|vet|medical|grocery) bills?\b|\bcost of living\b/,
-  };
-  const rx = drop[lcBrand];
-  if (rx && rx.test(txt)) return false;
-
-  // Soft positive bias for fashion/F&B brands: if the headline is clearly
-  // political/legal/sports and we're tracking a retail brand, drop it.
-  if (isFashionBrand || isFnbBrand) {
-    const hardOffTopic = /\b(parliament|congress|senate|supreme court|impeach|election|primary results|scotus|prime minister|president biden|president trump|world cup|premier league|uefa)\b/;
-    if (hardOffTopic.test(txt)) return false;
-  }
-
-  return true;
+  return isBrandNewsRelevant({ name: brandName, industry }, { title, summary });
 }
 
 // ── AI relevance judge ──────────────────────────────────────────────────
@@ -859,24 +827,13 @@ export async function ensureCuratedInstagramFeeds(limit = 100): Promise<{
   return { created, skipped, quotaRemaining: Math.max(0, room - created), excluded, errors };
 }
 
-// For a single article, decides which tracked brands it mentions and writes
-// brand_signals rows. De-duplicates on (brand, article_url).
-// Brand names that double as everyday English words. A lowercase word-boundary
-// match on these pulled in publisher credits ("- Sky News" → Sky), surnames
-// (Fed's Lisa Cook → COOK) and plain prose ("until", "next", "fuel", "pitch").
-// For these we require the token to appear with the brand's own casing —
-// "COOK" or "Sky" as a standalone capitalised token — before linking.
+// The newsletter discovery gate rejects these as new-company names without
+// more evidence. Existing-brand news uses the identity matcher instead.
 const COMMON_WORD_BRAND_TOKENS = new Set([
   "sky", "next", "cook", "until", "fuel", "pitch", "base", "oliver", "supreme",
   "coach", "monsoon", "jigsaw", "diesel", "pandora", "boots", "river", "bills",
   "mountain", "fat face", "gap", "mango", "space", "end", "size",
 ]);
-
-// Google News (and most aggregators) append " - Publisher" to titles. Strip it
-// before matching so "Story headline - Sky News" can't link the brand Sky.
-function stripPublisherSuffix(title: string): string {
-  return title.replace(/\s[-–—|·]\s[^-–—|·]{2,60}$/, "");
-}
 
 async function linkArticleToBrands(article: {
   id: string;
@@ -886,26 +843,8 @@ async function linkArticleToBrands(article: {
   sourceId: string | null;
   publishedAt: Date | null;
   aiSummary: string | null;
-}, brandIndex: { id: string; name: string; normalized: string }[]): Promise<string[]> {
-  const rawHaystack = [stripPublisherSuffix(article.title), article.summary || "", article.aiSummary || ""].join(" ");
-  const haystack = rawHaystack.toLowerCase();
-  const hits: string[] = [];
-  for (const b of brandIndex) {
-    if (b.normalized.length < 3) continue;
-    const token = b.normalized;
-    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    if (COMMON_WORD_BRAND_TOKENS.has(token)) {
-      // Case-sensitive: the brand's own capitalisation, standalone.
-      const brandCased = b.name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const reCased = new RegExp(`(^|[^A-Za-z0-9])${brandCased}([^A-Za-z0-9]|$)`);
-      if (reCased.test(rawHaystack)) hits.push(b.id);
-      continue;
-    }
-    // word-boundary match against normalized brand name
-    const re = new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i");
-    if (re.test(haystack)) hits.push(b.id);
-  }
-  return hits;
+}, brandIndex: Array<{ id: string; name: string; industry?: string | null }>): Promise<string[]> {
+  return brandIndex.filter(brand => isBrandNewsRelevant(brand, article)).map(brand => brand.id);
 }
 
 async function upsertBrandSignal(brandId: string, brandName: string, article: {
@@ -962,13 +901,13 @@ export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Pro
 
   // Load tracked brands for matching
   const brands = await db
-    .select({ id: crmCompanies.id, name: crmCompanies.name, industry: crmCompanies.industry })
+    .select({ id: crmCompanies.id, name: crmCompanies.name, industry: crmCompanies.industry,
+      domain: crmCompanies.domain, domainUrl: crmCompanies.domainUrl, website: crmCompanies.website,
+      aiGeneratedFields: crmCompanies.aiGeneratedFields })
     .from(crmCompanies)
     .where(and(ilike(crmCompanies.companyType, "tenant%"), sql`${crmCompanies.mergedIntoId} IS NULL`));
-  const brandIndex = brands
-    .map((b) => ({ id: b.id, name: b.name, industry: b.industry, normalized: normalizeBrandName(b.name) }))
-    .filter((b) => b.normalized.length >= 3);
-  const brandIndustryById = new Map(brandIndex.map((b) => [b.id, b.industry]));
+  const brandIndex = brands;
+  const brandById = new Map(brandIndex.map((brand) => [brand.id, brand]));
 
   // Load recent articles + source info
   const articles = await db
@@ -987,16 +926,15 @@ export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Pro
   for (const a of articles) {
     const src = a.sourceId ? sourceById.get(a.sourceId) : null;
 
-    // Explicit brand feeds (Google News per-brand) — link directly by category tag
+    // A Google News category is a search hint, not company identity evidence.
+    // Separately configured social channels retain their explicit attribution.
     if (src?.category?.startsWith(BRAND_CATEGORY_PREFIX)) {
       const brandId = src.category.slice(BRAND_CATEGORY_PREFIX.length);
-      const brandName = brandNameById.get(brandId) || "";
-      // Even though Google News was given a tighter query, RSS still slips in
-      // off-topic articles for ambiguous tokens like "Supreme". Reject the
-      // obvious noise before writing a brand_signals row.
-      if (brandName && !articleLooksRelevantForBrand(brandName, brandIndustryById.get(brandId), a.title, a.summary)) {
-        continue;
-      }
+      const brand = brandById.get(brandId);
+      if (!brand) continue;
+      const brandName = brand.name;
+      const isConfiguredSocial = Object.values(SOCIAL_TYPE).includes(src.type);
+      if (!isConfiguredSocial && !isBrandNewsRelevant(brand, a)) continue;
       await upsertBrandSignal(brandId, brandName, {
         id: a.id,
         url: a.url,
@@ -1009,7 +947,8 @@ export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Pro
       continue;
     }
 
-    // Generic feeds — fuzzy match against tracked brand names
+    // General industry articles stay in the feed; only corroborated brand
+    // matches become a company signal.
     const hits = await linkArticleToBrands(
       {
         id: a.id,
@@ -1024,12 +963,6 @@ export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Pro
     );
     for (const brandId of hits) {
       const brandName = brandNameById.get(brandId) || "";
-      // The per-brand feeds get this filter above; the generic fuzzy path was
-      // skipping it — which is how publisher credits and surnames became
-      // brand signals. Apply it here too.
-      if (brandName && !articleLooksRelevantForBrand(brandName, brandIndustryById.get(brandId), a.title, a.summary)) {
-        continue;
-      }
       await upsertBrandSignal(brandId, brandName, {
         id: a.id,
         url: a.url,

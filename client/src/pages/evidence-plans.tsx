@@ -375,7 +375,7 @@ function PlanView({ planId }: { planId: string }) {
     completedScan.current = scanJob.id;
     const summary = scanJob.reviewSummary;
     setScanReport(scanJob.status === "error" ? `Scan couldn't finish: ${scanJob.error || "Try again or trace a unit individually."}`
-      : summary ? `${summary.detected} boundaries detected · ${summary.added} added · ${summary.refined} refined · ${summary.current} already current · ${summary.needsReview} awaiting review. Existing unit information has been kept.`
+      : summary ? `${summary.detected} boundaries detected · ${summary.added} added · ${summary.refined} refined · ${summary.current} already current · ${summary.needsReview} scan proposals not applied. These may overlap protected saved outlines; they are not a count of missing units. Existing unit information has been kept.`
       : `Scan finished. ${scanJob.created || 0} units added. ${scanJob.error || "Review scan to inspect the detected outlines and any boundaries awaiting review."}`);
     if (scanJob.status === "done" && summary?.needsReview > 0 && scanJob.level_id === activeLevel?.id) setScanReviewOpen(true);
     invalidate();

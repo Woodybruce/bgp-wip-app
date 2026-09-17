@@ -38,6 +38,7 @@ import {
   Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail, ShieldCheck, ChevronRight, Loader2,
 } from "lucide-react";
 import { NewsTagFilterChips } from "@/components/news-tags-manager";
+import { brandComplianceStatus } from "@shared/brand-compliance-status";
 
 interface BrandProfile {
   identity?: { status: "verified" | "review"; domain: string | null };
@@ -3568,8 +3569,7 @@ export function BrandComplianceCard({
     retry: 1,
   });
 
-  // One list drives both the checklist rows and the "missing for AML pass"
-  // footer so they can never drift apart.
+  // These rows track collected records; approval is a separate decision.
   const downstreamChecks = [
     { key: "ch", label: "Companies House profile", done: !!company.companies_house_number },
     { key: "psc", label: "Officers + PSCs", done: !!(company.companies_house_data as any)?.pscs?.length },
@@ -3578,8 +3578,9 @@ export function BrandComplianceCard({
     { key: "covenant", label: "Covenant grade (CH + Gazette)", done: !!covReport?.grade },
     { key: "aml", label: "AML PEP / adverse media", done: !!company.aml_pep_status },
   ];
-  // Annual report only applies to PLCs — don't hold an AML pass on it.
+  // Annual reports do not apply to every entity.
   const amlMissing = downstreamChecks.filter((r) => !r.done && r.key !== "annual_report");
+  const complianceStatus = brandComplianceStatus(company, amlMissing.map(row => row.label));
 
   const inner = (
     <div className="space-y-2.5">
@@ -3588,9 +3589,7 @@ export function BrandComplianceCard({
         <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1.5">
           UK trading entity
             {hasEntity && !editing && (
-              <Badge variant="outline" className="text-[9px] font-normal bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800">
-                <Check className="w-2.5 h-2.5 mr-0.5" /> set
-              </Badge>
+              <Pill active={false}>Recorded</Pill>
             )}
             {rescrape.isPending && (
               <span className="text-[10px] italic flex items-center gap-1 text-muted-foreground">
@@ -3696,9 +3695,9 @@ export function BrandComplianceCard({
             {downstreamChecks.map((row) => (
               <div key={row.key} className="flex items-center gap-1.5 text-[11px]">
                 {row.done ? (
-                  <Check className="w-3 h-3 text-emerald-600 shrink-0" />
+                  <Check className="w-3 h-3 text-foreground shrink-0" />
                 ) : (
-                  <span className={`w-3 h-3 rounded-full border shrink-0 ${hasEntity ? "border-amber-400 bg-amber-50 dark:bg-amber-950" : "border-zinc-300 bg-zinc-100 dark:bg-zinc-900"}`} />
+                  <span className="w-3 h-3 rounded-full border border-border bg-muted shrink-0" />
                 )}
                 <span className={row.done ? "text-foreground" : (hasEntity ? "text-foreground/80" : "text-muted-foreground/60")}>
                   {row.label}
@@ -3757,20 +3756,12 @@ export function BrandComplianceCard({
                 : "Confirm the UK trading entity above, then we'll work out which APIs to pull (CH, Red Flag, AML PEP) against the right registered name."}
             </p>
           )}
-          {/* AML pass status — what still stands between this brand and a
-              clean pass (Woody, 2026-08-03). */}
-          {hasEntity && (
-            amlMissing.length === 0 ? (
-              <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50/60 dark:border-emerald-900 dark:bg-emerald-950/30 px-2 py-1.5 text-[11px] text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
-                <ShieldCheck className="w-3.5 h-3.5 shrink-0" /> AML pass complete — all checks in.
-              </div>
-            ) : (
-              <div className="mt-2 rounded-md border border-amber-200 bg-amber-50/60 dark:border-amber-900 dark:bg-amber-950/30 px-2 py-1.5 text-[11px] text-amber-800 dark:text-amber-300">
-                <span className="font-medium">Missing for AML pass:</span>{" "}
-                {amlMissing.map((r) => r.label).join(" · ")}
-              </div>
-            )
-          )}
+          <div className="mt-2 rounded-md border border-border bg-muted/40 p-3 text-xs space-y-2" data-testid="brand-compliance-review-status" role="status">
+            <p className="font-semibold">{complianceStatus.label}</p>
+            {complianceStatus.identityIssues.map(issue => <p key={issue}>{issue}</p>)}
+            <p className="text-muted-foreground">Collected checks are supporting records, not an AML approval. The recorded KYC decision is reviewed separately.</p>
+            {amlMissing.length > 0 && <p className="text-muted-foreground">Still to collect: {amlMissing.map(row => row.label).join(" · ")}</p>}
+          </div>
         </div>
     </div>
   );

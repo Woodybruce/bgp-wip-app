@@ -21,7 +21,7 @@ export function normaliseTenancyImportRef(value: unknown): string {
   return String(value ?? "").normalize("NFKC").toUpperCase().replace(/\b(UNITS?|SHOPS?)\b/g, " ")
     .replace(/\bSTORES\b/g, "STORE").replace(/[‐‑‒–—−]/g, "-")
     .replace(/[^A-Z0-9/&-]+/g, " ").replace(/\b([A-Z]*)0+(\d)/g, "$1$2")
-    .replace(/\s+/g, " ").trim();
+    .replace(/\s*([/&])\s*/g, "$1").replace(/\s+/g, " ").trim();
 }
 
 const text = (value: unknown) => String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();

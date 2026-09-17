@@ -19,6 +19,23 @@ test('a repeated import skips the existing record and ignores worksheet sort cha
   assert.deepEqual(classifyTenancyImportRow(incoming({ unit_number: 'Unit D4', tenant_name: ' EXISTING TENANT ', passing_rent_pa: 120000, sort_order: 17 }), [saved('keep')]), { action: 'skip', existingId: 'keep' });
 });
 
+test('separator whitespace does not create fresh copies of combined-unit references', () => {
+  for (const [compact, spaced] of [['D17A/D17B/D18/D19', 'D17A / D17B / D18 / D19'], ['A1&A2', 'A1 & A2']]) {
+    const existing = saved('keep', { unit_number: compact, floor_level: 'Lower', premises: 'premises-1' });
+    const values = { unit_number: spaced, floor_level: 'Lower', premises: 'premises-1' };
+    assert.deepEqual(classifyTenancyImportRow(incoming(values), [existing]), { action: 'skip', existingId: 'keep' });
+    const duplicate = classifyTenancyImportRow(incoming(values), [existing, { ...existing, id: 'duplicate' }]);
+    assert.equal(duplicate.action, 'review');
+    assert.equal(duplicate.review.reason, 'ambiguous_identity');
+    for (const patch of [{ floor_level: 'Upper' }, { premises: 'premises-2' }]) {
+      assert.equal(classifyTenancyImportRow(incoming({ ...values, ...patch }), [existing]).action, 'insert');
+    }
+  }
+  for (const [left, right] of [['A1/A2', 'A1/A3'], ['A1&A2', 'A1'], ['A1-A3', 'A1/A3'], ['Suite A1', 'Suite A2']]) {
+    assert.notEqual(normaliseTenancyImportRef(left), normaliseTenancyImportRef(right));
+  }
+});
+
 test('edited rent, notes and tenant remain reviewable instead of being overwritten or appended', () => {
   for (const patch of [{ passing_rent_pa: 90000 }, { comments: 'Different note' }, { tenant_name: 'Old tenant' }]) {
     const result = classifyTenancyImportRow(incoming({ unit_number: 'D4', ...patch }), [saved('keep', { comments: 'Human note' })]);

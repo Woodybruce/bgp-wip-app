@@ -5,6 +5,7 @@ import { backfillPropertyTenants, backfillPropertyUnitFks, normUnitSql, resolveB
 import { fanOutTenancyStatus } from "./unit-mirror";
 import { importTenancyRows, TenancyImportError, type ParsedTenancyImportRow } from "./tenancy-import";
 import { tenancyCalendarDatesSql } from "./tenancy-calendar-dates";
+import { mergeTenancyUnits, TenancyMergeError } from "./tenancy-merge";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -1800,60 +1801,16 @@ router.get("/api/properties/:propertyId/duplicate-units", requireAuth, async (re
   }
 });
 
-// Merge a duplicate tenancy row INTO a primary row. Moves all
-// downstream FKs (leasing/available/deals) from `secondaryId` →
-// `primaryId`, then deletes the secondary. Both must be on the same
-// property as a safety guard. Use case: "Unit 8" and "Unit 8 (Pret)"
-// resolve to the same physical shop → pick one as canonical, merge
-// the other in.
+// Merge only reviewed rows whose tenancy facts agree. All reference moves
+// and deletion happen together; a conflict leaves the complete pair intact.
 router.post("/api/properties/:propertyId/merge-tenancy-units", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { propertyId } = req.params;
-    const { primaryId, secondaryId, force } = req.body as { primaryId: string; secondaryId: string; force?: boolean };
-    if (!primaryId || !secondaryId) return res.status(400).json({ error: "primaryId and secondaryId required" });
-    if (primaryId === secondaryId) return res.status(400).json({ error: "primary and secondary must differ" });
-
-    const check = await pool.query(
-      `SELECT id, property_id, tenant_company_id, tenant_name, trading_name
-         FROM tenancy_schedule_units WHERE id IN ($1, $2)`,
-      [primaryId, secondaryId]
-    );
-    if (check.rows.length !== 2) return res.status(404).json({ error: "one or both rows not found" });
-    for (const row of check.rows) {
-      if (row.property_id !== propertyId) return res.status(400).json({ error: "rows must be on the same property" });
-    }
-
-    // Warn on brand mismatch — if primary and secondary point at
-    // different resolved brands, merging silently overwrites the
-    // secondary's brand with the primary's. The team should confirm
-    // they actually mean to do that; require force=true to proceed.
-    const primary = check.rows.find((r: any) => r.id === primaryId);
-    const secondary = check.rows.find((r: any) => r.id === secondaryId);
-    if (
-      primary?.tenant_company_id && secondary?.tenant_company_id &&
-      primary.tenant_company_id !== secondary.tenant_company_id &&
-      !force
-    ) {
-      return res.status(409).json({
-        error: "brand_mismatch",
-        message: `Primary (${primary.tenant_name || primary.trading_name || "?"}) and secondary (${secondary.tenant_name || secondary.trading_name || "?"}) resolve to different brands. Send force=true to merge anyway — the secondary's brand will be replaced with the primary's.`,
-        primary: { id: primary.id, tenant_company_id: primary.tenant_company_id, tenant_name: primary.tenant_name },
-        secondary: { id: secondary.id, tenant_company_id: secondary.tenant_company_id, tenant_name: secondary.tenant_name },
-      });
-    }
-
-    // Move FKs. Best-effort per table.
-    const moved = {
-      leasing: (await pool.query(`UPDATE leasing_schedule_units SET tenancy_unit_id = $1 WHERE tenancy_unit_id = $2`, [primaryId, secondaryId])).rowCount || 0,
-      available: (await pool.query(`UPDATE available_units SET tenancy_unit_id = $1 WHERE tenancy_unit_id = $2`, [primaryId, secondaryId])).rowCount || 0,
-      deals: (await pool.query(`UPDATE crm_deals SET tenancy_unit_id = $1 WHERE tenancy_unit_id = $2`, [primaryId, secondaryId])).rowCount || 0,
-    };
-
-    await pool.query(`DELETE FROM tenancy_schedule_units WHERE id = $1`, [secondaryId]);
-    res.json({ ok: true, moved });
+    const result = await mergeTenancyUnits(pool, req.params.propertyId, req.body?.primaryId, req.body?.secondaryId);
+    res.json(result);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(e instanceof TenancyMergeError ? e.status : 500).json({ error: e.message,
+      ...(e instanceof TenancyMergeError && e.conflicts.length ? { conflicts: e.conflicts } : {}) });
   }
 });
 
