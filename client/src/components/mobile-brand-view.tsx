@@ -207,6 +207,29 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       </div>
 
       <div className={sec("contacts")}>
+      {(data.representedBy || []).length > 0 && (
+        <Card data-testid="company-phone-represented-by">
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Represented by</CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 pt-0 space-y-2">
+            {data.representedBy.map((representation: any) => (
+              <div key={representation.id} className="rounded-lg border border-border p-3 space-y-2 min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Pill>{String(representation.agent_type || "Agent").replace(/_/g, " ")}</Pill>
+                  {representation.region && <span className="text-[11px] text-muted-foreground break-words">{String(representation.region).replace(/_/g, " ")}</span>}
+                </div>
+                {representation.contact_name && (representation.primary_contact_id
+                  ? <Link href={`/contacts/${representation.primary_contact_id}`} className="block min-h-11 py-2 text-sm font-semibold text-primary break-words hover:underline">{representation.contact_name}</Link>
+                  : <p className="text-sm font-semibold break-words">{representation.contact_name}</p>)}
+                {representation.agent_company_id && representation.agent_name
+                  ? <Link href={`/companies/${representation.agent_company_id}`} className="block min-h-11 py-2 text-sm text-primary break-words hover:underline">{representation.agent_name}</Link>
+                  : <p className="text-[11px] text-muted-foreground">Firm unconfirmed</p>}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
       {/* Key contacts — canonical board */}
       <CompanyContactsBoard
         companyId={companyId}

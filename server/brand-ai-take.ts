@@ -315,6 +315,7 @@ export async function readPreparedBrandAiTake(companyId: string, tab: Tab) {
   if (!company) throw new Error("Company not found");
   const identity = getBrandIdentity(company);
   if (identity.status !== "verified") return { text: "", cached: true, generatedAt: 0, pending: true, reason: identity.reason };
+  if (company.ai_generated_fields?.brand_identity?.previousFactsNeedReview) return { text: "", cached: true, generatedAt: 0, pending: true, reason: "Review the retained brand facts before using the BGP brief" };
   const saved = (await pool.query("SELECT value FROM system_settings WHERE key=$1", [takeKey(companyId, tab)])).rows[0]?.value;
   if (!saved?.text || saved.fingerprint !== identity.fingerprint) return { text: "", cached: true, generatedAt: 0, pending: true };
   return { text: saved.text as string, cached: true, generatedAt: Number(saved.generatedAt), stale: Date.now() > saved.expiresAt };
@@ -325,6 +326,7 @@ export async function prepareBrandAiTake(companyId: string, tab: Tab = "brand") 
   if (!company) throw new Error("Company not found");
   const identity = getBrandIdentity(company);
   if (identity.status !== "verified") return { text: "", cached: true, generatedAt: 0, reason: identity.reason };
+  if (company.ai_generated_fields?.brand_identity?.previousFactsNeedReview) return { text: "", cached: true, generatedAt: 0, reason: "Review the retained brand facts before generating the BGP brief" };
   if (company.ai_disabled) return { text: "", cached: true, generatedAt: 0, reason: "Brand enrichment is disabled" };
   let slice: any = null;
   let prompt = "";

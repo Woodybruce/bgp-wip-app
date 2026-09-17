@@ -12,6 +12,8 @@ test('office and industrial buildings do not become shopping destinations becaus
     assert.equal(propertyResearchContext({ assetClass, propertyView: 'centre' }).mode, 'not_applicable');
   }
   assert.equal(propertyResearchContext({ assetClass: 'Office' }, [{ permitted_use: 'Restaurant', status: ' Archived ' }]).mode, 'not_applicable');
+  assert.equal(propertyResearchContext({ assetClass: 'Office' }, [{ permitted_use: 'Restaurant', status: 'Occupied', occupancy_status: ' Archived ' }]).mode, 'not_applicable');
+  assert.equal(propertyResearchContext({ assetClass: 'Office' }, [{ permitted_use: 'Restaurant', status: null, occupancy_status: 'ARCHIVED' }]).mode, 'not_applicable');
 });
 
 test('research distinguishes local retail opportunities from a recorded centre', () => {
@@ -22,6 +24,18 @@ test('research distinguishes local retail opportunities from a recorded centre',
   assert.equal(propertyResearchContext({ assetClass: 'Retail', propertyView: 'centre' }).mode, 'centre');
   assert.equal(propertyResearchContext({ assetClass: 'Shopping Centre' }).mode, 'centre');
   assert.equal(propertyResearchContext({ assetClass: 'Retail Park' }).mode, 'centre');
+});
+
+test('current retail and hospitality use codes and common plural labels remain eligible', () => {
+  for (const permitted_use of ['E(a)', 'Class E(b)', 'E ( d )', 'A1', 'A3', 'Shops', 'Restaurants', 'Cafés', 'Gyms', 'Bars', 'Pubs', 'Kiosks', 'Takeaways', 'F & B']) {
+    const units = [{ permitted_use, status: 'Occupied' }];
+    assert.equal(propertyResearchContext({ assetClass: 'Mixed Use' }, units).mode, 'local', permitted_use);
+    assert.equal(propertyResearchContext({ assetClass: 'Office' }, [{ ...units[0], status: ' Archived ' }]).mode, 'not_applicable', permitted_use);
+    assert.equal(propertyResearchContext({ assetClass: 'Office' }, [{ ...units[0], occupancy_status: ' Archived ' }]).mode, 'not_applicable', permitted_use);
+  }
+  for (const permitted_use of ['E', 'Class E', 'E(c)', 'E(e)', 'E(f)', 'E(g)', 'E(g)(i)', 'B8', 'Offices', 'Workshop', 'Barcode storage']) {
+    assert.equal(propertyResearchContext({ assetClass: 'Mixed Use' }, [{ permitted_use }]).mode, 'not_applicable', permitted_use);
+  }
 });
 
 test('research cache identity changes when relevant property facts change, but not when rows reorder', () => {

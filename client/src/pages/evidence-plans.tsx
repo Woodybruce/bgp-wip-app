@@ -727,7 +727,7 @@ function PlanView({ planId }: { planId: string }) {
       <EvidencePlanReview open={reviewOpen} onOpenChange={setReviewOpen} units={units} levels={levels} activeLevelId={activeLevel?.id || null} propertyLinked={!!plan.property_id} unlinkedCount={unlinkedCount}
         evidence={<UnlinkedEvidence entries={entries} units={units} levels={levels} onSaved={invalidate} initiallyOpen />}
         onSelect={id => { const unit = units.find(u => u.id === id); stopDrawing(); setCleanPlan(false); setActiveLevelId(unit?.level_id || levels[0]?.id || null); setZoom(1); setPan({ x: 0, y: 0 }); selectUnit(id); }} />
-      {activeLevel && <EvidencePlanScanReview key={activeLevel.id} open={scanReviewOpen} onOpenChange={setScanReviewOpen} planId={planId} level={activeLevel} onSaved={invalidate} onRefresh={refreshUnits} scanRunning={detectRunning} />}
+      {activeLevel && <EvidencePlanScanReview key={activeLevel.id} open={scanReviewOpen} onOpenChange={setScanReviewOpen} planId={planId} level={activeLevel} onSaved={() => { setScanReport(null); invalidate(); }} onRefresh={refreshUnits} scanRunning={detectRunning} />}
 
       <LinkPropertyDialog open={linkingProperty} onOpenChange={setLinkingProperty} plan={plan} onSaved={invalidate} />
       <Dialog open={importReviewRows.length > 0} onOpenChange={open => { if (!open) setImportReviewRows([]); }}>

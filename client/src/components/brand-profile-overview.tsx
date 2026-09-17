@@ -26,6 +26,7 @@ export function BrandPreparationStatus({ companyId, refreshedAt }: { companyId: 
     preparedSections: number;
     totalSections: number;
     contactReviewRequired: boolean;
+    factReviewRequired: boolean;
     identity: { status: string; domain?: string; reason?: string };
     stages: Array<{ stage: string; status: string; lastSuccessAt?: string | null; reason?: string; lastError?: string }>;
   }>({
@@ -37,7 +38,7 @@ export function BrandPreparationStatus({ companyId, refreshedAt }: { companyId: 
   });
   const stages = data?.stages || [];
   const coreStages = stages.filter(stage => stage.stage === "identity" || stage.stage === "profile");
-  const needsReview = data?.identity?.status === "review" || coreStages.some(stage => stage.status === "needs_review");
+  const needsReview = data?.factReviewRequired || data?.identity?.status === "review" || coreStages.some(stage => stage.status === "needs_review");
   const running = coreStages.some(stage => stage.status === "running");
   const label = data?.ready ? "Core facts prepared" : needsReview ? "Core facts need review" : running ? "Preparing core facts" : coreStages.some(stage => ["error", "no_match", "unavailable"].includes(stage.status)) ? "Core preparation needs attention" : "Core preparation pending";
   const stageLabels: Record<string, string> = { identity: "Official identity", profile: "Core facts", apollo: "Company data", rocketreach: "Company match", stores: "Store locations", images: "Brand image", logo: "Brand logo", brief: "BGP action brief", contacts: "Contacts" };
@@ -47,20 +48,79 @@ export function BrandPreparationStatus({ companyId, refreshedAt }: { companyId: 
       <summary className="cursor-pointer min-h-11 sm:min-h-0 flex flex-wrap items-center gap-x-2 gap-y-1">
         <span>{data ? label : "Saved profile"}</span>
         {data?.contactReviewRequired && <span>· Contacts need review</span>}
-        {shortDate(refreshedAt) && <span>· Facts refreshed {shortDate(refreshedAt)}</span>}
+        {shortDate(refreshedAt) && <span>· {data?.factReviewRequired ? "Research updated" : "Facts refreshed"} {shortDate(refreshedAt)}</span>}
         <span className="underline underline-offset-2">Details</span>
       </summary>
       <div className="mt-2 space-y-1 rounded-md border border-border bg-background p-2 text-xs">
-        <p>Saved information opens immediately. Core facts are ready once the official identity and factual profile are prepared; other sections show their own progress below.</p>
+        <p>Saved information opens immediately. Core facts are ready once the official identity, factual profile and any retained fact review are complete; other sections show their own progress below.</p>
+        {data?.factReviewRequired && <p>Review the description, industry, head office and LinkedIn kept from the previous identity before relying on this profile.</p>}
         {data && <p><span className="font-mono tabular-nums">{data.preparedSections} of {data.totalSections}</span> automatic sections prepared. Contact review is separate and does not hold up the factual profile.</p>}
         {stages.map(stage => <div key={stage.stage} className="border-t border-border pt-2">
-          <p className="flex flex-wrap justify-between gap-x-3"><span>{stageLabels[stage.stage] || stage.stage}</span><span>{statusLabels[stage.status] || "Pending"}{shortDate(stage.lastSuccessAt) ? ` · ${shortDate(stage.lastSuccessAt)}` : ""}</span></p>
+          <p className="flex flex-wrap justify-between gap-x-3"><span>{stageLabels[stage.stage] || stage.stage}</span><span>{stage.stage === "profile" && data?.factReviewRequired ? "Facts need review" : statusLabels[stage.status] || "Pending"}{shortDate(stage.lastSuccessAt) ? ` · ${shortDate(stage.lastSuccessAt)}` : ""}</span></p>
           {(stage.reason || stage.lastError) && <p className="mt-1 break-words">{stage.stage === "contacts" && stage.reason?.includes("before marking this section complete") ? "Linked contacts are available. Check who currently handles property matters before contacting them; background preparation does not verify people." : stage.reason || stage.lastError}</p>}
         </div>)}
         {needsReview && <p>{data?.identity?.status === "review" ? "Confirm the brand’s official website or review its conflicting identity details." : "Open the section details above to see what needs attention. Other sections can continue preparing."}</p>}
       </div>
     </details>
   );
+}
+
+function BrandRetainedFactsReview({ companyId, identityVerified }: { companyId: string; identityVerified: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
+  const [draft, setDraft] = useState({ description: "", industry: "", linkedin: "", street: "", city: "", region: "", postcode: "", country: "" });
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { data, isLoading, isError, refetch } = useQuery<{
+    factReview?: { required: boolean; token: string; facts: { description: string | null; industry: string | null; linkedin_url: string | null; head_office_address: any } };
+  }>({
+    queryKey: ["/api/brand", companyId, "preparation"],
+    queryFn: async () => (await apiRequest("GET", `/api/brand/${companyId}/preparation`)).json(),
+    enabled: open,
+    staleTime: 0,
+    retry: false,
+  });
+  const review = data?.factReview;
+  useEffect(() => {
+    if (!open || !review) return;
+    const facts = review.facts;
+    const a = facts.head_office_address;
+    const address = a && typeof a === "object" ? a : {};
+    const line = typeof a === "string" ? a : address.street || address.line1 || (typeof address.address === "string" ? address.address : address.address?.street || address.address?.line1) || address.formatted || "";
+    setDraft({ description: facts.description || "", industry: facts.industry || "", linkedin: facts.linkedin_url || "", street: line,
+      city: address.city || "", region: address.region || "", postcode: address.postcode || "", country: address.country || "" });
+    setConfirmed(false);
+  }, [open, review?.token]);
+  const save = useMutation({
+    mutationFn: async () => (await apiRequest("PATCH", `/api/brand/${companyId}`, { factReview: {
+      token: review?.token, confirmed, description: draft.description, industry: draft.industry, linkedin_url: draft.linkedin,
+      head_office_address: { street: draft.street, city: draft.city, region: draft.region, postcode: draft.postcode, country: draft.country },
+    } })).json(),
+    onSuccess: () => {
+      setOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
+      toast({ title: "Reviewed facts saved", description: "Your corrections are saved. The BGP brief is queued to use the reviewed profile." });
+    },
+    onError: (error: Error) => toast({ title: "Facts could not be saved", description: error.message, variant: "destructive" }),
+  });
+  const labelClass = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
+  return <div className="space-y-3">
+    <Button type="button" variant="outline" size="sm" disabled={!identityVerified} onClick={() => setOpen(value => !value)} aria-expanded={open} data-testid="brand-fact-review-toggle">{open ? "Cancel fact review" : "Review retained facts"}</Button>
+    {open && (isLoading ? <p className="text-sm text-muted-foreground" role="status">Loading saved facts…</p>
+      : isError || !review ? <div className="space-y-2"><p className="text-sm">The facts could not be loaded.</p><Button type="button" variant="outline" size="sm" onClick={() => refetch()}>Try again</Button></div>
+        : <form className="space-y-3 border-t border-border pt-3" onSubmit={event => { event.preventDefault(); save.mutate(); }} data-testid="brand-fact-review-form">
+          <p className="text-sm text-muted-foreground">Check these retained facts against the official brand. Clear an unconfirmed LinkedIn page or address. Legal and KYC records require their own review.</p>
+          <div className="space-y-1"><Label className={labelClass} htmlFor={`review-description-${companyId}`}>Description</Label><Textarea id={`review-description-${companyId}`} required maxLength={4000} value={draft.description} rows={3} onChange={event => setDraft({ ...draft, description: event.target.value })} /></div>
+          <div className="space-y-1"><Label className={labelClass} htmlFor={`review-industry-${companyId}`}>Industry</Label><Input id={`review-industry-${companyId}`} required maxLength={300} value={draft.industry} onChange={event => setDraft({ ...draft, industry: event.target.value })} /></div>
+          <div className="space-y-1"><Label className={labelClass} htmlFor={`review-linkedin-${companyId}`}>LinkedIn company page · optional</Label><Input id={`review-linkedin-${companyId}`} type="url" maxLength={1000} value={draft.linkedin} placeholder="https://www.linkedin.com/company/…" onChange={event => setDraft({ ...draft, linkedin: event.target.value })} /></div>
+          <fieldset className="space-y-2"><legend className={labelClass}>Head office · optional</legend>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{([ ["street", "Address"], ["city", "Town or city"], ["region", "County or region"], ["postcode", "Postcode"], ["country", "Country"] ] as const).map(([field, label]) => <div key={field} className={`space-y-1 ${field === "street" ? "sm:col-span-2" : ""}`}><Label className={labelClass} htmlFor={`review-${field}-${companyId}`}>{label}</Label><Input id={`review-${field}-${companyId}`} maxLength={500} value={draft[field]} onChange={event => setDraft({ ...draft, [field]: event.target.value })} /></div>)}</div>
+          </fieldset>
+          <label className="flex items-center gap-2 min-h-11 text-sm"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={save.isPending} />I have checked these facts against the confirmed brand.</label>
+          <div className="flex justify-end"><Button type="submit" size="sm" disabled={!confirmed || !draft.description.trim() || !draft.industry.trim() || save.isPending}>{save.isPending ? "Saving…" : "Save reviewed facts"}</Button></div>
+        </form>)}
+  </div>;
 }
 
 export function BrandIdentityControl({ companyId, domain, identity, savedAliases = [], previousFactsNeedReview, canConfirm }: {
@@ -98,6 +158,7 @@ export function BrandIdentityControl({ companyId, domain, identity, savedAliases
       </div>
       {!verified && <p className="text-xs text-muted-foreground">Company information from outside sources is held for review until the brand’s identity is confirmed.</p>}
       {previousFactsNeedReview && <p className="text-xs text-muted-foreground">Previously recorded facts have been kept and still need review.</p>}
+      {previousFactsNeedReview && canConfirm && <BrandRetainedFactsReview key={companyId} companyId={companyId} identityVerified={verified} />}
       {open && <form className="space-y-2 border-t border-border pt-3" onSubmit={event => { event.preventDefault(); confirm.mutate(); }}>
         <Label htmlFor={`official-brand-website-${companyId}`} className="text-[11px] uppercase tracking-wider text-muted-foreground">Brand’s official website</Label>
         <Input id={`official-brand-website-${companyId}`} value={draft} onChange={event => setDraft(event.target.value)} placeholder="brand.co.uk" autoComplete="url" />

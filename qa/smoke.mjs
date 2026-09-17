@@ -53,6 +53,7 @@ const IGNORED_RESPONSES = [
 ];
 
 const failures = [];
+const responseChecks = [];
 let checks = 0;
 function check(name, ok, detail = '') {
   checks++;
@@ -66,6 +67,15 @@ function watchPage(page, label) {
   page.on('response', (res) => {
     const url = res.url();
     if (!url.includes('/api/') || res.status() < 500) return;   // smoke gates on 5xx only
+    if (res.headers()['x-bgp-smoke-synthetic'] === 'tenancy-outage') return;
+    // CI deliberately has no PropertyData key. Verify the exact documented
+    // unavailable response; a generic 500 or malformed 503 still fails.
+    if (new URL(url).pathname === '/api/market-tone' && res.status() === 503) {
+      responseChecks.push(res.json().then(body => check(`${label}: market tone reports provider unavailable`,
+        body.error === 'PropertyData not configured or no data for this postcode', JSON.stringify(body)))
+        .catch(error => check(`${label}: market tone reports provider unavailable`, false, error.message)));
+      return;
+    }
     if (IGNORED_RESPONSES.some((re) => re.test(url.split('?')[0]))) return;
     check(`${label}: no 5xx API responses`, false, `${res.status()} ${url.replace(BASE, '')}`);
   });
@@ -112,6 +122,15 @@ async function noCrash(page, label) {
   check(`${label}: no error boundary`, boundary === 0);
 }
 
+async function fullPropertyPage(page, label) {
+  // Simple views deliberately defer sidebar panels. Exercise the existing
+  // full-page control before asserting that every original board is usable.
+  const toggle = page.getByTestId('property-toggle-full-page');
+  if (await toggle.isVisible() && (await toggle.innerText()).includes('Show full page')) await toggle.click();
+  await page.locator('[data-property-view="full"]').waitFor({ state: 'visible', timeout: 15000 });
+  check(`${label}: full property page available`, true);
+}
+
 // Fresh containers ship chromium at /opt/pw-browsers/chromium but not the
 // headless-shell build playwright's npm install expects — fall back to the
 // preinstalled binary when the default launch can't find its browser.
@@ -142,10 +161,30 @@ console.log('── staff (Victoria) ──');
     check('staff dashboard: page content renders', await page.getByTestId('dashboard-page').isVisible());
     await page.screenshot({ path: `${SHOTS}/staff-dashboard.png` }).catch(() => {});
 
-    // Property page — the busiest surface in the app.
+    // A failed schedule must settle into an error instead of repeatedly
+    // unmounting/remounting the schedule and retrying hundreds of times.
+    // Only this explicitly tagged synthetic response bypasses the generic
+    // 5xx watcher; its error UI and strict request budget are asserted here.
+    const scheduleUrl = `${BASE}/api/tenancy-schedule/property/${BLUEWATER}`;
+    let failedScheduleReads = 0;
+    await page.route(scheduleUrl, route => {
+      failedScheduleReads++;
+      return route.fulfill({ status: 500, contentType: 'application/json',
+        headers: { 'x-bgp-smoke-synthetic': 'tenancy-outage' }, body: JSON.stringify({ error: 'Synthetic schedule outage' }) });
+    });
+    await page.goto(`${BASE}/properties/${BLUEWATER}`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(6500);
+    check('property: failed schedule has bounded automatic retries', failedScheduleReads > 0 && failedScheduleReads <= 4, `${failedScheduleReads} requests`);
+    check('property: failed schedule displays a stable error', await page.getByTestId('property-tenancy-schedule').getByText('Failed to load', { exact: true }).isVisible());
+    await page.unroute(scheduleUrl);
+
+    // Property page — the busiest surface in the app. Reload after restoring
+    // the real API and exercise every original board, not the error fixture.
     await page.goto(`${BASE}/properties/${BLUEWATER}`, { waitUntil: 'networkidle' }).catch(() => {});
     await settle(page, 6000);
     await noCrash(page, 'staff property page');
+    await fullPropertyPage(page, 'staff');
+    await page.getByTestId('btn-open-letting-tracker').waitFor({ state: 'visible', timeout: 15000 });
     check('property: tenancy schedule renders', await page.locator('[data-testid="btn-open-letting-tracker"]').count() > 0);
     check('property: unified tenancy schedule renders', await page.getByTestId('property-tenancy-schedule').isVisible());
     check('property: tracker card renders', await page.locator('[data-testid="tracker-summary-card"]').count() > 0);
@@ -224,6 +263,8 @@ console.log('── client (Mark, Landsec) ──');
     await page.goto(`${BASE}/properties/${BLUEWATER}`, { waitUntil: 'networkidle' }).catch(() => {});
     await settle(page, 6000);
     await noCrash(page, 'client property page');
+    await fullPropertyPage(page, 'client');
+    await page.getByTestId('btn-open-letting-tracker').waitFor({ state: 'visible', timeout: 15000 });
     check('client property: tenancy schedule', await page.locator('[data-testid="btn-open-letting-tracker"]').count() > 0);
     check('client property: jailed files panel (no staff panel)', await page.locator('[data-testid="client-property-folders-panel"]').count() > 0);
     check('client property: no team-name folder tabs', await page.locator('[data-testid^="folder-team-tab-"]').count() === 0);
@@ -266,6 +307,7 @@ console.log('── client (Mark, Landsec) ──');
 }
 
 await browser.close();
+await Promise.all(responseChecks);
 
 // ─── O365 → tracker auto-collection (viewings + offers) ──────────────────
 // Deterministic matcher/dedupe check against the fixture DB — the piece

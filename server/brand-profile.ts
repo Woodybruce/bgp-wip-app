@@ -7,6 +7,8 @@ import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { createBrandRepresentation, updateBrandRepresentation } from "./brand-representations";
 import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
+import { prepareBrandFactReview } from "./brand-fact-review";
+import { randomUUID } from "node:crypto";
 import { isOfficialBrandWebsite, publishableBrandImage, publishableBrandStore, prepareBrandIdentityUpdate, quarantineBrandIdentityDependents } from "./brand-publishing";
 
 const router = Router();
@@ -1087,8 +1089,20 @@ async function updateBrandRecord(companyId: string, body: any, actor: string | n
       const value = key in body ? body[key] : body[camel];
       if (value !== undefined) supplied[key] = value;
     }
-    if (!Object.keys(supplied).length && !identityOnly) throw Object.assign(new Error("No fields to update"), { status: 400 });
+    const reviewingFacts = Object.hasOwn(body, "factReview");
+    if (reviewingFacts && (identityOnly || Object.keys(body).some(key => key !== "factReview"))) throw Object.assign(new Error("Save the fact review separately from other changes."), { status: 400 });
+    if (!Object.keys(supplied).length && !identityOnly && !reviewingFacts) throw Object.assign(new Error("No fields to update"), { status: 400 });
     let fields: Record<string, any> = {};
+    if (reviewingFacts) {
+      const prepared = prepareBrandFactReview(company, body.factReview, actor);
+      fields = prepared.fields;
+      await client.query("INSERT INTO system_settings(key,value) VALUES ($1,$2::jsonb)",
+        [`brand-fact-review:${companyId}:${randomUUID()}`, JSON.stringify(prepared.review)]);
+      await client.query("DELETE FROM system_settings WHERE key = ANY($1::text[])", [[
+        ...["brand", "uk", "activity", "intel"].map(tab => `brand-prepared-take:${companyId}:${tab}`),
+        `brand-preparation:${companyId}:brief`,
+      ]]);
+    }
     if (identityOnly || "domain" in supplied || "domain_url" in supplied) {
       const input = { ...body, domain: body.domain ?? supplied.domain_url };
       const prepared = prepareBrandIdentityUpdate(company, input, actor);
@@ -1101,13 +1115,13 @@ async function updateBrandRecord(companyId: string, body: any, actor: string | n
     fields.ai_generated_fields = metadata;
     const keys = Object.keys(fields);
     await client.query(`UPDATE crm_companies SET ${keys.map((key, i) => `${key} = $${i + 2}`).join(", ")}, updated_at = now() WHERE id = $1`,
-      [companyId, ...keys.map(key => key === "ai_generated_fields" ? JSON.stringify(fields[key]) : fields[key])]);
+      [companyId, ...keys.map(key => ["ai_generated_fields", "head_office_address"].includes(key) && fields[key] !== null ? JSON.stringify(fields[key]) : fields[key])]);
     await client.query("COMMIT");
-    if (identityChanged) {
+    if (identityChanged || reviewingFacts) {
       await import("./brand-enrichment").then(module => module.enqueueBrandPreparation(companyId))
         .catch(error => console.warn("[brand-identity] queue:", error?.message));
     }
-    return { ok: true, identity: getBrandIdentity({ ...company, ...fields }), needsPreparation: identityChanged };
+    return { ok: true, identity: getBrandIdentity({ ...company, ...fields }), needsPreparation: identityChanged || reviewingFacts };
   } catch (error) { await client.query("ROLLBACK"); throw error; }
   finally { client.release(); }
 }
@@ -1116,7 +1130,11 @@ router.patch("/api/brand/:companyId", requireAuth, async (req: Request, res: Res
   try {
     const companyId = String(req.params.companyId);
     if (!(await canUseBrand(req, companyId))) return res.status(403).json({ error: "Not available for this account" });
-    res.json(await updateBrandRecord(companyId, req.body || {}, (req as any).user?.id || null));
+    if (Object.hasOwn(req.body || {}, "factReview")) {
+      const { resolveCompanyScope } = await import("./company-scope");
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Retained fact review is available in the staff view." });
+    }
+    res.json(await updateBrandRecord(companyId, req.body || {}, (req.session as any)?.userId || (req as any).tokenUserId || (req as any).user?.id || null));
   } catch (err: any) { res.status(err.status || 400).json({ error: err.message }); }
 });
 

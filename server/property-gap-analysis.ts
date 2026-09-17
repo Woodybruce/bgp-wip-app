@@ -14,14 +14,14 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { isClientCrmCategory } from "../shared/tenant-categories";
-import { propertyResearchContext, type PropertyResearchContext } from "../shared/property-research";
+import { propertyResearchContext, PROPERTY_RESEARCH_USE_PATTERN, PROPERTY_RESEARCH_CENTRE_PATTERN, type PropertyResearchContext } from "../shared/property-research";
 
 const router = Router();
 
 async function readPropertyResearchContext(propertyId: string): Promise<PropertyResearchContext | null> {
   const property = (await pool.query("SELECT asset_class, property_view FROM crm_properties WHERE id = $1", [propertyId])).rows[0];
   if (!property) return null;
-  const units = (await pool.query("SELECT permitted_use, status FROM tenancy_schedule_units WHERE property_id = $1", [propertyId])).rows;
+  const units = (await pool.query("SELECT permitted_use, status, occupancy_status FROM tenancy_schedule_units WHERE property_id = $1", [propertyId])).rows;
   return propertyResearchContext({ assetClass: property.asset_class, propertyView: property.property_view }, units);
 }
 
@@ -927,15 +927,16 @@ export async function runNightlyGapLiveIntelSweep(): Promise<{ swept: number; er
   await ensureGapColumns();
   const props = await pool.query(
     `SELECT p.id FROM crm_properties p
-      WHERE (p.asset_class ILIKE ANY($1::text[]) OR EXISTS (
+      WHERE (p.asset_class ~* $1 OR p.asset_class ~* $2 OR EXISTS (
           SELECT 1 FROM tenancy_schedule_units t WHERE t.property_id = p.id
-            AND lower(trim(coalesce(t.status, ''))) <> 'archived' AND t.permitted_use ILIKE ANY($1::text[])))
+            AND lower(trim(coalesce(t.status, ''))) <> 'archived'
+            AND lower(trim(coalesce(t.occupancy_status, ''))) <> 'archived' AND t.permitted_use ~* $1))
         AND (EXISTS (SELECT 1 FROM leasing_schedule_units l WHERE l.property_id = p.id)
              OR p.gap_commentary IS NOT NULL)
         AND (p.gap_live_intel_at IS NULL OR p.gap_live_intel_at < NOW() - INTERVAL '6 days')
       ORDER BY p.gap_live_intel_at ASC NULLS FIRST
       LIMIT 10`,
-    [["%retail%", "%shop%", "%restaurant%", "%cafe%", "%café%", "%coffee%", "%food%", "%f&b%", "%leisure%", "%fitness%", "%gym%", "%wellness%", "%bar%", "%pub%", "%kiosk%", "%takeaway%", "%takeout%", "A1", "A3", "A4", "A5"]]
+    [PROPERTY_RESEARCH_USE_PATTERN, PROPERTY_RESEARCH_CENTRE_PATTERN]
   );
   if (!props.rows.length) return out;
   const staff = await pool.query(

@@ -19,6 +19,7 @@ import { pool } from "./db";
 import Anthropic from "@anthropic-ai/sdk";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import { getBrandIdentity } from "./brand-identity";
+import { readBrandFactReview } from "./brand-fact-review";
 import { knownBrandLegalIdentity, verifyBrandIdentityFromOfficialSite } from "./brand-identity-verification";
 import { CLIENT_CRM_CATEGORIES } from "@shared/tenant-categories";
 import { BRAND_PREPARATION_STAGES, readPreparationStates, runPreparationStage, summarizeBrandPreparation, type BrandPreparationStage, type PreparationOutcome } from "./brand-preparation-jobs";
@@ -248,7 +249,8 @@ export async function prepareBrandStage(companyId: string, stage: BrandPreparati
   const company = (await pool.query("SELECT * FROM crm_companies WHERE id=$1 AND merged_into_id IS NULL", [companyId])).rows[0];
   if (!company) throw new Error("Company not found");
   const identity = getBrandIdentity(company);
-  const usable = stage === "identity" ? identity.status !== "verified" && !!knownBrandLegalIdentity(company) && !company.ai_disabled : identity.status === "verified" && !company.ai_disabled && configured(stage);
+  const usable = stage === "identity" ? identity.status !== "verified" && !!knownBrandLegalIdentity(company) && !company.ai_disabled : identity.status === "verified" && !company.ai_disabled && configured(stage)
+    && !(stage === "brief" && company.ai_generated_fields?.brand_identity?.previousFactsNeedReview);
   let result: any;
   const run = await runPreparationStage(pool, companyId, stage, identity.fingerprint, async (): Promise<PreparationOutcome> => {
     if (stage === "identity" && !company.ai_disabled) {
@@ -282,6 +284,7 @@ export async function prepareBrandStage(companyId: string, stage: BrandPreparati
     }
     if (stage === "logo") return (await import("./image-studio")).prepareBrandLogo(companyId);
     if (stage === "brief") {
+      if (company.ai_generated_fields?.brand_identity?.previousFactsNeedReview) return { status: "needs_review", reason: "Review the retained brand facts before generating the BGP brief" };
       const prepared = await readPreparationStates(pool, companyId, identity.fingerprint);
       if (prepared.find(section => section.stage === "profile")?.status !== "ready") return { status: "needs_review", reason: "Prepare the factual profile before generating the BGP brief" };
       result = await (await import("./brand-ai-take")).prepareBrandAiTake(companyId, options.tab || "brand");
@@ -364,7 +367,8 @@ router.get("/api/brand/:companyId/preparation", requireAuth, async (req: Request
     if (!company) return res.status(404).json({ error: "Company not found" });
     const identity = getBrandIdentity(company);
     const stages = await readPreparationStates(pool, companyId, identity.fingerprint);
-    res.json({ identity, stages, ...summarizeBrandPreparation(identity.status, stages) });
+    const factReview = readBrandFactReview(company);
+    res.json({ identity, stages, factReview, ...summarizeBrandPreparation(identity.status, stages, factReview.required) });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 

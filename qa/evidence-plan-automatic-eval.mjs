@@ -54,11 +54,11 @@ if (fs.existsSync(path.join(output, 'manifest.json'))) throw new Error('Use a ne
 const digest = data => crypto.createHash('sha256').update(data).digest('hex');
 const write = (name, data) => fs.writeFileSync(path.join(output, name), typeof data === 'string' ? data : JSON.stringify(data, null, 2));
 const append = (name, data) => fs.appendFileSync(path.join(output, name), JSON.stringify(data) + '\n');
-const declaration = name => find('server/evidence-plan.ts', node => (ts.isFunctionDeclaration(node) && node.name?.text === name)
+const declaration = (name, file = 'server/evidence-plan.ts') => find(file, node => (ts.isFunctionDeclaration(node) && node.name?.text === name)
   || (ts.isVariableStatement(node) && node.declarationList.declarations.some(item => item.name.getText() === name)));
 const commonNames = ['normaliseUnitRef', 'normTenantName', 'stripCoName', 'evidenceScheduleRows', 'matchEvidenceScheduleRow', 'relinkAllEntries', 'startDetectJob'];
-const commonSource = commonNames.map(declaration).join('\n');
-const tileSource = ['DETECT_PROMPT', 'extractJsonObject', 'detectTile'].map(declaration).join('\n');
+const commonSource = commonNames.map(name => declaration(name)).join('\n');
+const tileSource = ['DETECT_PROMPT', 'extractJsonObject', 'detectTile'].map(name => declaration(name, 'server/plan-scan-vision.ts')).join('\n');
 const workerSource = declaration('runDetectJob');
 const imageBytes = fs.readFileSync(imagePath);
 const meta = await sharp(imageBytes).metadata();
@@ -128,7 +128,7 @@ const manifest = {
   startedAt: new Date().toISOString(), case: args.case, name: selected.name,
   gitHead: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
   gitStatus: execFileSync('git', ['status', '--short'], { cwd: root, encoding: 'utf8' }).trim(),
-  sourceSha256: Object.fromEntries(['server/evidence-plan.ts', 'server/plan-unit-detection.ts', 'server/plan-scan-review.ts', 'shared/plan-geometry.ts', 'shared/plan-scan-review.ts', 'qa/evidence-plan-automatic-eval.mjs'].map(file => [file, digest(fs.readFileSync(path.join(root, file)))])),
+  sourceSha256: Object.fromEntries(['server/evidence-plan.ts', 'server/plan-scan-vision.ts', 'server/plan-unit-detection.ts', 'server/plan-scan-review.ts', 'shared/plan-geometry.ts', 'shared/plan-scan-review.ts', 'qa/evidence-plan-automatic-eval.mjs'].map(file => [file, digest(fs.readFileSync(path.join(root, file)))])),
   image: { path: imagePath, sha256: digest(imageBytes), width: meta.width, height: meta.height, bytes: imageBytes.length },
   maxProviderRequests: cap, provider: replay ? 'Recorded Anthropic responses; no external provider calls' : 'Anthropic Messages API', model: 'from actual detectTile source (no override)',
   executionMode: replay ? 'recorded_response_replay' : 'live_provider',

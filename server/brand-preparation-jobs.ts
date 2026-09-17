@@ -16,10 +16,11 @@ const DAY = 86400000;
 const LEASE_MS = 15 * 60000;
 export const preparationKey = (companyId: string, stage: BrandPreparationStage) => `brand-preparation:${companyId}:${stage}`;
 
-export function summarizeBrandPreparation(identityStatus: string, stages: PreparationState[]) {
+export function summarizeBrandPreparation(identityStatus: string, stages: PreparationState[], factReviewRequired = false) {
   const automatic = stages.filter(stage => stage.stage !== "contacts");
   return {
-    ready: identityStatus === "verified" && stages.some(stage => stage.stage === "profile" && stage.status === "ready"),
+    ready: identityStatus === "verified" && !factReviewRequired && stages.some(stage => stage.stage === "profile" && stage.status === "ready"),
+    factReviewRequired,
     preparedSections: automatic.filter(stage => stage.status === "ready").length,
     totalSections: BRAND_PREPARATION_STAGES.length - 1,
     contactReviewRequired: stages.find(stage => stage.stage === "contacts")?.status !== "ready",

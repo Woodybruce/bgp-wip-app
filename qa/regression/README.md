@@ -23,6 +23,8 @@ Against a local app using `qa/smoke-fixture.sql.gz`, run `node qa/smoke.mjs` fol
 
 The local pass completed 53 desktop checks and 21 phone checks, plus 22 actual HTTP/database client-access checks. The phone suite verifies reload/history, profiles and same-document account isolation using a disposable self-only conversation, then deletes it. Screenshots/results are written below `qa/smoke-shots/`. CI runs both browser suites after regression tests and TypeScript.
 
+The phone suite now also checks property cards, the Building overview, current/history tenancy totals and edit controls, full-page switching, and brand Contacts with a named agent whose firm is unconfirmed. Supply `PHONE_SMOKE_DATABASE_URL=postgresql://postgres@localhost:5432/bgpsmoke` (as CI does), or the guarded `bgp_smoke` Unix-socket URL, to create and clean its exact synthetic fixture records. The scenario is required in CI and reported as skipped locally without this dedicated variable. It checks horizontal fit, real linked contact navigation, and captures property/brand screenshots in `qa/smoke-shots/phone/`. These are Chromium tests with iPhone viewport, user agent and touch emulation, not physical-device Safari tests. `phone-property-brand.test.mjs` separately executes the real device-detection hook and phone component behavior without a browser; it does not certify visual layout.
+
 The browser pass found a reactive session-verification bug and a second CRM write gateway missed by the original isolated tests. The cache regression now covers structurally identical restored auth data; the access regression executes both gateways before scoped handlers. Live authenticated provider integrations and production deployment were not tested.
 
 ## Client agent links

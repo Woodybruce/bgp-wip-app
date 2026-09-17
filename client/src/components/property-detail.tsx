@@ -452,7 +452,10 @@ export function PropertyDetail({ id }: { id: string }) {
     },
   });
 
-  if (isLoading || (property && !property.propertyView && overviewSchedule.isPending)) {
+  // Wait for the first layout decision only. Once a request has settled,
+  // keep the schedule mounted while it retries: hiding it on every pending
+  // state lets retry-on-mount turn a failed request into a render/fetch loop.
+  if (isLoading || (property && !property.propertyView && overviewSchedule.isPending && !overviewSchedule.isFetched)) {
     return (
       <div className="p-4 sm:p-6 space-y-4">
         <Skeleton className="h-8 w-48" />

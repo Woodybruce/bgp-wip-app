@@ -45,9 +45,8 @@ const email = (id: string, subject: string, body = "") => ({
 try {
   await cleanup();
 
-  // Seed a deal-linked tracker unit so the company tiebreak has a target:
-  // Starbucks has ONE deal-linked unit at Bluewater → property-only events
-  // with a Starbucks attendee anchor there.
+  // Seed a deal-linked tracker unit. That historic deal is not proof that
+  // a property-only invitation refers to the same unit: keep it for review.
   const deal = await pool.query(
     `INSERT INTO crm_deals (name, deal_type, status, property_id, tenant_id)
      VALUES ('QA-SMOKE tiebreak letting', 'New Letting', 'AVA', $1, $2) RETURNING id`,
@@ -62,18 +61,25 @@ try {
 
   // 1. Named unit: the first comma segment of a stored unit name matches.
   const n1 = await syncDiaryViewings([event("v1", "Viewing QA-SMOKE-U77 at Bluewater") as any], "qa@bgp");
-  check("viewing lands when the unit is named", n1 === 1, `upserted ${n1}`);
+  const named = await pool.query(`SELECT unit_id, company_id FROM unit_viewings WHERE calendar_event_id = 'qa-smoke-v1'`);
+  check("viewing lands on the named unit and brand", n1 === 1 && named.rows[0]?.unit_id === qaUnitId
+    && named.rows[0]?.company_id === STARBUCKS, `upserted ${n1}`);
 
   // 2. Dedupe: the same iCalUId again updates in place, no second row.
   const n2 = await syncDiaryViewings([event("v1", "Viewing QA-SMOKE-U77 at Bluewater") as any], "qa@bgp");
   const rows = await pool.query(`SELECT count(*)::int AS n FROM unit_viewings WHERE calendar_event_id = 'qa-smoke-v1'`);
   check("re-sync dedupes on iCalUId", n2 === 0 && rows.rows[0].n === 1, `${rows.rows[0].n} row(s)`);
 
-  // 3. Company tiebreak: property named, unit NOT named, known attendee —
-  //    anchors to the attendee company's deal-linked unit.
+  // 3. Property named but unit absent: retain the brand and invitation for
+  //    review rather than assuming its old deal identifies today's viewing.
   const n3 = await syncDiaryViewings([event("v2", "Viewing at Bluewater with Starbucks") as any], "qa@bgp");
-  const v2 = await pool.query(`SELECT unit_id FROM unit_viewings WHERE calendar_event_id = 'qa-smoke-v2'`);
-  check("company tiebreak anchors property-only viewings", n3 === 1 && v2.rows[0]?.unit_id === qaUnitId);
+  const v2 = await pool.query(`SELECT unit_id, company_id, details_confirmed_at, source_details FROM unit_viewings WHERE calendar_event_id = 'qa-smoke-v2'`);
+  check("property-only viewing is retained with its brand and unit review required", n3 === 1 && v2.rows.length === 1
+    && v2.rows[0].unit_id === null && v2.rows[0].company_id === STARBUCKS && v2.rows[0].details_confirmed_at === null
+    && v2.rows[0].source_details?.issues?.includes("Choose which tracker units are being viewed"));
+  const n3Again = await syncDiaryViewings([event("v2", "Viewing at Bluewater with Starbucks") as any], "qa@bgp");
+  const pendingRows = await pool.query(`SELECT count(*)::int AS n FROM unit_viewings WHERE calendar_event_id = 'qa-smoke-v2' AND unit_id IS NULL`);
+  check("unassigned viewing re-sync stays one pending record", n3Again === 0 && pendingRows.rows[0].n === 1);
 
   // 4. Site tours classify as viewings.
   const n4 = await syncDiaryViewings([event("v3", "Site tour - QA-SMOKE-U77 Bluewater") as any], "qa@bgp");

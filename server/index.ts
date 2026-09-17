@@ -765,6 +765,16 @@ installGoogleBudgetGuard();
       rent_review_4_amount TEXT
     )`,
     `CREATE INDEX IF NOT EXISTS idx_tenancy_schedule_units_property ON tenancy_schedule_units(property_id)`,
+    // Mirror additive migration 0032 for restored/older databases. The
+    // tenancy, plan and linkage readers now use these columns at runtime;
+    // CREATE TABLE IF NOT EXISTS alone cannot upgrade an existing table.
+    `ALTER TABLE tenancy_schedule_units ADD COLUMN IF NOT EXISTS property_unit_id VARCHAR`,
+    `ALTER TABLE tenancy_schedule_units ADD COLUMN IF NOT EXISTS occupancy_status TEXT`,
+    `ALTER TABLE tenancy_schedule_units ADD COLUMN IF NOT EXISTS marketing_active BOOLEAN DEFAULT FALSE`,
+    `ALTER TABLE tenancy_schedule_units ADD COLUMN IF NOT EXISTS marketing_reason TEXT`,
+    `CREATE INDEX IF NOT EXISTS tenancy_schedule_units_property_unit_id_idx ON tenancy_schedule_units (property_unit_id) WHERE property_unit_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS tenancy_schedule_units_marketing_active_idx ON tenancy_schedule_units (marketing_active) WHERE marketing_active = TRUE`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS deal_scope TEXT DEFAULT 'unit'`,
     `CREATE TABLE IF NOT EXISTS kyc_investigations (id SERIAL PRIMARY KEY, subject_type TEXT NOT NULL, subject_name TEXT NOT NULL, company_number TEXT, crm_company_id VARCHAR, officer_name TEXT, risk_level TEXT, risk_score INTEGER, sanctions_match BOOLEAN DEFAULT false, result JSONB, conducted_by VARCHAR, conducted_at TIMESTAMP DEFAULT now(), notes TEXT)`,
     `CREATE INDEX IF NOT EXISTS kyc_investigations_company_number_idx ON kyc_investigations (company_number)`,
     `CREATE INDEX IF NOT EXISTS kyc_investigations_crm_company_id_idx ON kyc_investigations (crm_company_id)`,

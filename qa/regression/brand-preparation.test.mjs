@@ -10,8 +10,16 @@ const { source, find, evaluate, ts } = require('./source-harness.cjs');
 test('prepared factual profile is usable while contact review remains explicit', () => {
   const stages = BRAND_PREPARATION_STAGES.map(stage => ({stage,fingerprint:'verified',status:stage==='contacts'?'needs_review':'ready'}));
   const result=summarizeBrandPreparation('verified',stages);
-  assert.deepEqual(result,{ready:true,preparedSections:8,totalSections:8,contactReviewRequired:true});
+  assert.deepEqual(result,{ready:true,factReviewRequired:false,preparedSections:8,totalSections:8,contactReviewRequired:true});
   assert.equal(stages.at(-1).status,'needs_review');
+});
+
+test('retained facts from a corrected identity cannot be labelled prepared until explicitly reviewed', () => {
+  const stages = BRAND_PREPARATION_STAGES.map(stage => ({ stage, fingerprint: 'verified', status: stage === 'contacts' ? 'needs_review' : 'ready' }));
+  const pending = summarizeBrandPreparation('verified', stages, true);
+  assert.equal(pending.ready, false); assert.equal(pending.factReviewRequired, true);
+  assert.equal(pending.contactReviewRequired, true);
+  assert.equal(summarizeBrandPreparation('verified', stages, false).ready, true);
 });
 test('optional no-match or unavailable sources do not mislabel prepared core facts', () => {
   const stages=BRAND_PREPARATION_STAGES.map(stage=>({stage,fingerprint:'verified',status:['identity','profile'].includes(stage)?'ready':stage==='contacts'?'needs_review':'unavailable'}));
@@ -50,6 +58,9 @@ test('ordinary BGP take reads only persisted matching-identity output and never 
   const pending = await readPreparedBrandAiTake('brand', 'brand'); assert.equal(pending.pending, true); assert.equal(pending.text, '');
   saved = { text: 'Prepared action brief', fingerprint: getBrandIdentity(company).fingerprint, generatedAt: 100, expiresAt: Date.now() + 10000 };
   const cached = await readPreparedBrandAiTake('brand', 'brand'); assert.equal(cached.text, saved.text); assert.equal(cached.cached, true);
+  company.ai_generated_fields.brand_identity.previousFactsNeedReview = true;
+  const unreviewed = await readPreparedBrandAiTake('brand', 'brand'); assert.equal(unreviewed.text, ''); assert.equal(unreviewed.pending, true); assert.match(unreviewed.reason, /retained brand facts/);
+  delete company.ai_generated_fields.brand_identity.previousFactsNeedReview;
   company.domain = 'unrelated.example';
   const changed = await readPreparedBrandAiTake('brand', 'brand'); assert.equal(changed.text, ''); assert.equal(changed.pending, true);
   assert.ok(queries.every(query => query.sql.startsWith('SELECT')));
