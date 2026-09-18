@@ -17,6 +17,8 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { isBrandSignalRelevant } from "./brand-news-relevance";
+import { publishableBrandImage } from "./brand-publishing";
+import { rankCompanyHeroImages, companyImageHeroIssue } from "../shared/brand-image-selection";
 import * as path from "path";
 import * as fs from "fs";
 
@@ -47,7 +49,7 @@ async function loadBrandPackData(companyId: string) {
     `SELECT id, name, domain, domain_url, website, description, concept_pitch, store_count,
             rollout_status, backers, instagram_handle, industry, founded_year,
             employee_count, annual_revenue, logo_url, uk_entity_name, companies_house_number,
-            brand_analysis, ai_generated_fields
+            brand_analysis, ai_generated_fields, company_type
        FROM crm_companies WHERE id = $1`,
     [companyId]
   );
@@ -62,13 +64,13 @@ async function loadBrandPackData(companyId: string) {
     [companyId]
   );
   const imagesQ = pool.query(
-    `SELECT i.id, i.local_path, i.thumbnail_data
+    `SELECT i.id, i.local_path, i.company_id, i.brand_name, i.tags, i.source, i.file_name, i.width, i.height
        FROM image_studio_images i
       WHERE i.company_id = $1
          OR (i.brand_name IS NOT NULL
              AND lower(i.brand_name) = (SELECT lower(name) FROM crm_companies WHERE id = $1))
       ORDER BY ('brand-hero' = ANY(i.tags))::int DESC, i.created_at DESC
-      LIMIT 3`,
+      LIMIT 60`,
     [companyId]
   );
   const repsQ = pool.query(
@@ -129,7 +131,8 @@ async function loadBrandPackData(companyId: string) {
     } catch {}
   }
 
-  return { company: company.rows[0], signals: cleanSignals, reps: reps.rows, contacts: contacts.rows, requirements: requirements.rows, covenant, images: images.rows };
+  const photos = rankCompanyHeroImages(images.rows.filter(image => publishableBrandImage(company.rows[0], image)), company.rows[0].company_type);
+  return { company: company.rows[0], signals: cleanSignals, reps: reps.rows, contacts: contacts.rows, requirements: requirements.rows, covenant, images: photos };
 }
 
 // Read up to 3 gallery images as embeddable JPEG buffers, cropped to the
@@ -145,10 +148,11 @@ async function loadHeroImages(rows: any[], w: number, h: number): Promise<Buffer
     for (const r of rows) {
       if (out.length >= 3) break;
       try {
-        let raw: Buffer | null = r.local_path ? await readPersistedImage(r.local_path) : null;
-        if (!raw && r.thumbnail_data) raw = Buffer.from(r.thumbnail_data, "base64");
+        const raw: Buffer | null = r.local_path ? await readPersistedImage(r.local_path) : null;
         if (!raw || !raw.length) continue;
-        out.push(await sharp(raw).resize(Math.round(w * 2), Math.round(h * 2), { fit: "cover" }).jpeg({ quality: 78 }).toBuffer());
+        const metadata = await sharp(raw).metadata();
+        if (companyImageHeroIssue({ ...r, width: metadata.width, height: metadata.height })) continue;
+        out.push(await sharp(raw).rotate().resize(Math.round(w * 2), Math.round(h * 2), { fit: "cover", withoutEnlargement: true }).jpeg({ quality: 88 }).toBuffer());
       } catch {}
     }
   } catch {}

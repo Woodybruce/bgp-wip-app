@@ -280,7 +280,7 @@ export async function prepareBrandStage(companyId: string, stage: BrandPreparati
     }
     if (stage === "images") {
       result = await (await import("./brand-images")).refreshBrandImages(companyId, { target: 3 });
-      return { status: result.imported > 0 || /^Already have \d+ auto-images/.test(result.skipped || "") ? "ready" : "no_match", reason: result.skipped || undefined };
+      return { status: result.imported > 0 || result.qualified > 0 ? "ready" : "no_match", reason: result.skipped || undefined };
     }
     if (stage === "logo") return (await import("./image-studio")).prepareBrandLogo(companyId);
     if (stage === "brief") {

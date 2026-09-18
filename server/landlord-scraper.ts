@@ -13,7 +13,7 @@
 // landlord site, where the gold sits at /portfolio /our-places /investors.
 // This module exists so we can stop pretending landlords are brands.
 //
-// Each landlord scrape costs ~6 ScraperAPI calls (render:true is paid) +
+// Each landlord scrape uses at most 8 ScraperAPI calls (render:true is paid) +
 // 1 Haiku call (~5k input tokens). Findings live in their own table so
 // the existing crm_companies row stays clean; the brand-profile endpoint
 // pulls the latest snapshot in on read.
@@ -23,31 +23,13 @@ import { scraperFetch, isScraperApiAvailable } from "./utils/scraperapi";
 import { callClaude, safeParseJSON, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { geocodeBatch } from "./geocode";
 import { saveFile } from "./file-storage";
+import { discoverCompanyPhotographyPages, extractCompanyImageUrls, isPublicImageSourceUrl } from "./company-image-discovery";
 
-// Paths likely to hold landlord-specific intel. Probed in parallel. Each
-// path that returns >200 chars of text is fed into the AI prompt. We
-// cap at 6 to keep ScraperAPI cost predictable.
-// Order matters: paths earlier in the list get priority in the
-// image-URL round-robin (see imageUrls assembly below). Portfolio /
-// asset pages first — that's where the property hero photography
-// lives. Investor pages last so their charts + headshots don't
-// crowd out the property galleries.
-const LANDLORD_PATHS = [
-  "/our-places",          // Landsec
-  "/portfolio",
-  "/our-portfolio",
-  "/our-properties",
-  "/assets",
-  "/investments",
-  "/",
-  "/about",
-  "/about/board",
-  "/media",
-  "/media-centre",
-  "/investors",
-  "/investors/investors-overview",
-  "/sustainability",
-];
+// Keep the existing eight-page render budget. Observed portfolio/asset links
+// take precedence over guessed paths after the homepage and two common indexes.
+const LANDLORD_INITIAL_PATHS = ["/", "/our-places", "/portfolio"];
+const LANDLORD_FALLBACK_PATHS = ["/our-portfolio", "/our-properties", "/assets", "/investments", "/about"];
+const LANDLORD_PAGE_LIMIT = 8;
 
 let _tableEnsured = false;
 async function ensureTable() {
@@ -86,7 +68,7 @@ async function ensureTable() {
 }
 
 interface LandlordFindings {
-  source_urls: Array<{ url: string; status: number; bytes: number }>;
+  source_urls: Array<{ url: string; status: number; bytes: number; image_urls?: string[] }>;
   logo_url: string | null;
   share_ticker: string | null;
   ir_contact: { name?: string; email?: string; phone?: string; role?: string } | null;
@@ -135,90 +117,6 @@ function condenseHtml(html: string, baseUrl: string, maxChars = 12000): string {
   return `og:image=${og}\nLinks:\n${links.join("\n")}\n\nVisible text:\n${text}`;
 }
 
-// Extract high-quality image URLs from a rendered HTML page. We want
-// hero shots / asset photography (landlords' /portfolio pages are
-// curated picture galleries), NOT logos / sprites / icons.
-//
-// Strategy:
-//   - og:image / twitter:image (publisher's chosen hero, always good)
-//   - <img src/srcset/data-src/data-original/data-lazy-src> — modern
-//     landlord sites (Landsec / British Land / Hammerson) all use
-//     React or Drupal CMSes with progressive image loading
-//   - CSS background-image:url(...) on hero divs (Landsec's portfolio
-//     tiles are inline-styled bg images, not <img> tags)
-//   - Reject only OBVIOUS junk — substring matches are too aggressive
-//     because CMS URLs often legitimately contain "logo" / "placeholder"
-//     as part of folder names ("/logo-design-portfolio/page-hero.jpg").
-//     We anchor the reject patterns to filename boundaries instead.
-// Returns absolute URLs, deduped, capped at 30 per page.
-function extractImageUrls(html: string, baseUrl: string, limit = 30): string[] {
-  if (!html) return [];
-  const out: string[] = [];
-  const seen = new Set<string>();
-  // Anchor patterns to URL filename boundary so we don't kill
-  // /portfolio-2024-q1-flagship.jpg just because "logo" appears in a
-  // parent folder. Only reject when "logo" / "placeholder" etc. is
-  // clearly the asset's identity, not part of a longer path.
-  const REJECT = /(?:^|[/_-])(favicon|sprite|placeholder|spacer|pixel|tracking|gtm|analytics|1x1|404|error|not[-_]?found)(?:$|[._-])|\bicon-\d+\b|\.svg(?:\?|$)|^data:.*base64,/i;
-  // Broader logo match — covers "logo.png", "logo-b-90x90.png",
-  // "logo_white.svg", "logo2x.webp", etc. Anything where the
-  // filename starts with "logo" is unlikely to be a property shot.
-  const REJECT_TINY_LOGO = /\/logo[^/]*\.(?:svg|png|gif|webp|jpe?g)(?:\?|$)/i;
-  // Investor / press / report content — headshots, chart thumbnails,
-  // press release covers. Not what we want on the property gallery.
-  // Headshots from CMS photo libraries follow firstname_lastname_NNNN
-  // (Lightroom export pattern, ~5% false positive risk on hero shots).
-  const REJECT_INVESTOR = /(?:^|[/_-])(headshot|portrait|chart|graph|infographic|annual[-_]?report|results[-_]?presentation|press[-_]?release|board[-_]?member|director[-_]?profile|interim[-_]?report|prelim|trading[-_]?update|ceo|chairman|chairwoman|exec)(?:$|[._-])|\/investors?\/[^/]+\.(?:jpe?g|png|webp)|\/[a-z]+_[a-z]+_\d{3,5}\.(?:jpe?g|png|webp)/i;
-  const push = (url: string | undefined | null) => {
-    if (!url) return;
-    let abs: string;
-    try { abs = new URL(url, baseUrl).toString(); } catch { return; }
-    if (seen.has(abs)) return;
-    if (REJECT.test(abs)) return;
-    if (REJECT_TINY_LOGO.test(abs)) return;
-    if (REJECT_INVESTOR.test(abs)) return;
-    seen.add(abs);
-    out.push(abs);
-  };
-
-  // og:image / twitter:image — almost always the page's hero.
-  for (const m of html.matchAll(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/gi)) push(m[1]);
-  for (const m of html.matchAll(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/gi)) push(m[1]);
-
-  // Picture / source srcset (responsive images). Take the largest
-  // entry — it has the best chance of being a hero asset.
-  for (const m of html.matchAll(/<source\b[^>]*?srcset=["']([^"']+)["']/gi)) {
-    const cands = m[1].split(",").map(s => s.trim().split(/\s+/)[0]).filter(Boolean);
-    if (cands.length > 0) push(cands[cands.length - 1]);
-  }
-
-  // <img src=...> + srcset + every lazy-load variant we've seen in the
-  // wild. Prefer srcset (highest-res entry) but accept any of the
-  // attribute names as a fallback. Landsec uses data-src on hydrated
-  // images; British Land uses data-lazy-src; Hammerson's CMS emits
-  // data-original.
-  const imgRe = /<img\b[^>]*>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = imgRe.exec(html)) && out.length < limit) {
-    const tag = m[0];
-    const srcset = tag.match(/(?:^|\s)(?:srcset|data-srcset|data-lazy-srcset)=["']([^"']+)["']/i)?.[1];
-    if (srcset) {
-      const cands = srcset.split(",").map(s => s.trim().split(/\s+/)[0]).filter(Boolean);
-      if (cands.length > 0) { push(cands[cands.length - 1]); continue; }
-    }
-    push(tag.match(/(?:^|\s)(?:src|data-src|data-original|data-lazy-src|data-srcset|data-image|data-bg)=["']([^"']+)["']/i)?.[1]);
-  }
-
-  // Inline background-image:url(...) — Landsec, Land Securities Group,
-  // and most modern CMSes use inline-styled <div> tiles for portfolio
-  // hero panels. Without this we miss all the asset gallery shots.
-  for (const m of html.matchAll(/background-image\s*:\s*url\(["']?([^"')]+)["']?\)/gi)) push(m[1]);
-  // data-bg-* and srcset-style data attributes on non-img tags
-  // (e.g. <div data-bg="..."> patterns).
-  for (const m of html.matchAll(/\sdata-(?:bg|background|hero|image-src)=["']([^"']+)["']/gi)) push(m[1]);
-
-  return out.slice(0, limit);
-}
 
 function buildPrompt(landlordName: string, domain: string, pages: Array<{ url: string; text: string }>): string {
   const pageBlocks = pages
@@ -268,32 +166,46 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
   let root = raw.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "");
   if (!root) return { ok: false, error: "domain unparseable" };
   const baseUrl = `https://${root}`;
+  if (!isPublicImageSourceUrl(baseUrl)) return { ok: false, error: "domain must be a public website" };
 
   progress[companyId] = { state: "fetching", updatedAt: new Date().toISOString() };
 
-  // Probe paths in parallel with render:true. We don't bail early on
-  // 404s — landlord sites have idiosyncratic IA (Land Sec uses
-  // /our-places, others /portfolio, others /assets). Let the AI sort
-  // the wheat from the chaff at the end.
-  const fetched: Array<{ url: string; status: number; bytes: number; text: string; images: string[] }> = [];
-  await Promise.all(LANDLORD_PATHS.slice(0, 8).map(async (path) => {
-    const url = `${baseUrl}${path}`;
+  // Fetch observed asset pages even when the homepage already supplies enough
+  // images. A homepage full of graphics must not prevent portfolio discovery.
+  type FetchedPage = { url: string; status: number; bytes: number; text: string; images: string[]; links: string[] };
+  const fetchPage = async (url: string): Promise<FetchedPage> => {
+    const empty = { url, status: 0, bytes: 0, text: "", images: [], links: [] };
     try {
       const res = await scraperFetch(url, { uk: true, render: true, timeoutMs: 45000 });
-      if (!res.ok) {
-        fetched.push({ url, status: res.status, bytes: 0, text: "", images: [] });
-        return;
-      }
+      if (!res.ok) return { ...empty, status: res.status };
       const html = await res.text().catch(() => "");
-      const text = condenseHtml(html, url, 10000);
-      // Pull image URLs while we have the raw HTML — saves us a second
-      // fetch for the image-gathering pass.
-      const images = extractImageUrls(html, url, 20);
-      fetched.push({ url, status: 200, bytes: html.length, text, images });
-    } catch (err: any) {
-      fetched.push({ url, status: 0, bytes: 0, text: "", images: [] });
-    }
-  }));
+      return {
+        url, status: 200, bytes: html.length,
+        text: condenseHtml(html, url, 10000),
+        images: extractCompanyImageUrls(html, url, 20, "landlord"),
+        links: discoverCompanyPhotographyPages(html, url, { kind: "landlord", limit: 8 }),
+      };
+    } catch { return empty; }
+  };
+  // Promise.all retains requested order; pushing from concurrent callbacks
+  // previously made source priority depend on network timing.
+  const initialUrls = LANDLORD_INITIAL_PATHS.map(path => `${baseUrl}${path}`);
+  const fetched = await Promise.all(initialUrls.map(fetchPage));
+  const seenPages = new Set(initialUrls.map(url => url.replace(/\/$/, "")));
+  const followups: string[] = [];
+  // Portfolio indexes supply asset details; a homepage's press links must
+  // not consume the remaining budget ahead of those actual property pages.
+  const observed = [...fetched.slice(1), fetched[0]].flatMap(page => page.links)
+    .sort((a, b) => Number(/\/(?:press|media|newsroom)(?:\/|$)/i.test(new URL(a).pathname))
+      - Number(/\/(?:press|media|newsroom)(?:\/|$)/i.test(new URL(b).pathname)));
+  for (const url of [...observed, ...LANDLORD_FALLBACK_PATHS.map(path => `${baseUrl}${path}`)]) {
+    const key = url.replace(/\/$/, "");
+    if (seenPages.has(key)) continue;
+    seenPages.add(key);
+    followups.push(url);
+    if (followups.length + fetched.length >= LANDLORD_PAGE_LIMIT) break;
+  }
+  fetched.push(...await Promise.all(followups.map(fetchPage)));
 
   const usable = fetched.filter(p => p.text.length > 400);
   if (usable.length === 0) {
@@ -302,7 +214,7 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
       `INSERT INTO landlord_website_findings (company_id, source_urls, error)
        VALUES ($1, $2, $3)
        ON CONFLICT (company_id) DO UPDATE SET scraped_at = NOW(), source_urls = $2, error = $3`,
-      [companyId, JSON.stringify(fetched.map(f => ({ url: f.url, status: f.status, bytes: f.bytes }))), "no usable pages"]
+      [companyId, JSON.stringify(fetched.map(f => ({ url: f.url, status: f.status, bytes: f.bytes, image_urls: f.images }))), "no usable pages"]
     );
     return { ok: false, error: "no usable pages — site might block scraping or pages don't exist at common paths" };
   }
@@ -325,23 +237,20 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
     return { ok: false, error: err?.message || "AI extraction failed" };
   }
 
-  // Round-robin merge image URLs across all fetched pages. Previously
-  // we drained page 0 entirely before touching page 1 — which meant a
-  // chatty investors page would crowd out the property gallery. Now
-  // each page contributes one URL per round. Cap at 40.
-  //
-  // ALSO bias by page order: pages earlier in LANDLORD_PATHS (e.g.
-  // /our-places, /portfolio) are visited first in `fetched`, so the
-  // round-robin naturally prefers them. The reorder above puts those
-  // ahead of investors / about / media.
+  // Asset/detail pages precede generic home/about pages. Round-robin across
+  // pages keeps one long gallery from excluding the rest of the portfolio.
+  const imagePages = [...fetched].sort((a, b) => {
+    const score = (url: string) => /\/(?:our-places|portfolio|our-portfolio|our-properties|properties|assets|investments)(?:\/|$)/i.test(new URL(url).pathname) ? 1 : 0;
+    return score(b.url) - score(a.url);
+  });
   const imageUrlSeen = new Set<string>();
   const imageUrls: string[] = [];
-  const cursors = fetched.map(() => 0);
+  const cursors = imagePages.map(() => 0);
   let stillHasMore = true;
   while (stillHasMore && imageUrls.length < 40) {
     stillHasMore = false;
-    for (let pi = 0; pi < fetched.length && imageUrls.length < 40; pi++) {
-      const page = fetched[pi];
+    for (let pi = 0; pi < imagePages.length && imageUrls.length < 40; pi++) {
+      const page = imagePages[pi];
       if (cursors[pi] >= page.images.length) continue;
       const u = page.images[cursors[pi]++];
       stillHasMore = true;
@@ -356,7 +265,7 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
     (imageUrls.length === 0 ? ` — no images survived filtering; sample URLs from first page: ${fetched.find(p => p.text.length > 400)?.url}` : ""));
 
   const findings: LandlordFindings = {
-    source_urls: fetched.map(f => ({ url: f.url, status: f.status, bytes: f.bytes })),
+    source_urls: fetched.map(f => ({ url: f.url, status: f.status, bytes: f.bytes, image_urls: f.images })),
     logo_url: aiOut?.logo_url || null,
     share_ticker: aiOut?.share_ticker || null,
     ir_contact: aiOut?.ir_contact || null,

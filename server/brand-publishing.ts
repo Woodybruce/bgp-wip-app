@@ -17,6 +17,7 @@ export function publishableBrandImage(company: any, image: any): boolean {
   const tags = Array.isArray(image.tags) ? image.tags : [];
   if (tags.includes("identity-review")) return false;
   const automatic = ["brand-auto", "logo-dev-cache", "website-refresh", "bulk-import"].some(tag => tags.includes(tag));
+  if (automatic && tags.includes("image-quality-review") && !tags.includes("brand-hero")) return false;
   if (!automatic) return image.company_id === company.id
     || (!image.company_id && image.brand_name?.toLowerCase() === company.name?.toLowerCase());
   if (tags.includes("brand-hero")) return image.company_id === company.id;

@@ -1,4 +1,5 @@
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
+import { CompanyProfileImage } from "@/components/company-profile-image";
 import { useState, useEffect, useRef } from "react";
 import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandImageRefreshButton } from "@/components/brand-profile-overview";
 import { Button } from "@/components/ui/button";
@@ -133,10 +134,6 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
 
   const c = data.company;
   const isLandlord = /landlord|client/i.test(c.company_type || "");
-  const hero = (data.images || []).find((image: any) => Array.isArray(image.tags) && image.tags.includes("brand-hero")) || data.images?.[0];
-  const heroSrc = hero ? hero.thumbnail_data
-    ? (hero.thumbnail_data.startsWith("data:") ? hero.thumbnail_data : `data:${hero.mime_type || "image/jpeg"};base64,${hero.thumbnail_data}`)
-    : `/api/brand/gallery-image/${hero.id}` : null;
   const trackerComments: any[] = trackerData?.comments || [];
 
   // Same dedupe as the desktop Signals feed — Instagram + Google News often
@@ -160,15 +157,11 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
   return (
     <div className="p-4 space-y-3 pb-6">
       {/* Hero + identity */}
-      {heroSrc && (
-        <div key={`${companyId}:${hero.id}`} className="h-44 rounded-xl overflow-hidden bg-muted animate-pulse">
-          <img src={heroSrc} alt="" className="w-full h-full object-cover opacity-0 transition-opacity duration-500" onLoad={(e) => { e.currentTarget.classList.remove("opacity-0"); e.currentTarget.parentElement?.classList.remove("animate-pulse"); }} onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }} />
-        </div>
-      )}
+      <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={data.images || []} />
       <div className="flex flex-wrap items-center gap-2">
-        {c.company_type && <Badge variant="outline" className="text-[11px]">{String(c.company_type).replace(/\s*-\s*/g, " · ")}</Badge>}
-        {c.industry && <Badge variant="outline" className="text-[11px]">{c.industry}</Badge>}
-        {c.store_count != null && <Badge variant="outline" className="text-[11px] tabular-nums">{c.store_count} reported stores</Badge>}
+        {c.company_type && <Pill className="max-w-full"><span className="truncate">{String(c.company_type).replace(/\s*-\s*/g, " · ")}</span></Pill>}
+        {c.industry && <Pill className="max-w-full"><span className="truncate">{c.industry}</span></Pill>}
+        {c.store_count != null && <Pill><span className="font-mono tabular-nums">{c.store_count}</span> reported stores</Pill>}
         {(c as any).companies_house_number && <CovenantBadge companyNumber={(c as any).companies_house_number} />}
         {(c.domain_url || c.domain) && (
           <Button variant="outline" size="sm" asChild>

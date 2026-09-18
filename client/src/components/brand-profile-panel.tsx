@@ -1,11 +1,13 @@
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
+import { CompanyProfileImage, CompanyImageCoverChoice } from "@/components/company-profile-image";
+import { selectCompanyHeroImage, isCompanyImageLogo } from "@shared/brand-image-selection";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandImageRefreshButton } from "@/components/brand-profile-overview";
 import { ContactImportResults, type ContactImportResult } from "@/components/contact-import-results";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { PropertyFoldersPanel, ClientPropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
-import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon, Star as StarIcon, UserPlus, ClipboardList } from "lucide-react";
+import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon, UserPlus, ClipboardList } from "lucide-react";
 import { ContactFormDialog } from "@/pages/contacts";
 import { TagChip, TAG_TOKEN_SOURCE, buildTagToken, type TagType } from "@/components/chat-tags";
 import { CompanyContactsBoard } from "@/components/company-contacts-board";
@@ -1282,16 +1284,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             )}
 
 
-            {(() => {
-              const hero = (data.images || []).find((image: any) => Array.isArray(image.tags) && image.tags.includes("brand-hero")) || data.images?.[0];
-              if (!hero) return null;
-              const src = hero.thumbnail_data
-                ? (hero.thumbnail_data.startsWith("data:") ? hero.thumbnail_data : `data:${hero.mime_type || "image/jpeg"};base64,${hero.thumbnail_data}`)
-                : `/api/brand/gallery-image/${hero.id}`;
-              return <div key={`${companyId}:${hero.id}`} className="rounded-lg overflow-hidden border border-border bg-muted/20" data-testid="brand-overview-image">
-                <img src={src} alt={`${c.name} brand image`} className="w-full max-h-64 object-contain" onError={event => { event.currentTarget.parentElement!.hidden = true; }} />
-              </div>;
-            })()}
+            <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={data.images || []} canRefresh={!isClientViewer} />
 
             <div className="rounded-lg border border-border p-3 space-y-3">
               <div className="flex flex-wrap justify-between items-center gap-2">
@@ -4488,6 +4481,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   const [lightboxImg, setLightboxImg] = useState<any | null>(null);
   const { data: sbViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const sbIsClient = !sbViewer || sbViewer.role === "Client" || !!sbViewer.companyScopeId;
+  const coverImage = selectCompanyHeroImage(data.images, c.company_type);
 
   const deleteImageMutation = useMutation({
     mutationFn: async (imageId: string) => {
@@ -4505,10 +4499,8 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
     onError: (e: any) => toast({ title: "Couldn't delete", description: e?.message, variant: "destructive" }),
   });
 
-  // Hero toggle. brand-hero tag flips an image into the top banner —
-  // up to two hero images render up there (any more are ignored). PATCH
-  // rewrites the entire tags array; we read the existing tags off the
-  // image row and add/remove brand-hero locally before sending back.
+  // Keep prior cover choices until the user unpins them. PATCH preserves
+  // the image’s other tags while changing only its explicit cover choice.
   const toggleHeroMutation = useMutation({
     mutationFn: async ({ imageId, currentTags, isHero }: { imageId: string; currentTags: string[]; isHero: boolean }) => {
       const next = isHero
@@ -4524,7 +4516,8 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       return r.json();
     },
     onSuccess: (_d, vars) => {
-      toast({ title: vars.isHero ? "Removed from hero banner" : "Set as hero image" });
+      toast({ title: vars.isHero ? "Cover photo unpinned" : "Cover photo selected" });
+      setLightboxImg((current: any) => current?.id === vars.imageId ? { ...current, tags: vars.isHero ? vars.currentTags.filter(tag => tag !== "brand-hero") : Array.from(new Set([...vars.currentTags, "brand-hero"])) } : current);
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
     },
     onError: (e: any) => toast({ title: "Couldn't update", description: e?.message, variant: "destructive" }),
@@ -4908,7 +4901,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
               {!sbIsClient && (
               <Link
                 href={`/image-studio?brand=${encodeURIComponent(c.name)}`}
-                className="text-[10px] text-muted-foreground hover:text-foreground underline flex items-center gap-0.5"
+                className="text-[11px] text-muted-foreground hover:text-foreground underline flex items-center gap-1"
                 data-testid="link-open-image-studio"
               >
                 Open in Image Studio <ExternalLinkIcon className="w-2.5 h-2.5" />
@@ -4929,29 +4922,31 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
                         : `data:${img.mime_type || "image/jpeg"};base64,${img.thumbnail_data}`)
                     : `/api/brand/gallery-image/${img.id}`;
                   const isHero = Array.isArray(img.tags) && img.tags.includes("brand-hero");
+                  const isCover = coverImage?.id === img.id;
+                  const isLogo = isCompanyImageLogo(img);
                   return (
                     <div
                       key={img.id}
-                      className={`relative aspect-square rounded border overflow-hidden bg-muted cursor-zoom-in group ${isHero ? "border-amber-400 ring-1 ring-amber-300" : "border-border/60"}`}
+                      className={`relative aspect-square rounded border overflow-hidden bg-muted cursor-zoom-in group ${isCover ? "border-primary ring-1 ring-primary" : "border-border"}`}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Open ${img.file_name || "saved image"}${isCover ? ", cover photo" : ""}`}
                       onClick={() => setLightboxImg(img)}
+                      onKeyDown={event => { if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setLightboxImg(img); } }}
                       data-testid={`brand-image-${img.id}`}
                     >
                       <img
                         src={thumbSrc}
                         alt={img.file_name}
-                        className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                        className={`w-full h-full transition-transform group-hover:scale-105 ${isLogo ? "object-contain p-2 bg-card" : "object-cover"}`}
+                        loading="lazy"
                         onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                       />
-                      {/* Hero badge — sits top-left, always visible if pinned */}
-                      {isHero && (
-                        <div className="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-amber-500 text-white flex items-center justify-center shadow" title="Hero image — shown in the banner">
-                          <StarIcon className="w-3 h-3 fill-current" />
-                        </div>
-                      )}
+                      {(isCover || isHero || isLogo) && <div className="absolute top-1 left-1"><Pill active={isCover}>{isCover ? "Cover" : isHero ? "Saved choice" : "Logo"}</Pill></div>}
                       {/* Hover delete */}
                       <button
                         type="button"
-                        className="absolute top-0.5 right-0.5 h-5 w-5 rounded-full bg-black/70 hover:bg-red-600 text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                        className="absolute top-1 right-1 h-6 w-6 rounded-full bg-background text-muted-foreground hover:bg-destructive hover:text-destructive-foreground opacity-100 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity flex items-center justify-center"
                         onClick={(e) => {
                           e.stopPropagation();
                           if (confirm("Remove this image?")) deleteImageMutation.mutate(img.id);
@@ -4972,7 +4967,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
               user can delete the image or jump to the Image Studio for
               the full enhance / retag UI. */}
           <Dialog open={!!lightboxImg} onOpenChange={(v) => { if (!v) setLightboxImg(null); }}>
-            <DialogContent className="max-w-4xl">
+            <DialogContent className="max-w-4xl max-h-[90dvh] overflow-y-auto">
               <DialogTitle className="text-sm font-medium truncate">
                 {lightboxImg?.file_name || "Image"}
               </DialogTitle>
@@ -4983,39 +4978,33 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
                 <div className="space-y-3">
                   <div className="rounded-md overflow-hidden bg-muted">
                     <img
+                      key={lightboxImg.id}
                       src={`/api/brand/gallery-image/${lightboxImg.id}`}
                       alt={lightboxImg.file_name}
-                      className="w-full max-h-[70vh] object-contain bg-black/5"
+                      className="w-full max-h-[60vh] object-contain bg-muted"
                       onError={(e) => {
                         // Fall back to the embedded thumbnail if the full route fails
                         const el = e.target as HTMLImageElement;
                         const data = lightboxImg.thumbnail_data;
-                        if (data) {
+                        if (data && !el.dataset.thumbnailFallback) {
+                          el.dataset.thumbnailFallback = "true";
                           el.src = typeof data === "string" && data.startsWith("data:") ? data : `data:${lightboxImg.mime_type || "image/jpeg"};base64,${data}`;
                         }
                       }}
                     />
                   </div>
-                  {(() => {
-                    const isHero = Array.isArray(lightboxImg.tags) && lightboxImg.tags.includes("brand-hero");
-                    const heroCount = (data.images || []).filter((i: any) => Array.isArray(i.tags) && i.tags.includes("brand-hero")).length;
-                    return (
-                      <div className="flex items-center justify-between gap-2">
-                        <Button
-                          variant={isHero ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => toggleHeroMutation.mutate({
-                            imageId: lightboxImg.id,
-                            currentTags: lightboxImg.tags || [],
-                            isHero,
-                          })}
-                          disabled={toggleHeroMutation.isPending || (!isHero && heroCount >= 2)}
-                          title={!isHero && heroCount >= 2 ? "Two hero images already pinned — unpin one first" : ""}
-                          data-testid="lightbox-toggle-hero"
-                        >
-                          <StarIcon className={`w-3 h-3 mr-1 ${isHero ? "fill-current" : ""}`} />
-                          {isHero ? "Unpin from banner" : (heroCount >= 2 ? "Banner full (2 of 2)" : "Pin to banner")}
-                        </Button>
+                  <p className="text-[11px] text-muted-foreground">
+                    {({ homepage: "Company website", "landlord-website": "Company property pages", press: "Company press pages", places: "Google Places", cse: "Web image search", wikipedia: "Wikipedia" } as Record<string, string>)[lightboxImg.source] || "Saved image"}
+                    {Number(lightboxImg.width) > 0 && Number(lightboxImg.height) > 0 && <span className="font-mono tabular-nums"> · {lightboxImg.width} × {lightboxImg.height} px</span>}
+                  </p>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <CompanyImageCoverChoice
+                      image={lightboxImg}
+                      images={data.images}
+                      companyType={c.company_type}
+                      pending={toggleHeroMutation.isPending}
+                      onToggle={isHero => toggleHeroMutation.mutate({ imageId: lightboxImg.id, currentTags: lightboxImg.tags || [], isHero })}
+                    />
                         <div className="flex items-center gap-2">
                           {!sbIsClient && (
                           <Link
@@ -5038,9 +5027,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
                             <XIcon className="w-3 h-3 mr-1" /> Delete
                           </Button>
                         </div>
-                      </div>
-                    );
-                  })()}
+                  </div>
                 </div>
               )}
             </DialogContent>

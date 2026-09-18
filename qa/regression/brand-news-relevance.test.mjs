@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRequire } from 'node:module';
 import { isBrandNewsRelevant, isBrandSignalRelevant } from '../../server/brand-news-relevance.ts';
+import { rankCompanyHeroImages } from '../../shared/brand-image-selection.ts';
+import { publishableBrandImage } from '../../server/brand-publishing.ts';
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
 const co = (overrides = {}) => ({ id: 'cook', name: 'COOK', industry: 'Food retail', domain: 'cookfood.net',
@@ -135,7 +137,7 @@ test('actual brand PDF loader applies the same read filter and retains staff not
   const queries = [];
   const { loadBrandPackData } = evaluate(declaration('server/brand-pack.ts', 'loadBrandPackData')
     + '\nexports.loadBrandPackData = loadBrandPackData;', {
-    isBrandSignalRelevant,
+    isBrandSignalRelevant, rankCompanyHeroImages, publishableBrandImage,
     pool: { query: async sql => {
       queries.push(sql);
       if (sql.includes('FROM crm_companies WHERE')) return { rows: [co()] };

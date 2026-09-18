@@ -235,21 +235,30 @@ export function BrandImageRefreshButton({ companyId }: { companyId: string }) {
   const { toast } = useToast();
   const refresh = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", `/api/brand/${companyId}/refresh-images`, {});
+      await apiRequest("POST", `/api/brand/${companyId}/refresh-images`, { force: true });
       const started = Date.now();
       while (Date.now() - started < 5 * 60_000) {
         await new Promise(resolve => setTimeout(resolve, 5_000));
         const status = await (await apiRequest("GET", `/api/brand/${companyId}/refresh-images/status`)).json();
         if (status.state === "done") return status.result || {};
         if (status.state === "error") throw new Error(status.error || "Image refresh failed");
+        if (status.state === "idle") throw new Error("The image search stopped before reporting a result. Please try again.");
       }
       throw new Error("Image preparation is still running. Check the profile again shortly.");
     },
-    onSuccess: (result: { imported?: number; skipped?: boolean; reason?: string }) => {
+    onSuccess: (result: { imported?: number; skipped?: string | boolean; reason?: string }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId] });
-      toast({ title: result.reason ? "Images need review" : "Images refreshed", description: result.reason || `${result.imported || 0} new images added; existing images kept.` });
+      toast(brandImageRefreshFeedback(result));
     },
     onError: (error: Error) => toast({ title: "Images could not be refreshed", description: error.message, variant: "destructive" }),
   });
   return <Button type="button" variant="outline" size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending} data-testid="button-brand-refresh-images"><RefreshCw className={`w-4 h-4 ${refresh.isPending ? "animate-spin" : ""}`} />{refresh.isPending ? "Refreshing images…" : "Refresh images"}</Button>;
+}
+
+export function brandImageRefreshFeedback(result: { imported?: number; skipped?: string | boolean; reason?: string }) {
+  const imported = Number(result.imported) || 0;
+  const detail = result.reason || (typeof result.skipped === "string" ? result.skipped : "");
+  return imported > 0
+    ? { title: "Photos added", description: `${imported} new photo${imported === 1 ? "" : "s"} added.${detail ? ` ${detail}` : ""}` }
+    : { title: "No new photos added", description: detail || "No suitable new photos were found. Your saved images have been kept." };
 }

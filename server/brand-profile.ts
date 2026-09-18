@@ -9,6 +9,7 @@ import { createBrandRepresentation, updateBrandRepresentation } from "./brand-re
 import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
 import { prepareBrandFactReview } from "./brand-fact-review";
 import { isBrandNewsRelevant, isBrandSignalRelevant } from "./brand-news-relevance";
+import { rankCompanyHeroImages } from "../shared/brand-image-selection";
 import { randomUUID } from "node:crypto";
 import { isOfficialBrandWebsite, publishableBrandImage, publishableBrandStore, prepareBrandIdentityUpdate, quarantineBrandIdentityDependents } from "./brand-publishing";
 
@@ -263,7 +264,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // imports) and fall back to lowercased brand_name for older rows.
     const imagesQ = pool.query(
       `SELECT i.id, i.file_name, i.thumbnail_data, i.category, i.created_at,
-              i.tags, i.mime_type, i.description, i.source, i.company_id, i.property_id, i.brand_name
+              i.tags, i.mime_type, i.description, i.source, i.company_id, i.property_id, i.brand_name,
+              i.width, i.height, i.file_size
          FROM image_studio_images i
         WHERE i.company_id = $1
            OR (i.brand_name IS NOT NULL
@@ -1695,20 +1697,19 @@ router.get("/api/brand/gallery-image/:imageId", requireAuth, async (req: Request
     const buf = await readPersistedImage(img.local_path);
     if (buf) {
       res.setHeader("Content-Type", img.mime_type || "image/jpeg");
-      res.setHeader("Cache-Control", "public, max-age=86400");
+      res.setHeader("Cache-Control", "private, max-age=86400");
       return res.send(buf);
     }
+    // A cover must never upscale the 400px square gallery thumbnail. Keep
+    // missing originals recoverable instead of deleting records on a GET.
+    if (req.query.full === "1") return res.status(404).end();
     if (img.thumbnail_data) {
-      const buf = Buffer.from(img.thumbnail_data, "base64");
-      res.setHeader("Content-Type", img.mime_type || "image/jpeg");
-      res.setHeader("Cache-Control", "public, max-age=86400");
+      const dataUrl = String(img.thumbnail_data).match(/^data:(image\/[^;]+);base64,(.+)$/s);
+      const buf = Buffer.from(dataUrl?.[2] || img.thumbnail_data, "base64");
+      res.setHeader("Content-Type", dataUrl?.[1] || img.mime_type || "image/jpeg");
+      res.setHeader("Cache-Control", "private, max-age=86400");
       return res.send(buf);
     }
-    // No disk file, no DB copy, no thumbnail — the row is a phantom (its
-    // file pre-dates DB persistence and died with a redeploy). Delete it so
-    // the gallery stops advertising an image it can never show; the
-    // auto-refresh re-imports a real one on its next pass.
-    await pool.query(`DELETE FROM image_studio_images WHERE id = $1`, [req.params.imageId]).catch(() => {});
     res.status(404).end();
   } catch (err: any) {
     res.status(500).end();
@@ -1725,12 +1726,12 @@ router.get("/api/brand/:companyId/flagship-image", requireAuth, async (req: Requ
     if (!company) return res.status(404).end();
     const excludeId = typeof req.query.exclude === "string" ? req.query.exclude : null;
     const images = (await pool.query(
-      `SELECT id, company_id, brand_name, tags, local_path, mime_type FROM image_studio_images
+      `SELECT id, company_id, brand_name, tags, local_path, mime_type, source, file_name, width, height FROM image_studio_images
         WHERE company_id = $1 AND ($2::text IS NULL OR id::text <> $2)
         ORDER BY ('brand-hero' = ANY(tags)) DESC, created_at DESC LIMIT 60`, [companyId, excludeId])).rows;
     const { readPersistedImage } = await import("./image-studio");
     res.setHeader("Cache-Control", "private, no-cache");
-    for (const row of images.filter((image: any) => publishableBrandImage(company, image))) {
+    for (const row of rankCompanyHeroImages(images.filter((image: any) => publishableBrandImage(company, image)), company.company_type)) {
       if (!row.local_path) continue;
       const buffer = await readPersistedImage(row.local_path).catch(() => null);
       if (buffer) return res.type(row.mime_type || "image/jpeg").send(buffer);
@@ -1800,11 +1801,11 @@ function isFoodBrand(companyType: string | null, industry: string | null): boole
 }
 
 // For each menu/best-seller item without a Perplexity-provided image, run a
-// Google CSE image search anywhere on the web — quality enforced via:
+// Google CSE image search — quality enforced via:
 //   - imgSize=large + imgType=photo (no clipart / illustrations / icons)
 //   - denylist of stock-photo / craft / scraper hosts
-//   - brand-relevance check via looksLikeBrandImage (image must clearly
-//     reference the brand by domain or distinctive name token)
+//   - actual result dimensions and an official context-page hostname
+// CDN image hosts are allowed when their source page belongs to the brand.
 // Mutates the items array in place. Silently noops if CSE env vars aren't set.
 const PRODUCT_HOST_DENYLIST = [
   "pinterest.", "tumblr.", "redbubble.", "etsy.", "alamy.", "shutterstock.",
@@ -1824,20 +1825,36 @@ async function enrichMenuItemImagesWithCse(
     return;
   }
 
-  const { looksLikeBrandImage } = await import("./brand-images");
-  const cleanDomain = (brandDomain || "")
-    .replace(/^https?:\/\//, "")
-    .replace(/^www\./, "")
-    .split("/")[0]
-    .trim() || null;
+  const parsePublicUrl = (value: string): URL | null => {
+    try {
+      const url = new URL(value);
+      if (!/^https?:$/.test(url.protocol) || url.username || url.password || url.port) return null;
+      const host = url.hostname.toLowerCase().replace(/\.$/, "");
+      if (!/^[a-z\d.-]+\.[a-z]{2,}$/i.test(host) || /(^|\.)(localhost|local|internal|invalid|test|onion)$/.test(host)) return null;
+      return url;
+    } catch { return null; }
+  };
+  const rawDomain = (brandDomain || "").trim();
+  const domainUrl = rawDomain ? parsePublicUrl(/^https?:\/\//i.test(rawDomain) ? rawDomain : `https://${rawDomain}`) : null;
+  const cleanDomain = domainUrl?.hostname.toLowerCase().replace(/\.$/, "").replace(/^www\./, "");
+  if (!cleanDomain) return;
 
-  const isAcceptable = (link: string, page: string, title: string): boolean => {
-    const linkLower = link.toLowerCase();
-    const pageLower = page.toLowerCase();
+  const isAcceptable = (row: any): boolean => {
+    const link = parsePublicUrl(String(row?.link || ""));
+    const page = parsePublicUrl(String(row?.image?.contextLink || ""));
+    if (!link || !page) return false;
+    const pageHost = page.hostname.toLowerCase().replace(/\.$/, "");
+    if (pageHost !== cleanDomain && !pageHost.endsWith(`.${cleanDomain}`)) return false;
+    const width = Number(row?.image?.width), height = Number(row?.image?.height);
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width < 640 || height < 360) return false;
+    let filename = link.pathname.split("/").pop() || "";
+    try { filename = decodeURIComponent(filename); } catch { return false; }
+    filename = filename.replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2").replace(/([a-z])([A-Z])/g, "$1 $2");
+    if (/(?:^|[^a-z])(?:logos?\d*x?|favicon|icons?|sprites?|placeholder)(?:$|[^a-z])/i.test(filename) || /\.(?:svg|ico|gif)$/i.test(filename)) return false;
     for (const bad of PRODUCT_HOST_DENYLIST) {
-      if (linkLower.includes(bad) || pageLower.includes(bad)) return false;
+      if (link.hostname.toLowerCase().includes(bad) || pageHost.includes(bad)) return false;
     }
-    return looksLikeBrandImage(brandName, cleanDomain, page, title);
+    return true;
   };
 
   let attempted = 0, filled = 0, errors = 0, rejected = 0;
@@ -1845,9 +1862,7 @@ async function enrichMenuItemImagesWithCse(
     if (it.image && /^https?:\/\//i.test(it.image)) continue;
     attempted++;
     try {
-      const q = cleanDomain
-        ? `"${brandName}" "${it.name}" "${cleanDomain}"`
-        : `"${brandName}" "${it.name}"`;
+      const q = `"${brandName}" "${it.name}" site:${cleanDomain}`;
       const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(key)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(q)}&searchType=image&num=10&safe=active&imgSize=large&imgType=photo`;
       const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
       if (!r.ok) {
@@ -1860,9 +1875,7 @@ async function enrichMenuItemImagesWithCse(
       let chosen: string | null = null;
       for (const row of d?.items || []) {
         const link = String(row?.link || "");
-        const page = String(row?.image?.contextLink || "");
-        const title = String(row?.title || "");
-        if (link && /^https?:\/\//i.test(link) && isAcceptable(link, page, title)) {
+        if (isAcceptable(row)) {
           chosen = link;
           break;
         }

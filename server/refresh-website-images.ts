@@ -1,35 +1,14 @@
-// On-demand "refresh images from the company website" admin endpoints.
-//
-// Companion to the bulk import in bulk-brand-logos.ts. The bulk path
-// runs across hundreds of brands at once; this one runs against a
-// single CRM company — useful when:
-//   - We've just added a new tenant brand and want decent imagery now
-//   - The existing logo is rubbish (old Clearbit / favicon) and the
-//     team wants to wipe + re-pull from the company site
-//   - A landlord / freeholder appears on the brochure pipeline output
-//     and we want their corporate identity in the CRM for context
-//
-// What it does:
-//   1. Pulls the canonical domain off the crm_companies row.
-//   2. Scrapes the homepage for a logo (schema.org / Open Graph /
-//      apple-touch-icon / header img) and up to 6 hero body images.
-//   3. Wipes any existing 'website-refresh' tagged image_studio_images
-//      for this company (so re-runs replace rather than pile up).
-//   4. Writes new images into image_studio_images tagged with the
-//      brand name + 'website-refresh' + 'website-<source>' so the
-//      provenance is clear and re-runs are deterministic.
-//
-// Routes:
-//   POST /api/companies/:id/refresh-images   {logoOnly?: boolean, maxHero?: number}
-//   POST /api/brands/refresh-images-by-name  {name: string, domain?: string}
-
+// On-demand company image refresh. Logos remain separate from gallery photos;
+// all automatic profile photography uses the canonical identity/quality gate.
 import type { Express, Request, Response } from "express";
 import { db, pool } from "./db";
 import { crmCompanies } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { requireAuth } from "./auth";
 import { storeImageFromBuffer } from "./image-studio";
-import { scrapeLogoFromWebsite, scrapeHeroImagesFromWebsite } from "./website-logo-scraper";
+import { scrapeLogoFromWebsite } from "./website-logo-scraper";
+import { refreshBrandImages } from "./brand-images";
+import { getBrandIdentity, normalizeBrandDomain } from "./brand-identity";
 
 function extractDomain(raw: string | null | undefined): string | null {
   if (!raw) return null;
@@ -49,6 +28,8 @@ interface RefreshResult {
   logo?: { source: string; bytes: number; storedId: string } | null;
   hero?: Array<{ source: string; bytes: number; storedId: string; alt?: string | null }>;
   removedExisting?: number;
+  photoRefresh?: Awaited<ReturnType<typeof refreshBrandImages>>;
+  photoReason?: string;
   error?: string;
 }
 
@@ -59,23 +40,23 @@ async function refreshImagesForCompany(args: {
   logoOnly?: boolean;
   maxHero?: number;
 }): Promise<RefreshResult> {
-  // Wipe prior website-refresh rows for this brand so we don't pile up
-  // duplicates across runs. Manual uploads (no REFRESH_TAG) survive.
-  const wipe = await pool.query(
-    `DELETE FROM image_studio_images
-      WHERE brand_name = $1
-        AND $2 = ANY(tags)
-      RETURNING id`,
-    [args.brandName, REFRESH_TAG],
-  ).catch(() => ({ rows: [] as { id: string }[] }));
-
-  const result: RefreshResult = {
-    ok: true,
-    domain: args.domain,
-    logo: null,
-    hero: [],
-    removedExisting: wipe.rows.length,
-  };
+  const result: RefreshResult = { ok: true, domain: args.domain, logo: null, hero: [], removedExisting: 0 };
+  let companyId = args.companyId;
+  if (!companyId) {
+    const found = await pool.query("SELECT * FROM crm_companies WHERE LOWER(name) = LOWER($1)", [args.brandName]);
+    const matches = found.rows.filter(company => {
+      const identity = getBrandIdentity(company);
+      return identity.status === "verified" && identity.domain === normalizeBrandDomain(args.domain);
+    });
+    if (matches.length === 1) companyId = matches[0].id;
+  }
+  if (companyId) {
+    const company = (await pool.query("SELECT * FROM crm_companies WHERE id = $1", [companyId])).rows[0];
+    const identity = getBrandIdentity(company);
+    if (identity.status !== "verified" || identity.domain !== normalizeBrandDomain(args.domain)) {
+      return { ...result, ok: false, error: "Confirm the official company website before refreshing images." };
+    }
+  }
 
   // ── Logo ───────────────────────────────────────────────────────────
   try {
@@ -89,6 +70,7 @@ async function refreshImagesForCompany(args: {
         description: `Logo scraped from ${args.domain} (${scraped.source}: ${scraped.url})`,
         source: `website-${scraped.source}`,
         brandName: args.brandName,
+        companyId: companyId || undefined,
         mimeType: scraped.mime,
         filenameHint: args.brandName,
       });
@@ -98,41 +80,18 @@ async function refreshImagesForCompany(args: {
     console.warn(`[refresh-images] logo scrape failed for ${args.domain}: ${err?.message}`);
   }
 
-  // ── Hero imagery (skip if logoOnly) ────────────────────────────────
+  // Keep current images recoverable. The canonical pipeline only supersedes
+  // old unpinned photos after acceptable replacements have been stored.
   if (!args.logoOnly) {
-    try {
-      const hero = await scrapeHeroImagesFromWebsite(args.domain, args.maxHero ?? 6);
-      for (let i = 0; i < hero.length; i++) {
-        const img = hero[i];
-        const fileName = img.alt
-          ? `${args.brandName} — ${img.alt.slice(0, 60)}`
-          : `${args.brandName} — Website hero ${i + 1}`;
-        try {
-          const stored = await storeImageFromBuffer({
-            buffer: img.buffer,
-            fileName,
-            category: "Brands",
-            tags: ["Brand Hero", REFRESH_TAG, "website-hero", args.brandName],
-            description: img.alt
-              ? `${img.alt} — scraped from ${args.domain}`
-              : `Hero image #${i + 1} scraped from ${args.domain} (${img.url})`,
-            source: "website-hero",
-            brandName: args.brandName,
-            mimeType: img.mime,
-            filenameHint: `${args.brandName}-hero-${i + 1}`,
-          });
-          result.hero!.push({
-            source: "website-hero",
-            bytes: img.buffer.length,
-            storedId: stored.id,
-            alt: img.alt || null,
-          });
-        } catch (err: any) {
-          console.warn(`[refresh-images] hero store failed: ${err?.message}`);
-        }
+    if (companyId) {
+      try {
+        result.photoRefresh = await refreshBrandImages(companyId, { force: true, target: args.maxHero ?? 6 });
+        result.photoReason = result.photoRefresh.skipped;
+      } catch (err: any) {
+        result.photoReason = `Photo refresh could not finish: ${err?.message || "unavailable"}. Existing photos kept.`;
       }
-    } catch (err: any) {
-      console.warn(`[refresh-images] hero scrape failed: ${err?.message}`);
+    } else {
+      result.photoReason = "Create or confirm the company's CRM identity before automatically importing profile photos. Existing photos kept.";
     }
   }
 
@@ -140,9 +99,7 @@ async function refreshImagesForCompany(args: {
 }
 
 export function setupRefreshImageRoutes(app: Express): void {
-  // Single-company refresh — pulls fresh imagery from whatever domain
-  // sits on the row. Wipes prior website-refresh entries so re-runs
-  // replace rather than accumulate.
+  // Single-company refresh uses its confirmed official website.
   app.post("/api/companies/:id/refresh-images", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
