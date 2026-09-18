@@ -4344,6 +4344,79 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // --- Resend inbound webhook (bruces.app email forwarding) ---
+  // Receiving is enabled on bruces.app in Resend; any mail to *@bruces.app
+  // arrives here as an email.received event and is forwarded to the office.
+  const RESEND_INBOUND_FORWARD_TO = () =>
+    process.env.RESEND_INBOUND_FORWARD_TO || "woody@brucegillinghampollard.com";
+
+  const verifyResendWebhook = (req: any): boolean => {
+    const secret = process.env.RESEND_WEBHOOK_SECRET;
+    if (!secret) return false;
+    const id = req.headers["svix-id"];
+    const timestamp = req.headers["svix-timestamp"];
+    const signatureHeader = req.headers["svix-signature"];
+    const rawBody: Buffer | undefined = req.rawBody;
+    if (!id || !timestamp || !signatureHeader || !rawBody) return false;
+    if (Math.abs(Math.floor(Date.now() / 1000) - Number(timestamp)) > 300) return false;
+    const key = Buffer.from(secret.replace(/^whsec_/, ""), "base64");
+    const expected = crypto
+      .createHmac("sha256", key)
+      .update(`${id}.${timestamp}.${rawBody.toString("utf8")}`)
+      .digest("base64");
+    return String(signatureHeader)
+      .split(" ")
+      .some((sig) => {
+        const [, value] = sig.split(",");
+        return (
+          !!value &&
+          value.length === expected.length &&
+          crypto.timingSafeEqual(Buffer.from(value), Buffer.from(expected))
+        );
+      });
+  };
+
+  app.post("/api/public/resend-inbound", async (req, res) => {
+    try {
+      if (!verifyResendWebhook(req)) return res.status(401).end();
+      if (req.body?.type !== "email.received") return res.json({ ok: true });
+
+      const apiKey = process.env.RESEND_API_KEY;
+      const emailId = req.body?.data?.email_id;
+      if (!apiKey || !emailId) return res.json({ ok: true });
+
+      const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+      const emailRes = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, { headers });
+      if (!emailRes.ok) {
+        console.error("[routes] Resend inbound fetch failed:", emailRes.status, await emailRes.text());
+        return res.status(502).end();
+      }
+      const inbound = await emailRes.json();
+
+      const originalTo = Array.isArray(inbound.to) ? inbound.to.join(", ") : String(inbound.to ?? "");
+      const forwardRes = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          from: "bruces.app mail <forward@bruces.app>",
+          to: [RESEND_INBOUND_FORWARD_TO()],
+          reply_to: inbound.from,
+          subject: `[${originalTo}] ${inbound.subject ?? "(no subject)"}`,
+          text: `From: ${inbound.from}\nTo: ${originalTo}\n\n${inbound.text ?? ""}`,
+          html: inbound.html ?? undefined,
+        }),
+      });
+      if (!forwardRes.ok) {
+        console.error("[routes] Resend inbound forward failed:", forwardRes.status, await forwardRes.text());
+        return res.status(502).end();
+      }
+      res.json({ ok: true });
+    } catch (err: any) {
+      console.error("[routes] Resend inbound webhook error:", err?.message);
+      res.status(500).end();
+    }
+  });
+
   app.get("/api/available-units", requireAuth, async (req, res) => {
     try {
       // Clients (e.g. Landsec) see the Letting Tracker for THEIR OWN
