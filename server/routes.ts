@@ -4007,7 +4007,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.use("/api/public", (req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.header("Access-Control-Allow-Headers", "Content-Type");
     if (req.method === "OPTIONS") return res.sendStatus(204);
     next();
@@ -4282,6 +4282,65 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     } catch (err: any) {
       console.error("[routes] Public unit file error:", err?.message);
       res.status(500).end();
+    }
+  });
+
+  // --- Public newsletter signup (bgp marketing website) ---
+  // Adds the address to the Resend audience and notifies the office.
+  app.post("/api/public/newsletter-signup", async (req, res) => {
+    try {
+      const email = String(req.body?.email ?? "").trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ message: "A valid email address is required" });
+      }
+      const apiKey = process.env.RESEND_API_KEY;
+      if (!apiKey) return res.status(503).json({ message: "Newsletter signup is not configured yet" });
+
+      const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+      const audienceId = process.env.RESEND_AUDIENCE_ID;
+      if (audienceId) {
+        const contactRes = await fetch(`https://api.resend.com/audiences/${audienceId}/contacts`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ email, unsubscribed: false }),
+        });
+        if (!contactRes.ok) {
+          const detail = await contactRes.text();
+          console.error("[routes] Resend contact add failed:", contactRes.status, detail);
+          return res.status(502).json({ message: "Signup failed" });
+        }
+      }
+
+      const notifyTo = process.env.RESEND_NEWSLETTER_NOTIFY_TO || "harriette@brucegillinghampollard.com";
+      const from = process.env.RESEND_FROM_ADDRESS || "BGP <newsletter@bruces.app>";
+      const send = (payload: Record<string, unknown>) =>
+        fetch("https://api.resend.com/emails", { method: "POST", headers, body: JSON.stringify(payload) });
+
+      const notifyRes = await send({
+        from,
+        to: [notifyTo],
+        subject: "New website newsletter signup",
+        text: `${email} signed up for the newsletter on the BGP website.`,
+      });
+      if (!notifyRes.ok) {
+        console.error("[routes] Resend notify failed:", notifyRes.status, await notifyRes.text());
+        return res.status(502).json({ message: "Signup failed" });
+      }
+
+      const confirmRes = await send({
+        from,
+        to: [email],
+        subject: "Thanks for signing up — BGP",
+        text: "Thanks for signing up to the Bruce Gillingham Pollard newsletter. We'll keep you posted with market updates and news.\n\nBruce Gillingham Pollard",
+      });
+      if (!confirmRes.ok) {
+        console.error("[routes] Resend confirmation failed:", confirmRes.status, await confirmRes.text());
+      }
+
+      res.json({ ok: true });
+    } catch (err: any) {
+      console.error("[routes] Newsletter signup error:", err?.message);
+      res.status(500).json({ message: "Signup failed" });
     }
   });
 

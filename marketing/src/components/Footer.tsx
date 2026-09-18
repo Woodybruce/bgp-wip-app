@@ -1,7 +1,25 @@
+import { useState } from "react";
 import { Link } from "wouter";
 import { CONTACT, HERO_STATEMENT, NAV_ITEMS } from "../lib/content";
+import { newsletterSignup } from "../lib/api";
 
 export default function Footer() {
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState<"idle" | "sending" | "done" | "error">("idle");
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim() || status === "sending") return;
+    setStatus("sending");
+    try {
+      await newsletterSignup(email.trim());
+      setStatus("done");
+      setEmail("");
+    } catch {
+      setStatus("error");
+    }
+  };
+
   return (
     <footer id="contact" className="mt-24 bg-bgp-wine text-bgp-cream">
       <div className="mx-auto max-w-6xl px-4 pt-16 pb-10 grid grid-cols-1 md:grid-cols-4 gap-10">
@@ -43,15 +61,24 @@ export default function Footer() {
           <p className="text-sm font-light text-bgp-cream/85 mb-4">
             Lettings, transactions and opinion from the BGP team.
           </p>
-          <form onSubmit={(e) => e.preventDefault()} className="max-w-xs">
+          <form onSubmit={onSubmit} className="max-w-xs">
             <input
               type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               placeholder="Email address"
               className="w-full bg-transparent border-b border-bgp-nectar/70 pb-2 text-sm outline-none placeholder:text-bgp-cream/50 text-white focus:border-bgp-nectar transition-colors"
             />
-            <button type="submit" className="label-caps mt-4 text-white hover:text-bgp-nectar transition-colors">
-              Sign up <span aria-hidden>⟶</span>
+            <button type="submit" disabled={status === "sending"} className="label-caps mt-4 text-white hover:text-bgp-nectar transition-colors disabled:opacity-50">
+              {status === "sending" ? "Signing up…" : <>Sign up <span aria-hidden>⟶</span></>}
             </button>
+            {status === "done" && (
+              <p className="mt-3 text-sm text-bgp-nectar">Thanks — you're signed up.</p>
+            )}
+            {status === "error" && (
+              <p className="mt-3 text-sm text-bgp-nectar">Something went wrong — please try again.</p>
+            )}
           </form>
         </div>
       </div>

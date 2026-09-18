@@ -152,6 +152,19 @@ export function fileUrl(fileId: string): string {
   return `${API_BASE}/api/public/unit-files/${fileId}`;
 }
 
+export async function newsletterSignup(email: string): Promise<void> {
+  if (!API_BASE) throw new Error("Newsletter signup unavailable");
+  const res = await fetch(`${API_BASE}/api/public/newsletter-signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.message || "Signup failed");
+  }
+}
+
 export function isImage(f: ListingFile): boolean {
   return !!f.mimeType?.startsWith("image/");
 }
