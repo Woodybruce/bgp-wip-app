@@ -416,7 +416,7 @@ export function setupLeadsRoutes(app: Express) {
       const userId = req.session.userId || req.tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
 
-      const leadId = req.params.id;
+      const leadId = req.params.id as string;
       const { action, note } = req.body;
 
       if (!["dismissed", "saved", "converted", "archived"].includes(action)) {

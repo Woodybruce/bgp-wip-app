@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import { useToast } from "@/hooks/use-toast";
 import {
   Search, Building2, Briefcase, Copy, Image as ImageIcon,
@@ -56,15 +57,15 @@ function AddinAdobe() {
       <div className="p-3">
 
       <Tabs defaultValue="search">
-        <TabsList className="w-full h-8">
-          <TabsTrigger value="search" className="text-xs flex-1" data-testid="tab-search">
-            <Search className="h-3 w-3 mr-1" /> Search
+        <TabsList className={pillTabsList}>
+          <TabsTrigger value="search" className={pillTabsTrigger} data-testid="tab-search">
+            Search
           </TabsTrigger>
-          <TabsTrigger value="properties" className="text-xs flex-1" data-testid="tab-properties">
-            <Building2 className="h-3 w-3 mr-1" /> Properties
+          <TabsTrigger value="properties" className={pillTabsTrigger} data-testid="tab-properties">
+            Properties
           </TabsTrigger>
-          <TabsTrigger value="content" className="text-xs flex-1" data-testid="tab-content">
-            <FileText className="h-3 w-3 mr-1" /> Content
+          <TabsTrigger value="content" className={pillTabsTrigger} data-testid="tab-content">
+            Content
           </TabsTrigger>
         </TabsList>
 
@@ -155,7 +156,7 @@ function AddinAdobe() {
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-medium truncate">{c.name}</p>
                               {c.company && <p className="text-xs text-muted-foreground truncate">{c.company}</p>}
-                              {c.email && <p className="text-xs text-blue-600 dark:text-blue-400 truncate">{c.email}</p>}
+                              {c.email && <p className="text-xs text-primary truncate">{c.email}</p>}
                             </div>
                             <Button
                               variant="ghost"

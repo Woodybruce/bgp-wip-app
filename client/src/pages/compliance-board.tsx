@@ -1,9 +1,12 @@
 import { useMemo, useState, useCallback, memo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -11,7 +14,7 @@ import { ViewToggle } from "@/components/mobile-card-view";
 import {
   ShieldCheck, ShieldAlert, Clock, AlertCircle, CheckCircle2,
   Loader2, FileText, Search, Building2, Sun, Handshake, ChevronRight,
-  ChevronDown, ChevronUp, ExternalLink, Building, Database,
+  ChevronDown, ChevronUp, ExternalLink, Building, Database, Sparkles,
 } from "lucide-react";
 
 // Friendly labels + tones for automated check sources that populate aml_checklist.
@@ -23,6 +26,9 @@ const SOURCE_META: Record<string, { label: string; tone: string; title: string }
   perplexity: { label: "Adverse media", tone: "border-purple-300 text-purple-700 bg-purple-50", title: "Perplexity adverse media scan" },
   clouseau: { label: "Clouseau", tone: "border-teal-300 text-teal-700 bg-teal-50", title: "Clouseau investigation" },
   comply_advantage: { label: "ComplyAdvantage", tone: "border-amber-300 text-amber-700 bg-amber-50", title: "ComplyAdvantage PEP/sanctions" },
+  sharepoint_history: { label: "Prior pack", tone: "border-emerald-300 text-emerald-700 bg-emerald-50", title: "Existing KYC pack found in BGP SharePoint folder" },
+  yahoo_finance: { label: "Yahoo Finance", tone: "border-violet-300 text-violet-700 bg-violet-50", title: "Listed share data — market cap, momentum, halts" },
+  creditsafe: { label: "Creditsafe", tone: "border-cyan-300 text-cyan-700 bg-cyan-50", title: "Creditsafe Connect commercial credit data" },
   system: { label: "System", tone: "border-slate-300 text-slate-700 bg-slate-50", title: "Automated rule" },
 };
 
@@ -37,7 +43,9 @@ function extractSources(checklist: any): string[] {
   return order.filter(s => seen.has(s));
 }
 import { KycPanel } from "@/components/kyc-panel";
+import { AmlAiPanel } from "@/components/deal-aml-status";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 
 interface BoardRow {
   id: string;
@@ -213,6 +221,7 @@ interface DealBoardData {
 }
 
 export default function ComplianceBoard() {
+  const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [riskFilter, setRiskFilter] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">("board");
@@ -223,6 +232,28 @@ export default function ComplianceBoard() {
 
   const { data: dealsData, isLoading: dealsLoading } = useQuery<DealBoardData>({
     queryKey: ["/api/kyc/board/deals"],
+  });
+
+  const backfill = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/kyc/backfill-deals", {});
+      return (await res.json()) as {
+        dealsScanned: number;
+        companiesFound: number;
+        skippedRecent: number;
+        swept: number;
+        failed: number;
+      };
+    },
+    onSuccess: (r) => {
+      toast({
+        title: "AML backfill complete",
+        description: `${r.dealsScanned} deals · ${r.swept} swept · ${r.skippedRecent} fresh · ${r.failed} errors`,
+      });
+    },
+    onError: (e: any) => {
+      toast({ title: "Backfill failed", description: e?.message || "Unknown error", variant: "destructive" });
+    },
   });
 
   const filtered = useMemo(() => {
@@ -246,15 +277,26 @@ export default function ComplianceBoard() {
     <div className="p-4 lg:p-6 max-w-[1600px] mx-auto">
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2 tracking-tight">
-            <ShieldCheck className="w-6 h-6 text-primary" />
-            Compliance Board
-          </h1>
+          <h1 className="text-2xl font-bold tracking-tight">Compliance Board</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            AML status for every counterparty on a live deal · {data?.counts.total || 0} total
+            AML status for every counterparty on a live deal · {data?.counts?.total || 0} total
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => backfill.mutate()}
+            disabled={backfill.isPending}
+            className="h-9 gap-1.5"
+            data-testid="button-aml-backfill"
+            title="Run AML sweeps across every active deal counterparty (skips ones swept in the last 30 days)"
+          >
+            {backfill.isPending
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <Sparkles className="w-3.5 h-3.5" />}
+            {backfill.isPending ? "Running..." : "Run AML on all deals"}
+          </Button>
           <ViewToggle view={viewMode} onToggle={setViewMode} showBoard />
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -282,19 +324,19 @@ export default function ComplianceBoard() {
       </div>
 
       <Tabs defaultValue="counterparties">
-        <TabsList>
-          <TabsTrigger value="counterparties" data-testid="tab-counterparties">
-            <Building2 className="w-3.5 h-3.5 mr-1.5" />
-            Counterparties ({data?.counts.total || 0})
+        <TabsList className={pillTabsList}>
+          <TabsTrigger value="counterparties" className={pillTabsTrigger} data-testid="tab-counterparties">
+            Counterparties <span className="font-mono normal-case opacity-70">{data?.counts.total || 0}</span>
           </TabsTrigger>
-          <TabsTrigger value="deals" data-testid="tab-deals">
-            <Handshake className="w-3.5 h-3.5 mr-1.5" />
-            Live deals ({dealsData?.counts.total || 0})
+          <TabsTrigger value="deals" className={pillTabsTrigger} data-testid="tab-deals">
+            Live deals <span className="font-mono normal-case opacity-70">{dealsData?.counts.total || 0}</span>
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="counterparties" className="mt-4">
-          {/* Summary cards */}
+          {/* Summary cards — table/card views only; on the board they exactly
+              duplicated the kanban column headers + counts beneath them. */}
+          {viewMode !== "board" && (
           <div className="grid grid-cols-3 gap-3 mb-5">
             {COLUMNS.map(col => {
               const count = data?.counts[col.key] || 0;
@@ -313,6 +355,7 @@ export default function ComplianceBoard() {
               );
             })}
           </div>
+          )}
 
           {viewMode === "board" && (
             <>
@@ -475,25 +518,6 @@ function DealsKanban({ data, loading }: { data: DealBoardData | undefined; loadi
 
   return (
     <div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
-        {DEAL_COLUMNS.map(col => {
-          const count = (data.counts as any)[col.key] || 0;
-          const Icon = col.icon;
-          return (
-            <Card key={col.key} className={`border-l-4 ${col.tone}`}>
-              <CardContent className="p-3">
-                <div className="flex items-center gap-2 mb-1">
-                  <Icon className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-[11px] uppercase font-semibold text-muted-foreground tracking-wide">{col.label}</span>
-                </div>
-                <div className="text-2xl font-bold">{count}</div>
-                <div className="text-[10px] text-muted-foreground">{col.description}</div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {DEAL_COLUMNS.map(col => {
           const items = data.rows.filter(r => r.column === col.key);
@@ -627,6 +651,11 @@ const DealCard = memo(function DealCard({ row }: { row: DealRow }) {
               </div>
             );
           })}
+          {/* Deal-level AML AI augments below the per-counterparty KYC pack:
+              MLR scope, AI triage, SoF analyser, MLRO PDF, client upload links. */}
+          <div className="mt-3 pt-3 border-t">
+            <AmlAiPanel dealId={row.id} dealName={row.name} />
+          </div>
         </div>
       )}
     </div>

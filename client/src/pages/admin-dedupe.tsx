@@ -111,8 +111,7 @@ export default function AdminDedupe() {
     <div className="p-4 lg:p-6 max-w-[1400px] mx-auto space-y-6">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2 tracking-tight">
-            <Shield className="w-6 h-6 text-primary" />
+          <h1 className="text-2xl font-bold tracking-tight">
             CRM Dedupe
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
@@ -126,7 +125,7 @@ export default function AdminDedupe() {
             data-testid="button-scan"
           >
             {scanMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
-            Run scan (AI-assisted)
+            Scan (AI-assisted)
           </Button>
           <Button
             variant="outline"

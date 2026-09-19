@@ -2,12 +2,20 @@ import { io, Socket } from "socket.io-client";
 
 let socket: Socket | null = null;
 
+// Timestamp of the last token-refresh attempt (see connect_error handler).
+let lastTokenRefreshAt = 0;
+
 export function getSocket(): Socket | null {
   return socket;
 }
 
 export function connectSocket(): Socket {
-  if (socket?.connected) return socket;
+  // Idempotent: if we already have a socket object, return it — even if
+  // it's mid-reconnect (connected === false). socket.io has its own
+  // reconnection state machine; tearing the socket down and recreating
+  // it on every transient blip was causing connection churn. Let the
+  // existing instance recover.
+  if (socket) return socket;
 
   const token = localStorage.getItem("bgp_auth_token");
   if (!token) {
@@ -15,30 +23,62 @@ export function connectSocket(): Socket {
     return socket as any;
   }
 
-  if (socket) {
-    socket.disconnect();
-  }
-
   socket = io({
     path: "/ws",
     auth: { token },
-    transports: ["websocket", "polling"],
+    // WebSocket-only — no HTTP long-polling fallback. Polling requires
+    // sticky sessions (each poll must hit the same backend that holds
+    // the session); behind Railway's edge with >1 replica or across a
+    // restart, consecutive polls land on different instances and the
+    // handshake fails, producing the constant "reconnecting" churn that
+    // plagued chatbgp.app. A WebSocket is one persistent connection
+    // pinned to a single instance, so it sidesteps that entirely — and
+    // it's much lower latency, which is what chat actually needs.
+    // Railway supports WS natively, so dropping polling is safe here.
+    transports: ["websocket"],
+    upgrade: false,
+    rememberUpgrade: true,
     reconnection: true,
-    reconnectionDelay: 1000,
-    reconnectionDelayMax: 5000,
+    reconnectionDelay: 500,
+    reconnectionDelayMax: 4000,
     reconnectionAttempts: Infinity,
+    // Generous handshake timeout so a slow first connect doesn't get
+    // torn down prematurely.
+    timeout: 20000,
   });
 
   socket.on("connect", () => {
-    console.log("[ws] Connected");
+    console.log("[ws] Connected", socket?.id);
   });
 
   socket.on("disconnect", (reason) => {
     console.log("[ws] Disconnected:", reason);
+    // "io server disconnect" means the server deliberately dropped us
+    // (e.g. auth failure) — socket.io won't auto-reconnect in that case,
+    // so kick it manually.
+    if (reason === "io server disconnect") socket?.connect();
   });
 
   socket.on("connect_error", (err) => {
     console.warn("[ws] Connection error:", err.message);
+    // Auth tokens expire after 8h while the session cookie lives on — so the
+    // stored token routinely goes stale and the socket would loop "Invalid
+    // token" forever. Mint a fresh token off the session and reconnect.
+    // Rate-limited to one attempt per minute so a genuinely dead session
+    // doesn't hammer the endpoint.
+    if (/invalid token|authentication/i.test(err.message) && Date.now() - lastTokenRefreshAt > 60_000) {
+      lastTokenRefreshAt = Date.now();
+      fetch("/api/auth/refresh-token", { method: "POST", credentials: "include" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (!data?.token || !socket) return;
+          localStorage.setItem("bgp_auth_token", data.token);
+          (socket.auth as any).token = data.token;
+          console.log("[ws] Refreshed auth token — reconnecting");
+          socket.connect();
+        })
+        .catch(() => { /* session gone too — user needs to sign in */ });
+    }
   });
 
   return socket;

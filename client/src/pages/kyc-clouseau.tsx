@@ -1,12 +1,15 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { usePropertyContext } from "@/lib/property-context";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
+import { CovenantBadge } from "@/components/covenant-badge";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Pill, pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
@@ -327,7 +330,23 @@ function PropertiesOwnedSection({ propertiesOwned }: { propertiesOwned: any }) {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="overflow-x-auto">
+        {/* Phone: one card per property (§7) — the table never ships below md. */}
+        <div className="md:hidden divide-y divide-border">
+          {properties.map((prop: any, i: number) => (
+            <div key={i} className="py-3 first:pt-0 last:pb-0">
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-sm font-medium min-w-0">{prop.address || prop.property_address || "Unknown"}</span>
+                <Badge variant="outline" className="text-xs whitespace-nowrap shrink-0">
+                  {prop.tenure || prop.tenure_type || "Unknown"}
+                </Badge>
+              </div>
+              <p className="text-[11px] text-muted-foreground font-mono mt-0.5">
+                {prop.title_number || prop.titleNumber || "-"}
+              </p>
+            </div>
+          ))}
+        </div>
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b">
@@ -662,7 +681,7 @@ function BulkScreenDialog() {
                       <Badge variant="destructive" className="text-xs">Sanctions</Badge>
                     )}
                     {r.riskLevel ? (
-                      <Badge className={`text-xs ${riskColors[r.riskLevel] || ""}`}>
+                      <Badge variant="outline" className={`border-transparent text-xs ${riskColors[r.riskLevel] || ""}`}>
                         {r.riskLevel} {r.riskScore !== undefined ? `(${r.riskScore})` : ""}
                       </Badge>
                     ) : (
@@ -759,7 +778,7 @@ function CrmMatchStrip({
   const { data: match, refetch } = useQuery<{ id: string; name: string; kyc_status: string | null } | null>({
     queryKey: ["/api/kyc/match-company", companyNumber],
     queryFn: async () => {
-      const res = await fetch(`/api/kyc/match-company?companyNumber=${encodeURIComponent(companyNumber)}`, { credentials: "include" });
+      const res = await fetch(`/api/kyc/match-company?companyNumber=${encodeURIComponent(companyNumber)}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) return null;
       const data = await res.json();
       return data || null;
@@ -772,7 +791,7 @@ function CrmMatchStrip({
       const res = await fetch("/api/kyc/create-company-from-investigation", {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ companyNumber, companyName, companyType, address }),
       });
       if (!res.ok) throw new Error("Failed to create");
@@ -846,8 +865,18 @@ export default function KycClouseau() {
     pricePaid: landRegPrice,
   } : null);
 
-  const [searchMode, setSearchMode] = useState<"company" | "individual" | "property">("company");
-  const [searchQuery, setSearchQuery] = useState(landRegName);
+  const ctxProperty = usePropertyContext();
+  const [searchMode, setSearchMode] = useState<"company" | "individual" | "property">(ctxProperty?.name ? "property" : "company");
+  const [searchQuery, setSearchQuery] = useState(landRegName || ctxProperty?.name || "");
+  // When the parent Property Intelligence resolves a different property,
+  // switch to property mode and prefill — but don't override an in-progress
+  // company / individual search.
+  useEffect(() => {
+    if (ctxProperty?.name && (!searchQuery || searchQuery === landRegName)) {
+      setSearchMode("property");
+      setSearchQuery(ctxProperty.name);
+    }
+  }, [ctxProperty?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [investigation, setInvestigation] = useState<InvestigationResult | null>(null);
   const [individualResult, setIndividualResult] = useState<IndividualResult | null>(null);
@@ -1149,36 +1178,35 @@ export default function KycClouseau() {
         </div>
       )}
 
-      <div className="flex-1 overflow-hidden flex">
-        {/* Left sidebar — search */}
-        <div className="w-80 border-r flex flex-col flex-shrink-0">
+      <div className="flex-1 overflow-hidden flex flex-col lg:flex-row">
+        {/* Left sidebar — search. On mobile it stacks on top with a bounded
+            height so its internal history scroll still works; main column
+            takes the rest. */}
+        <div className="w-full h-[45vh] lg:h-auto lg:w-80 border-b lg:border-b-0 lg:border-r flex flex-col flex-shrink-0">
           <div className="p-4 border-b space-y-3">
             {/* Search mode tabs */}
-            <div className="flex gap-1 p-0.5 bg-muted rounded-lg">
-              <button
-                className={`flex-1 text-[11px] font-medium py-1.5 px-2 rounded-md transition-colors flex items-center justify-center gap-1 ${searchMode === "company" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+            <div className="flex flex-wrap gap-1.5">
+              <Pill
+                active={searchMode === "company"}
                 onClick={() => setSearchMode("company")}
                 data-testid="mode-company"
               >
-                <Building2 className="h-3 w-3" />
                 Company
-              </button>
-              <button
-                className={`flex-1 text-[11px] font-medium py-1.5 px-2 rounded-md transition-colors flex items-center justify-center gap-1 ${searchMode === "individual" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+              </Pill>
+              <Pill
+                active={searchMode === "individual"}
                 onClick={() => setSearchMode("individual")}
                 data-testid="mode-individual"
               >
-                <UserSearch className="h-3 w-3" />
                 Individual
-              </button>
-              <button
-                className={`flex-1 text-[11px] font-medium py-1.5 px-2 rounded-md transition-colors flex items-center justify-center gap-1 ${searchMode === "property" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+              </Pill>
+              <Pill
+                active={searchMode === "property"}
                 onClick={() => setSearchMode("property")}
                 data-testid="mode-property"
               >
-                <Home className="h-3 w-3" />
                 Property
-              </button>
+              </Pill>
             </div>
 
             {searchMode === "company" && (
@@ -1254,6 +1282,7 @@ export default function KycClouseau() {
                     }
                   }}
                   placeholder="Start typing an address (e.g. 18-22 Haymarket)..."
+                  resolveProperty
                 />
                 <Input
                   data-testid="input-property-postcode"
@@ -1676,6 +1705,9 @@ export default function KycClouseau() {
                     {investigation.companyProfile?.company_number && (
                       <span className="text-sm text-muted-foreground">#{investigation.companyProfile.company_number}</span>
                     )}
+                    {investigation.companyProfile?.company_number && (
+                      <CovenantBadge companyNumber={investigation.companyProfile.company_number} />
+                    )}
                     {investigation.companyProfile?.company_status && (
                       <Badge variant={investigation.companyProfile.company_status === "active" ? "outline" : "destructive"}>
                         {investigation.companyProfile.company_status}
@@ -1856,14 +1888,14 @@ export default function KycClouseau() {
               )}
 
               <Tabs defaultValue="analysis" className="w-full">
-                <TabsList className="w-full justify-start">
-                  <TabsTrigger value="analysis" data-testid="tab-analysis">AI Analysis</TabsTrigger>
-                  <TabsTrigger value="officers" data-testid="tab-officers">Officers ({investigation.officers?.length || 0})</TabsTrigger>
-                  <TabsTrigger value="pscs" data-testid="tab-pscs">PSCs ({investigation.pscs?.length || 0})</TabsTrigger>
-                  <TabsTrigger value="ownership" data-testid="tab-ownership">Ownership</TabsTrigger>
-                  <TabsTrigger value="charges" data-testid="tab-charges">Charges ({investigation.charges?.length || 0})</TabsTrigger>
-                  <TabsTrigger value="sanctions" data-testid="tab-sanctions">Sanctions</TabsTrigger>
-                  <TabsTrigger value="filings" data-testid="tab-filings">Filings</TabsTrigger>
+                <TabsList className={pillTabsList}>
+                  <TabsTrigger value="analysis" className={pillTabsTrigger} data-testid="tab-analysis">AI Analysis</TabsTrigger>
+                  <TabsTrigger value="officers" className={pillTabsTrigger} data-testid="tab-officers">Officers <span className="font-mono normal-case opacity-70">{investigation.officers?.length || 0}</span></TabsTrigger>
+                  <TabsTrigger value="pscs" className={pillTabsTrigger} data-testid="tab-pscs">PSCs <span className="font-mono normal-case opacity-70">{investigation.pscs?.length || 0}</span></TabsTrigger>
+                  <TabsTrigger value="ownership" className={pillTabsTrigger} data-testid="tab-ownership">Ownership</TabsTrigger>
+                  <TabsTrigger value="charges" className={pillTabsTrigger} data-testid="tab-charges">Charges <span className="font-mono normal-case opacity-70">{investigation.charges?.length || 0}</span></TabsTrigger>
+                  <TabsTrigger value="sanctions" className={pillTabsTrigger} data-testid="tab-sanctions">Sanctions</TabsTrigger>
+                  <TabsTrigger value="filings" className={pillTabsTrigger} data-testid="tab-filings">Filings</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="analysis" className="mt-4 space-y-4">
@@ -1894,7 +1926,8 @@ export default function KycClouseau() {
                   <Card>
                     <CardContent className="pt-6">
                       {(() => {
-                        const invId = (investigation as any).investigationId || (investigation as any)._investigationId;
+                        const rawInvId = (investigation as any).investigationId ?? (investigation as any)._investigationId;
+                        const invId = Number.isFinite(Number(rawInvId)) ? Number(rawInvId) : null;
                         const narrative = investigation.aiAnalysis || "";
                         const timedOut = /AI analysis (unavailable|timed out)/i.test(narrative);
                         const isPending = (investigation as any).aiStatus === "pending" || aiPollingId;
@@ -1913,11 +1946,11 @@ export default function KycClouseau() {
                           <div className="space-y-3">
                             {narrative && <MarkdownContent content={narrative} />}
                             {!narrative && <p className="text-sm text-muted-foreground">No AI analysis available.</p>}
-                            {invId && (
+                            {invId !== null && (
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() => regenerateAiMutation.mutate(Number(invId))}
+                                onClick={() => regenerateAiMutation.mutate(invId)}
                                 disabled={regenerateAiMutation.isPending}
                                 data-testid="btn-regenerate-ai"
                               >

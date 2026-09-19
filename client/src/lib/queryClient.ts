@@ -1,4 +1,86 @@
-import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { CancelledError, notifyManager, QueryClient, QueryFunction } from "@tanstack/react-query";
+import { clearPersistedQueries } from "./query-persist";
+
+const AUTH_KEY = ["/api/auth/me"];
+type SessionUser = { id: string; role?: string | null; companyScopeId?: string | null; isAdmin?: boolean | null; activeTeam?: string | null };
+let verifiedIdentity: string | null | undefined;
+const verificationListeners = new Set<() => void>();
+
+export function subscribeSessionVerification(listener: () => void) {
+  verificationListeners.add(listener);
+  return () => { verificationListeners.delete(listener); };
+}
+
+export function getSessionVerificationSnapshot() {
+  return verifiedIdentity;
+}
+
+function setVerifiedIdentity(identity: string | null | undefined) {
+  if (verifiedIdentity === identity) return;
+  verifiedIdentity = identity;
+  // A successful probe can return structurally identical cached user data,
+  // so React Query alone may not notify the authenticated shell to render.
+  for (const listener of verificationListeners) listener();
+}
+
+export function sessionIdentity(user: SessionUser | null | undefined) {
+  return user ? JSON.stringify([user.id, user.role, user.companyScopeId, !!user.isAdmin]) : null;
+}
+
+// A restored auth record identifies the cache owner; it does not prove that
+// the browser still has that person's session. App waits for a live probe.
+export function isSessionVerified(user: SessionUser | null | undefined) {
+  return user !== undefined && verifiedIdentity !== undefined && verifiedIdentity === sessionIdentity(user);
+}
+
+function clearSessionQueries() {
+  notifyManager.batch(() => {
+    for (const query of queryClient.getQueryCache().getAll()) {
+      if (query.queryKey[0] === AUTH_KEY[0]) continue;
+      // Reset first so existing observers also drop their old data. Removing
+      // an active query alone leaves its observer holding the last response.
+      query.reset();
+      if (query.getObserversCount() === 0) queryClient.getQueryCache().remove(query);
+    }
+    queryClient.getMutationCache().clear();
+  });
+  clearPersistedQueries();
+}
+
+function reconcileSession(user: SessionUser | null) {
+  const previous = verifiedIdentity === undefined
+    ? sessionIdentity(queryClient.getQueryData<SessionUser | null>(AUTH_KEY))
+    : verifiedIdentity;
+  const next = sessionIdentity(user);
+  if (!user || previous !== next) clearSessionQueries();
+  setVerifiedIdentity(next);
+}
+
+export function refreshSession() {
+  void queryClient.cancelQueries({ queryKey: AUTH_KEY });
+  setVerifiedIdentity(undefined);
+  clearSessionQueries();
+  queryClient.setQueryData(AUTH_KEY, null);
+  return queryClient.fetchQuery<SessionUser | null>({ queryKey: AUTH_KEY, queryFn: getQueryFn({ on401: "returnNull" }), staleTime: 0 });
+}
+
+// A session can expire while its pages are still open. Recheck auth on API
+// 401s, since an unlinked Microsoft calendar may also return 401 for a valid
+// session. Only the auth probe can clear the signed-in user's data. Debounce
+// a burst of failing requests so they share one probe.
+let authProbeAt = 0;
+function probeAuthOn401() {
+  const now = Date.now();
+  if (now - authProbeAt < 5000) return;
+  authProbeAt = now;
+  queryClient
+    .fetchQuery({
+      queryKey: ["/api/auth/me"],
+      queryFn: getQueryFn({ on401: "returnNull" }),
+      staleTime: 0,
+    })
+    .catch(() => {});
+}
 
 export function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
@@ -12,7 +94,18 @@ export function getAuthHeaders(): Record<string, string> {
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
-    throw new Error(`${res.status}: ${text}`);
+    // Surface the server's plain message (not raw JSON) so error toasts read
+    // cleanly. Client (read-only) accounts get a friendly line instead of a
+    // scary "403: {"error":"Read-only access for client accounts"}".
+    let msg = text;
+    try { const j = JSON.parse(text); msg = j.error || j.message || text; } catch {}
+    if (res.status === 403 && /read-only access for client/i.test(msg)) {
+      msg = "This is a read-only view — changes are managed by your BGP team.";
+    }
+    if (res.status === 401 && res.url.includes("/api/") && !res.url.includes("/api/auth/")) {
+      probeAuthOn401();
+    }
+    throw new Error(`${res.status}: ${msg}`);
   }
 }
 
@@ -44,27 +137,48 @@ export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
-  async ({ queryKey }) => {
+  async ({ queryKey, signal }) => {
     const res = await fetch(queryKey.join("/") as string, {
       credentials: "include",
       headers: getAuthHeaders(),
+      signal,
     });
 
-    if (unauthorizedBehavior === "returnNull" && res.status === 401) {
+    const isAuthQuery = queryKey.length === 1 && queryKey[0] === AUTH_KEY[0];
+    if (signal.aborted) throw new CancelledError({ silent: true });
+
+    if ((unauthorizedBehavior === "returnNull" || isAuthQuery) && res.status === 401) {
+      if (isAuthQuery) reconcileSession(null);
       return null;
     }
 
     await throwIfResNotOk(res);
-    return await res.json();
+    const data = await res.json();
+    if (signal.aborted) throw new CancelledError({ silent: true });
+    if (isAuthQuery) reconcileSession(data);
+    return data;
   };
 
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       queryFn: getQueryFn({ on401: "throw" }),
-      refetchInterval: false,
+      // Keep the app live while several people edit at once: poll every 30s
+      // (only while the tab is actually visible — refetchIntervalInBackground
+      // stays false — so background tabs and expensive endpoints aren't
+      // hammered), and treat data as stale after 15s so navigating, mounting
+      // a board, or refocusing the window pulls a colleague's change straight
+      // away instead of serving a minutes-old cache.
+      refetchInterval: 30 * 1000,
+      refetchIntervalInBackground: false,
       refetchOnWindowFocus: true,
-      staleTime: 5 * 60 * 1000,
+      refetchOnReconnect: true,
+      refetchOnMount: true,
+      staleTime: 15 * 1000,
+      // Keep unused queries in memory for a day so the persisted-cache
+      // restore (query-persist.ts, maxAge 24h) has something to restore
+      // into — the v5 default of 5 minutes would silently drop most of it.
+      gcTime: 24 * 60 * 60 * 1000,
       retry: (failureCount, error) => {
         if (error instanceof Error) {
           const match = error.message.match(/^(\d{3}):/);
@@ -82,3 +196,38 @@ export const queryClient = new QueryClient({
     },
   },
 });
+
+// Session validity doesn't change every 30 seconds — exempt auth/me from the
+// live-refresh polling above. Without this the poll + per-token API rate
+// limiter combine badly: a busy page burns the 200/min budget, the next
+// auth/me gets 429'd, and the app dumps a logged-in user at the sign-in
+// screen mid-session.
+queryClient.setQueryDefaults(["/api/auth/me"], {
+  refetchInterval: false,
+  staleTime: 5 * 60 * 1000,
+  // A restored identity needs a live check before App shows private pages.
+  // This mount check keeps the polling exemption above.
+  refetchOnMount: "always",
+});
+
+/**
+ * Invalidate every cache that derives from crm_deals so an edit on the Deals
+ * page, WIP report, deal detail panel, etc. propagates to all the other
+ * boards in one call. Call this anywhere a deal is created, updated, or
+ * deleted instead of hand-rolling individual invalidations.
+ */
+export function invalidateDealCaches(dealId?: string) {
+  queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/wip"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/portfolio"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+  // Status writes on a deal mirror to available_units + leasing_schedule_units
+  // server-side. Refresh those caches too so the Letting Tracker + Leasing
+  // Schedule reflect deal status changes without a manual reload.
+  queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property"] });
+  if (dealId) {
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId] });
+    queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "timeline"] });
+  }
+}

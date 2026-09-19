@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useSearch } from "wouter";
+import { useSearch, Link as WouterLink } from "wouter";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { ImageStudioImage } from "@shared/schema";
@@ -10,8 +10,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Pill } from "@/components/ui/pill";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { PropertyCombobox } from "@/components/property-combobox";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -43,12 +45,24 @@ import {
   FolderPlus,
   Library,
   Link,
+  RotateCcw,
+  ExternalLink,
 } from "lucide-react";
 import { PageLayout } from "@/components/page-layout";
 import { EmptyState } from "@/components/empty-state";
 import { AddressAutocomplete } from "@/components/address-autocomplete";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
 import { Checkbox } from "@/components/ui/checkbox";
+
+// Auto-generated collections are stored with a type prefix
+// ("Property · ", "Brand · ", "Pathway · ") so they read sensibly in the
+// DB and in flat lists. In the Collections grid they're already grouped by
+// kind under a section header, so the prefix is redundant and just eats the
+// width of the real name — strip it for display only (no data change).
+const COLLECTION_PREFIX = /^(Property|Brand|Pathway) · /;
+function displayCollectionName(name?: string | null): string {
+  return (name || "").replace(COLLECTION_PREFIX, "");
+}
 
 const CATEGORIES = [
   "All",
@@ -158,6 +172,11 @@ const UK_CITIES = [
 
 export default function ImageStudio() {
   const { toast } = useToast();
+  // Client viewers get the full studio (parity — the server scope-jails
+  // every endpoint to their own portfolio) but not hard delete or the
+  // firm-wide maintenance tools; those stay staff-side.
+  const { data: viewerMe } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientViewer = viewerMe?.role === "Client" || !!viewerMe?.companyScopeId;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchString = useSearch();
   const queryParams = new URLSearchParams(searchString);
@@ -165,17 +184,28 @@ export default function ImageStudio() {
   const linkedAddress = queryParams.get("address") || "";
   const linkedPropertyId = queryParams.get("propertyId") || "";
   const linkedCollectionId = queryParams.get("collection") || "";
+  // Deep-link support from the brand profile panel — opens Image
+  // Studio with the search box pre-filled to the brand's name so the
+  // user lands on a filtered view.
+  const linkedBrand = queryParams.get("brand") || "";
 
   const [activeTab, setActiveTab] = useState("library");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(linkedBrand);
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  // Apple-Photos-style property albums (Woody, 2026-08-19: "images for
+  // properties should be grouped... like a sub-folder approach"). "albums"
+  // shows one cover tile per property; clicking one drills into that
+  // property's photos via the existing propertyFilter.
+  const [libraryView, setLibraryView] = useState<"albums" | "all">("albums");
   const [selectedImage, setSelectedImage] = useState<ImageStudioImage | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [streetViewDialogOpen, setStreetViewDialogOpen] = useState(false);
   const [stockSearchOpen, setStockSearchOpen] = useState(false);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const dragDepthRef = useRef(0);
 
   const [uploadCategory, setUploadCategory] = useState("Uncategorised");
   const [uploadArea, setUploadArea] = useState("");
@@ -183,6 +213,12 @@ export default function ImageStudio() {
   const [uploadAddress, setUploadAddress] = useState("");
   const [uploadBrandName, setUploadBrandName] = useState("");
   const [uploadPropertyType, setUploadPropertyType] = useState("");
+  // Upload dialog "Add to folder" picker. uploadFolderId set ⇒ file into that
+  // existing collection; otherwise a non-empty uploadFolderName ⇒ create a new
+  // folder by that name and file into it.
+  const [uploadFolderId, setUploadFolderId] = useState<string | null>(null);
+  const [uploadFolderName, setUploadFolderName] = useState("");
+  const [folderDropdownOpen, setFolderDropdownOpen] = useState(false);
 
   const [activeSection, setActiveSection] = useState<"library" | "brands">("library");
   const [selectMode, setSelectMode] = useState(false);
@@ -192,6 +228,7 @@ export default function ImageStudio() {
   const [brandSectorFilter, setBrandSectorFilter] = useState("All");
   const [propertyTypeFilter, setPropertyTypeFilter] = useState("All");
   const [areaFilter, setAreaFilter] = useState("");
+  const [propertyFilter, setPropertyFilter] = useState("");
   const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
   const [uploadBrandSector, setUploadBrandSector] = useState("");
 
@@ -235,6 +272,12 @@ export default function ImageStudio() {
   const [aiEditPrompt, setAiEditPrompt] = useState("");
   const [aiEditImageId, setAiEditImageId] = useState<string | null>(null);
   const [aiEditImageName, setAiEditImageName] = useState("");
+  const [imageVersions, setImageVersions] = useState<Record<string, number>>({});
+  // Bulk "AI Touch Up" — apply one prompt across all selected images
+  // (e.g. the same colour-grade over several angles of a street).
+  const [bulkAiOpen, setBulkAiOpen] = useState(false);
+  const [bulkAiPrompt, setBulkAiPrompt] = useState("");
+  const [bulkAiProgress, setBulkAiProgress] = useState<{ running: boolean; done: number; total: number; failed: number }>({ running: false, done: 0, total: 0, failed: 0 });
 
   // Bulk tag state
   const [bulkTagDialogOpen, setBulkTagDialogOpen] = useState(false);
@@ -247,6 +290,17 @@ export default function ImageStudio() {
 
   // Collections state
   const [collectionsTab, setCollectionsTab] = useState<"grid" | "collections">("grid");
+  // Cap how many tiles render at once — without this the grid mounts all ~7k
+  // images and each fires a /thumb request, which hammers the browser. Reset
+  // whenever the filters change so a fresh filter starts from the top.
+  const [visibleCount, setVisibleCount] = useState(150);
+  const [rebuilding, setRebuilding] = useState(false);
+  const [aiTagging, setAiTagging] = useState(false);
+  const [aiTagProgress, setAiTagProgress] = useState<{ done: number; remaining: number } | null>(null);
+  const aiAutoRef = useRef(false);
+  const [deduping, setDeduping] = useState(false);
+  const [nearDeduping, setNearDeduping] = useState(false);
+  useEffect(() => { setVisibleCount(150); }, [selectedCategory, propertyTypeFilter, areaFilter, propertyFilter, searchQuery]);
   const [createCollectionOpen, setCreateCollectionOpen] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState("");
   const [newCollectionDesc, setNewCollectionDesc] = useState("");
@@ -275,19 +329,40 @@ export default function ImageStudio() {
   });
 
   const uploadMutation = useMutation({
-    mutationFn: async (formData: FormData) => {
+    mutationFn: async ({ formData, folder }: { formData: FormData; folder?: { id?: string | null; name?: string } | null }) => {
       const res = await fetch("/api/image-studio/upload", {
         method: "POST",
         headers: getAuthHeaders(),
         body: formData,
       });
       if (!res.ok) throw new Error(await res.text());
-      return res.json();
+      const data = await res.json();
+      // File the freshly-uploaded images into a folder if one was chosen
+      // (existing collection by id, or a brand-new one by name).
+      if (folder && (folder.id || folder.name?.trim())) {
+        const rows = Array.isArray(data) ? data : (data?.results || []);
+        const imageIds = rows.map((r: any) => r.id).filter(Boolean);
+        if (imageIds.length) {
+          let collectionId = folder.id || null;
+          if (!collectionId && folder.name?.trim()) {
+            const created = await apiRequest("POST", "/api/image-studio/collections", { name: folder.name.trim() });
+            collectionId = (await created.json()).id;
+          }
+          if (collectionId) {
+            await apiRequest("POST", `/api/image-studio/collections/${collectionId}/images`, { imageIds });
+          }
+        }
+      }
+      return data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/filed-image-ids"] });
       setUploadDialogOpen(false);
+      setUploadFolderId(null);
+      setUploadFolderName("");
       toast({ title: "Upload Complete", description: "Images uploaded successfully" });
     },
     onError: (e: Error) => toast({ title: "Upload Failed", description: e.message, variant: "destructive" }),
@@ -320,7 +395,7 @@ export default function ImageStudio() {
   });
 
   const bulkDeleteMutation = useMutation({
-    mutationFn: async (ids: string[]) => {
+    mutationFn: async ({ ids }: { ids: string[] }) => {
       await apiRequest("POST", "/api/image-studio/bulk-delete", { ids });
     },
     onSuccess: (_data: unknown, variables: { ids: string[] }) => {
@@ -335,15 +410,20 @@ export default function ImageStudio() {
 
   const bulkCategorizeMutation = useMutation({
     mutationFn: async ({ ids, category }: { ids: string[]; category: string }) => {
+      const count = ids.length;
       await apiRequest("PATCH", "/api/image-studio/bulk-categorize", { ids, category });
+      return { count };
     },
-    onSuccess: () => {
+    onSuccess: ({ count }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
       setSelectedIds(new Set());
       setSelectMode(false);
       setBulkCategory("");
-      toast({ title: "Categorised", description: `${selectedIds.size} images updated` });
+      toast({ title: "Categorised", description: `${count} image${count === 1 ? "" : "s"} updated` });
+    },
+    onError: (e: any) => {
+      toast({ title: "Categorise failed", description: e?.message || "Unknown error", variant: "destructive" });
     },
   });
 
@@ -374,10 +454,97 @@ export default function ImageStudio() {
     onError: (e: Error) => toast({ title: "Assign Failed", description: e.message, variant: "destructive" }),
   });
 
-  // Properties list for the assign dialog
+  // Properties list for the assign dialog. Also feeds the lookup maps
+  // below so image tiles can render their CRM link as a clickable chip
+  // pointing at the property page, not just a passive address string.
+  // Real BGP CRM properties — previously this pointed at /api/projects
+  // by mistake, which meant the bulk-assign dropdown and the
+  // property-name lookup on each image chip never matched anything.
+  // Switching to /api/crm/properties so the property→image linkage
+  // actually resolves.
   const { data: properties = [] } = useQuery<any[]>({
-    queryKey: ["/api/projects"],
+    queryKey: ["/api/crm/properties"],
+    staleTime: 5 * 60 * 1000,
   });
+
+  // Brands list — needed to turn an image's brand_name (free text) into
+  // a clickable link to the brand profile. Keyed by lowercased name so
+  // "BLUEWATER" / "bluewater" / "Bluewater" all resolve.
+  const { data: crmCompanies = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ["/api/crm/companies"],
+    staleTime: 10 * 60 * 1000,
+  });
+
+  // Address objects in this codebase come in several shapes — sometimes
+  // a plain string, sometimes {formatted, line1, city, country, postcode},
+  // sometimes {address: "12 High St"}, sometimes nested
+  // {address: {city, street, country, postcode}}. Always coerce to a
+  // string so React never sees an object child (root cause of the
+  // 'objects are not valid React children' #31 crash).
+  const safeAddress = (val: any): string => {
+    if (!val) return "";
+    if (typeof val === "string") return val;
+    if (typeof val === "object") {
+      const inner = (val as any).address;
+      if (typeof inner === "string") return inner;
+      if (inner && typeof inner === "object") {
+        // Nested address-of-address — common with the resolver-canonical shape.
+        return safeAddress(inner);
+      }
+      const formatted = (val as any).formatted;
+      if (typeof formatted === "string") return formatted;
+      // Last resort: stitch known address parts together.
+      const parts = [
+        (val as any).line1,
+        (val as any).line2,
+        (val as any).street,
+        (val as any).city,
+        (val as any).postcode,
+        (val as any).country,
+      ].filter((s) => typeof s === "string" && s.length > 0);
+      return parts.join(", ");
+    }
+    return String(val);
+  };
+  const safeStr = (val: any): string => (typeof val === "string" ? val : "");
+
+  const propertyLookup = useMemo(() => {
+    const m = new Map<string, { id: string; name: string }>();
+    for (const p of properties) {
+      if (p?.id) {
+        const name = safeStr(p.name) || safeAddress(p.address) || safeStr(p.postcode) || "Property";
+        m.set(p.id, { id: p.id, name });
+      }
+    }
+    return m;
+  }, [properties]);
+
+  // Items for the PropertyCombobox in the bulk-assign dialog. Includes
+  // postcode as subLabel so two same-named properties on different
+  // streets are distinguishable. Everything is coerced to a string —
+  // see safeAddress / safeStr above.
+  const propertyComboboxItems = useMemo(() => {
+    return properties
+      .filter((p: any) => p?.id)
+      .map((p: any) => {
+        const addrLine = safeAddress(p.address);
+        const name = safeStr(p.name);
+        return {
+          id: p.id,
+          label: name || addrLine || "Untitled",
+          subLabel: safeStr(p.postcode) || addrLine || undefined,
+          keywords: [name, addrLine, safeStr(p.postcode), safeStr(p.group_name), safeStr(p.status)].filter((s) => s.length > 0) as string[],
+        };
+      });
+  }, [properties]);
+
+  const brandLookup = useMemo(() => {
+    const m = new Map<string, { id: string; name: string }>();
+    for (const c of crmCompanies) {
+      if (c?.id && c?.name) m.set(c.name.toLowerCase().trim(), { id: c.id, name: c.name });
+    }
+    return m;
+  }, [crmCompanies]);
 
   // Collections queries
   const { data: collections = [], isLoading: collectionsLoading } = useQuery<any[]>({
@@ -427,9 +594,12 @@ export default function ImageStudio() {
     mutationFn: async (id: string) => {
       await apiRequest("DELETE", `/api/image-studio/collections/${id}`);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+    onSuccess: (_data, id) => {
+      // Drop the deleted collection's detail query outright — a prefix
+      // invalidation would refetch it while still enabled and 404.
       setViewingCollectionId(null);
+      queryClient.removeQueries({ queryKey: ["/api/image-studio/collections", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"], exact: true });
       toast({ title: "Deleted", description: "Collection deleted" });
     },
   });
@@ -502,10 +672,12 @@ export default function ImageStudio() {
       const res = await apiRequest("POST", "/api/image-studio/ai-edit", data);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
-      toast({ title: "Edited", description: "AI touch-up created as new image" });
+      // Bump the version so the lightbox re-fetches the updated image (bypasses browser cache)
+      setImageVersions(prev => ({ ...prev, [variables.imageId]: Date.now() }));
+      toast({ title: "Image updated", description: "AI touch-up applied — you can keep amending it" });
       setAiEditOpen(false);
       setAiEditPrompt("");
       setAiEditImageId(null);
@@ -515,12 +687,91 @@ export default function ImageStudio() {
     },
   });
 
+  // Apply the same AI touch-up to every selected image, one at a time so
+  // each stays a separate sub-45s request (no batch timeout) and we don't
+  // hammer the image providers. Same prompt ⇒ same provider/treatment, so
+  // a set of street angles comes back consistently graded.
+  const runBulkAiEdit = async () => {
+    const ids = [...selectedIds];
+    const prompt = bulkAiPrompt.trim();
+    if (!ids.length || !prompt) return;
+    setBulkAiProgress({ running: true, done: 0, total: ids.length, failed: 0 });
+    let done = 0;
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await apiRequest("POST", "/api/image-studio/ai-edit", { imageId: id, editPrompt: prompt });
+        setImageVersions(prev => ({ ...prev, [id]: Date.now() }));
+      } catch {
+        failed++;
+      }
+      done++;
+      setBulkAiProgress({ running: true, done, total: ids.length, failed });
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+      // Refresh the open folder's grid too (prefix-matches the viewed collection).
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+    }
+    setBulkAiProgress({ running: false, done, total: ids.length, failed });
+    queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
+    const ok = done - failed;
+    toast({
+      title: failed ? `Done — ${ok}/${ids.length} touched up` : `Touched up ${ids.length} images`,
+      description: failed ? `${failed} failed — try those again.` : "Same enhancement applied across the set.",
+      variant: failed ? "destructive" : undefined,
+    });
+    if (!failed) {
+      setBulkAiOpen(false);
+      setBulkAiPrompt("");
+      setSelectMode(false);
+      setSelectedIds(new Set());
+    }
+  };
+
+  const revertMutation = useMutation({
+    mutationFn: async (imageId: string) => {
+      const res = await apiRequest("POST", `/api/image-studio/${imageId}/revert`);
+      return res.json();
+    },
+    onSuccess: (data, imageId) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+      const remaining = Number(data?.undoLevelsRemaining || 0);
+      setImageVersions(prev => {
+        const next = { ...prev };
+        if (remaining > 0) {
+          // More amendments to peel back — keep the Undo button visible and
+          // bump the cache-bust token so the restored version shows.
+          next[imageId] = Date.now();
+        } else {
+          delete next[imageId];
+        }
+        return next;
+      });
+      toast({
+        title: "Undone",
+        description: remaining > 0 ? "Reverted the last edit" : "Back to the original image",
+      });
+    },
+    onError: (err: any) => {
+      toast({ title: "Revert failed", description: err.message, variant: "destructive" });
+    },
+  });
+
   const filteredImages = images.filter((img) => {
     if (selectedCategory !== "All" && img.category !== selectedCategory) return false;
+    // Brand Library images have their own tab — leaving them in the Library
+    // "All" grid made the grid show more cards than the tab count claims.
+    if (selectedCategory === "All" && img.category === "Brands") return false;
     if (propertyTypeFilter !== "All" && (img as any).propertyType !== propertyTypeFilter) return false;
     if (areaFilter) {
       const af = areaFilter.toLowerCase();
       if (!img.area?.toLowerCase().includes(af) && !(img as any).address?.toLowerCase().includes(af)) return false;
+    }
+    if (propertyFilter === "__uncategorised__") {
+      // The albums view's "Uncategorised" folder — images with no address.
+      if ((img as any).address) return false;
+    } else if (propertyFilter) {
+      const pf = propertyFilter.toLowerCase();
+      if (!((img as any).address?.toLowerCase().includes(pf))) return false;
     }
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -535,6 +786,42 @@ export default function ImageStudio() {
     }
     return true;
   });
+
+  // Distinct properties (by the address/name on each image) → the per-property
+  // "folders" for the sidebar filter, most-images-first.
+  const propertyCounts: Array<[string, number]> = (() => {
+    const m = new Map<string, number>();
+    for (const img of images) {
+      const a = String((img as any).address || "").trim();
+      if (a) m.set(a, (m.get(a) || 0) + 1);
+    }
+    return [...m.entries()].sort((x, y) => y[1] - x[1]);
+  })();
+
+  // Property albums for the Library's default view — one folder per
+  // property (most photos first) plus an Uncategorised folder at the end.
+  const propertyAlbums = (() => {
+    const m = new Map<string, { cover: ImageStudioImage; count: number }>();
+    let unCover: ImageStudioImage | null = null;
+    let unCount = 0;
+    for (const img of images) {
+      if (img.category === "Brands") continue;
+      const a = String((img as any).address || "").trim();
+      if (!a) { unCount++; if (!unCover) unCover = img; continue; }
+      const e = m.get(a);
+      if (e) e.count++;
+      else m.set(a, { cover: img, count: 1 });
+    }
+    const list = [...m.entries()].map(([name, v]) => ({ name, label: name, ...v }))
+      .sort((x, y) => y.count - x.count);
+    // UX #138 — this folder groups images with no ADDRESS; calling it
+    // "Uncategorised" collided with the sidebar's category of that name
+    // (two different counts under one label read like a bug).
+    if (unCount && unCover) list.push({ name: "__uncategorised__", label: "No property", cover: unCover, count: unCount });
+    return list;
+  })();
+  const albumsActive = libraryView === "albums" && !searchQuery && !propertyFilter
+    && selectedCategory === "All" && propertyTypeFilter === "All" && !areaFilter;
 
   const brandImages = images.filter((img) => {
     if (img.category !== "Brands") return false;
@@ -595,10 +882,72 @@ export default function ImageStudio() {
       if (uploadBrandName) formData.append("brandName", uploadBrandName);
       if (uploadBrandSector && uploadBrandSector !== "none") formData.append("brandSector", uploadBrandSector);
       if (uploadPropertyType) formData.append("propertyType", uploadPropertyType);
-      uploadMutation.mutate(formData);
+      uploadMutation.mutate({
+        formData,
+        folder: uploadFolderId
+          ? { id: uploadFolderId }
+          : (uploadFolderName.trim() ? { name: uploadFolderName } : null),
+      });
     },
-    [uploadCategory, uploadArea, uploadTags, uploadAddress, uploadBrandName, uploadBrandSector, uploadPropertyType, uploadMutation]
+    [uploadCategory, uploadArea, uploadTags, uploadAddress, uploadBrandName, uploadBrandSector, uploadPropertyType, uploadFolderId, uploadFolderName, uploadMutation]
   );
+
+  // Page-level drag-and-drop. Drop a JPEG / PNG / WebP anywhere on the
+  // Image Studio and it lands in the library straight away — no dialog,
+  // no category picker first. Picks up the currently-active category
+  // filter as the destination so dropping while viewing "Brands" tags
+  // the image as Brands.
+  const handleFilesDrop = useCallback(
+    (files: FileList | File[]) => {
+      const imageFiles = Array.from(files).filter(f =>
+        f.type.startsWith("image/") || /\.(jpe?g|jfif|png|webp|gif|tiff?|avif|heic|heif)$/i.test(f.name)
+      );
+      if (imageFiles.length === 0) {
+        toast({
+          title: "Images only",
+          description: "Drop JPEG / PNG / WebP files. PDFs go under Brochures on a property.",
+          variant: "destructive",
+        });
+        return;
+      }
+      const formData = new FormData();
+      imageFiles.forEach(f => formData.append("images", f));
+      // Default to the current filter category so drops land where the
+      // user expects. "All" → Uncategorised so they show up immediately
+      // in any filter.
+      const dropCategory = selectedCategory === "All" ? "Uncategorised" : selectedCategory;
+      formData.append("category", dropCategory);
+      formData.append("area", "");
+      formData.append("tags", "");
+      uploadMutation.mutate({ formData, folder: null });
+    },
+    [selectedCategory, uploadMutation, toast]
+  );
+
+  const onPageDragEnter = (e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    dragDepthRef.current++;
+    setIsDraggingFile(true);
+  };
+  const onPageDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepthRef.current--;
+    if (dragDepthRef.current <= 0) {
+      dragDepthRef.current = 0;
+      setIsDraggingFile(false);
+    }
+  };
+  const onPageDragOver = (e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+  };
+  const onPageDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDraggingFile(false);
+    if (e.dataTransfer?.files?.length) handleFilesDrop(e.dataTransfer.files);
+  };
 
   const captureStreetViewMutation = useMutation({
     mutationFn: async () => {
@@ -721,7 +1070,7 @@ export default function ImageStudio() {
             data-testid="button-street-view"
           >
             <MapPin className="h-4 w-4 mr-1" />
-            Street View
+            Capture Street View
           </Button>
           <Button
             variant="outline"
@@ -745,29 +1094,45 @@ export default function ImageStudio() {
       fullHeight
       testId="image-studio-page"
     >
+      <div
+        className="flex flex-col flex-1 min-h-0 relative"
+        onDragEnter={onPageDragEnter}
+        onDragOver={onPageDragOver}
+        onDragLeave={onPageDragLeave}
+        onDrop={onPageDrop}
+      >
+        {isDraggingFile && (
+          <div className="absolute inset-0 z-50 bg-blue-50/95 border-4 border-dashed border-blue-500 rounded-lg flex items-center justify-center pointer-events-none">
+            <div className="text-center">
+              <Upload className="w-12 h-12 mx-auto mb-2 text-blue-600" />
+              <p className="text-base font-semibold text-blue-900">Drop image{`${selectedCategory !== "All" ? `s into ${selectedCategory}` : "s"}`}</p>
+              <p className="text-xs text-blue-700 mt-1">JPEG, PNG, WebP, GIF, HEIC</p>
+            </div>
+          </div>
+        )}
       {/* Section tabs */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b bg-background flex-shrink-0">
-        <button
+      <div className="flex flex-wrap gap-1.5 px-4 py-2 flex-shrink-0">
+        <Pill
+          active={activeSection === "library" && collectionsTab === "grid"}
           onClick={() => { setActiveSection("library"); setCollectionsTab("grid"); setSelectMode(false); setSelectedIds(new Set()); }}
-          className={`text-sm px-2 py-0.5 rounded ${activeSection === "library" && collectionsTab === "grid" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-library"
         >
-          Library ({images.filter(i => i.category !== "Brands").length})
-        </button>
-        <button
+          Library <span className="font-mono normal-case opacity-70">{images.filter(i => i.category !== "Brands").length}</span>
+        </Pill>
+        <Pill
+          active={activeSection === "brands"}
           onClick={() => { setActiveSection("brands"); setCollectionsTab("grid"); setSelectMode(false); setSelectedIds(new Set()); }}
-          className={`text-sm px-2 py-0.5 rounded ${activeSection === "brands" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-brands"
         >
-          Brand Library ({images.filter(i => i.category === "Brands").length})
-        </button>
-        <button
+          Brand Library <span className="font-mono normal-case opacity-70">{images.filter(i => i.category === "Brands").length}</span>
+        </Pill>
+        <Pill
+          active={collectionsTab === "collections" && activeSection === "library"}
           onClick={() => { setActiveSection("library"); setCollectionsTab("collections"); setSelectMode(false); setSelectedIds(new Set()); }}
-          className={`text-sm px-2 py-0.5 rounded ${collectionsTab === "collections" && activeSection === "library" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-collections"
         >
-          Collections ({collections.length})
-        </button>
+          Collections <span className="font-mono normal-case opacity-70">{collections.length}</span>
+        </Pill>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
@@ -781,7 +1146,7 @@ export default function ImageStudio() {
                 onClick={() => { setSelectedCategory(cat); setSelectedPerson(null); }}
                 className={`w-full text-left px-2 py-1.5 rounded text-sm flex items-center justify-between transition-colors ${
                   selectedCategory === cat
-                    ? "bg-primary text-primary-foreground"
+                    ? "bg-foreground text-background"
                     : "hover:bg-muted"
                 }`}
                 data-testid={`button-category-${cat.toLowerCase().replace(/\s/g, "-")}`}
@@ -851,6 +1216,48 @@ export default function ImageStudio() {
                     onClick={() => setAreaFilter("")}
                     className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-muted text-muted-foreground hover:bg-muted/80"
                     data-testid="chip-area-clear"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              <Separator className="my-3" />
+              <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Property</h3>
+              <Input
+                placeholder="Filter by property..."
+                value={propertyFilter}
+                onChange={(e) => setPropertyFilter(e.target.value)}
+                className="h-8 text-sm"
+                list="property-name-suggestions"
+                data-testid="input-property-filter"
+              />
+              <datalist id="property-name-suggestions">
+                {propertyCounts.map(([name]) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </datalist>
+              <div className="mt-2 flex flex-wrap gap-1">
+                {propertyCounts.slice(0, 8).map(([name, count]) => (
+                  <button
+                    key={name}
+                    onClick={() => setPropertyFilter(propertyFilter === name ? "" : name)}
+                    title={`${name} (${count})`}
+                    className={`px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors ${
+                      propertyFilter === name
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80"
+                    }`}
+                    data-testid={`chip-property-${name.toLowerCase().replace(/\s/g, "-").slice(0, 24)}`}
+                  >
+                    {name.length > 22 ? name.slice(0, 22) + "…" : name} ({count})
+                  </button>
+                ))}
+                {propertyFilter && (
+                  <button
+                    onClick={() => setPropertyFilter("")}
+                    className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-muted text-muted-foreground hover:bg-muted/80"
+                    data-testid="chip-property-clear"
                   >
                     Clear
                   </button>
@@ -935,11 +1342,13 @@ export default function ImageStudio() {
                         setAiEditPrompt("");
                         setAiEditOpen(true);
                       }}
-                      onDelete={() => { if (confirm("Delete this brand image?")) deleteMutation.mutate(img.id); }}
+                      onDelete={isClientViewer ? undefined : () => { if (confirm("Delete this brand image?")) deleteMutation.mutate(img.id); }}
                       selectMode={selectMode}
                       selected={selectedIds.has(img.id)}
                       onToggleSelect={() => toggleSelect(img.id)}
                       aiTagging={aiTagMutation.isPending}
+                      crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
+                      version={imageVersions[img.id]}
                     />
                   ))}
                 </div>
@@ -980,25 +1389,29 @@ export default function ImageStudio() {
               {selectMode ? <X className="h-4 w-4 mr-1" /> : <StretchHorizontal className="h-4 w-4 mr-1" />}
               {selectMode ? "Cancel" : "Select"}
             </Button>
-            <div className="flex border rounded-md">
-              <Button
-                variant={viewMode === "grid" ? "default" : "ghost"}
-                size="sm"
-                className="h-9 px-2 rounded-r-none"
-                onClick={() => setViewMode("grid")}
+            <div className="flex items-center gap-1.5">
+              <Pill
+                active={libraryView === "albums"}
+                onClick={() => { setLibraryView("albums"); setPropertyFilter(""); }}
+                title="Group photos into one folder per property"
+                data-testid="button-view-albums"
+              >
+                Albums
+              </Pill>
+              <Pill
+                active={libraryView === "all" && viewMode === "grid"}
+                onClick={() => { setLibraryView("all"); setViewMode("grid"); }}
                 data-testid="button-view-grid"
               >
-                <Grid3X3 className="h-4 w-4" />
-              </Button>
-              <Button
-                variant={viewMode === "list" ? "default" : "ghost"}
-                size="sm"
-                className="h-9 px-2 rounded-l-none"
-                onClick={() => setViewMode("list")}
+                <Grid3X3 className="h-3 w-3" />
+              </Pill>
+              <Pill
+                active={libraryView === "all" && viewMode === "list"}
+                onClick={() => { setLibraryView("all"); setViewMode("list"); }}
                 data-testid="button-view-list"
               >
-                <List className="h-4 w-4" />
-              </Button>
+                <List className="h-3 w-3" />
+              </Pill>
             </div>
           </div>
 
@@ -1049,6 +1462,15 @@ export default function ImageStudio() {
                     <FolderPlus className="h-4 w-4 mr-1" />
                     Add to Collection
                   </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => { setBulkAiPrompt(""); setBulkAiProgress({ running: false, done: 0, total: 0, failed: 0 }); setBulkAiOpen(true); }}
+                    data-testid="button-bulk-ai-edit"
+                  >
+                    <Sparkles className="h-4 w-4 mr-1" />
+                    AI Touch Up
+                  </Button>
                   <div className="flex items-center gap-1.5">
                     <Select value={bulkCategory} onValueChange={setBulkCategory}>
                       <SelectTrigger className="h-8 w-[150px] text-xs" data-testid="select-bulk-category">
@@ -1071,13 +1493,14 @@ export default function ImageStudio() {
                       Categorise
                     </Button>
                   </div>
+                  {!isClientViewer && (
                   <Button
                     variant="destructive"
                     size="sm"
                     disabled={bulkDeleteMutation.isPending}
                     onClick={() => {
                       if (confirm(`Delete ${selectedIds.size} images? This cannot be undone.`)) {
-                        bulkDeleteMutation.mutate([...selectedIds]);
+                        bulkDeleteMutation.mutate({ ids: [...selectedIds] });
                       }
                     }}
                     data-testid="button-bulk-delete"
@@ -1085,6 +1508,7 @@ export default function ImageStudio() {
                     {bulkDeleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Trash2 className="h-4 w-4 mr-1" />}
                     Delete {selectedIds.size}
                   </Button>
+                  )}
                 </>
               )}
             </div>
@@ -1104,11 +1528,32 @@ export default function ImageStudio() {
                     ← Collections
                   </button>
                   <span className="text-muted-foreground">/</span>
-                  <h3 className="text-lg font-semibold" data-testid="text-collection-name">{viewingCollection?.name || "Loading..."}</h3>
+                  <h3 className="text-lg font-semibold" data-testid="text-collection-name" title={viewingCollection?.name || undefined}>{viewingCollection ? displayCollectionName(viewingCollection.name) : "Loading..."}</h3>
                   {viewingCollection?.description && (
                     <span className="text-sm text-muted-foreground ml-2">{viewingCollection.description}</span>
                   )}
                   <div className="flex-1" />
+                  <Button
+                    variant={selectMode ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => { setSelectMode(!selectMode); setSelectedIds(new Set()); }}
+                    data-testid="button-collection-select-mode"
+                  >
+                    {selectMode ? <X className="h-4 w-4 mr-1" /> : <StretchHorizontal className="h-4 w-4 mr-1" />}
+                    {selectMode ? "Cancel" : "Select"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      // Pre-target this folder so uploaded photos file straight in.
+                      setUploadFolderId(viewingCollectionId);
+                      setUploadFolderName(viewingCollection ? displayCollectionName(viewingCollection.name) : "");
+                      setUploadDialogOpen(true);
+                    }}
+                    data-testid="button-upload-to-collection"
+                  >
+                    <Upload className="h-4 w-4 mr-1" /> Upload here
+                  </Button>
                   <Button
                     variant="destructive"
                     size="sm"
@@ -1122,6 +1567,54 @@ export default function ImageStudio() {
                     <Trash2 className="h-4 w-4 mr-1" /> Delete Collection
                   </Button>
                 </div>
+                {selectMode && (
+                  <div className="mb-4 flex items-center gap-2 flex-wrap rounded-md border bg-muted/40 p-2">
+                    <span className="text-sm text-muted-foreground px-1">{selectedIds.size} selected</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={selectedIds.size === 0}
+                      onClick={() => { setBulkAiPrompt(""); setBulkAiProgress({ running: false, done: 0, total: 0, failed: 0 }); setBulkAiOpen(true); }}
+                      data-testid="button-collection-bulk-ai"
+                    >
+                      <Sparkles className="h-4 w-4 mr-1" /> AI Touch Up
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={selectedIds.size === 0}
+                      onClick={() => { setBulkTagInput(""); setBulkTagDialogOpen(true); }}
+                      data-testid="button-collection-bulk-tag"
+                    >
+                      <Tag className="h-4 w-4 mr-1" /> Tag All
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={selectedIds.size === 0}
+                      onClick={() => { setAddToCollectionTargetId(""); setAddToCollectionOpen(true); }}
+                      data-testid="button-collection-bulk-add"
+                    >
+                      <FolderPlus className="h-4 w-4 mr-1" /> Add to Collection
+                    </Button>
+                    {!isClientViewer && (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={selectedIds.size === 0 || bulkDeleteMutation.isPending}
+                      onClick={() => {
+                        if (confirm(`Delete ${selectedIds.size} images? This cannot be undone.`)) {
+                          bulkDeleteMutation.mutate({ ids: [...selectedIds] });
+                        }
+                      }}
+                      data-testid="button-collection-bulk-delete"
+                    >
+                      {bulkDeleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Trash2 className="h-4 w-4 mr-1" />}
+                      Delete {selectedIds.size}
+                    </Button>
+                    )}
+                  </div>
+                )}
                 {viewingCollectionLoading ? (
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                     {Array.from({ length: 6 }).map((_, i) => (
@@ -1153,7 +1646,8 @@ export default function ImageStudio() {
                         fileSize: img.file_size,
                         width: img.width,
                         height: img.height,
-                        thumbnailData: img.thumbnail_data,
+                        thumbnailData: img.thumbnail_data || null,
+                        hasThumbnail: !!img.has_thumbnail,
                         sharepointItemId: img.sharepoint_item_id,
                         sharepointDriveId: img.sharepoint_drive_id,
                         localPath: img.local_path,
@@ -1174,8 +1668,11 @@ export default function ImageStudio() {
                               }
                             }}
                             aiTagging={aiTagMutation.isPending}
-                            selectMode={false}
-                            selected={false}
+                            selectMode={selectMode}
+                            selected={selectedIds.has(img.id)}
+                            onToggleSelect={() => toggleSelect(img.id)}
+                            crmLinks={resolveCrmLinks(imageObj as any, propertyLookup, brandLookup)}
+                            version={imageVersions[img.id]}
                           />
                         </div>
                       );
@@ -1190,9 +1687,99 @@ export default function ImageStudio() {
                     <h3 className="text-lg font-semibold" data-testid="text-collections-title">Collections</h3>
                     <p className="text-sm text-muted-foreground">{collections.length} {collections.length === 1 ? "collection" : "collections"}</p>
                   </div>
-                  <Button size="sm" onClick={() => setCreateCollectionOpen(true)} data-testid="button-create-collection">
-                    <Plus className="h-4 w-4 mr-1" /> New Collection
-                  </Button>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {!isClientViewer && (<>
+                    <Button size="sm" variant="outline" data-testid="button-ai-tag-uncategorised"
+                      onClick={async () => {
+                        // Tagging runs as a server-side background job (the old
+                        // per-batch requests 504'd on Railway's 45s ceiling).
+                        // We just kick it off and poll progress; clicking again
+                        // cancels the job server-side.
+                        if (aiTagging) {
+                          aiAutoRef.current = false;
+                          await apiRequest("POST", "/api/image-studio/ai-tag-uncategorised/cancel").catch(() => {});
+                          return;
+                        }
+                        aiAutoRef.current = true; setAiTagging(true);
+                        try {
+                          const r = await apiRequest("POST", "/api/image-studio/ai-tag-uncategorised");
+                          const d = await r.json();
+                          if (!d.started && !d.alreadyRunning) {
+                            toast({ title: "Nothing to tag", description: "No uncategorised images left." });
+                            return;
+                          }
+                          while (aiAutoRef.current) {
+                            await new Promise(resolve => setTimeout(resolve, 2500));
+                            const sr = await apiRequest("GET", "/api/image-studio/ai-tag-uncategorised/status");
+                            const s = await sr.json();
+                            setAiTagProgress({ done: s.processed || 0, remaining: s.remaining ?? 0 });
+                            queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
+                            if (!s.running) {
+                              queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+                              toast({
+                                title: "AI-tagging finished",
+                                description: `${(s.processed || 0).toLocaleString()} image(s) tagged${s.failed ? `, ${s.failed} failed` : ""}.`,
+                              });
+                              break;
+                            }
+                          }
+                        } catch (e: any) {
+                          toast({ title: "AI-tag stopped", description: e?.message || "", variant: "destructive" });
+                        } finally { aiAutoRef.current = false; setAiTagging(false); setAiTagProgress(null); }
+                      }}>
+                      {aiTagging
+                        ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Stop ({aiTagProgress ? `${aiTagProgress.done} done · ${aiTagProgress.remaining} left` : "tagging…"})</>
+                        : <><Sparkles className="h-4 w-4 mr-1" /> AI-tag all uncategorised</>}
+                    </Button>
+                    <Button size="sm" variant="outline" disabled={nearDeduping} data-testid="button-dedupe-near"
+                      onClick={async () => {
+                        if (!confirm("Find & remove NEAR-duplicate images (resized / re-saved copies of the same shot), keeping the highest-resolution of each? Scans the library; can't be undone.")) return;
+                        setNearDeduping(true);
+                        try {
+                          const r = await apiRequest("POST", "/api/image-studio/dedupe-perceptual", { apply: true });
+                          const d = await r.json();
+                          toast({ title: "Near-dupe cleanup done", description: `${(d.duplicatesRemoved ?? 0).toLocaleString()} removed across ${d.groups ?? 0} group(s) (scanned ${(d.scanned ?? 0).toLocaleString()}).` });
+                          queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+                        } catch (e: any) {
+                          toast({ title: "Near-dupe scan failed", description: e?.message || "", variant: "destructive" });
+                        } finally { setNearDeduping(false); }
+                      }}>
+                      {nearDeduping ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />} Near-dupes
+                    </Button>
+                    <Button size="sm" variant="outline" disabled={deduping} data-testid="button-dedupe"
+                      onClick={async () => {
+                        if (!confirm("Scan for exact-duplicate images and delete all but the oldest of each? This can't be undone.")) return;
+                        setDeduping(true);
+                        try {
+                          const r = await apiRequest("POST", "/api/image-studio/dedupe", {});
+                          const d = await r.json();
+                          toast({ title: "Dedupe complete", description: `${d.duplicatesRemoved?.toLocaleString?.() ?? d.duplicatesRemoved} duplicate(s) removed.` });
+                          queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+                        } catch (e: any) {
+                          toast({ title: "Dedupe failed", description: e?.message || "", variant: "destructive" });
+                        } finally { setDeduping(false); }
+                      }}>
+                      {deduping ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />} Dedupe
+                    </Button>
+                    <Button size="sm" variant="outline" disabled={rebuilding} data-testid="button-rebuild-property-folders"
+                      onClick={async () => {
+                        setRebuilding(true);
+                        try {
+                          const r = await apiRequest("POST", "/api/image-studio/collections/rebuild-properties", {});
+                          const d = await r.json();
+                          toast({ title: "Property folders rebuilt", description: `${d.properties} properties · ${d.linked?.toLocaleString?.() ?? d.linked} images filed.` });
+                          queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+                        } catch (e: any) {
+                          toast({ title: "Rebuild failed", description: e?.message || "", variant: "destructive" });
+                        } finally { setRebuilding(false); }
+                      }}>
+                      {rebuilding ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Sparkles className="h-4 w-4 mr-1" />} Rebuild property folders
+                    </Button>
+                    </>)}
+                    <Button size="sm" onClick={() => setCreateCollectionOpen(true)} data-testid="button-create-collection">
+                      <Plus className="h-4 w-4 mr-1" /> New Collection
+                    </Button>
+                  </div>
                 </div>
                 {collectionsLoading ? (
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -1212,8 +1799,22 @@ export default function ImageStudio() {
                     </Button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                    {collections.map((col: any) => (
+                  (() => {
+                    // Group by kind so the new auto-folders (Property,
+                    // Brand) and Pathway runs surface as distinct
+                    // sections rather than disappearing into a flat
+                    // list with everything else.
+                    const groups: Record<string, { label: string; items: any[] }> = {
+                      property: { label: "Properties", items: [] },
+                      brand: { label: "Brands", items: [] },
+                      pathway: { label: "Pathway runs", items: [] },
+                      other: { label: "Other collections", items: [] },
+                    };
+                    for (const col of collections) {
+                      const key = col.kind && groups[col.kind] ? col.kind : "other";
+                      groups[key].items.push(col);
+                    }
+                    const renderCard = (col: any) => (
                       <div
                         key={col.id}
                         className="group rounded-lg border bg-card overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all"
@@ -1233,14 +1834,33 @@ export default function ImageStudio() {
                           </div>
                         </div>
                         <div className="p-3">
-                          <p className="font-medium text-sm truncate">{col.name}</p>
+                          <p className="font-medium text-sm truncate" title={col.name}>{displayCollectionName(col.name)}</p>
                           {col.description && (
                             <p className="text-xs text-muted-foreground truncate mt-0.5">{col.description}</p>
                           )}
                         </div>
                       </div>
-                    ))}
-                  </div>
+                    );
+                    return (
+                      <div className="space-y-6">
+                        {(["property", "brand", "pathway", "other"] as const).map(k => {
+                          const g = groups[k];
+                          if (!g.items.length) return null;
+                          return (
+                            <div key={k}>
+                              <div className="flex items-baseline gap-2 mb-3">
+                                <h4 className="text-sm font-semibold">{g.label}</h4>
+                                <span className="text-xs text-muted-foreground">{g.items.length}</span>
+                              </div>
+                              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                                {g.items.map(renderCard)}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()
                 )}
               </div>
             )}
@@ -1263,8 +1883,8 @@ export default function ImageStudio() {
                   <div className="flex flex-col items-center justify-center py-20 text-center">
                     <Camera className="h-12 w-12 text-muted-foreground/30 mb-3" />
                     <p className="text-muted-foreground text-sm">No headshots yet. Upload portrait photos to get started.</p>
-                    <Button size="sm" className="mt-4" onClick={() => { setUploadCategory("Headshots"); setUploadDialogOpen(true); }} data-testid="button-upload-headshots">
-                      <Upload className="h-4 w-4 mr-1" /> Upload Headshots
+                    <Button size="sm" variant="outline" className="mt-4" onClick={() => { setUploadCategory("Headshots"); setUploadDialogOpen(true); }} data-testid="button-upload-headshots">
+                      <Upload className="h-4 w-4 mr-1" /> Upload headshots
                     </Button>
                   </div>
                 ) : (
@@ -1276,9 +1896,9 @@ export default function ImageStudio() {
                         className="flex flex-col items-center gap-2.5 group cursor-pointer"
                         data-testid={`button-person-${person.name.toLowerCase().replace(/\s/g, "-")}`}
                       >
-                        <div className="w-[100px] h-[100px] sm:w-[110px] sm:h-[110px] md:w-[120px] md:h-[120px] rounded-full overflow-hidden ring-[3px] ring-white dark:ring-gray-800 shadow-[0_1px_4px_rgba(0,0,0,0.12)] group-hover:shadow-[0_2px_12px_rgba(0,0,0,0.18)] group-hover:scale-[1.04] transition-all duration-200">
+                        <div className="w-[100px] h-[100px] sm:w-[110px] sm:h-[110px] md:w-[120px] md:h-[120px] rounded-full overflow-hidden ring-[3px] ring-background shadow-[0_1px_4px_rgba(0,0,0,0.12)] group-hover:shadow-[0_2px_12px_rgba(0,0,0,0.18)] group-hover:scale-[1.04] transition-all duration-200">
                           <img
-                            src={person.coverImage.thumbnailData || `/api/image-studio/${person.coverImage.id}/full`}
+                            src={person.coverImage.thumbnailData || ((person.coverImage as any).hasThumbnail ? `/api/image-studio/${person.coverImage.id}/thumb` : `/api/image-studio/${person.coverImage.id}/full`)}
                             alt={person.name}
                             className="w-full h-full object-cover"
                             loading="lazy"
@@ -1318,17 +1938,19 @@ export default function ImageStudio() {
                       onEdit={() => openEdit(img)}
                       onAiTag={() => aiTagMutation.mutate(img.id)}
                       onAiEdit={() => { setAiEditImageId(img.id); setAiEditImageName(img.fileName || ""); setAiEditPrompt(""); setAiEditOpen(true); }}
-                      onDelete={() => { if (confirm("Delete this image?")) deleteMutation.mutate(img.id); }}
+                      onDelete={isClientViewer ? undefined : () => { if (confirm("Delete this image?")) deleteMutation.mutate(img.id); }}
                       aiTagging={aiTagMutation.isPending}
                       selectMode={selectMode}
                       selected={selectedIds.has(img.id)}
                       onToggleSelect={() => toggleSelect(img.id)}
+                      crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
+                      version={imageVersions[img.id]}
                     />
                   ))}
                 </div>
               </div>
             ) : filteredImages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12">
+              <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
                 <EmptyState
                   icon={ImageIconLucide}
                   title="No images yet"
@@ -1336,9 +1958,11 @@ export default function ImageStudio() {
                     ? "No images match your filters"
                     : "Upload images or capture from Street View"}
                 />
-                <div className="flex gap-2 mt-2">
-                  <Button size="sm" onClick={() => setUploadDialogOpen(true)} data-testid="button-upload-empty">
-                    <Upload className="h-4 w-4 mr-1" /> Upload Images
+                {/* flex-wrap so the third action doesn't clip at the phone
+                    edge; outline — the header Upload is the one filled primary. */}
+                <div className="flex flex-wrap justify-center gap-2 mt-2">
+                  <Button size="sm" variant="outline" onClick={() => setUploadDialogOpen(true)} data-testid="button-upload-empty">
+                    <Upload className="h-4 w-4 mr-1" /> Upload images
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => setAiGenerateOpen(true)} data-testid="button-ai-generate-empty">
                     <Sparkles className="h-4 w-4 mr-1" /> AI Generate
@@ -1348,9 +1972,44 @@ export default function ImageStudio() {
                   </Button>
                 </div>
               </div>
+            ) : albumsActive ? (
+              // Albums view — one folder per property, Apple-Photos style.
+              // Clicking a folder drills in via the existing propertyFilter.
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                {propertyAlbums.map((album) => (
+                  <button
+                    key={album.name}
+                    type="button"
+                    onClick={() => setPropertyFilter(album.name)}
+                    className="group relative aspect-square rounded-lg overflow-hidden border bg-muted text-left"
+                    data-testid={`album-${album.label.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 30)}`}
+                  >
+                    <img
+                      src={(album.cover as any).thumbnailData || ((album.cover as any).hasThumbnail ? `/api/image-studio/${album.cover.id}/thumb` : `/api/image-studio/${album.cover.id}/full`)}
+                      alt={album.label}
+                      className="absolute inset-0 w-full h-full object-cover transition-transform group-hover:scale-105"
+                      loading="lazy"
+                    />
+                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent p-2 pt-8">
+                      <p className="text-white text-xs font-semibold leading-tight line-clamp-2">{album.label}</p>
+                      <p className="text-white/70 text-[10px]">{album.count} photo{album.count === 1 ? "" : "s"}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
             ) : viewMode === "grid" ? (
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-                {filteredImages.map((img) => (
+                {libraryView === "albums" && propertyFilter && (
+                  <button
+                    type="button"
+                    onClick={() => setPropertyFilter("")}
+                    className="col-span-full self-start inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline w-fit"
+                    data-testid="button-back-to-albums"
+                  >
+                    ← All albums
+                  </button>
+                )}
+                {filteredImages.slice(0, visibleCount).map((img) => (
                   <ImageCard
                     key={img.id}
                     image={img}
@@ -1366,19 +2025,21 @@ export default function ImageStudio() {
                       setAiEditPrompt("");
                       setAiEditOpen(true);
                     }}
-                    onDelete={() => {
+                    onDelete={isClientViewer ? undefined : () => {
                       if (confirm("Delete this image?")) deleteMutation.mutate(img.id);
                     }}
                     aiTagging={aiTagMutation.isPending}
                     selectMode={selectMode}
                     selected={selectedIds.has(img.id)}
                     onToggleSelect={() => toggleSelect(img.id)}
+                    crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
+                    version={imageVersions[img.id]}
                   />
                 ))}
               </div>
             ) : (
               <div className="space-y-1">
-                {filteredImages.map((img) => (
+                {filteredImages.slice(0, visibleCount).map((img) => (
                   <ImageListRow
                     key={img.id}
                     image={img}
@@ -1394,14 +2055,23 @@ export default function ImageStudio() {
                       setAiEditPrompt("");
                       setAiEditOpen(true);
                     }}
-                    onDelete={() => {
+                    onDelete={isClientViewer ? undefined : () => {
                       if (confirm("Delete this image?")) deleteMutation.mutate(img.id);
                     }}
                     selectMode={selectMode}
                     selected={selectedIds.has(img.id)}
                     onToggleSelect={() => toggleSelect(img.id)}
+                    crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
+                    version={imageVersions[img.id]}
                   />
                 ))}
+              </div>
+            )}
+            {filteredImages.length > visibleCount && (
+              <div className="flex justify-center py-4">
+                <Button variant="outline" size="sm" onClick={() => setVisibleCount((v) => v + 200)} data-testid="button-load-more-images">
+                  Load more ({(filteredImages.length - visibleCount).toLocaleString()} more)
+                </Button>
               </div>
             )}
           </ScrollArea>
@@ -1461,20 +2131,26 @@ export default function ImageStudio() {
           <div className="space-y-4">
             <div>
               <Label>Property</Label>
-              <Select value={bulkPropertyId} onValueChange={(v) => {
-                setBulkPropertyId(v);
-                const prop = properties.find((p: any) => p.id === v);
-                if (prop) setBulkPropertyAddress(prop.name || prop.address || "");
-              }}>
-                <SelectTrigger data-testid="select-bulk-property">
-                  <SelectValue placeholder="Select a property..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {properties.map((p: any) => (
-                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <PropertyCombobox
+                items={propertyComboboxItems}
+                value={bulkPropertyId}
+                onChange={(id) => {
+                  setBulkPropertyId(id);
+                  const prop = properties.find((p: any) => p.id === id);
+                  if (prop) {
+                    setBulkPropertyAddress(safeStr(prop.name) || safeAddress(prop.address) || "");
+                  }
+                }}
+                onCreated={(prop) => {
+                  // Newly created property via Google lookup — pre-fill
+                  // address so the user doesn't have to retype it.
+                  setBulkPropertyId(prop.id);
+                  setBulkPropertyAddress(prop.name);
+                  queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+                }}
+                placeholder="Search BGP properties…"
+                testId="select-bulk-property"
+              />
             </div>
             <div>
               <Label>Address Override (optional)</Label>
@@ -1529,7 +2205,7 @@ export default function ImageStudio() {
                   <SelectContent>
                     {collections.map((col: any) => (
                       <SelectItem key={col.id} value={col.id}>
-                        {col.name} ({col.image_count || 0} images)
+                        {displayCollectionName(col.name)} ({col.image_count || 0} images)
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1609,11 +2285,11 @@ export default function ImageStudio() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
+      <Dialog open={uploadDialogOpen} onOpenChange={(o) => { setUploadDialogOpen(o); if (!o) { setUploadFolderId(null); setUploadFolderName(""); setFolderDropdownOpen(false); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Upload className="h-5 w-5" /> Upload Images
+              <Upload className="h-5 w-5" /> Upload images
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
@@ -1630,6 +2306,59 @@ export default function ImageStudio() {
                 </SelectContent>
               </Select>
             </div>
+            {(() => {
+              const q = uploadFolderName.trim().toLowerCase();
+              const matches = q
+                ? collections.filter((c: any) => displayCollectionName(c.name).toLowerCase().includes(q)).slice(0, 8)
+                : [];
+              const exact = collections.some((c: any) => displayCollectionName(c.name).toLowerCase() === q);
+              return (
+                <div className="relative">
+                  <Label>Add to folder (optional)</Label>
+                  <Input
+                    placeholder="Search folders, or type a new name…"
+                    value={uploadFolderName}
+                    onChange={(e) => { setUploadFolderName(e.target.value); setUploadFolderId(null); setFolderDropdownOpen(true); }}
+                    onFocus={() => setFolderDropdownOpen(true)}
+                    onBlur={() => setTimeout(() => setFolderDropdownOpen(false), 150)}
+                    data-testid="input-upload-folder"
+                  />
+                  {uploadFolderId ? (
+                    <p className="text-[11px] text-green-600 mt-1">Filing into existing folder</p>
+                  ) : uploadFolderName.trim() ? (
+                    <p className="text-[11px] text-muted-foreground mt-1">Will create a new folder “{uploadFolderName.trim()}”</p>
+                  ) : null}
+                  {folderDropdownOpen && q && (
+                    <div className="absolute z-50 left-0 right-0 mt-1 max-h-56 overflow-y-auto rounded-md border bg-popover shadow-md">
+                      {matches.map((c: any) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onMouseDown={(e) => { e.preventDefault(); setUploadFolderId(c.id); setUploadFolderName(displayCollectionName(c.name)); setFolderDropdownOpen(false); }}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-accent flex items-center gap-2"
+                          data-testid={`upload-folder-option-${c.id}`}
+                        >
+                          <FolderOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                          <span className="truncate">{displayCollectionName(c.name)}</span>
+                          <span className="ml-auto text-xs text-muted-foreground">{c.image_count || 0}</span>
+                        </button>
+                      ))}
+                      {!exact && (
+                        <button
+                          type="button"
+                          onMouseDown={(e) => { e.preventDefault(); setUploadFolderId(null); setFolderDropdownOpen(false); }}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-accent flex items-center gap-2 border-t"
+                          data-testid="upload-folder-create-new"
+                        >
+                          <Plus className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">Create new folder “{uploadFolderName.trim()}”</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             <div>
               <Label>Address (optional)</Label>
               <Input
@@ -1758,6 +2487,7 @@ export default function ImageStudio() {
                   setStreetViewFov(90);
                 }}
                 placeholder="Start typing an address..."
+                resolveProperty
               />
               <p className="mt-1 text-[11px] text-muted-foreground">
                 Drag the panorama to aim the camera, then save. We capture exactly the view you see.
@@ -2056,7 +2786,7 @@ export default function ImageStudio() {
             onClick={(e) => e.stopPropagation()}
           >
             <img
-              src={`/api/image-studio/${selectedImage.id}/full`}
+              src={`/api/image-studio/${selectedImage.id}/full${imageVersions[selectedImage.id] ? `?v=${imageVersions[selectedImage.id]}` : ""}`}
               alt={selectedImage.fileName}
               className="max-w-full max-h-[75vh] object-contain rounded"
               data-testid="img-lightbox-full"
@@ -2072,6 +2802,15 @@ export default function ImageStudio() {
               </div>
               {(selectedImage as any).address && (
                 <p className="text-xs text-white/60"><MapPin className="h-3 w-3 inline mr-1" />{(selectedImage as any).address}</p>
+              )}
+              {(selectedImage as any).propertyId && (
+                <a
+                  href={`/properties/${(selectedImage as any).propertyId}`}
+                  className="text-xs text-blue-300 hover:underline inline-flex items-center gap-1"
+                  data-testid="link-lightbox-property"
+                >
+                  <ExternalLink className="h-3 w-3" /> Open property page
+                </a>
               )}
               {selectedImage.description && (
                 <p className="text-sm text-white/70 max-w-lg">{selectedImage.description}</p>
@@ -2091,8 +2830,19 @@ export default function ImageStudio() {
                 }} data-testid="button-lightbox-ai-edit">
                   <Sparkles className="h-3 w-3 mr-1" /> AI Touch Up
                 </Button>
+                {imageVersions[selectedImage.id] && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => revertMutation.mutate(selectedImage.id)}
+                    disabled={revertMutation.isPending}
+                    data-testid="button-lightbox-undo"
+                  >
+                    <RotateCcw className="h-3 w-3 mr-1" /> Undo
+                  </Button>
+                )}
                 <a
-                  href={`/api/image-studio/${selectedImage.id}/full`}
+                  href={`/api/image-studio/${selectedImage.id}/full${imageVersions[selectedImage.id] ? `?v=${imageVersions[selectedImage.id]}` : ""}`}
                   download={selectedImage.fileName}
                   className="inline-flex"
                 >
@@ -2100,6 +2850,7 @@ export default function ImageStudio() {
                     <Download className="h-3 w-3 mr-1" /> Download
                   </Button>
                 </a>
+                {!isClientViewer && (
                 <Button
                   size="sm"
                   variant="destructive"
@@ -2110,6 +2861,7 @@ export default function ImageStudio() {
                 >
                   <Trash2 className="h-3 w-3 mr-1" /> Delete
                 </Button>
+                )}
               </div>
             </div>
           </div>
@@ -2230,7 +2982,137 @@ export default function ImageStudio() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={bulkAiOpen} onOpenChange={(o) => { if (!bulkAiProgress.running) setBulkAiOpen(o); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5" /> AI Touch Up · {selectedIds.size} images
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              The same enhancement is applied to every selected image — handy for a set of
+              street angles you want graded consistently.
+            </p>
+            <div>
+              <Label>What changes would you like?</Label>
+              <Textarea
+                placeholder="e.g. Re-light at golden-hour dusk, warmer tone, clean blue sky, remove parked cars"
+                value={bulkAiPrompt}
+                onChange={(e) => setBulkAiPrompt(e.target.value)}
+                rows={3}
+                disabled={bulkAiProgress.running}
+                data-testid="input-bulk-ai-edit-prompt"
+              />
+            </div>
+            {bulkAiProgress.running ? (
+              <p className="text-sm flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Editing {bulkAiProgress.done + 1} of {bulkAiProgress.total}… (~25s each, please keep this open)
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Each image is edited in turn (~25s each), so {selectedIds.size} images takes a few minutes.
+                Originals are kept — every image can still be undone individually.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkAiOpen(false)} disabled={bulkAiProgress.running} data-testid="button-bulk-ai-cancel">Cancel</Button>
+            <Button
+              onClick={runBulkAiEdit}
+              disabled={!bulkAiPrompt.trim() || bulkAiProgress.running || selectedIds.size === 0}
+              data-testid="button-bulk-ai-submit"
+            >
+              {bulkAiProgress.running ? (
+                <><Loader2 className="h-4 w-4 animate-spin mr-1" /> {bulkAiProgress.done}/{bulkAiProgress.total}…</>
+              ) : (
+                <><Sparkles className="h-4 w-4 mr-1" /> Apply to {selectedIds.size}</>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      </div>
     </PageLayout>
+  );
+}
+
+// Resolve the CRM rows this image is linked to. Returns an array of
+// {label, href} for clickable chips — property first (strong signal:
+// the image was directly assigned), brand second (resolved by name
+// from crm_companies). Used by both the grid card and list row so
+// link rendering stays consistent.
+function resolveCrmLinks(
+  image: ImageStudioImage,
+  propertyLookup: Map<string, { id: string; name: string }>,
+  brandLookup: Map<string, { id: string; name: string }>,
+): Array<{ kind: "property" | "brand"; label: string; href: string }> {
+  const out: Array<{ kind: "property" | "brand"; label: string; href: string }> = [];
+  const propertyId = (image as any).propertyId || (image as any).property_id;
+  if (propertyId) {
+    const p = propertyLookup.get(propertyId);
+    if (p) out.push({ kind: "property", label: p.name, href: `/properties/${p.id}` });
+    else if ((image as any).address) {
+      // Not in the lookup but we still have the id — link to it by id, label
+      // with the address. If the id is somehow blank, href is "" so the chip
+      // renders as plain text instead of a broken link.
+      const id = String(propertyId).trim();
+      out.push({ kind: "property", label: (image as any).address, href: id ? `/properties/${id}` : "" });
+    }
+  }
+  const brandName = (image as any).brandName || (image as any).brand_name;
+  if (brandName) {
+    const b = brandLookup.get(String(brandName).toLowerCase().trim());
+    if (b) out.push({ kind: "brand", label: b.name, href: `/companies/${b.id}` });
+  }
+  return out;
+}
+
+function CrmLinkChip({
+  link, dark = false, onClick,
+}: {
+  link: { kind: "property" | "brand"; label: string; href: string };
+  dark?: boolean;
+  onClick?: (e: React.MouseEvent) => void;
+}) {
+  const isProp = link.kind === "property";
+  // Property chips use building icon + amber tint, brand chips use tag + emerald.
+  // On the dark hover overlay we use translucent backgrounds; on the row /
+  // light card we use bright pill colours so the link reads as clickable.
+  const cls = dark
+    ? `text-[10px] h-5 px-1.5 inline-flex items-center gap-1 rounded-md transition-colors ${isProp ? "bg-amber-500/85 text-white hover:bg-amber-500" : "bg-emerald-600/85 text-white hover:bg-emerald-600"}`
+    : `text-[10px] h-5 px-1.5 inline-flex items-center gap-1 rounded-md transition-colors ${isProp ? "bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100" : "bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100"}`;
+  const inner = (
+    <>
+      {isProp ? <Building2 className="w-2.5 h-2.5 shrink-0" /> : <Tag className="w-2.5 h-2.5 shrink-0" />}
+      <span className="truncate max-w-[140px]">{link.label}</span>
+    </>
+  );
+  // No href means we can't resolve a target page (e.g. property linked by
+  // address but with no id) — render plain text rather than a broken link.
+  if (!link.href) {
+    return (
+      <span
+        className={cls.replace(/ hover:[^\s]+/g, "") + " cursor-default opacity-90"}
+        data-testid={`crm-link-${link.kind}`}
+        title={link.label}
+      >
+        {inner}
+      </span>
+    );
+  }
+  return (
+    <WouterLink
+      href={link.href}
+      onClick={(e) => { e.stopPropagation(); onClick?.(e); }}
+      className={cls}
+      data-testid={`crm-link-${link.kind}`}
+      title={`Open ${link.kind === "property" ? "property page" : "brand profile"}`}
+    >
+      {inner}
+    </WouterLink>
   );
 }
 
@@ -2245,18 +3127,27 @@ function ImageCard({
   selectMode = false,
   selected = false,
   onToggleSelect,
+  crmLinks = [],
+  version,
 }: {
   image: ImageStudioImage;
   onView: () => void;
   onEdit: () => void;
   onAiTag: () => void;
   onAiEdit: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
   aiTagging: boolean;
   selectMode?: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
+  crmLinks?: Array<{ kind: "property" | "brand"; label: string; href: string }>;
+  version?: number;
 }) {
+  // /thumb is cached `immutable` for a day, so after an AI edit the grid keeps
+  // showing the stale thumbnail until the cache expires. When we know the
+  // image was just edited (version token), bust the cache so it repaints —
+  // same trick the lightbox uses.
+  const cacheBust = version ? `?v=${version}` : "";
   return (
     <div
       className={`group relative rounded-lg overflow-hidden border bg-card cursor-pointer transition-all ${selected ? "ring-2 ring-primary" : "hover:ring-2 hover:ring-primary/50"}`}
@@ -2269,26 +3160,47 @@ function ImageCard({
         </div>
       )}
       <div className="aspect-square" onClick={selectMode ? undefined : onView}>
-        {image.thumbnailData ? (
-          <img
-            src={image.thumbnailData}
-            alt={image.fileName}
-            className="w-full h-full object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center bg-muted">
-            <ImageIconLucide className="h-8 w-8 text-muted-foreground/30" />
-          </div>
-        )}
+        <img
+          src={image.thumbnailData || ((image as any).hasThumbnail ? `/api/image-studio/${image.id}/thumb${cacheBust}` : `/api/image-studio/${image.id}/full${cacheBust}`)}
+          alt={image.fileName}
+          className="w-full h-full object-cover"
+          loading="lazy"
+          onError={(e) => {
+            const t = e.currentTarget;
+            if (!t.dataset.fallback) {
+              t.dataset.fallback = "1";
+              t.src = `/api/image-studio/${image.id}/full${cacheBust}`;
+            } else {
+              t.style.display = "none";
+              const parent = t.parentElement;
+              if (parent && !parent.querySelector(".img-fallback-icon")) {
+                const div = document.createElement("div");
+                div.className = "img-fallback-icon w-full h-full flex items-center justify-center bg-muted";
+                div.innerHTML = '<svg class="h-8 w-8 text-muted-foreground/30" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
+                parent.appendChild(div);
+              }
+            }
+          }}
+        />
       </div>
       <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+      {/* Always-visible CRM link chips. Property / brand the image is
+          linked to render as clickable amber / emerald pills in the
+          top-left corner so the link is obvious without hovering. The
+          stop-propagation on the chip's click means navigating doesn't
+          also trigger the tile's onView. */}
+      {crmLinks.length > 0 && (
+        <div className="absolute top-1.5 left-1.5 z-10 flex flex-col items-start gap-1 max-w-[80%]">
+          {crmLinks.map((l, i) => (
+            <CrmLinkChip key={i} link={l} dark />
+          ))}
+        </div>
+      )}
       <div className="absolute bottom-0 left-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity">
         <p className="text-white text-xs font-medium truncate">{(image as any).brandName || image.fileName}</p>
         <div className="flex items-center gap-1 mt-1 flex-wrap">
           <Badge variant="secondary" className="text-[10px] h-4 px-1">{image.category}</Badge>
           {image.area && <Badge variant="outline" className="text-[10px] h-4 px-1 text-white border-white/30">{image.area}</Badge>}
-          {(image as any).address && <Badge variant="outline" className="text-[10px] h-4 px-1 text-white/70 border-white/20 truncate max-w-[120px]">{(image as any).address}</Badge>}
         </div>
       </div>
       <div className="absolute top-1 left-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex justify-end gap-0.5 flex-wrap">
@@ -2304,9 +3216,11 @@ function ImageCard({
         <Button size="icon" variant="secondary" className="h-5 w-5 rounded-sm" onClick={(e) => { e.stopPropagation(); onAiEdit(); }} data-testid={`button-ai-edit-${image.id}`}>
           <Sparkles className="h-2.5 w-2.5" />
         </Button>
-        <Button size="icon" variant="destructive" className="h-5 w-5 rounded-sm" onClick={(e) => { e.stopPropagation(); onDelete(); }} data-testid={`button-delete-${image.id}`}>
-          <Trash2 className="h-2.5 w-2.5" />
-        </Button>
+        {onDelete && (
+          <Button size="icon" variant="destructive" className="h-5 w-5 rounded-sm" onClick={(e) => { e.stopPropagation(); onDelete(); }} data-testid={`button-delete-${image.id}`}>
+            <Trash2 className="h-2.5 w-2.5" />
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -2322,17 +3236,22 @@ function ImageListRow({
   selectMode = false,
   selected = false,
   onToggleSelect,
+  crmLinks = [],
+  version,
 }: {
   image: ImageStudioImage;
   onView: () => void;
   onEdit: () => void;
   onAiTag: () => void;
   onAiEdit: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
   selectMode?: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
+  crmLinks?: Array<{ kind: "property" | "brand"; label: string; href: string }>;
+  version?: number;
 }) {
+  const cacheBust = version ? `?v=${version}` : "";
   return (
     <div
       className={`flex items-center gap-3 p-2 rounded-lg border cursor-pointer transition-colors ${selected ? "bg-primary/10 border-primary" : "hover:bg-muted/50"}`}
@@ -2340,13 +3259,18 @@ function ImageListRow({
       data-testid={`row-image-${image.id}`}
     >
       {selectMode && (
-        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${selected ? "bg-primary border-primary" : "border-gray-400"}`}>
+        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${selected ? "bg-primary border-primary" : "border-border"}`}>
           {selected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
         </div>
       )}
       <div className="h-12 w-12 rounded overflow-hidden flex-shrink-0">
-        {image.thumbnailData ? (
-          <img src={image.thumbnailData} alt={image.fileName} className="h-full w-full object-cover" />
+        {image.thumbnailData || (image as any).hasThumbnail ? (
+          <img
+            src={image.thumbnailData || `/api/image-studio/${image.id}/thumb${cacheBust}`}
+            alt={image.fileName}
+            loading="lazy"
+            className="h-full w-full object-cover"
+          />
         ) : (
           <div className="h-full w-full bg-muted flex items-center justify-center">
             <ImageIconLucide className="h-4 w-4 text-muted-foreground/30" />
@@ -2356,9 +3280,13 @@ function ImageListRow({
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium truncate">{(image as any).brandName || image.fileName}</p>
         <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+          {/* CRM links first so the relationship is the first thing
+              the eye lands on. Clicking opens the property page or
+              brand profile — the row's own click handler is bypassed
+              by CrmLinkChip's stopPropagation. */}
+          {crmLinks.map((l, i) => <CrmLinkChip key={i} link={l} />)}
           <Badge variant="secondary" className="text-[10px] h-4 px-1">{image.category}</Badge>
           {image.area && <Badge variant="outline" className="text-[10px] h-4 px-1">{image.area}</Badge>}
-          {(image as any).address && <Badge variant="outline" className="text-[10px] h-4 px-1 truncate max-w-[150px]">{(image as any).address}</Badge>}
           {image.source && image.source !== "upload" && (
             <Badge variant="outline" className="text-[10px] h-4 px-1">{image.source}</Badge>
           )}
@@ -2378,9 +3306,11 @@ function ImageListRow({
         <Button size="icon" variant="ghost" className="h-7 w-7" onClick={onAiEdit} data-testid={`button-ai-edit-list-${image.id}`}>
           <Sparkles className="h-3 w-3" />
         </Button>
-        <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={onDelete} data-testid={`button-delete-list-${image.id}`}>
-          <Trash2 className="h-3 w-3" />
-        </Button>
+        {onDelete && (
+          <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={onDelete} data-testid={`button-delete-list-${image.id}`}>
+            <Trash2 className="h-3 w-3" />
+          </Button>
+        )}
       </div>
     </div>
   );

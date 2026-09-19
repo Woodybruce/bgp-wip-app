@@ -48,4 +48,8 @@ Create a new Railway service with root directory `marketing/`. The included
 - Photography: all image placeholders (`Placeholder` component).
 - Typeface is Archivo (Google Fonts) as a stand-in — confirm the brand
   typeface with the designer.
-- Newsletter signup and social links are visual only — no backend yet.
+- Newsletter signup is live: the footer form posts to the dashboard's
+  `POST /api/public/newsletter-signup`, which adds the address to the Resend
+  "General" audience and notifies the office (Resend env vars on the dashboard
+  service). bruces.app inbound mail is forwarded via the dashboard's
+  `/api/public/resend-inbound` webhook.

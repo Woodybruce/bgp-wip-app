@@ -113,14 +113,45 @@ export const FOLDER_TEMPLATES: FolderTemplate[] = [
   {
     id: "lease_advisory",
     name: "Lease Advisory",
-    description: "Advisory mandate — rent review, lease renewal, restructure. (Team to confirm structure.)",
+    description: "Advisory mandate — rent review, lease renewal, restructure.",
     tree: [
-      { name: "01 Lease Pack", autoFillFrom: "infotrack_leases" },
-      { name: "02 Evidence", autoFillFrom: "pathway_comps" },
-      { name: "03 Landlord Correspondence", autoFillFrom: "pathway_emails" },
-      { name: "04 Reports & Advice", autoFillFrom: "manual" },
-      { name: "05 Tenant KYC", autoFillFrom: "companies_house_kyc" },
-      { name: "06 Completion", autoFillFrom: "manual" },
+      {
+        name: "01 Lease Documents",
+        children: [
+          { name: "Lease", autoFillFrom: "infotrack_leases" },
+          { name: "Agreement for Lease", autoFillFrom: "manual" },
+          { name: "Deed of Variation", autoFillFrom: "manual" },
+          { name: "Licence to Alter", autoFillFrom: "manual" },
+          { name: "Licence to Assign", autoFillFrom: "manual" },
+        ],
+      },
+      {
+        name: "02 Rent Reviews",
+        children: [
+          { name: "Lease Summary", autoFillFrom: "manual" },
+          { name: "Comparable Evidence Schedule", autoFillFrom: "pathway_comps" },
+          { name: "Devaluation (of subject and comps)", autoFillFrom: "manual" },
+          { name: "Calderbank (Expert or Arbitrator)", autoFillFrom: "manual" },
+          { name: "Memorandum", autoFillFrom: "manual" },
+        ],
+      },
+      {
+        name: "03 Lease Renewals",
+        children: [
+          { name: "Notices (Section 25, 26 or 27)", autoFillFrom: "manual" },
+          { name: "Timeline with Notice Deadlines", autoFillFrom: "manual" },
+          { name: "Heads of Terms", autoFillFrom: "manual" },
+        ],
+      },
+      {
+        name: "04 Other",
+        children: [
+          { name: "Correspondence", autoFillFrom: "pathway_emails" },
+          { name: "Service Charge", autoFillFrom: "manual" },
+          { name: "Turnover Information", autoFillFrom: "manual" },
+          { name: "Market Commentary", autoFillFrom: "manual" },
+        ],
+      },
     ],
   },
 ];

@@ -88,7 +88,7 @@ export default function (api: any) {
     parameters: Type.Object({
       team: Type.Optional(
         Type.String({
-          description: "Filter news by team relevance: Investment, London Leasing, Lease Advisory, National Leasing, Tenant Rep, or Development",
+          description: "Filter news by team relevance: Investment, London F&B, London Retail, Lease Advisory, National Leasing, Tenant Rep, or Development",
         })
       ),
       limit: Type.Optional(Type.Number({ description: "Number of articles to return (default 10)" })),

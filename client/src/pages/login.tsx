@@ -1,25 +1,58 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
-import { LogIn, Loader2, Eye, EyeOff } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import bgpLogo from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 
 interface LoginPageProps {
   onLogin: () => void;
 }
 
+// Two login paths: Microsoft 365 SSO for BGP staff, and an email/password
+// form for clients and guests without a @brucegillinghampollard.com
+// Microsoft account (e.g. Landsec users). The guest form is collapsed
+// behind a button so staff still default to SSO; it posts to the
+// long-standing /api/auth/login endpoint.
 export default function LoginPage({ onLogin }: LoginPageProps) {
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [fullName, setFullName] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
   const [isSsoLoading, setIsSsoLoading] = useState(false);
+  const [showGuest, setShowGuest] = useState(false);
+  const [guestEmail, setGuestEmail] = useState("");
+  const [guestPassword, setGuestPassword] = useState("");
+  const [isGuestLoading, setIsGuestLoading] = useState(false);
   const { toast } = useToast();
+
+  async function handleGuestLogin(e: React.FormEvent) {
+    e.preventDefault();
+    if (!guestEmail.trim() || !guestPassword) return;
+    setIsGuestLoading(true);
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ username: guestEmail.trim(), password: guestPassword }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.token) {
+        localStorage.setItem("bgp_auth_token", data.token);
+        onLogin();
+        return;
+      }
+      toast({
+        title: "Sign-in failed",
+        description: data.message || "Check your email and password and try again.",
+        variant: "destructive",
+      });
+    } catch {
+      toast({
+        title: "Connection error",
+        description: "Could not reach the server. Check your internet connection and try again.",
+        variant: "destructive",
+      });
+    }
+    setIsGuestLoading(false);
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -35,8 +68,8 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         credentials: "include",
         body: JSON.stringify({ code: ssoCode }),
       })
-        .then(res => res.json())
-        .then(data => {
+        .then((res) => res.json())
+        .then((data) => {
           if (data.token) {
             localStorage.setItem("bgp_auth_token", data.token);
             onLogin();
@@ -66,70 +99,6 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setIsLoading(true);
-
-    try {
-      if (mode === "signup") {
-        // Client-side domain check — server enforces it again, this is
-        // just for a nicer error message before we hit the network.
-        if (!username.toLowerCase().endsWith("@brucegillinghampollard.com")) {
-          toast({ title: "Domain not allowed", description: "Sign-up is restricted to @brucegillinghampollard.com email addresses.", variant: "destructive" });
-          setIsLoading(false);
-          return;
-        }
-        if (!fullName.trim()) {
-          toast({ title: "Name required", description: "Please enter your full name.", variant: "destructive" });
-          setIsLoading(false);
-          return;
-        }
-        if (password.length < 8) {
-          toast({ title: "Password too short", description: "At least 8 characters.", variant: "destructive" });
-          setIsLoading(false);
-          return;
-        }
-        const res = await apiRequest("POST", "/api/auth/register", {
-          email: username.toLowerCase(),
-          password,
-          name: fullName.trim(),
-        });
-        const data = await res.json();
-        if (data.token) localStorage.setItem("bgp_auth_token", data.token);
-        toast({ title: "Welcome to BGP", description: "Your account is ready." });
-        onLogin();
-        return;
-      }
-
-      const res = await apiRequest("POST", "/api/auth/login", { username: username.toLowerCase(), password });
-      const data = await res.json();
-      if (data.token) {
-        localStorage.setItem("bgp_auth_token", data.token);
-      }
-      onLogin();
-    } catch (err: any) {
-      const msg = err?.message || "";
-      const isNetwork = msg.includes("Failed to fetch") || msg.includes("Load failed") || msg.includes("NetworkError");
-      const signupSpecific = mode === "signup" ? {
-        title: "Sign-up failed",
-        description: msg.includes("409") || msg.toLowerCase().includes("already exists")
-          ? "An account already exists for this email. Sign in instead."
-          : msg.includes("403") || msg.toLowerCase().includes("only @brucegillinghampollard")
-          ? "Only @brucegillinghampollard.com email addresses can register."
-          : "Could not create account. Please try again.",
-      } : null;
-      toast({
-        title: signupSpecific?.title || (isNetwork ? "Connection error" : "Login failed"),
-        description: signupSpecific?.description || (isNetwork
-          ? "Could not reach the server. Check your internet connection and try again."
-          : "Invalid email or password. Please try again."),
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  }
 
   async function handleMicrosoftLogin() {
     setIsSsoLoading(true);
@@ -170,7 +139,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
     let outcome = await attemptSso();
     if (outcome.kind === "network_error") {
-      await new Promise(r => setTimeout(r, 1500));
+      await new Promise((r) => setTimeout(r, 1500));
       outcome = await attemptSso();
     }
 
@@ -225,119 +194,70 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
               <Loader2 className="w-4 h-4 mr-3 animate-spin" />
             ) : (
               <svg className="w-5 h-5 mr-3" viewBox="0 0 21 21" fill="none">
-                <rect x="1" y="1" width="9" height="9" fill="#F25022"/>
-                <rect x="11" y="1" width="9" height="9" fill="#7FBA00"/>
-                <rect x="1" y="11" width="9" height="9" fill="#00A4EF"/>
-                <rect x="11" y="11" width="9" height="9" fill="#FFB900"/>
+                <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+                <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+                <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+                <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
               </svg>
             )}
             Sign in with Microsoft
           </Button>
 
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t border-neutral-200 dark:border-neutral-800" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-white dark:bg-neutral-950 px-3 text-neutral-400">or</span>
-            </div>
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px bg-neutral-200 dark:bg-neutral-800" />
+            <span className="text-[11px] uppercase tracking-wide text-neutral-400">or</span>
+            <div className="flex-1 h-px bg-neutral-200 dark:bg-neutral-800" />
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {mode === "signup" && (
-              <div className="space-y-2">
-                <Label htmlFor="fullname" className="text-xs uppercase tracking-wider text-neutral-500">Full name</Label>
-                <Input
-                  id="fullname"
-                  data-testid="input-fullname"
-                  type="text"
-                  placeholder="Your full name"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  autoComplete="name"
-                  className="h-11 border-neutral-200 dark:border-neutral-800"
-                />
-              </div>
-            )}
-            <div className="space-y-2">
-              <Label htmlFor="username" className="text-xs uppercase tracking-wider text-neutral-500">Email</Label>
-              <Input
-                id="username"
-                data-testid="input-username"
-                type="email"
-                placeholder="name@brucegillinghampollard.com"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                autoComplete={mode === "signup" ? "email" : "email"}
-                className="h-11 border-neutral-200 dark:border-neutral-800"
-              />
-              {mode === "signup" && (
-                <p className="text-[11px] text-neutral-500">Only @brucegillinghampollard.com addresses can register.</p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password" className="text-xs uppercase tracking-wider text-neutral-500">Password</Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  data-testid="input-password"
-                  type={showPassword ? "text" : "password"}
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                  className="h-11 pr-10 border-neutral-200 dark:border-neutral-800"
-                />
-                <button
-                  type="button"
-                  data-testid="button-toggle-password"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"
-                  tabIndex={-1}
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
+          {!showGuest ? (
             <Button
-              type="submit"
-              className="w-full h-11 bg-black hover:bg-neutral-800 text-white dark:bg-white dark:hover:bg-neutral-200 dark:text-black font-normal tracking-wide"
-              disabled={isLoading || !username || !password || (mode === "signup" && !fullName)}
-              data-testid="button-login"
+              type="button"
+              variant="ghost"
+              className="w-full h-10 font-normal text-neutral-600 dark:text-neutral-300"
+              onClick={() => setShowGuest(true)}
+              data-testid="button-show-guest-login"
             >
-              {isLoading ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <LogIn className="w-4 h-4 mr-2" />
-              )}
-              {mode === "signup" ? "Create account" : "Sign In"}
+              Client / guest sign in
             </Button>
-            <div className="text-center text-xs text-neutral-500">
-              {mode === "signin" ? (
-                <>New to BGP?{" "}
-                  <button
-                    type="button"
-                    onClick={() => setMode("signup")}
-                    className="text-black dark:text-white underline underline-offset-2 hover:text-neutral-700"
-                    data-testid="button-switch-to-signup"
-                  >
-                    Create an account
-                  </button>
-                </>
-              ) : (
-                <>Already have an account?{" "}
-                  <button
-                    type="button"
-                    onClick={() => setMode("signin")}
-                    className="text-black dark:text-white underline underline-offset-2 hover:text-neutral-700"
-                    data-testid="button-switch-to-signin"
-                  >
-                    Sign in
-                  </button>
-                </>
-              )}
-            </div>
-          </form>
+          ) : (
+            <form onSubmit={handleGuestLogin} className="space-y-3" data-testid="form-guest-login">
+              <Input
+                type="email"
+                autoComplete="email"
+                placeholder="Email address"
+                value={guestEmail}
+                onChange={(e) => setGuestEmail(e.target.value)}
+                autoFocus
+                data-testid="input-guest-email"
+              />
+              <Input
+                type="password"
+                autoComplete="current-password"
+                placeholder="Password"
+                value={guestPassword}
+                onChange={(e) => setGuestPassword(e.target.value)}
+                data-testid="input-guest-password"
+              />
+              <Button
+                type="submit"
+                className="w-full h-10"
+                disabled={isGuestLoading || !guestEmail.trim() || !guestPassword}
+                data-testid="button-guest-login"
+              >
+                {isGuestLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Sign in
+              </Button>
+              <p className="text-[11px] text-center text-neutral-500">
+                For clients and guests without a BGP Microsoft account.<br />
+                No login yet? Ask your BGP contact to set one up.
+              </p>
+            </form>
+          )}
+
+          <p className="text-[11px] text-center text-neutral-500 pt-2">
+            BGP staff — use your @brucegillinghampollard.com Microsoft account.<br />
+            New starters — ask IT to provision your Entra account.
+          </p>
         </div>
       </div>
     </div>

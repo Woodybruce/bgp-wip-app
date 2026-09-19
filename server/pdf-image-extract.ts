@@ -109,6 +109,15 @@ export async function rasterisePdfPage(args: {
     if (!file) return null;
     return fs.readFileSync(path.join(tmpDir, file));
   } catch (err: any) {
+    // Asking for a page past the end of the PDF is an EXPECTED outcome —
+    // every caller iterates `for p=1..N { if !page break }` to discover
+    // the page count, so returning null silently is the contract. Logging
+    // these as warnings was flooding production logs (one per brochure
+    // import, dozens per minute).
+    const msg = String(err?.stderr || err?.message || err);
+    if (/can not be after the last page|page.*does not exist/i.test(msg)) {
+      return null;
+    }
     console.warn("[pdf-image-extract] pdftoppm failed:", err?.message || err);
     return null;
   } finally {

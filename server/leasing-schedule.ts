@@ -1,7 +1,15 @@
 import { Router, Request, Response } from "express";
+import multer from "multer";
 import { requireAuth } from "./auth";
+import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
+import { normUnitSql, resolveBrandIdSubquery } from "./tenant-brand-resolver";
 
 const router = Router();
+
+const xlsxUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 },
+});
 
 let dbPool: any = null;
 async function getPool() {
@@ -24,6 +32,14 @@ async function checkPropertyAccess(pool: any, req: Request, propertyId: string):
   if (!user) return { allowed: false, user: null };
   if (user.is_admin) return { allowed: true, user };
 
+  // Client logins are confined to their own company's properties regardless
+  // of the per-property privacy flag. (Landsec audit.)
+  {
+    const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+    const scope = await resolveCompanyScope(req as any);
+    if (scope) return { allowed: await isPropertyInScope(scope, propertyId), user };
+  }
+
   const privacyCheck = await pool.query(
     "SELECT leasing_privacy_enabled FROM crm_properties WHERE id = $1",
     [propertyId]
@@ -39,7 +55,7 @@ async function checkPropertyAccess(pool: any, req: Request, propertyId: string):
 
 async function logAudit(pool: any, params: {
   unitId?: string; propertyId: string; userId: string; userName: string;
-  action: string; fieldName?: string; oldValue?: string; newValue?: string;
+  action: string; fieldName?: string; oldValue?: string | null; newValue?: string | null;
 }) {
   await pool.query(
     `INSERT INTO leasing_schedule_audit (unit_id, property_id, user_id, user_name, action, field_name, old_value, new_value)
@@ -55,14 +71,35 @@ router.get("/api/leasing-schedule/properties", requireAuth, async (req, res) => 
     const user = await getUserInfo(pool, req);
     if (!user) return res.status(401).json({ error: "Unauthorized" });
 
+    // Client logins see only their own portfolio here, not every BGP-managed
+    // property. (Landsec audit.)
+    const { resolveCompanyScope } = await import("./company-scope");
+    const lsPropsScope = await resolveCompanyScope(req as any);
+    if (lsPropsScope) {
+      const scoped = await pool.query(`
+        SELECT p.id, p.name, p.address, p.asset_class, p.bgp_engagement, p.leasing_privacy_enabled,
+          c.name as landlord_name, c.id as landlord_id,
+          COUNT(CASE WHEN COALESCE(u.status, '') <> 'Archived' THEN 1 END)::int as unit_count,
+          COUNT(CASE WHEN u.status = 'Occupied' THEN 1 END)::int as occupied_count,
+          COUNT(CASE WHEN u.status = 'Vacant' THEN 1 END)::int as vacant_count,
+          COUNT(CASE WHEN u.lease_expiry IS NOT NULL AND u.lease_expiry < NOW() + INTERVAL '12 months' AND COALESCE(u.status, '') <> 'Archived' THEN 1 END)::int as expiring_soon
+        FROM crm_properties p
+        JOIN leasing_schedule_units u ON u.property_id = p.id
+        LEFT JOIN crm_companies c ON p.landlord_id = c.id
+        WHERE p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+        GROUP BY p.id, p.name, p.address, p.asset_class, p.bgp_engagement, p.leasing_privacy_enabled, c.name, c.id
+        ORDER BY p.name`, [lsPropsScope]);
+      return res.json(scoped.rows);
+    }
+
     let query = `
       SELECT p.id, p.name, p.address, p.asset_class, p.bgp_engagement,
         p.leasing_privacy_enabled,
         c.name as landlord_name, c.id as landlord_id,
-        COUNT(CASE WHEN u.status != 'Archived' THEN 1 END)::int as unit_count,
+        COUNT(CASE WHEN COALESCE(u.status, '') <> 'Archived' THEN 1 END)::int as unit_count,
         COUNT(CASE WHEN u.status = 'Occupied' THEN 1 END)::int as occupied_count,
         COUNT(CASE WHEN u.status = 'Vacant' THEN 1 END)::int as vacant_count,
-        COUNT(CASE WHEN u.lease_expiry IS NOT NULL AND u.lease_expiry < NOW() + INTERVAL '12 months' AND u.status != 'Archived' THEN 1 END)::int as expiring_soon
+        COUNT(CASE WHEN u.lease_expiry IS NOT NULL AND u.lease_expiry < NOW() + INTERVAL '12 months' AND COALESCE(u.status, '') <> 'Archived' THEN 1 END)::int as expiring_soon
       FROM crm_properties p
       JOIN leasing_schedule_units u ON u.property_id = p.id
       LEFT JOIN crm_companies c ON p.landlord_id = c.id
@@ -90,14 +127,38 @@ router.get("/api/leasing-schedule/properties", requireAuth, async (req, res) => 
 router.get("/api/leasing-schedule/property/:propertyId", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "You do not have access to this property's leasing schedule" });
 
+    // Join the source Tenancy Schedule row (when linked) so the Existing
+    // column shows live data — tenant name + lease dates flow from tenancy.
+    // Match by tenancy_unit_id FK first, fall back to unit_number on the
+    // same property for older rows that pre-date the FK.
     const result = await pool.query(`
-      SELECT u.*, p.name as property_name, p.leasing_privacy_enabled, c.name as landlord_name
+      SELECT u.*,
+        p.name as property_name,
+        p.leasing_privacy_enabled,
+        c.name as landlord_name,
+        COALESCE(t.tenant_name, u.tenant_name)     AS live_tenant_name,
+        t.trading_name                             AS live_trading_name,
+        COALESCE(t.lease_expiry, u.lease_expiry)   AS live_lease_expiry,
+        COALESCE(t.break_date,   u.lease_break)    AS live_lease_break,
+        COALESCE(t.next_review_date, u.rent_review) AS live_rent_review,
+        t.id        AS resolved_tenancy_unit_id,
+        tc.id       AS resolved_tenant_company_id,
+        tc.name     AS resolved_tenant_company_name
       FROM leasing_schedule_units u
       JOIN crm_properties p ON u.property_id = p.id
       LEFT JOIN crm_companies c ON p.landlord_id = c.id
+      LEFT JOIN tenancy_schedule_units t
+        ON (u.tenancy_unit_id IS NOT NULL AND t.id = u.tenancy_unit_id)
+        OR (u.tenancy_unit_id IS NULL
+            AND t.property_id = u.property_id
+            AND lower(trim(t.unit_number)) = lower(trim(COALESCE(u.unit_name, ''))))
+      LEFT JOIN crm_companies tc
+        ON (tc.id = u.tenant_company_id AND tc.merged_into_id IS NULL)
+        OR (u.tenant_company_id IS NULL
+            AND tc.id = ${resolveBrandIdSubquery("COALESCE(t.trading_name, t.tenant_name, u.tenant_name, '')")})
       WHERE u.property_id = $1
       ORDER BY u.sort_order, u.zone, u.unit_name
     `, [req.params.propertyId]);
@@ -109,6 +170,27 @@ router.get("/api/leasing-schedule/property/:propertyId", requireAuth, async (req
 
 router.get("/api/leasing-schedule/company/:companyId", requireAuth, async (req, res) => {
   try {
+    const { resolveCompanyScope: rcs, isClientVisibleBrand } = await import("./company-scope");
+    const lsScope = await rcs(req as any);
+    if (lsScope && lsScope !== req.params.companyId) {
+      // Client viewing a brand profile: show that brand's footprint across
+      // the CLIENT'S schemes only (tenant of, or targeted at, a unit on a
+      // property they own) — never other landlords' schedules.
+      if (!(await isClientVisibleBrand(String(req.params.companyId), lsScope))) {
+        return res.status(403).json({ error: "Not available for this account" });
+      }
+      const scopedPool = await getPool();
+      const scoped = await scopedPool.query(
+        `SELECT u.*, p.name as property_name
+           FROM leasing_schedule_units u
+           JOIN crm_properties p ON u.property_id = p.id
+          WHERE p.landlord_id = $1
+            AND (u.tenant_company_id = $2 OR $2 = ANY(COALESCE(u.target_company_ids, '{}')))
+          ORDER BY p.name, u.sort_order, u.zone, u.unit_name`,
+        [lsScope, req.params.companyId]
+      );
+      return res.json(scoped.rows);
+    }
     const pool = await getPool();
     const user = await getUserInfo(pool, req);
     if (!user) return res.status(401).json({ error: "Unauthorized" });
@@ -152,7 +234,10 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
       "lease_expiry", "lease_break", "rent_review", "landlord_break",
       "rent_pa", "sqft", "mat_psqft", "lfl_percent", "occ_cost_percent",
       "financial_notes", "target_brands", "optimum_target", "priority", "status", "updates",
-      "target_company_ids"
+      "target_company_ids",
+      // Landsec leasing-tracker additions
+      "status_band", "meeting_month", "agent_input", "positioning_group",
+      "tenancy_unit_id", "tenant_company_id",
     ];
 
     const setClauses: string[] = [];
@@ -170,7 +255,7 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
         const oldVal = existingUnit[field];
         if (String(oldVal ?? "") !== String(newVal ?? "")) {
           await logAudit(pool, {
-            unitId: req.params.id,
+            unitId: req.params.id as string,
             propertyId: existingUnit.property_id,
             userId: user.id,
             userName: user.username,
@@ -186,13 +271,83 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
     if (setClauses.length === 0) return res.status(400).json({ error: "No fields to update" });
 
     setClauses.push("updated_at = NOW()");
+    if (user?.username) {
+      setClauses.push(`last_updated_by = $${values.length + 1}`);
+      values.push(user.username);
+    }
 
     const result = await pool.query(
       `UPDATE leasing_schedule_units SET ${setClauses.join(", ")} WHERE id = $1 RETURNING *`,
       values
     );
 
-    res.json(result.rows[0]);
+    // Re-knit on rename: when unit_name or tenant_name change, pull
+    // the row back into alignment with the canonical spine.
+    const body = req.body || {};
+    if ("unit_name" in body || "tenant_name" in body) {
+      // Re-knit tenancy_unit_id only if the new unit_name matches a real
+      // tenancy row. COALESCE preserves the existing link if the rename
+      // doesn't resolve — otherwise a typo correction with a different
+      // normalisation would silently wipe the canonical FK and drop the
+      // row off the 4-way mirror forever.
+      await pool.query(
+        `UPDATE leasing_schedule_units u
+            SET tenancy_unit_id = COALESCE((
+                  SELECT ts.id FROM tenancy_schedule_units ts
+                   WHERE ts.property_id = u.property_id
+                     AND ${normUnitSql("ts.unit_number")} = ${normUnitSql("u.unit_name")}
+                   LIMIT 1
+                ), u.tenancy_unit_id),
+                tenant_company_id = COALESCE(${resolveBrandIdSubquery("coalesce(u.tenant_name, '')")}, u.tenant_company_id)
+          WHERE u.id = $1`,
+        [req.params.id]
+      ).catch((e: any) => console.warn("[leasing] re-knit on rename failed:", e?.message));
+    }
+
+    // Four-way status mirror: status changes propagate to available_units,
+    // crm_deals (bucket-aware so EXC isn't dragged back to SOL) and the
+    // tenancy spine (Occupied/Vacant).
+    let mirrorWarning: string | null = null;
+    if ("status" in body) {
+      try {
+        const { mirrorFromLeasingSchedule } = await import("./lease-status-mirror");
+        await mirrorFromLeasingSchedule(req.params.id as string, body.status, { pool, reason: "leasing_schedule.PUT" });
+      } catch (e: any) {
+        console.warn(`[leasing] status mirror failed for ${req.params.id}:`, e?.message);
+        mirrorWarning = `Status saved, but syncing it to the Letting Tracker / Deals board failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
+      }
+    }
+
+    // Push lease-date and rent edits back to the canonical tenancy row.
+    // Reads on the Leasing Schedule pull these via the live_* overlay from
+    // tenancy, so without this round-trip the user could edit a value
+    // here and find it masked by the (stale) tenancy value on next load.
+    // Rent maps to passing_rent_pa — the rent roll's actual rent.
+    // Best-effort; the join requires a tenancy_unit_id link.
+    const tenancyFieldMap: Record<string, string> = {
+      lease_expiry: "lease_expiry",
+      lease_break:  "break_date",
+      rent_review:  "next_review_date",
+      rent_pa:      "passing_rent_pa",
+    };
+    const tenancyUpdates: Array<{ col: string; val: any }> = [];
+    for (const [src, tgt] of Object.entries(tenancyFieldMap)) {
+      if (src in body) tenancyUpdates.push({ col: tgt, val: body[src] === "" ? null : body[src] });
+    }
+    if (tenancyUpdates.length > 0 && existingUnit.tenancy_unit_id) {
+      try {
+        const sets = tenancyUpdates.map((u, i) => `${u.col} = $${i + 2}`).join(", ");
+        await pool.query(
+          `UPDATE tenancy_schedule_units SET ${sets}, updated_at = NOW() WHERE id = $1`,
+          [existingUnit.tenancy_unit_id, ...tenancyUpdates.map(u => u.val)],
+        );
+      } catch (e: any) {
+        console.warn(`[leasing] tenancy mirror failed for ${req.params.id}:`, e?.message);
+        mirrorWarning = mirrorWarning || `Saved, but syncing dates/rent to the tenancy schedule failed (${e?.message || "unknown error"}).`;
+      }
+    }
+
+    res.json(mirrorWarning ? { ...result.rows[0], mirrorWarning } : result.rows[0]);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -203,7 +358,8 @@ router.post("/api/leasing-schedule/unit", requireAuth, async (req, res) => {
     const pool = await getPool();
     const { property_id, zone, positioning, unit_name, tenant_name, agent_initials, lease_expiry,
       lease_break, rent_review, landlord_break, rent_pa, sqft, mat_psqft, lfl_percent,
-      occ_cost_percent, target_brands, optimum_target, priority, status, updates } = req.body;
+      occ_cost_percent, target_brands, optimum_target, priority, status, updates,
+      status_band, meeting_month, agent_input, target_company_ids } = req.body;
 
     if (!property_id || !unit_name) return res.status(400).json({ error: "property_id and unit_name required" });
 
@@ -217,15 +373,18 @@ router.post("/api/leasing-schedule/unit", requireAuth, async (req, res) => {
       INSERT INTO leasing_schedule_units
         (property_id, zone, positioning, unit_name, tenant_name, agent_initials, lease_expiry,
          lease_break, rent_review, landlord_break, rent_pa, sqft, mat_psqft, lfl_percent,
-         occ_cost_percent, target_brands, optimum_target, priority, status, updates, sort_order)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+         occ_cost_percent, target_brands, optimum_target, priority, status, updates, sort_order,
+         status_band, meeting_month, agent_input, target_company_ids, last_updated_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
       RETURNING *
     `, [property_id, zone || null, positioning || null, unit_name, tenant_name || unit_name,
       agent_initials || null, lease_expiry || null, lease_break || null, rent_review || null,
       landlord_break || null, rent_pa || null, sqft || null, mat_psqft || null,
       lfl_percent || null, occ_cost_percent || null, target_brands || null,
       optimum_target || null, priority || null, status || 'Occupied', updates || null,
-      maxSort.rows[0].next]);
+      maxSort.rows[0].next,
+      status_band || "AMBER_C_MAINTAIN", meeting_month || null, agent_input || null,
+      target_company_ids || null, user?.username || null]);
 
     await logAudit(pool, {
       unitId: result.rows[0].id?.toString(),
@@ -236,6 +395,28 @@ router.post("/api/leasing-schedule/unit", requireAuth, async (req, res) => {
       fieldName: "unit_name",
       newValue: unit_name,
     });
+
+    // Auto-knit to the canonical spine: stamp tenancy_unit_id +
+    // tenant_company_id from the brand resolver. Cheap single-row
+    // pass; mirrors the auto-knit on tenancy inserts. Best-effort.
+    const newId = result.rows[0]?.id;
+    if (newId) {
+      await pool.query(
+        `UPDATE leasing_schedule_units u
+            SET tenancy_unit_id = (
+                  SELECT ts.id FROM tenancy_schedule_units ts
+                   WHERE ts.property_id = u.property_id
+                     AND ${normUnitSql("ts.unit_number")} = ${normUnitSql("u.unit_name")}
+                   LIMIT 1
+                ),
+                tenant_company_id = COALESCE(
+                  u.tenant_company_id,
+                  ${resolveBrandIdSubquery("coalesce(u.tenant_name, '')")}
+                )
+          WHERE u.id = $1`,
+        [newId]
+      ).catch((e: any) => console.warn("[leasing] auto-knit on insert failed:", e?.message));
+    }
 
     res.json(result.rows[0]);
   } catch (e: any) {
@@ -258,7 +439,7 @@ router.patch("/api/leasing-schedule/units/:id/archive", requireAuth, async (req,
     await pool.query("UPDATE leasing_schedule_units SET status = $2 WHERE id = $1", [req.params.id, newStatus]);
 
     await logAudit(pool, {
-      unitId: req.params.id,
+      unitId: req.params.id as string,
       propertyId: unit.property_id,
       userId: user.id,
       userName: user.username,
@@ -267,6 +448,16 @@ router.patch("/api/leasing-schedule/units/:id/archive", requireAuth, async (req,
       oldValue: unit.status,
       newValue: newStatus,
     });
+
+    // Archive / unarchive is a status change — fan out through the
+    // 4-way mirror so the Letting Tracker, Deals board, and Tenancy
+    // spine all reflect the move. Best-effort; never fails the primary.
+    try {
+      const { mirrorFromLeasingSchedule } = await import("./lease-status-mirror");
+      await mirrorFromLeasingSchedule(req.params.id as string, newStatus, { pool, reason: "leasing.archive" });
+    } catch (e: any) {
+      console.warn(`[leasing] archive mirror failed for ${req.params.id}:`, e?.message);
+    }
 
     res.json({ success: true, status: newStatus });
   } catch (e: any) {
@@ -288,7 +479,7 @@ router.delete("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) =>
     await pool.query("DELETE FROM leasing_schedule_units WHERE id = $1", [req.params.id]);
 
     await logAudit(pool, {
-      unitId: req.params.id,
+      unitId: req.params.id as string,
       propertyId: unit.property_id,
       userId: user.id,
       userName: user.username,
@@ -299,6 +490,54 @@ router.delete("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) =>
 
     res.json({ success: true });
   } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Bulk-delete leasing schedule units for a property. Body:
+//   { propertyId, ids?: string[] }
+// If ids is omitted, every unit on the property is wiped — guarded by the
+// per-property access check, and the audit log records each deletion so a
+// rogue 'delete all' is reconstructible. Used by the 'Delete all' button
+// in the leasing schedule when the user wants to start the schedule over.
+router.post("/api/leasing-schedule/bulk-delete", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { propertyId, ids } = req.body || {};
+    if (!propertyId) return res.status(400).json({ error: "propertyId required" });
+
+    const { allowed, user } = await checkPropertyAccess(pool, req, propertyId);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+
+    const filterByIds = Array.isArray(ids) && ids.length > 0;
+    const selectQ = filterByIds
+      ? "SELECT id, unit_name FROM leasing_schedule_units WHERE property_id = $1 AND id = ANY($2::varchar[])"
+      : "SELECT id, unit_name FROM leasing_schedule_units WHERE property_id = $1";
+    const selectParams = filterByIds ? [propertyId, ids] : [propertyId];
+    const { rows: targets } = await pool.query(selectQ, selectParams);
+
+    if (targets.length === 0) return res.json({ success: true, deleted: 0 });
+
+    const deleteQ = filterByIds
+      ? "DELETE FROM leasing_schedule_units WHERE property_id = $1 AND id = ANY($2::varchar[])"
+      : "DELETE FROM leasing_schedule_units WHERE property_id = $1";
+    await pool.query(deleteQ, selectParams);
+
+    for (const t of targets) {
+      await logAudit(pool, {
+        unitId: t.id,
+        propertyId,
+        userId: user.id,
+        userName: user.username,
+        action: "delete",
+        fieldName: "unit_name",
+        oldValue: t.unit_name,
+      }).catch(() => { /* don't block delete on audit failure */ });
+    }
+
+    res.json({ success: true, deleted: targets.length });
+  } catch (e: any) {
+    console.error("[leasing-schedule bulk-delete] failed:", e?.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -317,14 +556,15 @@ router.post("/api/leasing-schedule/import", requireAuth, async (req, res) => {
       await pool.query(`
         INSERT INTO leasing_schedule_units
           (property_id, zone, positioning, unit_name, tenant_name, agent_initials, lease_expiry,
-           lease_break, rent_review, landlord_break, mat_psqft, lfl_percent, occ_cost_percent,
-           target_brands, optimum_target, priority, status, updates, sort_order)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+           lease_break, rent_review, landlord_break, rent_pa, sqft, mat_psqft, lfl_percent,
+           occ_cost_percent, financial_notes, target_brands, optimum_target, priority, status,
+           updates, sort_order)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
       `, [property_id, u.zone, u.positioning, u.unit_name, u.tenant_name || u.unit_name,
         u.agent_initials, u.lease_expiry || null, u.lease_break || null, u.rent_review || null,
-        u.landlord_break || null, u.mat_psqft, u.lfl_percent, u.occ_cost_percent,
-        u.target_brands, u.optimum_target, u.priority, u.status || 'Occupied',
-        u.updates, u.sort_order || count]);
+        u.landlord_break || null, u.rent_pa ?? null, u.sqft ?? null, u.mat_psqft, u.lfl_percent,
+        u.occ_cost_percent, u.financial_notes || null, u.target_brands, u.optimum_target,
+        u.priority, u.status || 'Occupied', u.updates, u.sort_order || count]);
       count++;
     }
 
@@ -342,10 +582,341 @@ router.post("/api/leasing-schedule/import", requireAuth, async (req, res) => {
   }
 });
 
+// Upload a landlord leasing schedule .xlsx and let Haiku map its columns
+// to our unit schema. Returns a preview; the caller then POSTs to /import
+// with the confirmed units.
+router.post(
+  "/api/leasing-schedule/property/:propertyId/parse-excel",
+  requireAuth,
+  xlsxUpload.single("file"),
+  async (req, res) => {
+    try {
+      const pool = await getPool();
+      const propertyId = req.params.propertyId as string;
+      const { allowed, user } = await checkPropertyAccess(pool, req, propertyId);
+      if (!allowed) return res.status(403).json({ error: "Access denied" });
+      if (!user) return res.status(401).json({ error: "Unauthorized" });
+      if (!req.file) return res.status(400).json({ error: "file required" });
+
+      const ExcelJS = (await import("exceljs")).default;
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(req.file.buffer as any);
+
+      // Flatten: take every sheet, every row, into a matrix of strings.
+      const sheets: { name: string; rows: string[][] }[] = [];
+      wb.eachSheet((ws) => {
+        const rows: string[][] = [];
+        ws.eachRow({ includeEmpty: false }, (row) => {
+          const vals: string[] = [];
+          row.eachCell({ includeEmpty: true }, (cell) => {
+            const v = cell.value;
+            if (v == null) vals.push("");
+            else if (typeof v === "object" && "text" in (v as any)) vals.push(String((v as any).text || ""));
+            else if (v instanceof Date) vals.push((v as Date).toISOString().slice(0, 10));
+            else vals.push(String(v));
+          });
+          rows.push(vals);
+        });
+        if (rows.length > 0) sheets.push({ name: ws.name, rows });
+      });
+
+      if (sheets.length === 0) return res.status(400).json({ error: "No sheets with data" });
+
+      // Pick the sheet with the most rows as the primary schedule.
+      const primary = sheets.reduce((a, b) => (a.rows.length >= b.rows.length ? a : b));
+
+      // Cap rows sent to the model — schedules rarely exceed 200 units.
+      const capped = primary.rows.slice(0, 250);
+      const csvPreview = capped.map((r) => r.join(" | ")).join("\n").slice(0, 18000);
+
+      const prompt = `You will receive a landlord leasing schedule exported from Excel. Map each data row to our unit schema.
+
+Columns in our schema (all optional except unit_name):
+- unit_name: short label like "Unit 1", "G-01", "Suite 4B"
+- tenant_name: current occupier (or "Vacant" / blank if void)
+- sqft: numeric, convert sq m to sq ft if needed (1 sqm = 10.7639 sqft)
+- rent_pa: annual rent in £ (numeric, no £ sign)
+- lease_expiry: ISO date YYYY-MM-DD
+- lease_break: ISO date YYYY-MM-DD (tenant break)
+- rent_review: ISO date YYYY-MM-DD
+- landlord_break: ISO date YYYY-MM-DD
+- status: "Occupied" | "Vacant" | "Under Offer" | "In Solicitors"
+- zone: floor/level/zone (e.g. "Ground", "L1", "Mall")
+- positioning: category (e.g. "F&B", "Fashion", "Beauty")
+- updates: short note on any special terms
+
+Rules:
+- Skip header rows, subtotals, blank rows, "Total" rows.
+- If a column doesn't exist in the source, leave it null.
+- Dates may be UK format (DD/MM/YYYY) — convert to ISO.
+- Currency strings like "£125,000" → 125000.
+- "Sq ft", "sqm", "NIA", "GIA" all map to sqft (convert sqm).
+- If a row has a tenant name but no unit label, synthesise one (e.g. "Unit 1", "Unit 2" in order).
+
+Return JSON only:
+{"units":[{"unit_name":"...","tenant_name":"...","sqft":123,"rent_pa":125000,"lease_expiry":"2028-06-24",...}]}
+
+Spreadsheet (tab: "${primary.name}"), pipe-separated:
+${csvPreview}`;
+
+      const ai = await callClaude({
+        model: CHATBGP_HELPER_MODEL,
+        max_completion_tokens: 6000,
+        temperature: 0,
+        messages: [{ role: "user", content: prompt }],
+      });
+      const raw = ai.choices?.[0]?.message?.content || "";
+      const parsed = safeParseJSON(raw);
+      const units = Array.isArray(parsed?.units) ? parsed.units : [];
+
+      res.json({
+        sheetName: primary.name,
+        sheetCount: sheets.length,
+        rowsScanned: capped.length,
+        units,
+      });
+    } catch (e: any) {
+      console.error("[leasing-schedule] parse-excel error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  },
+);
+
+// Parse a workbook that contains multiple schemes (one per sheet) — no property ID
+// required at this stage. Returns a preview list; client maps each sheet to a
+// property then POSTs /import-multi to commit.
+router.post(
+  "/api/leasing-schedule/parse-excel-multi",
+  requireAuth,
+  xlsxUpload.single("file"),
+  async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "file required" });
+
+      const ExcelJS = (await import("exceljs")).default;
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(req.file.buffer as any);
+
+      const sheets: { name: string; rows: string[][]; state: string }[] = [];
+      wb.eachSheet((ws) => {
+        const rows: string[][] = [];
+        ws.eachRow({ includeEmpty: false }, (row) => {
+          const vals: string[] = [];
+          row.eachCell({ includeEmpty: true }, (cell) => {
+            const v = cell.value;
+            if (v == null) vals.push("");
+            else if (typeof v === "object" && "text" in (v as any)) vals.push(String((v as any).text || ""));
+            else if (v instanceof Date) vals.push((v as Date).toISOString().slice(0, 10));
+            else if (typeof v === "object" && "result" in (v as any)) vals.push(String((v as any).result ?? ""));
+            else if (typeof v === "object" && "richText" in (v as any)) {
+              vals.push(((v as any).richText || []).map((r: any) => r.text).join(""));
+            } else vals.push(String(v));
+          });
+          rows.push(vals);
+        });
+        // Keep every non-empty sheet — even 1-2 row sheets. Filtering here was
+        // silently hiding tabs the user expects to see.
+        if (rows.length >= 1) sheets.push({ name: ws.name, rows, state: (ws as any).state || "visible" });
+      });
+
+      console.log(`[leasing-schedule] parse-excel-multi: workbook has ${sheets.length} non-empty sheet(s): ${sheets.map(s => `${s.name}(${s.rows.length}r,${s.state})`).join(", ")}`);
+
+      if (sheets.length === 0) return res.status(400).json({ error: "No sheets with data" });
+
+      // Process sheets with bounded concurrency — firing 20 parallel Claude calls
+      // hits rate limits and some come back empty/429. A cap of 3 is plenty
+      // fast (most workbooks finish in 5-15s) without tripping limits.
+      const CONCURRENCY = 3;
+      type SchemeResult = {
+        sheetName: string;
+        schemeHint: string;
+        rowsScanned: number;
+        units: any[];
+        skipped?: boolean;
+        skipReason?: string;
+        error?: string;
+      };
+      const schemes: SchemeResult[] = new Array(sheets.length);
+
+      async function processOne(index: number): Promise<void> {
+        const sheet = sheets[index];
+        const capped = sheet.rows.slice(0, 250);
+        const csvPreview = capped.map((r) => r.join(" | ")).join("\n").slice(0, 18000);
+
+        // Very small sheets rarely hold a schedule — keep them in the list but
+        // mark as skipped so the user can still see them.
+        if (sheet.rows.length < 2) {
+          schemes[index] = {
+            sheetName: sheet.name,
+            schemeHint: sheet.name,
+            rowsScanned: capped.length,
+            units: [],
+            skipped: true,
+            skipReason: "Sheet has fewer than 2 rows — likely a cover page",
+          };
+          return;
+        }
+
+        const prompt = `You will receive a landlord leasing schedule exported from Excel. Map each data row to our unit schema.
+
+Columns in our schema (all optional except unit_name):
+- unit_name: short label like "Unit 1", "G-01", "Suite 4B"
+- tenant_name: current occupier (or "Vacant" / blank if void)
+- sqft: numeric, convert sq m to sq ft if needed (1 sqm = 10.7639 sqft)
+- rent_pa: annual rent in £ (numeric, no £ sign)
+- lease_expiry: ISO date YYYY-MM-DD
+- lease_break: ISO date YYYY-MM-DD (tenant break)
+- rent_review: ISO date YYYY-MM-DD
+- landlord_break: ISO date YYYY-MM-DD
+- status: "Occupied" | "Vacant" | "Under Offer" | "In Solicitors"
+- zone: floor/level/zone (e.g. "Ground", "L1", "Mall")
+- positioning: category (e.g. "F&B", "Fashion", "Beauty")
+- updates: short note on any special terms
+
+Rules:
+- Skip header rows, subtotals, blank rows, "Total" rows.
+- If a column doesn't exist in the source, leave it null.
+- Dates may be UK format (DD/MM/YYYY) — convert to ISO.
+- Currency strings like "£125,000" → 125000.
+- "Sq ft", "sqm", "NIA", "GIA" all map to sqft (convert sqm).
+- If a row has a tenant name but no unit label, synthesise one (e.g. "Unit 1", "Unit 2" in order).
+- Also try to infer a scheme/property name from the header rows or sheet title — return as scheme_hint.
+- Be generous: if the sheet contains ANY list of tenants/units/rents, extract them. Err on the side of returning rows rather than an empty list.
+
+Return JSON only:
+{"scheme_hint":"optional scheme name from the sheet","units":[{"unit_name":"...","tenant_name":"...","sqft":123,"rent_pa":125000,"lease_expiry":"2028-06-24",...}]}
+
+If the sheet is a cover page / contents / summary with no unit list, return {"scheme_hint":"${sheet.name}","units":[]}.
+
+Spreadsheet (tab: "${sheet.name}"), pipe-separated:
+${csvPreview}`;
+
+        try {
+          const ai = await callClaude({
+            model: CHATBGP_HELPER_MODEL,
+            max_completion_tokens: 6000,
+            temperature: 0,
+            messages: [{ role: "user", content: prompt }],
+          });
+          const raw = ai.choices?.[0]?.message?.content || "";
+          let parsed: any = null;
+          try {
+            parsed = safeParseJSON(raw);
+          } catch (pe: any) {
+            console.warn(`[leasing-schedule] parse-excel-multi: sheet "${sheet.name}" returned unparseable JSON: ${pe.message}. Raw head: ${raw.slice(0, 200)}`);
+          }
+          const units = Array.isArray(parsed?.units) ? parsed.units : [];
+          const schemeHint = typeof parsed?.scheme_hint === "string" && parsed.scheme_hint.trim()
+            ? parsed.scheme_hint.trim()
+            : sheet.name;
+          schemes[index] = {
+            sheetName: sheet.name,
+            schemeHint,
+            rowsScanned: capped.length,
+            units,
+            ...(units.length === 0 ? { skipped: true, skipReason: "AI found no unit rows on this sheet" } : {}),
+          };
+          console.log(`[leasing-schedule] parse-excel-multi: sheet "${sheet.name}" → ${units.length} unit(s)`);
+        } catch (e: any) {
+          console.error(`[leasing-schedule] parse-excel-multi: sheet "${sheet.name}" errored:`, e?.message);
+          schemes[index] = {
+            sheetName: sheet.name,
+            schemeHint: sheet.name,
+            rowsScanned: capped.length,
+            units: [],
+            error: e?.message || "Unknown error",
+          };
+        }
+      }
+
+      // Worker pool
+      let nextIndex = 0;
+      const workers: Promise<void>[] = [];
+      for (let w = 0; w < Math.min(CONCURRENCY, sheets.length); w++) {
+        workers.push((async () => {
+          while (true) {
+            const i = nextIndex++;
+            if (i >= sheets.length) return;
+            await processOne(i);
+          }
+        })());
+      }
+      await Promise.all(workers);
+
+      // Return EVERY sheet — including skipped/errored ones — so the user can
+      // see what happened. The client decides what to show as mappable.
+      res.json({
+        sheetCount: sheets.length,
+        schemes,
+      });
+    } catch (e: any) {
+      console.error("[leasing-schedule] parse-excel-multi error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  },
+);
+
+// Commit multiple scheme → property mappings in one transaction-ish pass.
+// Each mapping: { property_id, units }. Skips mappings where property_id is blank.
+router.post("/api/leasing-schedule/import-multi", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const imports: Array<{ property_id: string; units: any[] }> = Array.isArray(req.body?.imports) ? req.body.imports : [];
+    if (imports.length === 0) return res.status(400).json({ error: "imports[] required" });
+
+    const results: Array<{ property_id: string; imported: number; error?: string }> = [];
+    let grandTotal = 0;
+
+    for (const imp of imports) {
+      if (!imp.property_id || !Array.isArray(imp.units) || imp.units.length === 0) continue;
+
+      const { allowed, user } = await checkPropertyAccess(pool, req, imp.property_id);
+      if (!allowed) {
+        results.push({ property_id: imp.property_id, imported: 0, error: "Access denied" });
+        continue;
+      }
+
+      try {
+        let count = 0;
+        for (const u of imp.units) {
+          await pool.query(`
+            INSERT INTO leasing_schedule_units
+              (property_id, zone, positioning, unit_name, tenant_name, agent_initials, lease_expiry,
+               lease_break, rent_review, landlord_break, rent_pa, sqft, mat_psqft, lfl_percent,
+               occ_cost_percent, financial_notes, target_brands, optimum_target, priority, status,
+               updates, sort_order)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+          `, [imp.property_id, u.zone, u.positioning, u.unit_name, u.tenant_name || u.unit_name,
+            u.agent_initials, u.lease_expiry || null, u.lease_break || null, u.rent_review || null,
+            u.landlord_break || null, u.rent_pa ?? null, u.sqft ?? null, u.mat_psqft, u.lfl_percent,
+            u.occ_cost_percent, u.financial_notes || null, u.target_brands, u.optimum_target,
+            u.priority, u.status || 'Occupied', u.updates, u.sort_order || count]);
+          count++;
+        }
+        await logAudit(pool, {
+          propertyId: imp.property_id,
+          userId: user!.id,
+          userName: user!.username,
+          action: "import",
+          newValue: `${count} units imported (multi-scheme)`,
+        });
+        grandTotal += count;
+        results.push({ property_id: imp.property_id, imported: count });
+      } catch (e: any) {
+        results.push({ property_id: imp.property_id, imported: 0, error: e.message });
+      }
+    }
+
+    res.json({ success: true, totalImported: grandTotal, results });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.put("/api/leasing-schedule/property/:propertyId/privacy", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
     const { enabled } = req.body;
@@ -355,7 +926,7 @@ router.put("/api/leasing-schedule/property/:propertyId/privacy", requireAuth, as
     );
 
     await logAudit(pool, {
-      propertyId: req.params.propertyId,
+      propertyId: req.params.propertyId as string,
       userId: user.id,
       userName: user.username,
       action: "privacy_toggle",
@@ -394,7 +965,7 @@ router.get("/api/leasing-schedule/property/:propertyId/privacy", requireAuth, as
 router.get("/api/leasing-schedule/property/:propertyId/audit", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
     const result = await pool.query(
@@ -413,7 +984,7 @@ router.get("/api/leasing-schedule/property/:propertyId/audit", requireAuth, asyn
 router.get("/api/leasing-schedule/property/:propertyId/export", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Export denied — you do not have access to this property" });
 
     const result = await pool.query(`
@@ -429,7 +1000,7 @@ router.get("/api/leasing-schedule/property/:propertyId/export", requireAuth, asy
     const user = await getUserInfo(pool, req);
     if (user) {
       await logAudit(pool, {
-        propertyId: req.params.propertyId,
+        propertyId: req.params.propertyId as string,
         userId: user.id,
         userName: user.username,
         action: "export",
@@ -446,7 +1017,7 @@ router.get("/api/leasing-schedule/property/:propertyId/export", requireAuth, asy
 router.get("/api/leasing-schedule/property/:propertyId/targets", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
     const result = await pool.query(
@@ -503,16 +1074,25 @@ router.post("/api/leasing-schedule/unit/:unitId/targets", requireAuth, async (re
     const validRatings = ["green", "amber", "red"];
     const rating = validRatings.includes(quality_rating) ? quality_rating : "amber";
 
+    // No explicit link (free-typed or AI-suggested name) — auto-link an
+    // exact name match so targets tie back to the brand list wherever
+    // possible.
+    let linkedCompanyId = company_id || null;
+    if (!linkedCompanyId) {
+      const match = await pool.query(`SELECT id FROM crm_companies WHERE LOWER(name) = LOWER($1) LIMIT 1`, [brand_name.trim()]);
+      linkedCompanyId = match.rows[0]?.id || null;
+    }
+
     const result = await pool.query(
       `INSERT INTO target_tenants (unit_id, property_id, company_id, brand_name, rationale, quality_rating, suggested_by, approved_by, status)
        VALUES ($1, $2, $3, $4, $5, $6, 'manual', $7, 'approved')
        RETURNING *`,
-      [req.params.unitId, unitCheck.rows[0].property_id, company_id || null,
+      [req.params.unitId, unitCheck.rows[0].property_id, linkedCompanyId,
        brand_name, rationale || null, rating, user?.id]
     );
 
     await logAudit(pool, {
-      unitId: req.params.unitId, propertyId: unitCheck.rows[0].property_id,
+      unitId: req.params.unitId as string, propertyId: unitCheck.rows[0].property_id,
       userId: user.id, userName: user.username, action: "add_target",
       fieldName: "target_tenant", newValue: brand_name,
     });
@@ -763,7 +1343,7 @@ Return JSON array only, no markdown:
     }
 
     await logAudit(pool, {
-      unitId: req.params.unitId, propertyId: unit.property_id,
+      unitId: req.params.unitId as string, propertyId: unit.property_id,
       userId: user.id, userName: user.username, action: "generate_targets",
       newValue: `AI generated ${inserted.length} target tenants`,
     });
@@ -778,7 +1358,7 @@ Return JSON array only, no markdown:
 router.post("/api/leasing-schedule/property/:propertyId/generate-targets", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
     const units = await pool.query(
@@ -857,13 +1437,56 @@ async function buildStyledSheet(wb: any, ExcelJS: any, propertyName: string, uni
     { key: "updates", width: 45 },
   ];
 
-  const titleRow = ws.addRow([`${propertyName}\nLeasing Schedule`]);
+  const titleRow = ws.addRow([`${propertyName} — Leasing Schedule`]);
   ws.mergeCells(titleRow.number, 1, titleRow.number, 8);
   const titleCell = ws.getCell(titleRow.number, 1);
-  titleCell.font = { name: "Calibri", size: 14, bold: true, color: { argb: "FFFFFFFF" } };
+  titleCell.font = { name: "Calibri", size: 16, bold: true, color: { argb: "FFFFFFFF" } };
   titleCell.fill = DARK_BLUE_FILL;
-  titleCell.alignment = { vertical: "middle", wrapText: true };
-  ws.getRow(titleRow.number).height = 40;
+  titleCell.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
+  ws.getRow(titleRow.number).height = 36;
+
+  // "As at" / meeting month + last-updated banner
+  const mostRecentUpdate = units.reduce((max: Date | null, u: any) => {
+    const d = u.updated_at ? new Date(u.updated_at) : null;
+    return d && (!max || d > max) ? d : max;
+  }, null as Date | null);
+  const lastBy = (units.find((u: any) => u.last_updated_by)?.last_updated_by) || null;
+  const meetingMonth = units.find((u: any) => u.meeting_month)?.meeting_month || null;
+  const banner: string[] = [];
+  banner.push(`Bruce Gillingham Pollard`);
+  banner.push(`Exported ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} at ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`);
+  if (mostRecentUpdate) banner.push(`Last updated ${mostRecentUpdate.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}${lastBy ? ` by ${lastBy}` : ""}`);
+  if (meetingMonth) banner.push(`For ${meetingMonth} meeting`);
+  banner.push(`${units.length} units`);
+  const dateRow = ws.addRow([banner.join("  ·  ")]);
+  ws.mergeCells(dateRow.number, 1, dateRow.number, 8);
+  const dateCell = ws.getCell(dateRow.number, 1);
+  dateCell.font = { name: "Calibri", size: 9, italic: true, color: { argb: "FF596264" } };
+  dateCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8E6DF" } };
+  dateCell.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
+  ws.getRow(dateRow.number).height = 20;
+
+  // Status-band legend row
+  const legendCells = [
+    { label: "A — Halo / On Strategy", fill: "FFC6EFCE" },
+    { label: "B — On Strategy", fill: "FFE2EFDA" },
+    { label: "C — Maintain Mix", fill: "FFFFEB9C" },
+    { label: "D — Divest Over Time", fill: "FFC00000", fontWhite: true },
+    { label: "D — Customer at Risk / Live Opp", fill: "FFFF0000", fontWhite: true },
+    { label: "Void / Live Opp", fill: "FFD9D9D9" },
+  ];
+  const legendRow = ws.addRow(legendCells.map(c => c.label));
+  legendRow.eachCell((cell: any, colNumber: number) => {
+    const c = legendCells[colNumber - 1];
+    if (!c) return;
+    cell.font = { name: "Calibri", size: 9, bold: true, color: { argb: c.fontWhite ? "FFFFFFFF" : "FF000000" } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: c.fill } };
+    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    cell.border = THIN_BORDER;
+  });
+  legendRow.height = 28;
+  // Span legend to col 8
+  ws.mergeCells(legendRow.number, 6, legendRow.number, 8);
 
   const headerRow = ws.addRow(["Zone", "Positioning", "Existing", "Targets", "Optimum Targets", "Financial Performance", "Priority", "Updates"]);
   headerRow.eachCell((cell: any) => {
@@ -881,8 +1504,18 @@ async function buildStyledSheet(wb: any, ExcelJS: any, propertyName: string, uni
     zoneGroups.get(zone)!.push(unit);
   }
 
-  function getStatusFill(status: string) {
-    const s = (status || "").toLowerCase();
+  // Use the explicit Landsec status_band enum first; fall back to free-text
+  // status for backward-compat with rows imported before the band field existed.
+  const GREEN_B_FILL: any = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2EFDA" } };
+  function getStatusFill(unit: any) {
+    const band = unit?.status_band;
+    if (band === "GREEN_A_HALO") return GREEN_FILL;
+    if (band === "GREEN_B_HALO") return GREEN_B_FILL;
+    if (band === "AMBER_C_MAINTAIN") return AMBER_FILL;
+    if (band === "DARK_RED_D_DIVEST") return DARK_RED_FILL;
+    if (band === "BRIGHT_RED_D_AT_RISK") return BRIGHT_RED_FILL;
+    if (band === "GREY_VOID") return GREY_FILL;
+    const s = (unit?.status || "").toLowerCase();
     if (s === "occupied" || s === "let" || s === "on strategy") return GREEN_FILL;
     if (s === "maintain" || s === "maintain mix") return AMBER_FILL;
     if (s === "divest" || s === "divest over time") return DARK_RED_FILL;
@@ -892,8 +1525,12 @@ async function buildStyledSheet(wb: any, ExcelJS: any, propertyName: string, uni
     return null;
   }
 
-  function getStatusFont(status: string) {
-    const s = (status || "").toLowerCase();
+  function getStatusFont(unit: any) {
+    const band = unit?.status_band;
+    if (band === "DARK_RED_D_DIVEST" || band === "BRIGHT_RED_D_AT_RISK") {
+      return { name: "Calibri", size: 10, color: { argb: "FFFFFFFF" } };
+    }
+    const s = (unit?.status || "").toLowerCase();
     if (s === "divest" || s === "divest over time" || s === "at risk" || s === "customer at risk") {
       return { name: "Calibri", size: 10, color: { argb: "FFFFFFFF" } };
     }
@@ -990,8 +1627,8 @@ async function buildStyledSheet(wb: any, ExcelJS: any, propertyName: string, uni
           updatesText
         ]);
 
-        const statusFill = getStatusFill(unit.status);
-        const statusFont = getStatusFont(unit.status);
+        const statusFill = getStatusFill(unit);
+        const statusFont = getStatusFont(unit);
 
         const ratingSymbol: Record<string, string> = { green: "●", amber: "◐", red: "○" };
         const ratingColor: Record<string, string> = { green: "FF00A651", amber: "FFFF8C00", red: "FFCC0000" };
@@ -1002,7 +1639,7 @@ async function buildStyledSheet(wb: any, ExcelJS: any, propertyName: string, uni
           cell.font = statusFont;
           if (statusFill && colNumber === 3) {
             cell.fill = statusFill;
-            cell.font = getStatusFont(unit.status);
+            cell.font = getStatusFont(unit);
           }
           if (colNumber === 4 && unitTargets.length > 0) {
             const richText: any[] = [];
@@ -1123,7 +1760,7 @@ async function buildStyledSheet(wb: any, ExcelJS: any, propertyName: string, uni
 router.get("/api/leasing-schedule/property/:propertyId/export-excel", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Export denied" });
 
     const propRes = await pool.query("SELECT name FROM crm_properties WHERE id = $1", [req.params.propertyId]);
@@ -1133,7 +1770,8 @@ router.get("/api/leasing-schedule/property/:propertyId/export-excel", requireAut
       SELECT u.id, u.unit_name, u.zone, u.positioning, u.tenant_name, u.agent_initials, u.status,
         u.lease_expiry, u.lease_break, u.rent_review, u.landlord_break,
         u.rent_pa, u.sqft, u.mat_psqft, u.lfl_percent, u.occ_cost_percent,
-        u.target_brands, u.optimum_target, u.priority, u.updates, u.financial_notes
+        u.target_brands, u.optimum_target, u.priority, u.updates, u.financial_notes,
+        u.status_band, u.meeting_month, u.agent_input, u.last_updated_by, u.updated_at
       FROM leasing_schedule_units u
       WHERE u.property_id = $1
       ORDER BY u.sort_order, u.zone, u.unit_name
@@ -1155,7 +1793,7 @@ router.get("/api/leasing-schedule/property/:propertyId/export-excel", requireAut
 
     if (user) {
       await logAudit(pool, {
-        propertyId: req.params.propertyId, userId: user.id, userName: user.username,
+        propertyId: req.params.propertyId as string, userId: user.id, userName: user.username,
         action: "export_excel", newValue: `${result.rows.length} units exported to Excel`,
       });
     }
@@ -1264,7 +1902,7 @@ router.get("/api/leasing-schedule/export-excel", requireAuth, async (req, res) =
     wb.creator = "BGP Dashboard";
     const ws = wb.addWorksheet("Leasing Schedule");
 
-    const BGP_GREEN = "FF2E5E3F";
+    const BGP_GREEN = "FF6E0C25";
     const WHITE_FONT = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
     const HEADER_FILL: any = { type: "pattern", pattern: "solid", fgColor: { argb: BGP_GREEN } };
     const THIN_BORDER: any = {
@@ -1344,9 +1982,9 @@ router.get("/api/leasing-schedule/export-excel", requireAuth, async (req, res) =
       lease_start: null,
       lease_end: null,
       break_date: null,
-      rent_pa: rows.reduce((s, r) => s + (r.rent_pa ? Number(r.rent_pa) : 0), 0),
+      rent_pa: rows.reduce((s: number, r: any) => s + (r.rent_pa ? Number(r.rent_pa) : 0), 0),
       rent_psf: null,
-      area_sqft: rows.reduce((s, r) => s + (r.sqft ? Number(r.sqft) : 0), 0),
+      area_sqft: rows.reduce((s: number, r: any) => s + (r.sqft ? Number(r.sqft) : 0), 0),
       status: "",
     });
     totalsRow.eachCell({ includeEmpty: true }, (cell: any) => {
@@ -1373,5 +2011,553 @@ router.get("/api/leasing-schedule/export-excel", requireAuth, async (req, res) =
     res.status(500).json({ error: e.message });
   }
 });
+
+// Freeze the property's current Leasing Schedule into a versioned snapshot.
+// Each Monday meeting cycle should end with an Approve → snapshot. Subsequent
+// edits don't affect prior snapshots — historical versions remain reclaimable.
+router.post("/api/leasing-schedule/property/:propertyId/snapshot", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+
+    const meetingMonth = req.body?.meetingMonth || new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" }).toUpperCase();
+    const notes = req.body?.notes || null;
+
+    const rows = await pool.query(
+      `SELECT * FROM leasing_schedule_units WHERE property_id = $1 ORDER BY sort_order, zone, unit_name`,
+      [req.params.propertyId]
+    );
+
+    const ins = await pool.query(
+      `INSERT INTO leasing_schedule_snapshots
+        (property_id, meeting_month, taken_by_id, taken_by_name, unit_count, notes, data)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+       RETURNING id, taken_at, meeting_month, unit_count`,
+      [req.params.propertyId, meetingMonth, user?.id || null, user?.username || null, rows.rows.length, notes, JSON.stringify(rows.rows)]
+    );
+
+    await logAudit(pool, {
+      propertyId: req.params.propertyId as string, userId: user.id, userName: user.username,
+      action: "snapshot_approve",
+      newValue: `${rows.rows.length} units snapshot for ${meetingMonth}`,
+    });
+
+    res.json({ ok: true, snapshot: ins.rows[0] });
+  } catch (e: any) {
+    console.error("[snapshot] failed:", e?.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// List all snapshots for a property — meta only (id, date, who, count).
+router.get("/api/leasing-schedule/property/:propertyId/snapshots", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+
+    const rows = await pool.query(
+      `SELECT id, meeting_month, taken_at, taken_by_name, unit_count, notes
+         FROM leasing_schedule_snapshots
+        WHERE property_id = $1
+        ORDER BY taken_at DESC
+        LIMIT 50`,
+      [req.params.propertyId]
+    );
+    res.json({ snapshots: rows.rows });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Fetch one snapshot's full data (the frozen rows).
+router.get("/api/leasing-schedule/snapshot/:snapshotId", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const row = await pool.query(
+      `SELECT s.*, p.name AS property_name
+         FROM leasing_schedule_snapshots s
+         LEFT JOIN crm_properties p ON p.id = s.property_id
+        WHERE s.id = $1`,
+      [req.params.snapshotId]
+    );
+    if (row.rows.length === 0) return res.status(404).json({ error: "Snapshot not found" });
+    const snap = row.rows[0];
+    const { allowed } = await checkPropertyAccess(pool, req, snap.property_id);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+    res.json({ snapshot: snap });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Strategic Principles & Priorities — per-property block that surfaces above
+// the leasing schedule (Landsec key block). Toggle on/off, edit any field.
+router.get("/api/leasing-schedule/property/:propertyId/strategic-principles", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+    const r = await pool.query("SELECT strategic_principles FROM crm_properties WHERE id = $1", [req.params.propertyId]);
+    res.json({ principles: r.rows[0]?.strategic_principles || null });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put("/api/leasing-schedule/property/:propertyId/strategic-principles", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+    const principles = req.body?.principles || null;
+    await pool.query("UPDATE crm_properties SET strategic_principles = $1::jsonb WHERE id = $2", [principles ? JSON.stringify(principles) : null, req.params.propertyId]);
+    await logAudit(pool, {
+      propertyId: req.params.propertyId as string, userId: user.id, userName: user.username,
+      action: "edit_strategic_principles",
+      newValue: principles?.enabled ? "enabled" : "disabled",
+    });
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Backfill the Tenancy Schedule for every Leasing Schedule unit on this
+// property that doesn't already have a linked tenancy_unit_id. The leasing
+// schedule is often imported standalone (e.g. Landsec tracker xlsx) while
+// the Tenancy Schedule lags — this seeds a minimal tenancy row per leasing
+// row so the live cross-link works, and writes the FK back on the leasing
+// row. Idempotent: re-runs only touch units still missing a link.
+router.post("/api/leasing-schedule/property/:propertyId/sync-to-tenancy", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+
+    const leasing = await pool.query(
+      `SELECT id, unit_name, tenant_name, status, zone, positioning, sqft, rent_pa,
+              lease_expiry, lease_break, rent_review
+         FROM leasing_schedule_units
+        WHERE property_id = $1 AND (tenancy_unit_id IS NULL OR tenancy_unit_id = '')`,
+      [req.params.propertyId]
+    );
+
+    let created = 0, linked = 0;
+    for (const l of leasing.rows) {
+      // First check if a tenancy row already exists by unit_number — link it.
+      const existing = await pool.query(
+        `SELECT id FROM tenancy_schedule_units
+          WHERE property_id = $1
+            AND ${normUnitSql("unit_number")} = ${normUnitSql("$2")}
+          LIMIT 1`,
+        [req.params.propertyId, l.unit_name || ""]
+      );
+      let tenancyId: string;
+      if (existing.rows[0]?.id) {
+        tenancyId = existing.rows[0].id;
+        linked++;
+      } else {
+        // Seed a minimal tenancy row.
+        const status = (l.status || "Occupied") === "Vacant" ? "Vacant" : "Occupied";
+        const ins = await pool.query(`
+          INSERT INTO tenancy_schedule_units
+            (property_id, unit_number, premises, grouping, tenant_name, permitted_use,
+             status, nia_sqft, passing_rent_pa, lease_expiry, break_date, next_review_date,
+             in_leasing_schedule)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,true)
+          RETURNING id
+        `, [
+          req.params.propertyId,
+          l.unit_name || "",
+          l.zone || null,
+          l.zone || null,
+          l.tenant_name || null,
+          l.positioning || null,
+          status,
+          l.sqft || null,
+          l.rent_pa || null,
+          l.lease_expiry || null,
+          l.lease_break || null,
+          l.rent_review || null,
+        ]);
+        tenancyId = ins.rows[0].id;
+        created++;
+      }
+      // Write the FK back so the live cross-link kicks in.
+      await pool.query(
+        `UPDATE leasing_schedule_units SET tenancy_unit_id = $1 WHERE id = $2`,
+        [tenancyId, l.id]
+      );
+    }
+
+    await logAudit(pool, {
+      propertyId: req.params.propertyId as string, userId: user.id, userName: user.username,
+      action: "sync_to_tenancy",
+      newValue: `${created} created + ${linked} linked`,
+    });
+    res.json({ ok: true, created, linked, scanned: leasing.rows.length });
+  } catch (e: any) {
+    console.error("[sync-to-tenancy] failed:", e?.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Scan the Updates field for @username mentions and create a user_task per
+// newly added mention. Compares against `previousText` so re-saves don't
+// re-create tasks for existing mentions. Username matches the local part of
+// the user's email (e.g. "@woodybruce" matches woodybruce@brucegillinghampollard.com).
+router.post("/api/leasing-schedule/unit/:unitId/mention-tasks", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { unitId } = req.params;
+    const { text, previousText, propertyId } = req.body || {};
+    if (typeof text !== "string") return res.json({ created: 0 });
+
+    const tokens = (s: string) => Array.from(new Set((s.match(/@[\w.-]+/g) || []).map(m => m.slice(1).toLowerCase())));
+    const newMentions = tokens(text).filter(m => !tokens(previousText || "").includes(m));
+    if (newMentions.length === 0) return res.json({ created: 0 });
+
+    const unit = await pool.query("SELECT unit_name, tenant_name, property_id FROM leasing_schedule_units WHERE id = $1", [unitId]);
+    if (unit.rows.length === 0) return res.status(404).json({ error: "Unit not found" });
+    const u = unit.rows[0];
+    const propId = propertyId || u.property_id;
+    const propRes = await pool.query("SELECT name FROM crm_properties WHERE id = $1", [propId]);
+    const propName = propRes.rows[0]?.name || "Property";
+
+    let created = 0;
+    const creator = await getUserInfo(pool, req);
+    for (const handle of newMentions) {
+      // Resolve handle → user. Try email local-part, then username.
+      const userRow = await pool.query(
+        `SELECT id, email, username FROM users
+          WHERE lower(split_part(email, '@', 1)) = $1
+             OR lower(username) = $1
+          LIMIT 1`,
+        [handle]
+      );
+      const user = userRow.rows[0];
+      if (!user) continue;
+      const tenant = u.tenant_name || u.unit_name || "Unit";
+      const title = `${propName} · ${tenant} · Leasing schedule action`;
+      const description = `Tagged by ${creator?.username || "BGP"} on the Leasing Schedule.\n\n${text}`;
+      await pool.query(
+        `INSERT INTO user_tasks (user_id, title, description, priority, status, category, linked_property_id)
+         VALUES ($1, $2, $3, 'medium', 'todo', 'leasing-schedule', $4)`,
+        [user.id, title, description, propId]
+      );
+      created++;
+    }
+    res.json({ created, mentions: newMentions });
+  } catch (e: any) {
+    console.error("[mention-tasks] failed:", e?.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// AI auto-suggest status bands for every unit on this property's leasing
+// schedule. Asks Claude to classify each tenant into one of the Landsec
+// bands using whatever context we have (tenant name, performance, expiry,
+// updates, optimum target). Writes the suggestion back to status_band only
+// where it's currently NULL / unset, so manual classifications stick.
+router.post("/api/leasing-schedule/property/:propertyId/auto-status", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+
+    const rows = await pool.query(`
+      SELECT id, unit_name, tenant_name, zone, positioning, lease_expiry, lease_break,
+        mat_psqft, lfl_percent, occ_cost_percent, optimum_target, target_brands,
+        priority, status, status_band, updates
+      FROM leasing_schedule_units
+      WHERE property_id = $1 AND status != 'Archived'
+      ORDER BY zone, sort_order, unit_name`,
+      [req.params.propertyId]
+    );
+    if (rows.rows.length === 0) return res.json({ updated: 0, message: "Nothing to classify" });
+
+    const prompt = `You are a Landsec leasing analyst. Classify each unit into ONE of these status bands:
+
+- GREEN_A_HALO — Halo brand, top-tier strategic anchor we want to keep / expand
+- GREEN_B_HALO — On Strategy, performing well, retain
+- AMBER_C_MAINTAIN — Maintain Mix, average performer, no urgent action
+- DARK_RED_D_DIVEST — Divest Over Time, weak performer, plan to replace at lease end
+- BRIGHT_RED_D_AT_RISK — Customer At Risk or Live opportunity right now
+- GREY_VOID — Void / Live opportunity (vacant or about to be)
+
+Use the data per unit. Strong performers (positive LFL, low occ cost %) → GREEN. Weak (negative LFL, high occ cost, near-expiry, optimum target named) → DARK_RED. Currently vacant or expiring soon with active target → BRIGHT_RED or GREY. Solid but unremarkable → AMBER.
+
+Respond as JSON only:
+{ "classifications": [ { "id": "<unit-id>", "band": "<enum>", "reason": "<1 sentence>" } ] }
+
+Units:
+${rows.rows.map((u: any) => JSON.stringify({
+  id: u.id,
+  unit: u.unit_name,
+  tenant: u.tenant_name,
+  zone: u.zone,
+  positioning: u.positioning,
+  lease_expiry: u.lease_expiry,
+  lease_break: u.lease_break,
+  mat_psqft: u.mat_psqft,
+  lfl_percent: u.lfl_percent,
+  occ_cost_percent: u.occ_cost_percent,
+  optimum_target: u.optimum_target,
+  status: u.status,
+  current_band: u.status_band,
+})).join("\n")}`;
+
+    const ai = await callClaude({
+      model: CHATBGP_HELPER_MODEL,
+      max_tokens: 4000,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const raw = ai.choices[0]?.message?.content || "";
+    const parsed = safeParseJSON(raw);
+    const classifications: Array<{ id: string; band: string; reason: string }> = Array.isArray(parsed?.classifications) ? parsed.classifications : [];
+
+    const validBands = new Set(["GREEN_A_HALO", "GREEN_B_HALO", "AMBER_C_MAINTAIN", "DARK_RED_D_DIVEST", "BRIGHT_RED_D_AT_RISK", "GREY_VOID"]);
+    let updated = 0;
+    for (const c of classifications) {
+      if (!c?.id || !validBands.has(c?.band)) continue;
+      const r = await pool.query(
+        `UPDATE leasing_schedule_units
+            SET status_band = $1, updated_at = NOW(), last_updated_by = $2
+          WHERE id = $3 AND property_id = $4 AND (status_band IS NULL OR status_band = '' OR status_band = 'AMBER_C_MAINTAIN')`,
+        [c.band, user?.username || "ai-auto", c.id, req.params.propertyId]
+      );
+      updated += r.rowCount || 0;
+    }
+
+    await logAudit(pool, {
+      propertyId: req.params.propertyId as string, userId: user.id, userName: user.username,
+      action: "ai_auto_status_band",
+      newValue: `${updated}/${classifications.length} units auto-classified`,
+    });
+
+    res.json({ updated, attempted: classifications.length, total: rows.rows.length });
+  } catch (e: any) {
+    console.error("[leasing auto-status] failed:", e?.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Pull vacant units from a property's Tenancy Schedule and offer them up to
+// be promoted into the Leasing Schedule. Tenancy Schedule is the source of
+// truth for "what units exist at this property"; Leasing Schedule subscribes
+// to a subset via the `in_leasing_schedule` flag.
+router.get("/api/leasing-schedule/property/:propertyId/available-from-tenancy", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+
+    // Tenancy units not already mirrored into leasing_schedule_units by unit name.
+    const result = await pool.query(`
+      SELECT t.id, t.unit_number, t.premises, t.grouping, t.tenant_name, t.trading_name,
+             t.permitted_use, t.status, t.nia_sqft, t.gia_sqft, t.passing_rent_pa, t.erv_pa,
+             t.lease_expiry, t.in_leasing_schedule
+        FROM tenancy_schedule_units t
+       WHERE t.property_id = $1
+         AND COALESCE(t.unit_number, '') <> ''
+         AND NOT EXISTS (
+           SELECT 1 FROM leasing_schedule_units l
+            WHERE l.property_id = t.property_id
+              AND ${normUnitSql("l.unit_name")} = ${normUnitSql("t.unit_number")}
+         )
+       ORDER BY t.grouping NULLS LAST, t.premises NULLS LAST, t.sort_order, t.unit_number
+    `, [req.params.propertyId]);
+    res.json({ units: result.rows });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Promote a Tenancy Schedule unit into the Leasing Schedule. Creates a
+// leasing_schedule_units row pre-filled with the tenancy data, and flips the
+// `in_leasing_schedule` flag on the tenancy row so it shows up in the
+// "already on leasing schedule" view.
+router.post("/api/leasing-schedule/promote-from-tenancy", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { tenancyUnitId } = req.body;
+    if (!tenancyUnitId) return res.status(400).json({ error: "tenancyUnitId required" });
+
+    const t = await pool.query("SELECT * FROM tenancy_schedule_units WHERE id = $1", [tenancyUnitId]);
+    if (t.rows.length === 0) return res.status(404).json({ error: "Tenancy unit not found" });
+    const ten = t.rows[0];
+    const { allowed, user } = await checkPropertyAccess(pool, req, ten.property_id);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+
+    const maxSort = await pool.query(
+      "SELECT COALESCE(MAX(sort_order), 0) + 1 as next FROM leasing_schedule_units WHERE property_id = $1",
+      [ten.property_id]
+    );
+
+    // Map tenancy → leasing. Tenant becomes "Existing" (current occupant).
+    // Status_band defaults to AMBER (Maintain Mix) until set by team.
+    const status = (ten.status || "").toLowerCase() === "vacant" ? "Vacant" : "Occupied";
+    // Try to resolve the tenant name to a CRM company so the Existing cell
+    // links through to the brand profile on click. Match case-insensitive.
+    let tenantCompanyId: string | null = null;
+    if (ten.tenant_name) {
+      const cq = await pool.query(
+        "SELECT id FROM crm_companies WHERE lower(trim(name)) = lower(trim($1)) LIMIT 1",
+        [ten.tenant_name]
+      );
+      tenantCompanyId = cq.rows[0]?.id || null;
+    }
+    const inserted = await pool.query(`
+      INSERT INTO leasing_schedule_units
+        (property_id, zone, positioning, unit_name, tenant_name, lease_expiry, lease_break,
+         rent_pa, sqft, status, status_band, sort_order, last_updated_by,
+         tenancy_unit_id, tenant_company_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      RETURNING *
+    `, [
+      ten.property_id, ten.grouping || ten.premises || null, ten.permitted_use || null,
+      ten.unit_number, ten.tenant_name || null,
+      ten.lease_expiry || null, ten.break_date || null,
+      ten.passing_rent_pa || null, ten.nia_sqft || null,
+      status,
+      status === "Vacant" ? "GREY_VOID" : "AMBER_C_MAINTAIN",
+      maxSort.rows[0].next,
+      user?.username || null,
+      tenancyUnitId,
+      tenantCompanyId,
+    ]);
+
+    await pool.query(
+      "UPDATE tenancy_schedule_units SET in_leasing_schedule = true, updated_at = NOW() WHERE id = $1",
+      [tenancyUnitId]
+    );
+
+    await logAudit(pool, {
+      unitId: inserted.rows[0].id?.toString(),
+      propertyId: ten.property_id,
+      userId: user.id,
+      userName: user.username,
+      action: "promote_from_tenancy",
+      fieldName: "unit_name",
+      newValue: ten.unit_number,
+    });
+    res.json(inserted.rows[0]);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Bluewater (and any Landsec-formatted xlsx) one-shot import. Parses the
+// uploaded file, finds the Bluewater section by sheet/header text, creates
+// leasing_schedule_units rows with status_band populated. Doesn't touch the
+// tenancy schedule — that's its own import. Subsequent re-imports overwrite
+// by unit name within the same property.
+const landsecImportUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+router.post(
+  "/api/leasing-schedule/import-landsec",
+  requireAuth,
+  landsecImportUpload.single("file"),
+  async (req: any, res) => {
+    try {
+      const pool = await getPool();
+      const propertyId = req.body.propertyId;
+      const meetingMonth = req.body.meetingMonth || null;
+      if (!propertyId) return res.status(400).json({ error: "propertyId required" });
+      if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+      const { allowed, user } = await checkPropertyAccess(pool, req, propertyId);
+      if (!allowed) return res.status(403).json({ error: "Access denied" });
+
+      const XLSX = await import("xlsx");
+      const wb = XLSX.read(req.file.buffer);
+      // Bluewater sheet — could be the first sheet OR named "Bluewater". Try both.
+      const sheetName =
+        wb.SheetNames.find((s: string) => /bluewater/i.test(s))
+        || wb.SheetNames[0];
+      const ws = wb.Sheets[sheetName];
+      const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as any[];
+
+      // Find header row — the one with "Zone" + "Existing" + "Targets" together.
+      let headerIdx = -1;
+      for (let i = 0; i < Math.min(15, data.length); i++) {
+        const row = (data[i] || []).map((c: any) => String(c || "").toLowerCase());
+        if (row.some(c => c.includes("zone")) && row.some(c => c.includes("existing"))) {
+          headerIdx = i;
+          break;
+        }
+      }
+      if (headerIdx === -1) return res.status(400).json({ error: "Couldn't find Landsec header row (Zone / Existing / Targets)" });
+
+      // Map column index → field
+      const header = (data[headerIdx] || []).map((c: any) => String(c || "").toLowerCase());
+      const idx = {
+        zone: header.findIndex(h => h.includes("zone")),
+        positioning: header.findIndex(h => h.includes("positioning")),
+        existing: header.findIndex(h => h.includes("existing")),
+        targets: header.findIndex(h => h.includes("target") && !h.includes("optimum")),
+        optimum: header.findIndex(h => h.includes("optimum")),
+        performance: header.findIndex(h => h.includes("performance")),
+        priority: header.findIndex(h => h.includes("priority")),
+        updates: header.findIndex(h => h.includes("updates")),
+      };
+
+      let imported = 0, sortOrder = 0;
+      for (let r = headerIdx + 1; r < data.length; r++) {
+        const row = data[r] || [];
+        const existing = String(row[idx.existing] ?? "").trim();
+        const zone = idx.zone >= 0 ? String(row[idx.zone] ?? "").trim() : "";
+        const unitName = existing || zone || `Row ${r}`;
+        if (!existing && !zone) continue;
+
+        sortOrder++;
+        const performance = idx.performance >= 0 ? String(row[idx.performance] ?? "").trim() : "";
+        // Parse MAT/psf, LFL%, Occ% out of the freeform performance cell.
+        const matMatch = performance.match(/£?\s*([\d,]+(?:\.\d+)?)/);
+        const lflMatch = performance.match(/(-?\d+(?:\.\d+)?)\s*%\s*lfl/i) || performance.match(/lfl[^\d-]*(-?\d+(?:\.\d+)?)/i);
+        const ocMatch  = performance.match(/(\d+(?:\.\d+)?)\s*%\s*oc/i)  || performance.match(/oc[^\d-]*(\d+(?:\.\d+)?)/i);
+
+        await pool.query(`
+          INSERT INTO leasing_schedule_units
+            (property_id, zone, positioning, unit_name, tenant_name,
+             target_brands, optimum_target, mat_psqft, lfl_percent, occ_cost_percent,
+             priority, status, status_band, updates, meeting_month, sort_order, last_updated_by)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+        `, [
+          propertyId,
+          zone || null,
+          idx.positioning >= 0 ? String(row[idx.positioning] ?? "").trim() || null : null,
+          unitName,
+          existing || null,
+          idx.targets >= 0 ? String(row[idx.targets] ?? "").trim() || null : null,
+          idx.optimum >= 0 ? String(row[idx.optimum] ?? "").trim() || null : null,
+          matMatch?.[1] || null,
+          lflMatch?.[1] || null,
+          ocMatch?.[1] || null,
+          idx.priority >= 0 ? String(row[idx.priority] ?? "").trim() || null : null,
+          "Occupied",
+          "AMBER_C_MAINTAIN",
+          idx.updates >= 0 ? String(row[idx.updates] ?? "").trim() || null : null,
+          meetingMonth,
+          sortOrder,
+          user?.username || null,
+        ]);
+        imported++;
+      }
+
+      await logAudit(pool, {
+        propertyId, userId: user.id, userName: user.username,
+        action: "import_landsec",
+        newValue: `${imported} rows imported from "${sheetName}"`,
+      });
+
+      res.json({ imported, sheetName, headerRow: headerIdx + 1 });
+    } catch (e: any) {
+      console.error("[leasing import-landsec] failed:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  }
+);
 
 export default router;

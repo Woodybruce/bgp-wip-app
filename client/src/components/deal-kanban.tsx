@@ -1,15 +1,18 @@
 import { Badge } from "@/components/ui/badge";
 import { Link } from "wouter";
 import type { CrmDeal } from "@shared/schema";
+import { legacyToCode } from "@shared/deal-status";
+import { computeDealAmlStatus, DealAmlBadge, type AmlCheckCompany } from "@/components/deal-aml-badge";
+import { teamLabel } from "@/lib/crm-options";
 
+// WIP-only kanban: NEG → INV. Pipeline (REP/SPEC/LIVE/AVA) belongs on the
+// Letting / Investment trackers; WIT is hidden from the WIP board entirely.
 const KANBAN_COLUMNS = [
-  { key: "Pipeline", label: "Pipeline", statuses: ["Targeting", "Available", "Marketing", "Speculative", "Live"] },
-  { key: "NEG", label: "Under Negotiation", statuses: ["NEG", "Under Negotiation"] },
-  { key: "HOTs", label: "HOTs", statuses: ["HOTs"] },
-  { key: "SOLs", label: "SOLs", statuses: ["SOLs"] },
-  { key: "Exchanged", label: "Exchanged", statuses: ["Exchanged"] },
-  { key: "Completed", label: "Completed", statuses: ["Completed"] },
-  { key: "Invoiced", label: "Invoiced", statuses: ["Invoiced"] },
+  { key: "NEG", label: "Negotiating", statuses: ["NEG"] },
+  { key: "SOL", label: "Solicitors", statuses: ["SOL"] },
+  { key: "EXC", label: "Exchanged", statuses: ["EXC"] },
+  { key: "COM", label: "Completed", statuses: ["COM"] },
+  { key: "INV", label: "Invoiced", statuses: ["INV"] },
 ];
 
 const DEAL_TYPE_COLORS: Record<string, string> = {
@@ -27,6 +30,7 @@ const DEAL_TYPE_COLORS: Record<string, string> = {
   "Purchase": "bg-emerald-600 text-white",
   "New Letting": "bg-lime-600 text-white",
   "Sub-Letting": "bg-sky-600 text-white",
+  "Temp Lease": "bg-cyan-600 text-white",
   "Assignment": "bg-slate-600 text-white",
 };
 
@@ -42,7 +46,8 @@ const ASSET_CLASS_COLORS: Record<string, string> = {
 
 const TEAM_COLORS: Record<string, string> = {
   "Development": "bg-orange-100 text-orange-800",
-  "London Leasing": "bg-blue-100 text-blue-800",
+  "London F&B": "bg-rose-100 text-rose-800",
+  "London Retail": "bg-teal-100 text-teal-800",
   "National Leasing": "bg-emerald-100 text-emerald-800",
   "Investment": "bg-purple-100 text-purple-800",
   "Tenant Rep": "bg-rose-100 text-rose-800",
@@ -59,14 +64,22 @@ function formatFee(fee: number | null | undefined): string {
 interface DealKanbanProps {
   deals: CrmDeal[];
   propertyMap: Map<string, string>;
+  unitMap?: Map<string, string>;
+  tenantMap?: Map<string, string>;
+  /** Optional — supply to render the AML status dot on each card. */
+  amlCompanyMap?: Map<string, AmlCheckCompany>;
 }
 
-export function DealKanban({ deals, propertyMap }: DealKanbanProps) {
+// Stages where the tenant becomes part of the card heading.
+const TENANT_HEADING_STATUSES = new Set(["SOL", "EXC", "COM", "INV"]);
+
+export function DealKanban({ deals, propertyMap, unitMap, tenantMap, amlCompanyMap }: DealKanbanProps) {
   // Group deals into columns
   const columns = KANBAN_COLUMNS.map((col) => {
-    const columnDeals = deals.filter((d) =>
-      col.statuses.includes(d.status || "")
-    );
+    const columnDeals = deals.filter((d) => {
+      const code = legacyToCode(d.status);
+      return code !== null && col.statuses.includes(code);
+    });
     const totalFee = columnDeals.reduce(
       (sum, d) => sum + (d.fee ? Number(d.fee) : 0),
       0
@@ -112,7 +125,26 @@ export function DealKanban({ deals, propertyMap }: DealKanbanProps) {
               const propName = deal.propertyId
                 ? propertyMap.get(deal.propertyId) || ""
                 : "";
-              const displayName = propName || deal.name;
+              const unitName = deal.unitId
+                ? unitMap?.get(deal.unitId) || ""
+                : "";
+              const tenantName = deal.tenantId
+                ? tenantMap?.get(deal.tenantId) || ""
+                : "";
+              const code = legacyToCode(deal.status);
+              const showTenant = code && TENANT_HEADING_STATUSES.has(code) && tenantName;
+              // Heading priority:
+              //   1. User-typed deal name (when it differs from the
+              //      auto-filled property name — i.e. Layla customised it)
+              //   2. Unit name
+              //   3. Property name
+              //   4. Deal name as final fallback
+              // The auto-fill on the form sets deal.name = property.name when
+              // the user doesn't type their own, so equating those two is how
+              // we detect "this is just the auto-fill, prefer unit".
+              const customDealName = deal.name && deal.name !== propName ? deal.name : null;
+              const baseName = customDealName || unitName || propName || deal.name;
+              const displayName = showTenant ? `${baseName} — ${tenantName}` : baseName;
               const agents = Array.isArray(deal.internalAgent)
                 ? deal.internalAgent.join(", ")
                 : deal.internalAgent || "";
@@ -122,13 +154,23 @@ export function DealKanban({ deals, propertyMap }: DealKanbanProps) {
                   ? [deal.team]
                   : [];
 
+              // Derive AML state per deal — shown as a small dot beside
+              // the name so the team sees the gate coming before they
+              // try to drag a card to SOL.
+              const aml = amlCompanyMap
+                ? computeDealAmlStatus(deal as any, amlCompanyMap)
+                : null;
+
               return (
                 <Link key={deal.id} href={`/deals/${deal.id}`}>
                   <div className="bg-background rounded-md border shadow-sm p-3 space-y-2 hover:shadow-md hover:border-primary/30 transition-all cursor-pointer group">
-                    {/* Name */}
-                    <p className="text-sm font-semibold leading-tight truncate group-hover:text-primary transition-colors">
-                      {displayName}
-                    </p>
+                    {/* Name + AML status */}
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      {aml && <DealAmlBadge status={aml.status} missing={aml.missing} />}
+                      <p className="text-sm font-semibold leading-tight truncate group-hover:text-primary transition-colors flex-1 min-w-0">
+                        {displayName}
+                      </p>
+                    </div>
 
                     {/* Deal type badge + asset class dot */}
                     <div className="flex items-center gap-1.5 flex-wrap">
@@ -170,7 +212,7 @@ export function DealKanban({ deals, propertyMap }: DealKanbanProps) {
                             variant="outline"
                             className={`text-[9px] px-1.5 py-0 h-4 border-0 ${TEAM_COLORS[t] || "bg-muted text-muted-foreground"}`}
                           >
-                            {t}
+                            {teamLabel(t)}
                           </Badge>
                         ))}
                       </div>

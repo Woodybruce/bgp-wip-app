@@ -1,9 +1,26 @@
 import { db } from "./db";
-import { externalRequirements } from "@shared/schema";
-import { eq, and } from "drizzle-orm";
+import { externalRequirements, crmRequirementsLeasing, crmCompanies, crmContacts } from "@shared/schema";
+import { eq, and, isNull } from "drizzle-orm";
+import { ScraperSession, isScraperApiAvailable } from "./utils/scraperapi";
 
 const TRL_BASE = "https://www.therequirementlist.com";
 const MEMBERSTACK_SITE_ID = process.env.TRL_SITE_ID || "71a8cd36166fbac3ef4f574f428d449b";
+
+// Sticky ScraperAPI session for the entire TRL scrape — keeps the
+// Memberstack auth cookie + Webflow session valid across the directory
+// pagination + per-agency page loads. Without sticky sessions every
+// request would hit a different upstream IP and TRL's Webflow stack
+// would either re-issue a fresh anonymous session or rate-limit hard.
+let scraperSession: ScraperSession | null = null;
+function trlFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  if (!isScraperApiAvailable()) return fetch(url, init);
+  if (!scraperSession) scraperSession = new ScraperSession();
+  return scraperSession.fetch(url, init);
+}
+/** Reset between scrapes so a stale session number doesn't outlive the data. */
+export function resetTrlSession() {
+  scraperSession = null;
+}
 
 function getTrlToken(): string {
   const token = process.env.TRL_TOKEN;
@@ -71,7 +88,7 @@ export async function scrapeTrlPage(url: string): Promise<{
     }
     const token = getTrlToken();
     const cookie = `__ms_${MEMBERSTACK_SITE_ID}=${token}`;
-    const res = await fetch(url, {
+    const res = await trlFetch(url, {
       headers: { Cookie: cookie },
       redirect: "manual",
     });
@@ -186,7 +203,7 @@ export async function scrapeTrlPage(url: string): Promise<{
   }
 }
 
-export async function importTrlRequirement(url: string): Promise<string | null> {
+export async function importTrlRequirement(url: string, autoPromote = true): Promise<string | null> {
   const data = await scrapeTrlPage(url);
   if (!data) return null;
 
@@ -222,19 +239,258 @@ export async function importTrlRequirement(url: string): Promise<string | null> 
     updatedAt: new Date(),
   };
 
+  let externalId: string;
   if (existing.length > 0) {
     await db
       .update(externalRequirements)
       .set(record)
       .where(eq(externalRequirements.id, existing[0].id));
-    return existing[0].id;
+    externalId = existing[0].id;
+  } else {
+    const [inserted] = await db
+      .insert(externalRequirements)
+      .values(record)
+      .returning({ id: externalRequirements.id });
+    externalId = inserted.id;
   }
 
-  const [inserted] = await db
-    .insert(externalRequirements)
-    .values(record)
-    .returning({ id: externalRequirements.id });
-  return inserted.id;
+  if (autoPromote && (existing.length === 0 || existing[0].status !== "converted")) {
+    await promoteTrlToCrmRequirement(externalId, record);
+  }
+  return externalId;
+}
+
+// Classify a TRL contact as Principal (brand staff) or Agent (external rep)
+// from the email domain. e.g. brand "Pret A Manger" + email "*@pret.co.uk" →
+// Principal; "*@knightfrank.com" → Agent. Brand-name tokens are matched as
+// substrings of the email's host so "pretamanger.com" and "pret.co.uk" both
+// hit. Falls back to Agent when no email is available — TRL's named contacts
+// are usually agents on the user's read of the data.
+function classifyTrlContact(brandName: string, email: string | null): "Principal" | "Agent" {
+  if (!email) return "Agent";
+  const at = email.lastIndexOf("@");
+  if (at < 0) return "Agent";
+  const host = email.slice(at + 1).toLowerCase().split(":")[0]; // strip any port
+  if (!host) return "Agent";
+  const STOP = new Set(["the", "and", "group", "co", "company", "ltd", "limited", "plc", "uk", "of", "a", "an"]);
+  const tokens = brandName
+    .toLowerCase()
+    .replace(/&/g, " ")
+    .split(/[^a-z0-9]+/)
+    .filter(t => t.length >= 3 && !STOP.has(t));
+  if (tokens.length === 0) return "Agent";
+  for (const t of tokens) {
+    if (host.includes(t)) return "Principal";
+  }
+  return "Agent";
+}
+
+// Normalise a brand/company name for cross-source dedup. Same agent often
+// registers a requirement on both PIPnet and TRL under slightly different
+// names ("Pret", "Pret A Manger", "Pret A Manger Ltd") — we want all three
+// to collapse to one CRM row.
+function normaliseBrandName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/\b(ltd|limited|plc|llp|inc|co|company|group|holdings|the)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+// Mirror of PIPnet's promote — the brand company (Pret, Greggs etc.) is the
+// requirement holder. Contact routing uses classifyTrlContact: email-domain
+// match → principal (linked to brand company), mismatch → agent (unlinked,
+// since we don't have the agency name from TRL).
+async function promoteTrlToCrmRequirement(
+  externalId: string,
+  item: {
+    companyName: string;
+    companyLogo: string | null;
+    contactName: string | null;
+    contactTitle: string | null;
+    contactEmail: string | null;
+    contactPhone: string | null;
+    useClass: string | null;
+    sizeRange: string | null;
+    locations: string[] | null;
+    tenure: string | null;
+    description: string | null;
+    pitch: string | null;
+    lastUpdated: string | null;
+    sourceUrl?: string;
+    rawData: any;
+  }
+): Promise<boolean> {
+  const mappedUse: string[] = item.rawData?.mappedUse || [];
+  const role = classifyTrlContact(item.companyName, item.contactEmail);
+  return db.transaction(async (tx) => {
+    // Brand company — tag as "Brand" when newly created so it doesn't
+    // collide with the agent/landlord segments.
+    let clientCompanyId: string | null = null;
+    if (item.companyName) {
+      const existingCompany = await tx
+        .select()
+        .from(crmCompanies)
+        .where(eq(crmCompanies.name, item.companyName))
+        .limit(1);
+      if (existingCompany.length > 0) {
+        clientCompanyId = existingCompany[0].id;
+      } else {
+        const [newCompany] = await tx
+          .insert(crmCompanies)
+          .values({ name: item.companyName, companyType: "Brand" })
+          .returning({ id: crmCompanies.id });
+        clientCompanyId = newCompany.id;
+      }
+    }
+
+    // Contact — Principal if email domain matches the brand, else Agent.
+    // Principal contacts are linked to the brand company. Agent contacts are
+    // left unlinked (we don't know the agency name from TRL).
+    let principalContactId: string | null = null;
+    let agentContactId: string | null = null;
+    if (item.contactName) {
+      const existingContact = await tx
+        .select()
+        .from(crmContacts)
+        .where(eq(crmContacts.name, item.contactName))
+        .limit(1);
+      let contactId: string;
+      if (existingContact.length > 0) {
+        contactId = existingContact[0].id;
+        const updates: Record<string, any> = {};
+        if (!existingContact[0].email && item.contactEmail) updates.email = item.contactEmail;
+        if (!existingContact[0].phone && item.contactPhone) updates.phone = item.contactPhone;
+        if (!existingContact[0].role && item.contactTitle) updates.role = item.contactTitle;
+        if (role === "Principal" && !existingContact[0].companyId && clientCompanyId) {
+          updates.companyId = clientCompanyId;
+          updates.companyName = item.companyName;
+        }
+        if (!existingContact[0].contactType) updates.contactType = role;
+        if (Object.keys(updates).length > 0) {
+          await tx.update(crmContacts).set(updates).where(eq(crmContacts.id, existingContact[0].id));
+        }
+      } else {
+        const [newContact] = await tx
+          .insert(crmContacts)
+          .values({
+            name: item.contactName,
+            email: item.contactEmail,
+            phone: item.contactPhone,
+            role: item.contactTitle,
+            contactType: role,
+            companyId: role === "Principal" ? clientCompanyId : null,
+            companyName: role === "Principal" ? item.companyName : null,
+          })
+          .returning({ id: crmContacts.id });
+        contactId = newContact.id;
+      }
+      if (role === "Principal") principalContactId = contactId;
+      else agentContactId = contactId;
+    }
+
+    const useArray = mappedUse.length > 0
+      ? mappedUse
+      : item.useClass
+      ? item.useClass.split(/[,;|]/).map(s => s.trim()).filter(Boolean)
+      : null;
+
+    // Skip if a leasing requirement for this brand already exists. Match by
+    // normalised name so agents registering on both PIPnet and TRL under
+    // slightly different brand strings collapse to a single CRM row.
+    const normalisedTarget = normaliseBrandName(item.companyName);
+    const candidateReqs = await tx
+      .select()
+      .from(crmRequirementsLeasing);
+    const existingReq = candidateReqs.find(r => normaliseBrandName(r.name) === normalisedTarget);
+    if (existingReq) {
+      // Enrich: fill empty fields on the existing row with TRL data. TRL is
+      // particularly valuable for locations + principal contact + pitch text
+      // which PIPnet doesn't surface.
+      const updates: Record<string, any> = {};
+      if (!existingReq.principalContactId && principalContactId) updates.principalContactId = principalContactId;
+      if (!existingReq.agentContactId && agentContactId) updates.agentContactId = agentContactId;
+      if ((!existingReq.use || existingReq.use.length === 0) && useArray) updates.use = useArray;
+      if ((!existingReq.size || existingReq.size.length === 0) && item.sizeRange) updates.size = [item.sizeRange];
+      if ((!existingReq.requirementLocations || existingReq.requirementLocations.length === 0) && item.locations && item.locations.length > 0) {
+        updates.requirementLocations = item.locations;
+      }
+      const existingSources = existingReq.sources ?? [];
+      if (!existingSources.includes("TRL")) {
+        updates.sources = [...existingSources, "TRL"];
+      }
+      if (Object.keys(updates).length > 0) {
+        await tx.update(crmRequirementsLeasing).set(updates).where(eq(crmRequirementsLeasing.id, existingReq.id));
+      }
+      await tx
+        .update(externalRequirements)
+        .set({ status: "converted" })
+        .where(eq(externalRequirements.id, externalId));
+      return false;
+    }
+
+    await tx.insert(crmRequirementsLeasing).values({
+      name: item.companyName,
+      companyId: clientCompanyId,
+      principalContactId,
+      agentContactId,
+      use: useArray,
+      size: item.sizeRange ? [item.sizeRange] : null,
+      requirementLocations: item.locations,
+      sources: ["TRL"],
+      comments: [
+        item.description,
+        item.pitch ? `Pitch: ${item.pitch}` : null,
+        item.tenure ? `Tenure: ${item.tenure}` : null,
+        item.sourceUrl ? `TRL: ${item.sourceUrl}` : null,
+        "Source: TheRequirementList",
+      ].filter(Boolean).join("\n"),
+      status: "Active",
+    });
+
+    await tx
+      .update(externalRequirements)
+      .set({ status: "converted" })
+      .where(eq(externalRequirements.id, externalId));
+    return true;
+  });
+}
+
+// Full sync: discover every requirement URL via TRL's search, then import +
+// auto-promote each. Returns counts so the UI can show a useful toast.
+export async function syncAllTrlRequirements(): Promise<{ discovered: number; imported: number; failed: number; errors: string[] }> {
+  let imported = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  let urls: string[] = [];
+  try {
+    const searched = await scrapeTrlRequirementSearch();
+    urls = searched.map(s => s.url);
+  } catch (e: any) {
+    errors.push(`Requirement search failed: ${e?.message}`);
+  }
+  // Fall back to the static known-pages list if discovery yielded nothing
+  // (e.g. TRL search markup changes, auth blip).
+  if (urls.length === 0) urls = KNOWN_TRL_PAGES;
+
+  for (const url of urls) {
+    try {
+      const id = await importTrlRequirement(url, true);
+      if (id) imported++;
+      else {
+        failed++;
+        errors.push(`No data extracted from ${url}`);
+      }
+    } catch (err: any) {
+      failed++;
+      errors.push(`${url}: ${err.message}`);
+    }
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  return { discovered: urls.length, imported, failed, errors };
 }
 
 export const KNOWN_TRL_PAGES = [
@@ -336,7 +592,7 @@ export async function scrapeTrlOccupierDirectory(): Promise<TrlDirectoryCompany[
     const url = page === 1
       ? `${TRL_BASE}/features/occupier-directory`
       : `${TRL_BASE}/features/occupier-directory?${pageKey}=${page}`;
-    const res = await fetch(url, { headers: { Cookie: cookie }, redirect: "follow" });
+    const res = await trlFetch(url, { headers: { Cookie: cookie }, redirect: "follow" });
     if (!res.ok) break;
     const html = await res.text();
 
@@ -385,7 +641,7 @@ export async function scrapeTrlAgencyListing(): Promise<TrlDirectoryCompany[]> {
     const url = page === 1
       ? `${TRL_BASE}/features/agency-directory`
       : `${TRL_BASE}/features/agency-directory?${pageKey}=${page}`;
-    const res = await fetch(url, { headers: { Cookie: cookie }, redirect: "follow" });
+    const res = await trlFetch(url, { headers: { Cookie: cookie }, redirect: "follow" });
     if (!res.ok) break;
     const html = await res.text();
 
@@ -424,7 +680,7 @@ export async function scrapeTrlAgencyDetailPage(slug: string): Promise<{ name: s
   const url = `${TRL_BASE}/agency/${slug}`;
   const contacts: TrlAgencyContact[] = [];
 
-  const res = await fetch(url, { headers: { Cookie: cookie }, redirect: "follow" });
+  const res = await trlFetch(url, { headers: { Cookie: cookie }, redirect: "follow" });
   if (!res.ok) return { name: slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()), contacts: [] };
   const html = await res.text();
 
@@ -493,7 +749,7 @@ export async function scrapeTrlRequirementSearch(): Promise<{ slug: string; url:
     const url = page === 1
       ? `${TRL_BASE}/features/requirement-search`
       : `${TRL_BASE}/features/requirement-search?${pageKey}=${page}`;
-    const res = await fetch(url, { headers: { Cookie: cookie }, redirect: "follow" });
+    const res = await trlFetch(url, { headers: { Cookie: cookie }, redirect: "follow" });
     if (!res.ok) break;
     const html = await res.text();
 
@@ -543,7 +799,7 @@ export async function discoverTrlPages(): Promise<string[]> {
       let totalPages = 50;
       while (page <= totalPages) {
         const pageUrl = page === 1 ? sourceUrl : `${sourceUrl}?${pageKey}=${page}`;
-        const res = await fetch(pageUrl, {
+        const res = await trlFetch(pageUrl, {
           headers: { Cookie: cookie },
           redirect: "follow",
         });
