@@ -3,10 +3,16 @@ import Anthropic from "@anthropic-ai/sdk";
 export const CHATBGP_MODEL = "claude-sonnet-4-6";
 export const CHATBGP_HELPER_MODEL = "claude-haiku-4-5-20251001";
 
+export function anthropicWorkspaceOptions(): { defaultHeaders?: Record<string, string> } {
+  const workspaceId = process.env.ANTHROPIC_WORKSPACE_ID;
+  return workspaceId ? { defaultHeaders: { "anthropic-workspace-id": workspaceId } } : {};
+}
+
 export function getAnthropicClient(useDirect = false) {
   if (useDirect && process.env.ANTHROPIC_API_KEY) {
     return new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
+      ...anthropicWorkspaceOptions(),
     });
   }
   return new Anthropic({
@@ -14,6 +20,7 @@ export function getAnthropicClient(useDirect = false) {
     ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
       ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
       : {}),
+    ...anthropicWorkspaceOptions(),
   });
 }
 

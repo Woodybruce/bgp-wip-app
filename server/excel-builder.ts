@@ -9,7 +9,7 @@
  * - Freeze panes, print setup, cell protection
  */
 
-import * as ExcelJS from "exceljs";
+import ExcelJS from "exceljs";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -288,6 +288,7 @@ function getDefaultAssumptions(overrides: Record<string, any> = {}): Record<stri
     exitCapRate: { label: 'Exit Cap Rate', value: 0.055, format: 'percentage', namedRange: 'ExitCapRate', category: 'Exit' },
     disposalCostsRate: { label: 'Disposal Costs (%)', value: 0.02, format: 'percentage', namedRange: 'DisposalCostsRate', category: 'Exit', note: 'Agent + legal on exit' },
     holdPeriodYears: { label: 'Hold Period (years)', value: 5, format: 'integer', namedRange: 'HoldPeriodYears', category: 'Exit', validation: { type: 'whole', min: 1, max: 25 } },
+    discountRate: { label: 'Discount Rate', value: 0.08, format: 'percentage', namedRange: 'DiscountRate', category: 'Exit', note: 'Used for NPV' },
 
     // Dates
     acquisitionDate: { label: 'Acquisition Date', value: '2025-07-01', format: 'date', namedRange: 'AcquisitionDate', category: 'Dates' },
@@ -554,7 +555,7 @@ function buildAssumptionsSheet(wb: ExcelJS.Workbook, assumptions: Record<string,
 
 // ─── Sheet 3: Cash Flow ─────────────────────────────────────────────────────
 
-function buildCashFlowSheet(wb: ExcelJS.Workbook, quarters: number, rowMap: AssumptionRowMap): ExcelJS.Worksheet {
+function buildCashFlowSheet(wb: ExcelJS.Workbook, quarters: number, rowMap: AssumptionRowMap): { ws: ExcelJS.Worksheet; noiRow: number } {
   const ws = wb.addWorksheet('Cash Flow', {
     properties: { defaultColWidth: 14 },
     pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 },
@@ -667,7 +668,7 @@ function buildCashFlowSheet(wb: ExcelJS.Workbook, quarters: number, rowMap: Assu
   for (let q = 1; q <= quarters; q++) {
     const col = q + 4;
     const cl = colLetter(col);
-    setFormula(ws, r, col, `${cl}${rentRow}+${cl}${voidRow}+${cl}${rentFreeRow}+${cl}${vacancyRow}`, 'subtotal', 'currency');
+    setFormula(ws, r, col, `MAX(0,${cl}${rentRow}+${cl}${voidRow}+${cl}${rentFreeRow}+${cl}${vacancyRow})`, 'subtotal', 'currency');
   }
   r++;
 
@@ -740,7 +741,7 @@ function buildCashFlowSheet(wb: ExcelJS.Workbook, quarters: number, rowMap: Assu
   setVal(ws, r, 2, 'Interest Payment', 'label');
   for (let q = 1; q <= quarters; q++) {
     const col = q + 4;
-    setFormula(ws, r, col, `IF(${q}<=LoanTermQuarters,-LoanAmount*InterestRate/4,0)`, 'formula', 'currency');
+    setFormula(ws, r, col, `IF(${q}<=LoanTermQuarters,IF(AmortisationType="Interest Only",-LoanAmount*InterestRate/4,IPMT(InterestRate/4,${q},LoanTermQuarters,LoanAmount)),0)`, 'formula', 'currency');
   }
   r++;
 
@@ -748,9 +749,8 @@ function buildCashFlowSheet(wb: ExcelJS.Workbook, quarters: number, rowMap: Assu
   setVal(ws, r, 2, 'Principal Repayment', 'label');
   for (let q = 1; q <= quarters; q++) {
     const col = q + 4;
-    // For interest-only: principal = 0; for amortising: use PMT
     setFormula(ws, r, col,
-      `IF(AmortisationType="Interest Only",0,IF(${q}<=LoanTermQuarters,-PMT(InterestRate/4,LoanTermQuarters,LoanAmount)-(-LoanAmount*InterestRate/4),0))`,
+      `IF(AmortisationType="Interest Only",0,IF(${q}<=LoanTermQuarters,PPMT(InterestRate/4,${q},LoanTermQuarters,LoanAmount),0))`,
       'formula', 'currency');
   }
   r++;
@@ -818,11 +818,7 @@ function buildCashFlowSheet(wb: ExcelJS.Workbook, quarters: number, rowMap: Assu
   for (let q = 1; q <= quarters; q++) {
     const col = q + 4;
     const cl = colLetter(col);
-    if (q === quarters) {
-      setFormula(ws, r, col, `${cl}${unlevCFRow}+D${netExitRow}`, 'total', 'currency');
-    } else {
-      setFormula(ws, r, col, `${cl}${unlevCFRow}`, 'total', 'currency');
-    }
+    setFormula(ws, r, col, `${cl}${unlevCFRow}`, 'total', 'currency');
   }
   r++;
 
@@ -859,10 +855,10 @@ function buildCashFlowSheet(wb: ExcelJS.Workbook, quarters: number, rowMap: Assu
   }
   r++;
 
-  // Exit: repay loan
+  // Exit: repay the outstanding loan balance (zero once fully amortised)
   const loanRepayRow = r;
   setVal(ws, r, 2, 'Loan Repayment at Exit', 'label');
-  setFormula(ws, r, 4, `-LoanAmount`, 'formula', 'currency');
+  setFormula(ws, r, 4, `-MAX(0,LoanBalanceAtExit)`, 'formula', 'currency');
   r++;
 
   const netExitLevRow = r;
@@ -881,11 +877,7 @@ function buildCashFlowSheet(wb: ExcelJS.Workbook, quarters: number, rowMap: Assu
   for (let q = 1; q <= quarters; q++) {
     const col = q + 4;
     const cl = colLetter(col);
-    if (q === quarters) {
-      setFormula(ws, r, col, `${cl}${levCFRow}+D${netExitLevRow}`, 'total', 'currency');
-    } else {
-      setFormula(ws, r, col, `${cl}${levCFRow}`, 'total', 'currency');
-    }
+    setFormula(ws, r, col, `${cl}${levCFRow}`, 'total', 'currency');
   }
   r++;
 
@@ -928,13 +920,23 @@ function buildCashFlowSheet(wb: ExcelJS.Workbook, quarters: number, rowMap: Assu
   // Profit (unlevered)
   const unlevProfitRow = r;
   setVal(ws, r, 2, 'Unlevered Total Profit', 'label');
-  setFormula(ws, r, 3, `SUM(C${unlevTotalRow}:${lastQCol}${unlevTotalRow})+D${unlevTotalRow}`, 'total', 'currency');
+  setFormula(ws, r, 3, `SUM(C${unlevTotalRow}:${lastQCol}${unlevTotalRow})`, 'total', 'currency');
   r++;
 
   // Profit (levered)
   const levProfitRow = r;
   setVal(ws, r, 2, 'Levered Total Profit', 'label');
-  setFormula(ws, r, 3, `SUM(C${levTotalRow}:${lastQCol}${levTotalRow})+D${levTotalRow}`, 'total', 'currency');
+  setFormula(ws, r, 3, `SUM(C${levTotalRow}:${lastQCol}${levTotalRow})`, 'total', 'currency');
+  r++;
+
+  // NPV (unlevered)
+  setVal(ws, r, 2, 'Unlevered NPV @ Discount Rate', 'label');
+  setFormula(ws, r, 3, `C${unlevTotalRow}+NPV(DiscountRate/4,E${unlevTotalRow}:${lastQCol}${unlevTotalRow})+D${unlevTotalRow}/(1+DiscountRate/4)^HoldPeriodQuarters`, 'total', 'currency');
+  r++;
+
+  // NPV (levered)
+  setVal(ws, r, 2, 'Levered NPV @ Discount Rate', 'label');
+  setFormula(ws, r, 3, `C${levTotalRow}+NPV(DiscountRate/4,E${levTotalRow}:${lastQCol}${levTotalRow})+D${levTotalRow}/(1+DiscountRate/4)^HoldPeriodQuarters`, 'total', 'currency');
   r++;
 
   // Store key row references as named ranges
@@ -970,12 +972,12 @@ function buildCashFlowSheet(wb: ExcelJS.Workbook, quarters: number, rowMap: Assu
   // Freeze panes
   ws.views = [{ state: 'frozen', xSplit: 2, ySplit: 3, topLeftCell: 'C4', activeCell: 'E6' }];
 
-  return ws;
+  return { ws, noiRow };
 }
 
 // ─── Sheet 4: Debt Schedule ─────────────────────────────────────────────────
 
-function buildDebtScheduleSheet(wb: ExcelJS.Workbook, quarters: number): ExcelJS.Worksheet {
+function buildDebtScheduleSheet(wb: ExcelJS.Workbook, quarters: number, noiRow: number): ExcelJS.Worksheet {
   const ws = wb.addWorksheet('Debt Schedule', {
     properties: { defaultColWidth: 14 },
     pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 },
@@ -1112,6 +1114,10 @@ function buildDebtScheduleSheet(wb: ExcelJS.Workbook, quarters: number): ExcelJS
     const cl = colLetter(col);
     setFormula(ws, r, col, `${cl}${openBalRow}-${cl}${princRow}`, 'total', 'currency');
   }
+  // The exit-quarter closing balance as a workbook-level named range: the Cash
+  // Flow sheet's "Loan Repayment at Exit" references it, so amortising loans
+  // repay the outstanding balance rather than the original principal.
+  wb.definedNames.add(`'Debt Schedule'!$${colLetter(quarters + 2)}$${closeBalRow}`, 'LoanBalanceAtExit');
   r++;
 
   r++;
@@ -1150,7 +1156,7 @@ function buildDebtScheduleSheet(wb: ExcelJS.Workbook, quarters: number): ExcelJS
     const col = q + 2;
     const qCFCol = colLetter(q + 4); // Cash Flow sheet columns start at E (col 5)
     // Reference NOI from Cash Flow - we use a cross-sheet reference
-    setFormula(ws, r, col, `IF(ABS(${colLetter(col)}${totalDSRow})>0,'Cash Flow'!${qCFCol}6/ABS(${colLetter(col)}${totalDSRow}),0)`, 'formula', 'decimal');
+    setFormula(ws, r, col, `IF(ABS(${colLetter(col)}${totalDSRow})>0,'Cash Flow'!${qCFCol}${noiRow}/ABS(${colLetter(col)}${totalDSRow}),0)`, 'formula', 'decimal');
   }
   r++;
 
@@ -1159,7 +1165,7 @@ function buildDebtScheduleSheet(wb: ExcelJS.Workbook, quarters: number): ExcelJS
   for (let q = 1; q <= quarters; q++) {
     const col = q + 2;
     const qCFCol = colLetter(q + 4);
-    setFormula(ws, r, col, `IF(ABS(${colLetter(col)}${intRow})>0,'Cash Flow'!${qCFCol}6/ABS(${colLetter(col)}${intRow}),0)`, 'formula', 'decimal');
+    setFormula(ws, r, col, `IF(ABS(${colLetter(col)}${intRow})>0,'Cash Flow'!${qCFCol}${noiRow}/ABS(${colLetter(col)}${intRow}),0)`, 'formula', 'decimal');
   }
   r++;
 
@@ -1232,13 +1238,10 @@ function buildSensitivitySheet(wb: ExcelJS.Workbook): ExcelJS.Worksheet {
   r++;
 
   // Explanation
-  setVal(ws, r, 2, 'Note: approximate sensitivities', 'label');
+  setVal(ws, r, 2, 'Not computed — each scenario requires a full model recalculation; change the assumption inputs to test a scenario.', 'label');
   ws.getCell(r, 2).font = { ...FONT_LABEL, italic: true, size: 9 };
   r++;
 
-  // Sensitivity grid: each cell adjusts IRR based on deviation from base assumptions
-  // This uses approximate sensitivities since Excel can't re-run XIRR for each combo
-  // We use a linear approximation: IRR_adj = BaseIRR + (RentGrowth_change * sensitivity_coeff) - (ExitCap_change * sensitivity_coeff)
   for (let i = 0; i < exitCapRates.length; i++) {
     const row = r + i;
     // Row header (exit cap rate)
@@ -1249,15 +1252,7 @@ function buildSensitivitySheet(wb: ExcelJS.Workbook): ExcelJS.Worksheet {
 
     for (let j = 0; j < rentGrowths.length; j++) {
       const col = j + 3;
-      // Approximate IRR sensitivity:
-      // deltaExit = this cap rate - ExitCapRate (base)
-      // deltaRent = this rent growth - RentGrowthPA (base)
-      // IRR ~ BaseIRR - 2*deltaExit + 1.5*deltaRent (reasonable approximation for property)
-      const exitRate = exitCapRates[i];
-      const rentGrowth = rentGrowths[j];
-      setFormula(ws, row, col,
-        `$C$${baseIRRRow}-2*(${exitRate}-ExitCapRate)+1.5*(${rentGrowth}-RentGrowthPA)`,
-        'formula', 'percentage');
+      setVal(ws, row, col, 'n/c', 'formula');
     }
   }
 
@@ -1316,13 +1311,7 @@ function buildSensitivitySheet(wb: ExcelJS.Workbook): ExcelJS.Worksheet {
 
     for (let j = 0; j < ltvs.length; j++) {
       const col = j + 3;
-      const exitRate = exitCapRates[i];
-      const ltvVal = ltvs[j];
-      // Leverage amplifies returns: higher LTV = more amplification
-      // IRR_lev ~ BaseIRR_lev - 2*(exitCap - base) + (LTV - baseLTV)*BaseIRR_lev/(1-baseLTV)
-      setFormula(ws, row, col,
-        `$C$${baseLevIRRRow}-2*(${exitRate}-ExitCapRate)+(${ltvVal}-LTV)*$C$${baseLevIRRRow}/(1-LTV)`,
-        'formula', 'percentage');
+      setVal(ws, row, col, 'n/c', 'formula');
     }
   }
 
@@ -1734,8 +1723,8 @@ export async function buildInvestmentModel(params: InvestmentModelParams): Promi
 
   // Build sheets in order (Summary will be repositioned to first)
   const { ws: assumptionsWs, rowMap } = buildAssumptionsSheet(wb, assumptions);
-  const cashFlowWs = buildCashFlowSheet(wb, quarters, rowMap);
-  const debtWs = buildDebtScheduleSheet(wb, quarters);
+  const { ws: cashFlowWs, noiRow } = buildCashFlowSheet(wb, quarters, rowMap);
+  const debtWs = buildDebtScheduleSheet(wb, quarters, noiRow);
   const sensitivityWs = buildSensitivitySheet(wb);
   const returnsWs = buildReturnsSheet(wb);
 
@@ -2206,7 +2195,7 @@ export function buildModelForAddin(params: InvestmentModelParams): AddinModelDef
   addinLabel(cfCells, r, 2, 'Gross Rental Income');
   for (let q = 1; q <= quarters; q++) {
     const cl = colLetter(q + 4);
-    addinSubtotal(cfCells, r, q + 4, `${cl}${rentRow}+${cl}${voidRow}+${cl}${rentFreeRow}+${cl}${vacancyRow}`, 'currency');
+    addinSubtotal(cfCells, r, q + 4, `MAX(0,${cl}${rentRow}+${cl}${voidRow}+${cl}${rentFreeRow}+${cl}${vacancyRow})`, 'currency');
   }
   r++;
 
@@ -2270,7 +2259,7 @@ export function buildModelForAddin(params: InvestmentModelParams): AddinModelDef
   const interestRow = r;
   addinLabel(cfCells, r, 2, 'Interest Payment');
   for (let q = 1; q <= quarters; q++) {
-    addinFormula(cfCells, r, q + 4, `IF(${q}<=LoanTermQuarters,-LoanAmount*InterestRate/4,0)`, 'currency');
+    addinFormula(cfCells, r, q + 4, `IF(${q}<=LoanTermQuarters,IF(AmortisationType="Interest Only",-LoanAmount*InterestRate/4,IPMT(InterestRate/4,${q},LoanTermQuarters,LoanAmount)),0)`, 'currency');
   }
   r++;
 
@@ -2278,7 +2267,7 @@ export function buildModelForAddin(params: InvestmentModelParams): AddinModelDef
   addinLabel(cfCells, r, 2, 'Principal Repayment');
   for (let q = 1; q <= quarters; q++) {
     addinFormula(cfCells, r, q + 4,
-      `IF(AmortisationType="Interest Only",0,IF(${q}<=LoanTermQuarters,-PMT(InterestRate/4,LoanTermQuarters,LoanAmount)-(-LoanAmount*InterestRate/4),0))`,
+      `IF(AmortisationType="Interest Only",0,IF(${q}<=LoanTermQuarters,PPMT(InterestRate/4,${q},LoanTermQuarters,LoanAmount),0))`,
       'currency');
   }
   r++;
@@ -2340,11 +2329,7 @@ export function buildModelForAddin(params: InvestmentModelParams): AddinModelDef
   addinTotal(cfCells, r, 4, `D${netExitRow}`, 'currency');
   for (let q = 1; q <= quarters; q++) {
     const cl = colLetter(q + 4);
-    if (q === quarters) {
-      addinTotal(cfCells, r, q + 4, `${cl}${unlevCFRow}+D${netExitRow}`, 'currency');
-    } else {
-      addinTotal(cfCells, r, q + 4, `${cl}${unlevCFRow}`, 'currency');
-    }
+    addinTotal(cfCells, r, q + 4, `${cl}${unlevCFRow}`, 'currency');
   }
   r++;
 
@@ -2379,7 +2364,7 @@ export function buildModelForAddin(params: InvestmentModelParams): AddinModelDef
 
   const loanRepayRow = r;
   addinLabel(cfCells, r, 2, 'Loan Repayment at Exit');
-  addinFormula(cfCells, r, 4, '-LoanAmount', 'currency');
+  addinFormula(cfCells, r, 4, '-MAX(0,LoanBalanceAtExit)', 'currency');
   r++;
 
   const netExitLevRow = r;
@@ -2396,11 +2381,7 @@ export function buildModelForAddin(params: InvestmentModelParams): AddinModelDef
   addinTotal(cfCells, r, 4, `D${netExitLevRow}`, 'currency');
   for (let q = 1; q <= quarters; q++) {
     const cl = colLetter(q + 4);
-    if (q === quarters) {
-      addinTotal(cfCells, r, q + 4, `${cl}${levCFRow}+D${netExitLevRow}`, 'currency');
-    } else {
-      addinTotal(cfCells, r, q + 4, `${cl}${levCFRow}`, 'currency');
-    }
+    addinTotal(cfCells, r, q + 4, `${cl}${levCFRow}`, 'currency');
   }
   r++;
 
@@ -2439,14 +2420,22 @@ export function buildModelForAddin(params: InvestmentModelParams): AddinModelDef
 
   const unlevProfitRow = r;
   addinLabel(cfCells, r, 2, 'Unlevered Total Profit');
-  addinTotal(cfCells, r, 3, `SUM(C${unlevTotalRow}:${lastQCol}${unlevTotalRow})+D${unlevTotalRow}`, 'currency');
+  addinTotal(cfCells, r, 3, `SUM(C${unlevTotalRow}:${lastQCol}${unlevTotalRow})`, 'currency');
   cfNR.push({ name: 'UnleveredProfit', range: `C${unlevProfitRow}` });
   r++;
 
   const levProfitRow = r;
   addinLabel(cfCells, r, 2, 'Levered Total Profit');
-  addinTotal(cfCells, r, 3, `SUM(C${levTotalRow}:${lastQCol}${levTotalRow})+D${levTotalRow}`, 'currency');
+  addinTotal(cfCells, r, 3, `SUM(C${levTotalRow}:${lastQCol}${levTotalRow})`, 'currency');
   cfNR.push({ name: 'LeveredProfit', range: `C${levProfitRow}` });
+  r++;
+
+  addinLabel(cfCells, r, 2, 'Unlevered NPV @ Discount Rate');
+  addinTotal(cfCells, r, 3, `C${unlevTotalRow}+NPV(DiscountRate/4,E${unlevTotalRow}:${lastQCol}${unlevTotalRow})+D${unlevTotalRow}/(1+DiscountRate/4)^HoldPeriodQuarters`, 'currency');
+  r++;
+
+  addinLabel(cfCells, r, 2, 'Levered NPV @ Discount Rate');
+  addinTotal(cfCells, r, 3, `C${levTotalRow}+NPV(DiscountRate/4,E${levTotalRow}:${lastQCol}${levTotalRow})+D${levTotalRow}/(1+DiscountRate/4)^HoldPeriodQuarters`, 'currency');
   r++;
 
   const cfColWidths: Record<number, number> = { 1: 3, 2: 30, 3: 16, 4: 16 };
@@ -2600,7 +2589,7 @@ export function buildModelForAddin(params: InvestmentModelParams): AddinModelDef
     columnWidths: dsColWidths,
     freezeRow: 3, freezeCol: 2,
     cells: dsCells,
-    namedRanges: [],
+    namedRanges: [{ name: 'LoanBalanceAtExit', range: `${colLetter(dsLastCol)}${closeBalRow}` }],
   });
 
   // ─── Sheet: Sensitivity Analysis ──────────────────────────────────────
@@ -2630,7 +2619,8 @@ export function buildModelForAddin(params: InvestmentModelParams): AddinModelDef
   addinLabel(sensCells, sr, 2, 'Base Unlevered IRR');
   addinFormula(sensCells, sr, 3, 'UnleveredIRR', 'percentage');
   sr++;
-  sr++; // spacer
+  sensCells.push({ cell: `B${sr}`, value: 'Not computed — each scenario requires a full model recalculation; change the assumption inputs to test a scenario.', fontColor: '757575', fontSize: 9 });
+  sr++;
 
   for (let i = 0; i < exitCapRates.length; i++) {
     const row = sr + i;
@@ -2640,9 +2630,10 @@ export function buildModelForAddin(params: InvestmentModelParams): AddinModelDef
       numberFormat: NF.percentage_1dp, borders: 'thin',
     });
     for (let j = 0; j < rentGrowths.length; j++) {
-      addinFormula(sensCells, row, j + 3,
-        `$C$${baseIRRRow}-2*(${exitCapRates[i]}-ExitCapRate)+1.5*(${rentGrowths[j]}-RentGrowthPA)`,
-        'percentage');
+      sensCells.push({
+        cell: `${colLetter(j + 3)}${row}`, value: 'n/c',
+        horizontalAlignment: 'Right', borders: 'thin',
+      });
     }
   }
   sr += exitCapRates.length + 2;
@@ -2676,9 +2667,10 @@ export function buildModelForAddin(params: InvestmentModelParams): AddinModelDef
       numberFormat: NF.percentage_1dp, borders: 'thin',
     });
     for (let j = 0; j < ltvs.length; j++) {
-      addinFormula(sensCells, row, j + 3,
-        `$C$${baseLevIRRRow}-2*(${exitCapRates[i]}-ExitCapRate)+(${ltvs[j]}-LTV)*$C$${baseLevIRRRow}/(1-LTV)`,
-        'percentage');
+      sensCells.push({
+        cell: `${colLetter(j + 3)}${row}`, value: 'n/c',
+        horizontalAlignment: 'Right', borders: 'thin',
+      });
     }
   }
 

@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo, lazy, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -10,6 +10,16 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Pill, pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -55,6 +65,16 @@ import type { ExcelTemplate, ExcelModelRun } from "@shared/schema";
 import bgpLogoDark from "@assets/BGP_BlackHolder_1771853582461.png";
 import type { CrmProperty } from "@shared/schema";
 import { EmptyState } from "@/components/empty-state";
+import type { CellEdit, SheetPayload, WorkbookPayload } from "@/components/univer-spreadsheet";
+
+// Univer is heavy; split it out of the page chunk (same lazy+Suspense pattern as the hub pages).
+const UniverSpreadsheet = lazy(() => import("@/components/univer-spreadsheet"));
+
+/** Response shape of the models `/cells` endpoint (one sheet per request). */
+interface CellsEndpointResponse extends SheetPayload {
+  sheetNames: string[];
+  activeSheet: string;
+}
 
 interface TemplateWithMeta extends Omit<ExcelTemplate, "inputMapping" | "outputMapping"> {
   inputMapping: Record<string, InputField>;
@@ -87,44 +107,23 @@ interface RunWithMeta extends Omit<ExcelModelRun, "inputValues" | "outputValues"
   templateName?: string;
 }
 
-function OpenInExcelButton({ runId, runName, iconOnly }: { runId: string; runName?: string; iconOnly?: boolean }) {
-  const { toast } = useToast();
-  const [loading, setLoading] = useState(false);
-
-  const handleOpenInExcel = async () => {
-    setLoading(true);
-    try {
-      const res = await apiRequest("POST", `/api/models/runs/${runId}/open-in-excel`);
-      const data = await res.json();
-      if (data.webUrl) {
-        window.open(data.webUrl, "_blank");
-        toast({ title: "Opening in Excel", description: `${runName || "Model"} synced to SharePoint and opening in Excel` });
+function formatOutputValue(value: any, format?: string): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "string" && value.trim().endsWith("%")) return value;
+  const num = typeof value === "number" ? value : parseFloat(String(value).replace(/[,£$\s]/g, ""));
+  if (!isNaN(num) && format) {
+    switch (format) {
+      case "percent": {
+        const pct = Math.abs(num) <= 1 ? num * 100 : num;
+        return `${pct.toLocaleString("en-GB", { maximumFractionDigits: 1 })}%`;
       }
-    } catch (err: any) {
-      toast({ title: "Could not open in Excel", description: err?.message || "SharePoint connection required", variant: "destructive" });
+      case "number0":
+        return num.toLocaleString("en-GB", { maximumFractionDigits: 0 });
+      case "number2":
+        return num.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
-    setLoading(false);
-  };
-
-  if (iconOnly) {
-    return (
-      <Button variant="ghost" size="icon" className="h-7 w-7" title="Open in Excel (via SharePoint)"
-        onClick={handleOpenInExcel} disabled={loading}
-        data-testid={`button-open-excel-${runId}`}
-      >
-        {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />}
-      </Button>
-    );
   }
-
-  return (
-    <Button variant="default" size="sm" onClick={handleOpenInExcel} disabled={loading}
-      data-testid={`button-open-excel-${runId}`}
-    >
-      {loading ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <FileSpreadsheet className="w-4 h-4 mr-1" />}
-      Open in Excel
-    </Button>
-  );
+  return String(value);
 }
 
 function TemplateUpload() {
@@ -384,7 +383,7 @@ function OutputCard({ outputs, mapping }: { outputs: Record<string, any>; mappin
                 <div key={key} className="flex justify-between items-center text-sm">
                   <span className="text-muted-foreground">{field.label}</span>
                   <span className="font-mono font-medium" data-testid={`output-${key}`}>
-                    {value !== null && value !== undefined ? String(value) : "—"}
+                    {formatOutputValue(value, field.format)}
                   </span>
                 </div>
               ))}
@@ -796,7 +795,7 @@ function ModelDashboard({ outputs, mapping }: {
               <div key={key} className="flex justify-between items-baseline gap-2" data-testid={`metric-${key}`}>
                 <span className="text-xs text-muted-foreground truncate">{field.label}</span>
                 <span className={`text-sm font-semibold font-mono tabular-nums flex-shrink-0 ${getValueColor(groupName)}`}>
-                  {value !== null && value !== undefined && value !== "" ? String(value) : "—"}
+                  {formatOutputValue(value, field.format)}
                 </span>
               </div>
             ))}
@@ -824,9 +823,6 @@ function SpreadsheetViewer({ endpoint, title, editable, outputs, outputMapping, 
     else setInternalOpen(val);
   };
   const [activeSheet, setActiveSheet] = useState("");
-  const [editingCell, setEditingCell] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState("");
-  const [selectedCell, setSelectedCell] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [designChatOpen, setDesignChatOpen] = useState(false);
   const [designMessages, setDesignMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
@@ -869,104 +865,72 @@ function SpreadsheetViewer({ endpoint, title, editable, outputs, outputMapping, 
     setTimeout(() => designEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
   };
 
-  const { data, isLoading, refetch } = useQuery<{
-    sheetNames: string[];
-    activeSheet: string;
-    totalRows: number;
-    totalCols: number;
-    rows: (null | { v: any; f?: string; t: string; w?: string })[][];
-    merges: { r: number; c: number; rs: number; cs: number }[];
-    inputCells: string[];
-    outputCells: string[];
-  }>({
-    queryKey: [endpoint, activeSheet],
-    queryFn: async () => {
-      const url = activeSheet ? `${endpoint}?sheet=${encodeURIComponent(activeSheet)}` : endpoint;
-      const res = await fetch(url, { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) throw new Error("Failed to load");
-      return res.json();
+  // Univer renders the whole workbook at once, so fetch every sheet up front instead of
+  // one sheet per tab click. The parameterless first request also returns sheetNames.
+  const { data, isLoading, refetch } = useQuery<WorkbookPayload>({
+    queryKey: [endpoint, "workbook"],
+    queryFn: async (): Promise<WorkbookPayload> => {
+      const fetchSheet = async (sheet?: string): Promise<CellsEndpointResponse> => {
+        const url = sheet ? `${endpoint}?sheet=${encodeURIComponent(sheet)}` : endpoint;
+        const res = await fetch(url, { credentials: "include", headers: getAuthHeaders() });
+        if (!res.ok) throw new Error("Failed to load");
+        return res.json();
+      };
+      const first = await fetchSheet();
+      const rest = await Promise.all(first.sheetNames.slice(1).map((s) => fetchSheet(s)));
+      const sheets: Record<string, SheetPayload> = {};
+      for (const res of [first, ...rest]) {
+        sheets[res.activeSheet] = {
+          totalRows: res.totalRows,
+          totalCols: res.totalCols,
+          rows: res.rows,
+          merges: res.merges,
+          colWidths: res.colWidths,
+          inputCells: res.inputCells,
+          outputCells: res.outputCells,
+        };
+      }
+      return { sheetNames: first.sheetNames, sheets };
     },
     enabled: open,
   });
 
-  const colLetter = (c: number) => {
-    let s = "";
-    let n = c;
-    while (n >= 0) { s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) - 1; }
-    return s;
-  };
+  const { data: templateDetail } = useQuery<TemplateWithMeta>({
+    queryKey: ["/api/models/templates", templateId],
+    enabled: open && !!templateId && !outputMapping,
+  });
+  const effectiveOutputMapping = outputMapping || templateDetail?.outputMapping;
 
-  const inputSet = new Set(data?.inputCells || []);
-  const outputSet = new Set(data?.outputCells || []);
-
-  const mergeMap = new Map<string, { rs: number; cs: number }>();
-  const hiddenCells = new Set<string>();
-  if (data?.merges) {
-    for (const m of data.merges) {
-      mergeMap.set(`${m.r}-${m.c}`, { rs: m.rs, cs: m.cs });
-      for (let dr = 0; dr < m.rs; dr++) {
-        for (let dc = 0; dc < m.cs; dc++) {
-          if (dr !== 0 || dc !== 0) hiddenCells.add(`${m.r + dr}-${m.c + dc}`);
-        }
+  const formatHints = useMemo(() => {
+    const hints: Record<string, Record<string, string>> = {};
+    if (effectiveOutputMapping) {
+      for (const f of Object.values(effectiveOutputMapping)) {
+        if (f.sheet && f.cell && f.format) (hints[f.sheet] ||= {})[f.cell] = f.format;
       }
     }
-  }
+    return hints;
+  }, [effectiveOutputMapping]);
 
-  const formatVal = (cell: { v: any; f?: string; t: string; w?: string } | null) => {
-    if (!cell) return "";
-    if (cell.w) return cell.w;
-    if (cell.t === "n" && typeof cell.v === "number") {
-      if (Math.abs(cell.v) < 1 && cell.v !== 0) return `${(cell.v * 100).toFixed(1)}%`;
-      return cell.v.toLocaleString("en-GB", { maximumFractionDigits: 2 });
-    }
-    return String(cell.v ?? "");
-  };
-
-  const rawVal = (cell: { v: any; f?: string; t: string; w?: string } | null) => {
-    if (!cell) return "";
-    if (cell.f) return `=${cell.f}`;
-    return cell.v !== undefined ? String(cell.v) : "";
-  };
-
-  const saveCell = async (cellRef: string, value: string) => {
-    if (!editable || !data?.activeSheet) return;
+  const postCellEdit = async (edit: CellEdit) => {
+    if (!editable) return;
     setSaving(true);
     try {
       await apiRequest("POST", endpoint, {
-        sheet: data.activeSheet,
-        cell: cellRef,
-        value,
+        sheet: edit.sheet,
+        cell: edit.cell,
+        value: edit.value,
       });
       await refetch();
-      toast({ title: "Cell updated", description: `${cellRef} = ${value || "(empty)"}` });
+      toast({ title: "Cell updated", description: `${edit.cell} = ${edit.value || "(empty)"}` });
     } catch (err: any) {
       toast({ title: "Failed to save", description: err?.message, variant: "destructive" });
     }
     setSaving(false);
-    setEditingCell(null);
   };
 
-  const handleCellClick = (cellRef: string, cell: any) => {
-    setSelectedCell(cellRef);
-    if (editable) {
-      setEditingCell(cellRef);
-      setEditValue(rawVal(cell));
-    }
-  };
+  const currentSheet = data?.sheets[activeSheet || data.sheetNames[0]];
 
-  const handleKeyDown = (e: React.KeyboardEvent, cellRef: string) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      saveCell(cellRef, editValue);
-    } else if (e.key === "Escape") {
-      setEditingCell(null);
-    } else if (e.key === "Tab") {
-      e.preventDefault();
-      saveCell(cellRef, editValue);
-    }
-  };
-
-  const metricGroups = outputMapping && outputs ? Object.entries(outputMapping).reduce<Record<string, { key: string; field: OutputField; value: any }[]>>(
+  const metricGroups = effectiveOutputMapping && outputs ? Object.entries(effectiveOutputMapping).reduce<Record<string, { key: string; field: OutputField; value: any }[]>>(
     (acc, [key, field]) => {
       const g = field.group || "Key Metrics";
       if (!acc[g]) acc[g] = [];
@@ -1021,115 +985,33 @@ function SpreadsheetViewer({ endpoint, title, editable, outputs, outputMapping, 
             </DialogTitle>
           </DialogHeader>
 
-          {data?.sheetNames && (
-            <div className="flex gap-0.5 px-3 pb-1 flex-shrink-0 overflow-x-auto border-b">
-              {data.sheetNames.map((s) => (
-                <Button
-                  key={s}
-                  size="sm"
-                  variant={(data.activeSheet === s) ? "default" : "ghost"}
-                  className="text-[11px] h-6 px-2 whitespace-nowrap rounded-sm"
-                  onClick={() => { setActiveSheet(s); setEditingCell(null); setSelectedCell(null); }}
-                  data-testid={`button-sheet-${s}`}
-                >
-                  {s}
-                </Button>
-              ))}
-            </div>
-          )}
-
-          {selectedCell && (
-            <div className="flex items-center gap-2 px-3 py-0.5 bg-muted/50 border-b text-[11px] flex-shrink-0">
-              <Badge variant="secondary" className="font-mono text-[10px] h-5 px-1.5">{selectedCell}</Badge>
-              <span className="text-muted-foreground font-mono truncate">
-                {editingCell === selectedCell ? editValue : data?.rows && (() => {
-                  const match = selectedCell.match(/^([A-Z]+)(\d+)$/);
-                  if (!match) return "";
-                  const col = match[1].split("").reduce((acc, ch) => acc * 26 + ch.charCodeAt(0) - 64, 0) - 1;
-                  const row = parseInt(match[2]) - 1;
-                  const cell = data.rows[row]?.[col];
-                  return cell?.f ? `=${cell.f}` : formatVal(cell);
-                })()}
-              </span>
-            </div>
-          )}
-
           <div className="flex flex-1 min-h-0">
-            <div className="flex-1 overflow-auto min-h-0">
+            <div className="flex-1 min-h-0 min-w-0">
               {isLoading ? (
                 <div className="space-y-3 p-4">
                   {Array.from({ length: 8 }).map((_, i) => (
                     <Skeleton key={i} className="h-8 w-full rounded-lg" />
                   ))}
                 </div>
-              ) : data?.rows ? (
-                <table className="border-collapse text-[11px] font-mono">
-                  <thead className="sticky top-0 z-10">
-                    <tr className="bg-muted">
-                      <th className="border border-border px-0.5 py-0 text-center text-muted-foreground w-8 sticky left-0 bg-muted z-20 text-[9px]"></th>
-                      {data.rows[0]?.map((_, ci) => (
-                        <th key={ci} className="border border-border px-1 py-0 text-center text-muted-foreground font-normal text-[9px]" style={{ minWidth: ci === 0 ? "140px" : "60px" }}>
-                          {colLetter(ci)}
-                        </th>
+              ) : data ? (
+                <Suspense
+                  fallback={
+                    <div className="space-y-3 p-4">
+                      {Array.from({ length: 8 }).map((_, i) => (
+                        <Skeleton key={i} className="h-8 w-full rounded-lg" />
                       ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.rows.map((row, ri) => (
-                      <tr key={ri} className="hover:bg-muted/20">
-                        <td className="border border-border px-0.5 py-0 text-center text-muted-foreground bg-muted sticky left-0 z-10 text-[9px]">
-                          {ri + 1}
-                        </td>
-                        {row.map((cell, ci) => {
-                          const key = `${ri}-${ci}`;
-                          if (hiddenCells.has(key)) return null;
-                          const merge = mergeMap.get(key);
-                          const cellRef = `${colLetter(ci)}${ri + 1}`;
-                          const isInput = inputSet.has(cellRef);
-                          const isOutput = outputSet.has(cellRef);
-                          const isFormula = !!cell?.f;
-                          const isNumber = cell?.t === "n";
-                          const hasContent = cell && (cell.v !== undefined && cell.v !== "" && cell.v !== null);
-                          const isBold = hasContent && typeof cell?.v === "string" && (ri < 3 || cell.v === cell.v.toUpperCase());
-                          const isEditing = editingCell === cellRef;
-                          const isSelected = selectedCell === cellRef;
-
-                          return (
-                            <td
-                              key={ci}
-                              rowSpan={merge?.rs}
-                              colSpan={merge?.cs}
-                              title={cell?.f ? `=${cell.f}` : undefined}
-                              onClick={() => handleCellClick(cellRef, cell)}
-                              className={`border px-1 py-0 whitespace-nowrap cursor-cell leading-tight ${
-                                isSelected ? "border-blue-500 border-2" :
-                                isInput ? "border-blue-300 bg-blue-50 dark:bg-blue-950" :
-                                isOutput ? "border-green-300 bg-green-50 dark:bg-green-950" :
-                                isFormula ? "border-border bg-gray-50/50 dark:bg-gray-900/50" : "border-border"
-                              } ${isNumber && !isEditing ? "text-right" : ""} ${isBold ? "font-semibold" : "font-normal"}`}
-                              data-testid={`cell-${cellRef}`}
-                            >
-                              {isEditing ? (
-                                <input
-                                  type="text"
-                                  value={editValue}
-                                  onChange={(e) => setEditValue(e.target.value)}
-                                  onKeyDown={(e) => handleKeyDown(e, cellRef)}
-                                  onBlur={() => saveCell(cellRef, editValue)}
-                                  autoFocus
-                                  className="w-full bg-white dark:bg-gray-900 outline-none border-none text-[11px] font-mono p-0 m-0"
-                                  data-testid={`input-cell-${cellRef}`}
-                                />
-                              ) : (
-                                formatVal(cell)
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </div>
+                  }
+                >
+                  <UniverSpreadsheet
+                    workbookName={title}
+                    payload={data}
+                    formatHints={formatHints}
+                    editable={editable}
+                    onCellEdit={postCellEdit}
+                    onActiveSheetChange={setActiveSheet}
+                  />
+                </Suspense>
               ) : (
                 <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
                   No data
@@ -1147,7 +1029,7 @@ function SpreadsheetViewer({ endpoint, title, editable, outputs, outputMapping, 
                       <div key={key} className="flex justify-between items-center px-1 py-0.5 rounded hover:bg-muted/50 text-[11px]">
                         <span className="text-muted-foreground truncate mr-1" title={field.label}>{field.label}</span>
                         <span className="font-mono font-semibold flex-shrink-0" data-testid={`metric-sidebar-${key}`}>
-                          {value !== null && value !== undefined ? String(value) : "—"}
+                          {formatOutputValue(value, field.format)}
                         </span>
                       </div>
                     ))}
@@ -1266,20 +1148,20 @@ function SpreadsheetViewer({ endpoint, title, editable, outputs, outputMapping, 
 
           <div className="flex items-center justify-between px-3 py-1 border-t text-[10px] text-muted-foreground flex-shrink-0">
             <div className="flex items-center gap-3">
-              <span>{data?.totalRows || 0}r x {data?.totalCols || 0}c</span>
-              {inputSet.size > 0 && (
-                <span className="flex items-center gap-0.5">
-                  <span className="w-2 h-2 rounded-sm bg-blue-200 border border-blue-400 inline-block" /> {inputSet.size}
+              <span>{currentSheet?.totalRows || 0}r x {currentSheet?.totalCols || 0}c</span>
+              {(currentSheet?.inputCells.length || 0) > 0 && (
+                <span className="flex items-center gap-0.5" title="Input cells">
+                  <span className="w-2 h-2 rounded-sm bg-blue-200 border border-blue-400 inline-block" /> {currentSheet?.inputCells.length}
                 </span>
               )}
-              {outputSet.size > 0 && (
-                <span className="flex items-center gap-0.5">
-                  <span className="w-2 h-2 rounded-sm bg-green-200 border border-green-400 inline-block" /> {outputSet.size}
+              {(currentSheet?.outputCells.length || 0) > 0 && (
+                <span className="flex items-center gap-0.5" title="Output cells">
+                  <span className="w-2 h-2 rounded-sm bg-green-200 border border-green-400 inline-block" /> {currentSheet?.outputCells.length}
                 </span>
               )}
               {saving && <Loader2 className="w-3 h-3 animate-spin" />}
             </div>
-            <span>{editable ? "Click cell to edit · Enter to save · Esc to cancel" : "Read-only"}</span>
+            <span>{editable ? "Double-click or type to edit · Enter/Tab to save · Esc to cancel" : "Read-only"}</span>
           </div>
         </DialogContent>
       </Dialog>
@@ -1375,8 +1257,16 @@ function PropertyLinkBadge({
   );
 }
 
-function TemplateCard({ template }: { template: ExcelTemplate }) {
+function TemplateCard({ template }: { template: ExcelTemplate & { sheetCount?: number } }) {
   const { toast } = useToast();
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [runOpen, setRunOpen] = useState(false);
+
+  const { data: templateDetail } = useQuery<TemplateWithMeta>({
+    queryKey: ["/api/models/templates", template.id],
+    enabled: runOpen,
+  });
 
   const deleteMutation = useMutation({
     mutationFn: async () => {
@@ -1388,17 +1278,13 @@ function TemplateCard({ template }: { template: ExcelTemplate }) {
     },
   });
 
-  const { data: templateDetail } = useQuery<TemplateWithMeta>({
-    queryKey: ["/api/models/templates", template.id],
-  });
-
-  const sheetCount = templateDetail?.analysis?.sheets?.length || 0;
+  const sheetCount = template.sheetCount || 0;
   const createdDate = template.createdAt ? new Date(template.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
 
   return (
     <div
       className="flex items-center gap-3 px-4 py-3 rounded-lg border hover:bg-muted/50 cursor-pointer transition-colors group"
-      onClick={() => window.open(`/api/models/templates/${template.id}/download`, "_blank")}
+      onClick={() => setViewerOpen(true)}
       data-testid={`card-template-${template.id}`}
     >
       <FileSpreadsheet className="w-8 h-8 text-green-600 shrink-0" />
@@ -1413,6 +1299,12 @@ function TemplateCard({ template }: { template: ExcelTemplate }) {
         </p>
       </div>
       <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+        <Button variant="ghost" size="icon" className="h-7 w-7" title="Run model"
+          onClick={() => setRunOpen(true)}
+          data-testid={`button-run-template-${template.id}`}
+        >
+          <Play className="w-3.5 h-3.5" />
+        </Button>
         <Button variant="ghost" size="icon" className="h-7 w-7" title="Download Excel"
           onClick={() => window.open(`/api/models/templates/${template.id}/download`, "_blank")}
           data-testid={`button-download-template-${template.id}`}
@@ -1420,12 +1312,46 @@ function TemplateCard({ template }: { template: ExcelTemplate }) {
           <Download className="w-3.5 h-3.5" />
         </Button>
         <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" title="Delete"
-          onClick={() => deleteMutation.mutate()}
+          onClick={() => setConfirmDelete(true)}
           data-testid={`button-delete-template-${template.id}`}
         >
           <Trash2 className="w-3.5 h-3.5" />
         </Button>
       </div>
+
+      <SpreadsheetViewer
+        endpoint={`/api/models/templates/${template.id}/cells`}
+        title={template.name}
+        editable
+        externalOpen={viewerOpen}
+        onExternalClose={() => setViewerOpen(false)}
+      />
+
+      <Dialog open={runOpen} onOpenChange={setRunOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+          <DialogHeader>
+            <DialogTitle>Run model — {template.name}</DialogTitle>
+          </DialogHeader>
+          {templateDetail ? (
+            <RunModelForm template={templateDetail} onClose={() => setRunOpen(false)} />
+          ) : (
+            <div className="py-8 text-center text-sm text-muted-foreground">Loading template…</div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete template</AlertDialogTitle>
+            <AlertDialogDescription>Delete "{template.name}"? This cannot be undone.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteMutation.mutate()} data-testid={`button-confirm-delete-template-${template.id}`}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -1436,16 +1362,23 @@ function SmartRunPanel() {
   const [runName, setRunName] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [extractedData, setExtractedData] = useState<any>(null);
+  const [editedValues, setEditedValues] = useState<Record<string, string>>({});
   const [step, setStep] = useState<"upload" | "review" | "complete">("upload");
 
   const { data: templates } = useQuery<ExcelTemplate[]>({
     queryKey: ["/api/models/templates"],
   });
 
+  const { data: templateDetail } = useQuery<TemplateWithMeta>({
+    queryKey: ["/api/models/templates", templateId],
+    enabled: !!templateId,
+  });
+
   const extractMutation = useMutation({
     mutationFn: async () => {
       const formData = new FormData();
       files.forEach((f) => formData.append("documents", f));
+      if (templateId) formData.append("templateId", templateId);
       const response = await fetch("/api/models/smart-extract", {
         method: "POST",
         body: formData,
@@ -1459,6 +1392,14 @@ function SmartRunPanel() {
     },
     onSuccess: (data) => {
       setExtractedData(data.extracted);
+      // Seed the editable review state with every scalar the AI returned; the
+      // user edits these in place and they are sent back as editedInputs.
+      const initial: Record<string, string> = {};
+      for (const [key, value] of Object.entries(data.extracted || {})) {
+        if (key === "summary" || key === "tenants" || key === "leaseExpiries") continue;
+        if (value !== null && value !== undefined) initial[key] = String(value);
+      }
+      setEditedValues(initial);
       if (data.extracted?.dealName) setRunName(data.extracted.dealName);
       setStep("review");
       toast({ title: "Data extracted from documents" });
@@ -1474,6 +1415,9 @@ function SmartRunPanel() {
       files.forEach((f) => formData.append("documents", f));
       formData.append("templateId", templateId);
       if (runName) formData.append("name", runName);
+      if (Object.keys(editedValues).length > 0) {
+        formData.append("editedInputs", JSON.stringify(editedValues));
+      }
       const response = await fetch("/api/models/smart-run", {
         method: "POST",
         body: formData,
@@ -1509,6 +1453,7 @@ function SmartRunPanel() {
   const handleReset = () => {
     setFiles([]);
     setExtractedData(null);
+    setEditedValues({});
     setRunName("");
     setTemplateId("");
     setStep("upload");
@@ -1532,6 +1477,17 @@ function SmartRunPanel() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            {Array.isArray(extractedData.overriddenKeys) && extractedData.overriddenKeys.length > 0 && (
+              <div className="flex items-center gap-2 p-3 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800" data-testid="note-smart-run-overrides">
+                <Badge variant="outline" className="border-amber-300 text-amber-700 dark:text-amber-400 shrink-0">
+                  {extractedData.overriddenKeys.length} edited
+                </Badge>
+                <p className="text-xs text-muted-foreground">
+                  Your reviewed values were used for:{" "}
+                  {extractedData.overriddenKeys.map((k: string) => templateDetail?.inputMapping?.[k]?.label || k).join(", ")}
+                </p>
+              </div>
+            )}
             {extractedData.extracted?.summary && (
               <div className="p-3 rounded-lg bg-muted">
                 <p className="text-sm font-medium mb-1">Property Summary</p>
@@ -1544,23 +1500,8 @@ function SmartRunPanel() {
                 <OutputCard
                   outputs={extractedData.outputValues}
                   mapping={Object.entries(extractedData.outputValues).reduce<Record<string, OutputField>>((acc, [key]) => {
-                    const defaultOutputs: Record<string, OutputField> = {
-                      unleveredIRR: { sheet: "", cell: "", label: "Unlevered IRR", format: "percent", group: "Returns" },
-                      leveredPreTaxIRR: { sheet: "", cell: "", label: "Levered Pre-Tax IRR", format: "percent", group: "Returns" },
-                      leveredPostTaxIRR: { sheet: "", cell: "", label: "Levered Post-Tax IRR", format: "percent", group: "Returns" },
-                      agIRR: { sheet: "", cell: "", label: "AG IRR (Post Promote)", format: "percent", group: "Returns" },
-                      unleveredMOIC: { sheet: "", cell: "", label: "Unlevered MOIC", format: "number2", group: "Returns" },
-                      leveredPreTaxMOIC: { sheet: "", cell: "", label: "Levered Pre-Tax MOIC", format: "number2", group: "Returns" },
-                      agMOIC: { sheet: "", cell: "", label: "AG MOIC (Post Promote)", format: "number2", group: "Returns" },
-                      profits: { sheet: "", cell: "", label: "AG Profits (£000s)", format: "number0", group: "Returns" },
-                      peakEquity: { sheet: "", cell: "", label: "AG Peak Equity (£000s)", format: "number0", group: "Returns" },
-                      griYieldPurchase: { sheet: "", cell: "", label: "GRI Yield on Purchase", format: "percent", group: "Yields" },
-                      noiYieldPurchase: { sheet: "", cell: "", label: "NOI Yield on Purchase", format: "percent", group: "Yields" },
-                      ervYieldPurchase: { sheet: "", cell: "", label: "ERV Yield on Purchase", format: "percent", group: "Yields" },
-                      occupancy: { sheet: "", cell: "", label: "Occupancy (%)", format: "percent", group: "Property" },
-                      totalLettableArea: { sheet: "", cell: "", label: "Total Lettable Area (SF)", format: "number0", group: "Property" },
-                    };
-                    if (defaultOutputs[key]) acc[key] = defaultOutputs[key];
+                    const mapped = templateDetail?.outputMapping?.[key];
+                    acc[key] = mapped || { sheet: "", cell: "", label: key, format: "", group: "Results" };
                     return acc;
                   }, {})}
                 />
@@ -1681,21 +1622,37 @@ function SmartRunPanel() {
             <>
               <Separator />
               <div>
-                <h4 className="text-sm font-medium mb-3">Extracted Property Data</h4>
+                <h4 className="text-sm font-medium mb-1">Extracted Property Data</h4>
+                <p className="text-xs text-muted-foreground mb-3">
+                  These values will be used in the model run — edit anything the AI misread.
+                </p>
                 {extractedData.summary && (
                   <div className="p-3 rounded-lg bg-muted mb-3">
                     <p className="text-sm text-muted-foreground">{extractedData.summary}</p>
                   </div>
                 )}
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
                   {Object.entries(extractedData)
-                    .filter(([key, val]) => val !== null && key !== "summary" && key !== "tenants" && key !== "leaseExpiries")
-                    .map(([key, value]) => (
-                      <div key={key} className="flex justify-between p-2 rounded bg-accent/50">
-                        <span className="text-muted-foreground">{key}:</span>
-                        <span className="font-medium">{String(value)}</span>
-                      </div>
-                    ))}
+                    .filter(([key]) => key !== "summary" && key !== "tenants" && key !== "leaseExpiries")
+                    .map(([key, value]) => {
+                      const mappedField = templateDetail?.inputMapping?.[key];
+                      const fieldType = mappedField?.type || (typeof value === "number" ? "number" : "text");
+                      return (
+                        <div key={key}>
+                          <Label htmlFor={`smart-edit-${key}`} className="text-xs text-muted-foreground">
+                            {mappedField?.label || key}
+                          </Label>
+                          <Input
+                            id={`smart-edit-${key}`}
+                            type={fieldType === "text" ? "text" : "number"}
+                            step={fieldType === "percent" ? "0.1" : "any"}
+                            value={editedValues[key] ?? ""}
+                            onChange={(e) => setEditedValues((prev) => ({ ...prev, [key]: e.target.value }))}
+                            data-testid={`input-smart-edit-${key}`}
+                          />
+                        </div>
+                      );
+                    })}
                 </div>
                 {extractedData.tenants && extractedData.tenants.length > 0 && (
                   <div className="mt-3 p-3 rounded-lg bg-muted">
@@ -1764,12 +1721,10 @@ function SmartRunPanel() {
   );
 }
 
-function RunCard({ run }: { run: ExcelModelRun }) {
+function RunCard({ run }: { run: ExcelModelRun & { templateName?: string | null } }) {
   const { toast } = useToast();
-
-  const { data: runDetail } = useQuery<RunWithMeta>({
-    queryKey: ["/api/models/runs", run.id],
-  });
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const deleteMutation = useMutation({
     mutationFn: async () => {
@@ -1783,16 +1738,10 @@ function RunCard({ run }: { run: ExcelModelRun }) {
 
   const createdDate = run.createdAt ? new Date(run.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
 
-  const handleClick = () => {
-    if (run.generatedFilePath) {
-      window.open(`/api/models/runs/${run.id}/download`, "_blank");
-    }
-  };
-
   return (
     <div
       className="flex items-center gap-3 px-4 py-3 rounded-lg border hover:bg-muted/50 cursor-pointer transition-colors group"
-      onClick={handleClick}
+      onClick={() => setDetailsOpen(true)}
       data-testid={`card-run-${run.id}`}
     >
       <FileSpreadsheet className="w-8 h-8 text-blue-600 shrink-0" />
@@ -1804,7 +1753,7 @@ function RunCard({ run }: { run: ExcelModelRun }) {
           <Badge variant={run.status === "completed" ? "default" : "secondary"} className="text-[9px] h-4 px-1">{run.status}</Badge>
         </div>
         <p className="text-xs text-muted-foreground truncate">
-          {runDetail?.templateName || "Model run"}
+          {run.templateName || "Model run"}
           {createdDate && <> · {createdDate}</>}
         </p>
       </div>
@@ -1818,12 +1767,34 @@ function RunCard({ run }: { run: ExcelModelRun }) {
           </Button>
         )}
         <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" title="Delete"
-          onClick={() => deleteMutation.mutate()}
+          onClick={() => setConfirmDelete(true)}
           data-testid={`button-delete-run-${run.id}`}
         >
           <Trash2 className="w-3.5 h-3.5" />
         </Button>
       </div>
+
+      <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+          <DialogHeader>
+            <DialogTitle className="sr-only">{run.name}</DialogTitle>
+          </DialogHeader>
+          <RunDetails runId={run.id} />
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete run</AlertDialogTitle>
+            <AlertDialogDescription>Delete "{run.name}"? This cannot be undone.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteMutation.mutate()} data-testid={`button-confirm-delete-run-${run.id}`}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -1868,13 +1839,32 @@ function SensitivityPanel() {
     },
   });
 
-  const getHeatColor = (value: string) => {
-    const num = parseFloat(value?.replace?.(/[%,]/g, "") || "0");
-    if (isNaN(num)) return "";
-    if (num > 15) return "bg-green-100 dark:bg-green-900/30";
-    if (num > 10) return "bg-green-50 dark:bg-green-900/20";
-    if (num > 5) return "bg-yellow-50 dark:bg-yellow-900/20";
-    if (num > 0) return "bg-orange-50 dark:bg-orange-900/20";
+  const parseHeatValue = (value: any): number | null => {
+    if (value === null || value === undefined || value === "") return null;
+    const num = typeof value === "number" ? value : parseFloat(String(value).replace(/[%,£$\s]/g, ""));
+    return isNaN(num) ? null : num;
+  };
+
+  const outputRanges: Record<string, { min: number; max: number }> = {};
+  if (results?.results && results?.outputLabels) {
+    for (const key of Object.keys(results.outputLabels)) {
+      const vals = results.results
+        .map((r: any) => parseHeatValue(r.outputs?.[key]))
+        .filter((v: number | null): v is number => v !== null);
+      if (vals.length > 0) outputRanges[key] = { min: Math.min(...vals), max: Math.max(...vals) };
+    }
+  }
+
+  const getHeatColor = (value: any, outputKey?: string) => {
+    const num = parseHeatValue(value);
+    if (num === null) return "";
+    const range = outputKey ? outputRanges[outputKey] : undefined;
+    if (!range || range.max === range.min) return "bg-yellow-50 dark:bg-yellow-900/20";
+    const t = (num - range.min) / (range.max - range.min);
+    if (t >= 0.8) return "bg-green-100 dark:bg-green-900/30";
+    if (t >= 0.6) return "bg-green-50 dark:bg-green-900/20";
+    if (t >= 0.4) return "bg-yellow-50 dark:bg-yellow-900/20";
+    if (t >= 0.2) return "bg-orange-50 dark:bg-orange-900/20";
     return "bg-red-50 dark:bg-red-900/20";
   };
 
@@ -1995,9 +1985,12 @@ function SensitivityPanel() {
                             const match = results.results.find((r: any) =>
                               r.var1Value === v1 && r.var2Value === v2
                             );
-                            const firstOutput = match?.outputs ? Object.values(match.outputs)[0] : "—";
+                            const firstOutputKey = Object.keys(results.outputLabels || {})[0];
+                            const firstOutput = (firstOutputKey && match?.outputs?.[firstOutputKey] !== undefined)
+                              ? match.outputs[firstOutputKey]
+                              : (match?.outputs ? Object.values(match.outputs)[0] : "—");
                             return (
-                              <td key={v2} className={`border p-2 text-center text-xs font-mono ${getHeatColor(String(firstOutput))}`}>
+                              <td key={v2} className={`border p-2 text-center text-xs font-mono ${getHeatColor(firstOutput, firstOutputKey)}`}>
                                 {String(firstOutput)}
                               </td>
                             );
@@ -2026,7 +2019,7 @@ function SensitivityPanel() {
                         <tr key={i}>
                           <td className="border p-2 font-medium bg-muted text-xs">{r.var1Value}</td>
                           {Object.keys(results.outputLabels).map((k: string) => (
-                            <td key={k} className={`border p-2 text-center text-xs font-mono ${getHeatColor(String(r.outputs?.[k]))}`}>
+                            <td key={k} className={`border p-2 text-center text-xs font-mono ${getHeatColor(r.outputs?.[k], k)}`}>
                               {r.outputs?.[k] ?? "—"}
                             </td>
                           ))}
@@ -2899,11 +2892,11 @@ export default function ModelsPage() {
     localStorage.getItem("chatbgp-excel-banner-dismissed") === "1"
   );
 
-  const { data: templates, isLoading: templatesLoading } = useQuery<ExcelTemplate[]>({
+  const { data: templates, isLoading: templatesLoading } = useQuery<(ExcelTemplate & { sheetCount?: number })[]>({
     queryKey: ["/api/models/templates"],
   });
 
-  const { data: runs, isLoading: runsLoading } = useQuery<ExcelModelRun[]>({
+  const { data: runs, isLoading: runsLoading } = useQuery<(ExcelModelRun & { templateName?: string | null })[]>({
     queryKey: ["/api/models/runs"],
   });
 
@@ -2963,6 +2956,22 @@ export default function ModelsPage() {
           <TabsTrigger value="runs" className={pillTabsTrigger} data-testid="tab-runs">
             Runs <span className="font-mono normal-case opacity-70">{runs?.length || 0}</span>
           </TabsTrigger>
+          <TabsTrigger value="smart-run" data-testid="tab-smart-run">
+            <Sparkles className="w-3.5 h-3.5 mr-1" />
+            Smart Run
+          </TabsTrigger>
+          <TabsTrigger value="sensitivity" data-testid="tab-sensitivity">
+            <BarChart3 className="w-3.5 h-3.5 mr-1" />
+            Sensitivity
+          </TabsTrigger>
+          <TabsTrigger value="compare" data-testid="tab-compare">
+            <GitCompare className="w-3.5 h-3.5 mr-1" />
+            Compare
+          </TabsTrigger>
+          <TabsTrigger value="batch" data-testid="tab-batch">
+            <Zap className="w-3.5 h-3.5 mr-1" />
+            Batch
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="ask-claude" className="mt-4 space-y-6">
@@ -3001,6 +3010,22 @@ export default function ModelsPage() {
               description="Select a template and run a model with your property inputs to see results here."
             />
           )}
+        </TabsContent>
+
+        <TabsContent value="smart-run" className="mt-4">
+          <SmartRunPanel />
+        </TabsContent>
+
+        <TabsContent value="sensitivity" className="mt-4">
+          <SensitivityPanel />
+        </TabsContent>
+
+        <TabsContent value="compare" className="mt-4">
+          <ComparePanel />
+        </TabsContent>
+
+        <TabsContent value="batch" className="mt-4">
+          <BatchRunPanel />
         </TabsContent>
 
       </Tabs>

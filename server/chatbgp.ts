@@ -44,6 +44,7 @@ async function buildDeckPptxFromArgs(fnArgs: any): Promise<{ buffer: Buffer; saf
   return { buffer, safeName, slideCount: cards.length };
 }
 import { escapeLike } from "./utils/escape-like";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schema";
 import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
@@ -757,6 +758,7 @@ function getAnthropicClient(useDirect = false) {
   if (useDirect && process.env.ANTHROPIC_API_KEY) {
     return new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
+      ...anthropicWorkspaceOptions(),
     });
   }
   // Use integration key if available, otherwise fall back to direct key
@@ -766,6 +768,7 @@ function getAnthropicClient(useDirect = false) {
   if (process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
     opts.baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
   }
+  Object.assign(opts, anthropicWorkspaceOptions());
   return new Anthropic(opts);
 }
 
@@ -5196,7 +5199,9 @@ async function executeModelRun(args: { templateId: string; name: string; inputVa
   if (!template) throw new Error("Model template not found");
 
   const XLSX = (await import("xlsx")).default;
-  const wb = XLSX.readFile(template.filePath);
+  // cellFormula+sheetStubs keep formula cells (even without cached values) so
+  // the generated run file retains live formulas instead of values-only stubs.
+  const wb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
   const inputMapping = JSON.parse(template.inputMapping || "{}");
   const outputMapping = JSON.parse(template.outputMapping || "{}");
 

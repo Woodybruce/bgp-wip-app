@@ -9,6 +9,7 @@
     "railway": "tsx script/railway.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "test": "node --import tsx --test server/model-engine.test.ts",
     "db:push": "drizzle-kit push",
     "qa:pg": "bash qa/start-postgres.sh",
     "qa:regression": "node --import tsx --test qa/regression/*.test.* qa/regression/access.cjs qa/regression/auth.cjs qa/regression/wip.cjs qa/regression/financial.cjs"
@@ -97,6 +98,7 @@
     "framer-motion": "^11.13.1",
     "heic-convert": "^2.1.0",
     "html-to-image": "^1.11.13",
+    "hyperformula": "^3.4.0",
     "iink-ts": "^3.2.1",
     "input-otp": "^1.4.2",
     "jspdf": "^4.2.0",

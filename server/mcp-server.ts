@@ -876,7 +876,8 @@ function createBgpMcpServer(): McpServer {
         const fs = (await import("node:fs")).default;
         const pathMod = (await import("node:path")).default;
 
-        const wb = XLSX.readFile(template.filePath);
+        // cellFormula+sheetStubs keep formula cells alive in the generated run file.
+        const wb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
         const inputMapping = JSON.parse(template.inputMapping || "{}");
         const outputMapping = JSON.parse(template.outputMapping || "{}");
 

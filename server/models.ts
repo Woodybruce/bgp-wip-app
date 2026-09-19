@@ -14,6 +14,8 @@ import { performPropertyLookup, formatPropertyReport } from "./property-lookup";
 import { crmDeals, crmContacts, crmCompanies, crmProperties, chatbgpLearnings, appFeedbackLog, appChangeRequests, excelTemplates, excelModelRuns, excelModelRunVersions } from "@shared/schema";
 import { ilike, or, eq, sql, desc, and } from "drizzle-orm";
 import { saveFileFromDisk, ensureFileOnDisk, syncFileToDisk } from "./file-storage";
+import { createEngineFromWorkbook, type EngineCellError } from "./model-engine";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 
 const UPLOAD_DIR = path.join(process.cwd(), "ChatBGP", "templates");
 const RUNS_DIR = path.join(process.cwd(), "ChatBGP", "runs");
@@ -447,6 +449,74 @@ function extractOutputs(wb: XLSX.WorkBook, mapping: Record<string, any>): Record
   return outputs;
 }
 
+interface EngineRunOutcome {
+  /** true when the engine recalculated the workbook and output cells were refreshed. */
+  computed: boolean;
+  /** Set when the engine could not run this workbook at all. */
+  engineError?: string;
+  /** Non-fatal load problems (e.g. named ranges that failed to register). */
+  engineWarnings: string[];
+  /** Cells that evaluate to Excel errors (#NAME?, #CYCLE!, #DIV/0!, ...). */
+  calculationErrors: EngineCellError[];
+}
+
+/**
+ * Recalculate a workbook with the model engine and refresh the cached values
+ * of every mapped output cell in place (formula `.f` is kept; only `.v`/`.t`
+ * are updated), so both the API response and the written .xlsx show fresh
+ * numbers. Returns computed=false when the engine cannot handle the workbook —
+ * callers must then fall back to stale cached values and say so.
+ */
+function recalculateOutputsWithEngine(wb: XLSX.WorkBook, outputMapping: Record<string, any>): EngineRunOutcome {
+  const noRun: EngineRunOutcome = { computed: false, engineWarnings: [], calculationErrors: [] };
+  if (!outputMapping || Object.keys(outputMapping).length === 0) {
+    // Nothing to read back: no stale numbers can be presented, nothing to compute.
+    return { computed: true, engineWarnings: [], calculationErrors: [] };
+  }
+
+  let engine;
+  try {
+    engine = createEngineFromWorkbook(wb);
+  } catch (err: any) {
+    return { ...noRun, engineError: err?.message || String(err) };
+  }
+
+  try {
+    for (const config of Object.values(outputMapping) as any[]) {
+      if (!config?.sheet || !config?.cell) continue;
+      const ws = wb.Sheets[config.sheet];
+      if (!ws) continue;
+      const result = engine.getCellValue(config.sheet, config.cell);
+      const cell: any = ws[config.cell] || {};
+      if (result.ok) {
+        const v = result.value;
+        if (typeof v === "number") { cell.v = v; cell.t = "n"; }
+        else if (typeof v === "boolean") { cell.v = v; cell.t = "b"; }
+        else if (v === null) { delete cell.v; }
+        else { cell.v = String(v); cell.t = "s"; }
+      } else {
+        cell.v = result.error;
+        cell.t = "e";
+      }
+      delete cell.w; // cached display text no longer matches
+      ws[config.cell] = cell;
+    }
+
+    // Also surface errors anywhere else in the workbook (unsupported functions
+    // show up as #NAME?, circular references as #CYCLE!).
+    const calculationErrors = engine.collectErrors(25);
+    return {
+      computed: true,
+      engineWarnings: engine.warnings,
+      calculationErrors,
+    };
+  } catch (err: any) {
+    return { ...noRun, engineError: err?.message || String(err) };
+  } finally {
+    engine.dispose();
+  }
+}
+
 function analyzeWorkbook(wb: XLSX.WorkBook): { sheets: { name: string; rows: number; cols: number }[]; properties: string[] } {
   const sheets = wb.SheetNames.map((name) => {
     const ws = wb.Sheets[name];
@@ -660,7 +730,7 @@ function getAnthropicClient() {
   const baseURL = process.env.ANTHROPIC_API_KEY
     ? undefined
     : process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
-  return new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
+  return new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}), ...anthropicWorkspaceOptions() });
 }
 
 function getGeminiModelClient() {
@@ -671,7 +741,21 @@ function getGeminiModelClient() {
   return new GoogleGenAI({ apiKey, httpOptions: { apiVersion: "", baseUrl } });
 }
 
-async function extractPropertyDataWithAI(documentTexts: { name: string; text: string }[]): Promise<any> {
+function buildTemplateInputSchema(inputMapping: Record<string, any>): string {
+  const entries = Object.entries(inputMapping || {});
+  if (!entries.length) return "";
+  const lines = entries.map(([key, m]: [string, any]) => {
+    const unit = m?.type === "percent"
+      ? "percentage number (5.5 for 5.5%)"
+      : m?.type === "text"
+        ? "string"
+        : "number in FULL units (11000000 for £11m, 500000 for £500k/yr)";
+    return `  "${key}": "${m?.label || key} — ${unit}"`;
+  });
+  return `\n\nCRITICAL — the target model has these EXACT input fields. For every one you can determine from the documents, include it in the JSON keyed EXACTLY as shown below (these keys override the generic fields above where they overlap — e.g. use "purchasePrice" not a variant, in the units specified):\n{\n${lines.join(",\n")}\n}`;
+}
+
+async function extractPropertyDataWithAI(documentTexts: { name: string; text: string }[], inputMapping?: Record<string, any>): Promise<any> {
   const anthropic = getAnthropicClient();
 
   const combinedText = documentTexts
@@ -681,7 +765,7 @@ async function extractPropertyDataWithAI(documentTexts: { name: string; text: st
   const response = await studioCreate(anthropic, {
     model: STUDIO_MODEL,
     max_tokens: 8192,
-    system: SMART_EXTRACT_PROMPT,
+    system: SMART_EXTRACT_PROMPT + (inputMapping ? buildTemplateInputSchema(inputMapping) : ""),
     messages: [
       { role: "user", content: combinedText },
     ],
@@ -689,7 +773,15 @@ async function extractPropertyDataWithAI(documentTexts: { name: string; text: st
 
   const content = response.content[0]?.type === "text" ? response.content[0].text : "{}";
   const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-  return JSON.parse(cleaned);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try { return JSON.parse(jsonMatch[0]); } catch {}
+    }
+    throw new Error("AI returned invalid JSON. Please try again.");
+  }
 }
 
 async function analyzeTemplateWithAI(wb: XLSX.WorkBook): Promise<{
@@ -745,7 +837,15 @@ Guidelines:
 
   const content = response.content[0]?.type === "text" ? response.content[0].text : "{}";
   const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-  return JSON.parse(cleaned);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try { return JSON.parse(jsonMatch[0]); } catch {}
+    }
+    throw new Error("AI returned invalid JSON. Please try again.");
+  }
 }
 
 async function askAboutModel(wb: XLSX.WorkBook, question: string, templateName: string, inputMapping?: Record<string, any>, outputMapping?: Record<string, any>): Promise<string> {
@@ -863,7 +963,15 @@ Only suggest values for fields that are currently empty. Use numbers (not string
 
   const content = response.content[0]?.type === "text" ? response.content[0].text : "{}";
   const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-  return JSON.parse(cleaned);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try { return JSON.parse(jsonMatch[0]); } catch {}
+    }
+    throw new Error("AI returned invalid JSON. Please try again.");
+  }
 }
 
 export function setupModelsRoutes(app: Express) {
@@ -874,7 +982,17 @@ export function setupModelsRoutes(app: Express) {
       if (propertyId) {
         templates = templates.filter(t => t.propertyId === propertyId);
       }
-      res.json(templates);
+      const enriched = templates.map((t) => {
+        let sheetCount: number | undefined;
+        try {
+          if (t.filePath && fs.existsSync(t.filePath)) {
+            const wb = XLSX.readFile(t.filePath, { bookSheets: true });
+            sheetCount = wb.SheetNames.length;
+          }
+        } catch {}
+        return { ...t, sheetCount };
+      });
+      res.json(enriched);
     } catch (err: any) {
       res.status(500).json({ message: "Failed to fetch templates" });
     }
@@ -891,7 +1009,7 @@ export function setupModelsRoutes(app: Express) {
       let analysis = null;
       try {
         await ensureTemplateFile(template.filePath);
-      const wb = XLSX.readFile(template.filePath);
+      const wb = XLSX.readFile(template.filePath, { sheetStubs: true });
         analysis = analyzeWorkbook(wb);
         const existingOutputs = extractOutputs(wb, outputMapping);
         res.json({ ...template, inputMapping, outputMapping, analysis, sampleOutputs: existingOutputs });
@@ -988,7 +1106,10 @@ export function setupModelsRoutes(app: Express) {
       if (!sheet || !cell) return res.status(400).json({ message: "Sheet and cell are required" });
 
       await ensureTemplateFile(template.filePath);
-      const wb = XLSX.readFile(template.filePath);
+      // cellFormula+sheetStubs: without them SheetJS drops formula cells that
+      // have no cached value, and the writeFile below would erase every
+      // uncached formula from the template on disk.
+      const wb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
       const ws = wb.Sheets[sheet];
       if (!ws) return res.status(404).json({ message: `Sheet "${sheet}" not found` });
 
@@ -1214,7 +1335,9 @@ export function setupModelsRoutes(app: Express) {
       if (propertyId) {
         runs = runs.filter(r => r.propertyId === propertyId);
       }
-      res.json(runs);
+      const templates = await storage.getExcelTemplates();
+      const templateNameById = new Map(templates.map((t) => [t.id, t.name]));
+      res.json(runs.map((r) => ({ ...r, templateName: templateNameById.get(r.templateId) || null })));
     } catch (err: any) {
       res.status(500).json({ message: "Failed to fetch model runs" });
     }
@@ -1253,7 +1376,7 @@ export function setupModelsRoutes(app: Express) {
       if (!template) return res.status(404).json({ message: "Template not found" });
 
       await ensureTemplateFile(template.filePath);
-      const wb = XLSX.readFile(template.filePath);
+      const wb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
       const inputMapping = JSON.parse(template.inputMapping || "{}");
       const outputMapping = JSON.parse(template.outputMapping || "{}");
 
@@ -1269,13 +1392,21 @@ export function setupModelsRoutes(app: Express) {
         }
       }
 
+      // Recalculate with the model engine: refreshes the cached values of the
+      // mapped output cells inside wb before it is written to disk. On failure
+      // we fall back to the stale Excel cache and say so.
+      const engineResult = recalculateOutputsWithEngine(wb, outputMapping);
+
       const runFileName = `run-${Date.now()}-${name.replace(/[^a-zA-Z0-9]/g, "_")}.xlsx`;
       const runFilePath = path.join(RUNS_DIR, runFileName);
       XLSX.writeFile(wb, runFilePath);
       try { await saveFileFromDisk(`runs/${runFileName}`, runFilePath, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", `${name}.xlsx`); } catch {}
 
-      const reloadedWb = XLSX.readFile(runFilePath);
-      const outputs = extractOutputs(reloadedWb, outputMapping);
+      // When the engine ran, wb already carries fresh output values; otherwise
+      // read back whatever Excel last cached (stale) and flag it.
+      const outputs = engineResult.computed
+        ? extractOutputs(wb, outputMapping)
+        : extractOutputs(XLSX.readFile(runFilePath, { sheetStubs: true }), outputMapping);
 
       const run = await storage.createExcelModelRun({
         templateId,
@@ -1283,13 +1414,23 @@ export function setupModelsRoutes(app: Express) {
         inputValues: JSON.stringify(inputValues || {}),
         outputValues: JSON.stringify(outputs),
         generatedFilePath: runFilePath,
-        status: "completed",
+        status: engineResult.computed ? "completed" : "uncalculated",
       });
 
       res.json({
         ...run,
         inputValues: inputValues || {},
         outputValues: outputs,
+        ...(engineResult.computed
+          ? {
+              engine: "hyperformula",
+              engineWarnings: engineResult.engineWarnings,
+              calculationErrors: engineResult.calculationErrors,
+            }
+          : {
+              outputsAreStaleCache: true,
+              engineError: engineResult.engineError,
+            }),
       });
     } catch (err: any) {
       console.error("Model run error:", err?.message);
@@ -1420,7 +1561,7 @@ export function setupModelsRoutes(app: Express) {
       let newOutputs: Record<string, any> = {};
       let newInputs: Record<string, any> = JSON.parse(run.inputValues || "{}");
       try {
-        const wb = XLSX.readFile(versionedFilePath);
+        const wb = XLSX.readFile(versionedFilePath, { sheetStubs: true });
         newOutputs = extractOutputs(wb, outputMapping);
         if (inputMapping && typeof inputMapping === "object") {
           const reread: Record<string, any> = {};
@@ -1780,7 +1921,9 @@ export function setupModelsRoutes(app: Express) {
       if (!template) return res.status(404).json({ message: "Template not found" });
 
       await ensureTemplateFile(template.filePath);
-      const wb = XLSX.readFile(template.filePath);
+      // cellFormula+sheetStubs keep uncached formula cells alive so the
+      // writeFile on apply-changes cannot strip them from the template.
+      const wb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
       const richContext = extractRichWorkbookContext(wb, 40);
       const inputMapping = JSON.parse(template.inputMapping || "{}");
       const outputMapping = JSON.parse(template.outputMapping || "{}");
@@ -2020,7 +2163,13 @@ Return ONLY valid JSON. No markdown, no code fences.`;
         return res.status(400).json({ message: "Could not extract text from any uploaded documents" });
       }
 
-      const extracted = await extractPropertyDataWithAI(documentTexts);
+      let inputMapping: Record<string, any> | undefined;
+      if (req.body?.templateId) {
+        const template = await storage.getExcelTemplate(req.body.templateId);
+        if (template) inputMapping = JSON.parse(template.inputMapping || "{}");
+      }
+
+      const extracted = await extractPropertyDataWithAI(documentTexts, inputMapping);
 
       for (const file of files) {
         try { fs.unlinkSync(file.path); } catch {}
@@ -2036,10 +2185,38 @@ Return ONLY valid JSON. No markdown, no code fences.`;
     }
   });
 
+/**
+ * Coerce a reviewed smart-run input the same way writeCellValue treats values
+ * at cell-write time: text → String, everything else → plain parseFloat.
+ * Percent stays human-scale here (5.5); writeCellValue divides by 100 when it
+ * writes the cell. Returns undefined for empty/non-numeric values, which means
+ * "do not write this input".
+ */
+function coerceSmartRunInput(value: any, type: string | undefined): number | string | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
+  if (type === "text") return String(value);
+  const n = parseFloat(value);
+  return isNaN(n) ? undefined : n;
+}
+
   app.post("/api/models/smart-run", requireAuth, docUpload.array("documents", 5), async (req: Request, res: Response) => {
     try {
       const files = req.files as Express.Multer.File[];
-      const { templateId, name } = req.body;
+      const { templateId, name, editedInputs: editedInputsRaw } = req.body;
+
+      // Reviewed values from the client arrive as a JSON string (multer text
+      // field). Malformed JSON is ignored — extraction alone decides inputs.
+      let editedInputs: Record<string, any> | null = null;
+      if (typeof editedInputsRaw === "string" && editedInputsRaw.trim()) {
+        try {
+          const parsed = JSON.parse(editedInputsRaw);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            editedInputs = parsed;
+          }
+        } catch {
+          console.warn("[smart-run] Ignoring malformed editedInputs payload");
+        }
+      }
 
       if (!files || files.length === 0) {
         return res.status(400).json({ message: "No documents uploaded" });
@@ -2068,20 +2245,31 @@ Return ONLY valid JSON. No markdown, no code fences.`;
         return res.status(400).json({ message: "Could not extract text from any uploaded documents" });
       }
 
-      const extracted = await extractPropertyDataWithAI(documentTexts);
-
       const inputMapping = JSON.parse(template.inputMapping || "{}");
       const outputMapping = JSON.parse(template.outputMapping || "{}");
 
+      const extracted = await extractPropertyDataWithAI(documentTexts, inputMapping);
+
+      // Precedence: a reviewed value present in editedInputs wins over the
+      // fresh extraction for that key; keys outside the template's
+      // inputMapping are never written. An edited value that coerces to
+      // empty/non-numeric omits the input entirely (the extraction does not
+      // resurrect it), matching writeCellValue's skip semantics.
       const inputValues: Record<string, any> = {};
+      const overriddenKeys: string[] = [];
       for (const [key, mapping] of Object.entries(inputMapping) as [string, any][]) {
-        if (extracted[key] !== undefined && extracted[key] !== null) {
+        if (editedInputs && Object.prototype.hasOwnProperty.call(editedInputs, key)) {
+          const editedValue = coerceSmartRunInput(editedInputs[key], mapping?.type);
+          const extractedValue = coerceSmartRunInput(extracted[key], mapping?.type);
+          if (String(editedValue) !== String(extractedValue)) overriddenKeys.push(key);
+          if (editedValue !== undefined) inputValues[key] = editedValue;
+        } else if (extracted[key] !== undefined && extracted[key] !== null) {
           inputValues[key] = extracted[key];
         }
       }
 
       await ensureTemplateFile(template.filePath);
-      const wb = XLSX.readFile(template.filePath);
+      const wb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
       for (const [key, value] of Object.entries(inputValues)) {
         const mapping = inputMapping[key];
         if (mapping) {
@@ -2092,14 +2280,18 @@ Return ONLY valid JSON. No markdown, no code fences.`;
         }
       }
 
+      // Recalculate with the model engine (same as POST /api/models/runs).
+      const engineResult = recalculateOutputsWithEngine(wb, outputMapping);
+
       const runName = name || extracted.dealName || `Smart Run ${new Date().toLocaleDateString()}`;
       const runFileName = `run-${Date.now()}-${runName.replace(/[^a-zA-Z0-9]/g, "_")}.xlsx`;
       const runFilePath = path.join(RUNS_DIR, runFileName);
       XLSX.writeFile(wb, runFilePath);
       try { await saveFileFromDisk(`runs/${runFileName}`, runFilePath, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", `${runName}.xlsx`); } catch {}
 
-      const reloadedWb = XLSX.readFile(runFilePath);
-      const outputs = extractOutputs(reloadedWb, outputMapping);
+      const outputs = engineResult.computed
+        ? extractOutputs(wb, outputMapping)
+        : extractOutputs(XLSX.readFile(runFilePath, { sheetStubs: true }), outputMapping);
 
       const run = await storage.createExcelModelRun({
         templateId,
@@ -2107,7 +2299,7 @@ Return ONLY valid JSON. No markdown, no code fences.`;
         inputValues: JSON.stringify(inputValues),
         outputValues: JSON.stringify(outputs),
         generatedFilePath: runFilePath,
-        status: "completed",
+        status: engineResult.computed ? "completed" : "uncalculated",
       });
 
       for (const file of files) {
@@ -2118,6 +2310,17 @@ Return ONLY valid JSON. No markdown, no code fences.`;
         ...run,
         inputValues,
         outputValues: outputs,
+        overriddenKeys,
+        ...(engineResult.computed
+          ? {
+              engine: "hyperformula",
+              engineWarnings: engineResult.engineWarnings,
+              calculationErrors: engineResult.calculationErrors,
+            }
+          : {
+              outputsAreStaleCache: true,
+              engineError: engineResult.engineError,
+            }),
         extracted,
         documentsProcessed: documentTexts.map((d) => d.name),
       });
@@ -3021,7 +3224,8 @@ CRITICAL RULES:
             if (!fs.existsSync(template.filePath)) return JSON.stringify({ error: "Template file missing" });
 
             await ensureTemplateFile(template.filePath);
-      const wb = XLSX.readFile(template.filePath);
+      // cellFormula+sheetStubs so the writeFile below preserves uncached formulas.
+      const wb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
             const ws = wb.Sheets[input.sheetName];
             if (!ws) return JSON.stringify({ error: `Sheet "${input.sheetName}" not found. Available: ${wb.SheetNames.join(", ")}` });
 
@@ -3075,7 +3279,8 @@ CRITICAL RULES:
             if (!template) return JSON.stringify({ error: "Template not found" });
 
             await ensureTemplateFile(template.filePath);
-      const wb = XLSX.readFile(template.filePath);
+      // cellFormula+sheetStubs so the writeFile below preserves uncached formulas.
+      const wb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
             if (wb.SheetNames.includes(input.sheetName)) {
               return JSON.stringify({ error: `Sheet "${input.sheetName}" already exists` });
             }
@@ -3125,7 +3330,8 @@ CRITICAL RULES:
             if (!template) return JSON.stringify({ error: "Template not found" });
 
             await ensureTemplateFile(template.filePath);
-      const wb = XLSX.readFile(template.filePath);
+      // cellFormula+sheetStubs so the writeFile below preserves uncached formulas.
+      const wb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
             if (!wb.SheetNames.includes(input.sheetName)) {
               return JSON.stringify({ error: `Sheet "${input.sheetName}" not found` });
             }
