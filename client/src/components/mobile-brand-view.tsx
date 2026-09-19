@@ -1,4 +1,5 @@
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
+import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
 import { CompanyProfileImage } from "@/components/company-profile-image";
 import { useState, useEffect, useRef } from "react";
 import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandImageRefreshButton } from "@/components/brand-profile-overview";
@@ -112,14 +113,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
     staleTime: 10 * 60 * 1000,
     retry: false,
   });
-  const refreshProfile = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/brand/enrich/${companyId}`, {})).json(),
-    onSuccess: (out) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId] });
-      toast({ title: out.reason ? "Profile needs review" : "Profile refreshed", description: out.reason || "Saved facts have been checked." });
-    },
-    onError: (error: Error) => toast({ title: "Profile could not be refreshed", description: error.message, variant: "destructive" }),
-  });
+  const refreshProfile = useBrandProfileRefresh(companyId, !isClientViewer);
 
   if (isError) return <Card className="p-4 space-y-3"><p className="text-sm text-muted-foreground">The saved brand profile could not be loaded.</p><Button size="sm" variant="outline" onClick={() => reloadSavedProfile()}>Try again</Button></Card>;
   if (isLoading || !data?.company) {
@@ -176,6 +170,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       </div>
       <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
       {!isClientViewer && <Button variant="outline" size="sm" onClick={() => refreshProfile.mutate()} disabled={refreshProfile.isPending} data-testid="button-brand-refresh">{refreshProfile.isPending ? "Refreshing…" : "Refresh profile"}</Button>}
+      {!isClientViewer && refreshProfile.message && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{refreshProfile.message}</p>}
       <div className="flex flex-wrap gap-1.5" data-testid="company-phone-sections">
         <Pill active={section === "chat"} onClick={() => setSection("chat")} data-testid="company-section-chat">Overview</Pill>
         <Pill active={section === "contacts"} onClick={() => setSection("contacts")} data-testid="company-section-contacts">Contacts</Pill>

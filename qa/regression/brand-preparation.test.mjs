@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { Router } from 'express';
+import { currentOfficialProfileEvidence, prepareOfficialProfileEvidence, retainedProfileFactsCorroborated } from '../../server/brand-profile-evidence.ts';
 import { getBrandIdentity } from '../../server/brand-identity.ts';
 import { BRAND_BRIEF_POLICY_VERSION } from '../../server/brand-brief-evidence.ts';
 import { BRAND_PREPARATION_STAGES, nextPreparationState, summarizeBrandPreparation } from '../../server/brand-preparation-jobs.ts';
@@ -52,7 +53,7 @@ test('ordinary BGP take reads only persisted matching-identity output and never 
   let saved; const queries = [];
   const code = find('server/brand-ai-take.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'readPreparedBrandAiTake');
   const { readPreparedBrandAiTake } = evaluate(code, {
-    getBrandIdentity, BRAND_BRIEF_POLICY_VERSION, takeKey: (id, tab) => `brand-prepared-take:${id}:${tab}`,
+    getBrandIdentity, currentOfficialProfileEvidence, BRAND_BRIEF_POLICY_VERSION, takeKey: (id, tab) => `brand-prepared-take:${id}:${tab}`,
     pool: { query: async (sql, values) => { queries.push({ sql, values }); return { rows: sql.includes('crm_companies') ? [company] : saved ? [{ value: saved }] : [] }; } },
     callClaude: () => { throw new Error('Ordinary profile open must not call an AI provider'); },
   });
@@ -87,7 +88,7 @@ test('profile enrichment rejects object text and unknown headcount, and incomple
     getBrandIdentity, process: { env: { ANTHROPIC_API_KEY: 'synthetic-test-key' } },
     ENRICHABLE_FIELDS: ['description', 'industry', 'employee_count', 'store_count'], ROLLOUT_VALUES: [],
     MODEL_PRIMARY: 'test', MODEL_FALLBACK_1: 'test', MODEL_FALLBACK_2: 'test',
-    fetchBrandWebContext: async () => '', buildPrompt: () => 'synthetic input',
+    readBrandOfficialEvidence: async () => [], prepareOfficialProfileEvidence, retainedProfileFactsCorroborated, fetchBrandWebContext: async () => '', buildPrompt: () => 'synthetic input',
     anthropic: { messages: { create: async () => ({ content: [{ type: 'text', text: JSON.stringify({ description: { wrong: 'shape' }, industry: 'Food', employee_count: 0, store_count: [] }) }] }) } },
     pool: { query: async (sql, values) => { if (sql.startsWith('SELECT')) return { rows: [company] }; writes.push({ sql, values }); return { rowCount: 1 }; } },
   });
@@ -103,7 +104,7 @@ test('AI backer detail cannot override the human-maintained backers headline', a
   const code = fn => find('server/brand-enrichment.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === fn);
   const { enrichCompany } = evaluate(code('enrichCompany') + '\nexports.enrichCompany=enrichCompany;', {
     getBrandIdentity, process: { env: { ANTHROPIC_API_KEY: 'synthetic-test-key' } }, ENRICHABLE_FIELDS: ['backers'], ROLLOUT_VALUES: [],
-    MODEL_PRIMARY: 'test', MODEL_FALLBACK_1: 'test', MODEL_FALLBACK_2: 'test', fetchBrandWebContext: async () => '', buildPrompt: () => '',
+    MODEL_PRIMARY: 'test', MODEL_FALLBACK_1: 'test', MODEL_FALLBACK_2: 'test', readBrandOfficialEvidence: async () => [], prepareOfficialProfileEvidence, retainedProfileFactsCorroborated, fetchBrandWebContext: async () => '', buildPrompt: () => '',
     anthropic: { messages: { create: async () => ({ content: [{ type: 'text', text: JSON.stringify({ backers: 'Wrong owner', backers_detail: [{ name: 'Wrong owner', type: 'parent group', description: 'Wrong ownership claim' }] }) }] }) } },
     pool: { query: async sql => sql.startsWith('SELECT') ? { rows: [company] } : { rowCount: 1 } },
   });

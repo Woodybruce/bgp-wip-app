@@ -137,3 +137,57 @@ test('actual landlord scrape retains per-page provenance and bounded discovery d
   assert.equal(result.findings.image_urls[0], 'https://landlord.example.com/place-index.jpg');
   assert.ok(result.findings.image_urls.includes('https://landlord.example.com/centre-exterior.jpg'));
 });
+
+test('global navigation thumbnails and tracking pixels cannot fill the photo candidate cap', () => {
+  const images = extractCompanyImageCandidates(`
+    <header>${Array.from({ length: 12 }, (_, n) => `<a href='/menu/${n}'><img src='/food${n}.jpg'></a>`).join('')}</header>
+    <nav><img src='/another-menu-thumbnail.jpg'></nav>
+    <img width='1' height='1' src='https://analytics.example.com/tr?id=123'>
+    <header><h1>Our newest shop</h1><img src='/feature-image.jpg'><a href='/shops/new'>Visit us</a></header>
+    <main><img src='/large-scene.jpg'></main>
+    <footer><img src='/award-badge.jpg'></footer>`, base, { limit: 2 });
+  assert.deepEqual(images.map(image => image.url), ['https://retailer.example.com/feature-image.jpg', 'https://retailer.example.com/large-scene.jpg']);
+});
+
+test('shop indexes deduplicate trailing slash and www variants; restaurant wording does not turn a product page into a venue', () => {
+  const pages = discoverCompanyPhotographyPages(`
+    <a href='/menu/main-meals/takeaway'>Restaurant favourites</a>
+    <a href='/products/restaurant-meals'>Restaurant meals</a>
+    <a href='/shops'>Shop finder</a><a href='/shops/'>Our shops</a>
+    <a href='https://www.retailer.example.com/shops/'>Shop finder</a>
+    <a href='/press'>Press enquiries</a>`, 'https://retailer.example.com/', { limit: 4 });
+  assert.deepEqual(pages, ['https://retailer.example.com/shops', 'https://retailer.example.com/press']);
+});
+
+test('canonical brand discovery follows shop index to actual venues within the existing four-page budget', async () => {
+  const { companyPhotographyPageKey } = await import('../../server/company-image-discovery.ts');
+  const code = find('server/brand-images.ts', n => ts.isFunctionDeclaration(n) && n.name?.text === 'findHomepageImages');
+  const calls = [];
+  const home = `<a href='/shops'>Shop finder</a><a href='/shops/'>Our shops</a><a href='/press'>Press</a>`;
+  const index = `<a href='/shops'>Shops</a>${['alpha','bravo','charlie','delta'].map(name => `<a href='/shops/${name}'>${name}</a>`).join('')}`;
+  const { findHomepageImages } = evaluate(code + '\nexports.findHomepageImages=findHomepageImages;', {
+    extractCompanyImageCandidates, discoverCompanyPhotographyPages, companyPhotographyPageKey,
+    fetchHtml: async url => {
+      calls.push(url);
+      if (url === 'https://retailer.example.com') return home;
+      if (url === 'https://retailer.example.com/shops') return index;
+      if (/\/shops\/\w+$/.test(url)) return `<a href='/shops'>Shops</a><img src='${url}/large.jpg' alt='Shop exterior'>`;
+      return null;
+    },
+  });
+  const result = await findHomepageImages('retailer.example.com');
+  assert.equal(calls.length, 5, 'homepage plus at most four linked pages');
+  assert.equal(new Set(calls).size, 5);
+  assert.deepEqual(calls.slice(1), ['https://retailer.example.com/shops', 'https://retailer.example.com/shops/alpha',
+    'https://retailer.example.com/shops/bravo', 'https://retailer.example.com/shops/charlie']);
+  assert.equal(result.length, 3);
+  assert.ok(result.every(image => image.pageUrl.startsWith('https://retailer.example.com/shops/')));
+});
+
+test('unnamed homepage photos linked to shops outrank an ecommerce thumbnail grid before the cap', () => {
+  const html = `<main>${Array.from({ length: 15 }, (_, n) => `<a href='/products/food-${n}'><img data-src='/meal-${n}.jpg' alt='Meal ${n}'></a>`).join('')}
+    <a href='/shops'><img src='/placeholder.png' width='355' height='250' data-src='/scene-123.jpg'></a>
+    <a href='/shops/'><picture><source srcset='/scene-456.webp 1200w'><img alt='' src='/scene-small.jpg'></picture></a></main>`;
+  const images = extractCompanyImageCandidates(html, 'https://retailer.example.com/', { limit: 2 });
+  assert.deepEqual(images.map(image => image.url), ['https://retailer.example.com/scene-456.webp', 'https://retailer.example.com/scene-123.jpg']);
+});

@@ -12,7 +12,7 @@ function component(name, bindings = {}, file = 'client/src/components/company-pr
   const ast = ts.createSourceFile(file, source(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const declaration = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name);
   const sandbox = { exports: {}, require, encodeURIComponent, selectCompanyHeroImage, rankCompanyHeroImages, companyImageHeroIssue,
-    useState: initial => [initial, () => {}], Button: 'Button', Star: 'Star', ImageIcon: 'ImageIcon', BrandImageRefreshButton: 'BrandImageRefreshButton', ...bindings };
+    useState: initial => [initial, () => {}], useRef: initial => ({ current: initial }), useEffect: () => {}, useQuery: () => ({ data: undefined, isError: false }), Button: 'Button', Star: 'Star', ImageIcon: 'ImageIcon', BrandImageRefreshButton: 'BrandImageRefreshButton', ...bindings };
   vm.runInNewContext(ts.transpileModule(declaration.getText(ast), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText, sandbox);
   return sandbox.exports[name];
 }
@@ -110,16 +110,91 @@ test('refresh does not claim success when nothing was imported or the search was
   assert.match(feedback({ imported: 0, reason: 'Photo review unavailable; existing photos kept.' }).description, /review unavailable/);
 });
 
-test('manual refresh requests new candidates and propagates stopped jobs as an error', async () => {
-  let mutation;
+test('manual refresh requests new candidates and a stopped status remains an error', async () => {
+  let mutation, query, cached;
   const calls = [];
   component('BrandImageRefreshButton', {
-    useQueryClient: () => ({}), useToast: () => ({}), RefreshCw: 'RefreshCw', Date,
+    useQueryClient: () => ({ cancelQueries: async () => {}, setQueryData: (_key, data) => { cached = data; }, getQueryData: () => cached }),
+    useToast: () => ({}), RefreshCw: 'RefreshCw', Date, getAuthHeaders: () => ({}),
+    useQuery: options => { query = options; return { data: undefined, isError: false }; },
     useMutation: options => { mutation = options; return { isPending: false }; },
-    setTimeout: resolve => { resolve(); },
-    apiRequest: async (...args) => { calls.push(args); return { json: async () => ({ state: 'idle' }) }; },
+    apiRequest: async (...args) => { calls.push(args); return { json: async () => ({ accepted: true }) }; },
+    fetch: async () => ({ ok: true, json: async () => ({ state: 'idle' }) }),
   }, 'client/src/components/brand-profile-overview.tsx')({ companyId: 'company' });
-  await assert.rejects(mutation.mutationFn(), /stopped before reporting a result/);
+  assert.equal(calls.length, 0);
+  await mutation.onMutate('company');
+  await mutation.mutationFn('company');
+  const status = await query.queryFn({ signal: new AbortController().signal });
+  assert.match(status.error, /stopped before reporting a result/);
   assert.equal(calls[0][0], 'POST');
   assert.equal(calls[0][2].force, true);
+});
+
+function imageRefreshFixture(initial) {
+  const cache = new Map(), queries = [], invalidated = [], requests = [], toasts = [], refs = [];
+  if (initial) cache.set('company', { ...initial, companyId: 'company' });
+  let effects, refIndex, query, mutation;
+  const feedback = component('brandImageRefreshFeedback', {}, 'client/src/components/brand-profile-overview.tsx');
+  const renderComponent = component('BrandImageRefreshButton', {
+    useRef: initial => refs[refIndex++] ||= { current: initial }, useEffect: effect => effects.push(effect),
+    useQueryClient: () => ({ getQueryData: key => cache.get(key[1]), setQueryData: (key, data) => cache.set(key[1], data), cancelQueries: async () => {}, invalidateQueries: async ({ queryKey }) => invalidated.push(queryKey) }),
+    useToast: () => ({ toast: value => toasts.push(value) }), getAuthHeaders: () => ({}), brandImageRefreshFeedback: feedback, RefreshCw: 'RefreshCw',
+    useQuery: options => { query = options; queries.push(options.queryKey); return { data: cache.get(options.queryKey[1]), isError: false }; },
+    useMutation: options => { mutation = options; return { isPending: false }; },
+    apiRequest: async (...args) => { requests.push(args); return { json: async () => ({ accepted: true }) }; },
+    fetch: async (url, options) => { requests.push({ url, options }); return { ok: true, json: async () => initial || ({ state: 'idle' }) }; },
+  }, 'client/src/components/brand-profile-overview.tsx');
+  const render = (companyId = 'company') => { effects = []; refIndex = 0; const tree = renderComponent({ companyId }); effects.forEach(effect => effect()); return tree; };
+  render();
+  return { render, cache, queries, invalidated, requests, toasts, get query() { return query; }, get mutation() { return mutation; } };
+}
+
+test('image refresh restores the reason inline without starting a search or repeating a toast', async () => {
+  const app = imageRefreshFixture({ state: 'done', result: { imported: 0, skipped: 'No photos passed the identity and quality review.' } });
+  const tree = app.render();
+  const status = nodes(tree).find(node => node.props['data-testid'] === 'brand-image-refresh-status');
+  assert.match(text(status), /No new photos added/);
+  assert.match(text(status), /identity and quality review/);
+  assert.equal(status.props.role, 'status');
+  assert.equal(app.requests.length, 0);
+  assert.equal(app.toasts.length, 0);
+  await app.query.queryFn({ signal: new AbortController().signal });
+  assert.equal(app.requests[0].url, '/api/brand/company/refresh-images/status');
+  assert.equal(app.query.refetchOnMount, 'always');
+});
+
+test('image refresh keeps completed and failed outcomes visible and isolates other companies', () => {
+  for (const [initial, expected] of [
+    [{ state: 'done', result: { imported: 2 } }, /2 new photos added/],
+    [{ state: 'error', error: 'Image review is temporarily unavailable.' }, /review is temporarily unavailable/],
+  ]) {
+    const app = imageRefreshFixture(initial);
+    assert.match(text(app.render()), expected);
+    assert.doesNotMatch(text(app.render('other-company')), expected);
+    assert.equal(app.toasts.length, 0);
+  }
+});
+
+test('image job polling stops at completion and invalidates the profile without a status-refetch loop', () => {
+  const app = imageRefreshFixture({ state: 'running' });
+  assert.equal(app.query.refetchInterval({ state: { status: 'success', data: { state: 'running' } } }), 5000);
+  assert.match(text(app.render()), /Searching for suitable photos/);
+  app.cache.set('company', { companyId: 'company', state: 'done', result: { imported: 0 } });
+  app.render();
+  const count = app.invalidated.length;
+  app.render();
+  assert.equal(app.invalidated.length, count);
+  assert.equal(app.invalidated.some(key => key.includes('refresh-images')), false);
+  assert.equal(app.query.refetchInterval({ state: { data: { state: 'done' } } }), false);
+});
+
+test('new official sourced profile is ready even while older retained fields await review', () => {
+  const data = { ready: false, officialProfileReady: true, factReviewRequired: true, identity: { status: 'verified' }, preparedSections: 2, totalSections: 9, stages: [{ stage: 'identity', status: 'ready' }, { stage: 'profile', status: 'ready' }] };
+  const render = component('BrandPreparationStatus', { useQuery: () => ({ data }), shortDate: () => null }, 'client/src/components/brand-profile-overview.tsx');
+  const tree = render({ companyId: 'company', refreshedAt: null });
+  assert.match(text(tree), /Official profile prepared/);
+  assert.match(text(tree), /can support a new BGP brief/);
+  assert.match(text(tree), /Older retained.*separate review/);
+  data.officialProfileReady = false;
+  assert.match(text(render({ companyId: 'company', refreshedAt: null })), /Core facts need review/);
 });

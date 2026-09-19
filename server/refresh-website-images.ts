@@ -9,6 +9,7 @@ import { storeImageFromBuffer } from "./image-studio";
 import { scrapeLogoFromWebsite } from "./website-logo-scraper";
 import { refreshBrandImages } from "./brand-images";
 import { getBrandIdentity, normalizeBrandDomain } from "./brand-identity";
+import { brandImageIdentityTag } from "./brand-publishing";
 
 function extractDomain(raw: string | null | undefined): string | null {
   if (!raw) return null;
@@ -42,6 +43,7 @@ async function refreshImagesForCompany(args: {
 }): Promise<RefreshResult> {
   const result: RefreshResult = { ok: true, domain: args.domain, logo: null, hero: [], removedExisting: 0 };
   let companyId = args.companyId;
+  let verifiedIdentity: { fingerprint: string; tag: string } | null = null;
   if (!companyId) {
     const found = await pool.query("SELECT * FROM crm_companies WHERE LOWER(name) = LOWER($1)", [args.brandName]);
     const matches = found.rows.filter(company => {
@@ -56,17 +58,25 @@ async function refreshImagesForCompany(args: {
     if (identity.status !== "verified" || identity.domain !== normalizeBrandDomain(args.domain)) {
       return { ...result, ok: false, error: "Confirm the official company website before refreshing images." };
     }
+    verifiedIdentity = { fingerprint: identity.fingerprint, tag: brandImageIdentityTag(company) };
   }
 
   // ── Logo ───────────────────────────────────────────────────────────
   try {
     const scraped = await scrapeLogoFromWebsite(args.domain);
     if (scraped) {
+      if (verifiedIdentity) {
+        const current = (await pool.query("SELECT * FROM crm_companies WHERE id = $1", [companyId])).rows[0];
+        const identity = getBrandIdentity(current);
+        if (identity.status !== "verified" || identity.fingerprint !== verifiedIdentity.fingerprint) {
+          return { ...result, ok: false, error: "The company identity changed during the refresh. No logo was saved; refresh again using its confirmed website." };
+        }
+      }
       const stored = await storeImageFromBuffer({
         buffer: scraped.buffer,
         fileName: `${args.brandName} — Logo`,
         category: "Brands",
-        tags: ["Logo", "brand-logo", REFRESH_TAG, `website-${scraped.source}`, args.brandName],
+        tags: ["Logo", "brand-logo", REFRESH_TAG, `website-${scraped.source}`, args.brandName, ...(verifiedIdentity ? [verifiedIdentity.tag] : [])],
         description: `Logo scraped from ${args.domain} (${scraped.source}: ${scraped.url})`,
         source: `website-${scraped.source}`,
         brandName: args.brandName,

@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import { BRAND_IMAGE_QUALITY_TAG, MAX_IMAGE_BYTES, fetchPublicImageSource, prepareBrandPhoto,
   parseImageJudgment, isSuitableBrandPhoto, brandPhotoRank, brandPhotoQualityTags, isPublicImageAddress } from '../../server/brand-image-quality.ts';
 import { getBrandIdentity } from '../../server/brand-identity.ts';
+import { brandImageIdentityTag, publishableBrandImage } from '../../server/brand-publishing.ts';
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
 const extract = name => find('server/brand-images.ts', n => ts.isFunctionDeclaration(n) && n.name?.text === name);
@@ -205,7 +206,7 @@ test('alternate website refresh uses the same photo gate and never deletes curre
   const src = find('server/refresh-website-images.ts', n => ts.isFunctionDeclaration(n) && n.name?.text === 'refreshImagesForCompany');
   const writes = [], calls = [];
   const { refreshImagesForCompany } = evaluate(src + '\nexports.refreshImagesForCompany=refreshImagesForCompany;', {
-    getBrandIdentity, normalizeBrandDomain: value => value, REFRESH_TAG: 'website-refresh',
+    getBrandIdentity, brandImageIdentityTag, normalizeBrandDomain: value => value, REFRESH_TAG: 'website-refresh',
     scrapeLogoFromWebsite: async () => null,
     refreshBrandImages: async (id, opts) => { calls.push({ id, opts }); return { imported: 0, skipped: 'No suitable new photos' }; },
     pool: { query: async sql => { assert.ok(sql.startsWith('SELECT'), 'Existing gallery must never be deleted'); return { rows: [company] }; } },
@@ -236,4 +237,56 @@ test('checking a rejected image cannot poison duplicate detection for later cand
   assert.equal(await deduper.isDuplicate(photo), false, 'a check is not acceptance');
   await deduper.remember(photo);
   assert.equal(await deduper.isDuplicate(photo), true);
+});
+
+
+function logoRefreshHarness(afterFetch = company) {
+  const src = find('server/refresh-website-images.ts', n => ts.isFunctionDeclaration(n) && n.name?.text === 'refreshImagesForCompany');
+  const stored = [];
+  let fetched = false;
+  const { refreshImagesForCompany } = evaluate(src + '\nexports.refreshImagesForCompany=refreshImagesForCompany;', {
+    getBrandIdentity, brandImageIdentityTag, normalizeBrandDomain: value => value, REFRESH_TAG: 'website-refresh',
+    scrapeLogoFromWebsite: async () => {
+      fetched = true;
+      return { buffer: Buffer.from('synthetic-logo'), source: 'header', url: `https://${company.domain}/logo.png`, mime: 'image/png' };
+    },
+    pool: { query: async sql => { assert.ok(sql.startsWith('SELECT')); return { rows: [fetched ? afterFetch : company] }; } },
+    storeImageFromBuffer: async args => { stored.push(args); return { id: 'new-logo' }; },
+  });
+  return { stored, run: () => refreshImagesForCompany({ companyId: company.id, brandName: company.name, domain: company.domain, logoOnly: true }) };
+}
+
+test('verified company website logo retains its identity tag and is publishable', async () => {
+  const qa = logoRefreshHarness();
+  const result = await qa.run();
+  assert.equal(result.ok, true); assert.equal(result.logo.storedId, 'new-logo'); assert.equal(qa.stored.length, 1);
+  const saved = qa.stored[0];
+  assert.equal(saved.companyId, company.id);
+  assert.ok(saved.tags.includes(brandImageIdentityTag(company)));
+  assert.equal(publishableBrandImage(company, { company_id: saved.companyId, brand_name: saved.brandName, tags: saved.tags }), true);
+});
+
+test('company identity changed during website scrape prevents saving the stale logo', async () => {
+  const changed = { ...company, domain: 'replacement.example.com',
+    ai_generated_fields: { brand_identity: { status: 'verified', domain: 'replacement.example.com' } } };
+  const qa = logoRefreshHarness(changed);
+  const result = await qa.run();
+  assert.equal(result.ok, false); assert.match(result.error, /identity changed/);
+  assert.equal(result.logo, null); assert.equal(qa.stored.length, 0);
+});
+
+test('official CDN raster photos served as application/octet-stream reach the same pixel gate', async () => {
+  const original = await image(1200, 800);
+  const downloaded = await fetchPublicImageSource('https://assets.example.com/shop.jpg', { resolveHost: publicDns,
+    fetcher: async () => new Response(original, { headers: { 'content-type': 'application/octet-stream' } }) });
+  assert.ok(downloaded);
+  const photo = await prepareBrandPhoto(downloaded);
+  assert.equal(photo.width, 1200); assert.equal(photo.height, 800);
+  for (const invalid of ['<html>Access denied</html>', '<svg width="1200" height="800"></svg>', 'not an image']) {
+    assert.equal(await fetchPublicImageSource('https://assets.example.com/shop.jpg', { resolveHost: publicDns,
+      fetcher: async () => new Response(invalid, { headers: { 'content-type': 'application/octet-stream' } }) }), null);
+  }
+  const thumb = await fetchPublicImageSource('https://assets.example.com/small.jpg', { resolveHost: publicDns,
+    fetcher: async () => new Response(await image(300, 272), { headers: { 'content-type': 'application/octet-stream' } }) });
+  assert.equal(await prepareBrandPhoto(thumb), null);
 });

@@ -1,4 +1,5 @@
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
+import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
 import { CompanyProfileImage, CompanyImageCoverChoice } from "@/components/company-profile-image";
 import { selectCompanyHeroImage, isCompanyImageLogo } from "@shared/brand-image-selection";
 import { useState, useEffect, useRef, useMemo } from "react";
@@ -498,19 +499,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     onError: (e: any) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
 
-  const enrichMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/brand/enrich/${companyId}`, {});
-      return res.json();
-    },
-    onSuccess: (out: { updated?: string[]; skipped?: string[]; reason?: string }) => {
-      toast({ title: out.reason ? "Profile needs review" : "Profile refreshed",
-        description: out.reason || (out.updated?.length ? "New verified information has been saved." : "The saved facts are unchanged.") });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
-    },
-    onError: (e: any) => toast({ title: "Enrichment failed", description: e.message, variant: "destructive" }),
-  });
+  const enrichMutation = useBrandProfileRefresh(companyId, !isClientViewer);
 
   const findUkEntityMutation = useMutation({
     mutationFn: async () => {
@@ -1051,6 +1040,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
       </CardHeader>
 
       <CardContent className="p-3 space-y-4">
+        {!isClientViewer && enrichMutation.message && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{enrichMutation.message}</p>}
         {!editing && (
           <div className="flex flex-wrap gap-1.5 md:hidden pt-2" data-testid="brand-panel-sections">
             <Pill active={panelSection === "profile"} onClick={() => setPanelSection("profile")} data-testid="brand-section-profile">Profile</Pill>

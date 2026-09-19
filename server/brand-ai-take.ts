@@ -16,6 +16,8 @@ import { safeParseJSON } from "./utils/anthropic-client";
 import crypto from "crypto";
 import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
 import { BRAND_BRIEF_POLICY_VERSION, BRAND_BRIEF_EVIDENCE_RULES, brandActionEvidence, brandBriefWithoutEvidence, brandLegalEvidenceContext } from "./brand-brief-evidence";
+import { currentOfficialProfileEvidence } from "./brand-profile-evidence";
+import { readBrandCoreRefresh, startBrandCoreRefresh } from "./brand-core-refresh";
 import { isBrandNewsRelevant, isBrandSignalRelevant } from "./brand-news-relevance";
 
 const router = Router();
@@ -39,12 +41,20 @@ function dataHash(obj: any): string {
 
 async function loadBrandSlice(companyId: string) {
   const { rows } = await pool.query(
-    `SELECT id, name, description, concept_pitch, industry, domain, domain_url, website,
+    `SELECT id, name, company_type, description, concept_pitch, industry, domain, domain_url, website,
             uk_entity_name, trading_entities, ai_generated_fields
        FROM crm_companies WHERE id = $1`,
     [companyId]
   );
   if (!rows[0]) return null;
+  if (/landlord|client/i.test(rows[0].company_type || "")) {
+    const [properties, activity] = await Promise.all([
+      pool.query(`SELECT id, name, postcode, status, asset_class FROM crm_properties WHERE landlord_id=$1 ORDER BY name LIMIT 30`, [companyId]),
+      loadActivitySlice(companyId),
+    ]);
+    return { ...brandActionEvidence(rows[0], [], []), landlord: true, recorded_properties: properties.rows,
+      portfolio_note: "These are linked CRM properties, not a complete or independently verified ownership portfolio.", activity };
+  }
   const [requirements, signals] = await Promise.all([
     pool.query(`SELECT id, name, status, "use", size, requirement_locations, requirement_date, updated_at, sources
       FROM crm_requirements_leasing WHERE company_id = $1 AND LOWER(TRIM(COALESCE(status, ''))) = 'active'
@@ -280,6 +290,14 @@ FORMAT (the app renders this as a styled card — follow it exactly):
 Total under 110 words.`;
 }
 
+function landlordPrompt(d: any): string {
+  return `You are a BGP commercial property agent preparing a concise relationship and leasing brief for a LANDLORD, not a retail tenant.
+${BRAND_BRIEF_EVIDENCE_RULES}
+Data: ${JSON.stringify(d)}
+Use the checked official profile, linked CRM properties, recorded deals and relationship activity. A CRM property link is not a complete ownership portfolio or proof of a current mandate. Do not describe tenant expansion requirements as this landlord's strategy. Avoid repeating the company overview. Summarise the recorded BGP position and one useful next action; when facts are missing say what should be confirmed. Do not invent people, leasing vacancies, strategic plans or urgency.
+Format: one bold headline, then three short bullets labelled **Evidence:**, **BGP angle:** and **Next step:**. Maximum 110 words. Use only supplied names and facts.`;
+}
+
 function intelPrompt(d: any): string {
   return `You are a senior BGP retail-property broker writing a short intel read on a tracked brand for our team. You are also the data steward: the api_feeds block shows what each of our paid data feeds (Apollo firmographics, RocketReach, covenant engine) currently holds and how old it is.
 
@@ -316,7 +334,7 @@ async function callClaude(prompt: string): Promise<string> {
         model,
         max_tokens: 400,
         messages: [{ role: "user", content: prompt }],
-      });
+      }, { timeout: 40_000, maxRetries: 0 });
       const text = msg.content.map((b: any) => (b.type === "text" ? b.text : "")).join("").trim();
       if (text) return text;
     } catch (e: any) {
@@ -334,7 +352,7 @@ export async function readPreparedBrandAiTake(companyId: string, tab: Tab) {
   if (!company) throw new Error("Company not found");
   const identity = getBrandIdentity(company);
   if (identity.status !== "verified") return { text: "", cached: true, generatedAt: 0, pending: true, reason: identity.reason };
-  if (company.ai_generated_fields?.brand_identity?.previousFactsNeedReview) return { text: "", cached: true, generatedAt: 0, pending: true, reason: "Review the retained brand facts before using the BGP brief" };
+  if (company.ai_generated_fields?.brand_identity?.previousFactsNeedReview && !currentOfficialProfileEvidence(company)) return { text: "", cached: true, generatedAt: 0, pending: true, reason: "Review the retained brand facts before using the BGP brief" };
   const saved = (await pool.query("SELECT value FROM system_settings WHERE key=$1", [takeKey(companyId, tab)])).rows[0]?.value;
   if (!saved?.text || saved.fingerprint !== identity.fingerprint) return { text: "", cached: true, generatedAt: 0, pending: true };
   if (saved.policyVersion !== BRAND_BRIEF_POLICY_VERSION) return { text: "", cached: true, generatedAt: 0, pending: true, reason: "Refresh the BGP brief to use the current evidence checks" };
@@ -346,12 +364,12 @@ export async function prepareBrandAiTake(companyId: string, tab: Tab = "brand") 
   if (!company) throw new Error("Company not found");
   const identity = getBrandIdentity(company);
   if (identity.status !== "verified") return { text: "", cached: true, generatedAt: 0, reason: identity.reason };
-  if (company.ai_generated_fields?.brand_identity?.previousFactsNeedReview) return { text: "", cached: true, generatedAt: 0, reason: "Review the retained brand facts before generating the BGP brief" };
+  if (company.ai_generated_fields?.brand_identity?.previousFactsNeedReview && !currentOfficialProfileEvidence(company)) return { text: "", cached: true, generatedAt: 0, reason: "Review the retained brand facts before generating the BGP brief" };
   if (company.ai_disabled) return { text: "", cached: true, generatedAt: 0, reason: "Brand enrichment is disabled" };
   let slice: any = null;
   let prompt = "";
   switch (tab) {
-    case "brand":    slice = await loadBrandSlice(companyId);    prompt = slice ? brandPrompt(slice)    : ""; break;
+    case "brand":    slice = await loadBrandSlice(companyId);    prompt = slice ? (slice.landlord ? landlordPrompt(slice) : brandPrompt(slice)) : ""; break;
     case "uk":       slice = await loadUkSlice(companyId);       prompt = slice ? ukPrompt(slice)       : ""; break;
     case "activity": slice = await loadActivitySlice(companyId); prompt = slice ? activityPrompt(slice) : ""; break;
     case "intel":    slice = await loadIntelSlice(companyId);    prompt = slice ? intelPrompt(slice)    : ""; break;
@@ -364,7 +382,7 @@ export async function prepareBrandAiTake(companyId: string, tab: Tab = "brand") 
   if (saved?.text && saved.policyVersion === BRAND_BRIEF_POLICY_VERSION && saved.fingerprint === identity.fingerprint && saved.dataHash === hash && Date.now() < saved.expiresAt) {
     return { text: saved.text as string, cached: true, generatedAt: Number(saved.generatedAt) };
   }
-  const text = (tab === "brand" ? brandBriefWithoutEvidence(slice) : null) || await callClaude(prompt);
+  const text = (tab === "brand" && !slice.landlord ? brandBriefWithoutEvidence(slice) : null) || await callClaude(prompt);
   const now = Date.now();
   const client = await pool.connect();
   try {
@@ -394,11 +412,13 @@ router.get("/api/brand/:companyId/ai-take/:tab", requireAuth, async (req: Reques
     if (scope && !await isClientVisibleBrand(companyId, scope)) return res.status(403).json({ error: "Access denied" });
     const force = req.query.refresh === "1" || req.query.refresh === "true";
     if (force) {
-      const { prepareBrandStage } = await import("./brand-enrichment");
-      const result = await prepareBrandStage(companyId, "brief", true, { tab });
-      if (result.state.status !== "ready") return res.json({ text: "", cached: true, generatedAt: 0, pending: true, reason: result.state.reason || result.reason });
+      const job = await startBrandCoreRefresh(companyId, { tab });
+      return res.status(202).json({ text: "", cached: true, generatedAt: 0, pending: true, running: job.status === "running", reason: job.reason });
     }
-    res.json(await readPreparedBrandAiTake(companyId, tab));
+    const [take, job] = await Promise.all([readPreparedBrandAiTake(companyId, tab), readBrandCoreRefresh(companyId)]);
+    const running = job.status === "running";
+    const failed = ["error", "needs_review"].includes(job.status) && job.tab === tab;
+    res.json({ ...take, ...(running || failed ? { pending: true, running, reason: job.reason } : {}) });
   } catch (err: any) {
     // No AI credentials = environment state, not a server fault.
     if (/api ?key|authentication|authToken/i.test(err.message || "")) {

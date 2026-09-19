@@ -82,6 +82,7 @@ function usefulPhotography(url: string, caption: string, kind: CompanyImageKind)
   if (/(?:^|[^a-z])(logos?\d*x?|favicon|sprites?|icons?|placeholder|spacer|pixel|tracking|1x1|loader|spinner|social[-_ ]?card|og[-_ ]?default)(?:$|[^a-z])/i.test(clue)) return false;
   if (/(?:^|[^a-z])(voucher|coupon|gift[-_ ]?card|product[-_ ]?(?:shot|pack)|packshot|size[-_ ]?guide|qr[-_ ]?code|app[-_ ]?store|google[-_ ]?play|payment[-_ ]?(?:methods?|icons?)|sale[-_ ]?banner|promo[-_ ]?banner)(?:$|[^a-z])/i.test(clue)) return false;
   if (/(?:^|[^a-z])(headshot|portrait|chart|graph|infographic|annual[-_ ]?report|results[-_ ]?presentation|press[-_ ]?release|board[-_ ]?member|director[-_ ]?profile)(?:$|[^a-z])/i.test(clue)) return false;
+  if (/(?:^|[^a-z])(?:top[-_ ]?nav|navigation|footer)(?:$|[^a-z])/i.test(clue)) return false;
   if (kind === "landlord" && /\/(?:investors?|board|leadership)\//i.test(parsed.pathname)) return false;
   return true;
 }
@@ -104,8 +105,15 @@ export function extractCompanyImageCandidates(html: string, pageUrl: string, opt
     return true;
   };
   // Script strings can contain marketing templates which are not images on this page.
-  const document = html.replace(/<script\b[\s\S]*?<\/script\s*>/gi, "").replace(/<!--[\s\S]*?-->/g, "");
+  const document = html.replace(/<script\b[\s\S]*?<\/script\s*>/gi, "").replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<(nav|footer)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "")
+    // Global headers often carry dozens of small menu photos. Keep a simple
+    // editorial hero header, but remove a header used as site navigation.
+    .replace(/<header\b[^>]*>[\s\S]*?<\/header\s*>/gi, header => (header.match(/<a\b/gi)?.length ?? 0) >= 3 ? "" : header);
   const documentLower = document.toLowerCase();
+  const imageLinks = [...document.matchAll(/<a\b((?:[^<>"']|"[^"]*"|'[^']*')*)>[\s\S]*?<\/a\s*>/gi)].map(match => ({
+    start: match.index, end: match.index + match[0].length, href: attributes(match[1]).href || "",
+  }));
   const tags = [...document.matchAll(TAG)];
   for (const match of tags) {
     const type = match[1].toLowerCase();
@@ -115,6 +123,12 @@ export function extractCompanyImageCandidates(html: string, pageUrl: string, opt
       continue;
     }
     if (type === "img" || type === "source") {
+      const imageLink = imageLinks.find(link => link.start < (match.index ?? 0) && link.end > (match.index ?? 0));
+      // Some sites leave photo filenames and alt text uninformative. A photo
+      // linking to the company's shops/portfolio is still a useful lead and
+      // should outrank an ecommerce product grid before the candidate cap.
+      const venueLink = /(?:^|\/)(?:shops?|stores?|locations?|venues?|portfolio|properties|our-places)(?:\/|$|\?)/i.test(imageLink?.href || "");
+      const priority = venueLink ? 40 : 0;
       const pictureStart = type === "source" ? documentLower.lastIndexOf("<picture", match.index) : -1;
       const pictureEnd = pictureStart >= 0 ? documentLower.indexOf("</picture", pictureStart) : -1;
       const pictureImg = type === "source" && pictureStart > documentLower.lastIndexOf("</picture", match.index) && pictureEnd > (match.index || 0)
@@ -123,17 +137,18 @@ export function extractCompanyImageCandidates(html: string, pageUrl: string, opt
       const caption = (attrs.alt || attrs.title || pictureAttrs.alt || pictureAttrs.title || "").trim();
       const width = /^\d+$/.test(attrs.width || "") ? Number(attrs.width) : undefined;
       const height = /^\d+$/.test(attrs.height || "") ? Number(attrs.height) : undefined;
+      if (width && height && width <= 2 && height <= 2) continue;
       const responsive = [attrs["data-srcset"], attrs["data-lazy-srcset"], attrs.srcset].filter(Boolean)
         .flatMap(value => srcsetCandidates(value, width)).sort((a, b) => b.rank - a.rank);
       let found = false;
       for (const image of responsive) {
         const actualHeight = image.width && width && height ? height * image.width / width : undefined;
-        if (add(image.url, caption, image.width, actualHeight)) { found = true; break; }
+        if (add(image.url, caption, image.width, actualHeight, priority)) { found = true; break; }
       }
       if (!found) {
         // Lazy attributes beat a low-resolution/transparent src placeholder.
         for (const name of ["data-original", "data-src", "data-lazy-src", "data-image", "src"]) {
-          if (add(attrs[name], caption, undefined, undefined)) break;
+          if (add(attrs[name], caption, undefined, undefined, priority)) break;
         }
       }
     }
@@ -156,31 +171,40 @@ export function extractCompanyImageUrls(html: string, pageUrl: string, limit = 3
   return extractCompanyImageCandidates(html, pageUrl, { limit, kind }).map(image => image.url);
 }
 
+export function companyPhotographyPageKey(raw: string): string {
+  const url = new URL(raw);
+  return url.hostname.toLowerCase().replace(/^www\./, "") + url.pathname.replace(/\/+$/, "") + url.search;
+}
+
 /** Follow observed store/asset links only on the official host, never a search result or external venue. */
 export function discoverCompanyPhotographyPages(html: string, pageUrl: string, options: { kind?: CompanyImageKind; limit?: number } = {}): string[] {
   if (!isPublicImageSourceUrl(pageUrl)) return [];
   const base = new URL(pageUrl);
   const host = base.hostname.toLowerCase().replace(/^www\./, "");
   const kind = options.kind || "brand";
-  const candidates = new Map<string, number>();
+  const candidates = new Map<string, { url: string; score: number }>();
   for (const match of html.matchAll(/<a\b((?:[^<>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/a\s*>/gi)) {
     const attrs = attributes(match[1]);
     const href = imageUrl(attrs.href || "", pageUrl);
     if (!href) continue;
     const url = new URL(href);
-    if (url.hostname.toLowerCase().replace(/^www\./, "") !== host || url.origin + url.pathname === base.origin + base.pathname) continue;
+    if (url.hostname.toLowerCase().replace(/^www\./, "") !== host || companyPhotographyPageKey(url.href) === companyPhotographyPageKey(base.href)) continue;
     if (/\.(?:pdf|jpe?g|png|webp|svg|zip|mp4|css|js)$/i.test(url.pathname)) continue;
     const label = decodeHtml(match[2].replace(/<[^>]+>/g, " ")).trim();
     const clue = `${url.pathname} ${label} ${attrs.title || ""}`;
     if (/(?:^|[/\s_-])(?:login|sign-in|account|checkout|cart|privacy|terms|careers|jobs|investors?|board|leadership)(?:$|[/\s_-])/i.test(clue)) continue;
+    if (kind === "brand" && /^\/(?:menu|products?|collections?)\//i.test(url.pathname)) continue;
     const venues = kind === "landlord"
       ? /(?:^|[^a-z])(?:portfolio|propert(?:y|ies)|assets?|our[-_ ]?places|destinations?|shopping[-_ ]?(?:centres?|centers?)|retail[-_ ]?parks?|campus)(?:$|[^a-z])/i
       : /(?:^|[^a-z])(?:stores?|shops?|locations?|venues?|restaurants?|cafes?|showrooms?|gyms?|hotels?|flagships?)(?:$|[^a-z])/i;
-    const isVenue = venues.test(clue);
+    const venuePath = venues.test(url.pathname);
+    const isVenue = venuePath || venues.test(clue);
     if (!isVenue && !/(?:^|[^a-z])(?:press|media|newsroom)(?:$|[^a-z])/i.test(clue)) continue;
     const depth = url.pathname.split("/").filter(Boolean).length;
     for (const key of [...url.searchParams.keys()]) if (/^(?:utm_|fbclid|gclid)/i.test(key)) url.searchParams.delete(key);
-    candidates.set(url.href, (isVenue ? 20 : 0) + Math.min(depth, 4));
+    const key = companyPhotographyPageKey(url.href);
+    const score = (venuePath ? 40 : isVenue ? 20 : 0) + Math.min(depth, 4);
+    if (!candidates.has(key) || candidates.get(key)!.score < score) candidates.set(key, { url: url.href, score });
   }
-  return [...candidates].sort((a, b) => b[1] - a[1]).slice(0, Math.max(0, options.limit ?? 6)).map(([url]) => url);
+  return [...candidates.values()].sort((a, b) => b.score - a.score).slice(0, Math.max(0, options.limit ?? 6)).map(candidate => candidate.url);
 }

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Globe, MapPin, RefreshCw, Search, ShieldCheck, Store } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +27,7 @@ export function BrandPreparationStatus({ companyId, refreshedAt }: { companyId: 
     totalSections: number;
     contactReviewRequired: boolean;
     factReviewRequired: boolean;
+    officialProfileReady?: boolean;
     identity: { status: string; domain?: string; reason?: string };
     stages: Array<{ stage: string; status: string; lastSuccessAt?: string | null; reason?: string; lastError?: string }>;
   }>({
@@ -40,7 +41,7 @@ export function BrandPreparationStatus({ companyId, refreshedAt }: { companyId: 
   const coreStages = stages.filter(stage => stage.stage === "identity" || stage.stage === "profile");
   const needsReview = data?.factReviewRequired || data?.identity?.status === "review" || coreStages.some(stage => stage.status === "needs_review");
   const running = coreStages.some(stage => stage.status === "running");
-  const label = data?.ready ? "Core facts prepared" : needsReview ? "Core facts need review" : running ? "Preparing core facts" : coreStages.some(stage => ["error", "no_match", "unavailable"].includes(stage.status)) ? "Core preparation needs attention" : "Core preparation pending";
+  const label = data?.officialProfileReady && data.factReviewRequired ? "Official profile prepared" : data?.ready ? "Core facts prepared" : needsReview ? "Core facts need review" : running ? "Preparing core facts" : coreStages.some(stage => ["error", "no_match", "unavailable"].includes(stage.status)) ? "Core preparation needs attention" : "Core preparation pending";
   const stageLabels: Record<string, string> = { identity: "Official identity", profile: "Core facts", apollo: "Company data", rocketreach: "Company match", stores: "Store locations", images: "Brand image", logo: "Brand logo", brief: "BGP action brief", contacts: "Contacts" };
   const statusLabels: Record<string, string> = { pending: "Queued", running: "Preparing", ready: "Prepared", no_match: "No match found", error: "Retry needed", needs_review: "Needs review", unavailable: "Unavailable" };
   return (
@@ -52,11 +53,11 @@ export function BrandPreparationStatus({ companyId, refreshedAt }: { companyId: 
         <span className="underline underline-offset-2">Details</span>
       </summary>
       <div className="mt-2 space-y-1 rounded-md border border-border bg-background p-2 text-xs">
-        <p>Saved information opens immediately. Core facts are ready once the official identity, factual profile and any retained fact review are complete; other sections show their own progress below.</p>
-        {data?.factReviewRequired && <p>Review the description, industry, head office and LinkedIn kept from the previous identity before relying on this profile.</p>}
+        <p>Saved information opens immediately. The official profile uses the confirmed company identity and sourced facts; other sections show their own progress below.</p>
+        {data?.factReviewRequired && <p>{data.officialProfileReady ? "The official profile is prepared and can support a new BGP brief. Older retained description, industry, head office and LinkedIn fields still need a separate review." : "Review the description, industry, head office and LinkedIn kept from the previous identity before relying on those retained fields."}</p>}
         {data && <p><span className="font-mono tabular-nums">{data.preparedSections} of {data.totalSections}</span> automatic sections prepared. Contact review is separate and does not hold up the factual profile.</p>}
         {stages.map(stage => <div key={stage.stage} className="border-t border-border pt-2">
-          <p className="flex flex-wrap justify-between gap-x-3"><span>{stageLabels[stage.stage] || stage.stage}</span><span>{stage.stage === "profile" && data?.factReviewRequired ? "Facts need review" : statusLabels[stage.status] || "Pending"}{shortDate(stage.lastSuccessAt) ? ` · ${shortDate(stage.lastSuccessAt)}` : ""}</span></p>
+          <p className="flex flex-wrap justify-between gap-x-3"><span>{stageLabels[stage.stage] || stage.stage}</span><span>{stage.stage === "profile" && data?.factReviewRequired ? data.officialProfileReady ? "Official profile prepared · Retained fields need review" : "Facts need review" : statusLabels[stage.status] || "Pending"}{shortDate(stage.lastSuccessAt) ? ` · ${shortDate(stage.lastSuccessAt)}` : ""}</span></p>
           {(stage.reason || stage.lastError) && <p className="mt-1 break-words">{stage.stage === "contacts" && stage.reason?.includes("before marking this section complete") ? "Linked contacts are available. Check who currently handles property matters before contacting them; background preparation does not verify people." : stage.reason || stage.lastError}</p>}
         </div>)}
         {needsReview && <p>{data?.identity?.status === "review" ? "Confirm the brand’s official website or review its conflicting identity details." : "Open the section details above to see what needs attention. Other sections can continue preparing."}</p>}
@@ -233,26 +234,66 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
 export function BrandImageRefreshButton({ companyId }: { companyId: string }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const refresh = useMutation({
-    mutationFn: async () => {
-      await apiRequest("POST", `/api/brand/${companyId}/refresh-images`, { force: true });
-      const started = Date.now();
-      while (Date.now() - started < 5 * 60_000) {
-        await new Promise(resolve => setTimeout(resolve, 5_000));
-        const status = await (await apiRequest("GET", `/api/brand/${companyId}/refresh-images/status`)).json();
-        if (status.state === "done") return status.result || {};
-        if (status.state === "error") throw new Error(status.error || "Image refresh failed");
-        if (status.state === "idle") throw new Error("The image search stopped before reporting a result. Please try again.");
+  const requestedCompany = useRef<string | null>(null);
+  const handledCompletion = useRef("");
+  type ImageJob = { companyId: string; state: "running" | "done" | "error" | "idle"; error?: string; startedAt?: number; finishedAt?: number; result?: { imported?: number; skipped?: string | boolean; reason?: string } };
+  const queryKey = ["/api/brand", companyId, "refresh-images", "status"];
+  const statusQuery = useQuery<ImageJob>({
+    queryKey,
+    queryFn: async ({ signal }) => {
+      const response = await fetch(`/api/brand/${companyId}/refresh-images/status`, { credentials: "include", headers: getAuthHeaders(), signal });
+      if (!response.ok) throw new Error("Image progress could not be checked. Please try again.");
+      const status = await response.json();
+      const previous = queryClient.getQueryData<ImageJob>(queryKey);
+      if (status.state === "idle" && previous?.companyId === companyId) {
+        if (previous.state === "running") return { companyId, state: "error" as const, error: "The image search stopped before reporting a result. Please try again." };
+        if (previous.state === "done" || previous.state === "error") return previous;
       }
-      throw new Error("Image preparation is still running. Check the profile again shortly.");
+      return { ...status, companyId };
     },
-    onSuccess: (result: { imported?: number; skipped?: string | boolean; reason?: string }) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId] });
-      toast(brandImageRefreshFeedback(result));
-    },
-    onError: (error: Error) => toast({ title: "Images could not be refreshed", description: error.message, variant: "destructive" }),
+    staleTime: 5_000,
+    refetchOnMount: "always",
+    retry: false,
+    refetchInterval: query => query.state.status !== "error" && query.state.data?.state === "running" ? 5_000 : false,
   });
-  return <Button type="button" variant="outline" size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending} data-testid="button-brand-refresh-images"><RefreshCw className={`w-4 h-4 ${refresh.isPending ? "animate-spin" : ""}`} />{refresh.isPending ? "Refreshing images…" : "Refresh images"}</Button>;
+  const refresh = useMutation({
+    onMutate: async (targetCompanyId: string) => {
+      requestedCompany.current = targetCompanyId;
+      const targetKey = ["/api/brand", targetCompanyId, "refresh-images", "status"];
+      await queryClient.cancelQueries({ queryKey: targetKey });
+      queryClient.setQueryData(targetKey, { companyId: targetCompanyId, state: "running", startedAt: Date.now() });
+    },
+    mutationFn: async (targetCompanyId: string) => (await apiRequest("POST", `/api/brand/${targetCompanyId}/refresh-images`, { force: true })).json(),
+    onSuccess: (_out, targetCompanyId) => {
+      void queryClient.invalidateQueries({ queryKey: ["/api/brand", targetCompanyId, "refresh-images", "status"] });
+    },
+    onError: (error: Error, targetCompanyId) => {
+      queryClient.setQueryData(["/api/brand", targetCompanyId, "refresh-images", "status"], { companyId: targetCompanyId, state: "error", error: error.message || "Image refresh failed" });
+    },
+  });
+  const status = statusQuery.data?.companyId === companyId ? statusQuery.data : undefined;
+  useEffect(() => {
+    if (!status || status.state === "idle") return;
+    if (status.state === "running") { handledCompletion.current = ""; return; }
+    const completion = JSON.stringify(status);
+    if (handledCompletion.current === completion) return;
+    handledCompletion.current = completion;
+    void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "preparation"] });
+    if (requestedCompany.current === companyId) {
+      requestedCompany.current = null;
+      toast(status.state === "done" ? brandImageRefreshFeedback(status.result || {}) : { title: "Images could not be refreshed", description: status.error || "Image refresh failed", variant: "destructive" });
+    }
+  }, [companyId, queryClient, status, toast]);
+  const busy = (refresh.isPending && refresh.variables === companyId) || (!statusQuery.isError && status?.state === "running");
+  const feedback = statusQuery.isError ? { title: "Image progress unavailable", description: (statusQuery.error as Error).message }
+    : status?.state === "done" ? brandImageRefreshFeedback(status.result || {})
+    : status?.state === "error" ? { title: "Images could not be refreshed", description: status.error || "Image refresh failed" }
+    : status?.state === "running" ? { title: "Searching for suitable photos", description: "You can leave this page and return to check the result." } : null;
+  return <div className="min-w-0 space-y-2">
+    <Button type="button" variant="outline" size="sm" onClick={() => refresh.mutate(companyId)} disabled={busy} data-testid="button-brand-refresh-images"><RefreshCw className={`w-4 h-4 ${busy ? "animate-spin" : ""}`} />{busy ? "Refreshing images…" : "Refresh images"}</Button>
+    {feedback && <p role="status" aria-live="polite" className="max-w-prose text-[11px] text-muted-foreground break-words" data-testid="brand-image-refresh-status"><span className="font-semibold">{feedback.title}.</span> {feedback.description}</p>}
+  </div>;
 }
 
 export function brandImageRefreshFeedback(result: { imported?: number; skipped?: string | boolean; reason?: string }) {

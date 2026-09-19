@@ -59,7 +59,8 @@ export async function fetchPublicImageSource(
         continue;
       }
       const type = res.headers.get("content-type")?.split(";")[0].trim().toLowerCase() ?? "";
-      if (!res.ok || !(options.html ? /^(text\/html|application\/xhtml\+xml)$/.test(type) : type.startsWith("image/"))) {
+      const binaryImage = !options.html && type === "application/octet-stream";
+      if (!res.ok || !(options.html ? /^(text\/html|application\/xhtml\+xml)$/.test(type) : type.startsWith("image/") || binaryImage)) {
         await res.body?.cancel();
         return null;
       }
@@ -77,7 +78,15 @@ export async function fetchPublicImageSource(
         if (bytes > limit) { await reader.cancel(); return null; }
         chunks.push(next.value);
       }
-      return Buffer.concat(chunks);
+      const buffer = Buffer.concat(chunks);
+      // Some official asset CDNs serve photographs as generic binary data.
+      // Accept them only when the bytes identify a supported raster; the
+      // caller still fully decodes and checks dimensions before any AI/store.
+      if (binaryImage) {
+        const metadata = await sharp(buffer, { failOn: "error", limitInputPixels: 40_000_000 }).metadata();
+        if (!["jpeg", "png", "webp", "avif", "heif"].includes(metadata.format ?? "")) return null;
+      }
+      return buffer;
     }
   } catch { /* No candidate is preferable to an unverified download. */ }
   return null;

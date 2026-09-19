@@ -9,7 +9,7 @@ import { pool } from "./db";
 import { getBrandIdentity } from "./brand-identity";
 import { brandImageIdentityTag, isOfficialBrandWebsite, publishableBrandStore } from "./brand-publishing";
 import { storeImageFromBuffer, readPersistedImage } from "./image-studio";
-import { extractCompanyImageCandidates, discoverCompanyPhotographyPages } from "./company-image-discovery";
+import { extractCompanyImageCandidates, discoverCompanyPhotographyPages, companyPhotographyPageKey } from "./company-image-discovery";
 import { BRAND_IMAGE_QUALITY_TAG, fetchPublicImageSource, prepareBrandPhoto, parseImageJudgment, isSuitableBrandPhoto, brandPhotoQualityTags, brandPhotoRank, type ImageJudgment } from "./brand-image-quality";
 
 const router = Router();
@@ -166,18 +166,30 @@ async function findHomepageImages(domain: string, landlord = false, deadlineAt =
   const base = `https://${domain}`;
   const home = await fetchHtml(base);
   const kind = landlord ? "landlord" : "brand";
-  const homeImages = home ? extractCompanyImageCandidates(home, base, { kind, limit: 8 }) : [];
+  const homeImages = home ? extractCompanyImageCandidates(home, base, { kind, limit: 24 }) : [];
   const discovered = home ? discoverCompanyPhotographyPages(home, base, { kind, limit: 4 }) : [];
-  const pages = [...new Set([...discovered, ... (landlord ? ["/portfolio", "/properties"] : ["/stores", "/locations"])
-    .map(path => `${base}${path}`)])].slice(0, 4);
+  const pages = [...discovered, ... (landlord ? ["/portfolio", "/properties"] : ["/stores", "/locations"])
+    .map(path => `${base}${path}`)];
   const out: FoundImage[] = [];
+  const visited = new Set([companyPhotographyPageKey(base)]);
   // Dedicated places/portfolio pages outrank homepage banners. A homepage
   // full of promotional tiles no longer prevents checking these pages.
-  for (const url of pages) {
+  let fetchedPages = 0;
+  while (pages.length && fetchedPages < 4) {
     if (Date.now() + 12000 > deadlineAt) break;
+    const url = pages.shift()!;
+    const key = companyPhotographyPageKey(url);
+    if (visited.has(key)) continue;
+    visited.add(key);
+    fetchedPages++;
     const html = await fetchHtml(url);
     if (!html) continue;
     out.push(...extractCompanyImageCandidates(html, url, { kind, limit: 6 }).map(image => ({ ...image, source: "homepage" as const })));
+    // Store locators often contain links but no photos. Follow a few actual
+    // venues within the same four-page budget instead of stopping at the index.
+    const detailPages = discoverCompanyPhotographyPages(html, url, { kind, limit: 4 })
+      .filter(page => !visited.has(companyPhotographyPageKey(page)));
+    pages.unshift(...detailPages);
   }
   out.push(...homeImages.map(image => ({ ...image, source: "homepage" as const })));
   return out;

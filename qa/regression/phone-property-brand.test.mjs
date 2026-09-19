@@ -74,7 +74,7 @@ test('actual mobile routing requires touch plus a phone UA, handles rotation and
 function componentFixture(file, name, props, input) {
   const ast = ts.createSourceFile(file, source(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const declarations = ast.statements.filter(node => ts.isFunctionDeclaration(node) && node.name?.text === name || ts.isVariableStatement(node));
-  const slots = [], effects = [], calls = [], bindings = {};
+  const slots = [], effects = [], calls = [], profileRefreshHooks = [], bindings = {};
   let cursor = 0, dirty = false;
   for (const node of ast.statements) if (ts.isImportDeclaration(node)) {
     for (const member of node.importClause?.namedBindings?.elements || []) bindings[member.name.text] = function Leaf() { return null; };
@@ -86,10 +86,21 @@ function componentFixture(file, name, props, input) {
     useEffect(fn, deps) { const index = cursor++; if (!slots[index] || deps.some((value, i) => !Object.is(value, slots[index][i]))) { slots[index] = deps; effects.push(fn); } },
     useQuery({ queryKey }) { return { data: queryKey[0] === '/api/auth/me' ? input.user : queryKey.at(-1) === 'profile' ? input.profile : queryKey.at(-1) === 'preparation' ? input.preparation : undefined, isLoading: false, isError: queryKey.at(-1) === 'profile' && input.failed, refetch: () => calls.push('retry saved profile') }; },
     useToast: () => ({ toast() {} }), useMutation: () => ({ isPending: false, mutate: (...args) => calls.push(args) }),
+    useBrandProfileRefresh(companyId, enabled) {
+      profileRefreshHooks.push({ companyId, enabled });
+      return {
+        isPending: !!input.refreshPending,
+        message: enabled ? input.refreshMessage || '' : '',
+        mutate() {
+          assert.equal(enabled, true, 'client controls must not call the staff refresh action');
+          calls.push({ action: 'refresh profile', companyId });
+        },
+      };
+    },
   });
   const compiled = ts.transpileModule(declarations.map(node => node.getText(ast)).join('\n'), { fileName: 'fixture.tsx', compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
   vm.runInNewContext(compiled, bindings);
-  return { props, bindings, input, calls,
+  return { props, bindings, input, calls, profileRefreshHooks,
     render() { let tree; for (let pass = 0; pass < 10; pass++) { cursor = 0; dirty = false; tree = bindings.exports[name](props); while (effects.length) effects.shift()(); if (!dirty) return tree; } throw new Error('Render did not settle'); },
     find(tree, id) { return descendants(tree).find(node => node.props['data-testid'] === id); },
   };
@@ -135,12 +146,29 @@ test('phone saved-profile retry and staff refresh remain explicit while client c
   assert.deepEqual(failed.calls, ['retry saved profile']);
   const client = phoneBrand();
   assert.equal(client.find(client.render(), 'button-brand-refresh'), undefined);
+  assert.ok(client.profileRefreshHooks.every(call => call.companyId === 'brand' && call.enabled === false));
+  assert.deepEqual(client.calls, []);
   const staff = phoneBrand({ role: 'Admin' });
   const refresh = staff.find(staff.render(), 'button-brand-refresh');
   assert.ok(refresh);
   assert.deepEqual(staff.calls, []);
+  assert.ok(staff.profileRefreshHooks.every(call => call.companyId === 'brand' && call.enabled === true));
   refresh.props.onClick();
-  assert.equal(staff.calls.length, 1);
+  assert.deepEqual(staff.calls, [{ action: 'refresh profile', companyId: 'brand' }]);
+});
+
+test('phone staff refresh displays its pending and completed messages without starting work on render', () => {
+  const app = phoneBrand({ role: 'Admin' }, { refreshPending: true, refreshMessage: 'Refreshing saved facts.' });
+  let tree = app.render();
+  assert.equal(app.find(tree, 'button-brand-refresh').props.disabled, true);
+  assert.match(content(app.find(tree, 'brand-profile-refresh-status')), /Refreshing saved facts/);
+  assert.equal(app.find(tree, 'brand-profile-refresh-status').props.role, 'status');
+  app.input.refreshPending = false;
+  app.input.refreshMessage = 'Profile checked. No saved facts changed.';
+  tree = app.render();
+  assert.equal(app.find(tree, 'button-brand-refresh').props.disabled, false);
+  assert.match(content(app.find(tree, 'brand-profile-refresh-status')), /No saved facts changed/);
+  assert.deepEqual(app.calls, []);
 });
 
 test('phone-shared preparation control separates core readiness from contact review and keeps details reachable', () => {
