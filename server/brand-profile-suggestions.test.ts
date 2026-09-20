@@ -11,6 +11,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { expandParticipants, PENDING_CONTACT_SUGGESTIONS_SQL } from "./brand-profile-suggestions";
 
 describe("expandParticipants", () => {
@@ -64,5 +65,28 @@ describe("PENDING_CONTACT_SUGGESTIONS_SQL", () => {
     assert.match(PENDING_CONTACT_SUGGESTIONS_SQL, /company_id = \$2/i);
     assert.match(PENDING_CONTACT_SUGGESTIONS_SQL, /ORDER BY touches DESC, last_touch DESC/i);
     assert.match(PENDING_CONTACT_SUGGESTIONS_SQL, /LIMIT 20/i);
+  });
+});
+
+// Follow-up: the interaction-stats endpoint in interactions.ts had the same
+// bug — LATERAL unnest(participants) on the jsonb column inside a bare
+// catch {}, so per-domain stats were always empty. Assert the fixed source.
+describe("interactions.ts top-domains stats query", () => {
+  const src = readFileSync(new URL("./interactions.ts", import.meta.url), "utf8");
+  // Isolate the top-domains query block (the only SUBSTRING(p FROM ...) site).
+  const anchor = src.indexOf("SUBSTRING(p FROM");
+  const block = anchor === -1 ? "" : src.slice(anchor, anchor + 600);
+
+  it("has no bare unnest(participants) anywhere in interactions.ts", () => {
+    assert.doesNotMatch(src, /\bunnest\s*\(\s*participants\s*\)/i);
+  });
+
+  it("expands participants with jsonb_array_elements_text", () => {
+    assert.ok(anchor !== -1, "top-domains query block not found");
+    assert.match(block, /jsonb_array_elements_text\(participants\)/i);
+  });
+
+  it("guards legacy scalar/null jsonb rows with jsonb_typeof", () => {
+    assert.match(block, /jsonb_typeof\(participants\)\s*=\s*'array'/i);
   });
 });

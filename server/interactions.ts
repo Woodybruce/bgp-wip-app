@@ -860,15 +860,19 @@ async function computeSyncHealth(): Promise<{
     domains = await pool.query(`
       SELECT domain, COUNT(*) as count FROM (
         SELECT SUBSTRING(p FROM '@(.+)$') as domain
-        FROM crm_interactions, LATERAL unnest(participants) AS p
+        FROM crm_interactions
+        CROSS JOIN LATERAL jsonb_array_elements_text(participants) AS p
         WHERE participants IS NOT NULL
+          AND jsonb_typeof(participants) = 'array'
       ) sub
       WHERE domain IS NOT NULL AND domain != 'brucegillinghampollard.com'
       GROUP BY domain
       ORDER BY count DESC
       LIMIT 20
     `);
-  } catch {}
+  } catch (e: any) {
+    console.warn('[interactions] domain stats failed:', e?.message);
+  }
 
   const total = parseInt(totalResult.rows[0]?.count || "0");
   const covered = parseInt(coveredResult.rows[0]?.count || "0");
