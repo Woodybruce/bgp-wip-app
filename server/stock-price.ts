@@ -263,7 +263,8 @@ async function fetchSnapshotFromYahoo(symbol: string): Promise<StockSnapshotLook
       ? { status: "invalid-symbol", snapshot: null, provider: null }
       : { status: "provider-error", snapshot: null, provider: null };
   } catch (err: any) {
-    console.warn(`[stock-price] fetch failed for ${symbol}: ${err.message}`);
+    const cause = err?.cause ? ` (cause: ${err.cause.code ?? err.cause.message ?? err.cause})` : "";
+    console.warn(`[stock-price] fetch failed for ${symbol}: ${err.message}${cause}`);
     return { status: "provider-error", snapshot: null, provider: null };
   }
 }
@@ -378,15 +379,16 @@ async function fetchSnapshotFromStooq(symbol: string): Promise<(StockSnapshotLoo
     const key = process.env.STOOQ_API_KEY || "";
     const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&d1=${ymd(d1)}&d2=${ymd(d2)}&i=d${key ? `&apikey=${encodeURIComponent(key)}` : ""}`;
     const resp = await stooqFetch(url);
-    if (!resp.ok) return { status: "provider-error", snapshot: null, provider: null };
+    if (!resp.ok) {
+      console.warn(`[stock-price] stooq HTTP ${resp.status} for ${symbol}${key ? "" : " (no STOOQ_API_KEY set)"}`);
+      return { status: "provider-error", snapshot: null, provider: null };
+    }
     const text = await resp.text();
     const rows = parseStooqCsv(text);
     const priced = rows.filter((r) => r.close != null);
     if (priced.length === 0) {
-      // A syntactically valid CSV with zero rows means Stooq answered but
-      // doesn't know the symbol; anything else (Access denied, HTML) is a
-      // provider problem.
       const answered = text.trim() === "" || /^date,/i.test(text.trim());
+      if (!answered) console.warn(`[stock-price] stooq non-CSV response for ${symbol}: ${text.trim().slice(0, 80)}`);
       return answered
         ? { status: "invalid-symbol", snapshot: null, provider: null }
         : { status: "provider-error", snapshot: null, provider: null };
@@ -422,7 +424,8 @@ async function fetchSnapshotFromStooq(symbol: string): Promise<(StockSnapshotLoo
     const history: PricePoint[] = priced.map((r) => ({ date: r.date, close: r.close as number }));
     return { status: "ok", snapshot, provider: "stooq", history };
   } catch (err: any) {
-    console.warn(`[stock-price] stooq fetch failed for ${symbol}: ${err.message}`);
+    const cause = err?.cause ? ` (cause: ${err.cause.code ?? err.cause.message ?? err.cause})` : "";
+    console.warn(`[stock-price] stooq fetch failed for ${symbol}: ${err.message}${cause}`);
     return { status: "provider-error", snapshot: null, provider: null };
   }
 }
