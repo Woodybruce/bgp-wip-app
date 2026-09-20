@@ -3227,7 +3227,7 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
     snapshot: any | null;
     history: Array<{ date: string; close: number }>;
     status?: "ok" | "invalid-symbol" | "provider-error" | "no-ticker";
-    provider?: "yahoo" | "stooq" | null;
+    provider?: "yahoo" | "stooq" | "cnbc" | null;
     symbol?: string | null;
   }>({
     // Ticker in the key: editing the company's ticker refetches instead of
@@ -3286,11 +3286,13 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
     : `£${(s.marketCapGBP / 1_000).toFixed(0)}k`;
   const currencySymbol = s.currency === "GBp" ? "p" : s.currency === "GBP" ? "£" : s.currency === "USD" ? "$" : s.currency === "EUR" ? "€" : "";
   const priceLabel = s.price != null ? `${currencySymbol}${s.price.toFixed(2)}` : "—";
-  // Show when the QUOTE is as-of, not when we fetched it — Stooq serves
-  // delayed daily closes, so its timestamp is the trading date.
+  // Show when the QUOTE is as-of, not when we fetched it — the fallback
+  // providers serve date-level timestamps (Stooq's delayed daily close,
+  // CNBC's trading date), so they render a day, not a bogus clock time.
   const quoteTs = s.quoteTimestamp ?? s.fetchedAt;
+  const dateLevelProvider = data?.provider === "stooq" || data?.provider === "cnbc";
   const fetchedLabel = quoteTs
-    ? data?.provider === "stooq"
+    ? dateLevelProvider
       ? new Date(quoteTs).toLocaleDateString("en-GB", { day: "numeric", month: "short" })
       : new Date(quoteTs).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
     : null;
@@ -3304,6 +3306,7 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
           <span className="font-mono font-semibold">{s.ticker}</span>
           {s.exchange && <span className="text-[10px] text-muted-foreground truncate">· {s.exchange}</span>}
           {data?.provider === "stooq" && <span className="text-[10px] text-muted-foreground shrink-0" title="Yahoo Finance is unreachable from the server — showing Stooq's delayed daily close">· via Stooq (delayed)</span>}
+          {data?.provider === "cnbc" && <span className="text-[10px] text-muted-foreground shrink-0" title="Yahoo Finance is unreachable from the server — showing CNBC's quote feed">· via CNBC</span>}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {fetchedLabel && <span className="text-[10px] text-muted-foreground" title={quoteTs}>as of {fetchedLabel}</span>}

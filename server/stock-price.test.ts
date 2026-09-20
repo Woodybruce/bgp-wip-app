@@ -1,10 +1,11 @@
 /**
  * stock-price.test.ts — ticker normalization, negative caching, the
- * ok / invalid-symbol / provider-error state model, and the Yahoo → Stooq
- * fallback order for market data.
+ * ok / invalid-symbol / provider-error state model, and the Yahoo → CNBC →
+ * Stooq fallback order for market data.
  *
- * Yahoo and Stooq access are mocked at the global fetch layer; no network,
- * no proxy env vars, so yahooFetch/stooqFetch always take the direct path.
+ * Yahoo, CNBC and Stooq access are mocked at the global fetch layer; no
+ * network, no proxy env vars, so yahooFetch/stooqFetch always take the
+ * direct path.
  *
  * Run with: node --import tsx --test server/stock-price.test.ts
  */
@@ -18,7 +19,7 @@ import {
   getHistoricalPrices,
   NEGATIVE_TTL_MS,
 } from "./stock-price";
-import { displayTicker, toStooqSymbol } from "../shared/stock-ticker";
+import { displayTicker, toStooqSymbol, toCnbcSymbol } from "../shared/stock-ticker";
 
 // ─── fetch mock ───────────────────────────────────────────────────────────
 // v7 quote rows exist only for symbols in KNOWN_QUOTES. Symbols in DOWN
@@ -45,7 +46,7 @@ const KNOWN_QUOTES: Record<string, any> = {
     shortName: "Batch One",
   },
 };
-const DOWN = new Set(["DOWNCO", "STOOQONLY.L", "DENIEDCO.L", "HEADERONLY.L"]);
+const DOWN = new Set(["DOWNCO", "STOOQONLY.L", "DENIEDCO.L", "HEADERONLY.L", "CNBCONLY.L", "CNBCDOWN.L"]);
 // Q1BLOCKED symbols get a 429 on query1.finance.yahoo.com but succeed on
 // query2 — mirrors production, where Yahoo's edge blocks Railway's egress
 // IP on query1 only.
@@ -75,6 +76,27 @@ const STOOQ_QUOTES: Record<string, string> = {
 };
 const STOOQ_DOWN = new Set(["downco.us"]); // DOWNCO has no suffix → downco.us
 const STOOQ_DENIED = new Set(["deniedco.uk"]);
+
+// CNBC fixtures: symbols in CNBC_QUOTES get a quote payload, CNBC_CHARTS
+// supplies the companion chart bars. Symbols in CNBC_DOWN fail at the HTTP
+// layer; anything else gets an empty FormattedQuote — CNBC's "never heard
+// of it", which the fallback chain deliberately treats as weak evidence
+// (narrower coverage) and NOT as invalid-symbol.
+const CNBC_QUOTES: Record<string, any> = {
+  "CNBCONLY-GB": {
+    symbol: "CNBCONLY-GB", code: 0, name: "Cnbc Only PLC", last: "343.40",
+    last_time: "2026-09-18", currencyCode: "GBp", exchange: "London Stock Exchange",
+    pe: "8.61", mktcapView: "2.01B", yrhiprice: "391.80", yrloprice: "280.40",
+  },
+};
+const CNBC_CHARTS: Record<string, any[]> = {
+  "CNBCONLY-GB": [
+    { close: "280.00", tradeTimeinMills: Date.parse("2025-09-18T00:00:00Z") },
+    { close: "312.00", tradeTimeinMills: Date.parse("2026-03-18T00:00:00Z") },
+    { close: "343.40", tradeTimeinMills: Date.parse("2026-09-18T00:00:00Z") },
+  ],
+};
+const CNBC_DOWN = new Set(["CNBCDOWN-GB"]);
 
 let calls: string[] = [];
 const realFetch = globalThis.fetch;
@@ -116,6 +138,17 @@ globalThis.fetch = (async (input: any): Promise<Response> => {
     const csv = STOOQ_QUOTES[symbol];
     if (csv != null) return new Response(csv, { status: 200, headers: { "content-type": "text/csv" } });
     return new Response("", { status: 200, headers: { "content-type": "text/csv" } });
+  }
+  if (url.startsWith("https://quote.cnbc.com/")) {
+    const symbol = decodeURIComponent(url.match(/[?&]symbols=([^&]+)/)?.[1] ?? "");
+    if (CNBC_DOWN.has(symbol)) return new Response("boom", { status: 500 });
+    const q = CNBC_QUOTES[symbol];
+    return jsonResponse({ FormattedQuoteResult: { FormattedQuote: q ? [q] : [] } });
+  }
+  if (url.startsWith("https://ts-api.cnbc.com/")) {
+    const symbol = decodeURIComponent(url.match(/[?&]symbol=([^&]+)/)?.[1] ?? "");
+    if (CNBC_DOWN.has(symbol)) return new Response("boom", { status: 500 });
+    return jsonResponse({ barData: { priceBars: CNBC_CHARTS[symbol] ?? [] } });
   }
   return new Response("unexpected", { status: 500 });
 }) as any;
@@ -191,6 +224,12 @@ describe("displayTicker / toStooqSymbol", () => {
     assert.equal(toStooqSymbol("NKE"), "nke.us");
     assert.equal(toStooqSymbol("MC.PA"), null);
   });
+
+  it("toCnbcSymbol maps London to -GB and passes bare US tickers through", () => {
+    assert.equal(toCnbcSymbol("HMSO.L"), "HMSO-GB");
+    assert.equal(toCnbcSymbol("NKE"), "NKE");
+    assert.equal(toCnbcSymbol("MC.PA"), null); // unverified venue → no mapping
+  });
 });
 
 describe("Stooq fallback", () => {
@@ -254,6 +293,60 @@ describe("Stooq fallback", () => {
       calls.some((u) => u.startsWith("https://query2.finance.yahoo.com/") && u.includes("Q1BLOCKED.L")),
       "expected a query2 retry after query1's 429",
     );
+  });
+});
+
+// ─── CNBC fallback ────────────────────────────────────────────────────────
+describe("CNBC fallback", () => {
+  it("serves CNBC when Yahoo is down: parsed quote, scaled cap, chart-derived YoY", async () => {
+    const r = await getStockSnapshotState("CNBCONLY.L");
+    assert.equal(r.status, "ok");
+    assert.equal(r.provider, "cnbc");
+    assert.equal(r.snapshot?.ticker, "CNBCONLY.L");
+    assert.equal(r.snapshot?.price, 343.4);
+    assert.equal(r.snapshot?.currency, "GBp");
+    assert.ok(Math.abs((r.snapshot?.marketCap ?? 0) - 2.01e9) < 1);     // "2.01B" parsed
+    assert.ok(Math.abs((r.snapshot?.marketCapGBP ?? 0) - 2.01e9) < 1);  // GBp caps are already in pounds
+    assert.equal(r.snapshot?.peRatio, 8.61);
+    assert.equal(r.snapshot?.fiftyTwoWeekHigh, 391.8);
+    assert.equal(r.snapshot?.fiftyTwoWeekLow, 280.4);
+    // (343.40 - 280.00) / 280.00 — from the companion 1Y chart, not the quote.
+    assert.ok(Math.abs((r.snapshot?.fiftyTwoWeekChange ?? 0) - 63.4 / 280) < 1e-9);
+    assert.equal(r.snapshot?.signals.largeCap, true);
+    // CNBC carries the trading date only — the timestamp stays date-level.
+    assert.equal(r.snapshot?.quoteTimestamp, "2026-09-18T00:00:00.000Z");
+  });
+
+  it("seeds the history cache from the CNBC chart (mini chart works while Yahoo is blocked)", async () => {
+    await getStockSnapshotState("CNBCONLY.L"); // ensures the seed regardless of test order
+    const before = calls.filter((u) => u.includes("CNBCONLY.L") && u.includes("range=3mo")).length;
+    const history = await getHistoricalPrices("CNBCONLY.L");
+    assert.equal(history.length, 3);
+    assert.equal(history[0].date, "2025-09-18");
+    assert.equal(history[history.length - 1].close, 343.4);
+    // Served from the seeded cache — no Yahoo 3mo chart fetch happened.
+    assert.equal(calls.filter((u) => u.includes("CNBCONLY.L") && u.includes("range=3mo")).length, before);
+  });
+
+  it("ignores CNBC's unknown-symbol verdict and still falls through to Stooq", async () => {
+    // STOOQONLY.L: Yahoo down, CNBC answers empty (invalid), Stooq serves.
+    const r = await getStockSnapshotState("STOOQONLY.L");
+    assert.equal(r.status, "ok");
+    assert.equal(r.provider, "stooq");
+  });
+
+  it("falls through a CNBC HTTP failure to Stooq's verdict", async () => {
+    // CNBCDOWN.L: Yahoo down, CNBC 500, Stooq answers with no data.
+    const r = await getStockSnapshotState("CNBCDOWN.L");
+    assert.equal(r.status, "invalid-symbol");
+  });
+
+  it("does not call CNBC when Yahoo answers (fallback order)", async () => {
+    calls = [];
+    const r = await getStockSnapshotState("LON:BATCH1");
+    assert.equal(r.status, "ok");
+    assert.equal(r.provider, "yahoo");
+    assert.ok(!calls.some((u) => u.includes("cnbc.com")), "CNBC must not be queried when Yahoo succeeded");
   });
 });
 

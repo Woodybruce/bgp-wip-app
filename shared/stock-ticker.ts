@@ -97,3 +97,18 @@ export function toStooqSymbol(yahooSymbol: string): string | null {
   if (!s.includes(".")) return `${s}.us`;
   return null;
 }
+
+/**
+ * Map a normalized Yahoo symbol to a CNBC symbol (the second fallback quote
+ * provider — keyless, and reachable from datacenter egress IPs that Yahoo's
+ * edge blocks). London: HMSO.L → HMSO-GB. Bare US tickers pass through
+ * (NKE → NKE). Other venues have no verified CNBC mapping here — returns
+ * null and the caller treats the quote as Yahoo/Stooq-only.
+ */
+export function toCnbcSymbol(yahooSymbol: string): string | null {
+  const s = yahooSymbol.trim().toUpperCase();
+  if (!s) return null;
+  if (s.endsWith(".L")) return `${s.slice(0, -2)}-GB`;
+  if (!s.includes(".")) return s;
+  return null;
+}

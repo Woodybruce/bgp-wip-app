@@ -15,13 +15,13 @@
 // crumb needed) as the fallback when auth can't be established.
 //
 // When Yahoo fails outright (blocked egress IP, HTTP error, or an unknown
-// symbol) the single-quote path falls back to Stooq's free daily CSV —
-// see the Stooq section below.
+// symbol) the single-quote path falls back to CNBC's keyless quote/chart
+// JSON, then Stooq's free daily CSV — see the fallback sections below.
 // ──────────────────────────────────────────────────────────────────────────
 
 import { createHash } from "node:crypto";
 import { webshareF, isProxyConfigured } from "./proxy-fetch";
-import { normalizeTicker, toStooqSymbol } from "@shared/stock-ticker";
+import { normalizeTicker, toStooqSymbol, toCnbcSymbol } from "@shared/stock-ticker";
 
 export { normalizeTicker } from "@shared/stock-ticker";
 
@@ -192,7 +192,7 @@ export interface PricePoint {
 // recognised" for the former and a retryable "provider error" for the
 // latter. `provider` records who served a successful quote so the UI can
 // label it and future debugging is easy.
-export type StockQuoteProvider = "yahoo" | "stooq";
+export type StockQuoteProvider = "yahoo" | "stooq" | "cnbc";
 export type StockQuoteStatus = "ok" | "invalid-symbol" | "provider-error";
 
 export interface StockSnapshotLookup {
@@ -452,21 +452,136 @@ async function fetchSnapshotFromStooq(symbol: string): Promise<(StockSnapshotLoo
   }
 }
 
-// Yahoo first, Stooq when Yahoo fails for any reason (blocked egress IP,
-// HTTP error, unknown symbol). invalid-symbol wins over provider-error when
-// either provider answered "no such symbol" — a successful lookup that found
-// nothing is stronger evidence than a fetch that never got through.
+// ─── CNBC fallback provider ──────────────────────────────────────────────
+// Second fallback, ahead of Stooq: CNBC's public quote/chart JSON (the
+// endpoints cnbc.com's own quote pages use). Keyless and — unlike Yahoo —
+// not blocked on datacenter egress IPs (verified from the production
+// container 2026-09-20: query1 AND query2 429, CNBC 200). LSE quotes come
+// back in GBp with market cap already in pounds, matching the Yahoo
+// semantics mapV7Quote relies on. The quote payload has no year-ago close,
+// so the 52-week change is derived from a companion 1Y chart call, which
+// also seeds the history cache for the card's mini chart.
+
+function cnbcNum(v: any): number | null {
+  if (typeof v === "number") return isFinite(v) ? v : null;
+  if (typeof v !== "string") return null;
+  const n = parseFloat(v.replace(/,/g, ""));
+  return isFinite(n) ? n : null;
+}
+
+// CNBC formats scaled figures as strings: "2.01B", "585.21M", "469.2K".
+function cnbcScaledNum(v: any): number | null {
+  if (typeof v !== "string") return cnbcNum(v);
+  const m = v.trim().match(/^([\d,]+(?:\.\d+)?)([KMBT])?$/i);
+  if (!m) return null;
+  const base = parseFloat(m[1].replace(/,/g, ""));
+  if (!isFinite(base)) return null;
+  const mult = { K: 1e3, M: 1e6, B: 1e9, T: 1e12 }[(m[2] ?? "").toUpperCase()] ?? 1;
+  return base * mult;
+}
+
+async function cnbcChartBars(cnbcSymbol: string, range: "1Y" | "3M"): Promise<PricePoint[]> {
+  const url = `https://ts-api.cnbc.com/harmony/app/charts/${range}.json?symbol=${encodeURIComponent(cnbcSymbol)}`;
+  const resp = await fetch(url, { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(15_000) });
+  if (!resp.ok) return [];
+  const json: any = await resp.json().catch(() => null);
+  const bars: any[] = json?.barData?.priceBars ?? [];
+  const out: PricePoint[] = [];
+  for (const b of bars) {
+    const close = cnbcNum(b?.close);
+    const mills = cnbcNum(b?.tradeTimeinMills);
+    if (close == null || mills == null) continue;
+    out.push({ date: new Date(mills).toISOString().slice(0, 10), close });
+  }
+  return out;
+}
+
+// 3-month CNBC history for the card's mini chart when Yahoo's chart
+// endpoint is unreachable. null = CNBC can't help (unmapped venue or no
+// bars) — caller falls through to its negative-cache path.
+async function historyViaCnbc(key: string): Promise<PricePoint[] | null> {
+  const cnbcSymbol = toCnbcSymbol(key);
+  if (!cnbcSymbol) return null;
+  const bars = await cnbcChartBars(cnbcSymbol, "3M").catch(() => [] as PricePoint[]);
+  return bars.length ? bars.slice(-63) : null;
+}
+
+async function fetchSnapshotFromCnbc(symbol: string): Promise<(StockSnapshotLookup & { history?: PricePoint[] }) | null> {
+  const cnbcSymbol = toCnbcSymbol(symbol);
+  if (!cnbcSymbol) return null;
+  try {
+    const url = `https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol?symbols=${encodeURIComponent(cnbcSymbol)}&requestMethod=itv&noform=1&partnerId=2&fund=1&exthrs=1&output=json`;
+    const resp = await fetch(url, { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(15_000) });
+    if (!resp.ok) return { status: "provider-error", snapshot: null, provider: null };
+    const json: any = await resp.json().catch(() => null);
+    const q = json?.FormattedQuoteResult?.FormattedQuote?.[0];
+    if (!q || q.code !== 0 || q.last == null) {
+      return { status: "invalid-symbol", snapshot: null, provider: null };
+    }
+    const currency = typeof q.currencyCode === "string" ? q.currencyCode : null;
+    const marketCap = cnbcScaledNum(q.mktcapView);
+    const marketCapGBP = currency === "GBp" ? marketCap : fxToGBP(marketCap, currency);
+    const bars = await cnbcChartBars(cnbcSymbol, "1Y").catch(() => [] as PricePoint[]);
+    const first = bars[0]?.close;
+    const lastBar = bars[bars.length - 1]?.close;
+    const fiftyTwoWeekChange = first && lastBar ? (lastBar - first) / first : null;
+    const snapshot: StockSnapshot = {
+      ticker: symbol,
+      price: cnbcNum(q.last),
+      currency,
+      marketCap,
+      marketCapGBP,
+      fiftyTwoWeekHigh: cnbcNum(q.yrhiprice),
+      fiftyTwoWeekLow: cnbcNum(q.yrloprice),
+      fiftyTwoWeekChange,
+      peRatio: cnbcNum(q.pe),
+      exchange: typeof q.exchange === "string" ? q.exchange : null,
+      shortName: typeof q.name === "string" ? q.name : null,
+      fetchedAt: new Date().toISOString(),
+      // CNBC's payload carries the trading date but no time-of-day — keep the
+      // timestamp date-level so the UI shows a day, not a bogus midnight.
+      quoteTimestamp: typeof q.last_time === "string" ? `${q.last_time}T00:00:00.000Z` : null,
+      signals: {
+        largeCap:        marketCapGBP != null && marketCapGBP >= 500_000_000,
+        midCap:          marketCapGBP != null && marketCapGBP >= 50_000_000 && marketCapGBP < 500_000_000,
+        stockMomentum:   fiftyTwoWeekChange != null && fiftyTwoWeekChange >= 0.20,
+        strongMomentum:  fiftyTwoWeekChange != null && fiftyTwoWeekChange >= 0.40,
+      },
+    };
+    return { status: "ok", snapshot, provider: "cnbc", history: bars };
+  } catch (err: any) {
+    const cause = err?.cause ? ` (cause: ${err.cause.code ?? err.cause.message ?? err.cause})` : "";
+    console.warn(`[stock-price] cnbc fetch failed for ${symbol}: ${err.message}${cause}`);
+    return { status: "provider-error", snapshot: null, provider: null };
+  }
+}
+
+// Yahoo first, then CNBC, then Stooq when Yahoo fails for any reason
+// (blocked egress IP, HTTP error, unknown symbol). invalid-symbol wins over
+// provider-error when Yahoo or Stooq answered "no such symbol" — a
+// successful lookup that found nothing is stronger evidence than a fetch
+// that never got through. CNBC's own "unknown symbol" does NOT force
+// invalid-symbol: its coverage is narrower (no .PA/.DE/etc mappings here),
+// so its negative is weak evidence and is treated as no-data.
 async function fetchSnapshotWithFallback(symbol: string): Promise<StockSnapshotLookup> {
   const yahoo = await fetchSnapshotFromYahoo(symbol);
   if (yahoo.status === "ok") return yahoo;
+  // A fallback quote that carries its own daily closes seeds the history
+  // cache (3-month slice) so the card's mini chart renders even while
+  // Yahoo's chart endpoint is unreachable.
+  const seedHistory = (history?: PricePoint[]) => {
+    if (history?.length) {
+      HISTORY_CACHE.set(symbol, { data: history.slice(-63), expiresAt: Date.now() + HISTORY_TTL_MS });
+    }
+  };
+  const cnbc = await fetchSnapshotFromCnbc(symbol);
+  if (cnbc?.status === "ok" && cnbc.snapshot) {
+    seedHistory(cnbc.history);
+    return { status: "ok", snapshot: cnbc.snapshot, provider: "cnbc" };
+  }
   const stooq = await fetchSnapshotFromStooq(symbol);
   if (stooq?.status === "ok" && stooq.snapshot) {
-    // The Stooq response already carries a year of daily closes — seed the
-    // history cache (3-month slice) so the card's mini chart renders even
-    // while Yahoo's chart endpoint is unreachable.
-    if (stooq.history?.length) {
-      HISTORY_CACHE.set(symbol, { data: stooq.history.slice(-63), expiresAt: Date.now() + HISTORY_TTL_MS });
-    }
+    seedHistory(stooq.history);
     return { status: "ok", snapshot: stooq.snapshot, provider: "stooq" };
   }
   if (yahoo.status === "invalid-symbol" || stooq?.status === "invalid-symbol") {
@@ -479,7 +594,7 @@ async function fetchSnapshotWithFallback(symbol: string): Promise<StockSnapshotL
  * Look up a single ticker with an explicit outcome: "ok" (snapshot
  * attached), "invalid-symbol", or "provider-error". The stored ticker is
  * normalized first (prefix strip, alias map, .L suffix), then Yahoo is tried
- * first with Stooq as the fallback — `provider` on the result says who
+ * first with CNBC and Stooq as fallbacks — `provider` on the result says who
  * served the quote. Successful quotes are cached 6h under the normalized
  * instrument (so editing a company's ticker changes the cache key and
  * fetches fresh); failures are negative-cached for NEGATIVE_TTL_MS so a
@@ -628,6 +743,12 @@ export async function getHistoricalPrices(ticker: string): Promise<PricePoint[]>
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(key)}?range=3mo&interval=1d&includePrePost=false`;
     const resp = await yahooFetch(url);
     if (!resp.ok) {
+      // Yahoo blocked/down — CNBC's chart endpoint is the keyless fallback.
+      const alt = await historyViaCnbc(key);
+      if (alt) {
+        HISTORY_CACHE.set(key, { data: alt, expiresAt: now + HISTORY_TTL_MS });
+        return alt;
+      }
       console.warn(`[stock-price] history ${resp.status} for ${key}`);
       HISTORY_CACHE.set(key, { data: [], expiresAt: now + 15 * 60 * 1000 });
       return [];
@@ -653,6 +774,11 @@ export async function getHistoricalPrices(ticker: string): Promise<PricePoint[]>
     HISTORY_CACHE.set(key, { data: points, expiresAt: now + HISTORY_TTL_MS });
     return points;
   } catch (err: any) {
+    const alt = await historyViaCnbc(key).catch(() => null);
+    if (alt) {
+      HISTORY_CACHE.set(key, { data: alt, expiresAt: now + HISTORY_TTL_MS });
+      return alt;
+    }
     console.warn(`[stock-price] history fetch failed for ${key}: ${err.message}`);
     HISTORY_CACHE.set(key, { data: [], expiresAt: now + 15 * 60 * 1000 });
     return [];
