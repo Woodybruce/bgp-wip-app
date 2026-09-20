@@ -46,6 +46,19 @@ const KNOWN_QUOTES: Record<string, any> = {
   },
 };
 const DOWN = new Set(["DOWNCO", "STOOQONLY.L", "DENIEDCO.L", "HEADERONLY.L"]);
+// Q1BLOCKED symbols get a 429 on query1.finance.yahoo.com but succeed on
+// query2 — mirrors production, where Yahoo's edge blocks Railway's egress
+// IP on query1 only.
+const Q1_BLOCKED = new Set(["Q1BLOCKED.L"]);
+KNOWN_QUOTES["Q1BLOCKED.L"] = {
+  symbol: "Q1BLOCKED.L",
+  regularMarketPrice: 42,
+  currency: "GBp",
+  marketCap: null,
+  fiftyTwoWeekChangePercent: null,
+  fullExchangeName: "London",
+  shortName: "Query One Blocked",
+};
 
 // Stooq fixtures: CSV served for these .uk symbols. Symbols in STOOQ_DOWN
 // fail at the HTTP layer; symbols in STOOQ_DENIED answer "Access denied"
@@ -76,6 +89,9 @@ function jsonResponse(body: any, status = 200): Response {
 globalThis.fetch = (async (input: any): Promise<Response> => {
   const url = String(input);
   calls.push(url);
+  if (url.startsWith("https://query1.finance.yahoo.com/") && [...Q1_BLOCKED].some((s) => url.includes(s))) {
+    return new Response("Too Many Requests", { status: 429 });
+  }
   if (url.startsWith("https://fc.yahoo.com/")) {
     return new Response("", { status: 200, headers: { "set-cookie": "A1=test-cookie; Path=/" } });
   }
@@ -226,6 +242,18 @@ describe("Stooq fallback", () => {
   it("keeps provider-error when both providers fail at the HTTP layer", async () => {
     const r = await getStockSnapshotState("DOWNCO");
     assert.equal(r.status, "provider-error");
+  });
+
+  it("fails over to query2 when query1 answers 429 (Railway egress block)", async () => {
+    calls = [];
+    const r = await getStockSnapshotState("Q1BLOCKED.L");
+    assert.equal(r.status, "ok");
+    assert.equal(r.provider, "yahoo");
+    assert.equal(r.snapshot?.price, 42);
+    assert.ok(
+      calls.some((u) => u.startsWith("https://query2.finance.yahoo.com/") && u.includes("Q1BLOCKED.L")),
+      "expected a query2 retry after query1's 429",
+    );
   });
 });
 

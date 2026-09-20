@@ -30,18 +30,40 @@ const YAHOO_HEADERS: Record<string, string> = {
   Accept: "application/json,text/plain,*/*",
 };
 
+// Yahoo edge blocks Railway's egress IP per-host: query1.finance.yahoo.com
+// answers 429 to curl and resets Node's TLS handshake outright, while
+// query2.finance.yahoo.com serves the same endpoints fine (verified from
+// inside the production container 2026-09-20). So the failover order is
+// direct query1 → direct query2 → residential proxy.
+const YAHOO_HOST_BLOCK = new Set([401, 403, 429]);
+
+function swapYahooHost(url: string): string | null {
+  return url.startsWith("https://query1.finance.yahoo.com/")
+    ? url.replace("https://query1.finance.yahoo.com/", "https://query2.finance.yahoo.com/")
+    : null;
+}
+
 async function yahooFetch(url: string, extraHeaders: Record<string, string> = {}): Promise<Response> {
   const headers = { ...YAHOO_HEADERS, ...extraHeaders };
+  const viaProxy = () => webshareF(url, { headers, signal: AbortSignal.timeout(20_000) });
   try {
     const r = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
-    if ([401, 403, 429].includes(r.status) && isProxyConfigured()) {
-      return await webshareF(url, { headers, signal: AbortSignal.timeout(20_000) });
+    if (YAHOO_HOST_BLOCK.has(r.status)) {
+      const alt = swapYahooHost(url);
+      if (alt) {
+        const r2 = await fetch(alt, { headers, signal: AbortSignal.timeout(15_000) }).catch(() => null);
+        if (r2 && !YAHOO_HOST_BLOCK.has(r2.status)) return r2;
+      }
+      if (isProxyConfigured()) return await viaProxy();
     }
     return r;
   } catch (err) {
-    if (isProxyConfigured()) {
-      return await webshareF(url, { headers, signal: AbortSignal.timeout(20_000) });
+    const alt = swapYahooHost(url);
+    if (alt) {
+      const r2 = await fetch(alt, { headers, signal: AbortSignal.timeout(15_000) }).catch(() => null);
+      if (r2) return r2;
     }
+    if (isProxyConfigured()) return await viaProxy();
     throw err;
   }
 }
