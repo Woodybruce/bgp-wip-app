@@ -111,7 +111,9 @@ export async function prepareBrandPhoto(buffer: Buffer): Promise<{ buffer: Buffe
 
 export function parseImageJudgment(raw: string): ImageJudgment | null {
   try {
-    const value = JSON.parse(raw.trim());
+    const text = raw.trim();
+    const fenced = text.match(/^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i);
+    const value = JSON.parse(fenced ? fenced[1] : text);
     if (!value || typeof value !== "object" || Array.isArray(value)
       || typeof value.keep !== "boolean" || typeof value.photograph !== "boolean" || typeof value.relevant !== "boolean"
       || ![...PHOTO_KINDS, "people", "logo", "graphic", "other"].includes(value.kind)

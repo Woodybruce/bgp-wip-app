@@ -98,6 +98,33 @@ test('AI confirmation requires exact operator name/domain, high confidence and b
   assert.equal(supportedWebsiteAssessment(landlord(), [{ ...landlordPages()[0], html: `<script>${operatorQuote}</script>${businessQuote}` }], assessment()), null);
 });
 
+test('Landsec first-person operator quotes can be corroborated by a separate named business quote', () => {
+  const row = { ...landlord(), id: 'landsec', name: 'Landsec', domain: 'landsec.com' };
+  const business = 'Landsec is built on places that connect people and communities.';
+  const operator = "For more than 80 years, we've shaped places for people to work, shop and live.";
+  const operatorTwo = 'Our role is to identify and create the places that people need.';
+  const url = 'https://landsec.com/about-us';
+  const pages = [{ url, html: `<h1>${business}</h1><p>${operator}</p><p>${operatorTwo}</p>` }];
+  const output = { ...assessment(), brandName: 'Landsec', officialDomain: 'landsec.com', evidence: [
+    { url, quote: business, kind: 'business' }, { url, quote: operator, kind: 'operator' }, { url, quote: operatorTwo, kind: 'operator' },
+  ] };
+  const supported = supportedWebsiteAssessment(row, pages, output);
+  assert.equal(supported.confidence, 0.98); assert.equal(supported.evidence.length, 3);
+
+  const unnamed = 'Our business is built on places that connect people and communities.';
+  assert.equal(supportedWebsiteAssessment(row, [{ url, html: `${unnamed} ${operator}` }], {
+    ...output, evidence: [{ url, quote: unnamed, kind: 'business' }, { url, quote: operator, kind: 'operator' }],
+  }), null, 'confidence and first-person statements alone do not name the operator');
+  assert.equal(supportedWebsiteAssessment(row, pages, { ...output,
+    evidence: [{ url, quote: 'Landsec is the independently verified operator, according to a fabricated statement.', kind: 'business' }, output.evidence[1]],
+  }), null, 'the naming quote must exist in the fetched page');
+  const reseller = 'We stock products as a reseller for several other companies.';
+  assert.equal(supportedWebsiteAssessment(row, [{ url, html: `${business} ${reseller}` }], {
+    ...output, evidence: [output.evidence[0], { url, quote: reseller, kind: 'operator' }],
+  }), null, 'a named quote does not override reseller evidence');
+  assert.equal(supportedWebsiteAssessment(row, pages, { ...output, relationship: 'reseller' }), null);
+});
+
 test('successful AI website proof records attributed evidence and preserves legal registration and human facts', async () => {
   const row = landlord(), db = database(row); let aiCalls = 0;
   const result = await verifyBrandIdentityFromOfficialSite(db, row, async url => ({ ...landlordPages()[0], url }), async (context, pages) => {

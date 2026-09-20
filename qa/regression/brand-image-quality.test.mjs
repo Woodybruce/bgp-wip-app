@@ -41,7 +41,7 @@ test('strict image review never treats string false, invalid scores or wrapped p
     { ...pass(), quality: '90' }, { ...pass(), quality: 101 }, { ...pass(), quality: 70.5 }, { ...pass(), kind: 'portrait' }, {} ]) {
     assert.equal(parseImageJudgment(JSON.stringify(value)), null);
   }
-  assert.equal(parseImageJudgment('```json\n' + JSON.stringify(pass()) + '\n```'), null);
+  assert.equal(parseImageJudgment('Prose before ```json\n' + JSON.stringify(pass()) + '\n```'), null);
   assert.equal(parseImageJudgment('Explanation ' + JSON.stringify(pass())), null);
   assert.deepEqual(parseImageJudgment(JSON.stringify(pass())), pass());
 });
@@ -289,4 +289,56 @@ test('official CDN raster photos served as application/octet-stream reach the sa
   const thumb = await fetchPublicImageSource('https://assets.example.com/small.jpg', { resolveHost: publicDns,
     fetcher: async () => new Response(await image(300, 272), { headers: { 'content-type': 'application/octet-stream' } }) });
   assert.equal(await prepareBrandPhoto(thumb), null);
+});
+
+
+test('one complete JSON fence is accepted without relaxing verdict types or permitting prose and trailing data', () => {
+  const json = JSON.stringify(pass());
+  for (const fenced of ['```json\n' + json + '\n```', '```\n' + json + '\n```', '  ```JSON\r\n' + json + '\r\n```  ']) {
+    assert.deepEqual(parseImageJudgment(fenced), pass());
+  }
+  for (const invalid of ['Here is the JSON: ```json\n' + json + '\n```', '```json\n' + json + '\n``` extra',
+    '```json\n' + json + '\n```\n```json\n' + json + '\n```', '```javascript\n' + json + '\n```', json + json,
+    '```json\n' + JSON.stringify({ ...pass(), keep: 'true' }) + '\n```',
+    '```json\n' + JSON.stringify({ ...pass(), quality: '85' }) + '\n```']) assert.equal(parseImageJudgment(invalid), null);
+});
+
+async function judgeResponse(response) {
+  const warnings = [], requests = [];
+  const { aiJudgeBrandImage } = evaluate(extract('aiJudgeBrandImage') + '\nexports.aiJudgeBrandImage=aiJudgeBrandImage;', {
+    sharp, parseImageJudgment,
+    process: { env: { ANTHROPIC_API_KEY: 'synthetic-test-key' } },
+    console: { warn: (...args) => warnings.push(args) },
+    require: name => {
+      assert.equal(name, '@anthropic-ai/sdk');
+      return { default: class MockAnthropic {
+        constructor(options) { assert.equal(options.maxRetries, 0); }
+        messages = { create: async request => { requests.push(request); return response; } };
+      } };
+    },
+  });
+  const result = await aiJudgeBrandImage('Private test company', 'Private industry', await image(),
+    { landlord: false, domain: 'private.example.com', source: 'homepage', caption: 'Private source caption' });
+  return { result, warnings, requests };
+}
+
+test('actual vision judge accepts the fully fenced valid response and preserves the suitability gate', async () => {
+  const qa = await judgeResponse({ content: [{ type: 'text', text: '```json\n' + JSON.stringify(pass()) + '\n```' }],
+    stop_reason: 'end_turn', usage: { input_tokens: 450, output_tokens: 55 } });
+  assert.deepEqual(qa.result, pass()); assert.equal(isSuitableBrandPhoto(qa.result), true);
+  assert.equal(qa.warnings.length, 0); assert.equal(qa.requests.length, 1);
+  assert.equal(qa.requests[0].messages[0].content[0].type, 'image');
+  const rejected = await judgeResponse({ content: [{ type: 'text', text: '```json\n' + JSON.stringify({ ...pass(), keep: false }) + '\n```' }],
+    stop_reason: 'end_turn', usage: { input_tokens: 450, output_tokens: 55 } });
+  assert.equal(isSuitableBrandPhoto(rejected.result), false);
+});
+
+test('actual vision judge logs malformed response metadata without image, source, company or response text', async () => {
+  const qa = await judgeResponse({ content: [{ type: 'text', text: 'private response text {"keep":' }],
+    stop_reason: 'max_tokens', usage: { input_tokens: 450, output_tokens: 180 } });
+  assert.equal(qa.result, null); assert.equal(qa.warnings.length, 1);
+  const metadata = qa.warnings[0][1];
+  assert.equal(metadata.stopReason, 'max_tokens'); assert.deepEqual(Array.from(metadata.contentTypes), ['text']);
+  assert.equal(metadata.inputTokens, 450); assert.equal(metadata.outputTokens, 180);
+  assert.doesNotMatch(JSON.stringify(qa.warnings), /private|synthetic-test-key|base64|data:image/i);
 });

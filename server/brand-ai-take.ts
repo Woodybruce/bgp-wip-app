@@ -15,7 +15,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { safeParseJSON } from "./utils/anthropic-client";
 import crypto from "crypto";
 import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
-import { BRAND_BRIEF_POLICY_VERSION, BRAND_BRIEF_EVIDENCE_RULES, brandActionEvidence, brandBriefWithoutEvidence, brandLegalEvidenceContext } from "./brand-brief-evidence";
+import { BRAND_BRIEF_POLICY_VERSION, BRAND_BRIEF_EVIDENCE_RULES, brandActionEvidence, brandBriefWithoutEvidence, landlordBriefFromRecords, brandLegalEvidenceContext } from "./brand-brief-evidence";
 import { currentOfficialProfileEvidence } from "./brand-profile-evidence";
 import { readBrandCoreRefresh, startBrandCoreRefresh } from "./brand-core-refresh";
 import { isBrandNewsRelevant, isBrandSignalRelevant } from "./brand-news-relevance";
@@ -351,11 +351,12 @@ export async function readPreparedBrandAiTake(companyId: string, tab: Tab) {
   const company = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
   if (!company) throw new Error("Company not found");
   const identity = getBrandIdentity(company);
+  const policyVersion = BRAND_BRIEF_POLICY_VERSION + (tab === "brand" && /landlord|client/i.test(company.company_type || "") ? ":landlord-records-1" : "");
   if (identity.status !== "verified") return { text: "", cached: true, generatedAt: 0, pending: true, reason: identity.reason };
   if (company.ai_generated_fields?.brand_identity?.previousFactsNeedReview && !currentOfficialProfileEvidence(company)) return { text: "", cached: true, generatedAt: 0, pending: true, reason: "Review the retained brand facts before using the BGP brief" };
   const saved = (await pool.query("SELECT value FROM system_settings WHERE key=$1", [takeKey(companyId, tab)])).rows[0]?.value;
   if (!saved?.text || saved.fingerprint !== identity.fingerprint) return { text: "", cached: true, generatedAt: 0, pending: true };
-  if (saved.policyVersion !== BRAND_BRIEF_POLICY_VERSION) return { text: "", cached: true, generatedAt: 0, pending: true, reason: "Refresh the BGP brief to use the current evidence checks" };
+  if (saved.policyVersion !== policyVersion) return { text: "", cached: true, generatedAt: 0, pending: true, reason: "Refresh the BGP brief to use the current evidence checks" };
   return { text: saved.text as string, cached: true, generatedAt: Number(saved.generatedAt), stale: Date.now() > saved.expiresAt };
 }
 
@@ -363,6 +364,7 @@ export async function prepareBrandAiTake(companyId: string, tab: Tab = "brand") 
   const company = (await pool.query("SELECT *, updated_at::text AS brief_revision FROM crm_companies WHERE id=$1", [companyId])).rows[0];
   if (!company) throw new Error("Company not found");
   const identity = getBrandIdentity(company);
+  const policyVersion = BRAND_BRIEF_POLICY_VERSION + (tab === "brand" && /landlord|client/i.test(company.company_type || "") ? ":landlord-records-1" : "");
   if (identity.status !== "verified") return { text: "", cached: true, generatedAt: 0, reason: identity.reason };
   if (company.ai_generated_fields?.brand_identity?.previousFactsNeedReview && !currentOfficialProfileEvidence(company)) return { text: "", cached: true, generatedAt: 0, reason: "Review the retained brand facts before generating the BGP brief" };
   if (company.ai_disabled) return { text: "", cached: true, generatedAt: 0, reason: "Brand enrichment is disabled" };
@@ -379,10 +381,10 @@ export async function prepareBrandAiTake(companyId: string, tab: Tab = "brand") 
 
   const hash = dataHash(slice);
   const saved = (await pool.query("SELECT value FROM system_settings WHERE key=$1", [takeKey(companyId, tab)])).rows[0]?.value;
-  if (saved?.text && saved.policyVersion === BRAND_BRIEF_POLICY_VERSION && saved.fingerprint === identity.fingerprint && saved.dataHash === hash && Date.now() < saved.expiresAt) {
+  if (saved?.text && saved.policyVersion === policyVersion && saved.fingerprint === identity.fingerprint && saved.dataHash === hash && Date.now() < saved.expiresAt) {
     return { text: saved.text as string, cached: true, generatedAt: Number(saved.generatedAt) };
   }
-  const text = (tab === "brand" && !slice.landlord ? brandBriefWithoutEvidence(slice) : null) || await callClaude(prompt);
+  const text = (tab === "brand" ? slice.landlord ? landlordBriefFromRecords(slice) : brandBriefWithoutEvidence(slice) : null) || await callClaude(prompt);
   const now = Date.now();
   const client = await pool.connect();
   try {
@@ -391,7 +393,7 @@ export async function prepareBrandAiTake(companyId: string, tab: Tab = "brand") 
     if (getBrandIdentity(current).fingerprint !== identity.fingerprint || getBrandIdentity(current).status !== "verified" || current.brief_revision !== company.brief_revision) throw new Error("Brand identity changed during research; the brief was not published");
     await client.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ($1,$2::jsonb,now())
       ON CONFLICT(key) DO UPDATE SET value=$2::jsonb,updated_at=now()`,
-    [takeKey(companyId, tab), JSON.stringify({ text, policyVersion: BRAND_BRIEF_POLICY_VERSION, fingerprint: identity.fingerprint, dataHash: hash, generatedAt: now, expiresAt: now + CACHE_TTL_MS })]);
+    [takeKey(companyId, tab), JSON.stringify({ text, policyVersion, fingerprint: identity.fingerprint, dataHash: hash, generatedAt: now, expiresAt: now + CACHE_TTL_MS })]);
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; }
   finally { client.release(); }

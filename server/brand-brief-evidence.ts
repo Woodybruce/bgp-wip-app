@@ -56,6 +56,31 @@ export function brandBriefWithoutEvidence(evidence: ReturnType<typeof brandActio
 - **Next step:** The BGP team should confirm the brand's current property contact and requirement, then record the source and date.`;
 }
 
+export function landlordBriefFromRecords(evidence: any): string {
+  const name = (value: unknown, fallback = "") => typeof value === "string" && value.trim()
+    ? value.replace(/\s+/g, " ").trim().slice(0, 140).replace(/([\\`*_\[\]<>])/g, "\\$1") : fallback;
+  const records = (value: unknown, limit: number): any[] => Array.isArray(value)
+    ? value.filter(row => row && typeof row === "object" && !Array.isArray(row) && (row.id || name(row.name))).slice(0, limit) : [];
+  const properties = records(evidence?.recorded_properties, 30);
+  const propertyNames = properties.map(row => name(row.name)).filter(Boolean).slice(0, 3);
+  const deals = records(evidence?.activity?.deals, 10);
+  const contacts = records(evidence?.activity?.contacts, 12);
+  const listedNames = propertyNames.length ? `, including ${propertyNames.join(", ")}` : "";
+  const propertySummary = properties.length
+    ? `${properties.length} linked CRM propert${properties.length === 1 ? "y" : "ies"} shown${properties.length === 30 ? " (up to 30)" : ""}${listedNames}.`
+    : "No properties linked in this CRM summary.";
+  const dealSummary = deals.length
+    ? `${deals.length} most recently updated deal record${deals.length === 1 ? "" : "s"} shown`
+    : "No deal records in this summary";
+  const contactSummary = contacts.length
+    ? `${contacts.length} listed CRM contact${contacts.length === 1 ? "" : "s"} included`
+    : "no CRM contacts in this summary";
+  return `**${name(evidence?.name, "Landlord")} — linked CRM records.**
+- **Properties:** ${propertySummary}
+- **Records:** ${dealSummary}; ${contactSummary}.
+- **Next step:** Review the latest deal stages with the BGP team, agree the next leasing action for each property, and record its owner and follow-up date.`;
+}
+
 export function brandLegalEvidenceContext(company: any) {
   const compliance = brandComplianceStatus(company, []);
   const profile = company.companies_house_data?.profile;

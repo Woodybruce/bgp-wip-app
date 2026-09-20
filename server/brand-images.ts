@@ -271,7 +271,16 @@ async function aiJudgeBrandImage(
           `Return only STRICT JSON: {"keep":true|false,"photograph":true|false,"relevant":true|false,"kind":"storefront|interior|building|food|product|people|logo|graphic|other","quality":0}.` },
       ] }],
     });
-    return parseImageJudgment(msg.content.map((block: any) => block.type === "text" ? block.text : "").join(""));
+    const judgment = parseImageJudgment(msg.content.map((block: any) => block.type === "text" ? block.text : "").join(""));
+    if (!judgment) {
+      console.warn("[brand-images] image review response did not match the required schema", {
+        stopReason: msg.stop_reason,
+        contentTypes: msg.content.map(block => block.type),
+        inputTokens: msg.usage?.input_tokens,
+        outputTokens: msg.usage?.output_tokens,
+      });
+    }
+    return judgment;
   } catch (e: any) {
     console.warn(`[brand-images] image review unavailable: ${e?.message}`);
     return null;
