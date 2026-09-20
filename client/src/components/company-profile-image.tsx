@@ -25,7 +25,7 @@ export function CompanyProfileImage({ companyId, companyName, companyType, image
     <img
       src={`/api/brand/gallery-image/${encodeURIComponent(hero.id)}?full=1`}
       alt={`${companyName} cover photo`}
-      className="w-full h-44 sm:h-64 object-cover"
+      className="block w-full h-auto max-h-72 sm:max-h-80 object-contain"
       decoding="async"
       onError={() => setFailedImages(previous => imageKey && !previous.includes(imageKey) ? [...previous.filter(key => key.startsWith(`${companyId}:`)), imageKey] : previous)}
     />

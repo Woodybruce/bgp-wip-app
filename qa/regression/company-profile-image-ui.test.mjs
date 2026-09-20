@@ -20,12 +20,16 @@ const photo = { id: 'photo', file_name: 'shop.jpg', width: 1400, height: 900, ta
 const logo = { id: 'logo', file_name: 'brand-logo.png', width: 1200, height: 800, tags: ['brand-hero'] };
 const props = { companyId: 'company', companyName: 'Example', companyType: 'Tenant', images: [logo, photo] };
 
-test('desktop and phone cover uses a suitable full original, never the embedded thumbnail or logo', () => {
+test('desktop and phone cover fits the whole original in a bounded frame without cropping the shop fascia', () => {
   const tree = component('CompanyProfileImage')(props);
   const image = nodes(tree).find(node => node.type === 'img');
   assert.equal(image.props.src, '/api/brand/gallery-image/photo?full=1');
   assert.equal(image.props.alt, 'Example cover photo');
-  assert.match(image.props.className, /object-cover/);
+  assert.match(image.props.className, /object-contain/);
+  assert.match(image.props.className, /h-auto/);
+  assert.match(image.props.className, /max-h-72/);
+  assert.match(image.props.className, /sm:max-h-80/);
+  assert.doesNotMatch(image.props.className, /object-cover/);
   assert.doesNotMatch(image.props.src, /thumbnail|logo/);
 });
 
