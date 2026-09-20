@@ -798,14 +798,17 @@ export default function ImageStudio() {
     return [...m.entries()].sort((x, y) => y[1] - x[1]);
   })();
 
-  // Property albums for the Library's default view — one folder per
-  // property (most photos first) plus an Uncategorised folder at the end.
+  // Property albums — one folder per property (most photos first) plus a
+  // "No property" folder at the end. Built from the filtered image set so the
+  // folders follow the sidebar category / property-type / area filters
+  // (e.g. the Properties category shows one folder per property instead of
+  // thousands of flat images). Search and propertyFilter are empty whenever
+  // the albums render, so they don't need re-applying here.
   const propertyAlbums = (() => {
     const m = new Map<string, { cover: ImageStudioImage; count: number }>();
     let unCover: ImageStudioImage | null = null;
     let unCount = 0;
-    for (const img of images) {
-      if (img.category === "Brands") continue;
+    for (const img of filteredImages) {
       const a = String((img as any).address || "").trim();
       if (!a) { unCount++; if (!unCover) unCover = img; continue; }
       const e = m.get(a);
@@ -820,8 +823,10 @@ export default function ImageStudio() {
     if (unCount && unCover) list.push({ name: "__uncategorised__", label: "No property", cover: unCover, count: unCount });
     return list;
   })();
+  // Albums work in every category, not just "All" — Headshots has its own
+  // people-grouped view earlier in the render tree.
   const albumsActive = libraryView === "albums" && !searchQuery && !propertyFilter
-    && selectedCategory === "All" && propertyTypeFilter === "All" && !areaFilter;
+    && selectedCategory !== "Headshots";
 
   const brandImages = images.filter((img) => {
     if (img.category !== "Brands") return false;
@@ -2067,7 +2072,7 @@ export default function ImageStudio() {
                 ))}
               </div>
             )}
-            {filteredImages.length > visibleCount && (
+            {filteredImages.length > visibleCount && !albumsActive && (
               <div className="flex justify-center py-4">
                 <Button variant="outline" size="sm" onClick={() => setVisibleCount((v) => v + 200)} data-testid="button-load-more-images">
                   Load more ({(filteredImages.length - visibleCount).toLocaleString()} more)
