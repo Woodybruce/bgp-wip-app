@@ -42,6 +42,8 @@ import {
 } from "lucide-react";
 import { NewsTagFilterChips } from "@/components/news-tags-manager";
 import { brandComplianceStatus } from "@shared/brand-compliance-status";
+import { displayTicker, normalizeTicker } from "@shared/stock-ticker";
+import { isLandlordCompany } from "@/lib/company-kind";
 
 interface BrandProfile {
   identity?: { status: "verified" | "review"; domain: string | null };
@@ -933,12 +935,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   // sidebar shows a SharePoint Folders panel like the property page so
   // we can drop legal-DD / accounts / cash-flow packs into one place.
   // Server-decided (same rule as the Landlord CRM list); the type heuristic
-  // is only a fallback for stale cached responses without the flag.
-  const isLandlord = typeof (data as any).isLandlord === "boolean" ? (data as any).isLandlord : (() => {
-    const t = (c.company_type || "").toLowerCase();
-    if (!t) return false;
-    return t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("reit") || t.includes("fund");
-  })();
+  // is only a fallback for stale cached responses without the flag. Shared
+  // with the mobile view via isLandlordCompany.
+  const isLandlord = isLandlordCompany(c.company_type, (data as any).isLandlord);
   const pitchedTo = data.pitchedTo || [];
   const liveLocations = (data as any).liveLocations || [];
   const requirements = data.requirements || [];
@@ -1236,12 +1235,12 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   {c.founded_year && <span className="text-xs text-muted-foreground">Est. {c.founded_year}</span>}
                   {c.stock_ticker && (
                     <a
-                      href={`https://finance.yahoo.com/quote/${encodeURIComponent(c.stock_ticker)}`}
+                      href={`https://finance.yahoo.com/quote/${encodeURIComponent(normalizeTicker(c.stock_ticker) ?? c.stock_ticker)}`}
                       target="_blank"
                       rel="noreferrer"
                       className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/60 bg-muted/40 hover:bg-muted text-[11px] font-medium text-foreground"
                     >
-                      <Coins className="w-2.5 h-2.5 text-amber-600" /> {c.stock_ticker}
+                      <Coins className="w-2.5 h-2.5 text-amber-600" /> {displayTicker(c.stock_ticker)}
                     </a>
                   )}
                 </div>
@@ -3211,12 +3210,14 @@ function ContactRow({ dm }: { dm: { id: string; name: string; role: string | nul
   );
 }
 
-// ─── Stock snapshot card (Yahoo Finance) with price chart ────────────────
+// ─── Stock snapshot card (Yahoo Finance, Stooq fallback) with price chart ─
 export function StockSnapshotCard({ companyId, ticker }: { companyId: string; ticker: string }) {
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [companyId, ticker]);
+  // Collapsed header shows the cleaned symbol ("HMSO.L"), not the raw stored
+  // string ("LSE: HMSON").
   return <details className="rounded-lg border border-border p-3" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
-    <summary className="text-sm cursor-pointer">Market data · {ticker}</summary>
+    <summary className="text-sm cursor-pointer">Market data · {displayTicker(ticker)}</summary>
     {open && <div className="pt-3"><LoadedStockSnapshotCard companyId={companyId} ticker={ticker} /></div>}
   </details>;
 }
@@ -3226,9 +3227,12 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
     snapshot: any | null;
     history: Array<{ date: string; close: number }>;
     status?: "ok" | "invalid-symbol" | "provider-error" | "no-ticker";
+    provider?: "yahoo" | "stooq" | null;
     symbol?: string | null;
   }>({
-    queryKey: ["/api/brand", companyId, "stock"],
+    // Ticker in the key: editing the company's ticker refetches instead of
+    // serving the previous symbol's cached quote.
+    queryKey: ["/api/brand", companyId, "stock", ticker],
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/brand/${companyId}/stock`);
       return res.json();
@@ -3240,11 +3244,12 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
   const history = data?.history ?? [];
   // Older cached responses have no status — infer from the snapshot.
   const status = data?.status ?? (s ? "ok" : "provider-error");
+  const displaySymbol = data?.symbol ?? displayTicker(ticker);
 
   if (isLoading) {
     return (
       <div className="rounded border bg-muted/30 px-2 py-1.5 text-xs text-muted-foreground flex items-center gap-1 animate-pulse">
-        <TrendingUp className="w-3 h-3" /> {ticker} — fetching…
+        <TrendingUp className="w-3 h-3" /> {displaySymbol} — fetching…
       </div>
     );
   }
@@ -3253,13 +3258,13 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
     if (status === "invalid-symbol") {
       return (
         <div className="rounded border bg-muted/30 px-2 py-1.5 text-xs text-muted-foreground flex items-center gap-1">
-          <TrendingUp className="w-3 h-3" /> {ticker} — unknown ticker
+          <TrendingUp className="w-3 h-3" /> {displaySymbol} — symbol not recognised — check the ticker
         </div>
       );
     }
     return (
       <div className="rounded border bg-muted/30 px-2 py-1.5 text-xs text-muted-foreground flex items-center gap-1">
-        <TrendingUp className="w-3 h-3" /> {ticker} — price unavailable, provider error
+        <TrendingUp className="w-3 h-3" /> {displaySymbol} — price unavailable, provider error
         <button
           type="button"
           className="ml-auto text-[10px] text-primary hover:underline disabled:opacity-50"
@@ -3281,8 +3286,13 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
     : `£${(s.marketCapGBP / 1_000).toFixed(0)}k`;
   const currencySymbol = s.currency === "GBp" ? "p" : s.currency === "GBP" ? "£" : s.currency === "USD" ? "$" : s.currency === "EUR" ? "€" : "";
   const priceLabel = s.price != null ? `${currencySymbol}${s.price.toFixed(2)}` : "—";
-  const fetchedLabel = s.fetchedAt
-    ? new Date(s.fetchedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
+  // Show when the QUOTE is as-of, not when we fetched it — Stooq serves
+  // delayed daily closes, so its timestamp is the trading date.
+  const quoteTs = s.quoteTimestamp ?? s.fetchedAt;
+  const fetchedLabel = quoteTs
+    ? data?.provider === "stooq"
+      ? new Date(quoteTs).toLocaleDateString("en-GB", { day: "numeric", month: "short" })
+      : new Date(quoteTs).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
     : null;
 
   return (
@@ -3293,9 +3303,10 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
           <TrendingUp className="w-3 h-3 text-muted-foreground shrink-0" />
           <span className="font-mono font-semibold">{s.ticker}</span>
           {s.exchange && <span className="text-[10px] text-muted-foreground truncate">· {s.exchange}</span>}
+          {data?.provider === "stooq" && <span className="text-[10px] text-muted-foreground shrink-0" title="Yahoo Finance is unreachable from the server — showing Stooq's delayed daily close">· via Stooq (delayed)</span>}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {fetchedLabel && <span className="text-[10px] text-muted-foreground" title={s.fetchedAt}>as of {fetchedLabel}</span>}
+          {fetchedLabel && <span className="text-[10px] text-muted-foreground" title={quoteTs}>as of {fetchedLabel}</span>}
           <span className="font-semibold tabular-nums">{priceLabel}</span>
         </div>
       </div>
@@ -4523,15 +4534,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   const cov = data.covenant;
   // Landlord-shaped CRM rows skip the Menu / Best-sellers card and get
   // a SharePoint Folders panel (like the property page) instead of the
-  // brand-style Documents & Gallery block. Same heuristic as the main
+  // brand-style Documents & Gallery block. Same shared helper as the main
   // panel so the two halves agree.
-  // Server-decided (same rule as the Landlord CRM list); the type heuristic
-  // is only a fallback for stale cached responses without the flag.
-  const isLandlord = typeof (data as any).isLandlord === "boolean" ? (data as any).isLandlord : (() => {
-    const t = (c.company_type || "").toLowerCase();
-    if (!t) return false;
-    return t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("reit") || t.includes("fund");
-  })();
+  const isLandlord = isLandlordCompany(c.company_type, (data as any).isLandlord);
   const isBrand = /^tenant/i.test(c.company_type || "");
   const [newsShowAll, setNewsShowAll] = useState(false);
   const [newsSourceFilter, setNewsSourceFilter] = useState<string | null>(null);

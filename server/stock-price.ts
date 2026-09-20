@@ -1,8 +1,8 @@
 // ─── Stock price service ──────────────────────────────────────────────────
-// Fetches market data for listed retail brands from Yahoo Finance's public
-// query endpoint. No API key required. Successful quotes are cached
-// in-memory for 6 hours per ticker; failed/invalid lookups get a ≤60s
-// negative cache so one bad response can't blank the panel for hours.
+// Fetches market data for listed retail brands, primarily from Yahoo
+// Finance's public query endpoint (no API key required). Successful quotes
+// are cached in-memory for 6 hours per ticker; failed/invalid lookups get a
+// ≤60s negative cache so one bad response can't blank the panel for hours.
 //
 // Used by Brand Hunter scoring — large caps, rising stocks, and recent
 // earnings beats are all strong expansion signals.
@@ -13,9 +13,17 @@
 // direct first, then the Webshare residential proxy — and quote lookups do
 // the fc.yahoo.com cookie → getcrumb dance with the v8 chart endpoint (no
 // crumb needed) as the fallback when auth can't be established.
+//
+// When Yahoo fails outright (blocked egress IP, HTTP error, or an unknown
+// symbol) the single-quote path falls back to Stooq's free daily CSV —
+// see the Stooq section below.
 // ──────────────────────────────────────────────────────────────────────────
 
+import { createHash } from "node:crypto";
 import { webshareF, isProxyConfigured } from "./proxy-fetch";
+import { normalizeTicker, toStooqSymbol } from "@shared/stock-ticker";
+
+export { normalizeTicker } from "@shared/stock-ticker";
 
 const YAHOO_HEADERS: Record<string, string> = {
   "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
@@ -107,6 +115,7 @@ async function snapshotViaChart(ticker: string): Promise<{ snapshot: StockSnapsh
       exchange: meta.fullExchangeName ?? meta.exchangeName ?? null,
       shortName: meta.shortName ?? meta.longName ?? null,
       fetchedAt: new Date().toISOString(),
+      quoteTimestamp: typeof meta.regularMarketTime === "number" ? new Date(meta.regularMarketTime * 1000).toISOString() : null,
       signals: {
         largeCap: false,
         midCap: false,
@@ -130,6 +139,10 @@ export interface StockSnapshot {
   exchange: string | null;
   shortName: string | null;
   fetchedAt: string;
+  // When the quote itself is as-of (Yahoo regularMarketTime / Stooq's daily
+  // close date). Stale/delayed feeds stay honest — the card shows this, not
+  // just the fetch time. null when the provider didn't say.
+  quoteTimestamp?: string | null;
   // Derived signals used by Brand Hunter scoring
   signals: {
     largeCap: boolean;        // market cap > £500m
@@ -152,49 +165,18 @@ export interface PricePoint {
 }
 
 // ─── Lookup states ────────────────────────────────────────────────────────
-// Callers need to tell "Yahoo has never heard of this symbol" apart from
-// "Yahoo is down / rate-limited us" — the UI shows "unknown ticker" for the
-// former and a retryable "provider error" for the latter.
+// Callers need to tell "the provider has never heard of this symbol" apart
+// from "the provider is down / rate-limited us" — the UI shows "symbol not
+// recognised" for the former and a retryable "provider error" for the
+// latter. `provider` records who served a successful quote so the UI can
+// label it and future debugging is easy.
+export type StockQuoteProvider = "yahoo" | "stooq";
 export type StockQuoteStatus = "ok" | "invalid-symbol" | "provider-error";
 
 export interface StockSnapshotLookup {
   status: StockQuoteStatus;
   snapshot: StockSnapshot | null;
-}
-
-// ─── Ticker normalization ────────────────────────────────────────────────
-// Stored tickers occasionally carry an exchange prefix (LON:HMSO, LSE:JD.L)
-// or a typo. Normalize to the bare Yahoo symbol before every lookup.
-const EXCHANGE_PREFIX_RE = /^(?:LON|LSE|XLON):/;
-
-// Defensive aliases for known one-off stored mistakes. Keys are the
-// prefix-stripped, uppercased stored value; values are the full Yahoo
-// symbol. Hammerson is stored as "HMSON" (stray N — the correct LSE ticker
-// is HMSO, Yahoo symbol HMSO.L). The durable fix is DB data cleanup in
-// Delivery 2/6 — keep this map tiny and explicit until then.
-const TICKER_ALIASES: Record<string, string> = {
-  HMSON: "HMSO.L",
-};
-
-/**
- * Normalize a stored ticker to the Yahoo instrument symbol:
- * trim + uppercase, strip a London exchange prefix (LON:/LSE:/XLON:), apply
- * the alias map, and append the .L suffix for London-prefixed listings that
- * lack one (London listings trade in pence — see mapV7Quote's GBp handling).
- * Tickers that already carry a Yahoo suffix (.L, .PA, …) or have no London
- * prefix pass through unchanged. Returns null when nothing usable remains.
- */
-export function normalizeTicker(raw: string): string | null {
-  if (!raw) return null;
-  let s = raw.trim().toUpperCase();
-  if (!s) return null;
-  const london = EXCHANGE_PREFIX_RE.test(s);
-  if (london) s = s.replace(EXCHANGE_PREFIX_RE, "");
-  if (!s) return null;
-  const alias = TICKER_ALIASES[s];
-  if (alias) return alias;
-  if (london && !s.includes(".")) s = `${s}.L`;
-  return s;
+  provider: StockQuoteProvider | null;
 }
 
 interface CacheEntry {
@@ -254,6 +236,7 @@ function mapV7Quote(q: any, fallbackTicker: string): StockSnapshot {
     exchange: q.fullExchangeName ?? q.exchange ?? null,
     shortName: q.shortName ?? q.longName ?? null,
     fetchedAt: new Date().toISOString(),
+    quoteTimestamp: typeof q.regularMarketTime === "number" ? new Date(q.regularMarketTime * 1000).toISOString() : null,
     signals: {
       largeCap:        marketCapGBP != null && marketCapGBP >= 500_000_000,
       midCap:          marketCapGBP != null && marketCapGBP >= 50_000_000 && marketCapGBP < 500_000_000,
@@ -271,36 +254,221 @@ async function fetchSnapshotFromYahoo(symbol: string): Promise<StockSnapshotLook
     const rows = await quoteViaV7([symbol]);
     if (rows) {
       const q = rows[0];
-      if (q) return { status: "ok", snapshot: mapV7Quote(q, symbol) };
-      return { status: "invalid-symbol", snapshot: null };
+      if (q) return { status: "ok", snapshot: mapV7Quote(q, symbol), provider: "yahoo" };
+      return { status: "invalid-symbol", snapshot: null, provider: null };
     }
     const chart = await snapshotViaChart(symbol);
-    if (chart.snapshot) return { status: "ok", snapshot: chart.snapshot };
+    if (chart.snapshot) return { status: "ok", snapshot: chart.snapshot, provider: "yahoo" };
     return chart.notFound
-      ? { status: "invalid-symbol", snapshot: null }
-      : { status: "provider-error", snapshot: null };
+      ? { status: "invalid-symbol", snapshot: null, provider: null }
+      : { status: "provider-error", snapshot: null, provider: null };
   } catch (err: any) {
     console.warn(`[stock-price] fetch failed for ${symbol}: ${err.message}`);
-    return { status: "provider-error", snapshot: null };
+    return { status: "provider-error", snapshot: null, provider: null };
   }
+}
+
+// ─── Stooq fallback provider ─────────────────────────────────────────────
+// Yahoo blocks some datacenter egress IPs wholesale (production evidence:
+// every HMSO.L lookup provider-errors from Railway while resolving fine
+// from a residential connection). Stooq's free daily CSV is the fallback.
+//
+// Reality check (verified 2026-09-20): the old intraday endpoint
+// (stooq.com/q/l/?f=sd2t2ohlcv&e=csv) now 404s, and the daily download
+// endpoint (q/d/l/) requires TWO things since ~April 2026:
+//   1. a JavaScript proof-of-work cookie (sha256 nonce → POST /__verify) —
+//      solved inline by stooqFetch, cookie cached for the session, and
+//   2. an `apikey` query param for CSV data (email Stooq / CAPTCHA on the
+//      site to get one) — set STOOQ_API_KEY on the environment.
+// Without a key Stooq answers "Access denied" and the fallback reports a
+// provider error, preserving the honest UI state. UK symbols use the .uk
+// suffix (hmso.uk); quotes are daily closes (delayed) — the snapshot's
+// quoteTimestamp carries the trading date so the card stays honest.
+
+let stooqAuth: { cookie: string; expiresAt: number } | null = null;
+
+function looksLikeStooqChallenge(status: number, contentType: string, body: string): boolean {
+  return status === 200 && contentType.includes("text/html") && body.includes("/__verify");
+}
+
+async function solveStooqChallenge(body: string, cookie: string): Promise<string | null> {
+  const m = body.match(/const c="([^"]+)",d=(\d+)/);
+  if (!m) return null;
+  const [, challenge, difficulty] = m;
+  const target = "0".repeat(Number(difficulty));
+  let n = 0;
+  while (!createHash("sha256").update(challenge + n).digest("hex").startsWith(target)) n++;
+  const verify = await fetch("https://stooq.com/__verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", ...(cookie ? { Cookie: cookie } : {}) },
+    body: `c=${encodeURIComponent(challenge)}&n=${n}`,
+  });
+  if (!verify.ok) return null;
+  const auth = (verify.headers.get("set-cookie") || "").split(";")[0];
+  if (!auth.includes("=")) return null;
+  return [cookie, auth].filter(Boolean).join("; ");
+}
+
+async function stooqFetch(url: string): Promise<Response> {
+  const doFetch = () => fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+      ...(stooqAuth ? { Cookie: stooqAuth.cookie } : {}),
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  let resp = await doFetch();
+  // Anti-bot challenge? Solve it once, cache the cookie (24h Max-Age), retry.
+  if (resp.ok) {
+    const contentType = resp.headers.get("content-type") || "";
+    if (contentType.includes("text/html")) {
+      const body = await resp.text();
+      if (looksLikeStooqChallenge(resp.status, contentType, body)) {
+        const cookie = await solveStooqChallenge(body, stooqAuth?.cookie ?? "");
+        if (cookie) {
+          stooqAuth = { cookie, expiresAt: Date.now() + 12 * 60 * 60 * 1000 };
+          resp = await doFetch();
+        }
+      } else {
+        // Not a challenge — hand the HTML back as the response body so the
+        // caller classifies it (it won't parse as CSV → provider error).
+        return new Response(body, { status: resp.status, headers: resp.headers });
+      }
+    }
+  }
+  if (stooqAuth && Date.now() >= stooqAuth.expiresAt) stooqAuth = null;
+  return resp;
+}
+
+interface StooqRow {
+  date: string;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  volume: number | null;
+}
+
+// Stooq daily CSV: header "Date,Open,High,Low,Close,Volume" then one row per
+// trading day. Unknown symbols return an empty body; rate-limit/key problems
+// return plain text ("Access denied", "Exceeded the daily hits limit", …).
+function parseStooqCsv(text: string): StooqRow[] {
+  const rows: StooqRow[] = [];
+  for (const line of text.trim().split(/\r?\n/)) {
+    if (!line || /^date,/i.test(line)) continue;
+    const [date, open, high, low, close, volume] = line.split(",");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? "")) continue; // skips "Access denied" etc.
+    const num = (v: string | undefined) => {
+      const n = Number(v);
+      return v != null && v !== "" && v !== "N/D" && isFinite(n) ? n : null;
+    };
+    rows.push({ date, open: num(open), high: num(high), low: num(low), close: num(close), volume: num(volume) });
+  }
+  return rows;
+}
+
+// null = no Stooq equivalent for this listing (Yahoo-only suffix like .PA).
+async function fetchSnapshotFromStooq(symbol: string): Promise<(StockSnapshotLookup & { history?: PricePoint[] }) | null> {
+  const stooqSymbol = toStooqSymbol(symbol);
+  if (!stooqSymbol) return null;
+  try {
+    const d2 = new Date();
+    const d1 = new Date(d2.getTime() - 400 * 24 * 60 * 60 * 1000); // ≥ 52 weeks of trading days
+    const ymd = (d: Date) => d.toISOString().slice(0, 10).replace(/-/g, "");
+    const key = process.env.STOOQ_API_KEY || "";
+    const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&d1=${ymd(d1)}&d2=${ymd(d2)}&i=d${key ? `&apikey=${encodeURIComponent(key)}` : ""}`;
+    const resp = await stooqFetch(url);
+    if (!resp.ok) return { status: "provider-error", snapshot: null, provider: null };
+    const text = await resp.text();
+    const rows = parseStooqCsv(text);
+    const priced = rows.filter((r) => r.close != null);
+    if (priced.length === 0) {
+      // A syntactically valid CSV with zero rows means Stooq answered but
+      // doesn't know the symbol; anything else (Access denied, HTML) is a
+      // provider problem.
+      const answered = text.trim() === "" || /^date,/i.test(text.trim());
+      return answered
+        ? { status: "invalid-symbol", snapshot: null, provider: null }
+        : { status: "provider-error", snapshot: null, provider: null };
+    }
+    const first = priced[0];
+    const last = priced[priced.length - 1];
+    const change = first.close && last.close ? (last.close - first.close) / first.close : null;
+    const highs = rows.map((r) => r.high).filter((n): n is number => n != null);
+    const lows = rows.map((r) => r.low).filter((n): n is number => n != null);
+    const uk = stooqSymbol.endsWith(".uk");
+    const snapshot: StockSnapshot = {
+      ticker: symbol,
+      price: last.close,
+      currency: uk ? "GBp" : "USD", // Stooq quotes LSE in pence, US in dollars
+      marketCap: null,
+      marketCapGBP: null,
+      fiftyTwoWeekHigh: highs.length ? Math.max(...highs) : null,
+      fiftyTwoWeekLow: lows.length ? Math.min(...lows) : null,
+      fiftyTwoWeekChange: change,
+      peRatio: null,
+      exchange: uk ? "London" : null,
+      shortName: null,
+      fetchedAt: new Date().toISOString(),
+      // Daily feed — the quote is as-of the last trading day, not now.
+      quoteTimestamp: `${last.date}T00:00:00.000Z`,
+      signals: {
+        largeCap: false,
+        midCap: false,
+        stockMomentum: change != null && change >= 0.20,
+        strongMomentum: change != null && change >= 0.40,
+      },
+    };
+    const history: PricePoint[] = priced.map((r) => ({ date: r.date, close: r.close as number }));
+    return { status: "ok", snapshot, provider: "stooq", history };
+  } catch (err: any) {
+    console.warn(`[stock-price] stooq fetch failed for ${symbol}: ${err.message}`);
+    return { status: "provider-error", snapshot: null, provider: null };
+  }
+}
+
+// Yahoo first, Stooq when Yahoo fails for any reason (blocked egress IP,
+// HTTP error, unknown symbol). invalid-symbol wins over provider-error when
+// either provider answered "no such symbol" — a successful lookup that found
+// nothing is stronger evidence than a fetch that never got through.
+async function fetchSnapshotWithFallback(symbol: string): Promise<StockSnapshotLookup> {
+  const yahoo = await fetchSnapshotFromYahoo(symbol);
+  if (yahoo.status === "ok") return yahoo;
+  const stooq = await fetchSnapshotFromStooq(symbol);
+  if (stooq?.status === "ok" && stooq.snapshot) {
+    // The Stooq response already carries a year of daily closes — seed the
+    // history cache (3-month slice) so the card's mini chart renders even
+    // while Yahoo's chart endpoint is unreachable.
+    if (stooq.history?.length) {
+      HISTORY_CACHE.set(symbol, { data: stooq.history.slice(-63), expiresAt: Date.now() + HISTORY_TTL_MS });
+    }
+    return { status: "ok", snapshot: stooq.snapshot, provider: "stooq" };
+  }
+  if (yahoo.status === "invalid-symbol" || stooq?.status === "invalid-symbol") {
+    return { status: "invalid-symbol", snapshot: null, provider: null };
+  }
+  return { status: "provider-error", snapshot: null, provider: null };
 }
 
 /**
  * Look up a single ticker with an explicit outcome: "ok" (snapshot
  * attached), "invalid-symbol", or "provider-error". The stored ticker is
- * normalized first (prefix strip, alias map, .L suffix). Successful quotes
- * are cached 6h; failures are negative-cached for NEGATIVE_TTL_MS so a
+ * normalized first (prefix strip, alias map, .L suffix), then Yahoo is tried
+ * first with Stooq as the fallback — `provider` on the result says who
+ * served the quote. Successful quotes are cached 6h under the normalized
+ * instrument (so editing a company's ticker changes the cache key and
+ * fetches fresh); failures are negative-cached for NEGATIVE_TTL_MS so a
  * transient error or typo doesn't blank the panel for hours.
  */
 export async function getStockSnapshotState(ticker: string): Promise<StockSnapshotLookup> {
   const symbol = normalizeTicker(ticker);
-  if (!symbol) return { status: "invalid-symbol", snapshot: null };
+  if (!symbol) return { status: "invalid-symbol", snapshot: null, provider: null };
   const now = Date.now();
 
   const cached = CACHE.get(symbol);
   if (cached && cached.expiresAt > now) return cached.data;
 
-  const fresh = await fetchSnapshotFromYahoo(symbol);
+  const fresh = await fetchSnapshotWithFallback(symbol);
   CACHE.set(symbol, { data: fresh, expiresAt: now + (fresh.status === "ok" ? TTL_MS : NEGATIVE_TTL_MS) });
   return fresh;
 }
@@ -363,26 +531,28 @@ export async function getStockSnapshots(tickers: string[]): Promise<Map<string, 
         for (const symbol of chunk) {
           const q = gotBySymbol.get(symbol);
           record(symbol, q
-            ? { status: "ok", snapshot: mapV7Quote(q, symbol) }
-            : { status: "invalid-symbol", snapshot: null });
+            ? { status: "ok", snapshot: mapV7Quote(q, symbol), provider: "yahoo" }
+            : { status: "invalid-symbol", snapshot: null, provider: null });
         }
       } else {
         // No crumb — fall back to per-ticker chart lookups, 4 at a time.
+        // (Batch stays Yahoo-only: Stooq is per-ticker and would be 50
+        // serial CSV fetches here. The single-quote path has the fallback.)
         for (let j = 0; j < chunk.length; j += 4) {
           const outcomes = await Promise.all(chunk.slice(j, j + 4).map(async (symbol) => ({
             symbol,
             outcome: await snapshotViaChart(symbol)
               .then((c): StockSnapshotLookup => c.snapshot
-                ? { status: "ok", snapshot: c.snapshot }
-                : { status: c.notFound ? "invalid-symbol" : "provider-error", snapshot: null })
-              .catch((): StockSnapshotLookup => ({ status: "provider-error", snapshot: null })),
+                ? { status: "ok", snapshot: c.snapshot, provider: "yahoo" }
+                : { status: c.notFound ? "invalid-symbol" : "provider-error", snapshot: null, provider: null })
+              .catch((): StockSnapshotLookup => ({ status: "provider-error", snapshot: null, provider: null })),
           })));
           for (const { symbol, outcome } of outcomes) record(symbol, outcome);
         }
       }
     } catch (err: any) {
       console.warn(`[stock-price] batch fetch failed: ${err.message}`);
-      chunk.forEach(symbol => record(symbol, { status: "provider-error", snapshot: null }));
+      chunk.forEach(symbol => record(symbol, { status: "provider-error", snapshot: null, provider: null }));
     }
   }
 
