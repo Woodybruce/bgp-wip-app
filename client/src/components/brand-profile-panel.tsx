@@ -115,8 +115,20 @@ interface BrandProfile {
   kyc: { doc_count: number; last_uploaded_at: string | null };
   images: Array<any>;
   deals: Array<any>;
-  completedDeals: Array<any>;
-  activeDeals: Array<any>;
+  // Full-set counts from the server aggregate (the `deals` list is capped at
+  // 20); completedDealRows/activeDealRows are the capped arrays for link/name
+  // rendering.
+  completedDeals: number;
+  activeDeals: number;
+  completedDealRows?: Array<any>;
+  activeDealRows?: Array<any>;
+  dealTotals?: {
+    total: number;
+    completed: number;
+    active: number;
+    totalFees: number | null;
+    team: string[];
+  };
   parentGroup: { id: string; name: string; store_count: number | null } | null;
   siblings: Array<any>;
   news: Array<{
@@ -234,7 +246,7 @@ interface BrandProfile {
   bgpSummary: {
     totalDeals: number;
     completedDeals: number;
-    totalFees: number;
+    totalFees: number | null;
     team: string[];
     interactionsTotal: number;
     interactionsLast90d: number;
@@ -930,8 +942,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   const pitchedTo = data.pitchedTo || [];
   const liveLocations = (data as any).liveLocations || [];
   const requirements = data.requirements || [];
-  const completedDeals = data.completedDeals || [];
-  const activeDeals = data.activeDeals || [];
+  const completedDeals = data.completedDealRows || [];
+  const activeDeals = data.activeDealRows || [];
+  // Full-set counts from the server aggregate — the deal list is capped at
+  // LIMIT 20, so these are the honest totals (the UI can show "20 of N").
+  const dealTotals = data.dealTotals || null;
+  const completedDealCount = data.completedDeals ?? completedDeals.length;
+  const activeDealCount = data.activeDeals ?? activeDeals.length;
   const turnover = data.turnover || [];
   const covenant = data.covenant || null;
   const rolloutVelocity = data.rolloutVelocity || null;
@@ -1745,21 +1762,22 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               similarTenants={competitors.slice(0, 8)}
             />
 
-            {/* Deal ledger + active pipeline */}
-            {(completedDeals?.length > 0 || activeDeals?.length > 0 || requirements.length > 0) && (
+            {/* Deal ledger + active pipeline — counts are the full-set server
+                aggregates, honest even when the deal list is capped at 20. */}
+            {(completedDealCount > 0 || activeDealCount > 0 || requirements.length > 0) && (
               <div className="border-t pt-2">
                 <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   <Briefcase className="w-3 h-3" /> Deal ledger &amp; pipeline
                 </div>
                 <div className="flex gap-2 text-xs flex-wrap">
-                  {completedDeals?.length > 0 && (
+                  {completedDealCount > 0 && (
                     <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]">
-                      {completedDeals.length} completed
+                      {completedDealCount} completed
                     </Badge>
                   )}
-                  {activeDeals?.length > 0 && (
+                  {activeDealCount > 0 && (
                     <Badge variant="secondary" className="text-[10px]">
-                      {activeDeals.length} active
+                      {activeDealCount} active
                     </Badge>
                   )}
                   {requirements.filter(r => r.status === "Active").length > 0 && (

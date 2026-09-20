@@ -13,6 +13,7 @@ import { rankCompanyHeroImages } from "../shared/brand-image-selection";
 import { randomUUID } from "node:crypto";
 import { isOfficialBrandWebsite, publishableBrandImage, publishableBrandStore, prepareBrandIdentityUpdate, quarantineBrandIdentityDependents } from "./brand-publishing";
 import { PENDING_CONTACT_SUGGESTIONS_SQL } from "./brand-profile-suggestions";
+import { dealTotalsSql, isActiveDealStatus, isCompletedDealStatus } from "./brand-profile-deals";
 
 const router = Router();
 
@@ -553,6 +554,15 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         ORDER BY d.updated_at DESC NULLS LAST LIMIT 20`,
       bpScope ? [companyId, bpScope] : [companyId]
     );
+
+    // Portfolio-wide deal totals over the FULL matching set — the list query
+    // above is capped at LIMIT 20 for display, so totals (count / completed /
+    // fees / team) must be aggregated separately. Uses the exact same WHERE,
+    // including the client-counterparty scope clause.
+    const dealTotalsQ = pool.query(
+      dealTotalsSql(dealsClientScope),
+      bpScope ? [companyId, bpScope] : [companyId]
+    );
     const bgpInteractionsQ = pool.query(
       `SELECT COUNT(*) ::int AS total,
               MAX(interaction_date) AS last_at,
@@ -689,7 +699,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       rolloutVelocityRow, rentComps,
       bgpDeals, bgpInteractions, bgpInteractionsList, decisionMakers, leaseEvents, competitors,
       rolloutMonthly, kycInvestigation, ownedProperties, landRegistry, landlordFindings, contactInteractionStats,
-      liveLocations, dismissedDiscoveries,
+      liveLocations, dismissedDiscoveries, dealTotalsRow,
     ] = await Promise.all([
       companyQ, safe(signalsQ), safe(repsForBrandQ), safe(brandsForAgentQ),
       safe(kycQ), safe(imagesQ), safe(dealsQ), safe(parentGroupQ), safe(siblingsQ), safe(newsQ),
@@ -697,7 +707,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       safe(rolloutVelocityQ), safe(rentCompsQ),
       safe(bgpDealsQ), safe(bgpInteractionsQ), safe(bgpInteractionsListQ), safe(decisionMakersQ), safe(leaseEventsQ), safe(competitorsQ),
       safe(rolloutMonthlyQ), safe(kycInvestigationQ), safe(ownedPropertiesQ), safe(landRegistryQ), safe(landlordFindingsQ), safe(contactInteractionStatsQ),
-      safe(liveLocationsQ), safe(dismissedDiscoveriesQ),
+      safe(liveLocationsQ), safe(dismissedDiscoveriesQ), safe(dealTotalsQ),
     ]);
 
     if (!company.rows[0]) return res.status(404).json({ error: "Company not found" });
@@ -799,13 +809,21 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       experian: kycInvestigation.rows[0]?.experian || chData.experian || null,
     } : null;
 
-    // Deal ledger summary
-    const completedDeals = deals.rows.filter((d: any) => d.status === "COM" || d.status === "INV" || d.status === "completed" || d.completed_at);
-    // BGP deal lifecycle: WIT (withdrawn) / COM (completed) / INV
-    // (invoiced) = terminal. Anything else (REP, NEG, AGT, EXC, …) is
-    // still live. Matches the /api/company-portfolio convention.
-    const TERMINAL_DEAL_STATUSES = new Set(["WIT", "COM", "INV"]);
-    const activeDeals = deals.rows.filter((d: any) => !TERMINAL_DEAL_STATUSES.has(String(d.status || "").toUpperCase()));
+    // Deal ledger — full-set aggregates from dealTotalsQ (the list query is
+    // capped at LIMIT 20, so counts derived from it undercount). "Completed"
+    // uses the canonical status vocabulary (COM/INV) from shared/deal-status.ts;
+    // "active" = not fully closed (WIT/COM/INV). The capped arrays stay for
+    // display/link rendering, reclassified with the same canonical helpers.
+    const totals = dealTotalsRow.rows[0] || {};
+    const dealTotals = {
+      total: Number(totals.total) || 0,
+      completed: Number(totals.completed) || 0,
+      active: Number(totals.active) || 0,
+      totalFees: Number(totals.total_fees) || 0,
+      team: (totals.team || []) as string[],
+    };
+    const completedDeals = deals.rows.filter((d: any) => isCompletedDealStatus(d.status) || d.completed_at);
+    const activeDeals = deals.rows.filter((d: any) => isActiveDealStatus(d.status));
 
     // Rollout velocity — signed net from brand_signals, plus store-count trend from brand_stores
     const velocityRow = rolloutVelocityRow.rows[0] || { openings_12m: 0, closures_12m: 0 };
@@ -860,22 +878,16 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       };
     })();
 
-    // BGP relationship summary — deals count, fees, last-touch aggregate
+    // BGP relationship summary — full-set totals from dealTotalsQ (not the
+    // LIMIT 20 list), plus last-touch aggregates. Status classification is the
+    // canonical COM/INV from shared/deal-status.ts (via the aggregate SQL).
     const bgpSummary = (() => {
-      const rows = bgpDeals.rows;
-      const completed = rows.filter((d: any) => (d.status || "").toLowerCase().includes("complet") || (d.status || "").toLowerCase().includes("won"));
-      const totalFees = rows.reduce((acc: number, d: any) => acc + (Number(d.fee) || 0), 0);
-      const bgpTeam = new Set<string>();
-      for (const d of rows) {
-        for (const t of (d.team || [])) bgpTeam.add(t);
-        for (const a of (d.internal_agent || [])) bgpTeam.add(a);
-      }
       const lastInteraction = bgpInteractions.rows[0] || {};
       return {
-        totalDeals: rows.length,
-        completedDeals: completed.length,
-        totalFees,
-        team: Array.from(bgpTeam),
+        totalDeals: dealTotals.total,
+        completedDeals: dealTotals.completed,
+        totalFees: dealTotals.totalFees,
+        team: dealTotals.team,
         interactionsTotal: lastInteraction.total || 0,
         interactionsLast90d: lastInteraction.last_90d || 0,
         lastInteractionAt: lastInteraction.last_at || null,
@@ -924,8 +936,14 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       kyc: kyc.rows[0] || { doc_count: 0, last_uploaded_at: null },
       images: images.rows,
       deals: deals.rows,
-      completedDeals,
-      activeDeals,
+      // Full-set counts (the `deals` list above is capped at LIMIT 20, so
+      // array lengths would undercount). completedDealRows/activeDealRows keep
+      // the capped arrays for UIs that render deal names/links.
+      completedDeals: dealTotals.completed,
+      activeDeals: dealTotals.active,
+      completedDealRows: completedDeals,
+      activeDealRows: activeDeals,
+      dealTotals: bpScope ? { ...dealTotals, totalFees: null } : dealTotals,
       parentGroup: parentGroup.rows[0] || null,
       siblings: siblings.rows,
       news: (news.rows as any[]).filter((n: any) => isBrandNewsRelevant(c, n)).slice(0, 20),
