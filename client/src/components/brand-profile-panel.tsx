@@ -1007,7 +1007,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             return "Brand Profile";
           })()}
           {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-transparent text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
-          {hunter && hunter.expansionScore >= 40 && (
+          {!isLandlord && hunter && hunter.expansionScore >= 40 && (
             <Badge
               className={
                 hunter.expansionScore >= 75 ? "bg-orange-50 text-orange-700 border-transparent text-[10px]" :
@@ -1031,7 +1031,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               </span>
             );
           })()}
-          {c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
+          {!isLandlord && c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
         </CardTitle>
         <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
         </div>
@@ -1293,9 +1293,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
             <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={data.images || []} canRefresh={!isClientViewer} />
 
-            <div className="rounded-lg border border-border p-3 space-y-3">
+            <div className={`rounded-lg border border-border p-3 space-y-3${isLandlord ? " md:w-1/2" : ""}`}>
               <div className="flex flex-wrap justify-between items-center gap-2">
-                <p className="text-sm font-medium flex items-center gap-2"><MessageSquare className="w-4 h-4 text-muted-foreground" />Brand conversation</p>
+                <p className="text-sm font-medium flex items-center gap-2"><MessageSquare className="w-4 h-4 text-muted-foreground" />{isLandlord ? "Landlord conversation" : "Brand conversation"}</p>
                 <Button type="button" size="sm" variant="outline" onClick={() => setConversationOpen(value => !value)} aria-expanded={conversationOpen} data-testid="button-brand-conversation">{conversationOpen ? "Close conversation" : "Open conversation"}</Button>
               </div>
               {conversationOpen && <>
@@ -1306,7 +1306,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
             {/* Key facts row */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm empty:hidden">
-              {c.store_count != null && (
+              {!isLandlord && c.store_count != null && (
                 <div>
                   <div className="text-xs text-muted-foreground flex items-center gap-1">
                     <Store className="w-3 h-3" /> Reported store total {aiFields.store_count && <AiChip />}
@@ -1329,7 +1329,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   </div>
                 </div>
               )}
-              {c.rollout_status && (
+              {!isLandlord && c.rollout_status && (
                 <div>
                   <div className="text-xs text-muted-foreground mb-1">Rollout {aiFields.rollout_status && <AiChip />}</div>
                   <RolloutBadge status={c.rollout_status} />
@@ -1689,8 +1689,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               </div>
             )}
 
-            {/* Space preferences — what they typically take */}
-            {spacePreferences && spacePreferences.sampleSize >= 2 && (
+            {/* Space preferences — what they typically take (occupier-only;
+                landlords don't take space, they let it) */}
+            {!isLandlord && spacePreferences && spacePreferences.sampleSize >= 2 && (
               <div className="border-t pt-2">
                 <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   <Target className="w-3 h-3" /> Space preferences (from {spacePreferences.sampleSize} comps)
@@ -1753,7 +1754,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
             {/* Similar tenants + AI competitor set merged into ONE section
                 (Woody, 2026-08-19: "are they not the same thing?") — CRM
-                same-use-class chips first, AI-researched set after, deduped. */}
+                same-use-class chips first, AI-researched set after, deduped.
+                Occupier-only: hidden for landlords. */}
+            {!isLandlord && (
             <AiCompetitorsPanel
               companyId={companyId}
               competitors={c.ai_competitors || []}
@@ -1761,10 +1764,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               allCompaniesForPicker={allCompaniesForPicker}
               similarTenants={competitors.slice(0, 8)}
             />
+            )}
 
             {/* Deal ledger + active pipeline — counts are the full-set server
                 aggregates, honest even when the deal list is capped at 20. */}
-            {(completedDealCount > 0 || activeDealCount > 0 || requirements.length > 0) && (
+            {(completedDealCount > 0 || activeDealCount > 0 || (!isLandlord && requirements.length > 0)) && (
               <div className="border-t pt-2">
                 <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   <Briefcase className="w-3 h-3" /> Deal ledger &amp; pipeline
@@ -1780,7 +1784,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                       {activeDealCount} active
                     </Badge>
                   )}
-                  {requirements.filter(r => r.status === "Active").length > 0 && (
+                  {!isLandlord && requirements.filter(r => r.status === "Active").length > 0 && (
                     <Badge variant="secondary" className="text-[10px]">
                       {requirements.filter(r => r.status === "Active").length} active requirement{requirements.filter(r => r.status === "Active").length !== 1 ? "s" : ""}
                     </Badge>
@@ -2024,8 +2028,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     </div>
                   </details>
                 )}
-            {/* Active internal requirements — what this brand has on our books */}
-            {requirements.filter(r => r.status === "Active").length > 0 && (
+            {/* Active internal requirements — what this brand has on our books.
+                Occupier-only: a landlord lets space rather than seeking it. */}
+            {!isLandlord && requirements.filter(r => r.status === "Active").length > 0 && (
               <div>
                 <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
                   <span className="flex items-center gap-1">
@@ -2060,8 +2065,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             )}
 
             {/* Pipnet requirements — external feed of what the brand is asking
-                the wider market for. Lazy-fetched, cached server-side 1h. */}
-            <PipnetRequirementsRow companyId={companyId} brandName={c.name} isClient={isClientViewer} />
+                the wider market for. Lazy-fetched, cached server-side 1h.
+                Occupier-only: hidden for landlords. */}
+            {!isLandlord && <PipnetRequirementsRow companyId={companyId} brandName={c.name} isClient={isClientViewer} />}
 
             {/* Signals feed — same shape as the old Hunter Intel zone */}
             <div>

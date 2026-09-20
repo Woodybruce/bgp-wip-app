@@ -155,7 +155,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       <div className="flex flex-wrap items-center gap-2">
         {c.company_type && <Pill className="max-w-full"><span className="truncate">{String(c.company_type).replace(/\s*-\s*/g, " · ")}</span></Pill>}
         {c.industry && <Pill className="max-w-full"><span className="truncate">{c.industry}</span></Pill>}
-        {c.store_count != null && <Pill><span className="font-mono tabular-nums">{c.store_count}</span> reported stores</Pill>}
+        {!isLandlord && c.store_count != null && <Pill><span className="font-mono tabular-nums">{c.store_count}</span> reported stores</Pill>}
         {(c as any).companies_house_number && <CovenantBadge companyNumber={(c as any).companies_house_number} />}
         {(c.domain_url || c.domain) && (
           <Button variant="outline" size="sm" asChild>
@@ -190,7 +190,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       <BgpTakeStrip companyId={companyId} tab="brand" />
       <div className="rounded-lg border border-border bg-card p-3 space-y-3">
         <Button variant="outline" size="sm" onClick={() => setConversationOpen(value => !value)} aria-expanded={conversationOpen} data-testid="button-brand-conversation">{conversationOpen ? "Close conversation" : "Open conversation"}</Button>
-        {conversationOpen && <><AskChatBGPInline brandName={c.name} /><div className="h-80"><CompanyMiniChat companyId={companyId} companyName={c.name} fill /></div></>}
+        {conversationOpen && <><AskChatBGPInline brandName={c.name} isLandlord={isLandlord} /><div className="h-80"><CompanyMiniChat companyId={companyId} companyName={c.name} fill /></div></>}
       </div>
       </div>
 
