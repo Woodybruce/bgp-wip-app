@@ -125,6 +125,32 @@ test('Landsec first-person operator quotes can be corroborated by a separate nam
   assert.equal(supportedWebsiteAssessment(row, pages, { ...output, relationship: 'reseller' }), null);
 });
 
+test('an extra misattributed citation is discarded without losing sufficient correctly sourced Landsec proof', () => {
+  const row = { ...landlord(), id: 'landsec', name: 'Landsec', domain: 'landsec.com' };
+  const home = 'https://landsec.com/', about = 'https://landsec.com/about-us';
+  const business = 'Landsec is built on places that connect people and communities.';
+  const operator = "For more than 80 years, we've shaped places for people to work, shop and live.";
+  const extra = 'Our role is to identify and create the places that people need.';
+  const pages = [{ url: home, html: `${business} ${extra}` }, { url: about, html: operator }];
+  const valid = [{ url: home, quote: business, kind: 'business' }, { url: about, quote: operator, kind: 'operator' }];
+  const output = { ...assessment(), brandName: 'Landsec', officialDomain: 'landsec.com', evidence: [
+    ...valid, { url: about, quote: extra, kind: 'operator' },
+  ] };
+  const supported = supportedWebsiteAssessment(row, pages, output);
+  assert.equal(supported.confidence, 0.98);
+  assert.deepEqual(supported.evidence, valid, 'only the two corroborated source citations can be saved');
+  for (const essentialMissing of [
+    [valid[0], { ...valid[1], url: home }],
+    [{ ...valid[0], url: about }, valid[1]],
+    [{ ...valid[0], quote: 'Landsec owns this website according to a fabricated statement.' },
+      { ...valid[1], quote: 'We are a verified operator according to a second fabricated statement.' }],
+  ]) assert.equal(supportedWebsiteAssessment(row, pages, { ...output, evidence: essentialMissing }), null);
+  assert.equal(supportedWebsiteAssessment(row, pages, { ...output, conflicts: ['This business may be unrelated'] }), null);
+  assert.equal(supportedWebsiteAssessment(row, pages, { ...output, evidence: [
+    ...valid, { url: about, quote: 'We stock products as a reseller for several other companies.', kind: 'operator' },
+  ] }), null, 'conflicting reseller evidence is never silently discarded');
+});
+
 test('successful AI website proof records attributed evidence and preserves legal registration and human facts', async () => {
   const row = landlord(), db = database(row); let aiCalls = 0;
   const result = await verifyBrandIdentityFromOfficialSite(db, row, async url => ({ ...landlordPages()[0], url }), async (context, pages) => {

@@ -77,8 +77,10 @@ export function supportedWebsiteAssessment(company: any, pages: WebsitePage[], a
     if (!item || !["operator", "business"].includes(item.kind) || typeof item.quote !== "string" || item.quote.trim().length < 20 || item.quote.length > 800) return null;
     const page = pages.find(page => page.url === item.url && normalizeBrandDomain(page.url) === candidate.domain);
     const quote = item.quote.replace(/\s+/g, " ").trim();
-    if (!page || !visibleText(page.html).replace(/\s+/g, " ").includes(quote)) return null;
     if (item.kind === "operator" && /\b(?:reseller|stockist|we stock|brands we (?:carry|stock|sell))\b/i.test(quote)) return null;
+    // A bad extra citation is not proof, but must not discard independent,
+    // correctly attributed evidence. Only the retained quotes can verify.
+    if (!page || !visibleText(page.html).replace(/\s+/g, " ").includes(quote)) continue;
     evidence.push({ url: page.url, quote, kind: item.kind });
   }
   if (!evidence.some(item => item.kind === "operator") || !evidence.some(item => item.kind === "business")
