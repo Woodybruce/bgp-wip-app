@@ -1229,13 +1229,15 @@ router.get("/api/brand/:companyId/stock", requireAuth, async (req: Request, res:
       [companyId]
     );
     const ticker = rows[0]?.stock_ticker;
-    if (!ticker) return res.json({ snapshot: null, history: [] });
-    const { getStockSnapshot, getHistoricalPrices } = await import("./stock-price");
-    const [snapshot, history] = await Promise.all([
-      getStockSnapshot(ticker),
+    if (!ticker) return res.json({ snapshot: null, history: [], status: "no-ticker" });
+    const { getStockSnapshotState, getHistoricalPrices, normalizeTicker } = await import("./stock-price");
+    const [quote, history] = await Promise.all([
+      getStockSnapshotState(ticker),
       getHistoricalPrices(ticker),
     ]);
-    res.json({ snapshot, history });
+    // status lets the panel distinguish a live quote from an unknown ticker
+    // vs a retryable provider error — never an endless "fetching…".
+    res.json({ snapshot: quote.snapshot, history, status: quote.status, symbol: normalizeTicker(ticker) });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

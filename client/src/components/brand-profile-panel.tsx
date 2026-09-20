@@ -3222,7 +3222,12 @@ export function StockSnapshotCard({ companyId, ticker }: { companyId: string; ti
 }
 
 function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; ticker: string }) {
-  const { data, isLoading } = useQuery<{ snapshot: any | null; history: Array<{ date: string; close: number }> }>({
+  const { data, isLoading, refetch, isFetching } = useQuery<{
+    snapshot: any | null;
+    history: Array<{ date: string; close: number }>;
+    status?: "ok" | "invalid-symbol" | "provider-error" | "no-ticker";
+    symbol?: string | null;
+  }>({
     queryKey: ["/api/brand", companyId, "stock"],
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/brand/${companyId}/stock`);
@@ -3233,11 +3238,36 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
 
   const s = data?.snapshot;
   const history = data?.history ?? [];
+  // Older cached responses have no status — infer from the snapshot.
+  const status = data?.status ?? (s ? "ok" : "provider-error");
 
-  if (isLoading || !s) {
+  if (isLoading) {
     return (
       <div className="rounded border bg-muted/30 px-2 py-1.5 text-xs text-muted-foreground flex items-center gap-1 animate-pulse">
         <TrendingUp className="w-3 h-3" /> {ticker} — fetching…
+      </div>
+    );
+  }
+
+  if (!s) {
+    if (status === "invalid-symbol") {
+      return (
+        <div className="rounded border bg-muted/30 px-2 py-1.5 text-xs text-muted-foreground flex items-center gap-1">
+          <TrendingUp className="w-3 h-3" /> {ticker} — unknown ticker
+        </div>
+      );
+    }
+    return (
+      <div className="rounded border bg-muted/30 px-2 py-1.5 text-xs text-muted-foreground flex items-center gap-1">
+        <TrendingUp className="w-3 h-3" /> {ticker} — price unavailable, provider error
+        <button
+          type="button"
+          className="ml-auto text-[10px] text-primary hover:underline disabled:opacity-50"
+          onClick={() => refetch()}
+          disabled={isFetching}
+        >
+          {isFetching ? "Retrying…" : "Retry"}
+        </button>
       </div>
     );
   }
@@ -3251,6 +3281,9 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
     : `£${(s.marketCapGBP / 1_000).toFixed(0)}k`;
   const currencySymbol = s.currency === "GBp" ? "p" : s.currency === "GBP" ? "£" : s.currency === "USD" ? "$" : s.currency === "EUR" ? "€" : "";
   const priceLabel = s.price != null ? `${currencySymbol}${s.price.toFixed(2)}` : "—";
+  const fetchedLabel = s.fetchedAt
+    ? new Date(s.fetchedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
+    : null;
 
   return (
     <div className="rounded border bg-muted/30 overflow-hidden text-xs">
@@ -3261,7 +3294,10 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
           <span className="font-mono font-semibold">{s.ticker}</span>
           {s.exchange && <span className="text-[10px] text-muted-foreground truncate">· {s.exchange}</span>}
         </div>
-        <span className="font-semibold tabular-nums">{priceLabel}</span>
+        <div className="flex items-center gap-2 shrink-0">
+          {fetchedLabel && <span className="text-[10px] text-muted-foreground" title={s.fetchedAt}>as of {fetchedLabel}</span>}
+          <span className="font-semibold tabular-nums">{priceLabel}</span>
+        </div>
       </div>
       {/* Stats row */}
       <div className="flex items-center gap-3 px-2.5 pb-1.5 text-xs">
