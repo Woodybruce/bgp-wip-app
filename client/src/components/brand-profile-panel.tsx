@@ -4546,7 +4546,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           Best sellers. The chat moved up into the banner's second pane at
           the very top of the profile. */}
       <div className={pairCls}>
-      <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={data.contacts || []} pendingSenders={data.pendingContactSuggestions || []} />
+      <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={data.contacts || []} pendingSenders={data.pendingContactSuggestions || []} isLandlord={isLandlord} />
       {!isLandlord && (
         <MenuIntelCard
           companyId={companyId}

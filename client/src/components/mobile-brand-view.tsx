@@ -224,6 +224,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
         companyName={c.name}
         contacts={data.contacts || []}
         pendingSenders={data.pendingContactSuggestions || []}
+        isLandlord={isLandlord}
       />
 
       {/* BGP engagement — how much history the firm has with this brand

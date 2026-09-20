@@ -198,7 +198,7 @@ function PendingSendersList({ suggestions, companyId }: { suggestions: any[]; co
   );
 }
 
-export function CompanyContactsBoard({ companyId, companyName, contacts, pendingSenders = [], extraSections = [], discovery = true, filterPropertyTier = true }: {
+export function CompanyContactsBoard({ companyId, companyName, contacts, pendingSenders = [], extraSections = [], discovery = true, filterPropertyTier = true, isLandlord = false }: {
   companyId: string;
   companyName: string;
   contacts: any[];
@@ -210,6 +210,11 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   // the list (dashboard widget) turn it off.
   discovery?: boolean;
   filterPropertyTier?: boolean;
+  // Landlord companies get no property-tier role filter: that tier is
+  // retail/tenant-oriented (store dev, expansion, C-suite of a brand), so it
+  // hides landlord-side roles (asset management, leasing, estates surveyors).
+  // Callers pass the same isLandlord signal the rest of the profile uses.
+  isLandlord?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -288,10 +293,12 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   // When nothing survives the property-tier filter and the full list is
   // small anyway, gating a handful of contacts behind "Show all 1" is pure
   // friction — just list them (UX #85). The gate keeps working for long lists.
+  // Landlords bypass the tier entirely (see the isLandlord prop above).
+  const applyTierFilter = filterPropertyTier && !isLandlord;
   const tierEmpty = allContacts.every((c: any) => !isPropertyTier(c.role)) && discovered.every((k: any) => !isPropertyTier(k.title));
   const effectiveShowAll = showAll || (tierEmpty && allContacts.length + discovered.length <= 5);
-  const crmVisible = effectiveShowAll || !filterPropertyTier ? allContacts : allContacts.filter((c: any) => isPropertyTier(c.role));
-  const discoveredVisible = effectiveShowAll || !filterPropertyTier ? discovered : discovered.filter((k: any) => isPropertyTier(k.title));
+  const crmVisible = effectiveShowAll || !applyTierFilter ? allContacts : allContacts.filter((c: any) => isPropertyTier(c.role));
+  const discoveredVisible = effectiveShowAll || !applyTierFilter ? discovered : discovered.filter((k: any) => isPropertyTier(k.title));
   const hiddenCount = (allContacts.length - crmVisible.length) + (discovered.length - discoveredVisible.length);
   const summary = cascade?.summary;
 

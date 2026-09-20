@@ -12,6 +12,7 @@ import { isBrandNewsRelevant, isBrandSignalRelevant } from "./brand-news-relevan
 import { rankCompanyHeroImages } from "../shared/brand-image-selection";
 import { randomUUID } from "node:crypto";
 import { isOfficialBrandWebsite, publishableBrandImage, publishableBrandStore, prepareBrandIdentityUpdate, quarantineBrandIdentityDependents } from "./brand-publishing";
+import { PENDING_CONTACT_SUGGESTIONS_SQL } from "./brand-profile-suggestions";
 
 const router = Router();
 
@@ -735,27 +736,14 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     if (companyDomain && !bpScope) {
       try {
         const ps = await pool.query(
-          `SELECT p AS email,
-                  COUNT(*)::int AS touches,
-                  MAX(interaction_date) AS last_touch
-             FROM crm_interactions
-             CROSS JOIN LATERAL unnest(participants) AS p
-            WHERE participants IS NOT NULL
-              AND p ILIKE $1
-              AND p NOT ILIKE '%@brucegillinghampollard.com'
-              AND p NOT IN (
-                SELECT LOWER(email) FROM crm_contacts
-                 WHERE company_id = $2 AND email IS NOT NULL
-              )
-            GROUP BY p
-            ORDER BY touches DESC, last_touch DESC
-            LIMIT 20`,
+          PENDING_CONTACT_SUGGESTIONS_SQL,
           [`%@${companyDomain}`, companyId]
         );
         pendingContactSuggestions = ps.rows;
-      } catch {
+      } catch (e: any) {
         // Older databases may not have the participants column populated —
         // not fatal; just don't surface suggestions.
+        console.warn('[brand-profile] contact suggestions failed:', e?.message);
       }
     }
 
