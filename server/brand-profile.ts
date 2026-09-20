@@ -1236,8 +1236,10 @@ router.get("/api/brand/:companyId/stock", requireAuth, async (req: Request, res:
       getHistoricalPrices(ticker),
     ]);
     // status lets the panel distinguish a live quote from an unknown ticker
-    // vs a retryable provider error — never an endless "fetching…".
-    res.json({ snapshot: quote.snapshot, history, status: quote.status, symbol: normalizeTicker(ticker) });
+    // vs a retryable provider error — never an endless "fetching…". provider
+    // says who served the quote ("yahoo" | "stooq") so the UI can label a
+    // delayed fallback quote and debugging is easy.
+    res.json({ snapshot: quote.snapshot, history, status: quote.status, provider: quote.provider, symbol: normalizeTicker(ticker) });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

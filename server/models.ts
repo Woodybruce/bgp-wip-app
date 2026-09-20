@@ -10,6 +10,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { setupAdvancedModelsRoutes } from "./models-advanced";
 import { buildInvestmentModel, buildDCFModel, analyzeAdvancedWorkbook, applyBGPBranding, buildModelForAddin } from "./excel-builder";
 import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
+import { listAllChildren } from "./microsoft-graph-pagination";
 import { performPropertyLookup, formatPropertyReport } from "./property-lookup";
 import { crmDeals, crmContacts, crmCompanies, crmProperties, chatbgpLearnings, appFeedbackLog, appChangeRequests, excelTemplates, excelModelRuns, excelModelRunVersions } from "@shared/schema";
 import { ilike, or, eq, sql, desc, and } from "drizzle-orm";
@@ -3424,11 +3425,27 @@ CRITICAL RULES:
               itemUrl = `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root:/${encoded}:/children?$top=200&$select=name,size,webUrl,id,file,folder,lastModifiedDateTime`;
             }
 
-            const childrenRes = await fetch(itemUrl, { headers: { Authorization: `Bearer ${msToken}` } });
-            if (!childrenRes.ok) return JSON.stringify({ error: `Could not list folder "${cleanPath}" (${childrenRes.status})` });
-            const children = await childrenRes.json();
+            // Follow @odata.nextLink — folders over one page ($top=200)
+            // silently truncated for the AI browse tool without it.
+            let childrenValue: any[];
+            try {
+              childrenValue = await listAllChildren(
+                async (pageUrl) => {
+                  const pageRes = await fetch(pageUrl, { headers: { Authorization: `Bearer ${msToken}` } });
+                  if (!pageRes.ok) {
+                    const err: any = new Error(`Could not list folder "${cleanPath}" (${pageRes.status})`);
+                    err.graphStatus = pageRes.status;
+                    throw err;
+                  }
+                  return pageRes.json();
+                },
+                itemUrl,
+              );
+            } catch (e: any) {
+              return JSON.stringify({ error: e?.graphStatus ? e.message : `Could not list folder "${cleanPath}"` });
+            }
 
-            const items = (children.value || []).map((c: any) => ({
+            const items = childrenValue.map((c: any) => ({
               name: c.name,
               type: c.folder ? "folder" : "file",
               size: c.size ? `${Math.round(c.size / 1024)}KB` : undefined,

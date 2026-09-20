@@ -12,6 +12,13 @@
  * file silently before parsing.
  */
 import { graphRequest } from "./shared-mailbox";
+import { listAllChildren } from "./microsoft-graph-pagination";
+
+// graphRequest takes paths relative to the Graph origin; @odata.nextLink is
+// absolute — strip the origin before handing it back.
+const GRAPH_ORIGIN = "https://graph.microsoft.com/v1.0";
+const graphPage = async (url: string) =>
+  graphRequest(url.startsWith(GRAPH_ORIGIN) ? url.slice(GRAPH_ORIGIN.length) : url);
 
 function encodeShareUrl(shareUrl: string): string {
   const base64 = Buffer.from(shareUrl, "utf-8").toString("base64");
@@ -32,13 +39,18 @@ export async function resolveSharePointShareLink(shareUrl: string): Promise<Reso
   const driveItem: any = await graphRequest(`/shares/${encoded}/driveItem`);
 
   if (driveItem.folder) {
-    // Folder — return list of children. Caller decides whether to recurse.
-    const children: any = await graphRequest(`/shares/${encoded}/driveItem/children?$select=name,@microsoft.graph.downloadUrl,folder`);
+    // Folder — return list of children (all pages: Graph paginates children,
+    // a single fetch silently truncates large folders). Caller decides
+    // whether to recurse.
+    const allChildren: any[] = await listAllChildren(
+      graphPage,
+      `/shares/${encoded}/driveItem/children?$select=name,@microsoft.graph.downloadUrl,folder`,
+    );
     return {
       filename: driveItem.name,
       bytes: Buffer.alloc(0),
       isFolder: true,
-      folderChildren: (children?.value || [])
+      folderChildren: allChildren
         .filter((c: any) => !c.folder && c["@microsoft.graph.downloadUrl"])
         .map((c: any) => ({ filename: c.name, downloadUrl: c["@microsoft.graph.downloadUrl"] })),
     };

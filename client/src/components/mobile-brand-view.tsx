@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { getAuthHeaders, apiRequest, queryClient } from "@/lib/queryClient";
+import { isLandlordCompany } from "@/lib/company-kind";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pill } from "@/components/ui/pill";
@@ -127,7 +128,10 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
   }
 
   const c = data.company;
-  const isLandlord = /landlord|client/i.test(c.company_type || "");
+  // Same shared rule as the desktop panel (server flag first, type heuristic
+  // fallback) — mobile used its own /landlord|client/i regex and disagreed
+  // with desktop for investor/developer/reit/fund types.
+  const isLandlord = isLandlordCompany(c.company_type, (data as any).isLandlord);
   const trackerComments: any[] = trackerData?.comments || [];
 
   // Same dedupe as the desktop Signals feed — Instagram + Google News often

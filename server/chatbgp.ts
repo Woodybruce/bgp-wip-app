@@ -14,6 +14,7 @@ import { parseSlashCommand, setThreadModel, resolveChatModel, ackMessage } from 
 import { APP_MAP } from "./chatbgp-app-map";
 import mammoth from "mammoth";
 import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
+import { listAllChildren } from "./microsoft-graph-pagination";
 import { getFile, saveFile, findChatMediaByOriginalName, searchChatMedia, getRecentUserUploads } from "./file-storage";
 import { rectifyRows, fixPptxSchemaViolations } from "./pptx-rectify";
 
@@ -5639,17 +5640,15 @@ async function browseSharePointFolder(
       return { success: false, error: "Could not resolve the folder." };
     }
 
-    const childrenRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=200&$select=name,size,webUrl,id,file,folder,lastModifiedDateTime`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-
-    if (!childrenRes.ok) {
-      return { success: false, error: `Could not list folder contents (${childrenRes.status})` };
+    let childrenValue: any[];
+    try {
+      childrenValue = await listSharePointFolderChildren(driveId, itemId, token);
+    } catch (e: any) {
+      if (e?.graphStatus) return { success: false, error: `Could not list folder contents (${e.graphStatus})` };
+      throw e; // outer catch → "Failed to browse folder: …"
     }
 
-    const children = await childrenRes.json();
-    const items = (children.value || []).map((child: any) => ({
+    const items = childrenValue.map((child: any) => ({
       name: child.name,
       type: child.folder ? "folder" : "file",
       size: child.size,
@@ -5665,23 +5664,38 @@ async function browseSharePointFolder(
   }
 }
 
+// Graph pages drive-item children listings — follow @odata.nextLink (via the
+// shared helper) so folders over one page ($top=200) don't silently truncate
+// for the AI browse tools.
+async function listSharePointFolderChildren(driveId: string, itemId: string, token: string): Promise<any[]> {
+  return listAllChildren(
+    async (pageUrl) => {
+      const r = await fetch(pageUrl, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) {
+        const err: any = new Error(`Could not list folder contents (${r.status})`);
+        err.graphStatus = r.status;
+        throw err;
+      }
+      return r.json();
+    },
+    `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=200&$select=name,size,webUrl,id,file,folder,lastModifiedDateTime`,
+  );
+}
+
 async function browseSharePointFolderByIds(
   driveId: string,
   itemId: string,
   token: string
 ): Promise<{ success: boolean; items?: Array<{ name: string; type: string; size?: number; webUrl: string; driveId?: string; itemId?: string; lastModified?: string }>; error?: string }> {
   try {
-    const childrenRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=200&$select=name,size,webUrl,id,file,folder,lastModifiedDateTime`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-
-    if (!childrenRes.ok) {
-      return { success: false, error: `Could not list folder contents (${childrenRes.status})` };
+    let childrenValue: any[];
+    try {
+      childrenValue = await listSharePointFolderChildren(driveId, itemId, token);
+    } catch (e: any) {
+      if (e?.graphStatus) return { success: false, error: `Could not list folder contents (${e.graphStatus})` };
+      throw e; // outer catch → "Failed to browse folder: …"
     }
-
-    const children = await childrenRes.json();
-    const items = (children.value || []).map((child: any) => ({
+    const items = childrenValue.map((child: any) => ({
       name: child.name,
       type: child.folder ? "folder" : "file",
       size: child.size,
@@ -5707,16 +5721,15 @@ async function browseSharePointFolderRecursive(
 ): Promise<Array<{ name: string; path: string; type: string; size?: number; webUrl: string; driveId: string; itemId: string; lastModified?: string }>> {
   if (currentDepth >= maxDepth) return [];
 
-  const childrenRes = await fetch(
-    `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=200&$select=name,size,webUrl,id,file,folder,lastModifiedDateTime`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-
-  if (!childrenRes.ok) return [];
-  const children = await childrenRes.json();
+  let childrenValue: any[];
+  try {
+    childrenValue = await listSharePointFolderChildren(driveId, itemId, token);
+  } catch {
+    return [];
+  }
   const results: any[] = [];
 
-  for (const child of children.value || []) {
+  for (const child of childrenValue) {
     const childPath = basePath ? `${basePath}/${child.name}` : child.name;
     if (child.folder) {
       const subItems = await browseSharePointFolderRecursive(driveId, child.id, token, childPath, maxDepth, currentDepth + 1);
