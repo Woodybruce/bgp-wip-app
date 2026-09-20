@@ -1293,7 +1293,15 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
             <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={data.images || []} canRefresh={!isClientViewer} />
 
-            <div className={`rounded-lg border border-border p-3 space-y-3${isLandlord ? " md:w-1/2" : ""}`}>
+            {/* Landlord desktop: chat + key facts compose side-by-side in one
+                row (each half the content width); below md they stack as
+                before. Tenants keep the original single-column flow — the
+                wrapper is a plain block with the same space-y-4 spacing the
+                CardContent was already applying between these two blocks. */}
+            <div className={isLandlord
+              ? "flex flex-col md:flex-row gap-4 items-start"
+              : "space-y-4"}>
+            <div className={`rounded-lg border border-border p-3 space-y-3${isLandlord ? " md:flex-1 md:min-w-0" : ""}`}>
               <div className="flex flex-wrap justify-between items-center gap-2">
                 <p className="text-sm font-medium flex items-center gap-2"><MessageSquare className="w-4 h-4 text-muted-foreground" />{isLandlord ? "Landlord conversation" : "Brand conversation"}</p>
                 <Button type="button" size="sm" variant="outline" onClick={() => setConversationOpen(value => !value)} aria-expanded={conversationOpen} data-testid="button-brand-conversation">{conversationOpen ? "Close conversation" : "Open conversation"}</Button>
@@ -1305,7 +1313,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             </div>
 
             {/* Key facts row */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm empty:hidden">
+            <div className={`grid grid-cols-2 md:grid-cols-4 gap-2 text-sm empty:hidden${isLandlord ? " md:flex-1 md:min-w-0" : ""}`}>
               {!isLandlord && c.store_count != null && (
                 <div>
                   <div className="text-xs text-muted-foreground flex items-center gap-1">
@@ -1498,6 +1506,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   />
                 </div>
               ) : null}
+            </div>
             </div>
 
             {/* Parent group */}
