@@ -1229,6 +1229,24 @@ export function setupModelsRoutes(app: Express) {
         }
       }
 
+      // Fallback: if no mappings emerged (AI key absent or analysis came back
+      // empty), run the validated auto-mapper so the template is drivable
+      // immediately after upload.
+      if (Object.keys(inputMapping).length === 0 && Object.keys(outputMapping).length === 0) {
+        try {
+          const { autoMapWorkbook } = await import("./model-automap");
+          const wbForMap = XLSX.readFile(req.file.path, { cellFormula: true, sheetStubs: true });
+          const proposal = await autoMapWorkbook(wbForMap);
+          if (Object.keys(proposal.inputs).length > 0 || Object.keys(proposal.outputs).length > 0) {
+            inputMapping = proposal.inputs as typeof inputMapping;
+            outputMapping = proposal.outputs as typeof outputMapping;
+            console.log(`[upload] auto-mapped "${req.body.name || req.file.originalname}" via ${proposal.source}: ${Object.keys(proposal.inputs).length} inputs, ${Object.keys(proposal.outputs).length} outputs`);
+          }
+        } catch (e: any) {
+          console.error("[upload] auto-map fallback failed:", e?.message);
+        }
+      }
+
       const template = await storage.createExcelTemplate({
         name: req.body.name || path.parse(req.file.originalname).name,
         description: req.body.description || aiDescription,

@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, lazy, Suspense } from "react";
+import { useState, useRef, useMemo, useEffect, lazy, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -1257,11 +1257,122 @@ function PropertyLinkBadge({
   );
 }
 
+function AutoMapDialog({ template, open, onClose }: { template: ExcelTemplate; open: boolean; onClose: () => void }) {
+  const { toast } = useToast();
+  const [proposal, setProposal] = useState<any>(null);
+
+  const proposeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/models/templates/${template.id}/auto-map`, {});
+      return res.json();
+    },
+    onSuccess: (data) => setProposal(data),
+    onError: (e: any) => toast({ title: "Auto-map failed", description: e.message, variant: "destructive" }),
+  });
+
+  const applyMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/models/templates/${template.id}/auto-map`, {
+        apply: true,
+        inputMapping: proposal.inputs,
+        outputMapping: proposal.outputs,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/models/templates"] });
+      toast({ title: "Mappings applied", description: "Template is now drivable — Run, Sensitivity, Smart Run and Compare will use it." });
+      onClose();
+    },
+    onError: (e: any) => toast({ title: "Failed to apply mappings", description: e.message, variant: "destructive" }),
+  });
+
+  useEffect(() => {
+    if (open) { setProposal(null); proposeMutation.mutate(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const renderGroup = (entries: [string, any][], field: "type" | "format") => {
+    const groups = entries.reduce<Record<string, [string, any][]>>((acc, e) => {
+      const g = e[1].group || "Other";
+      (acc[g] ||= []).push(e);
+      return acc;
+    }, {});
+    return Object.entries(groups).map(([g, items]) => (
+      <div key={g} className="mb-2">
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{g}</p>
+        {items.map(([key, m]) => (
+          <div key={key} className="flex items-center justify-between text-sm py-0.5">
+            <span>{m.label}</span>
+            <span className="text-xs text-muted-foreground font-mono">{m.sheet}!{m.cell} · {m[field]}</span>
+          </div>
+        ))}
+      </div>
+    ));
+  };
+
+  const inputEntries = proposal ? Object.entries(proposal.inputs) : [];
+  const outputEntries = proposal ? Object.entries(proposal.outputs) : [];
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-primary" /> Auto-map — {template.name}
+          </DialogTitle>
+        </DialogHeader>
+        {proposeMutation.isPending && (
+          <div className="py-10 text-center text-sm text-muted-foreground">Claude is reading the workbook structure…</div>
+        )}
+        {proposal && (
+          <div className="space-y-4">
+            {proposal.source === "heuristic" && (
+              <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                AI unavailable — this proposal came from keyword heuristics. Review carefully before applying.
+              </p>
+            )}
+            {proposal.warnings?.length > 0 && (
+              <div className="text-xs text-muted-foreground border rounded px-2 py-1 space-y-0.5">
+                {proposal.warnings.slice(0, 8).map((w: string, i: number) => <p key={i}>⚠ {w}</p>)}
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-sm font-semibold mb-1">Inputs ({inputEntries.length})</p>
+                {inputEntries.length ? renderGroup(inputEntries, "type") : <p className="text-xs text-muted-foreground">None found</p>}
+              </div>
+              <div>
+                <p className="text-sm font-semibold mb-1">Outputs ({outputEntries.length})</p>
+                {outputEntries.length ? renderGroup(outputEntries, "format") : <p className="text-xs text-muted-foreground">None found</p>}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={onClose}>Cancel</Button>
+              <Button variant="outline" onClick={() => proposeMutation.mutate()} disabled={proposeMutation.isPending}>
+                Regenerate
+              </Button>
+              <Button
+                onClick={() => applyMutation.mutate()}
+                disabled={applyMutation.isPending || (!inputEntries.length && !outputEntries.length)}
+                data-testid={`button-apply-automap-${template.id}`}
+              >
+                {applyMutation.isPending ? "Applying…" : "Apply mappings"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function TemplateCard({ template }: { template: ExcelTemplate & { sheetCount?: number } }) {
   const { toast } = useToast();
   const [viewerOpen, setViewerOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
+  const [autoMapOpen, setAutoMapOpen] = useState(false);
 
   const { data: templateDetail } = useQuery<TemplateWithMeta>({
     queryKey: ["/api/models/templates", template.id],
@@ -1299,6 +1410,12 @@ function TemplateCard({ template }: { template: ExcelTemplate & { sheetCount?: n
         </p>
       </div>
       <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+        <Button variant="ghost" size="icon" className="h-7 w-7" title="Auto-map inputs/outputs with AI"
+          onClick={() => setAutoMapOpen(true)}
+          data-testid={`button-automap-template-${template.id}`}
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+        </Button>
         <Button variant="ghost" size="icon" className="h-7 w-7" title="Run model"
           onClick={() => setRunOpen(true)}
           data-testid={`button-run-template-${template.id}`}
@@ -1326,6 +1443,8 @@ function TemplateCard({ template }: { template: ExcelTemplate & { sheetCount?: n
         externalOpen={viewerOpen}
         onExternalClose={() => setViewerOpen(false)}
       />
+
+      <AutoMapDialog template={template} open={autoMapOpen} onClose={() => setAutoMapOpen(false)} />
 
       <Dialog open={runOpen} onOpenChange={setRunOpen}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>

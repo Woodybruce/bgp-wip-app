@@ -9,7 +9,7 @@
     "railway": "tsx script/railway.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
-    "test": "node --import tsx --test server/model-engine.test.ts",
+    "test": "node --import tsx --test server/model-engine.test.ts server/model-automap.test.ts",
     "db:push": "drizzle-kit push",
     "qa:pg": "bash qa/start-postgres.sh",
     "qa:regression": "node --import tsx --test qa/regression/*.test.* qa/regression/access.cjs qa/regression/auth.cjs qa/regression/wip.cjs qa/regression/financial.cjs"

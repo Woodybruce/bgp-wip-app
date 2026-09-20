@@ -10,6 +10,7 @@ import * as path from "path";
 import Anthropic from "@anthropic-ai/sdk";
 import PDFDocument from "pdfkit";
 import { createEngineFromWorkbook, applyMappedInputs, readEngineOutputs, type EngineCellError } from "./model-engine";
+import { autoMapWorkbook, buildWorkbookDigest, validateProposal, type AutoMapProposal } from "./model-automap";
 import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { ensureFileOnDisk } from "./file-storage";
 
@@ -112,6 +113,41 @@ function safeParseAIJson(text: string): any {
 }
 
 export function setupAdvancedModelsRoutes(app: Express) {
+
+  // Propose (or persist a confirmed) input/output mapping for a template.
+  // POST {} → AI proposal only. POST { apply: true } → propose + persist.
+  // POST { apply: true, inputMapping, outputMapping } → persist the exact
+  // client-confirmed proposal (validated against the workbook, no 2nd AI call).
+  app.post("/api/models/templates/:id/auto-map", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const template = await storage.getExcelTemplate(req.params.id as string);
+      if (!template) return res.status(404).json({ message: "Template not found" });
+
+      await ensureTemplateFile(template.filePath);
+      const wb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
+
+      const { apply, inputMapping: clientInputs, outputMapping: clientOutputs } = req.body || {};
+      let proposal: AutoMapProposal;
+      if (apply && clientInputs && typeof clientInputs === "object") {
+        proposal = validateProposal(buildWorkbookDigest(wb), clientInputs, clientOutputs || {});
+        proposal.source = "ai";
+      } else {
+        proposal = await autoMapWorkbook(wb);
+      }
+
+      if (apply) {
+        await db.update(excelTemplates).set({
+          inputMapping: JSON.stringify(proposal.inputs),
+          outputMapping: JSON.stringify(proposal.outputs),
+        }).where(eq(excelTemplates.id, template.id));
+      }
+
+      res.json({ ...proposal, applied: !!apply });
+    } catch (err: any) {
+      console.error("[auto-map] failed:", err);
+      res.status(500).json({ message: err?.message || "Auto-map failed" });
+    }
+  });
 
   app.post("/api/models/templates/:id/sensitivity", requireAuth, async (req: Request, res: Response) => {
     try {
