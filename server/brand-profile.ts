@@ -395,6 +395,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               MAX(interaction_date) AS last_touch
          FROM crm_interactions
         WHERE company_id = $1
+          AND interaction_date <= NOW()
         GROUP BY contact_id`,
       [companyId]
     );
@@ -556,7 +557,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               MAX(interaction_date) AS last_at,
               COUNT(*) FILTER (WHERE interaction_date >= now() - interval '90 days') ::int AS last_90d
          FROM crm_interactions
-        WHERE company_id = $1`,
+        WHERE company_id = $1
+          AND interaction_date <= NOW()`,
       [companyId]
     );
 

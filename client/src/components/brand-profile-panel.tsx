@@ -1004,8 +1004,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
           )}
           {c.agent_type && <Badge variant="secondary" className="text-[10px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
           {(() => {
-            const lastContactedAt = data.contacts.map((ct: any) => ct.last_contacted_at).filter(Boolean).sort().reverse()[0] as string | undefined;
-            const lastContactor = lastContactedAt ? data.contacts.find((ct: any) => ct.last_contacted_at === lastContactedAt) : null;
+            const lastContactedAt = data.contacts.map((ct: any) => ct.last_interaction_at).filter(Boolean).sort().reverse()[0] as string | undefined;
+            const lastContactor = lastContactedAt ? data.contacts.find((ct: any) => ct.last_interaction_at === lastContactedAt) : null;
             if (!lastContactedAt) return null;
             const days = Math.floor((Date.now() - new Date(lastContactedAt).getTime()) / 864e5);
             return (
@@ -1562,13 +1562,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             {/* Relationship strip — lead broker, last touchpoint, active contacts */}
             {(c.bgp_contact_crm || data.contacts.length > 0) && (() => {
               const lastContactedAt = data.contacts
-                .map((ct: any) => ct.last_contacted_at)
+                .map((ct: any) => ct.last_interaction_at)
                 .filter(Boolean)
                 .sort()
                 .reverse()[0] as string | undefined;
               const recent90d = data.contacts.filter((ct: any) => {
-                if (!ct.last_contacted_at) return false;
-                const d = new Date(ct.last_contacted_at);
+                if (!ct.last_interaction_at) return false;
+                const d = new Date(ct.last_interaction_at);
                 return Date.now() - d.getTime() < 90 * 864e5;
               }).length;
               const daysSince = lastContactedAt
