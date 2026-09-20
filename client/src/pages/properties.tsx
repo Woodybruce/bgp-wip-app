@@ -1755,10 +1755,22 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
     mutationFn: async (file: File) => {
       const formData = new FormData();
       formData.append("file", file);
-      const folderPath = folderUrl
-        ? "" // when using URL-based browsing, upload routes to SharePoint root for now
-        : `BGP share drive/${activeTeam}/${propertyName}${subPath ? `/${subPath}` : ""}`;
-      formData.append("folderPath", folderPath);
+      const destDriveId = folderData?.driveId;
+      const destFolderId = folderData?.currentItemId;
+      if (destDriveId && destFolderId) {
+        // Upload straight into the folder the user is actually browsing, by
+        // drive/item ID — correct for both linked-folder (folderUrl) and
+        // path-based browsing, immune to CRM/SharePoint name mismatches.
+        formData.append("driveId", destDriveId);
+        formData.append("folderId", destFolderId);
+      } else if (folderUrl) {
+        // A linked folder IS selected but the listing hasn't resolved its
+        // IDs — refuse here rather than let the server silently land the
+        // file at the SharePoint root.
+        throw new Error("This folder's location isn't available yet — wait for the file list to load, then try again.");
+      } else {
+        formData.append("folderPath", `BGP share drive/${activeTeam}/${propertyName}${subPath ? `/${subPath}` : ""}`);
+      }
       const res = await fetch("/api/microsoft/files/upload", { method: "POST", credentials: "include", body: formData });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));

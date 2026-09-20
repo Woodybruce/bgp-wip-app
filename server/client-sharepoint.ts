@@ -14,6 +14,7 @@ import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { graphRequest } from "./shared-mailbox";
 import { resolveCompanyScope } from "./company-scope";
+import { listAllChildren } from "./microsoft-graph-pagination";
 
 const router = Router();
 
@@ -120,10 +121,13 @@ router.get("/api/client/sharepoint/list", requireAuth, async (req, res) => {
     const item = await assertInRoot(root, itemId);
     if (!item) return res.status(403).json({ message: "That folder is outside your SharePoint area" });
 
-    const data = await graphRequest(
+    // graphRequest accepts absolute URLs, so @odata.nextLink pages resolve
+    // as-is — large folders no longer truncate at the first page.
+    const children = await listAllChildren(
+      (url) => graphRequest(url),
       `/drives/${root.driveId}/items/${itemId}/children?$top=200&$orderby=name&$select=id,name,size,lastModifiedDateTime,folder,file`
     );
-    const items = (data?.value || []).map((c: any) => ({
+    const items = children.map((c: any) => ({
       id: c.id,
       name: c.name,
       size: c.size ?? null,

@@ -162,9 +162,14 @@ async function listSharePointFolders(relPath: string): Promise<Array<{ name: str
   const childrenUrl = clean
     ? `https://graph.microsoft.com/v1.0/drives/${drive.id}/root:/${encodeURIComponent(clean).replace(/%2F/g, "/")}:/children?$select=${select}&$top=400`
     : `https://graph.microsoft.com/v1.0/drives/${drive.id}/root/children?$select=${select}&$top=400`;
-  const res = await fetch(childrenUrl, { headers: { Authorization: `Bearer ${token}` } });
-  const data = await res.json();
-  return (data.value || [])
+  // Follow @odata.nextLink — folder pickers truncate silently past one page.
+  const { listAllChildren } = await import("./microsoft-graph-pagination");
+  const children = await listAllChildren(async (pageUrl) => {
+    const pageRes = await fetch(pageUrl, { headers: { Authorization: `Bearer ${token}` } });
+    if (!pageRes.ok) throw new Error(`Graph list failed: ${pageRes.status}`);
+    return pageRes.json();
+  }, childrenUrl);
+  return children
     .filter((c: any) => !!c.folder)
     .map((c: any) => ({ name: c.name, path: clean ? `${clean}/${c.name}` : c.name }));
 }

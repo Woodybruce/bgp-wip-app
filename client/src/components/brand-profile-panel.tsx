@@ -115,8 +115,20 @@ interface BrandProfile {
   kyc: { doc_count: number; last_uploaded_at: string | null };
   images: Array<any>;
   deals: Array<any>;
-  completedDeals: Array<any>;
-  activeDeals: Array<any>;
+  // Full-set counts from the server aggregate (the `deals` list is capped at
+  // 20); completedDealRows/activeDealRows are the capped arrays for link/name
+  // rendering.
+  completedDeals: number;
+  activeDeals: number;
+  completedDealRows?: Array<any>;
+  activeDealRows?: Array<any>;
+  dealTotals?: {
+    total: number;
+    completed: number;
+    active: number;
+    totalFees: number | null;
+    team: string[];
+  };
   parentGroup: { id: string; name: string; store_count: number | null } | null;
   siblings: Array<any>;
   news: Array<{
@@ -234,7 +246,7 @@ interface BrandProfile {
   bgpSummary: {
     totalDeals: number;
     completedDeals: number;
-    totalFees: number;
+    totalFees: number | null;
     team: string[];
     interactionsTotal: number;
     interactionsLast90d: number;
@@ -930,8 +942,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   const pitchedTo = data.pitchedTo || [];
   const liveLocations = (data as any).liveLocations || [];
   const requirements = data.requirements || [];
-  const completedDeals = data.completedDeals || [];
-  const activeDeals = data.activeDeals || [];
+  const completedDeals = data.completedDealRows || [];
+  const activeDeals = data.activeDealRows || [];
+  // Full-set counts from the server aggregate — the deal list is capped at
+  // LIMIT 20, so these are the honest totals (the UI can show "20 of N").
+  const dealTotals = data.dealTotals || null;
+  const completedDealCount = data.completedDeals ?? completedDeals.length;
+  const activeDealCount = data.activeDeals ?? activeDeals.length;
   const turnover = data.turnover || [];
   const covenant = data.covenant || null;
   const rolloutVelocity = data.rolloutVelocity || null;
@@ -990,7 +1007,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             return "Brand Profile";
           })()}
           {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-transparent text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
-          {hunter && hunter.expansionScore >= 40 && (
+          {!isLandlord && hunter && hunter.expansionScore >= 40 && (
             <Badge
               className={
                 hunter.expansionScore >= 75 ? "bg-orange-50 text-orange-700 border-transparent text-[10px]" :
@@ -1004,8 +1021,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
           )}
           {c.agent_type && <Badge variant="secondary" className="text-[10px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
           {(() => {
-            const lastContactedAt = data.contacts.map((ct: any) => ct.last_contacted_at).filter(Boolean).sort().reverse()[0] as string | undefined;
-            const lastContactor = lastContactedAt ? data.contacts.find((ct: any) => ct.last_contacted_at === lastContactedAt) : null;
+            const lastContactedAt = data.contacts.map((ct: any) => ct.last_interaction_at).filter(Boolean).sort().reverse()[0] as string | undefined;
+            const lastContactor = lastContactedAt ? data.contacts.find((ct: any) => ct.last_interaction_at === lastContactedAt) : null;
             if (!lastContactedAt) return null;
             const days = Math.floor((Date.now() - new Date(lastContactedAt).getTime()) / 864e5);
             return (
@@ -1014,7 +1031,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               </span>
             );
           })()}
-          {c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
+          {!isLandlord && c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
         </CardTitle>
         <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
         </div>
@@ -1276,9 +1293,18 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
             <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={data.images || []} canRefresh={!isClientViewer} />
 
-            <div className="rounded-lg border border-border p-3 space-y-3">
+            {/* Landlord desktop: chat + key facts compose side-by-side in one
+                row (each half the content width); below md they stack
+                full-width (items-start only applies on md+ so the column
+                children still stretch). Tenants keep the original
+                single-column flow — the wrapper matches the parent flex
+                column's gap-2.5 spacing exactly. */}
+            <div className={isLandlord
+              ? "flex flex-col md:flex-row gap-2.5 md:gap-4 md:items-start"
+              : "flex flex-col gap-2.5"}>
+            <div className={`rounded-lg border border-border p-3 space-y-3${isLandlord ? " md:flex-1 md:min-w-0" : ""}`}>
               <div className="flex flex-wrap justify-between items-center gap-2">
-                <p className="text-sm font-medium flex items-center gap-2"><MessageSquare className="w-4 h-4 text-muted-foreground" />Brand conversation</p>
+                <p className="text-sm font-medium flex items-center gap-2"><MessageSquare className="w-4 h-4 text-muted-foreground" />{isLandlord ? "Landlord conversation" : "Brand conversation"}</p>
                 <Button type="button" size="sm" variant="outline" onClick={() => setConversationOpen(value => !value)} aria-expanded={conversationOpen} data-testid="button-brand-conversation">{conversationOpen ? "Close conversation" : "Open conversation"}</Button>
               </div>
               {conversationOpen && <>
@@ -1288,8 +1314,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             </div>
 
             {/* Key facts row */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm empty:hidden">
-              {c.store_count != null && (
+            <div className={`grid grid-cols-2 md:grid-cols-4 gap-2 text-sm empty:hidden${isLandlord ? " md:flex-1 md:min-w-0" : ""}`}>
+              {!isLandlord && c.store_count != null && (
                 <div>
                   <div className="text-xs text-muted-foreground flex items-center gap-1">
                     <Store className="w-3 h-3" /> Reported store total {aiFields.store_count && <AiChip />}
@@ -1312,7 +1338,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   </div>
                 </div>
               )}
-              {c.rollout_status && (
+              {!isLandlord && c.rollout_status && (
                 <div>
                   <div className="text-xs text-muted-foreground mb-1">Rollout {aiFields.rollout_status && <AiChip />}</div>
                   <RolloutBadge status={c.rollout_status} />
@@ -1482,6 +1508,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 </div>
               ) : null}
             </div>
+            </div>
 
             {/* Parent group */}
             {data.parentGroup && (
@@ -1562,13 +1589,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             {/* Relationship strip — lead broker, last touchpoint, active contacts */}
             {(c.bgp_contact_crm || data.contacts.length > 0) && (() => {
               const lastContactedAt = data.contacts
-                .map((ct: any) => ct.last_contacted_at)
+                .map((ct: any) => ct.last_interaction_at)
                 .filter(Boolean)
                 .sort()
                 .reverse()[0] as string | undefined;
               const recent90d = data.contacts.filter((ct: any) => {
-                if (!ct.last_contacted_at) return false;
-                const d = new Date(ct.last_contacted_at);
+                if (!ct.last_interaction_at) return false;
+                const d = new Date(ct.last_interaction_at);
                 return Date.now() - d.getTime() < 90 * 864e5;
               }).length;
               const daysSince = lastContactedAt
@@ -1672,8 +1699,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               </div>
             )}
 
-            {/* Space preferences — what they typically take */}
-            {spacePreferences && spacePreferences.sampleSize >= 2 && (
+            {/* Space preferences — what they typically take (occupier-only;
+                landlords don't take space, they let it) */}
+            {!isLandlord && spacePreferences && spacePreferences.sampleSize >= 2 && (
               <div className="border-t pt-2">
                 <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   <Target className="w-3 h-3" /> Space preferences (from {spacePreferences.sampleSize} comps)
@@ -1736,7 +1764,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
             {/* Similar tenants + AI competitor set merged into ONE section
                 (Woody, 2026-08-19: "are they not the same thing?") — CRM
-                same-use-class chips first, AI-researched set after, deduped. */}
+                same-use-class chips first, AI-researched set after, deduped.
+                Occupier-only: hidden for landlords. */}
+            {!isLandlord && (
             <AiCompetitorsPanel
               companyId={companyId}
               competitors={c.ai_competitors || []}
@@ -1744,25 +1774,27 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               allCompaniesForPicker={allCompaniesForPicker}
               similarTenants={competitors.slice(0, 8)}
             />
+            )}
 
-            {/* Deal ledger + active pipeline */}
-            {(completedDeals?.length > 0 || activeDeals?.length > 0 || requirements.length > 0) && (
+            {/* Deal ledger + active pipeline — counts are the full-set server
+                aggregates, honest even when the deal list is capped at 20. */}
+            {(completedDealCount > 0 || activeDealCount > 0 || (!isLandlord && requirements.length > 0)) && (
               <div className="border-t pt-2">
                 <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   <Briefcase className="w-3 h-3" /> Deal ledger &amp; pipeline
                 </div>
                 <div className="flex gap-2 text-xs flex-wrap">
-                  {completedDeals?.length > 0 && (
+                  {completedDealCount > 0 && (
                     <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]">
-                      {completedDeals.length} completed
+                      {completedDealCount} completed
                     </Badge>
                   )}
-                  {activeDeals?.length > 0 && (
+                  {activeDealCount > 0 && (
                     <Badge variant="secondary" className="text-[10px]">
-                      {activeDeals.length} active
+                      {activeDealCount} active
                     </Badge>
                   )}
-                  {requirements.filter(r => r.status === "Active").length > 0 && (
+                  {!isLandlord && requirements.filter(r => r.status === "Active").length > 0 && (
                     <Badge variant="secondary" className="text-[10px]">
                       {requirements.filter(r => r.status === "Active").length} active requirement{requirements.filter(r => r.status === "Active").length !== 1 ? "s" : ""}
                     </Badge>
@@ -2006,8 +2038,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     </div>
                   </details>
                 )}
-            {/* Active internal requirements — what this brand has on our books */}
-            {requirements.filter(r => r.status === "Active").length > 0 && (
+            {/* Active internal requirements — what this brand has on our books.
+                Occupier-only: a landlord lets space rather than seeking it. */}
+            {!isLandlord && requirements.filter(r => r.status === "Active").length > 0 && (
               <div>
                 <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
                   <span className="flex items-center gap-1">
@@ -2042,8 +2075,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             )}
 
             {/* Pipnet requirements — external feed of what the brand is asking
-                the wider market for. Lazy-fetched, cached server-side 1h. */}
-            <PipnetRequirementsRow companyId={companyId} brandName={c.name} isClient={isClientViewer} />
+                the wider market for. Lazy-fetched, cached server-side 1h.
+                Occupier-only: hidden for landlords. */}
+            {!isLandlord && <PipnetRequirementsRow companyId={companyId} brandName={c.name} isClient={isClientViewer} />}
 
             {/* Signals feed — same shape as the old Hunter Intel zone */}
             <div>
@@ -3188,7 +3222,12 @@ export function StockSnapshotCard({ companyId, ticker }: { companyId: string; ti
 }
 
 function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; ticker: string }) {
-  const { data, isLoading } = useQuery<{ snapshot: any | null; history: Array<{ date: string; close: number }> }>({
+  const { data, isLoading, refetch, isFetching } = useQuery<{
+    snapshot: any | null;
+    history: Array<{ date: string; close: number }>;
+    status?: "ok" | "invalid-symbol" | "provider-error" | "no-ticker";
+    symbol?: string | null;
+  }>({
     queryKey: ["/api/brand", companyId, "stock"],
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/brand/${companyId}/stock`);
@@ -3199,11 +3238,36 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
 
   const s = data?.snapshot;
   const history = data?.history ?? [];
+  // Older cached responses have no status — infer from the snapshot.
+  const status = data?.status ?? (s ? "ok" : "provider-error");
 
-  if (isLoading || !s) {
+  if (isLoading) {
     return (
       <div className="rounded border bg-muted/30 px-2 py-1.5 text-xs text-muted-foreground flex items-center gap-1 animate-pulse">
         <TrendingUp className="w-3 h-3" /> {ticker} — fetching…
+      </div>
+    );
+  }
+
+  if (!s) {
+    if (status === "invalid-symbol") {
+      return (
+        <div className="rounded border bg-muted/30 px-2 py-1.5 text-xs text-muted-foreground flex items-center gap-1">
+          <TrendingUp className="w-3 h-3" /> {ticker} — unknown ticker
+        </div>
+      );
+    }
+    return (
+      <div className="rounded border bg-muted/30 px-2 py-1.5 text-xs text-muted-foreground flex items-center gap-1">
+        <TrendingUp className="w-3 h-3" /> {ticker} — price unavailable, provider error
+        <button
+          type="button"
+          className="ml-auto text-[10px] text-primary hover:underline disabled:opacity-50"
+          onClick={() => refetch()}
+          disabled={isFetching}
+        >
+          {isFetching ? "Retrying…" : "Retry"}
+        </button>
       </div>
     );
   }
@@ -3217,6 +3281,9 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
     : `£${(s.marketCapGBP / 1_000).toFixed(0)}k`;
   const currencySymbol = s.currency === "GBp" ? "p" : s.currency === "GBP" ? "£" : s.currency === "USD" ? "$" : s.currency === "EUR" ? "€" : "";
   const priceLabel = s.price != null ? `${currencySymbol}${s.price.toFixed(2)}` : "—";
+  const fetchedLabel = s.fetchedAt
+    ? new Date(s.fetchedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
+    : null;
 
   return (
     <div className="rounded border bg-muted/30 overflow-hidden text-xs">
@@ -3227,7 +3294,10 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
           <span className="font-mono font-semibold">{s.ticker}</span>
           {s.exchange && <span className="text-[10px] text-muted-foreground truncate">· {s.exchange}</span>}
         </div>
-        <span className="font-semibold tabular-nums">{priceLabel}</span>
+        <div className="flex items-center gap-2 shrink-0">
+          {fetchedLabel && <span className="text-[10px] text-muted-foreground" title={s.fetchedAt}>as of {fetchedLabel}</span>}
+          <span className="font-semibold tabular-nums">{priceLabel}</span>
+        </div>
       </div>
       {/* Stats row */}
       <div className="flex items-center gap-3 px-2.5 pb-1.5 text-xs">
@@ -4546,7 +4616,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           Best sellers. The chat moved up into the banner's second pane at
           the very top of the profile. */}
       <div className={pairCls}>
-      <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={data.contacts || []} pendingSenders={data.pendingContactSuggestions || []} />
+      <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={data.contacts || []} pendingSenders={data.pendingContactSuggestions || []} isLandlord={isLandlord} />
       {!isLandlord && (
         <MenuIntelCard
           companyId={companyId}

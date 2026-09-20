@@ -6423,14 +6423,20 @@ export async function executeCrmToolRaw(
           siblings: full.siblings?.slice(0, 10),
           contactsSummary: {
             total: full.contacts?.length || 0,
-            lastTouchedAt: full.contacts?.[0]?.last_contacted_at || null,
+            lastTouchedAt: (full.contacts || []).reduce(
+              (max: string | null, ct: any) =>
+                ct?.last_interaction_at && (!max || ct.last_interaction_at > max) ? ct.last_interaction_at : max,
+              null,
+            ),
             sample: full.contacts?.slice(0, 5).map((ct: any) => ({
-              name: ct.name, role: ct.role, email: ct.email, lastContactedAt: ct.last_contacted_at,
+              name: ct.name, role: ct.role, email: ct.email, lastContactedAt: ct.last_interaction_at || null,
             })),
           },
-          completedDealsCount: full.completedDeals?.length || 0,
-          activeDealsCount: full.activeDeals?.length || 0,
-          activeDeals: full.activeDeals?.slice(0, 10).map((d: any) => ({ id: d.id, name: d.name, stage: d.stage, role: d.role })),
+          // completedDeals/activeDeals are full-set counts; the capped row
+          // arrays moved to completedDealRows/activeDealRows.
+          completedDealsCount: full.completedDeals ?? full.completedDealRows?.length ?? 0,
+          activeDealsCount: full.activeDeals ?? full.activeDealRows?.length ?? 0,
+          activeDeals: full.activeDealRows?.slice(0, 10).map((d: any) => ({ id: d.id, name: d.name, stage: d.stage, role: d.role })),
           requirements: full.requirements?.filter((r: any) => r.status === "Active").slice(0, 10),
           pitchedTo: full.pitchedTo?.slice(0, 15).map((p: any) => ({
             propertyId: p.property_id, propertyName: p.property_name, unit: p.unit_name, status: p.status,

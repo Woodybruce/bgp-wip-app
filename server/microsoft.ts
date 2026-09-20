@@ -5,6 +5,7 @@ import multer from "multer";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { contentDispositionFor } from "./utils/http-headers";
+import { listAllChildren, resolveUploadDestination } from "./microsoft-graph-pagination";
 
 const SCOPES = [
   "User.Read",
@@ -557,26 +558,37 @@ export function setupMicrosoftRoutes(app: Express) {
         }
       }
 
-      const response = await fetch(url + "?$top=100&$orderby=name&$select=id,name,size,lastModifiedDateTime,webUrl,folder,file,parentReference&$expand=thumbnails", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          delete req.session.msTokens;
-          return res.status(401).json({ message: "Microsoft token expired. Please reconnect." });
+      // Follow @odata.nextLink until exhausted — Graph pages drive-item
+      // children, so a single fetch silently truncates large folders.
+      const fetchPage = async (pageUrl: string) => {
+        const pageRes = await fetch(pageUrl, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!pageRes.ok) {
+          if (pageRes.status === 401) {
+            delete req.session.msTokens;
+            const err: any = new Error("Microsoft token expired");
+            err.status = 401;
+            throw err;
+          }
+          throw new Error(`Graph API error: ${pageRes.status}`);
         }
-        throw new Error(`Graph API error: ${response.status}`);
-      }
+        return pageRes.json();
+      };
 
-      const data = await response.json();
-      const items = data.value || [];
+      const items = await listAllChildren(
+        fetchPage,
+        url + "?$top=100&$orderby=name&$select=id,name,size,lastModifiedDateTime,webUrl,folder,file,parentReference&$expand=thumbnails",
+      );
       if (items.length > 0 && items[0].parentReference?.driveId) {
         res.json({ items, driveId: items[0].parentReference.driveId });
       } else {
         res.json({ items, driveId: driveId || null });
       }
     } catch (err: any) {
+      if (err?.status === 401) {
+        return res.status(401).json({ message: "Microsoft token expired. Please reconnect." });
+      }
       console.error("Files error:", err);
       res.status(500).json({ message: "Failed to fetch files" });
     }
@@ -2929,12 +2941,15 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
           const subItem = await subRes.json();
           itemId = subItem.id;
         }
-        const childrenRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=100`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!childrenRes.ok) throw new Error(`Failed to list children: ${childrenRes.status}`);
-        const childrenData = await childrenRes.json();
-        const items = (childrenData.value || []).map((item: any) => ({
+        // Paginate: large folders span multiple Graph pages (@odata.nextLink).
+        const childItems = await listAllChildren(async (pageUrl) => {
+          const childrenRes = await fetch(pageUrl, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!childrenRes.ok) throw new Error(`Failed to list children: ${childrenRes.status}`);
+          return childrenRes.json();
+        }, `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=100`);
+        const items = childItems.map((item: any) => ({
           id: item.id,
           name: item.name,
           isFolder: !!item.folder,
@@ -2954,21 +2969,30 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       let folderPath = `${SHAREPOINT_ROOT_FOLDER}/${team}/${propertyName}`;
       if (subPath) folderPath = `${folderPath}/${subPath}`;
       const encodedPath = folderPath.split("/").map(s => encodeURIComponent(s)).join("/");
-      const url = `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodedPath}:/children?$top=100`;
 
-      const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!response.ok) {
-        if (response.status === 404) {
+      // Paginate: large folders span multiple Graph pages (@odata.nextLink).
+      // A 404 on the first page means the folder doesn't exist.
+      let childItems: any[];
+      try {
+        childItems = await listAllChildren(async (pageUrl) => {
+          const pageRes = await fetch(pageUrl, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!pageRes.ok) {
+            const err: any = new Error(`Failed to list folders: ${pageRes.status}`);
+            err.status = pageRes.status;
+            throw err;
+          }
+          return pageRes.json();
+        }, `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodedPath}:/children?$top=100`);
+      } catch (err: any) {
+        if (err?.status === 404) {
           return res.json({ exists: false, folders: [] });
         }
-        throw new Error(`Failed to list folders: ${response.status}`);
+        throw err;
       }
 
-      const data = await response.json();
-      const items = (data.value || []).map((item: any) => ({
+      const items = childItems.map((item: any) => ({
         id: item.id,
         name: item.name,
         isFolder: !!item.folder,
@@ -3059,21 +3083,30 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       }
 
       const encodedPath = folderPath.split("/").map(s => encodeURIComponent(s)).join("/");
-      const url = `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodedPath}:/children?$top=200&$orderby=name`;
 
-      const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!response.ok) {
-        if (response.status === 404) {
+      // Paginate: large folders span multiple Graph pages (@odata.nextLink).
+      // A 404 on the first page means the folder doesn't exist.
+      let childItems: any[];
+      try {
+        childItems = await listAllChildren(async (pageUrl) => {
+          const pageRes = await fetch(pageUrl, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!pageRes.ok) {
+            const err: any = new Error(`Failed to browse: ${pageRes.status}`);
+            err.status = pageRes.status;
+            throw err;
+          }
+          return pageRes.json();
+        }, `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodedPath}:/children?$top=200&$orderby=name`);
+      } catch (err: any) {
+        if (err?.status === 404) {
           return res.json({ exists: false, items: [], path: folderPath });
         }
-        throw new Error(`Failed to browse: ${response.status}`);
+        throw err;
       }
 
-      const data = await response.json();
-      const items = (data.value || []).map((item: any) => ({
+      const items = childItems.map((item: any) => ({
         id: item.id,
         name: item.name,
         isFolder: !!item.folder,
@@ -3110,40 +3143,29 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       const folderId = req.body.folderId as string;
       const folderPath = req.body.folderPath as string;
 
-      if (!driveId && !folderPath) {
-        const spInfo = await getSharePointDriveId(token);
-        if (!spInfo) return res.status(404).json({ message: "Could not find SharePoint site" });
-
-        const uploadUrl = `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodeURIComponent(SHAREPOINT_ROOT_FOLDER)}/${encodeURIComponent(file.originalname)}:/content`;
-        const uploadRes = await fetch(uploadUrl, {
-          method: "PUT",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": file.mimetype || "application/octet-stream",
-          },
-          body: file.buffer,
-        });
-
-        if (!uploadRes.ok) {
-          const err = await uploadRes.text();
-          return res.status(uploadRes.status).json({ message: `Upload failed: ${err.slice(0, 200)}` });
-        }
-
-        const result = await uploadRes.json();
-        return res.json({ id: result.id, name: result.name, webUrl: result.webUrl, size: result.size });
+      // Where does this upload land? A selected folder with missing IDs is a
+      // 4xx — never a silent upload to the SharePoint root. No selection at
+      // all keeps the existing BGP-share-drive-root default.
+      const dest = resolveUploadDestination({ driveId, folderId, folderPath });
+      if (dest.kind === "error") {
+        return res.status(dest.status).json({ message: dest.message });
       }
 
       let uploadUrl: string;
-      if (folderId) {
-        uploadUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(file.originalname)}:/content`;
-      } else if (folderPath) {
+      if (dest.kind === "folder") {
+        uploadUrl = `https://graph.microsoft.com/v1.0/drives/${dest.driveId}/items/${dest.folderId}:/${encodeURIComponent(file.originalname)}:/content`;
+      } else if (dest.kind === "path") {
         const spInfo = await getSharePointDriveId(token);
-        const drive = driveId || spInfo?.driveId;
+        const drive = dest.driveId || spInfo?.driveId;
         if (!drive) return res.status(404).json({ message: "Could not find SharePoint drive" });
-        const cleanPath = folderPath.replace(/^\/+|\/+$/g, "");
+        const cleanPath = dest.folderPath.replace(/^\/+|\/+$/g, "");
         uploadUrl = `https://graph.microsoft.com/v1.0/drives/${drive}/root:/${cleanPath}/${encodeURIComponent(file.originalname)}:/content`;
+      } else if (dest.kind === "drive-root") {
+        uploadUrl = `https://graph.microsoft.com/v1.0/drives/${dest.driveId}/root:/${encodeURIComponent(file.originalname)}:/content`;
       } else {
-        uploadUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(file.originalname)}:/content`;
+        const spInfo = await getSharePointDriveId(token);
+        if (!spInfo) return res.status(404).json({ message: "Could not find SharePoint site" });
+        uploadUrl = `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodeURIComponent(SHAREPOINT_ROOT_FOLDER)}/${encodeURIComponent(file.originalname)}:/content`;
       }
 
       const uploadRes = await fetch(uploadUrl, {
