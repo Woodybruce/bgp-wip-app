@@ -177,4 +177,17 @@ describe("chatbgp.ts brand-profile tool", () => {
     assert.doesNotMatch(block, /full\.activeDeals\?\.length/);
     assert.doesNotMatch(block, /full\.completedDeals\?\.length/);
   });
+
+  // Follow-up (final review): the profile API has only ever decorated contacts
+  // with last_interaction_at, so last_contacted_at reads were always null —
+  // and contacts[0] is name-sorted, not recency-sorted. Assert the tool reads
+  // last_interaction_at and reduces over all contacts for lastTouchedAt.
+  it("reads contact recency from last_interaction_at, never last_contacted_at", () => {
+    const contactsAnchor = src.indexOf("contactsSummary");
+    assert.ok(contactsAnchor !== -1, "contactsSummary block not found");
+    const contactsBlock = src.slice(contactsAnchor, contactsAnchor + 700);
+    assert.doesNotMatch(contactsBlock, /last_contacted_at/);
+    assert.match(contactsBlock, /last_interaction_at/);
+    assert.match(contactsBlock, /\(full\.contacts \|\| \[\]\)\.reduce\(/);
+  });
 });

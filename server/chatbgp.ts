@@ -6423,9 +6423,13 @@ export async function executeCrmToolRaw(
           siblings: full.siblings?.slice(0, 10),
           contactsSummary: {
             total: full.contacts?.length || 0,
-            lastTouchedAt: full.contacts?.[0]?.last_contacted_at || null,
+            lastTouchedAt: (full.contacts || []).reduce(
+              (max: string | null, ct: any) =>
+                ct?.last_interaction_at && (!max || ct.last_interaction_at > max) ? ct.last_interaction_at : max,
+              null,
+            ),
             sample: full.contacts?.slice(0, 5).map((ct: any) => ({
-              name: ct.name, role: ct.role, email: ct.email, lastContactedAt: ct.last_contacted_at,
+              name: ct.name, role: ct.role, email: ct.email, lastContactedAt: ct.last_interaction_at || null,
             })),
           },
           // completedDeals/activeDeals are full-set counts; the capped row
