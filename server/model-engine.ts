@@ -11,6 +11,14 @@
  */
 import { HyperFormula, DetailedCellError } from "hyperformula";
 import XLSX from "xlsx-js-style";
+import { registerExcelCompatFunctions } from "./model-functions";
+import { desugarLet } from "./model-let";
+import { boundFullRowColRefs, type SheetDims } from "./model-ranges";
+import { foldPositionGuards, rewriteBooleanLiterals } from "./model-guards";
+
+export { desugarLet };
+export { boundFullRowColRefs, foldPositionGuards, rewriteBooleanLiterals };
+export type { SheetDims };
 
 export type EngineScalar = number | string | boolean | null;
 
@@ -49,12 +57,35 @@ function dateToExcelSerial(d: Date): number {
 
 type HFScalar = string | number | boolean | null;
 
-function cellToHFValue(cell: XLSX.CellObject | undefined): HFScalar {
+/** Where a cell lives, so load-time rewrites can use sheet bounds and position. */
+interface CellContext {
+  sheetName: string;
+  dimsBySheet: ReadonlyMap<string, SheetDims>;
+  row: number; // 0-based
+  col: number; // 0-based
+}
+
+function cellToHFValue(cell: XLSX.CellObject | undefined, ctx?: CellContext): HFScalar {
   if (!cell) return null;
 
   if (typeof cell.f === "string" && cell.f.length > 0) {
-    const f = cell.f.startsWith("=") ? cell.f : `=${cell.f}`;
-    return f;
+    let f = cell.f.startsWith("=") ? cell.f : `=${cell.f}`;
+    if (ctx) {
+      // Bound full-row/full-column refs (CF!$8:$8 -> CF!$A$8:$GG$8) to the used
+      // range of the referenced sheet: keeps HyperFormula's static dependency
+      // ranges at real cells instead of 16,384 phantom columns (model-ranges.ts).
+      f = boundFullRowColRefs(f, ctx.sheetName, ctx.dimsBySheet);
+      // Fold IF(COLUMN()=k,...) / IF(ROW()=k,...) guards whose outcome is fixed
+      // by the host cell's position. Removes the dead edge that closes false
+      // circular references in running-total rows (model-guards.ts).
+      f = foldPositionGuards(f, ctx.row, ctx.col);
+    }
+    // Excel's bare TRUE/FALSE literals are 0-arg calls to HyperFormula
+    // (model-guards.ts).
+    f = rewriteBooleanLiterals(f);
+    // HyperFormula has no LET: inline it away (see model-let.ts). Cheap gate
+    // first so the 99% of formulas without LET skip the parser.
+    return /\bLET\s*\(/i.test(f) ? desugarLet(f) : f;
   }
 
   const v = cell.v;
@@ -78,7 +109,11 @@ function cellToHFValue(cell: XLSX.CellObject | undefined): HFScalar {
   }
 }
 
-function worksheetToHFArray(ws: XLSX.WorkSheet): HFScalar[][] {
+function worksheetToHFArray(
+  ws: XLSX.WorkSheet,
+  sheetName?: string,
+  dimsBySheet?: ReadonlyMap<string, SheetDims>,
+): HFScalar[][] {
   const ref = ws["!ref"];
   if (!ref) return [];
   const range = XLSX.utils.decode_range(ref);
@@ -93,7 +128,9 @@ function worksheetToHFArray(ws: XLSX.WorkSheet): HFScalar[][] {
   for (let r = 0; r <= range.e.r; r++) {
     const row: HFScalar[] = new Array(colCount).fill(null);
     for (let c = 0; c <= range.e.c; c++) {
-      row[c] = cellToHFValue(ws[XLSX.utils.encode_cell({ r, c })]);
+      const ctx: CellContext | undefined =
+        sheetName && dimsBySheet ? { sheetName, dimsBySheet, row: r, col: c } : undefined;
+      row[c] = cellToHFValue(ws[XLSX.utils.encode_cell({ r, c })], ctx);
     }
     rows[r] = row;
   }
@@ -106,6 +143,111 @@ function describeError(err: unknown): string {
     return String((err as any).value);
   }
   return String(err);
+}
+
+interface HFAddress {
+  sheet: number;
+  row: number;
+  col: number;
+}
+
+function isCycleError(v: unknown): boolean {
+  return v instanceof DetailedCellError && v.value === "#CYCLE!";
+}
+
+function findFirstCycle(hf: HyperFormula, sheetIdByName: Map<string, number>): HFAddress | null {
+  for (const [, sheetId] of sheetIdByName) {
+    const dims = hf.getSheetDimensions(sheetId);
+    for (let r = 0; r < dims.height; r++) {
+      for (let c = 0; c < dims.width; c++) {
+        if (isCycleError(hf.getCellValue({ sheet: sheetId, row: r, col: c }))) {
+          return { sheet: sheetId, row: r, col: c };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Follow #CYCLE! precedents until the walk repeats a cell. Any closed walk in
+ * the static dependency graph is a genuine circular reference, so the repeated
+ * cell is guaranteed to be a member of a cycle. Returns null if the walk
+ * dead-ends (then the caller should freeze the start cell itself).
+ */
+function walkToCycleMember(hf: HyperFormula, start: HFAddress): HFAddress | null {
+  const seen = new Set<string>();
+  let cur = start;
+  for (let step = 0; step < 500; step++) {
+    const key = `${cur.sheet}:${cur.row}:${cur.col}`;
+    if (seen.has(key)) return cur;
+    seen.add(key);
+    const preds = hf.getCellPrecedents(cur) as any[];
+    let next: HFAddress | null = null;
+    for (const p of preds) {
+      if (p.start) {
+        // Range precedent: scan for a cyclic cell inside (bounded for safety).
+        let scanned = 0;
+        for (let r = p.start.row; r <= p.end.row && !next; r++) {
+          for (let c = p.start.col; c <= p.end.col && !next; c++) {
+            if (++scanned > 100_000) break;
+            if (isCycleError(hf.getCellValue({ sheet: p.start.sheet, row: r, col: c }))) {
+              next = { sheet: p.start.sheet, row: r, col: c };
+            }
+          }
+        }
+        if (next) break;
+      } else if (isCycleError(hf.getCellValue(p))) {
+        next = p;
+        break;
+      }
+    }
+    if (!next) return null;
+    cur = next;
+  }
+  return null;
+}
+
+/**
+ * Excel with iterative calculation OFF resolves circular references to 0 (and
+ * shows a warning); HyperFormula instead marks the whole SCC #CYCLE! and the
+ * error poisons every downstream cell. To reproduce the workbook's observable
+ * state we freeze one member of each genuine cycle at the value Excel cached
+ * in the file (0 when there is none), which breaks the SCC, and repeat until
+ * the graph is acyclic. This is only reachable after the load-time transforms
+ * (model-ranges / model-guards) have already removed FALSE cycles, so what
+ * remains is circular in Excel too.
+ */
+function breakCircularReferences(
+  hf: HyperFormula,
+  wb: XLSX.WorkBook,
+  sheetIdByName: Map<string, number>,
+  warnings: string[],
+): void {
+  const MAX_FREEZES = 200;
+  const frozen: string[] = [];
+  for (let i = 0; i < MAX_FREEZES; i++) {
+    const start = findFirstCycle(hf, sheetIdByName);
+    if (!start) break;
+    const member = walkToCycleMember(hf, start) ?? start;
+    const sheet = hf.getSheetName(member.sheet) ?? String(member.sheet);
+    const a1 = XLSX.utils.encode_cell({ r: member.row, c: member.col });
+    const cached = wb.Sheets[sheet]?.[a1]?.v;
+    const value =
+      typeof cached === "number" || typeof cached === "string" || typeof cached === "boolean"
+        ? cached
+        : 0;
+    hf.setCellContents(member, [[value]]);
+    frozen.push(`${sheet}!${a1}`);
+  }
+  if (frozen.length > 0) {
+    warnings.push(
+      `Circular reference(s) with iterative calculation off; froze ${frozen.length} cell(s) at Excel-cached values: ${frozen.join(", ")}`,
+    );
+  }
+  if (findFirstCycle(hf, sheetIdByName)) {
+    warnings.push("Some circular references could not be resolved");
+  }
 }
 
 class HyperFormulaEngine implements ModelEngine {
@@ -214,6 +356,11 @@ const HF_OPTIONS = {
   licenseKey: "gpl-v3", // see licence note in project docs; swap for a commercial key if required
   // Excel 1900 date system; DATE() serials match SheetJS serials (verified).
   leapYear1900: false,
+  // Excel 365 semantics: range arithmetic evaluates elementwise. Required by
+  // workbooks whose named expressions are array formulas (e.g.
+  // Import_Key = TRIM(CLEAN(range)) & "|" & TRIM(CLEAN(range))); without it
+  // those evaluate to #VALUE! and poison every dependent cell.
+  useArrayArithmetic: true,
 };
 
 /** Shape of one entry in a template's inputMapping / outputMapping. */
@@ -308,9 +455,26 @@ export function readEngineOutputs(
  * unsupported functions surface as per-cell Excel errors instead.
  */
 export function createEngineFromWorkbook(wb: XLSX.WorkBook): ModelEngine {
+  registerExcelCompatFunctions(); // static, once per process; must precede buildFromSheets
   const warnings: string[] = [];
   const sheets: Record<string, HFScalar[][]> = {};
   const sheetNames: string[] = [];
+
+  // Used-range dimensions per sheet, from SheetJS !ref. Needed up front so
+  // full-row/column refs in any sheet can be bounded against the sheet they
+  // point at (which may be parsed later in the loop).
+  const dimsBySheet = new Map<string, SheetDims>();
+  for (const name of wb.SheetNames) {
+    const ref = wb.Sheets[name]?.["!ref"];
+    if (!ref) continue;
+    const range = XLSX.utils.decode_range(ref);
+    dimsBySheet.set(name, {
+      firstRow: range.s.r,
+      firstCol: range.s.c,
+      lastRow: range.e.r,
+      lastCol: range.e.c,
+    });
+  }
 
   for (const name of wb.SheetNames) {
     const ws = wb.Sheets[name];
@@ -319,7 +483,7 @@ export function createEngineFromWorkbook(wb: XLSX.WorkBook): ModelEngine {
       warnings.push(`Duplicate sheet name skipped: "${name}"`);
       continue;
     }
-    sheets[name] = worksheetToHFArray(ws);
+    sheets[name] = worksheetToHFArray(ws, name, dimsBySheet);
     sheetNames.push(name);
   }
 
@@ -347,6 +511,18 @@ export function createEngineFromWorkbook(wb: XLSX.WorkBook): ModelEngine {
     } catch (err: any) {
       warnings.push(`Named range "${name}" could not be registered: ${err?.message || err}`);
     }
+  }
+
+  // Genuine circular references (still present after the false-cycle
+  // transforms): emulate Excel's no-iterative-calc behaviour by freezing one
+  // member of each cycle at its Excel-cached value.
+  {
+    const ids = new Map<string, number>();
+    for (const name of sheetNames) {
+      const id = hf.getSheetId(name);
+      if (id !== undefined) ids.set(name, id);
+    }
+    breakCircularReferences(hf, wb, ids, warnings);
   }
 
   return new HyperFormulaEngine(hf, sheetNames, warnings);
