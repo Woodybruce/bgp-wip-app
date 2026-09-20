@@ -6428,9 +6428,11 @@ export async function executeCrmToolRaw(
               name: ct.name, role: ct.role, email: ct.email, lastContactedAt: ct.last_contacted_at,
             })),
           },
-          completedDealsCount: full.completedDeals?.length || 0,
-          activeDealsCount: full.activeDeals?.length || 0,
-          activeDeals: full.activeDeals?.slice(0, 10).map((d: any) => ({ id: d.id, name: d.name, stage: d.stage, role: d.role })),
+          // completedDeals/activeDeals are full-set counts; the capped row
+          // arrays moved to completedDealRows/activeDealRows.
+          completedDealsCount: full.completedDeals ?? full.completedDealRows?.length ?? 0,
+          activeDealsCount: full.activeDeals ?? full.activeDealRows?.length ?? 0,
+          activeDeals: full.activeDealRows?.slice(0, 10).map((d: any) => ({ id: d.id, name: d.name, stage: d.stage, role: d.role })),
           requirements: full.requirements?.filter((r: any) => r.status === "Active").slice(0, 10),
           pitchedTo: full.pitchedTo?.slice(0, 15).map((p: any) => ({
             propertyId: p.property_id, propertyName: p.property_name, unit: p.unit_name, status: p.status,

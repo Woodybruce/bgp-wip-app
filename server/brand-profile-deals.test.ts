@@ -12,6 +12,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   COMPLETED_DEAL_STATUSES,
   isCompletedDealStatus,
@@ -150,5 +151,30 @@ describe("dealTotalsSql", () => {
     const staffSql = dealTotalsSql("");
     assert.doesNotMatch(staffSql, /\$2/);
     assert.doesNotMatch(staffSql, /\bLIMIT\b/i);
+  });
+});
+
+// Follow-up (fix round 1): the ChatBGP brand-profile tool (server/chatbgp.ts)
+// consumed the old array shape — full.activeDeals?.slice(...) threw a TypeError
+// once activeDeals became a full-set count, failing every company-profile
+// lookup. Assert the fixed source reads counts from the numeric fields and
+// slices the capped row arrays.
+describe("chatbgp.ts brand-profile tool", () => {
+  const src = readFileSync(new URL("./chatbgp.ts", import.meta.url), "utf8");
+  // Isolate the profile-tool block that reads the deal fields.
+  const anchor = src.indexOf("completedDealsCount");
+  const block = anchor === -1 ? "" : src.slice(anchor, anchor + 700);
+
+  it("reads counts from the numeric completedDeals/activeDeals fields", () => {
+    assert.ok(anchor !== -1, "profile tool block not found");
+    assert.match(block, /full\.completedDeals \?\?/);
+    assert.match(block, /full\.activeDeals \?\?/);
+  });
+
+  it("slices the capped row arrays, never the count fields", () => {
+    assert.match(block, /full\.activeDealRows\?\.slice\(0, 10\)/);
+    assert.doesNotMatch(block, /full\.activeDeals\?\.slice/);
+    assert.doesNotMatch(block, /full\.activeDeals\?\.length/);
+    assert.doesNotMatch(block, /full\.completedDeals\?\.length/);
   });
 });
