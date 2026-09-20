@@ -33,7 +33,12 @@ import {
   normalizeInputValue,
   applyMappedInputs,
   readEngineOutputs,
+  desugarLet,
+  boundFullRowColRefs,
+  foldPositionGuards,
+  rewriteBooleanLiterals,
   type ModelEngine,
+  type SheetDims,
 } from "./model-engine";
 
 const require = createRequire(import.meta.url);
@@ -753,17 +758,22 @@ describe("createEngineFromFile on an ExcelJS-built workbook", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("engine edge cases", () => {
-  it("a circular reference loads and surfaces #CYCLE! without crashing", () => {
-    const ws: Record<string, unknown> = XLSX.utils.aoa_to_sheet([[null], [null]]);
+  it("a circular reference freezes at its cached value (0 when none) instead of #CYCLE!", () => {
+    // Excel with iterative calculation off resolves genuine circular refs to 0;
+    // the engine freezes one member at the Excel-cached value to reproduce that.
+    const ws: Record<string, unknown> = XLSX.utils.aoa_to_sheet([[null], [null], [null]]);
     ws["A1"] = { t: "n", f: "A2+1" };
     ws["A2"] = { t: "n", f: "A1+1" };
+    ws["A3"] = { t: "n", f: "A1*10" };
     const wb = { SheetNames: ["S"], Sheets: { S: ws } } as never;
     const engine = createEngineFromWorkbook(wb);
     const a1 = engine.getCellValue("S", "A1");
     const a2 = engine.getCellValue("S", "A2");
-    T(!a1.ok && a1.error === "#CYCLE!", `A1 is #CYCLE!, got ${JSON.stringify(a1)}`);
-    T(!a2.ok && a2.error === "#CYCLE!", `A2 is #CYCLE!, got ${JSON.stringify(a2)}`);
-    T(engine.collectErrors().some((e) => e.error === "#CYCLE!"), "collectErrors lists the cycle");
+    T(a1.ok && a1.value === 0, `A1 frozen at 0, got ${JSON.stringify(a1)}`);
+    T(a2.ok && a2.value === 1, `A2 computes from the freeze, got ${JSON.stringify(a2)}`);
+    approx(cellNum(engine, "S", "A3"), 0, "downstream computes from the frozen member");
+    T(engine.warnings.some((w) => w.includes("Circular reference")), "freeze warning recorded");
+    T(!engine.collectErrors().some((e) => e.error === "#CYCLE!"), "no #CYCLE! remains");
     engine.dispose();
   });
 
@@ -808,21 +818,536 @@ describe("engine edge cases", () => {
 
   it("readEngineOutputs maps blanks to null and errors into the error list", () => {
     const ws: Record<string, unknown> = XLSX.utils.aoa_to_sheet([[null], [null]]);
-    ws["A1"] = { t: "n", f: "A2+1" };
-    ws["A2"] = { t: "n", f: "A1+1" };
+    ws["A1"] = { t: "n", f: "1/0" };
     const wb = { SheetNames: ["S"], Sheets: { S: ws } } as never;
     const engine = createEngineFromWorkbook(wb);
     const { outputs, errors } = readEngineOutputs(engine, {
       blank: { sheet: "S", cell: "B9" },
-      cycle: { sheet: "S", cell: "A1" },
+      boom: { sheet: "S", cell: "A1" },
       missingSheet: { sheet: "Nope", cell: "A1" },
       noMapping: undefined as never,
     });
     T(outputs.blank === null, "blank output is null");
-    T(outputs.cycle === "#CYCLE!", "error output carries the error string");
+    T(outputs.boom === "#DIV/0!", `error output carries the error string, got ${outputs.boom}`);
     T(typeof outputs.missingSheet === "string", "missing sheet output carries the error string");
     T(outputs.noMapping === null, "unmapped output is null");
     T(errors.length === 2, `two errors listed, got ${errors.length}`);
+    engine.dispose();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Excel-compat shims: LOOKUP / IFS / DATEDIF plugins (model-functions.ts)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("Excel-compat function plugins", () => {
+  const serial = (y: number, m: number, d: number) =>
+    Math.round((Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000);
+
+  function engineWith(cells: Record<string, { f?: string; v?: number | string }>, size: [number, number] = [4, 4]): ModelEngine {
+    const ws: Record<string, unknown> = XLSX.utils.aoa_to_sheet(
+      Array.from({ length: size[0] }, () => Array.from({ length: size[1] }, () => null)),
+    );
+    for (const [a1, cell] of Object.entries(cells)) {
+      ws[a1] = cell.f !== undefined ? { t: "n", f: cell.f } : { t: typeof cell.v === "string" ? "s" : "n", v: cell.v };
+    }
+    const wb = { SheetNames: ["S"], Sheets: { S: ws } } as never;
+    return createEngineFromWorkbook(wb);
+  }
+
+  it("LOOKUP vector form over a sorted date spine picks the right row", () => {
+    const engine = engineWith({
+      A1: { v: serial(2024, 1, 31) }, B1: { v: serial(2024, 2, 29) }, C1: { v: serial(2024, 3, 31) },
+      A2: { v: 100 }, B2: { v: 200 }, C2: { v: 300 },
+      A3: { f: "LOOKUP(DATE(2024,3,15),A1:C1,A2:C2)" },
+      B3: { f: "LOOKUP(DATE(2024,3,31),A1:C1,A2:C2)" },
+      C3: { f: "LOOKUP(DATE(2025,1,1),A1:C1,A2:C2)" },
+    });
+    approx(cellNum(engine, "S", "A3"), 200, "mid-spine lookup -> Feb row");
+    approx(cellNum(engine, "S", "B3"), 300, "exact end-date match");
+    approx(cellNum(engine, "S", "C3"), 300, "past-the-end lookup clamps to last");
+    engine.dispose();
+  });
+
+  it("LOOKUP vector form returns #N/A below the first value", () => {
+    const engine = engineWith({
+      A1: { v: 10 }, B1: { v: 20 },
+      A2: { v: 1 }, B2: { v: 2 },
+      A3: { f: "LOOKUP(5,A1:B1,A2:B2)" },
+      B3: { f: "IFERROR(LOOKUP(5,A1:B1,A2:B2),-1)" },
+    });
+    const r = engine.getCellValue("S", "A3");
+    T(!r.ok && r.error === "#N/A", `too-small key is #N/A, got ${JSON.stringify(r)}`);
+    approx(cellNum(engine, "S", "B3"), -1, "IFERROR catches the #N/A");
+    engine.dispose();
+  });
+
+  it("LOOKUP two-arg vector form returns from the lookup vector itself", () => {
+    const engine = engineWith({
+      A1: { v: 10 }, B1: { v: 20 }, C1: { v: 30 },
+      A2: { f: "LOOKUP(25,A1:C1)" },
+    });
+    approx(cellNum(engine, "S", "A2"), 20, "self-vector lookup");
+    engine.dispose();
+  });
+
+  it("LOOKUP array form searches the first row and returns from the last", () => {
+    const engine = engineWith({
+      A1: { v: 1 }, B1: { v: 2 }, C1: { v: 3 },
+      A2: { v: "a" }, B2: { v: "b" }, C2: { v: "c" },
+      A3: { f: "LOOKUP(2,A1:C2)" },
+      // vertical orientation: more rows than columns -> search col 1, return col 2
+      E1: { v: 10 }, F1: { v: 5 },
+      E2: { v: 20 }, F2: { v: 6 },
+      E3: { v: 30 }, F3: { v: 7 },
+      B3: { f: "LOOKUP(25,E1:F3)" },
+    }, [4, 8]);
+    const horiz = engine.getCellValue("S", "A3");
+    T(horiz.ok && horiz.value === "b", `horizontal array form -> "b", got ${JSON.stringify(horiz)}`);
+    approx(cellNum(engine, "S", "B3"), 6, "vertical array form");
+    engine.dispose();
+  });
+
+  it("IFS returns the value of the first truthy condition", () => {
+    const engine = engineWith({
+      A1: { f: 'IFS(FALSE(),1,TRUE(),2,TRUE(),3)' },
+      B1: { f: 'IFS(1=1,"yes",TRUE(),"no")' },
+      C1: { f: 'IFS(FALSE(),1,FALSE(),2)' },
+      D1: { f: 'IFS(FALSE(),1,1/0,2)' },
+    });
+    approx(cellNum(engine, "S", "A1"), 2, "first match wins");
+    const b = engine.getCellValue("S", "B1");
+    T(b.ok && b.value === "yes", `string result, got ${JSON.stringify(b)}`);
+    const c = engine.getCellValue("S", "C1");
+    T(!c.ok && c.error === "#N/A", `no match is #N/A, got ${JSON.stringify(c)}`);
+    const d = engine.getCellValue("S", "D1");
+    T(!d.ok && d.error === "#DIV/0!", `error in a reached condition propagates, got ${JSON.stringify(d)}`);
+    engine.dispose();
+  });
+
+  it("DATEDIF accepts lowercase units and computes complete months and years", () => {
+    const engine = engineWith({
+      A1: { v: serial(2024, 1, 1) }, B1: { v: serial(2025, 1, 1) },
+      C1: { f: 'DATEDIF(A1,B1,"m")' },
+      D1: { f: 'DATEDIF(A1,B1,"Y")' },
+      E1: { f: 'DATEDIF(A1,B1,"d")' },
+      F1: { f: 'DATEDIF(A1,DATE(2025,3,15),"ym")' },
+      G1: { f: 'DATEDIF(B1,A1,"m")' },
+      H1: { f: 'DATEDIF(A1,B1,"w")' },
+    }, [4, 8]);
+    approx(cellNum(engine, "S", "C1"), 12, 'DATEDIF "m" complete months');
+    approx(cellNum(engine, "S", "D1"), 1, 'DATEDIF "Y" complete years');
+    approx(cellNum(engine, "S", "E1"), 366, 'DATEDIF "d" days across a leap year');
+    approx(cellNum(engine, "S", "F1"), 2, 'DATEDIF "ym" months ignoring years');
+    const rev = engine.getCellValue("S", "G1");
+    T(!rev.ok && rev.error === "#NUM!", `end before start is #NUM!, got ${JSON.stringify(rev)}`);
+    const badUnit = engine.getCellValue("S", "H1");
+    T(!badUnit.ok && badUnit.error === "#NUM!", `unknown unit is #NUM!, got ${JSON.stringify(badUnit)}`);
+    engine.dispose();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LET desugaring (model-let.ts)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("LET desugaring", () => {
+  it("rewrites simple LETs to inlined arithmetic", () => {
+    T(desugarLet("=LET(x,1,x+1)") === "=((1)+1)", `simple LET, got ${desugarLet("=LET(x,1,x+1)")}`);
+    T(desugarLet("=1+1") === "=1+1", "formula without LET untouched");
+  });
+
+  it("handles nesting and shadowing like Excel", () => {
+    // Excel: =LET(x,1,LET(x,2,x)+x) -> 3 (inner x shadows outer in inner body)
+    T(
+      desugarLet("=LET(x,1,LET(x,2,x)+x)") === "=(((2))+(1))",
+      `shadowed LET, got ${desugarLet("=LET(x,1,LET(x,2,x)+x)")}`,
+    );
+  });
+
+  it("does not touch names inside string literals or longer identifiers", () => {
+    T(desugarLet('=LET(x,1,"x, y")') === '=("x, y")', `string literal, got ${desugarLet('=LET(x,1,"x, y")')}`);
+    T(desugarLet("=LET(n,2,nx+n)") === "=(nx+(2))", `longer identifier, got ${desugarLet("=LET(n,2,nx+n)")}`);
+  });
+
+  it("substitutes later names' values before earlier names", () => {
+    // LET(a,1,b,a+1,b*2) -> ((1)+1)*2 = 4
+    T(
+      desugarLet("=LET(a,1,b,a+1,b*2)") === "=(((1)+1)*2)",
+      `chained names, got ${desugarLet("=LET(a,1,b,a+1,b*2)")}`,
+    );
+  });
+
+  it("leaves malformed LETs unchanged", () => {
+    T(desugarLet("=LET(x,1)") === "=LET(x,1)", "too few args unchanged");
+    T(desugarLet("=LET(x+1,2,x)") === "=LET(x+1,2,x)", "non-identifier name unchanged");
+  });
+
+  it("desugared LET formulas compute in the engine", () => {
+    const ws: Record<string, unknown> = XLSX.utils.aoa_to_sheet([[null], [null], [null]]);
+    ws["A1"] = { t: "n", f: "LET(x,1,x+1)" };
+    ws["A2"] = { t: "n", f: "LET(x,1,LET(x,2,x)+x)" };
+    ws["A3"] = { t: "n", f: "LET(_xlpm.n,3,_xlpm.n*2)" };
+    const wb = { SheetNames: ["S"], Sheets: { S: ws } } as never;
+    const engine = createEngineFromWorkbook(wb);
+    approx(cellNum(engine, "S", "A1"), 2, "simple LET computes");
+    approx(cellNum(engine, "S", "A2"), 3, "shadowed nested LET computes to Excel's 3");
+    approx(cellNum(engine, "S", "A3"), 6, "_xlpm.-prefixed names (as stored in xlsx) work");
+    engine.dispose();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Full-row/column reference bounding (model-ranges.ts)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("full-row/column bounding", () => {
+  // Mirrors pete.xlsx geometry: CF/Tenant_Calc start at A and end at GG;
+  // TS_Map-like sheets start at B2.
+  const dims = new Map<string, SheetDims>([
+    ["Calc", { firstRow: 0, firstCol: 0, lastRow: 99, lastCol: 25 }], // A1:Z100
+    ["CF", { firstRow: 0, firstCol: 0, lastRow: 226, lastCol: 188 }], // A1:GG227
+    ["My Sheet", { firstRow: 0, firstCol: 0, lastRow: 99, lastCol: 3 }], // A1:D100
+    ["Offset", { firstRow: 1, firstCol: 1, lastRow: 67, lastCol: 38 }], // B2:AM68
+  ]);
+  const bound = (f: string, host = "Calc") => boundFullRowColRefs(f, host, dims);
+
+  it("bounds full-row refs to the host sheet's used columns", () => {
+    T(bound("=$8:$8") === "=$A$8:$Z$8", `host row pair, got ${bound("=$8:$8")}`);
+    T(bound("=8:13") === "=$A$8:$Z$13", `relative row pair, got ${bound("=8:13")}`);
+    T(bound("=SUM($8:$8, 10:10)") === "=SUM($A$8:$Z$8, $A$10:$Z$10)", "two pairs in one formula");
+  });
+
+  it("bounds full-column refs to the host sheet's used rows", () => {
+    T(bound("=A:A") === "=$A$1:$A$100", `column pair, got ${bound("=A:A")}`);
+    T(bound("=$a:$C") === "=$A$1:$C$100", `mixed case/$ column pair, got ${bound("=$a:$C")}`);
+  });
+
+  it("uses the referenced sheet's dims for sheet-qualified refs", () => {
+    T(
+      bound("=LOOKUP(X,CF!$8:$8,CF!$13:$13)") === "=LOOKUP(X,CF!$A$8:$GG$8,CF!$A$13:$GG$13)",
+      `sheet-qualified rows, got ${bound("=LOOKUP(X,CF!$8:$8,CF!$13:$13)")}`,
+    );
+    T(
+      bound("='My Sheet'!A:A") === "='My Sheet'!$A$1:$A$100",
+      `quoted sheet name, got ${bound("='My Sheet'!A:A")}`,
+    );
+  });
+
+  it("honours sheets whose used range does not start at A1", () => {
+    T(bound("=$5:$5", "Offset") === "=$B$5:$AM$5", `offset rows, got ${bound("=$5:$5", "Offset")}`);
+    T(bound("=B:B", "Offset") === "=$B$2:$B$68", `offset cols, got ${bound("=B:B", "Offset")}`);
+  });
+
+  it("never touches string literals", () => {
+    T(bound('=IF(A1="8:8",1,2)') === '=IF(A1="8:8",1,2)', "row pair inside string");
+    T(bound('=IF(A1="CF!$8:$8",1,$8:$8)') === '=IF(A1="CF!$8:$8",1,$A$8:$Z$8)', "only the real ref is bounded");
+    T(bound('="a""A:A"') === '="a""A:A"', "escaped quotes keep the string open");
+  });
+
+  it("requires identifier boundaries on both sides", () => {
+    T(bound("=LOG10(A1)") === "=LOG10(A1)", "no colon at all");
+    T(bound("=LOG10(A8:A10)") === "=LOG10(A8:A10)", "LOG10( and a normal range untouched");
+    T(bound("=X8:8") === "=X8:8", "letter before the pair blocks the match");
+    T(bound("=8:8AM") === "=8:8AM", "letter after the pair blocks the match");
+    T(bound("=SUM(A1:B2)") === "=SUM(A1:B2)", "ordinary range untouched");
+    T(bound("=Nope!$8:$8") === "=Nope!$8:$8", "unknown sheet left alone");
+    T(bound("=CF!A8") === "=CF!A8", "sheet-qualified single cell untouched");
+  });
+
+  it("leaves formulas without colon untouched", () => {
+    T(bound("=SUM(A1,A2)") === "=SUM(A1,A2)", "cheap gate");
+  });
+
+  it("bounded full-row/column refs compute in the engine", () => {
+    const data: Record<string, unknown> = XLSX.utils.aoa_to_sheet([
+      [null, null, null, null],
+      [1, 2, 3, 4],
+    ]);
+    const calc: Record<string, unknown> = XLSX.utils.aoa_to_sheet([[null], [null], [null]]);
+    calc["A1"] = { t: "n", f: "SUM(Data!$2:$2)" };
+    calc["A2"] = { t: "n", f: "SUM(Data!B:B)" };
+    calc["A3"] = { t: "n", f: "COUNT(Data!$2:$2)" };
+    const wb = { SheetNames: ["Calc", "Data"], Sheets: { Calc: calc, Data: data } } as never;
+    const engine = createEngineFromWorkbook(wb);
+    approx(cellNum(engine, "Calc", "A1"), 10, "full-row SUM computes");
+    approx(cellNum(engine, "Calc", "A2"), 2, "full-column SUM computes");
+    approx(cellNum(engine, "Calc", "A3"), 4, "full-row COUNT computes");
+    engine.dispose();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Position-guard folding (model-guards.ts)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("position-guard folding", () => {
+  // Row/col are 0-based: (10, 6) is G11, (10, 7) is H11.
+  it("folds IF(COLUMN()=7,...) to the taken branch", () => {
+    T(
+      foldPositionGuards("=IF(COLUMN()=7,0,F11)+1", 10, 6) === "=0+1",
+      `G11 takes the guard branch, got ${foldPositionGuards("=IF(COLUMN()=7,0,F11)+1", 10, 6)}`,
+    );
+    T(
+      foldPositionGuards("=IF(COLUMN()=7,0,F11)+1", 10, 7) === "=F11+1",
+      `H11 takes the else branch, got ${foldPositionGuards("=IF(COLUMN()=7,0,F11)+1", 10, 7)}`,
+    );
+  });
+
+  it("handles ROW() and the other comparison operators", () => {
+    T(foldPositionGuards("=IF(ROW()=5,10,20)", 4, 0) === "=10", "ROW() true branch");
+    T(foldPositionGuards("=IF(ROW()=5,10,20)", 5, 0) === "=20", "ROW() false branch");
+    T(foldPositionGuards("=IF(COLUMN()<>7,0,F11)", 10, 6) === "=F11", "<> operator");
+    T(foldPositionGuards("=IF(COLUMN()>=7,1,2)", 10, 6) === "=1", ">= operator");
+  });
+
+  it("supports two-argument IF (false -> FALSE)", () => {
+    T(foldPositionGuards("=IF(COLUMN()=9,7)", 0, 8) === "=7", "2-arg true");
+    T(foldPositionGuards("=IF(COLUMN()=9,7)", 0, 2) === "=FALSE", "2-arg false");
+  });
+
+  it("respects strings, boundaries, and non-constant conditions", () => {
+    T(
+      foldPositionGuards('=IF(A1="IF(COLUMN()=7",1,2)', 10, 6) === '=IF(A1="IF(COLUMN()=7",1,2)',
+      "IF( inside a string untouched",
+    );
+    T(foldPositionGuards("=IF(A1>5,1,2)", 10, 6) === "=IF(A1>5,1,2)", "non-constant condition untouched");
+    T(
+      foldPositionGuards("=SUMIF(A:A,\">0\")+IF(COLUMN()=2,1,0)", 0, 1) === '=SUMIF(A:A,">0")+1',
+      `SUMIF( not matched as IF(, got ${foldPositionGuards("=SUMIF(A:A,\">0\")+IF(COLUMN()=2,1,0)", 0, 1)}`,
+    );
+    T(
+      foldPositionGuards("=IF(COLUMN()=7,SUM(1,2),MAX(F11,3))", 10, 6) === "=SUM(1,2)",
+      "branches with nested parens/commas split correctly",
+    );
+  });
+
+  it("folds guards nested inside other functions", () => {
+    T(
+      foldPositionGuards('=MAX(IF(COLUMN()=7,0,F11),XLOOKUP(1,A:A,B:B,""))', 10, 6) ===
+        '=MAX(0,XLOOKUP(1,A:A,B:B,""))',
+      `guard inside MAX, got ${foldPositionGuards('=MAX(IF(COLUMN()=7,0,F11),XLOOKUP(1,A:A,B:B,""))', 10, 6)}`,
+    );
+  });
+
+  it("dissolves the running-total false cycle in the engine", () => {
+    // The pete.xlsx idiom: row total in F, first period guards the left-ref.
+    const ws: Record<string, unknown> = XLSX.utils.aoa_to_sheet([
+      [null, null, null, null, null, null, null, null, null],
+    ]);
+    ws["F1"] = { t: "n", f: "SUM(G1:I1)" };
+    ws["G1"] = { t: "n", f: "IF(COLUMN()=7,0,F1)+5" };
+    ws["H1"] = { t: "n", f: "IF(COLUMN()=7,0,G1)+1" };
+    ws["I1"] = { t: "n", f: "IF(COLUMN()=7,0,H1)*2" };
+    const wb = { SheetNames: ["S"], Sheets: { S: ws } } as never;
+    const engine = createEngineFromWorkbook(wb);
+    approx(cellNum(engine, "S", "G1"), 5, "first period uses 0, not F1");
+    approx(cellNum(engine, "S", "H1"), 6, "second period chains from G1");
+    approx(cellNum(engine, "S", "I1"), 12, "third period chains from H1");
+    approx(cellNum(engine, "S", "F1"), 23, "row total computes (no #CYCLE!)");
+    engine.dispose();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Circular-reference freezing (Excel no-iterative-calc semantics)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("circular reference freezing", () => {
+  it("freezes a genuine cycle at the Excel-cached value and computes dependents", () => {
+    const ws: Record<string, unknown> = XLSX.utils.aoa_to_sheet([[null], [null], [null]]);
+    ws["A1"] = { t: "n", v: 10, f: "A2*2" }; // Excel cached 10 for the circular pair
+    ws["A2"] = { t: "n", v: 5, f: "A1+1" };
+    ws["A3"] = { t: "n", f: "A2*100" }; // downstream of the cycle
+    const wb = { SheetNames: ["S"], Sheets: { S: ws } } as never;
+    const engine = createEngineFromWorkbook(wb);
+    approx(cellNum(engine, "S", "A1"), 10, "cycle member frozen at cached value");
+    approx(cellNum(engine, "S", "A2"), 11, "other member computes from the freeze");
+    approx(cellNum(engine, "S", "A3"), 1100, "downstream computes (no #CYCLE! poisoning)");
+    T(
+      engine.warnings.some((w) => w.includes("Circular reference")),
+      `freeze warning recorded, got ${JSON.stringify(engine.warnings)}`,
+    );
+    engine.dispose();
+  });
+
+  it("leaves acyclic workbooks untouched", () => {
+    const ws: Record<string, unknown> = XLSX.utils.aoa_to_sheet([[1, 2, null]]);
+    ws["C1"] = { t: "n", f: "A1+B1" };
+    const wb = { SheetNames: ["S"], Sheets: { S: ws } } as never;
+    const engine = createEngineFromWorkbook(wb);
+    approx(cellNum(engine, "S", "C1"), 3, "plain formula");
+    T(!engine.warnings.some((w) => w.includes("Circular")), "no freeze warning");
+    engine.dispose();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INDEX whole-row/column vectors + date-text MONTH/YEAR/DAY (model-functions.ts)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("INDEX whole-row/column selection", () => {
+  function indexEngine(): ModelEngine {
+    // 14 rows x 4 cols so every formula cell lands inside !ref.
+    const ws: Record<string, unknown> = XLSX.utils.aoa_to_sheet([
+      [1, 2, 3, null],
+      [4, 5, 6, null],
+      [7, 8, 9, null],
+      [null, null, null, null],
+      [null, null, null, null],
+      [null, null, null, null],
+      [null, null, null, null],
+      [null, null, null, null],
+      ["a", 100, 0, null],
+      ["b", 200, 1, null],
+      ["c", 300, 0, null],
+      [null, null, null, null],
+      [null, null, null, null],
+      [null, null, null, null],
+    ]);
+    ws["A5"] = { t: "n", f: "INDEX(A1:C3,2,3)" };
+    ws["B5"] = { t: "n", f: "SUM(INDEX(A1:C3,0,2))" };
+    ws["C5"] = { t: "n", f: "SUM(INDEX(A1:C3,2,0))" };
+    ws["D5"] = { t: "n", f: "SUM(INDEX(A1:C3,0,0))" };
+    ws["A6"] = { t: "n", f: "INDEX(A1:C3,0,4)" };
+    ws["B6"] = { t: "n", f: "INDEX(A1:C3,4,0)" };
+    ws["C6"] = { t: "n", f: "INDEX(A1:C3,0,-1)" };
+    ws["D6"] = { t: "n", f: "INDEX(A1:C3,-1,0)" };
+    ws["A7"] = { t: "n", f: "INDEX(A1:C3,3)" };
+    // The Occupancy_History idiom: XLOOKUP over a computed lookup array whose
+    // one factor is a whole-column INDEX vector.
+    ws["A12"] = { t: "n", f: 'XLOOKUP(1,(C9:C11=1)*(INDEX(B9:B11,0,1)=200),A9:A11,"none")' };
+    ws["B12"] = { t: "n", f: "SUMPRODUCT(INDEX(A1:C3,0,3))" };
+    const wb = { SheetNames: ["S"], Sheets: { S: ws } } as never;
+    return createEngineFromWorkbook(wb);
+  }
+
+  it("keeps the built-in scalar path identical", () => {
+    const engine = indexEngine();
+    approx(cellNum(engine, "S", "A5"), 6, "scalar INDEX(row,col)");
+    approx(cellNum(engine, "S", "A7"), 7, "2-arg INDEX defaults col to 1");
+    engine.dispose();
+  });
+
+  it("returns whole-column / whole-row / whole-range vectors for zero", () => {
+    const engine = indexEngine();
+    approx(cellNum(engine, "S", "B5"), 15, "INDEX(range,0,2) sums the column");
+    approx(cellNum(engine, "S", "C5"), 15, "INDEX(range,2,0) sums the row");
+    approx(cellNum(engine, "S", "D5"), 45, "INDEX(range,0,0) sums the range");
+    approx(cellNum(engine, "S", "B12"), 18, "SUMPRODUCT over a column vector");
+    engine.dispose();
+  });
+
+  it("keeps the built-in bounds and negative errors", () => {
+    const engine = indexEngine();
+    const colTooBig = engine.getCellValue("S", "A6");
+    T(!colTooBig.ok && colTooBig.error === "#NUM!", `col past width is #NUM!, got ${JSON.stringify(colTooBig)}`);
+    const rowTooBig = engine.getCellValue("S", "B6");
+    T(!rowTooBig.ok && rowTooBig.error === "#NUM!", `row past height is #NUM!, got ${JSON.stringify(rowTooBig)}`);
+    const negCol = engine.getCellValue("S", "C6");
+    T(!negCol.ok && negCol.error === "#VALUE!", `negative col is #VALUE!, got ${JSON.stringify(negCol)}`);
+    const negRow = engine.getCellValue("S", "D6");
+    T(!negRow.ok && negRow.error === "#VALUE!", `negative row is #VALUE!, got ${JSON.stringify(negRow)}`);
+    engine.dispose();
+  });
+
+  it("feeds a vector into XLOOKUP's computed lookup array", () => {
+    const engine = indexEngine();
+    const r = engine.getCellValue("S", "A12");
+    T(r.ok && r.value === "b", `XLOOKUP over INDEX vector finds "b", got ${JSON.stringify(r)}`);
+    engine.dispose();
+  });
+});
+
+describe("MONTH/YEAR/DAY date-text coercion", () => {
+  function dateEngine(): ModelEngine {
+    const ws: Record<string, unknown> = XLSX.utils.aoa_to_sheet([
+      [null, null, null, null],
+      [null, null, null, null],
+      [null, null, null, null],
+      [null, null, null, null],
+    ]);
+    ws["A1"] = { t: "s", v: "Nov-2022" };
+    ws["B1"] = { t: "n", f: "MONTH(A1)" };
+    ws["C1"] = { t: "n", f: "YEAR(A1)" };
+    ws["D1"] = { t: "n", f: "DAY(A1)" };
+    ws["A2"] = { t: "n", f: 'MONTH("1 Nov 2022")' };
+    ws["B2"] = { t: "n", f: 'DAY("1-Nov-2022")' };
+    ws["C2"] = { t: "n", f: 'YEAR("2022-11-15")' };
+    ws["D2"] = { t: "n", f: 'DAY("2022-11-15")' };
+    ws["A3"] = { t: "n", f: "MONTH(DATE(2022,11,1))" };
+    ws["B3"] = { t: "n", f: "MONTH(45292)" };
+    ws["C3"] = { t: "n", f: 'MONTH("45292")' };
+    ws["D3"] = { t: "n", f: 'MONTH("hello")' };
+    ws["A4"] = { t: "n", f: "MONTH(-1)" };
+    ws["B4"] = { t: "n", f: 'MONTH("AUGUST 2026")' };
+    const wb = { SheetNames: ["S"], Sheets: { S: ws } } as never;
+    return createEngineFromWorkbook(wb);
+  }
+
+  it("coerces month-year text the way Excel does (first of the month)", () => {
+    const engine = dateEngine();
+    approx(cellNum(engine, "S", "B1"), 11, 'MONTH of a "Nov-2022" cell');
+    approx(cellNum(engine, "S", "C1"), 2022, 'YEAR of a "Nov-2022" cell');
+    approx(cellNum(engine, "S", "D1"), 1, 'DAY of a "Nov-2022" cell');
+    approx(cellNum(engine, "S", "B4"), 8, 'full month name with space ("AUGUST 2026")');
+    engine.dispose();
+  });
+
+  it("coerces day-precision date text", () => {
+    const engine = dateEngine();
+    approx(cellNum(engine, "S", "A2"), 11, 'MONTH("1 Nov 2022")');
+    approx(cellNum(engine, "S", "B2"), 1, 'DAY("1-Nov-2022")');
+    approx(cellNum(engine, "S", "C2"), 2022, 'YEAR of ISO text');
+    approx(cellNum(engine, "S", "D2"), 15, 'DAY of ISO text');
+    engine.dispose();
+  });
+
+  it("leaves the numeric path byte-identical to the built-in", () => {
+    const engine = dateEngine();
+    approx(cellNum(engine, "S", "A3"), 11, "MONTH of a DATE() serial");
+    approx(cellNum(engine, "S", "B3"), 1, "MONTH(45292) is January 2024");
+    approx(cellNum(engine, "S", "C3"), 1, "numeric string coerces as before");
+    engine.dispose();
+  });
+
+  it("keeps #VALUE! for non-date text and #NUM! for negatives", () => {
+    const engine = dateEngine();
+    const bad = engine.getCellValue("S", "D3");
+    T(!bad.ok && bad.error === "#VALUE!", `non-date text is #VALUE!, got ${JSON.stringify(bad)}`);
+    const neg = engine.getCellValue("S", "A4");
+    T(!neg.ok && neg.error === "#NUM!", `negative serial is #NUM!, got ${JSON.stringify(neg)}`);
+    engine.dispose();
+  });
+});
+
+describe("boolean literal rewrite", () => {
+  it("rewrites bare TRUE/FALSE to calls, respecting boundaries and strings", () => {
+    T(
+      rewriteBooleanLiterals('=IF(D23=TRUE,"OK","ERROR")') === '=IF(D23=TRUE(),"OK","ERROR")',
+      `the Checks-sheet shape, got ${rewriteBooleanLiterals('=IF(D23=TRUE,"OK","ERROR")')}`,
+    );
+    T(rewriteBooleanLiterals('="TRUE inside a string"') === '="TRUE inside a string"', "string literal untouched");
+    T(rewriteBooleanLiterals("=ISTRUE(A1)") === "=ISTRUE(A1)", "longer identifier untouched");
+    T(rewriteBooleanLiterals("=TRUE()") === "=TRUE()", "already a call untouched");
+    T(rewriteBooleanLiterals("=A1+1") === "=A1+1", "no token untouched");
+    T(rewriteBooleanLiterals("=if(a1,true,false)") === "=if(a1,TRUE(),FALSE())", "lowercase rewritten");
+  });
+
+  it("bare TRUE/FALSE compute in the engine", () => {
+    const ws: Record<string, unknown> = XLSX.utils.aoa_to_sheet([[null, null], [null, null], [null, null]]);
+    ws["A1"] = { t: "b", v: true };
+    ws["B1"] = { t: "n", f: 'IF(A1=TRUE,"OK","ERROR")' };
+    ws["A2"] = { t: "n", f: "IF(1=1,TRUE,FALSE)" };
+    ws["B2"] = { t: "n", f: "IF(1=2,TRUE,FALSE)" };
+    const wb = { SheetNames: ["S"], Sheets: { S: ws } } as never;
+    const engine = createEngineFromWorkbook(wb);
+    const b1 = engine.getCellValue("S", "B1");
+    T(b1.ok && b1.value === "OK", `Checks!E23 shape computes "OK", got ${JSON.stringify(b1)}`);
+    const a2 = engine.getCellValue("S", "A2");
+    T(a2.ok && a2.value === true, `TRUE branch literal, got ${JSON.stringify(a2)}`);
+    const b2 = engine.getCellValue("S", "B2");
+    T(b2.ok && b2.value === false, `FALSE branch literal, got ${JSON.stringify(b2)}`);
     engine.dispose();
   });
 });
