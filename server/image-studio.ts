@@ -1443,7 +1443,12 @@ export function registerImageStudioRoutes(app: Express) {
   // Destructive + bulk ops below still require admin.
   app.get("/api/image-studio", requireAuth, async (req: Request, res: Response) => {
     try {
-      const images = await db.select(LIST_COLS).from(imageStudioImages).orderBy(desc(imageStudioImages.createdAt));
+      // Trashed rows stay in the DB (restorable via /:id/restore) but are
+      // hidden from the library — this is what makes the prune workflow
+      // reversible instead of a hard delete.
+      const images = await db.select(LIST_COLS).from(imageStudioImages)
+        .where(sql`NOT ('trashed' = ANY(COALESCE(${imageStudioImages.tags}, '{}')))`)
+        .orderBy(desc(imageStudioImages.createdAt));
       // Client logins only see imagery filed against their own properties or
       // company — not the firm-wide asset pool. (Landsec audit.)
       const { resolveCompanyScope } = await import("./company-scope");
@@ -1484,7 +1489,7 @@ export function registerImageStudioRoutes(app: Express) {
         if (companyId && companyId !== searchScope) return res.json([]);
       }
       const pattern = q ? `%${q}%` : null;
-      const conditions: any[] = [];
+      const conditions: any[] = [sql`NOT ('trashed' = ANY(COALESCE(${imageStudioImages.tags}, '{}')))`];
       if (pattern) {
         conditions.push(or(
           ilike(imageStudioImages.fileName, pattern),
@@ -1519,7 +1524,8 @@ export function registerImageStudioRoutes(app: Express) {
       const limit = Math.min(parseInt((req.query.limit as string) || "200"), 500);
       const images = await db.select(LIST_COLS)
         .from(imageStudioImages)
-        .where(sql`${imageStudioImages.propertyId} IS NULL`)
+        .where(sql`${imageStudioImages.propertyId} IS NULL
+                   AND NOT ('trashed' = ANY(COALESCE(${imageStudioImages.tags}, '{}')))`)
         .orderBy(desc(imageStudioImages.createdAt))
         .limit(limit);
       res.json(images);
