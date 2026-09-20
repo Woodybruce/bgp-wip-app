@@ -1294,13 +1294,14 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={data.images || []} canRefresh={!isClientViewer} />
 
             {/* Landlord desktop: chat + key facts compose side-by-side in one
-                row (each half the content width); below md they stack as
-                before. Tenants keep the original single-column flow — the
-                wrapper is a plain block with the same space-y-4 spacing the
-                CardContent was already applying between these two blocks. */}
+                row (each half the content width); below md they stack
+                full-width (items-start only applies on md+ so the column
+                children still stretch). Tenants keep the original
+                single-column flow — the wrapper matches the parent flex
+                column's gap-2.5 spacing exactly. */}
             <div className={isLandlord
-              ? "flex flex-col md:flex-row gap-4 items-start"
-              : "space-y-4"}>
+              ? "flex flex-col md:flex-row gap-2.5 md:gap-4 md:items-start"
+              : "flex flex-col gap-2.5"}>
             <div className={`rounded-lg border border-border p-3 space-y-3${isLandlord ? " md:flex-1 md:min-w-0" : ""}`}>
               <div className="flex flex-wrap justify-between items-center gap-2">
                 <p className="text-sm font-medium flex items-center gap-2"><MessageSquare className="w-4 h-4 text-muted-foreground" />{isLandlord ? "Landlord conversation" : "Brand conversation"}</p>
