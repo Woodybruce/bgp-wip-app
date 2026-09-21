@@ -153,7 +153,9 @@ type Commission = { billedPence: number; commissionEarned: number; commissionFor
 
 // Core boards shown on Home by default. Everything else (admin / WIP tools)
 // hides behind "Show all" so the home screen stays focused on daily work.
-const CORE_BOARD_URLS = new Set(["/comps", "/brands", "/property-intelligence", "/sharepoint"]);
+// People & HR added so reviews/1:1s can be updated on the move (Carly,
+// 2026-09-21) — staff only, stripped from client homes below.
+const CORE_BOARD_URLS = new Set(["/comps", "/brands", "/property-intelligence", "/sharepoint", "/hr"]);
 
 // Pence → compact £ (e.g. £1.2m, £340k, £980)
 function fmtMoney(pence: number | undefined | null): string {
@@ -304,7 +306,11 @@ export default function MobileHome() {
   const visibleBoards = (mobileOverlayItems as any[]).filter(b => (user?.isAdmin || !b.adminOnly) && b.url !== "/mail");
   // Portfolio homes already have a Brands tile in the quick trio above, so
   // drop the Brand Intelligence board there to avoid showing /brands twice.
-  const boards = visibleBoards.filter(b => CORE_BOARD_URLS.has(b.url) && !(showPortfolioHome && b.url === "/brands"));
+  const boards = visibleBoards.filter(b =>
+    CORE_BOARD_URLS.has(b.url)
+    && !(showPortfolioHome && b.url === "/brands")
+    // HR is BGP-internal — never on a client (Landsec) home.
+    && !(isClientHome && b.url === "/hr"));
   const openTasks = (tasks || []).filter(t => t.status !== "done").slice(0, 6);
   // Count-gated approvals link — mirrors the desktop sidebar entry so Wendy/
   // Layla + directors can reach their queue from the phone.

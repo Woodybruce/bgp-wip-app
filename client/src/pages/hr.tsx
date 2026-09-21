@@ -5182,7 +5182,15 @@ function RecognitionPanel({ userId }: { userId: string }) {
   });
   const { data: awards = [] } = useQuery<AwardEntry[]>({
     queryKey: ["/api/hr/awards", userId],
-    queryFn: () => fetch(`/api/hr/awards?userId=${userId}&limit=50`, { credentials: "include" }).then(r => r.json()),
+    // Missing auth header + no ok-check meant a 401 handed `{message}` to
+    // awards.filter and crashed the whole person board behind the error
+    // boundary ("o.filter is not a function").
+    queryFn: async () => {
+      const res = await fetch(`/api/hr/awards?userId=${userId}&limit=50`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    },
   });
 
   // Group brucey totals by BGP scheme year (1 May → 30 Apr) — keeps things
