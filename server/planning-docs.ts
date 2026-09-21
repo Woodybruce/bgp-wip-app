@@ -79,7 +79,7 @@ function drawingNumberIntent(dn: string | undefined): "existing" | "proposed" | 
   return null;
 }
 
-function classifyDoc(desc: string, type: string, drawingNumber?: string): { category: string; label: string } {
+export function classifyDoc(desc: string, type: string, drawingNumber?: string): { category: string; label: string } {
   const s = `${desc} ${type}`.toLowerCase();
   if (/existing\b[^,;]*\bfloor\s*plan|existing\s*ground\s*floor|existing\s*first\s*floor|existing\s*plans?\b/.test(s)) return { category: "floor_plan_existing", label: "Floor Plan (Existing)" };
   if (/proposed\b[^,;]*\bfloor\s*plan|proposed\s*ground\s*floor|proposed\s*first\s*floor|proposed\s*plans?\b/.test(s)) return { category: "floor_plan_proposed", label: "Floor Plan (Proposed)" };
