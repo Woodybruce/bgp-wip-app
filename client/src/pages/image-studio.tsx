@@ -47,6 +47,8 @@ import {
   Link,
   RotateCcw,
   ExternalLink,
+  Check,
+  BadgeCheck,
 } from "lucide-react";
 import { PageLayout } from "@/components/page-layout";
 import { EmptyState } from "@/components/empty-state";
@@ -230,6 +232,7 @@ export default function ImageStudio() {
   const [areaFilter, setAreaFilter] = useState("");
   const [propertyFilter, setPropertyFilter] = useState("");
   const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
+  const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
   const [uploadBrandSector, setUploadBrandSector] = useState("");
 
   const [streetViewAddress, setStreetViewAddress] = useState("");
@@ -843,31 +846,67 @@ export default function ImageStudio() {
     return true;
   });
 
+  // Brand folders — one tile per brand (logos, shopfronts, campaign shots
+  // all inside), same sub-folder pattern as Headshots people and the
+  // property albums. Images with no brandName land in "Untagged" last.
+  const brandGroups = (() => {
+    const m = new Map<string, { cover: ImageStudioImage; count: number }>();
+    for (const img of brandImages) {
+      const name = String((img as any).brandName || "").trim() || "Untagged";
+      const e = m.get(name);
+      if (e) e.count++;
+      else m.set(name, { cover: img, count: 1 });
+    }
+    return [...m.entries()]
+      .map(([name, v]) => ({ name, ...v }))
+      .sort((a, b) => {
+        if (a.name === "Untagged") return 1;
+        if (b.name === "Untagged") return -1;
+        return a.name.localeCompare(b.name);
+      });
+  })();
+  const selectedBrandImages = selectedBrand
+    ? brandImages.filter((img) => (String((img as any).brandName || "").trim() || "Untagged") === selectedBrand)
+    : [];
+
   const headshotImages = images.filter((img) => img.category === "Headshots");
   const peopleGroups = (() => {
-    const groups: Record<string, ImageStudioImage[]> = {};
+    const groups: Record<string, { images: ImageStudioImage[]; personId: string | null }> = {};
     for (const img of headshotImages) {
-      const nameTags = (img.tags || []).filter(
-        (t) => !["People", "BGP Business Context", "Headshots", "Portrait", "Staff", "Team"].includes(t)
-      );
+      const tags = img.tags || [];
+      // Canonical filing: the person:/person_id: tags written by the
+      // filename→staff matching job. Older or unmatched photos fall back
+      // to the legacy heuristics (first free-text tag, else SharePoint
+      // parent folder) and land in "Untagged" when nothing fits.
+      const personTag = tags.find((t) => t.startsWith("person:"));
+      const personIdTag = tags.find((t) => t.startsWith("person_id:"));
       let personName: string;
-      if (nameTags.length > 0) {
-        personName = nameTags[0];
+      if (personTag) {
+        personName = personTag.slice("person:".length);
       } else {
-        const desc = img.description || "";
-        const pathParts = desc.replace(/^Imported from SharePoint:\s*/i, "").split("/");
-        if (pathParts.length >= 3) {
-          const folder = pathParts[pathParts.length - 2];
-          personName = folder || "Untagged";
+        const nameTags = tags.filter(
+          (t) => !t.startsWith("person") && !["People", "BGP Business Context", "Headshots", "Portrait", "Staff", "Team"].includes(t)
+        );
+        if (nameTags.length > 0) {
+          personName = nameTags[0];
         } else {
-          personName = "Untagged";
+          const desc = img.description || "";
+          const pathParts = desc.replace(/^Imported from SharePoint:\s*/i, "").split("/");
+          if (pathParts.length >= 3) {
+            const folder = pathParts[pathParts.length - 2];
+            personName = folder || "Untagged";
+          } else {
+            personName = "Untagged";
+          }
         }
       }
-      if (!groups[personName]) groups[personName] = [];
-      groups[personName].push(img);
+      const personId = personIdTag ? personIdTag.slice("person_id:".length) : null;
+      if (!groups[personName]) groups[personName] = { images: [], personId };
+      groups[personName].images.push(img);
+      if (personId) groups[personName].personId = personId;
     }
     return Object.entries(groups)
-      .map(([name, imgs]) => ({ name, images: imgs, coverImage: imgs[0], count: imgs.length }))
+      .map(([name, g]) => ({ name, images: g.images, personId: g.personId, coverImage: g.images[0], count: g.images.length }))
       .sort((a, b) => {
         if (a.name === "Untagged") return 1;
         if (b.name === "Untagged") return -1;
@@ -875,6 +914,24 @@ export default function ImageStudio() {
       });
   })();
 
+  // Headshot confirmations — a person verifying "yes, that's me" on their
+  // own filed photos. Confirmed people get a badge on their circle; inside
+  // a person's folder the owner gets a per-photo / confirm-all action.
+  const { data: headshotConfirmations } = useQuery<any[]>({ queryKey: ["/api/image-studio/headshots/confirmations"] });
+  const confirmations = headshotConfirmations || [];
+  const confirmedPersonIds = new Set(confirmations.map((c) => c.userId));
+  const confirmHeadshotMutation = useMutation({
+    mutationFn: async ({ id, confirmed }: { id: string; confirmed: boolean }) => {
+      await apiRequest("POST", `/api/image-studio/headshots/${id}/confirm`, { confirmed });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/image-studio/headshots/confirmations"] }),
+    onError: (e: any) => toast({ title: "Confirm failed", description: e?.message, variant: "destructive" }),
+  });
+  const confirmPersonAll = (group: { personId: string | null; images: ImageStudioImage[] }) => {
+    if (!group.personId) return;
+    const mine = new Set(confirmations.filter((c) => c.userId === group.personId).map((c) => c.imageId));
+    group.images.filter((img) => !mine.has(img.id)).forEach((img) => confirmHeadshotMutation.mutate({ id: img.id, confirmed: true }));
+  };
   const handleUpload = useCallback(
     (files: FileList | null) => {
       if (!files || files.length === 0) return;
@@ -1283,7 +1340,7 @@ export default function ImageStudio() {
                   <Input
                     placeholder="Search brands, retailers, restaurants..."
                     value={brandSearchQuery}
-                    onChange={(e) => setBrandSearchQuery(e.target.value)}
+                    onChange={(e) => { setBrandSearchQuery(e.target.value); setSelectedBrand(null); }}
                     className="pl-8 h-9"
                     data-testid="input-brand-search"
                   />
@@ -1304,7 +1361,7 @@ export default function ImageStudio() {
                   return (
                     <button
                       key={sector}
-                      onClick={() => setBrandSectorFilter(sector)}
+                      onClick={() => { setBrandSectorFilter(sector); setSelectedBrand(null); }}
                       className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                         brandSectorFilter === sector
                           ? "bg-primary text-primary-foreground"
@@ -1331,6 +1388,69 @@ export default function ImageStudio() {
                   <Button size="sm" className="mt-4" onClick={() => { setUploadCategory("Brands"); setUploadDialogOpen(true); }} data-testid="button-upload-brand-empty">
                     <Upload className="h-4 w-4 mr-1" /> Add First Brand
                   </Button>
+                </div>
+              ) : selectedBrand ? (
+                <div>
+                  <div className="mb-4 flex items-center gap-2">
+                    <button
+                      onClick={() => setSelectedBrand(null)}
+                      className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+                      data-testid="button-back-to-brands"
+                    >
+                      ← Brand Library
+                    </button>
+                    <span className="text-muted-foreground">/</span>
+                    <h3 className="text-lg font-semibold" data-testid="text-brand-view-name">{selectedBrand}</h3>
+                    <span className="text-sm text-muted-foreground">({selectedBrandImages.length} images)</span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                    {selectedBrandImages.map((img) => (
+                      <ImageCard
+                        key={img.id}
+                        image={img}
+                        onView={() => { setSelectedImage(img); setLightboxOpen(true); }}
+                        onEdit={() => openEdit(img)}
+                        onAiTag={() => aiTagMutation.mutate(img.id)}
+                        onAiEdit={() => {
+                          setAiEditImageId(img.id);
+                          setAiEditImageName(img.fileName || "");
+                          setAiEditPrompt("");
+                          setAiEditOpen(true);
+                        }}
+                        onDelete={isClientViewer ? undefined : () => { if (confirm("Delete this brand image?")) deleteMutation.mutate(img.id); }}
+                        selectMode={selectMode}
+                        selected={selectedIds.has(img.id)}
+                        onToggleSelect={() => toggleSelect(img.id)}
+                        aiTagging={aiTagMutation.isPending}
+                        crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
+                        version={imageVersions[img.id]}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : !brandSearchQuery ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-x-4 gap-y-6 px-2">
+                  {brandGroups.map((brand) => (
+                    <button
+                      key={brand.name}
+                      onClick={() => setSelectedBrand(brand.name)}
+                      className="flex flex-col items-center gap-2.5 group cursor-pointer"
+                      data-testid={`button-brand-${brand.name.toLowerCase().replace(/\s/g, "-")}`}
+                    >
+                      <div className="w-full aspect-square rounded-xl overflow-hidden bg-white ring-1 ring-border shadow-[0_1px_4px_rgba(0,0,0,0.08)] group-hover:shadow-[0_2px_12px_rgba(0,0,0,0.16)] group-hover:scale-[1.03] transition-all duration-200 flex items-center justify-center p-3">
+                        <img
+                          src={brand.cover.thumbnailData || ((brand.cover as any).hasThumbnail ? `/api/image-studio/${brand.cover.id}/thumb` : `/api/image-studio/${brand.cover.id}/full`)}
+                          alt={brand.name}
+                          className="max-w-full max-h-full object-contain"
+                          loading="lazy"
+                        />
+                      </div>
+                      <div className="text-center max-w-full">
+                        <p className="text-[13px] font-semibold text-foreground leading-tight truncate" data-testid={`text-brand-name-${brand.name.toLowerCase().replace(/\s/g, "-")}`}>{brand.name}</p>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">{brand.count}</p>
+                      </div>
+                    </button>
+                  ))}
                 </div>
               ) : (
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
@@ -1901,13 +2021,24 @@ export default function ImageStudio() {
                         className="flex flex-col items-center gap-2.5 group cursor-pointer"
                         data-testid={`button-person-${person.name.toLowerCase().replace(/\s/g, "-")}`}
                       >
-                        <div className="w-[100px] h-[100px] sm:w-[110px] sm:h-[110px] md:w-[120px] md:h-[120px] rounded-full overflow-hidden ring-[3px] ring-background shadow-[0_1px_4px_rgba(0,0,0,0.12)] group-hover:shadow-[0_2px_12px_rgba(0,0,0,0.18)] group-hover:scale-[1.04] transition-all duration-200">
-                          <img
-                            src={person.coverImage.thumbnailData || ((person.coverImage as any).hasThumbnail ? `/api/image-studio/${person.coverImage.id}/thumb` : `/api/image-studio/${person.coverImage.id}/full`)}
-                            alt={person.name}
-                            className="w-full h-full object-cover"
-                            loading="lazy"
-                          />
+                        <div className="relative">
+                          <div className="w-[100px] h-[100px] sm:w-[110px] sm:h-[110px] md:w-[120px] md:h-[120px] rounded-full overflow-hidden ring-[3px] ring-background shadow-[0_1px_4px_rgba(0,0,0,0.12)] group-hover:shadow-[0_2px_12px_rgba(0,0,0,0.18)] group-hover:scale-[1.04] transition-all duration-200">
+                            <img
+                              src={person.coverImage.thumbnailData || ((person.coverImage as any).hasThumbnail ? `/api/image-studio/${person.coverImage.id}/thumb` : `/api/image-studio/${person.coverImage.id}/full`)}
+                              alt={person.name}
+                              className="w-full h-full object-cover"
+                              loading="lazy"
+                            />
+                          </div>
+                          {person.personId && confirmedPersonIds.has(person.personId) && (
+                            <div
+                              className="absolute -bottom-0.5 -right-0.5 rounded-full bg-green-600 p-1 shadow ring-2 ring-background"
+                              title={`${person.name} confirmed these photos are them`}
+                              data-testid={`badge-confirmed-${person.name.toLowerCase().replace(/\s/g, "-")}`}
+                            >
+                              <BadgeCheck className="h-4 w-4 text-white" />
+                            </div>
+                          )}
                         </div>
                         <div className="text-center max-w-[120px]">
                           <p className="text-[13px] font-semibold text-foreground leading-tight capitalize truncate" data-testid={`text-person-name-${person.name.toLowerCase().replace(/\s/g, "-")}`}>{person.name}</p>
@@ -1933,25 +2064,68 @@ export default function ImageStudio() {
                   <span className="text-sm text-muted-foreground">
                     ({(peopleGroups.find(p => p.name === selectedPerson)?.count || 0)} photos)
                   </span>
+                  {(() => {
+                    const group = peopleGroups.find(p => p.name === selectedPerson);
+                    if (!group?.personId) return null;
+                    const isMe = !!viewerMe?.id && group.personId === viewerMe.id;
+                    const personConfirmed = confirmations.some(c => c.userId === group.personId);
+                    if (isMe) {
+                      return (
+                        <Button size="sm" variant="outline" className="ml-auto" onClick={() => confirmPersonAll(group)} data-testid="button-confirm-my-headshots">
+                          <BadgeCheck className="h-4 w-4 mr-1" /> Confirm these are me
+                        </Button>
+                      );
+                    }
+                    if (personConfirmed) {
+                      return (
+                        <span className="ml-auto text-xs text-green-700 flex items-center gap-1" data-testid="text-person-confirmed">
+                          <BadgeCheck className="h-4 w-4" /> Confirmed by {group.name}
+                        </span>
+                      );
+                    }
+                    return null;
+                  })()}
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-                  {(peopleGroups.find(p => p.name === selectedPerson)?.images || []).map((img) => (
-                    <ImageCard
-                      key={img.id}
-                      image={img}
-                      onView={() => { setSelectedImage(img); setLightboxOpen(true); }}
-                      onEdit={() => openEdit(img)}
-                      onAiTag={() => aiTagMutation.mutate(img.id)}
-                      onAiEdit={() => { setAiEditImageId(img.id); setAiEditImageName(img.fileName || ""); setAiEditPrompt(""); setAiEditOpen(true); }}
-                      onDelete={isClientViewer ? undefined : () => { if (confirm("Delete this image?")) deleteMutation.mutate(img.id); }}
-                      aiTagging={aiTagMutation.isPending}
-                      selectMode={selectMode}
-                      selected={selectedIds.has(img.id)}
-                      onToggleSelect={() => toggleSelect(img.id)}
-                      crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
-                      version={imageVersions[img.id]}
-                    />
-                  ))}
+                  {(peopleGroups.find(p => p.name === selectedPerson)?.images || []).map((img) => {
+                    const group = peopleGroups.find(p => p.name === selectedPerson);
+                    const isMe = !!viewerMe?.id && !!group?.personId && group.personId === viewerMe.id;
+                    const personConf = group?.personId ? confirmations.find(c => c.imageId === img.id && c.userId === group.personId) : null;
+                    return (
+                      <div key={img.id} className="relative">
+                        <ImageCard
+                          image={img}
+                          onView={() => { setSelectedImage(img); setLightboxOpen(true); }}
+                          onEdit={() => openEdit(img)}
+                          onAiTag={() => aiTagMutation.mutate(img.id)}
+                          onAiEdit={() => { setAiEditImageId(img.id); setAiEditImageName(img.fileName || ""); setAiEditPrompt(""); setAiEditOpen(true); }}
+                          onDelete={isClientViewer ? undefined : () => { if (confirm("Delete this image?")) deleteMutation.mutate(img.id); }}
+                          aiTagging={aiTagMutation.isPending}
+                          selectMode={selectMode}
+                          selected={selectedIds.has(img.id)}
+                          onToggleSelect={() => toggleSelect(img.id)}
+                          crmLinks={resolveCrmLinks(img, propertyLookup, brandLookup)}
+                          version={imageVersions[img.id]}
+                        />
+                        {(isMe || personConf) && (
+                          <button
+                            onClick={isMe ? () => confirmHeadshotMutation.mutate({ id: img.id, confirmed: !personConf }) : undefined}
+                            disabled={!isMe}
+                            className={`absolute bottom-2 left-2 z-10 flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium shadow ${
+                              personConf
+                                ? "bg-green-600 text-white"
+                                : "bg-white/95 text-foreground border hover:bg-white"
+                            }`}
+                            title={personConf ? `Confirmed by ${group?.name} — this is them` : "Confirm this headshot is you"}
+                            data-testid={`button-confirm-headshot-${img.id}`}
+                          >
+                            <Check className="h-3 w-3" />
+                            {personConf ? "Confirmed" : "Confirm it's me"}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ) : filteredImages.length === 0 ? (

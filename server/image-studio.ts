@@ -1474,6 +1474,19 @@ export async function sweepStage8ImagesForRun(args: {
   };
 }
 
+let _headshotConfirmationsEnsured = false;
+async function ensureHeadshotConfirmationsTable() {
+  if (_headshotConfirmationsEnsured) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS headshot_confirmations (
+      image_id character varying NOT NULL,
+      user_id text NOT NULL,
+      confirmed_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (image_id, user_id)
+    )`);
+  _headshotConfirmationsEnsured = true;
+}
+
 export function registerImageStudioRoutes(app: Express) {
   ensureTable().catch(err => console.error("[image-studio] Table setup error:", err.message));
 
@@ -2171,6 +2184,50 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
+  // ── Headshot confirmations ─────────────────────────────────────────────
+  // Headshots are filed per person via person:/person_id: tags; this table
+  // records the person themselves confirming "yes, this headshot is me" —
+  // one row per (image, user), so colleagues can see at a glance that the
+  // filing is verified rather than guessed from a filename.
+  app.get("/api/image-studio/headshots/confirmations", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      await ensureHeadshotConfirmationsTable();
+      const r = await pool.query(
+        `SELECT hc.image_id AS "imageId", hc.user_id AS "userId", u.name AS "userName", hc.confirmed_at AS "confirmedAt"
+         FROM headshot_confirmations hc
+         LEFT JOIN users u ON u.id = hc.user_id
+         ORDER BY hc.confirmed_at DESC`
+      );
+      res.json(r.rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/image-studio/headshots/:id/confirm", requireAuth, async (req: Request, res: Response) => {
+    const userId = req.session?.userId || (req as any).tokenUserId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      await ensureHeadshotConfirmationsTable();
+      const confirmed = req.body?.confirmed !== false;
+      if (confirmed) {
+        await pool.query(
+          `INSERT INTO headshot_confirmations (image_id, user_id) VALUES ($1, $2)
+           ON CONFLICT (image_id, user_id) DO UPDATE SET confirmed_at = now()`,
+          [req.params.id as string, String(userId)]
+        );
+      } else {
+        await pool.query(
+          "DELETE FROM headshot_confirmations WHERE image_id = $1 AND user_id = $2",
+          [req.params.id as string, String(userId)]
+        );
+      }
+      res.json({ ok: true, confirmed });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.delete("/api/image-studio/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id as string));
@@ -2192,6 +2249,7 @@ export function registerImageStudioRoutes(app: Express) {
         "DELETE FROM image_studio_collection_images WHERE image_id = $1",
         [req.params.id]
       );
+      await pool.query("DELETE FROM headshot_confirmations WHERE image_id = $1", [req.params.id]).catch(() => {});
       // And property gallery links — orphaned property_imagery_assets rows
       // left galleries pointing at deleted images (Westgate, 2026-09-01).
       await db.delete(propertyImageryAssets).where(eq(propertyImageryAssets.imageStudioId, req.params.id as string));
