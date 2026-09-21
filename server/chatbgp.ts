@@ -4190,7 +4190,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "measure_plan",
-      description: "Measure architects' drawing PDFs to real-world metres / m² / sq ft using the DRAWN SCALE. Reads the sheet's title block ('1 : 125@A1'), checks it against the physical page size (corrects for a 1:100@A1 sheet saved at A3), and returns an exact calibration (metres per PDF point), the drawing title/number, every dimension string printed on the sheet ('8.9m', '12,450') and any area figures (GIA/NIA/sq m/sq ft) with their positions. With render:true it also saves a high-resolution PNG of the page (or a region of it) to chat-media that you can look at with vision_describe_image and the user can open. Pass shapes to get areas/lengths: points as fractions of the page (0–1, origin top-left) or as pixels on a previous render (coords:'pixel' + image). Sources: a chat upload (chatMediaFilename), a storage key, an https PDF URL, or an RBKC register document link from get_planning_drawings — so 'measure the ground floor of the Plaza plans' is: get_planning_drawings → measure_plan on the ground floor sheet with render:true → read the unit corners off the render → measure_plan with shapes. Always report scaled areas as approximate and name the scale used. Vector PDFs only; for a scan/photo the user calibrates on the Cann CAD page (/cad-measure).",
+      description: "Measure architects' drawing PDFs to real-world metres / m² / sq ft using the DRAWN SCALE. Reads the sheet's title block ('1 : 125@A1'), checks it against the physical page size (corrects for a 1:100@A1 sheet saved at A3), and returns an exact calibration (metres per PDF point), the drawing title/number, every dimension string printed on the sheet ('8.9m', '12,450') and any area figures (GIA/NIA/sq m/sq ft) with their positions. With render:true it also saves a high-resolution PNG of the page (or a region of it) to chat-media that you can look at with vision_describe_image and the user can open. Pass shapes to get areas/lengths: points as fractions of the page (0–1, origin top-left) or as pixels on a previous render (coords:'pixel' + image). Pass fills:true on a shaded GIA/NIA/GEA demise plan to measure the shaded extent itself (grouped by fill colour, unioned) — the fastest way to a per-floor area schedule when the sheets print no figures. Sources: a chat upload (chatMediaFilename), a storage key, an https PDF URL, or an RBKC register document link from get_planning_drawings — so 'measure the ground floor of the Plaza plans' is: get_planning_drawings → measure_plan on the ground floor sheet with render:true → read the unit corners off the render → measure_plan with shapes. Always report scaled areas as approximate and name the scale used. Vector PDFs only; for a scan/photo the user calibrates on the Cann CAD page (/cad-measure).",
       parameters: {
         type: "object",
         properties: {
@@ -4218,6 +4218,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
             description: "true to save a high-res PNG of the whole page; or {region:{x,y,w,h}, targetDpi} to render just part of it (fractions of the page, origin top-left). Default 200 dpi, PNG.",
             oneOf: [{ type: "boolean" }, { type: "object", properties: { region: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" } } }, targetDpi: { type: "integer" } } }],
           },
+          fills: { type: "boolean", description: "Measure the sheet's SHADED regions: every solid colour fill on the vector page is grouped by colour, unioned, and converted to m²/sq ft at the drawn scale. This is how you get GIA/NIA off architects' demise plans (e.g. 'GROUND FLOOR PLAN - EXISTING GIA'), which shade the extent but print no figures — the largest tinted fill is the demise. Run it per floor sheet to build a schedule." },
           shapes: {
             type: "array",
             description: "Shapes to measure. type 'area' = closed polygon (≥3 points) → sqm, sqft, perimeter; type 'length' = polyline (≥2 points) → metres.",
@@ -8329,6 +8330,7 @@ export async function executeCrmToolRaw(
         calibrate: fnArgs.calibrate as any,
         render: fnArgs.render as any,
         shapes: fnArgs.shapes as any,
+        fills: fnArgs.fills === true,
         coords: fnArgs.coords as any,
         image: fnArgs.image as any,
       });
