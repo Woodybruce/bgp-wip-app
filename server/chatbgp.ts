@@ -665,6 +665,7 @@ function getToolProgressLabel(toolName: string): string {
     follow_url: "Adding to news feed...",
     property_lookup: "Looking up property data...",
     get_property_planning: "Pulling planning constraints + recent applications...",
+    get_planning_drawings: "Fetching planning drawings from the council portal...",
     property_data_lookup: "Querying PropertyData...",
     deep_investigate: "Running deep investigation...",
     rocketreach_person_lookup: "Looking up verified contact details...",
@@ -2878,6 +2879,27 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           propertyId: { type: "string", description: "crm_properties.id of the property to look up" },
         },
         required: ["propertyId"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "get_planning_drawings",
+      description: "Fetch the planning DRAWINGS/plans for a Royal Borough of Kensington & Chelsea (RBKC) planning application and bundle them into a single PDF for the user to download. Use this when the user asks for the plans, drawings, floor plans, elevations, sections or existing/proposed drawings of a building and there is an RBKC planning reference (form like PP/20/01165, CA/26/00563, LB/24/01234). RBKC's portal blocks casual downloads and its historical search is patchy after the 2025 cyber attack; this tool goes straight to the rebuilt Idox document publisher, so it works where a plain browser link doesn't. Returns a download link to the merged PDF plus the document list. RBKC only for now — for other councils direct the user to the LPA portal.",
+      parameters: {
+        type: "object",
+        properties: {
+          reference: { type: "string", description: "The RBKC planning application reference, e.g. 'PP/20/01165'. Required. Get it from get_property_planning (recent applications) or from the user." },
+          which: {
+            type: "string",
+            enum: ["existing", "proposed", "all_drawings", "everything"],
+            description: "Which documents to bundle. 'existing' = existing-building drawings only (for an existing-use underwrite); 'proposed' = the proposed-scheme drawings; 'all_drawings' (default) = every drawing/plan/elevation/section/site plan; 'everything' = all documents including reports and statements.",
+          },
+          title: { type: "string", description: "Optional title for the bundled PDF (defaults to the address + reference)." },
+        },
+        required: ["reference"],
       },
     },
   });
@@ -14475,6 +14497,102 @@ export function setupChatBGPRoutes(app: Express) {
       const { getPlanningSummary, planningSummaryToMarkdown } = await import("./planning-summary");
       const summary = await getPlanningSummary(String(tcArgs.propertyId));
       return { data: planningSummaryToMarkdown(summary) };
+    }
+    // Fetch RBKC planning drawings and bundle them into one downloadable PDF.
+    if (tcName === "get_planning_drawings") {
+      const ref = String(tcArgs.reference || "").trim().toUpperCase();
+      const which = String(tcArgs.which || "all_drawings");
+      const { looksLikeRbkcRef, listRbkcDocuments, downloadRbkcDocument, getRbkcCaseSummary } = await import("./rbkc-planning");
+      if (!looksLikeRbkcRef(ref)) {
+        return { data: { error: `'${tcArgs.reference}' isn't an RBKC application reference (expected e.g. PP/20/01165). This tool is RBKC-only for now.` } };
+      }
+      const [listed, caseSummary] = await Promise.all([listRbkcDocuments(ref), getRbkcCaseSummary(ref).catch(() => null)]);
+      if (!listed) return { data: { error: `Couldn't reach RBKC's planning portal for ${ref}. It may be a bad reference, or the portal is temporarily unavailable.` } };
+      const { docs, session } = listed;
+      if (docs.length === 0) return { data: { error: `No documents are published against ${ref} on RBKC's portal.`, caseSummary } };
+
+      const DRAWING_CATS = new Set([
+        "floor_plan_proposed", "floor_plan_existing", "floor_plan",
+        "elevation_proposed", "elevation_existing", "elevation",
+        "section_proposed", "section_existing", "section", "site_plan",
+      ]);
+      const isDrawing = (d: { category: string; type: string }) => DRAWING_CATS.has(d.category) || /drawing/i.test(d.type);
+      const allDrawings = docs.filter(isDrawing);
+      let wanted = docs;
+      let filterNote: string | undefined;
+      if (which === "existing" || which === "proposed") {
+        // Precise: architects mark existing/proposed in the description or the
+        // drawing number (…-X-… existing, …-P-… proposed). Don't sweep in
+        // every drawing — that would mix proposed into an "existing" bundle.
+        const marker = which === "existing" ? /\bexist|[-_]x[-_]/i : /\bpropos|[-_]p[-_]/i;
+        wanted = allDrawings.filter((d) => d.category.endsWith(`_${which}`) || marker.test(`${d.description} ${d.drawingNumber || ""}`));
+        // Older applications (e.g. the 2020 Plaza) don't label their drawings
+        // existing/proposed at all — fall back to every drawing so the user
+        // still gets something, with a note.
+        if (wanted.length === 0 && allDrawings.length > 0) {
+          wanted = allDrawings;
+          filterNote = `These drawings aren't labelled existing/proposed on the register, so all ${allDrawings.length} drawings are included.`;
+        }
+      } else if (which === "all_drawings") {
+        wanted = allDrawings;
+      }
+      // "everything" keeps all docs.
+
+      // Cap so a huge case (hundreds of docs) can't blow memory / time.
+      const CAP = 40;
+      const capped = wanted.slice(0, CAP);
+      if (capped.length === 0) {
+        return { data: { error: `No ${which.replace("_", " ")} documents on ${ref}. The application has ${docs.length} documents in total — try which:'everything' to see them all.`, caseSummary, documentList: docs.map((d) => ({ date: d.date, type: d.type, description: d.description })) } };
+      }
+
+      const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
+      const out = await PDFDocument.create();
+      const font = await out.embedFont(StandardFonts.HelveticaBold);
+      const addrLine = caseSummary?.address || "";
+      let merged = 0;
+      const failed: string[] = [];
+      for (const d of capped) {
+        const buf = await downloadRbkcDocument(d.url, session);
+        if (!buf) { failed.push(d.description.slice(0, 50)); continue; }
+        try {
+          const cover = out.addPage([595, 842]);
+          if (addrLine) cover.drawText(addrLine.slice(0, 70), { x: 40, y: 792, size: 11, font, color: rgb(0.4, 0.4, 0.4) });
+          cover.drawText(`${d.label}`, { x: 40, y: 762, size: 15, font });
+          cover.drawText(d.description.slice(0, 80), { x: 40, y: 738, size: 10, font, color: rgb(0.3, 0.3, 0.3) });
+          cover.drawText(`RBKC ${ref}${d.date ? "  ·  " + d.date : ""}`, { x: 40, y: 714, size: 9, font, color: rgb(0.5, 0.5, 0.5) });
+          const src = await PDFDocument.load(buf, { ignoreEncryption: true });
+          for (const p of await out.copyPages(src, src.getPageIndices())) out.addPage(p);
+          merged++;
+        } catch { failed.push(d.description.slice(0, 50)); }
+      }
+      if (merged === 0) return { data: { error: `Found ${capped.length} documents on ${ref} but couldn't download any as PDF (the portal may be rate-limiting). Try again shortly.`, caseSummary } };
+
+      const bytes = await out.save();
+      const buffer = Buffer.from(bytes);
+      const crypto = await import("node:crypto");
+      const title = String(tcArgs.title || `${caseSummary?.address ? caseSummary.address + " — " : ""}${ref.replace(/\//g, "-")} plans`).replace(/[^a-zA-Z0-9 .,()\-–—]/g, "").trim() || `${ref.replace(/\//g, "-")} plans`;
+      const storageFilename = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}-${title.replace(/[^a-zA-Z0-9-_]/g, "_").slice(0, 60)}.pdf`;
+      await saveFile(`chat-media/${storageFilename}`, buffer, "application/pdf", `${title}.pdf`);
+      const downloadUrl = `/api/chat-media/${storageFilename}`;
+
+      return {
+        data: {
+          reference: ref,
+          address: caseSummary?.address,
+          caseDescription: caseSummary?.description,
+          decision: caseSummary?.decision,
+          totalDocuments: docs.length,
+          bundled: merged,
+          which,
+          failed: failed.length ? failed : undefined,
+          note: filterNote,
+          truncated: wanted.length > CAP ? `Only the first ${CAP} of ${wanted.length} matching documents were bundled.` : undefined,
+          downloadUrl,
+          downloadMarkdown: `[Download ${title}.pdf](${downloadUrl}) — ${merged} drawings, ${out.getPageCount()} pages`,
+          documentList: docs.map((d) => ({ date: d.date, type: d.type, description: d.description, category: d.category })),
+          message: `Bundled ${merged} ${which === "everything" ? "documents" : "drawings"} from RBKC ${ref}${caseSummary?.address ? " (" + caseSummary.address + ")" : ""} into one PDF (${out.getPageCount()} pages). The download link is ready for the user.`,
+        },
+      };
     }
     // Financial model
     if (tcName === "run_model") {
