@@ -15,9 +15,11 @@ import { registerExcelCompatFunctions } from "./model-functions";
 import { desugarLet } from "./model-let";
 import { boundFullRowColRefs, type SheetDims } from "./model-ranges";
 import { foldPositionGuards, rewriteBooleanLiterals } from "./model-guards";
+import { analyzeSpills, cellKey, constrainSpillToRef, rewriteDynamicArrays } from "./model-spill";
 
 export { desugarLet };
 export { boundFullRowColRefs, foldPositionGuards, rewriteBooleanLiterals };
+export { analyzeSpills, rewriteDynamicArrays, constrainSpillToRef };
 export type { SheetDims };
 
 export type EngineScalar = number | string | boolean | null;
@@ -50,6 +52,7 @@ export class EngineLoadError extends Error {}
 
 const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30); // SheetJS / Excel 1900 date system
 const MAX_CELLS_PER_SHEET = 1_000_000;
+const EMPTY_ANCHORS: ReadonlyMap<string, string> = new Map();
 
 function dateToExcelSerial(d: Date): number {
   return (d.getTime() - EXCEL_EPOCH_MS) / 86400000;
@@ -61,31 +64,106 @@ type HFScalar = string | number | boolean | null;
 interface CellContext {
   sheetName: string;
   dimsBySheet: ReadonlyMap<string, SheetDims>;
+  /** Same-sheet dynamic-array anchors (anchor A1 -> spill range), when present. */
+  anchors: ReadonlyMap<string, string>;
+  /** Computed defined names to inline (name -> expression without "="). */
+  computedNames?: ReadonlyMap<string, string>;
   row: number; // 0-based
   col: number; // 0-based
+}
+
+/**
+ * Inline-expand references to COMPUTED defined names (e.g.
+ * Import_Key = TRIM(CLEAN(range))&"|"&TRIM(CLEAN(range))).
+ *
+ * HyperFormula cannot hold an array-valued named expression: a reference in
+ * an aggregating context (SUMPRODUCT(--(K=x))) evaluates fine, but it poisons
+ * the name's cached vertex with the intermediate comparison results, so plain
+ * references (INDEX(K,n)) read booleans; and the same reference in a scalar
+ * context reduces to the top-left element. Verified against HyperFormula 3.4
+ * with and without the compat plugin. Expanding the expression at each
+ * reference site sidesteps the named-expression machinery entirely; the name
+ * itself is never registered, so a missed reference fails loudly (#NAME?).
+ */
+function inlineComputedNames(f: string, computed: ReadonlyMap<string, string>): string {
+  if (computed.size === 0) return f;
+  let hit = false;
+  for (const name of computed.keys()) {
+    if (f.includes(name)) { hit = true; break; }
+  }
+  if (!hit) return f;
+  let out = "";
+  let inString = false;
+  let i = 0;
+  while (i < f.length) {
+    const ch = f[i];
+    if (inString) {
+      out += ch;
+      if (ch === '"') {
+        if (f[i + 1] === '"') { out += '"'; i++; }
+        else inString = false;
+      }
+      i++;
+      continue;
+    }
+    if (ch === '"') { inString = true; out += ch; i++; continue; }
+    if (/[A-Za-z_]/.test(ch)) {
+      let matched = false;
+      for (const [name, expr] of computed) {
+        if (!f.startsWith(name, i)) continue;
+        const before = i > 0 ? f[i - 1] : "";
+        const after = f[i + name.length] ?? "";
+        // Not part of a longer identifier, not sheet-qualified (Sheet!Name),
+        // not a function call.
+        if (/[A-Za-z0-9_.$!']/.test(before) || /[A-Za-z0-9_(]/.test(after)) continue;
+        out += `(${expr})`;
+        i += name.length;
+        matched = true;
+        break;
+      }
+      if (matched) continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
+/** A defined name whose Ref is a plain sheet(-qualified) cell/range reference. */
+const PURE_REF_RE = /^=?(?:'[^']+'|[A-Za-z_0-9. ]+)?!?\$?[A-Za-z]{1,3}\$?[0-9]+(?::\$?[A-Za-z]{1,3}\$?[0-9]+)?$/;
+
+/** Every load-time formula rewrite, in order. Also used for deferred anchors. */
+function transformFormula(f: string, ctx?: CellContext): string {
+  // Computed defined names are inlined first so later rewrites see the
+  // expanded expression (see inlineComputedNames for why names can't stay).
+  if (ctx?.computedNames) f = inlineComputedNames(f, ctx.computedNames);
+  // Excel 365 spill syntax: _xlws.FILTER -> FILTER, D52# -> D52:D53
+  // (model-spill.ts). No-ops fast on formulas without spill syntax.
+  f = rewriteDynamicArrays(f, ctx?.anchors ?? EMPTY_ANCHORS);
+  if (ctx) {
+    // Bound full-row/full-column refs (CF!$8:$8 -> CF!$A$8:$GG$8) to the used
+    // range of the referenced sheet: keeps HyperFormula's static dependency
+    // ranges at real cells instead of 16,384 phantom columns (model-ranges.ts).
+    f = boundFullRowColRefs(f, ctx.sheetName, ctx.dimsBySheet);
+    // Fold IF(COLUMN()=k,...) / IF(ROW()=k,...) guards whose outcome is fixed
+    // by the host cell's position. Removes the dead edge that closes false
+    // circular references in running-total rows (model-guards.ts).
+    f = foldPositionGuards(f, ctx.row, ctx.col);
+  }
+  // Excel's bare TRUE/FALSE literals are 0-arg calls to HyperFormula
+  // (model-guards.ts).
+  f = rewriteBooleanLiterals(f);
+  // HyperFormula has no LET: inline it away (see model-let.ts). Cheap gate
+  // first so the 99% of formulas without LET skip the parser.
+  return /\bLET\s*\(/i.test(f) ? desugarLet(f) : f;
 }
 
 function cellToHFValue(cell: XLSX.CellObject | undefined, ctx?: CellContext): HFScalar {
   if (!cell) return null;
 
   if (typeof cell.f === "string" && cell.f.length > 0) {
-    let f = cell.f.startsWith("=") ? cell.f : `=${cell.f}`;
-    if (ctx) {
-      // Bound full-row/full-column refs (CF!$8:$8 -> CF!$A$8:$GG$8) to the used
-      // range of the referenced sheet: keeps HyperFormula's static dependency
-      // ranges at real cells instead of 16,384 phantom columns (model-ranges.ts).
-      f = boundFullRowColRefs(f, ctx.sheetName, ctx.dimsBySheet);
-      // Fold IF(COLUMN()=k,...) / IF(ROW()=k,...) guards whose outcome is fixed
-      // by the host cell's position. Removes the dead edge that closes false
-      // circular references in running-total rows (model-guards.ts).
-      f = foldPositionGuards(f, ctx.row, ctx.col);
-    }
-    // Excel's bare TRUE/FALSE literals are 0-arg calls to HyperFormula
-    // (model-guards.ts).
-    f = rewriteBooleanLiterals(f);
-    // HyperFormula has no LET: inline it away (see model-let.ts). Cheap gate
-    // first so the 99% of formulas without LET skip the parser.
-    return /\bLET\s*\(/i.test(f) ? desugarLet(f) : f;
+    const f = cell.f.startsWith("=") ? cell.f : `=${cell.f}`;
+    return transformFormula(f, ctx);
   }
 
   const v = cell.v;
@@ -109,10 +187,20 @@ function cellToHFValue(cell: XLSX.CellObject | undefined, ctx?: CellContext): HF
   }
 }
 
+/** A multi-cell spill anchor whose formula is loaded after the initial build. */
+interface DeferredAnchor {
+  sheetName: string;
+  row: number; // 0-based
+  col: number; // 0-based
+  formula: string; // fully transformed, "=" prefixed
+}
+
 function worksheetToHFArray(
   ws: XLSX.WorkSheet,
   sheetName?: string,
   dimsBySheet?: ReadonlyMap<string, SheetDims>,
+  deferred?: DeferredAnchor[],
+  computedNames?: ReadonlyMap<string, string>,
 ): HFScalar[][] {
   const ref = ws["!ref"];
   if (!ref) return [];
@@ -125,12 +213,36 @@ function worksheetToHFArray(
     );
   }
   const rows: HFScalar[][] = new Array(rowCount);
+  // Excel 365 dynamic arrays: cells covered by a neighbour's spill hold cached
+  // values only; they must stay empty or HyperFormula's spill hits a wall
+  // (#SPILL!). Anchors are resolved up front so D52# can become D52:D53.
+  const spills = analyzeSpills(ws);
+  const deferredKeys = new Map(spills.multiAnchors.map((a) => [cellKey(a.row, a.col), a]));
   for (let r = 0; r <= range.e.r; r++) {
     const row: HFScalar[] = new Array(colCount).fill(null);
     for (let c = 0; c <= range.e.c; c++) {
+      if (spills.covered.has(cellKey(r, c))) continue; // leave room for the spill
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
       const ctx: CellContext | undefined =
-        sheetName && dimsBySheet ? { sheetName, dimsBySheet, row: r, col: c } : undefined;
-      row[c] = cellToHFValue(ws[XLSX.utils.encode_cell({ r, c })], ctx);
+        sheetName && dimsBySheet
+          ? { sheetName, dimsBySheet, anchors: spills.anchors, row: r, col: c, computedNames }
+          : undefined;
+      const anchorMeta = deferredKeys.get(cellKey(r, c));
+      if (deferred && anchorMeta && sheetName && cell && typeof cell.f === "string") {
+        // Multi-cell spill anchor: HyperFormula's build-time array-size
+        // prediction gives FILTER its full input height, which never fits an
+        // occupied grid (#SPILL!). Loaded after the build with the prediction
+        // pinned to the stored spill extent via ARRAY_CONSTRAIN (model-spill.ts).
+        const f = cell.f.startsWith("=") ? cell.f : `=${cell.f}`;
+        deferred.push({
+          sheetName,
+          row: r,
+          col: c,
+          formula: constrainSpillToRef(transformFormula(f, ctx), anchorMeta.height, anchorMeta.width),
+        });
+        continue;
+      }
+      row[c] = cellToHFValue(cell, ctx);
     }
     rows[r] = row;
   }
@@ -476,6 +588,33 @@ export function createEngineFromWorkbook(wb: XLSX.WorkBook): ModelEngine {
     });
   }
 
+  const deferred: DeferredAnchor[] = [];
+
+  // Split defined names: plain cell/range references are registered as
+  // HyperFormula named expressions after the build; computed names (formulas
+  // with functions/operators) are inlined at each reference site, because
+  // HyperFormula's array-valued named expressions are unreliable (see
+  // inlineComputedNames). First definition wins on duplicates, matching the
+  // old registration behaviour.
+  const computedNames = new Map<string, string>();
+  const pureNames: Array<{ name: string; ref: string }> = [];
+  {
+    const seen = new Set<string>();
+    for (const nameDef of (wb.Workbook?.Names ?? []) as any[]) {
+      const name = nameDef?.Name;
+      const ref = nameDef?.Ref;
+      if (!name || !ref || typeof name !== "string" || typeof ref !== "string") continue;
+      if (name.startsWith("_xlnm") || name.startsWith("_")) continue; // print areas etc.
+      if (seen.has(name)) continue;
+      seen.add(name);
+      if (PURE_REF_RE.test(ref.trim())) {
+        pureNames.push({ name, ref });
+      } else {
+        computedNames.set(name, ref.trim().replace(/^=/, ""));
+      }
+    }
+  }
+
   for (const name of wb.SheetNames) {
     const ws = wb.Sheets[name];
     if (!ws) continue;
@@ -483,7 +622,7 @@ export function createEngineFromWorkbook(wb: XLSX.WorkBook): ModelEngine {
       warnings.push(`Duplicate sheet name skipped: "${name}"`);
       continue;
     }
-    sheets[name] = worksheetToHFArray(ws, name, dimsBySheet);
+    sheets[name] = worksheetToHFArray(ws, name, dimsBySheet, deferred, computedNames);
     sheetNames.push(name);
   }
 
@@ -498,14 +637,11 @@ export function createEngineFromWorkbook(wb: XLSX.WorkBook): ModelEngine {
     throw new EngineLoadError(`Failed to build calculation engine: ${err?.message || err}`);
   }
 
-  // Register the workbook's defined names. Done after the build on purpose:
-  // HyperFormula recalculates dependents when a previously-unknown name
-  // appears, and a broken name must not abort the whole load.
-  for (const nameDef of (wb.Workbook?.Names ?? []) as any[]) {
-    const name = nameDef?.Name;
-    const ref = nameDef?.Ref;
-    if (!name || !ref || typeof name !== "string" || typeof ref !== "string") continue;
-    if (name.startsWith("_xlnm") || name.startsWith("_")) continue; // print areas etc.
+  // Register the workbook's (pure-reference) defined names. Done after the
+  // build on purpose: HyperFormula recalculates dependents when a
+  // previously-unknown name appears, and a broken name must not abort the
+  // whole load.
+  for (const { name, ref } of pureNames) {
     try {
       hf.addNamedExpression(name, ref.startsWith("=") ? ref : `=${ref}`);
     } catch (err: any) {
@@ -523,6 +659,20 @@ export function createEngineFromWorkbook(wb: XLSX.WorkBook): ModelEngine {
       if (id !== undefined) ids.set(name, id);
     }
     breakCircularReferences(hf, wb, ids, warnings);
+  }
+
+  // Deferred multi-cell spill anchors (Excel 365 dynamic arrays): loaded after
+  // the build so HyperFormula sizes each array vertex from the actual FILTER /
+  // SORT result instead of its static worst-case prediction (model-spill.ts).
+  for (const anchor of deferred) {
+    const id = hf.getSheetId(anchor.sheetName);
+    if (id === undefined) continue;
+    try {
+      hf.setCellContents({ sheet: id, row: anchor.row, col: anchor.col }, [[anchor.formula]]);
+    } catch (err: any) {
+      const a1 = XLSX.utils.encode_cell({ r: anchor.row, c: anchor.col });
+      warnings.push(`Spill anchor ${anchor.sheetName}!${a1} failed to load: ${err?.message || err}`);
+    }
   }
 
   return new HyperFormulaEngine(hf, sheetNames, warnings);

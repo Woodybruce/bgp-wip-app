@@ -10,8 +10,31 @@
  *           lowercase units ("m") with #NUM!, while Excel accepts any case.
  * - INDEX:  implemented natively, but the built-in rejects a zero row/column
  *           with #VALUE!, while Excel returns the whole column/row vector
- *           (INDEX(range, 0, col) / INDEX(range, row, 0)). This override keeps
- *           the built-in scalar path byte-identical and adds the vector path.
+ *           (INDEX(range, 0, col) / INDEX(range, row, 0)) — and the built-in
+ *           reads INDEX(1×N range, n) as a row index (#NUM!), while Excel's
+ *           two-argument vector form selects the nth column — and the
+ *           built-in's NUMBER selectors reject array selectors like
+ *           SEQUENCE(10) or {1,2,3,4}. This override keeps the built-in
+ *           scalar path byte-identical and adds the vector paths.
+ * - MOD:    implemented natively, but the built-in uses JS truncated
+ *           remainder (MOD(-7,3) = -1), while Excel floors (MOD(-7,3) = 2).
+ *           Quarter-end snapping formulas (EOMONTH(d, MOD(3-MONTH(d),3)))
+ *           break without Excel's sign convention.
+ * - TRIM / CLEAN: implemented natively, but the built-ins type the argument
+ *           STRING, which rejects a range with #VALUE! ("Cell range not
+ *           allowed"), while Excel vectorizes them elementwise. These
+ *           overrides take ANY and map over a SimpleRangeValue, keeping the
+ *           scalar path byte-identical. (Named-range key builders like
+ *           TRIM(CLEAN(D14:D200))&"|"&TRIM(CLEAN(E14:E200)) need this.)
+ * - CHOOSE: implemented natively, but the built-in coerces an array selector
+ *           ({1,2,3,4}) to its top-left scalar, returning only the first
+ *           candidate. Excel tiles the picked candidates in the selector's
+ *           grid arrangement (1×k selector → horizontal stacking). The scalar
+ *           path replicates the built-in exactly.
+ * - FILTER: implemented natively with NON-Excel semantics: the built-in
+ *           demands a same-shape boolean mask and rejects 2-D data, while
+ *           Excel keeps whole rows for a column-vector include (and whole
+ *           columns for a row-vector include). This override follows Excel.
  * - MONTH / YEAR / DAY: implemented natively, but the built-ins type the
  *           argument NUMBER(minValue: 0), which rejects date TEXT ("Nov-2022")
  *           with #VALUE!; Excel coerces date text to a serial first. These
@@ -31,6 +54,7 @@ import {
   ErrorType,
   SimpleRangeValue,
   EmptyValue,
+  ArraySize,
 } from "hyperformula";
 
 /** HyperFormula scalar as seen by a plugin implementation. */
@@ -154,6 +178,15 @@ export function parseDateTextToSerial(text: string): number | undefined {
     return ymdToSerial(y, month, d);
   }
   return undefined;
+}
+
+/** Excel/HyperFormula STRING-arg coercion, replicated for ANY-typed args. */
+function coerceToStringValue(arg: unknown): string | CellError {
+  if (arg instanceof CellError || typeof arg === "string") return arg;
+  if (arg === EmptyValue || arg === null || arg === undefined) return "";
+  const raw = rawNumber(arg);
+  if (typeof raw === "number") return raw.toString();
+  return raw ? "TRUE" : "FALSE";
 }
 
 class ExcelCompatPlugin extends FunctionPlugin {
@@ -318,32 +351,310 @@ class ExcelCompatPlugin extends FunctionPlugin {
    * unchanged; a vector only materialises at runtime, where aggregating
    * consumers (SUM, XLOOKUP, array arithmetic) absorb it.
    */
+  /**
+   * INDEX(range, row, [col]) — the built-in HyperFormula INDEX plus Excel's
+   * whole-row/whole-column selection (zero row/column returns a vector), the
+   * two-argument 1×N vector form (nth column), and array selectors
+   * (INDEX(grid, SEQUENCE(10), {1,2,3,4}) → a 10×4 cross product). The scalar
+   * path replicates the built-in body exactly, including its top-left
+   * fallback and error messages.
+   */
   index(ast: any, state: any): unknown {
+    const twoArgs = ast.args.length === 2;
     return this.runFunction(ast.args, state, this.metadata("INDEX"), (rangeValue: any, row: any, col: any): any => {
-      if ((row === 0 || col === 0) && row >= 0 && col >= 0) {
-        const data = rangeValue?.data as any[][] | undefined;
-        if (!data) return new CellError(ErrorType.VALUE, "Cell range expected.");
-        if (row === 0 && col === 0) {
-          return SimpleRangeValue.onlyValues(data.map((r) => r.slice()));
+      const data = rangeValue?.data as any[][] | undefined;
+      const height = typeof rangeValue?.height === "function" ? rangeValue.height() : (data?.length ?? 0);
+      const width = typeof rangeValue?.width === "function" ? rangeValue.width() : (data?.[0]?.length ?? 0);
+
+      // Coerce one selector position: EmptyValue/omitted -> 0 (Excel's
+      // whole-axis marker), numeric text -> number, else undefined.
+      const toIdx = (v: any): number | undefined => {
+        if (v === EmptyValue || v === null || v === undefined) return 0;
+        const raw = rawNumber(v);
+        if (typeof raw === "number") return Math.trunc(raw);
+        if (typeof raw === "string" && raw.trim() !== "" && !isNaN(Number(raw))) {
+          return Math.trunc(Number(raw));
         }
-        if (row === 0) {
-          if (col > rangeValue.width()) return new CellError(ErrorType.NUM, "Value too large.");
-          return SimpleRangeValue.onlyValues(data.map((r) => [r[col - 1] ?? EmptyValue]));
+        if (typeof raw === "boolean") return raw ? 1 : 0;
+        return undefined;
+      };
+      type Sel = { kind: "scalar"; n: number } | { kind: "vec"; ns: number[]; horizontal: boolean };
+      const normSel = (v: any): Sel | CellError => {
+        if (v instanceof CellError) return v;
+        if (v instanceof SimpleRangeValue) {
+          const d = v.data as any[][];
+          const vRows = d.length;
+          const vCols = vRows > 0 ? d[0].length : 0;
+          const ns: number[] = [];
+          for (const r of d) {
+            for (const x of r) {
+              if (x instanceof CellError) return x;
+              const n = toIdx(x);
+              if (n === undefined) return new CellError(ErrorType.VALUE, "Argument cannot be less than 1.");
+              ns.push(n);
+            }
+          }
+          return { kind: "vec", ns, horizontal: vRows === 1 && vCols > 1 };
         }
-        if (row > rangeValue.height()) return new CellError(ErrorType.NUM, "Value too large.");
-        const selected = data[row - 1] ?? [];
-        return SimpleRangeValue.onlyValues([selected.map((v: any) => v ?? EmptyValue)]);
+        const n = toIdx(v);
+        if (n === undefined) return new CellError(ErrorType.VALUE, "Argument cannot be less than 1.");
+        return { kind: "scalar", n };
+      };
+
+      const rowSel = normSel(row);
+      if (process.env.BGP_DEBUG_INDEX) {
+        // eslint-disable-next-line no-console
+        console.error("INDEX args:", {
+          range: rangeValue instanceof SimpleRangeValue ? `${rangeValue.height()}x${rangeValue.width()}` : typeof rangeValue,
+          row: row instanceof SimpleRangeValue ? `SRV ${row.height()}x${row.width()}` : String(row),
+          col: col instanceof SimpleRangeValue ? `SRV ${col.height()}x${col.width()}` : String(col),
+          rowSel: rowSel instanceof CellError ? "ERR" : rowSel.kind,
+        });
       }
-      if (col < 1 || row < 1) {
-        return new CellError(ErrorType.VALUE, "Argument cannot be less than 1.");
+      if (rowSel instanceof CellError) return rowSel;
+      const colSel = normSel(col);
+      if (colSel instanceof CellError) return colSel;
+
+      if (twoArgs && data && height === 1 && width > 1 && rowSel.kind === "scalar") {
+        // Excel vector semantics: INDEX(1×N range, n) selects the nth COLUMN.
+        // (The built-in always reads n as a row and returns #NUM!.)
+        if (rowSel.n < 1) return new CellError(ErrorType.VALUE, "Argument cannot be less than 1.");
+        if (rowSel.n > width) return new CellError(ErrorType.NUM, "Value too large.");
+        return data[0][rowSel.n - 1] ?? EmptyValue;
       }
-      if (col > rangeValue.width() || row > rangeValue.height()) {
-        return new CellError(ErrorType.NUM, "Value too large.");
+
+      if (rowSel.kind === "scalar" && colSel.kind === "scalar") {
+        const r = rowSel.n;
+        const c = colSel.n;
+        if ((r === 0 || c === 0) && r >= 0 && c >= 0) {
+          if (!data) return new CellError(ErrorType.VALUE, "Cell range expected.");
+          if (r === 0 && c === 0) {
+            return SimpleRangeValue.onlyValues(data.map((rw) => rw.slice()));
+          }
+          if (r === 0) {
+            if (c > width) return new CellError(ErrorType.NUM, "Value too large.");
+            return SimpleRangeValue.onlyValues(data.map((rw) => [rw[c - 1] ?? EmptyValue]));
+          }
+          if (r > height) return new CellError(ErrorType.NUM, "Value too large.");
+          const selected = data[r - 1] ?? [];
+          return SimpleRangeValue.onlyValues([selected.map((v: any) => v ?? EmptyValue)]);
+        }
+        if (c < 1 || r < 1) {
+          return new CellError(ErrorType.VALUE, "Argument cannot be less than 1.");
+        }
+        if (c > width || r > height) {
+          return new CellError(ErrorType.NUM, "Value too large.");
+        }
+        return data?.[r - 1]?.[c - 1] ??
+          data?.[0]?.[0] ??
+          new CellError(ErrorType.VALUE, "Cell range expected.");
       }
-      return rangeValue?.data?.[row - 1]?.[col - 1] ??
-        rangeValue?.data?.[0]?.[0] ??
-        new CellError(ErrorType.VALUE, "Cell range expected.");
+
+      // Array selectors: cross product of picked rows and columns. With one
+      // vector and one scalar, the selector's orientation is preserved
+      // (INDEX(range, {1;2}, 1) → 2×1, INDEX(range, {1,2}, 1) → 1×2).
+      if (!data) return new CellError(ErrorType.VALUE, "Cell range expected.");
+      const pickRows = rowSel.kind === "vec" ? rowSel.ns : [rowSel.n];
+      const pickCols = colSel.kind === "vec" ? colSel.ns : [colSel.n];
+      for (const r of pickRows) {
+        if (r < 1) return new CellError(ErrorType.VALUE, "Argument cannot be less than 1.");
+        if (r > height) return new CellError(ErrorType.NUM, "Value too large.");
+      }
+      for (const c of pickCols) {
+        if (c < 1) return new CellError(ErrorType.VALUE, "Argument cannot be less than 1.");
+        if (c > width) return new CellError(ErrorType.NUM, "Value too large.");
+      }
+      const grid: any[][] = pickRows.map((r) => pickCols.map((c) => data[r - 1]?.[c - 1] ?? EmptyValue));
+      if (rowSel.kind === "vec" && colSel.kind === "scalar" && rowSel.horizontal) {
+        return SimpleRangeValue.onlyValues([grid.map((rw) => rw[0])]);
+      }
+      if (rowSel.kind === "scalar" && colSel.kind === "vec" && !colSel.horizontal) {
+        return SimpleRangeValue.onlyValues(grid.map((rw) => [rw[0]]));
+      }
+      return SimpleRangeValue.onlyValues(grid);
     });
+  }
+
+  /**
+   * INDEX with array selectors returns rows×cols (cross product); with one
+   * vector selector and one scalar, the vector's orientation is preserved.
+   * Scalar-scalar INDEX stays 1×1 — the zero-row/column whole-axis vector is
+   * a runtime-only extension, same as the built-in.
+   */
+  indexArraySize(ast: any, state: any): unknown {
+    const count = (s: any) => s.width * s.height;
+    const isVec = (s: any) => count(s) > 1;
+    const horizontal = (s: any) => s.height === 1 && s.width > 1;
+    const rowSize = ast.args[1] ? (this.arraySizeForAst(ast.args[1], state) as any) : null;
+    const colSize = ast.args[2] ? (this.arraySizeForAst(ast.args[2], state) as any) : null;
+    const rowVec = rowSize !== null && isVec(rowSize);
+    const colVec = colSize !== null && isVec(colSize);
+    if (!rowVec && !colVec) return ArraySize.scalar();
+    if (rowVec && colVec) return new ArraySize(count(colSize), count(rowSize));
+    if (rowVec) {
+      return horizontal(rowSize)
+        ? new ArraySize(count(rowSize), 1)
+        : new ArraySize(1, count(rowSize));
+    }
+    return horizontal(colSize)
+      ? new ArraySize(count(colSize), 1)
+      : new ArraySize(1, count(colSize));
+  }
+
+  /**
+   * MOD(n, d) — Excel semantics: the result takes the divisor's sign, i.e.
+   * n - d * FLOOR(n/d). HyperFormula's built-in MOD uses JS remainder
+   * (truncated division), so MOD(-7, 3) yields -1 where Excel yields 2 — which
+   * breaks quarter-end snapping formulas like EOMONTH(d, MOD(3-MONTH(d),3)).
+   */
+  mod(ast: any, state: any): unknown {
+    return this.runFunction(ast.args, state, this.metadata("MOD"), (n: any, d: any): any => {
+      n = rawNumber(n);
+      d = rawNumber(d);
+      if (d === 0) return new CellError(ErrorType.DIV_BY_ZERO);
+      return (n as number) - (d as number) * Math.floor((n as number) / (d as number));
+    });
+  }
+
+  /**
+   * TRIM(text) — the built-in body (strip leading/trailing spaces, collapse
+   * inner runs to one) plus Excel's elementwise vectorization over a range.
+   */
+  trim(ast: any, state: any): unknown {
+    return this.runFunction(ast.args, state, this.metadata("TRIM"), (arg: any): any => {
+      const trimOne = (v: any): any => {
+        const s = coerceToStringValue(v);
+        if (s instanceof CellError) return s;
+        return s.replace(/^ +/g, "").replace(/ +$/g, "").replace(/ +/g, " ");
+      };
+      if (arg instanceof SimpleRangeValue) {
+        return SimpleRangeValue.onlyValues(arg.data.map((row: any[]) => row.map(trimOne)));
+      }
+      return trimOne(arg);
+    });
+  }
+
+  /** TRIM's array result has exactly the shape of its argument. */
+  trimArraySize(ast: any, state: any): unknown {
+    const s = this.arraySizeForAst(ast.args[0], state) as any;
+    // Drop isRef: a passthrough keeps it set, and isRef forces isScalar() ->
+    // the vertex would be built as a scalar formula and the range arg would
+    // never reach the body ("Cell range not allowed").
+    return new ArraySize(s.width, s.height);
+  }
+
+  /**
+   * CLEAN(text) — the built-in body (strip control chars U+0000–U+001F) plus
+   * Excel's elementwise vectorization over a range.
+   */
+  clean(ast: any, state: any): unknown {
+    return this.runFunction(ast.args, state, this.metadata("CLEAN"), (arg: any): any => {
+      const cleanOne = (v: any): any => {
+        const s = coerceToStringValue(v);
+        if (s instanceof CellError) return s;
+        // eslint-disable-next-line no-control-regex
+        return s.replace(/[ -]/g, "");
+      };
+      if (arg instanceof SimpleRangeValue) {
+        return SimpleRangeValue.onlyValues(arg.data.map((row: any[]) => row.map(cleanOne)));
+      }
+      return cleanOne(arg);
+    });
+  }
+
+  /** CLEAN's array result has exactly the shape of its argument. */
+  cleanArraySize(ast: any, state: any): unknown {
+    const s = this.arraySizeForAst(ast.args[0], state) as any;
+    return new ArraySize(s.width, s.height); // see trimArraySize re isRef
+  }
+
+  /**
+   * CHOOSE(selector, cand1, cand2, ...) — scalar selector replicates the
+   * built-in exactly. An array selector ({1,2,3,4}) tiles the picked
+   * candidates in the selector's grid arrangement: a 1×k selector stacks the
+   * candidates horizontally, k×1 stacks them vertically (this is how Excel
+   * assembles multi-column report tables in one spill formula). All picked
+   * candidates must share one block shape; a mismatch is #VALUE!.
+   */
+  choose(ast: any, state: any): unknown {
+    return this.runFunction(ast.args, state, this.metadata("CHOOSE"), (selector: any, ...candidates: any[]): any => {
+      if (!(selector instanceof SimpleRangeValue)) {
+        const idx = Math.trunc(rawNumber(selector) as number);
+        if (isNaN(idx) || idx < 1 || idx > candidates.length) {
+          return new CellError(ErrorType.NUM, "Selector cannot exceed the number of arguments.");
+        }
+        return candidates[idx - 1];
+      }
+      const sData = selector.data as any[][];
+      const sRows = sData.length;
+      const sCols = sRows > 0 ? sData[0].length : 0;
+      const blocks: any[][][][] = [];
+      let blockRows = -1;
+      let blockCols = -1;
+      for (let r = 0; r < sRows; r++) {
+        const rowBlocks: any[][][] = [];
+        for (let c = 0; c < sCols; c++) {
+          const raw = sData[r][c];
+          if (raw instanceof CellError) return raw;
+          const idx = Math.trunc(rawNumber(raw) as number);
+          if (isNaN(idx) || idx < 1 || idx > candidates.length) {
+            return new CellError(ErrorType.NUM, "Selector cannot exceed the number of arguments.");
+          }
+          const chosen = candidates[idx - 1];
+          if (chosen instanceof CellError) return chosen;
+          const grid: any[][] = chosen instanceof SimpleRangeValue ? (chosen.data as any[][]) : [[chosen]];
+          const gRows = grid.length;
+          const gCols = gRows > 0 ? grid[0].length : 0;
+          if (blockRows === -1) {
+            blockRows = gRows;
+            blockCols = gCols;
+          } else if (gRows !== blockRows || gCols !== blockCols) {
+            return new CellError(ErrorType.VALUE, "Array arguments to CHOOSE are of different size.");
+          }
+          rowBlocks.push(grid);
+        }
+        blocks.push(rowBlocks);
+      }
+      if (blockRows === -1) return new CellError(ErrorType.VALUE, "Selector cannot be empty.");
+      const out: any[][] = [];
+      for (let r = 0; r < sRows; r++) {
+        for (let br = 0; br < blockRows; br++) {
+          const outRow: any[] = [];
+          for (let c = 0; c < sCols; c++) {
+            outRow.push(...blocks[r][c][br]);
+          }
+          out.push(outRow);
+        }
+      }
+      return SimpleRangeValue.onlyValues(out);
+    });
+  }
+
+  /**
+   * CHOOSE's array result: scalar selector → the picked candidate's size when
+   * the selector is a numeric literal, else scalar (prediction must not widen
+   * an ordinary scalar CHOOSE). Array selector → selector grid × candidate
+   * block (candidates are assumed uniform; Excel errors when they are not).
+   */
+  chooseArraySize(ast: any, state: any): unknown {
+    const selectorSize = this.arraySizeForAst(ast.args[0], state) as any;
+    const candidateSizes = ast.args
+      .slice(1)
+      .map((a: any) => this.arraySizeForAst(a, state) as any);
+    const blockW = Math.max(...candidateSizes.map((s: any) => s.width), 1);
+    const blockH = Math.max(...candidateSizes.map((s: any) => s.height), 1);
+    if (selectorSize.width > 1 || selectorSize.height > 1) {
+      return new ArraySize(selectorSize.width * blockW, selectorSize.height * blockH);
+    }
+    const sel = ast.args[0];
+    if (sel?.type === "NUMBER") {
+      const idx = Math.trunc(sel.value as number);
+      if (idx >= 1 && idx <= candidateSizes.length) {
+        const s = candidateSizes[idx - 1];
+        return new ArraySize(s.width, s.height); // strip isRef (see trimArraySize)
+      }
+    }
+    return ArraySize.scalar();
   }
 
   /**
@@ -368,6 +679,89 @@ class ExcelCompatPlugin extends FunctionPlugin {
     return coerced instanceof CellError
       ? coerced
       : new CellError(ErrorType.VALUE, "Value cannot be coerced to number.");
+  }
+
+  /**
+   * FILTER(array, include, [if_empty]) — Excel semantics. HyperFormula's
+   * built-in FILTER requires a same-shape boolean mask, rejects 2-D data, and
+   * compacts cells row-wise; Excel keeps whole ROWS when include is a column
+   * vector of the array's height (and whole columns for a row vector). For
+   * 1-column data with a 1-column mask the two semantics coincide. Empty
+   * result → if_empty, else #N/A (HF has no #CALC! error type).
+   */
+  filterExcel(ast: any, state: any): unknown {
+    return this.runFunction(ast.args, state, this.metadata("FILTER"), (arrayArg: any, includeArg: any, ifEmpty: any): any => {
+      const data: any[][] = arrayArg instanceof SimpleRangeValue ? (arrayArg.data as any[][]) : [[arrayArg]];
+      const rows = data.length;
+      const cols = rows > 0 ? data[0].length : 0;
+      const mask: any[][] = includeArg instanceof SimpleRangeValue ? (includeArg.data as any[][]) : [[includeArg]];
+      const mRows = mask.length;
+      const mCols = mRows > 0 ? mask[0].length : 0;
+
+      const toBool = (v: any): boolean | CellError => {
+        if (v instanceof CellError) return v;
+        const raw = rawNumber(v);
+        if (typeof raw === "boolean") return raw;
+        if (typeof raw === "number") return raw !== 0;
+        if (raw === EmptyValue || raw === null || raw === undefined) return false;
+        if (typeof raw === "string") {
+          if (/^true$/i.test(raw)) return true;
+          if (/^false$/i.test(raw)) return false;
+        }
+        return new CellError(ErrorType.VALUE, "Unsupported type in FILTER criterion");
+      };
+
+      let out: any[][];
+      if (mRows === rows && mCols === 1) {
+        // Column-vector mask: keep whole rows.
+        out = [];
+        for (let i = 0; i < rows; i++) {
+          const b = toBool(mask[i][0]);
+          if (b instanceof CellError) return b;
+          if (b) out.push(data[i].slice());
+        }
+      } else if (mCols === cols && mRows === 1 && cols > 1) {
+        // Row-vector mask: keep whole columns.
+        const keep: number[] = [];
+        for (let j = 0; j < cols; j++) {
+          const b = toBool(mask[0][j]);
+          if (b instanceof CellError) return b;
+          if (b) keep.push(j);
+        }
+        out = data.map((row) => keep.map((j) => row[j]));
+      } else if (mRows === rows && mCols === cols) {
+        // Same-shape 1-column edge (mCols === cols === 1): identical to the
+        // row filter above; 2-D same-shape masks are not valid Excel FILTER.
+        if (cols === 1) {
+          out = [];
+          for (let i = 0; i < rows; i++) {
+            const b = toBool(mask[i][0]);
+            if (b instanceof CellError) return b;
+            if (b) out.push([data[i][0]]);
+          }
+        } else {
+          return new CellError(ErrorType.VALUE, "Array arguments to FILTER are of different size.");
+        }
+      } else {
+        return new CellError(ErrorType.VALUE, "Array arguments to FILTER are of different size.");
+      }
+
+      if (out.length === 0) {
+        if (ifEmpty !== undefined && ifEmpty !== EmptyValue) return ifEmpty;
+        return new CellError(ErrorType.NA, "No matches found in FILTER");
+      }
+      return SimpleRangeValue.onlyValues(out);
+    });
+  }
+
+  /**
+   * FILTER's worst-case size: the input array's own size (every row could
+   * match). Same predictor as the built-in.
+   */
+  filterExcelArraySize(ast: any, state: any): unknown {
+    if (ast.args.length < 2) return ArraySize.error();
+    const s = this.arraySizeForAst(ast.args[0], state) as any;
+    return new ArraySize(s.width, s.height); // strip isRef (see trimArraySize)
   }
 
   /** MONTH(serialOrDateText) — built-in behaviour plus date-text coercion. */
@@ -427,13 +821,16 @@ class ExcelCompatPlugin extends FunctionPlugin {
     ],
   },
   INDEX: {
-    // Identical to the built-in INDEX metadata on purpose: the graph-size
-    // predictor keys off this, and the vector extension is runtime-only.
+    // RANGE for the array, ANY for the selectors so array selectors
+    // (SEQUENCE(10), {1,2,3,4}) reach the body uncoerced. indexArraySize sizes
+    // the vertex for array selectors; scalar INDEX stays 1×1, same as the
+    // built-in.
     method: "index",
+    sizeOfResultArrayMethod: "indexArraySize",
     parameters: [
       { argumentType: FunctionArgumentType.RANGE },
-      { argumentType: FunctionArgumentType.NUMBER },
-      { argumentType: FunctionArgumentType.NUMBER, defaultValue: 1 },
+      { argumentType: FunctionArgumentType.ANY },
+      { argumentType: FunctionArgumentType.ANY, defaultValue: 1 },
     ],
   },
   MONTH: {
@@ -447,6 +844,51 @@ class ExcelCompatPlugin extends FunctionPlugin {
   DAY: {
     method: "day",
     parameters: [{ argumentType: FunctionArgumentType.SCALAR }],
+  },
+  MOD: {
+    // Identical to the built-in MOD metadata; only the arithmetic changes.
+    method: "mod",
+    parameters: [
+      { argumentType: FunctionArgumentType.NUMBER },
+      { argumentType: FunctionArgumentType.NUMBER },
+    ],
+  },
+  TRIM: {
+    // ANY (not the built-in's STRING) so a range reaches the body and is
+    // mapped elementwise; sizeOfResultArrayMethod keeps graph sizing exact
+    // (the generic fallback ignores ANY-typed args and would predict 1×1).
+    method: "trim",
+    sizeOfResultArrayMethod: "trimArraySize",
+    parameters: [{ argumentType: FunctionArgumentType.ANY }],
+  },
+  CLEAN: {
+    method: "clean",
+    sizeOfResultArrayMethod: "cleanArraySize",
+    parameters: [{ argumentType: FunctionArgumentType.ANY }],
+  },
+  CHOOSE: {
+    // ANY for selector and candidates so ranges/array constants reach the
+    // body uncoerced (the built-in's INTEGER/SCALAR params would reduce them
+    // to top-left scalars before the override could tile them).
+    method: "choose",
+    sizeOfResultArrayMethod: "chooseArraySize",
+    parameters: [
+      { argumentType: FunctionArgumentType.ANY },
+      { argumentType: FunctionArgumentType.ANY },
+    ],
+    repeatLastArgs: 1,
+  },
+  FILTER: {
+    // RANGE args so CHOOSE/array results pass through; array arithmetic for
+    // arguments so the predicate ($H$200:$H$253>0) vectorizes.
+    method: "filterExcel",
+    sizeOfResultArrayMethod: "filterExcelArraySize",
+    enableArrayArithmeticForArguments: true,
+    parameters: [
+      { argumentType: FunctionArgumentType.RANGE },
+      { argumentType: FunctionArgumentType.RANGE },
+      { argumentType: FunctionArgumentType.SCALAR, optionalArg: true },
+    ],
   },
 };
 
@@ -473,6 +915,11 @@ export function registerExcelCompatFunctions(): void {
       MONTH: "MONTH",
       YEAR: "YEAR",
       DAY: "DAY",
+      MOD: "MOD",
+      TRIM: "TRIM",
+      CLEAN: "CLEAN",
+      CHOOSE: "CHOOSE",
+      FILTER: "FILTER",
     },
   });
   registered = true;

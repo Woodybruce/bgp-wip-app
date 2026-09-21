@@ -948,6 +948,124 @@ describe("Excel-compat function plugins", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// REX-grade Excel semantics — TRIM/CLEAN vectorization, CHOOSE array
+// selectors, FILTER row-keep, INDEX array selectors, computed defined names.
+// Each test mirrors a construct in the REX exemplar workbook that stock
+// HyperFormula evaluates differently from Excel.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("REX-grade Excel semantics", () => {
+  function engineWith(
+    cells: Record<string, { f?: string; v?: number | string }>,
+    size: [number, number] = [6, 8],
+    names?: Array<{ Name: string; Ref: string }>,
+  ): ModelEngine {
+    const ws: Record<string, unknown> = XLSX.utils.aoa_to_sheet(
+      Array.from({ length: size[0] }, () => Array.from({ length: size[1] }, () => null)),
+    );
+    for (const [a1, cell] of Object.entries(cells)) {
+      ws[a1] = cell.f !== undefined ? { t: "n", f: cell.f } : { t: typeof cell.v === "string" ? "s" : "n", v: cell.v };
+    }
+    const wb = { SheetNames: ["S"], Sheets: { S: ws }, Workbook: names ? { Names: names } : undefined } as never;
+    return createEngineFromWorkbook(wb);
+  }
+
+  it("TRIM maps over ranges and cleans inner whitespace", () => {
+    const engine = engineWith({
+      A1: { v: "  x  " }, A2: { v: " y" }, A3: { v: "x" },
+      B1: { f: "TRIM(A1)" },
+      B2: { f: 'SUMPRODUCT(--(TRIM(A1:A3)="x"))' },
+    });
+    const b1 = engine.getCellValue("S", "B1");
+    T(b1.ok && b1.value === "x", `scalar TRIM, got ${JSON.stringify(b1)}`);
+    approx(cellNum(engine, "S", "B2"), 2, "TRIM over a range inside SUMPRODUCT");
+    engine.dispose();
+  });
+
+  it("CLEAN maps over ranges and strips control characters", () => {
+    const engine = engineWith({
+      A1: { f: '"a"&CHAR(10)&"b"' }, A2: { v: "ab" },
+      B1: { f: "CLEAN(A1)" },
+      B2: { f: 'SUMPRODUCT(--(CLEAN(A1:A2)="ab"))' },
+    });
+    const b1 = engine.getCellValue("S", "B1");
+    T(b1.ok && b1.value === "ab", `scalar CLEAN, got ${JSON.stringify(b1)}`);
+    approx(cellNum(engine, "S", "B2"), 2, "CLEAN over a range inside SUMPRODUCT");
+    engine.dispose();
+  });
+
+  it("CHOOSE with an array selector tiles the candidates in selector arrangement", () => {
+    // CHOOSE({1,2}, A1:A2, B1:B2) -> [[A1,B1],[A2,B2]] = [[1,10],[2,20]]
+    const engine = engineWith({
+      A1: { v: 1 }, A2: { v: 2 }, B1: { v: 10 }, B2: { v: 20 },
+      C1: { f: "SUM(CHOOSE({1,2},A1:A2,B1:B2))" },
+      C2: { f: "CHOOSE(5,A1,B1)" },
+    });
+    approx(cellNum(engine, "S", "C1"), 33, "tiled CHOOSE sums all picked cells");
+    const out = engine.getCellValue("S", "C2");
+    T(!out.ok && out.error === "#NUM!", `selector beyond candidates is #NUM!, got ${JSON.stringify(out)}`);
+    engine.dispose();
+  });
+
+  it("FILTER keeps whole rows for a column mask and honours if_empty", () => {
+    // Excel semantics: 2-D data + column-vector mask of matching height keeps
+    // whole rows (stock HyperFormula demands a same-shape mask and rejects it).
+    const engine = engineWith({
+      A1: { v: "a" }, B1: { v: 5 },
+      A2: { v: "b" }, B2: { v: 0 },
+      A3: { v: "c" }, B3: { v: 7 },
+      D1: { f: "SUM(FILTER(A1:B3,B1:B3>0))" },
+      D2: { f: 'FILTER(A1:A3,B1:B3>100,"none")' },
+    });
+    approx(cellNum(engine, "S", "D1"), 12, "rows with B>0 contribute B values 5+7");
+    const d2 = engine.getCellValue("S", "D2");
+    T(d2.ok && d2.value === "none", `empty FILTER yields if_empty, got ${JSON.stringify(d2)}`);
+    engine.dispose();
+  });
+
+  it("INDEX with array selectors returns the cross-product grid and spills", () => {
+    // INDEX(A1:B2, SEQUENCE(2), {1,2}) = whole 2x2 block, spilling right/down.
+    const engine = engineWith({
+      A1: { v: 1 }, B1: { v: 2 }, A2: { v: 3 }, B2: { v: 4 },
+      D1: { f: "INDEX(A1:B2,SEQUENCE(2),{1,2})" },
+    });
+    approx(cellNum(engine, "S", "D1"), 1, "anchor");
+    approx(cellNum(engine, "S", "E1"), 2, "spill right");
+    approx(cellNum(engine, "S", "D2"), 3, "spill down");
+    approx(cellNum(engine, "S", "E2"), 4, "spill corner");
+    engine.dispose();
+  });
+
+  it("INDEX with vector row and scalar column preserves orientation", () => {
+    // INDEX(A1:B3, SEQUENCE(3), 2) picks column 2 top-to-bottom, spilling down.
+    const engine = engineWith({
+      A1: { v: 1 }, B1: { v: 7 }, A2: { v: 2 }, B2: { v: 8 }, A3: { v: 3 }, B3: { v: 9 },
+      E1: { f: "INDEX(A1:B3,SEQUENCE(3),2)" },
+    });
+    approx(cellNum(engine, "S", "E1"), 7, "anchor");
+    approx(cellNum(engine, "S", "E2"), 8, "row 2 of the column spill");
+    approx(cellNum(engine, "S", "E3"), 9, "row 3 of the column spill");
+    engine.dispose();
+  });
+
+  it("computed defined names are inlined; one bad reference can't poison others", () => {
+    // Import_Key-style name: an expression, not a pure ref. HyperFormula's
+    // array-valued named expressions poison the name's cached vertex when a
+    // comparison reads it, so the engine inlines computed names instead.
+    const engine = engineWith({
+      A1: { v: "x" }, A2: { v: "y" }, A3: { v: "z" },
+      B1: { v: 1 }, B2: { v: 2 }, B3: { v: 3 },
+      C1: { f: 'SUMPRODUCT(--(Import_Key="y2"))' },
+      C2: { f: "INDEX(Import_Key,3)" },
+    }, [6, 8], [{ Name: "Import_Key", Ref: "=S!$A$1:$A$3&S!$B$1:$B$3" }]);
+    approx(cellNum(engine, "S", "C1"), 1, "SUMPRODUCT over the inlined name");
+    const c2 = engine.getCellValue("S", "C2");
+    T(c2.ok && c2.value === "z3", `INDEX over the inlined name stays correct, got ${JSON.stringify(c2)}`);
+    engine.dispose();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // LET desugaring (model-let.ts)
 // ═══════════════════════════════════════════════════════════════════════════
 
