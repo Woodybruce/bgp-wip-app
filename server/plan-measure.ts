@@ -386,7 +386,7 @@ export async function measurePlanFromBuffer(buffer: Buffer, name: string, args: 
     if (patternFills) notes.push(`${patternFills} hatched/pattern fill${patternFills === 1 ? "" : "s"} on this sheet could not be measured (only solid colour fills are).`);
     if (!fillRegions.length) notes.push("No solid coloured fills on this sheet — it isn't a shaded demise plan (or the shading is a hatch pattern / raster image).");
     else if (!metresPerPoint) notes.push("Fill regions were found but can't be converted to metres without a scale — see the scale note above.");
-    else notes.push("fillRegions: the largest tinted fill on a GIA/NIA sheet is normally the demise; check bboxFraction against the render and that the colour matches the sheet's legend swatch (the swatch itself is tiny). Small tinted regions can be key swatches or overlays.");
+    else notes.push("fillRegions: use `sqm` (painted pixels). The largest tinted fill outside the title strip on a GIA/GEA sheet is the demise; NIA sheets split the floor into several tints (retail / reception / BOH per the legend) — sum the non-title-strip tints for the floor NIA. vectorUnionSqm is only a cross-reference and is EXPECTED to be far larger where the fill polygon is a whole-footprint outline with the courtyard, cores and voids masked back to white on top of it — that gap is not an error.");
   }
 
   return {
