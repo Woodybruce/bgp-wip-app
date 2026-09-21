@@ -3722,45 +3722,35 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
         pdfBuffer = fs.readFileSync(localFilePath);
       }
 
-      const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs") as any;
-      const { createCanvas } = await import("canvas") as any;
-
-      class NodeCanvasFactory {
-        create(w: number, h: number) { const cv = createCanvas(w, h); return { canvas: cv, context: cv.getContext("2d") }; }
-        reset(ca: any, w: number, h: number) { ca.canvas.width = w; ca.canvas.height = h; }
-        destroy(ca: any) { ca.canvas.width = 0; ca.canvas.height = 0; }
-      }
-
-      const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer), disableFontFace: true });
-      const pdfDoc = await loadingTask.promise;
-      const numPages = Math.min(pdfDoc.numPages, maxPages || 999);
+      // DPI-aware rendering (pdf-raster.ts): scale from the physical page size
+      // so an A1 CAD sheet keeps its 6pt schedule text legible, PNG for vector
+      // pages so 1px linework isn't JPEG-smeared. Fixed scale 1.8 + JPEG was
+      // why the Plaza area tables came back blank from vision (2026-09-21).
+      const { pdfPageInfos, rasterisePdfPageBuffer } = await import("./pdf-raster");
+      const infos = await pdfPageInfos(pdfBuffer);
+      const numPages = Math.min(infos.length, maxPages || 999);
       const baseName = (fileName || "brochure").replace(/\.pdf$/i, "");
       const userId = req.session?.userId || (req as any).tokenUserId;
-      const saved: { id: string; page: number; fileName: string }[] = [];
+      const saved: { id: string; page: number; fileName: string; width: number; height: number; dpi: number }[] = [];
       const pageTags = [...(Array.isArray(tags) ? tags : []), "brochure", "pdf-capture", ...(propertyName ? [propertyName] : [])];
 
       for (let p = 1; p <= numPages; p++) {
-        const page = await pdfDoc.getPage(p);
-        const viewport = page.getViewport({ scale: 1.8 });
-        const factory = new NodeCanvasFactory();
-        const { canvas, context } = factory.create(viewport.width, viewport.height);
-        await page.render({ canvasContext: context, viewport, canvasFactory: factory }).promise;
-        const jpegBuf: Buffer = (canvas as any).toBuffer("image/jpeg", { quality: 0.88 });
+        const rendered = await rasterisePdfPageBuffer(pdfBuffer, p, { targetDpi: Number(req.body.targetDpi) || 220, maxSide: 8000 });
+        const ext = rendered.mimeType === "image/png" ? "png" : "jpg";
         const pageLabel = numPages > 1 ? ` p${p}` : "";
-        const imgFileName = `${baseName}${pageLabel}.jpg`;
-        const { thumbnail, width, height } = await generateThumbnail(jpegBuf);
-        const diskName = `${crypto.randomUUID()}.jpg`;
+        const imgFileName = `${baseName}${pageLabel}.${ext}`;
+        const { thumbnail, width, height } = await generateThumbnail(rendered.buffer);
+        const diskName = `${crypto.randomUUID()}.${ext}`;
         const diskPath = path.join(IMAGE_DIR, diskName);
-        await persistImage(diskPath, jpegBuf, "image/jpeg", imgFileName);
+        await persistImage(diskPath, rendered.buffer, rendered.mimeType, imgFileName);
         const [inserted] = await db.insert(imageStudioImages).values({
           fileName: imgFileName, category, tags: pageTags,
           description: propertyName ? `Page ${p} of ${baseName} — ${propertyName}` : `Page ${p} of ${baseName}`,
           source: "chatbgp", area: null, address: null, brandName: null, propertyType: null,
-          mimeType: "image/jpeg", fileSize: jpegBuf.length, width, height,
+          mimeType: rendered.mimeType, fileSize: rendered.buffer.length, width, height,
           thumbnailData: thumbnail, localPath: diskPath, uploadedBy: userId,
         }).returning();
-        saved.push({ id: inserted.id, page: p, fileName: imgFileName });
-        factory.destroy({ canvas, context });
+        saved.push({ id: inserted.id, page: p, fileName: imgFileName, width, height, dpi: Math.round(rendered.dpi) });
       }
 
       console.log(`[image-studio] capture-pdf: saved ${saved.length} pages from "${fileName}"`);

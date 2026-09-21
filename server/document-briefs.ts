@@ -49,7 +49,7 @@ import {
   composeCovenantCard,
 } from "./property-imagery-composers";
 import { getPlanningSummary, planningSummaryToMarkdown } from "./planning-summary";
-import { BGP_BRAND, renderHtmlWithClaude } from "./doc-engine";
+import { BGP_BRAND, renderHtmlWithClaude, injectBgpLogos } from "./doc-engine";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -1263,8 +1263,10 @@ async function inlineGoogleStaticMaps(html: string): Promise<string> {
 }
 
 async function htmlToPdfBuffer(htmlInput: string, options?: { format?: "A4" | "Letter"; landscape?: boolean }): Promise<Buffer> {
-  // Bake external Google map images into the document before Chrome sees it.
-  const html = await inlineGoogleStaticMaps(htmlInput).catch(() => htmlInput);
+  // Bake external Google map images into the document before Chrome sees it,
+  // and swap the __BGP_LOGO_*__ tokens for the real wordmark so every design
+  // path renders the actual logo.
+  const html = injectBgpLogos(await inlineGoogleStaticMaps(htmlInput).catch(() => htmlInput));
   let puppeteer: any;
 
   try {
