@@ -967,6 +967,10 @@ export default function InvestmentTrackerPage() {
   const [linkDealOpen, setLinkDealOpen] = useState<InvestmentTracker | null>(null);
   const [linkDealId, setLinkDealId] = useState("");
   const [form, setForm] = useState<FormState>(makeEmptyForm("Purchases"));
+  const openEdit = (item: InvestmentTracker) => {
+    setForm(itemToForm(item));
+    setEditItem(item);
+  };
   const [viewingsItem, setViewingsItem] = useState<InvestmentTracker | null>(null);
   const [offersItem, setOffersItem] = useState<InvestmentTracker | null>(null);
   const [distItem, setDistItem] = useState<InvestmentTracker | null>(null);
@@ -1739,7 +1743,7 @@ export default function InvestmentTrackerPage() {
               const statusCode = legacyToCode(item.status) || "REP";
               const statusColor = STATUS_LABEL_COLORS[statusCode] || "bg-gray-400";
               return (
-                <Card key={item.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => setEditItem(item)}>
+                <Card key={item.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => openEdit(item)} data-testid={`card-asset-${item.id}`}>
                   <CardContent className="p-4 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
@@ -2186,7 +2190,7 @@ export default function InvestmentTrackerPage() {
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
                       <div className="flex gap-0.5">
-                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setEditItem(item); setForm(itemToForm(item)); }} data-testid={`button-edit-${item.id}`}>
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openEdit(item)} data-testid={`button-edit-${item.id}`}>
                           <Pencil className="w-3 h-3" />
                         </Button>
                         <Button variant="ghost" size="icon" className="h-6 w-6 text-red-500" onClick={() => setDeleteItem(item)} data-testid={`button-delete-${item.id}`}>
