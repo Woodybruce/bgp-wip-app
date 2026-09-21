@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, timestamp, real, jsonb, uuid, serial, doublePrecision, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, boolean, timestamp, real, jsonb, uuid, serial, doublePrecision, uniqueIndex, date } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -809,6 +809,11 @@ export const crmProperties = pgTable("crm_properties", {
   longLeaseholderId: varchar("long_leaseholder_id"), // → crm_companies
   seniorLenderId: varchar("senior_lender_id"),  // → crm_companies
   juniorLenderId: varchar("junior_lender_id"),  // → crm_companies
+  // ── Country + geocode provenance (migration 0043) ────────────────────────
+  // NULL on pre-existing rows; written by country-aware discovery and the
+  // reviewed per-row repair script, never by bulk reinterpretation.
+  country: text("country"),                   // ISO 3166-1 alpha-2, e.g. 'GB','IE','FR'
+  geocodeStatus: text("geocode_status"),      // resolved | unresolved | needs_review
   // ── Resolver canonical identifiers ───────────────────────────────────────
   uprn: text("uprn"),
   toid: text("toid"),
@@ -1379,6 +1384,16 @@ export const crmCompanyProperties = pgTable("crm_company_properties", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   companyId: varchar("company_id").notNull(),
   propertyId: varchar("property_id").notNull(),
+  // Relationship annotation (migration 0041). All NULL on pre-existing rows —
+  // the account resolver renders a NULL role as "unknown" rather than
+  // assuming "owner". Populated by human curation or evidenced imports only.
+  relationshipRole: text("relationship_role"),           // owner | jv | manager | unknown
+  ownershipStakePct: real("ownership_stake_pct"),        // JV stake; NULL unless evidenced
+  relationshipConfidence: text("relationship_confidence"), // confirmed | inferred | unresolved
+  relationshipSource: text("relationship_source"),       // e.g. 'manual', 'land-registry', 'website-scrape'
+  validFrom: timestamp("valid_from", { withTimezone: true }),
+  validTo: timestamp("valid_to", { withTimezone: true }),
+  relationshipNotes: text("relationship_notes"),
 }, (t) => [uniqueIndex("uq_crm_company_properties_pair").on(t.companyId, t.propertyId)]);
 
 export const crmCompanyDeals = pgTable("crm_company_deals", {
@@ -1386,6 +1401,36 @@ export const crmCompanyDeals = pgTable("crm_company_deals", {
   companyId: varchar("company_id").notNull(),
   dealId: varchar("deal_id").notNull(),
 }, (t) => [uniqueIndex("uq_crm_company_deals_pair").on(t.companyId, t.dealId)]);
+
+// Account reconciliation (migration 0044): an official destination list an
+// account is checked against, plus a snapshot per generated report. Seeded
+// per company by server/account-reconciliation.ts (rows key off company_id,
+// which a migration can't know).
+export const accountReconciliationBaselines = pgTable("account_reconciliation_baselines", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyId: text("company_id").notNull(),
+  baselineName: text("baseline_name").notNull(),
+  destinationName: text("destination_name").notNull(),
+  officialGroupKey: text("official_group_key"),
+  expectedCrmPropertyCount: integer("expected_crm_property_count").notNull().default(1),
+  category: text("category").notNull().default("destination"), // destination | development | disposed
+  country: text("country"),
+  sourceUrl: text("source_url"),
+  sourceDate: date("source_date"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const accountReconciliationRuns = pgTable("account_reconciliation_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyId: text("company_id").notNull(),
+  baselineName: text("baseline_name").notNull(),
+  generatedAt: timestamp("generated_at", { withTimezone: true }).notNull().defaultNow(),
+  generatedBy: text("generated_by"),
+  rows: jsonb("rows").notNull(),
+});
+
+export type AccountReconciliationBaseline = typeof accountReconciliationBaselines.$inferSelect;
+export type AccountReconciliationRun = typeof accountReconciliationRuns.$inferSelect;
 
 export const crmInteractions = pgTable("crm_interactions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
