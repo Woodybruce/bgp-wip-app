@@ -46,7 +46,7 @@ import { displayTicker, normalizeTicker } from "@shared/stock-ticker";
 import { isLandlordCompany } from "@/lib/company-kind";
 import { AccountDealsBoard } from "@/components/account-deals-board";
 import { LandlordAccountGallery } from "@/components/account-media-gallery";
-import { AccountNextActionsCard, AccountTeamCard, InvestmentRequirementsCard, useAccountWorkspace } from "@/components/account-workspace-cards";
+import { AccountNextActionsCard, AccountTeamCard, InvestmentRequirementsCard, AccountFolderTreeCard, useAccountWorkspace } from "@/components/account-workspace-cards";
 
 interface BrandProfile {
   identity?: { status: "verified" | "review"; domain: string | null };
@@ -1533,6 +1533,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
                 <AccountNextActionsCard companyId={companyId} />
                 <InvestmentRequirementsCard companyId={companyId} />
+                {/* Standard client folder tree (Delivery 5) — the dry-run
+                    bind/match/missing/conflict report. Staff-only: renders
+                    nothing for scoped viewers or without an M365 session. */}
+                <AccountFolderTreeCard companyId={companyId} />
               </div>
             )}
 

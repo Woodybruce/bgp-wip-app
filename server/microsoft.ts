@@ -6,6 +6,13 @@ import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { contentDispositionFor } from "./utils/http-headers";
 import { listAllChildren, resolveUploadDestination } from "./microsoft-graph-pagination";
+import {
+  SHAREPOINT_HOST, SHAREPOINT_SITE_PATH, SHAREPOINT_ROOT_FOLDER,
+  getSharePointDriveId, createFolderByPath, runChunked, createTreeBatched,
+} from "./sharepoint-graph";
+
+// Re-exported for the many modules that import these constants from here.
+export { SHAREPOINT_HOST, SHAREPOINT_SITE_PATH, SHAREPOINT_ROOT_FOLDER };
 
 const SCOPES = [
   "User.Read",
@@ -23,12 +30,6 @@ const SCOPES = [
   "Notes.Read.All",
   "Notes.ReadWrite.All",
 ];
-
-const SHAREPOINT_HOST = "brucegillinghampollardlimited.sharepoint.com";
-const SHAREPOINT_SITE_PATH = "/sites/BGP";
-const SHAREPOINT_ROOT_FOLDER = "BGP share drive";
-
-export { SHAREPOINT_HOST, SHAREPOINT_SITE_PATH, SHAREPOINT_ROOT_FOLDER };
 
 let msalClient: ConfidentialClientApplication | null = null;
 let msalCacheLock: Promise<void> | null = null;
@@ -2084,25 +2085,6 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     }
   });
 
-  async function getSharePointDriveId(token: string): Promise<{ driveId: string; siteId: string } | null> {
-    const siteUrl = `https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`;
-    const siteRes = await fetch(siteUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!siteRes.ok) return null;
-    const site = await siteRes.json();
-
-    const drivesUrl = `https://graph.microsoft.com/v1.0/sites/${site.id}/drives`;
-    const drivesRes = await fetch(drivesUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!drivesRes.ok) return null;
-    const drivesData = await drivesRes.json();
-    const docsDrive = drivesData.value?.find((d: any) => d.name === "Documents" || d.name === "Shared Documents") || drivesData.value?.[0];
-    if (!docsDrive) return null;
-    return { driveId: docsDrive.id, siteId: site.id };
-  }
-
   app.post("/api/microsoft/folders", async (req: Request, res: Response) => {
     const token = await getValidMsToken(req);
     if (!token) {
@@ -2440,84 +2422,6 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       "Heads of Terms/Per Unit",
     ],
   };
-
-  async function createFolderByPath(token: string, driveId: string, parentPath: string, folderName: string): Promise<{ success: boolean; name: string; error?: string }> {
-    let createUrl: string;
-    if (!parentPath || parentPath === "/") {
-      createUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root/children`;
-    } else {
-      const cleanPath = parentPath.replace(/^\/+|\/+$/g, "");
-      createUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(cleanPath).replace(/%2F/g, "/")}:/children`;
-    }
-
-    // SharePoint throttles bursts (429) — honour Retry-After a couple of
-    // times before reporting failure, since folder setup now runs batches
-    // of creates concurrently.
-    for (let attempt = 0; ; attempt++) {
-      const response = await fetch(createUrl, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: folderName,
-          folder: {},
-          "@microsoft.graph.conflictBehavior": "fail",
-        }),
-      });
-
-      if (response.ok || response.status === 409) {
-        return { success: true, name: folderName };
-      }
-      if (response.status === 429 && attempt < 2) {
-        const wait = Math.min(10, Number(response.headers.get("Retry-After")) || 2);
-        await new Promise(r => setTimeout(r, wait * 1000));
-        continue;
-      }
-      const errText = await response.text();
-      return { success: false, name: folderName, error: `${response.status}: ${errText.slice(0, 100)}` };
-    }
-  }
-
-  // Run async work over a list with bounded concurrency. Folder setup used
-  // to create every folder one Graph call at a time — a bulk client run
-  // (properties × ~20 folders each) took minutes and timed out the request.
-  async function runChunked<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-    const out: R[] = [];
-    for (let i = 0; i < items.length; i += limit) {
-      out.push(...await Promise.all(items.slice(i, i + limit).map(fn)));
-    }
-    return out;
-  }
-
-  // Create a folder tree under rootPath: parents must exist before children,
-  // so group the subpaths by depth and create each depth level in parallel.
-  async function createTreeBatched(
-    token: string,
-    driveId: string,
-    rootPath: string,
-    subPaths: string[],
-  ): Promise<{ path: string; success: boolean; error?: string }[]> {
-    const byDepth = new Map<number, string[]>();
-    for (const p of subPaths) {
-      const d = p.split("/").length;
-      byDepth.set(d, [...(byDepth.get(d) || []), p]);
-    }
-    const results: { path: string; success: boolean; error?: string }[] = [];
-    for (const depth of [...byDepth.keys()].sort((a, b) => a - b)) {
-      const level = await runChunked(byDepth.get(depth)!, 5, async (subPath) => {
-        const parts = subPath.split("/");
-        const folderName = parts[parts.length - 1];
-        const parentParts = parts.slice(0, -1);
-        const parentPath = parentParts.length > 0 ? `${rootPath}/${parentParts.join("/")}` : rootPath;
-        const r = await createFolderByPath(token, driveId, parentPath, folderName);
-        return { path: `${rootPath}/${subPath}`, success: r.success, error: r.error };
-      });
-      results.push(...level);
-    }
-    return results;
-  }
 
   app.post("/api/microsoft/property-folders", async (req: Request, res: Response) => {
     const token = await getValidMsToken(req);
