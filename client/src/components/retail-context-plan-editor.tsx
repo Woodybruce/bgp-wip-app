@@ -31,7 +31,7 @@ const CATEGORIES: Array<{ key: string; label: string; color: string }> = [
   { key: "fnb",         label: "Food & Beverage",            color: "#D08F6E" },
   { key: "services",    label: "Services",                   color: "#8B9DC3" },
   { key: "beauty",      label: "Beauty & Personal Care",     color: "#B8A4B6" },
-  { key: "vacant",      label: "Vacant",                     color: "#FF7D00" },
+  { key: "vacant",      label: "Vacant",                     color: "#FC9F8D" },
   { key: "other",       label: "Other / Unknown",            color: "#A8A8A8" },
 ];
 
@@ -110,10 +110,10 @@ export function RetailContextPlanEditor({
           map,
           center: { lat, lng },
           radius,
-          strokeColor: "#15616D",
+          strokeColor: "#6E0C25",
           strokeOpacity: 0.9,
           strokeWeight: 1.5,
-          fillColor: "#15616D",
+          fillColor: "#6E0C25",
           fillOpacity: 0.08,
         });
         circleObj.current = circle;

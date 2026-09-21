@@ -894,7 +894,7 @@ export function registerDocumentBriefRoutes(app: Express): void {
 
   /**
    * Iterate: take a previous rendered HTML + user instruction ("make it
-   * punchier", "drop section 3", "use BGP teal for accents") and Claude
+   * punchier", "drop section 3", "more bordeaux in the accents") and Claude
    * re-emits the full document. Same pattern as why-buy-design's iterate,
    * but generalised for any brief.
    */

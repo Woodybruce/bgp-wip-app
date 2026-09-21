@@ -3103,7 +3103,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     function: {
       name: "generate_pptx",
       description: [
-        "Generate a native, editable Microsoft PowerPoint (.pptx) in BGP house style (green/gold, Georgia). Use for any PowerPoint / presentation / slides / deck / teaser / pitch.",
+        "Generate a native, editable Microsoft PowerPoint (.pptx) in BGP house style (v19: Bordeaux with a Nectar accent, real BGP wordmark, Georgia display). Use for any PowerPoint / presentation / slides / deck / teaser / pitch.",
         "PREFER the rich `cards` model over `slides` — it produces dense, professional, teaser-grade boards. Each card = { type, ...fields }. Card types:",
         "• cover {title, subtitle?, eyebrow?, meta:[{label,value}]}  • section {number,title}  • statement {title, kick?, sub?} full-bleed emphasis",
         "• content {title, kick?, bullets:[string] | body, image?/ref?}  • two_col {title, leftTitle?, left:[string], rightTitle?, right:[string]}",

@@ -3400,7 +3400,7 @@ function MobileDocumentStudio() {
   const { toast } = useToast();
   const [, navigate] = useLocation();
 
-  const makePreview = (titleLines: string[], sections: string[], accent: string = "#FF6900") => JSON.stringify({
+  const makePreview = (titleLines: string[], sections: string[], accent: string = "#fc9f8d") => JSON.stringify({
     pageWidth: 595, pageHeight: 842,
     pages: [{
       backgroundColor: "#FFFCF5",

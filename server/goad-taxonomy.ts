@@ -28,10 +28,10 @@ export interface CategoryStyle {
 }
 
 /**
- * Clean, simple palette — BGP slate + Claude-orange accents, desaturated
- * greens/teals so the map doesn't look like a pride flag. Vacant units
- * are deliberately visible (claude-orange) because vacancy is the signal
- * users care about most.
+ * Clean, simple palette — desaturated category fills that don't fight the
+ * plan, with the v19 house colours doing the signalling: vacant units are
+ * deliberately visible (nectar fill, bordeaux stroke) because vacancy is
+ * what users care about most, and the subject/"new let" accent is bordeaux.
  */
 export const CATEGORY_STYLES: Record<RetailCategory, CategoryStyle> = {
   fashion:     { fill: "#C9A961", stroke: "#8A7237", label: "Fashion & Comparison", textColor: "#1F1F1F" },
@@ -39,7 +39,7 @@ export const CATEGORY_STYLES: Record<RetailCategory, CategoryStyle> = {
   fnb:         { fill: "#C17A5F", stroke: "#7F4A32", label: "Food & Beverage", textColor: "#FFFFFF" },
   services:    { fill: "#8FA4B8", stroke: "#556877", label: "Services", textColor: "#1F1F1F" },
   beauty:      { fill: "#B89CB3", stroke: "#7A5F75", label: "Health & Beauty", textColor: "#1F1F1F" },
-  vacant:      { fill: "#F4E4D7", stroke: "#D97757", label: "Vacant / Likely Vacant", textColor: "#7A3E2C" },
+  vacant:      { fill: "#FC9F8D", stroke: "#6E0C25", label: "Vacant / Likely Vacant", textColor: "#4A0819" },
   other:       { fill: "#D6D6D3", stroke: "#9A9A95", label: "Other", textColor: "#3F3F3F" },
 };
 
@@ -51,10 +51,10 @@ export const PLAN_COLORS = {
   buildingStroke: "#B8B5AE",
   roadFill: "#FFFFFF",
   roadStroke: "#CDCAC2",
-  pageBg: "#FAF8F3",            // warm paper background (Claude-ish)
-  ink: "#1F1F1F",
+  pageBg: "#FCF8F4",            // v19 cream ground
+  ink: "#1D1D1B",
   inkMuted: "#6A655A",
-  accent: "#D97757",            // Claude orange — used for subject callout and "new let" badges
+  accent: "#6E0C25",            // v19 Bordeaux — subject callout and "new let" badges
 };
 
 /**

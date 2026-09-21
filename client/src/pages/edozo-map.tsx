@@ -5182,7 +5182,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
       fnb:         { fill: "#D08F6E", stroke: "#8A5A3F", label: "Food & Beverage" },
       services:    { fill: "#8B9DC3", stroke: "#5C6E94", label: "Services" },
       beauty:      { fill: "#B8A4B6", stroke: "#7C6A7A", label: "Beauty & Personal Care" },
-      vacant:      { fill: "#FF7D00", stroke: "#B25600", label: "Vacant" },
+      vacant:      { fill: "#FC9F8D", stroke: "#6E0C25", label: "Vacant" },
       other:       { fill: "#A8A8A8", stroke: "#707070", label: "Other / Unknown" },
     };
 
@@ -6131,7 +6131,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
               { key: "lease",  label: "Lease Events",   count: mapPins?.leaseEvents.length ?? 0, dot: "#ec4899", on: showLeaseEvents, set: setShowLeaseEvents },
               { key: "pathway",label: "Pathway runs",   count: mapPins?.pathway?.length ?? 0, dot: "#10b981", on: showPathway, set: setShowPathway },
               { key: "avail",  label: "Available Properties", count: availableProps.length, dot: "#06b6d4", on: showAvailable, set: setShowAvailable },
-              { key: "retail", label: retailFetching ? "Edozo (loading…)" : "Edozo", count: goadFeatures.length, dot: "#15616D", on: showRetailContext, set: setShowRetailContext },
+              { key: "retail", label: retailFetching ? "Edozo (loading…)" : "Edozo", count: goadFeatures.length, dot: "#6E0C25", on: showRetailContext, set: setShowRetailContext },
               { key: "tp",     label: "Tenancy Plans (uploaded)",  count: tenancyPlanCount, dot: "#dc2626", on: showTenancyPlans, set: setShowTenancyPlans },
               { key: "annot",  label: "Annotations",     count: annotations.length, dot: "#a855f7", on: showAnnotations, set: setShowAnnotations },
             ].filter((row) => !(mapIsClient && CLIENT_HIDDEN_LAYERS.has(row.key))).map((row) => (
@@ -6187,7 +6187,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
                   { k: "fnb",         l: "Food & Drink",c: "#D08F6E" },
                   { k: "services",    l: "Services",    c: "#8B9DC3" },
                   { k: "beauty",      l: "Beauty",      c: "#B8A4B6" },
-                  { k: "vacant",      l: "Vacant",      c: "#FF7D00" },
+                  { k: "vacant",      l: "Vacant",      c: "#FC9F8D" },
                   { k: "other",       l: "Other",       c: "#A8A8A8" },
                 ].map((cat) => {
                   const showing = !excludedRetailCategories.has(cat.k);

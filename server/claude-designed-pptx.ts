@@ -19,8 +19,9 @@ import crypto from "crypto";
 import { saveFile } from "./file-storage";
 import { preferencesPromptFor } from "./document-preferences";
 
-// Green house palette — mirrors why-buy-pptx.ts / document-templates.ts.
-const GREEN = "2E5E3F", GOLD = "C4A35A", DARK = "232323";
+// v19 house palette — Bordeaux signature + Nectar accent, mirrors
+// why-buy-pptx.ts / doc-engine BGP_BRAND. Constant names kept for the renderer.
+const GREEN = "6E0C25", GOLD = "FC9F8D", DARK = "1D1D1B";
 const PANEL = "EFEDE6", MUTE = "5A6468", HAIR = "D7DAD3", WHITE = "FFFFFF", INK = "232323", LIGHT = "E7E5DF";
 const SERIF = "Georgia", SANS = "Calibri";
 const M = 0.5, CW = 13.33 - M * 2;
@@ -179,7 +180,8 @@ export async function renderDeckSpecToPptx(spec: DeckSpec): Promise<Buffer> {
   s.addShape(R, { x: 0, y: 4.5, w: 13.33, h: 0.06, fill: { color: GOLD } });
   if (logo) s.addImage({ path: logo, x: 10.35, y: 0.5, w: 2.45, h: 0.86 });
   s.addShape(R, { x: M, y: 1.85, w: 1.7, h: 0.06, fill: { color: GOLD } });
-  s.addText("BRUCE GILLINGHAM POLLARD", { x: M, y: 2.0, w: 9, h: 0.4, fontFace: SANS, fontSize: 14, color: GOLD, charSpacing: 5 });
+  // The wordmark image carries the firm name; only type it when the asset is missing.
+  if (!logo) s.addText("BRUCE GILLINGHAM POLLARD", { x: M, y: 2.0, w: 9, h: 0.4, fontFace: SANS, fontSize: 14, color: GOLD, charSpacing: 5 });
   s.addText(spec.title, { x: M - 0.03, y: 2.4, w: 12.2, h: 0.95, fontFace: SERIF, fontSize: 40, color: WHITE });
   if (spec.subtitle) s.addText(spec.subtitle, { x: M, y: 3.32, w: 12, h: 0.4, fontFace: SANS, fontSize: 18, color: LIGHT });
   if (spec.thesis) s.addText(spec.thesis, { x: M, y: 3.78, w: 12.2, h: 0.5, fontFace: SERIF, fontSize: 15, italic: true, color: GOLD });

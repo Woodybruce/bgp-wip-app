@@ -5336,10 +5336,10 @@ async function buildPathwaySummaryHtml(run: any): Promise<string> {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
 @page { size: A4 portrait; margin: 14mm; }
 * { box-sizing: border-box; }
-body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color:#001524; font-size:11px; line-height:1.4; margin:0; }
+body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color:#1d1d1b; font-size:11px; line-height:1.4; margin:0; }
 .page { page-break-after: always; } .page:last-child { page-break-after: auto; }
-h1 { font-size:20px; margin:0 0 2px; } h2 { font-size:13px; color:#15616D; border-bottom:2px solid #15616D; padding-bottom:3px; margin:16px 0 8px; }
-.head { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:3px solid #15616D; padding-bottom:8px; }
+h1 { font-family: Georgia, "Times New Roman", serif; font-weight:400; font-size:20px; margin:0 0 2px; color:#6e0c25; } h2 { font-family: Georgia, "Times New Roman", serif; font-weight:400; font-size:13px; color:#6e0c25; border-bottom:1px solid #6e0c25; padding-bottom:3px; margin:16px 0 8px; }
+.head { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #6e0c25; padding-bottom:8px; }
 .head img { height:34px; }
 .muted { color:#5b6b72; font-size:10px; }
 .hero { width:100%; height:230px; object-fit:cover; border-radius:6px; margin-top:10px; }
@@ -5347,8 +5347,8 @@ h1 { font-size:20px; margin:0 0 2px; } h2 { font-size:13px; color:#15616D; borde
 .fact { border:1px solid #d8e0e2; border-radius:6px; padding:8px; }
 .fact .l { font-size:8.5px; text-transform:uppercase; letter-spacing:.04em; color:#5b6b72; } .fact .v { font-size:13px; font-weight:600; margin-top:2px; }
 ul { margin:4px 0; padding-left:16px; } li { margin:2px 0; }
-.links a { color:#15616D; text-decoration:none; font-weight:600; } .links div { margin:3px 0; }
-table { width:100%; border-collapse:collapse; font-size:10px; } th,td { text-align:left; padding:4px 6px; border-bottom:1px solid #e4e9ea; } th { color:#15616D; font-size:9px; text-transform:uppercase; }
+.links a { color:#6e0c25; text-decoration:none; font-weight:600; } .links div { margin:3px 0; }
+table { width:100%; border-collapse:collapse; font-size:10px; } th,td { text-align:left; padding:4px 6px; border-bottom:1px solid #e4d8d3; } th { color:#6e0c25; font-size:9px; text-transform:uppercase; letter-spacing:.04em; }
 .imgs { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; } .imgs img { width:100%; height:150px; object-fit:cover; border-radius:6px; }
 .locplan { width:100%; max-height:300px; object-fit:contain; border:1px solid #d8e0e2; border-radius:6px; }
 .foot { margin-top:14px; border-top:1px solid #d8e0e2; padding-top:6px; color:#5b6b72; font-size:9px; }
@@ -5356,7 +5356,7 @@ table { width:100%; border-collapse:collapse; font-size:10px; } th,td { text-ali
 <div class="page">
   <div class="head">
     <div><h1>${esc(address)}</h1><div class="muted">${esc(postcode)} &middot; Internal property summary &middot; ${today}</div></div>
-    ${logo ? `<img src="${logo}" alt="BGP">` : `<div style="font-weight:700;color:#15616D;font-size:18px">BGP</div>`}
+    ${logo ? `<img src="${logo}" alt="Bruce Gillingham Pollard">` : `<div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#1d1d1b">Bruce Gillingham Pollard</div>`}
   </div>
   ${heroUrl ? `<img class="hero" src="${esc(heroUrl)}" alt="">` : ""}
   <div class="facts">

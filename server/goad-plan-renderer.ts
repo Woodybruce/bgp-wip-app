@@ -744,7 +744,7 @@ function buildSvg(a: BuildSvgArgs): string {
   parts.push(`<text class="muted" x="0" y="20" font-size="10" text-anchor="middle">N</text>`);
   parts.push(`</g>`);
 
-  // Accent stripe (Claude orange) along bottom-right of title
+  // Accent stripe (bordeaux) along bottom-right of title
   parts.push(`<rect x="${outWidth - padding - 60}" y="16" width="60" height="3" fill="${PLAN_COLORS.accent}"/>`);
 
   parts.push(`</svg>`);

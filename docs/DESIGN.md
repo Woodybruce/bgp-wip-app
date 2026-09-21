@@ -30,7 +30,15 @@ tile, the Finance page, the 2026 WIP report, Comps' header, the chat list.
 - Status colours are semantic only (deal stages, alerts), from the existing
   status maps — not decoration. Red means genuinely negative, not emphasis.
 - The Bordeaux/Nectar/Stone rebrand palette is for **documents** (PDFs,
-  decks, emails), not app chrome, until decided otherwise.
+  decks, emails), not app chrome, until decided otherwise. Every generated
+  document goes through `doc-engine.ts` `BGP_BRAND` (the single palette +
+  logo instruction) and the real wordmark PNGs via the `__BGP_LOGO_DARK__` /
+  `__BGP_LOGO_LIGHT__` tokens, swapped in by the Chromium renderer. No teal,
+  green, gold or orange in a deliverable, and never an invented "BGP" box or
+  letter-mark (Woody, 2026-09-21, the Plaza plans pack). Deterministic
+  renderers (pptx engines, PDFKit reports, the Goad/retail-context plan)
+  use the same hexes: Bordeaux `#6E0C25`, deep `#4A0819`, Nectar `#FC9F8D`,
+  Blush `#E4D8D3`, Cream `#FCF8F4`, Ink `#1D1D1B`.
 
 ## 2. Typography
 

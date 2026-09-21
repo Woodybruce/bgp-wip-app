@@ -3,7 +3,8 @@
 // WHY THIS EXISTS
 // One source for every Pave deliverable: it takes a Deck (the card model) and
 // generates a NATIVE, EDITABLE PowerPoint in the Pave Investment-Memorandum
-// house style — navy #14253b ground, bone #e8e1d3 accent, Tiempos throughout.
+// house style — v19 Bordeaux #6E0C25 ground, bone/stone accents, Nectar for
+// the single warm highlight (the NAVY/GOLD constant names below are legacy).
 //
 // WHY GENERATED (not injected into a hand master)
 // IM layouts are data-dense: heatmapped ranking tables, asset-overview
