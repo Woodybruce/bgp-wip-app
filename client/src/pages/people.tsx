@@ -24,6 +24,7 @@ import {
   Handshake, ClipboardList, Landmark, AlertCircle,
 } from "lucide-react";
 import { ViewToggle } from "@/components/mobile-card-view";
+import { CrmMeetingsTab } from "@/components/crm-meetings-tab";
 import { Pill } from "@/components/ui/pill";
 import { countLabel } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -1066,12 +1067,13 @@ function LendersTab({
   );
 }
 
-type PeopleTab = "landlords" | "agents" | "lenders";
+type PeopleTab = "landlords" | "agents" | "lenders" | "meetings";
 
 const ALL_TABS: { key: PeopleTab; label: string; icon: any }[] = [
   { key: "landlords", label: "Landlords", icon: Building2 },
   { key: "agents", label: "Agents", icon: Briefcase },
   { key: "lenders", label: "Lenders", icon: Landmark },
+  { key: "meetings", label: "CRM Meetings", icon: ClipboardList },
 ];
 
 const LANDSEC_TABS: { key: PeopleTab; label: string; icon: any }[] = [
@@ -1794,6 +1796,7 @@ function PeopleHub() {
           {tab === "lenders" && (
             <LendersTab companies={lendersCompanies} contacts={contacts} properties={properties} />
           )}
+          {tab === "meetings" && <CrmMeetingsTab />}
         </>
       )}
 

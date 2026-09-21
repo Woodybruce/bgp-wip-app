@@ -100,6 +100,18 @@ installGoogleBudgetGuard();
       created_at TIMESTAMP DEFAULT now()
     )`,
     `CREATE UNIQUE INDEX IF NOT EXISTS unit_interest_email_conversation_idx ON unit_interest (email_conversation_id) WHERE email_conversation_id IS NOT NULL`,
+    // CRM Meetings — Heads of Team strategy interviews (migrations/0041,
+    // healed at boot like the other CRM feature tables).
+    `CREATE TABLE IF NOT EXISTS crm_interviews (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      team TEXT NOT NULL,
+      interviewee TEXT,
+      meeting_date TEXT,
+      responses JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_by VARCHAR,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS leasing_privacy_enabled BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS sharepoint_folder_url TEXT`,
     `ALTER TABLE lease_events ADD COLUMN IF NOT EXISTS landlord TEXT`,

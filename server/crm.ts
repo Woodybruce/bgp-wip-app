@@ -1476,6 +1476,78 @@ export function setupCrmRoutes(app: Express) {
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // ── CRM Meetings — Heads of Team strategy interviews ─────────────────────
+  // Phase 1 of the CRM strategy doc: one interview per Head of Team, the
+  // question set lives client-side (crm-meetings-tab.tsx), responses are a
+  // jsonb map keyed by question id so per-question autosaves merge instead
+  // of clobbering each other. BGP-internal: client logins get nothing.
+  const INTERVIEW_TEAMS = ["Leasing", "Investment", "Tenant Rep", "Lease Advisory"];
+
+  app.get("/api/crm/interviews", async (req, res) => {
+    try {
+      if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      // Seed the four Head of Team interviews on first open.
+      const count = await pool.query(`SELECT COUNT(*)::int AS n FROM crm_interviews`);
+      if (count.rows[0].n === 0) {
+        for (const team of INTERVIEW_TEAMS) {
+          await pool.query(
+            `INSERT INTO crm_interviews (team, created_by) VALUES ($1, $2)`,
+            [team, (req as any).session?.userId || null],
+          );
+        }
+      }
+      const rows = await pool.query(`SELECT * FROM crm_interviews ORDER BY created_at ASC`);
+      res.json(rows.rows);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/crm/interviews", async (req, res) => {
+    try {
+      if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const team = String(req.body?.team || "").trim();
+      const interviewee = typeof req.body?.interviewee === "string" ? req.body.interviewee.trim() : null;
+      if (!team) return res.status(400).json({ error: "team is required" });
+      const inserted = await pool.query(
+        `INSERT INTO crm_interviews (team, interviewee, created_by) VALUES ($1, $2, $3) RETURNING *`,
+        [team, interviewee || null, (req as any).session?.userId || null],
+      );
+      res.json(inserted.rows[0]);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.patch("/api/crm/interviews/:id", async (req, res) => {
+    try {
+      if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const { interviewee, meetingDate, responses } = req.body || {};
+      const sets: string[] = [];
+      const params: any[] = [];
+      if (typeof interviewee === "string") { params.push(interviewee.trim()); sets.push(`interviewee = $${params.length}`); }
+      if (typeof meetingDate === "string" || meetingDate === null) { params.push(meetingDate || null); sets.push(`meeting_date = $${params.length}`); }
+      if (responses && typeof responses === "object") {
+        // Merge, don't replace — two people can answer different questions
+        // in the same interview without losing each other's text.
+        params.push(JSON.stringify(responses));
+        sets.push(`responses = COALESCE(responses, '{}'::jsonb) || $${params.length}::jsonb`);
+      }
+      if (sets.length === 0) return res.status(400).json({ error: "Nothing to update" });
+      params.push(String(req.params.id));
+      const updated = await pool.query(
+        `UPDATE crm_interviews SET ${sets.join(", ")}, updated_at = now() WHERE id = $${params.length} RETURNING *`,
+        params,
+      );
+      if (!updated.rows[0]) return res.status(404).json({ error: "Interview not found" });
+      res.json(updated.rows[0]);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete("/api/crm/interviews/:id", async (req, res) => {
+    try {
+      if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      await pool.query(`DELETE FROM crm_interviews WHERE id = $1`, [String(req.params.id)]);
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // Landlord board — aggregated view of every Landlord company with WIP
   // fees, active deal count, properties, contacts, and last touchpoint.
   // All data is already in the CRM; this endpoint just rolls it up.
