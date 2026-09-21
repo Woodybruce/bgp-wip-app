@@ -2731,6 +2731,10 @@ export const kycAuditLog = pgTable("kyc_audit_log", {
   action: text("action").notNull(), // created | updated | approved | rejected | re-screened
   performedBy: varchar("performed_by"),
   notes: text("notes"),
+  // Entity-level audit (Delivery 5): set when the action concerns a legal
+  // entity rather than (or in addition to) a brand-level investigation.
+  entityKind: text("entity_kind"), // company | trading_entity
+  entityId: text("entity_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -3764,3 +3768,77 @@ export const websiteNews = pgTable("website_news", {
 });
 export const insertWebsiteNewsSchema = createInsertSchema(websiteNews).omit({ id: true, updatedAt: true });
 export type WebsiteNewsItem = typeof websiteNews.$inferSelect;
+
+// ── Delivery 5: standard client folder tree + entity-level KYC ────────────
+
+// The ONE durable account→folder mapping for the standard client folder
+// tree. Keyed by CRM identity, storing Graph IDs — cached_path/web_url are
+// display caches refreshed on write, never identity. See
+// migrations/0045_account_folder_map.sql.
+export const accountFolderMap = pgTable("account_folder_map", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ownerKind: text("owner_kind").notNull(),       // company | entity | property | section
+  ownerId: text("owner_id").notNull(),           // crm_companies.id | crm_trading_entities.id | crm_properties.id
+  parentMapId: varchar("parent_map_id"),         // nesting within the logical tree (NULL at the client root)
+  logicalKey: text("logical_key").notNull(),     // 'root' | '01-client-relationship' | 'property' | 'property:01-instructions' …
+  displayName: text("display_name").notNull(),   // folder label at bind/create time
+  driveId: text("drive_id").notNull(),
+  itemId: text("item_id").notNull(),
+  cachedPath: text("cached_path"),               // display cache only — never used for identity
+  webUrl: text("web_url"),
+  bindStatus: text("bind_status").notNull().default("bound"), // bound | created | missing | conflict
+  boundBy: text("bound_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [
+  uniqueIndex("uq_account_folder_map_owner_key").on(t.ownerKind, t.ownerId, t.logicalKey),
+  uniqueIndex("uq_account_folder_map_item").on(t.driveId, t.itemId),
+]);
+
+// Canonical per-entity KYC state (Delivery 5). Starts NULL — brand-level
+// crm_companies.kyc_* is NOT copied in; the deprecated
+// crm_trading_entities.kyc_* columns stay untouched. See migrations/0046.
+export const crmEntityKyc = pgTable("crm_entity_kyc", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  entityKind: text("entity_kind").notNull(),     // company | trading_entity
+  entityId: text("entity_id").notNull(),         // crm_companies.id | crm_trading_entities.id
+  kycStatus: text("kyc_status").notNull().default("pending"), // pending | in_review | approved | rejected | expired
+  checkedAt: timestamp("checked_at"),
+  approvedBy: text("approved_by"),               // reviewer NAME, same representation as crm_companies.kyc_approved_by
+  approvedAt: timestamp("approved_at"),
+  expiresAt: timestamp("expires_at"),
+  nextReviewAt: timestamp("next_review_at"),
+  outstanding: jsonb("outstanding"),             // [{key, label, since}]
+  evidence: jsonb("evidence"),                   // {investigation_id?, sanctions?, companies_house?, notes?}
+  lastCheckJobAt: timestamp("last_check_job_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [
+  uniqueIndex("uq_crm_entity_kyc_entity").on(t.entityKind, t.entityId),
+]);
+
+// Deal → contracting LEGAL entity links (Delivery 5). Populated manually /
+// by reviewed linking — NEVER from Xero (Xero ContactIDs are billing
+// identifiers, not legal-entity FKs). Nothing reads this in any gate; the
+// entity-aware deal gate is shadow-comparison only. See migrations/0047.
+export const crmDealEntities = pgTable("crm_deal_entities", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  role: text("role").notNull(),                  // landlord | tenant | vendor | purchaser
+  entityKind: text("entity_kind").notNull(),     // company | trading_entity
+  entityId: text("entity_id").notNull(),
+  linkSource: text("link_source").notNull().default("manual"), // manual | migration — never 'xero'
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  uniqueIndex("uq_crm_deal_entities_role").on(t.dealId, t.role, t.entityKind, t.entityId),
+]);
+
+// Shadow gate comparison snapshots: per deal, the current brand-level gate
+// outcome vs the proposed entity-aware outcome + diff reason. Evidence for
+// the post-Delivery-5 decision on flipping the live gate. See migrations/0047.
+export const amlShadowGateRuns = pgTable("aml_shadow_gate_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  generatedAt: timestamp("generated_at").defaultNow(),
+  generatedBy: text("generated_by"),
+  rows: jsonb("rows").notNull(),
+});

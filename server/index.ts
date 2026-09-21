@@ -2647,6 +2647,68 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     )`,
     `CREATE INDEX IF NOT EXISTS idx_account_recon_runs_company
       ON account_reconciliation_runs(company_id, baseline_name, generated_at DESC)`,
+
+    // Delivery 5 — mirrors migrations/0045–0047 (all additive + idempotent).
+    // Account folder map (the durable account→folder mapping):
+    `CREATE TABLE IF NOT EXISTS account_folder_map (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      owner_kind text NOT NULL,
+      owner_id text NOT NULL,
+      parent_map_id varchar,
+      logical_key text NOT NULL,
+      display_name text NOT NULL,
+      drive_id text NOT NULL,
+      item_id text NOT NULL,
+      cached_path text,
+      web_url text,
+      bind_status text NOT NULL DEFAULT 'bound',
+      bound_by text,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_account_folder_map_owner_key
+      ON account_folder_map(owner_kind, owner_id, logical_key)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_account_folder_map_item
+      ON account_folder_map(drive_id, item_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_account_folder_map_owner ON account_folder_map(owner_kind, owner_id)`,
+    // Canonical per-entity KYC + audit-trail entity columns:
+    `CREATE TABLE IF NOT EXISTS crm_entity_kyc (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_kind text NOT NULL,
+      entity_id text NOT NULL,
+      kyc_status text NOT NULL DEFAULT 'pending',
+      checked_at timestamptz,
+      approved_by text,
+      approved_at timestamptz,
+      expires_at timestamptz,
+      next_review_at timestamptz,
+      outstanding jsonb,
+      evidence jsonb,
+      last_check_job_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_entity_kyc_entity ON crm_entity_kyc(entity_kind, entity_id)`,
+    `ALTER TABLE kyc_audit_log ADD COLUMN IF NOT EXISTS entity_kind text`,
+    `ALTER TABLE kyc_audit_log ADD COLUMN IF NOT EXISTS entity_id text`,
+    // Deal contracting entities + shadow gate comparison log:
+    `CREATE TABLE IF NOT EXISTS crm_deal_entities (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      deal_id varchar NOT NULL,
+      role text NOT NULL,
+      entity_kind text NOT NULL,
+      entity_id text NOT NULL,
+      link_source text NOT NULL DEFAULT 'manual',
+      created_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_deal_entities_role
+      ON crm_deal_entities(deal_id, role, entity_kind, entity_id)`,
+    `CREATE TABLE IF NOT EXISTS aml_shadow_gate_runs (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      generated_at timestamptz NOT NULL DEFAULT now(),
+      generated_by text,
+      rows jsonb NOT NULL
+    )`,
   ];
 
   let ok = 0, skipped = 0;
