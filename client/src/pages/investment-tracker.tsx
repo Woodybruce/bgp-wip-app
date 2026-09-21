@@ -1113,14 +1113,20 @@ export default function InvestmentTrackerPage() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: any }) => apiRequest("PATCH", `/api/investment-tracker/${id}`, data),
-    onSuccess: () => {
+    onSuccess: (_res, vars) => {
       queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
       // Status / fee / parties / agent edits server-side mirror to the
       // backing deal and the 4-way mirror — refresh the sibling boards'
       // caches so the Deals / Letting / Leasing tabs pick up the change
       // without a manual reload.
       invalidateDealCaches();
-      toast({ title: "Updated" });
+      const movedTo = vars?.data?.boardType as BoardType | undefined;
+      if (movedTo && BOARD_TYPES.includes(movedTo) && movedTo !== boardType) {
+        setBoardType(movedTo);
+        toast({ title: `Moved to ${movedTo}`, description: "The backing deal is now a " + (movedTo === "Sales" ? "Sale" : "Purchase") + "." });
+      } else {
+        toast({ title: "Updated" });
+      }
       setEditItem(null);
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -1912,7 +1918,12 @@ export default function InvestmentTrackerPage() {
                       />
                     </TableCell>
                     <TableCell className="px-2 py-1.5 font-mono text-muted-foreground text-xs">
-                      {item.dealId ? (dealRefMap.get(item.dealId) ? `#${dealRefMap.get(item.dealId)}` : "—") : "—"}
+                      {(() => {
+                        const ref = (item as any).dealRef ?? (item.dealId ? dealRefMap.get(item.dealId) : null);
+                        return item.dealId && ref
+                          ? <a href={`/deals/${item.dealId}`} className="text-primary hover:underline" data-testid={`link-deal-ref-${item.id}`}>#{ref}</a>
+                          : "—";
+                      })()}
                     </TableCell>
                     <TableCell className="px-2 py-1.5 font-medium max-w-[200px]">
                       <InlineLinkSelect
@@ -2350,7 +2361,20 @@ export default function InvestmentTrackerPage() {
                 <SelectContent>{STATUSES.map(s => <SelectItem key={s} value={s}>{DEAL_STATUS_LABELS[s]}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            {boardType === "Purchases" ? (
+            <div>
+              {/* Board switch — a sale instruction that turns into an
+                  acquisition (or vice versa) moves boards here; the backing
+                  deal's type follows server-side (Woody, 2026-09-21). */}
+              <Label className="text-xs">Board</Label>
+              <Select value={form.boardType || "Purchases"} onValueChange={v => setForm({ ...form, boardType: v as BoardType })}>
+                <SelectTrigger className="h-9" data-testid="select-board-type"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Purchases">Purchase (we acquire for the client)</SelectItem>
+                  <SelectItem value="Sales">Sale (we sell for the client)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {(form.boardType || "Purchases") === "Purchases" ? (
               <>
                 <div>
                   <Label className="text-xs">Vendor</Label>

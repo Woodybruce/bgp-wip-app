@@ -5656,6 +5656,42 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   // Backfill: create CRM deals for any tracker rows that are still missing dealId.
   // Safe to run multiple times — skips rows that already have a dealId.
+  // Every Investment Tracker asset gets a backing crm_deal (that's where
+  // its Ref # and deal page come from). New rows get one on POST; rows
+  // imported before that existed (the 2025-26 Investment WIP spreadsheet)
+  // never did, so the Ref column sat empty and "Link deal" was the only
+  // way in (Woody, 2026-09-21: "should they not have a ref, ie a deal
+  // page?"). Runs once shortly after boot, and via the admin route.
+  const backfillInvestmentTrackerDeals = async (): Promise<number> => {
+    const { investmentTracker: invTracker } = await import("@shared/schema");
+    // Also rows whose deal was deleted from the Deals board — they show
+    // "View Deal" but the link is dead and the Ref is blank.
+    const unlinkedInv = await db.select().from(invTracker).where(sql`deal_id IS NULL OR deal_id NOT IN (SELECT id FROM crm_deals)`);
+    let created = 0;
+    for (const row of unlinkedInv) {
+      try {
+        const dealType = row.boardType === "Sales" ? "Sale" : "Purchase";
+        const deal = await storage.createCrmDeal({
+          name: row.assetName,
+          propertyId: row.propertyId,
+          status: legacyToCode(row.status) || "REP",
+          dealType,
+          internalAgent: await resolveAgentNames(row.agentUserIds),
+          fee: row.fee ?? undefined,
+          ...(row.clientId ? (dealType === "Sale" ? { vendorId: row.clientId, landlordId: row.clientId } : { purchaserId: row.clientId, landlordId: row.clientId }) : {}),
+          ...(row.vendorId && dealType === "Purchase" ? { vendorId: row.vendorId } : {}),
+        } as any);
+        await db.update(invTracker).set({ dealId: deal.id }).where(eq(invTracker.id, row.id));
+        created++;
+      } catch (e: any) {
+        console.warn(`[backfill] inv-tracker ${row.id} failed:`, e.message);
+      }
+    }
+    if (created > 0) console.log(`[backfill] investment tracker: created ${created} backing deals`);
+    return created;
+  };
+  setTimeout(() => { backfillInvestmentTrackerDeals().catch(e => console.warn("[backfill] investment tracker boot run failed:", e?.message)); }, 30_000);
+
   app.post("/api/admin/backfill-tracker-deals", requireAuth, async (req, res) => {
     try {
       const { availableUnits, investmentTracker: invTracker } = await import("@shared/schema");
@@ -5688,24 +5724,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
 
       // --- Investment Tracker ---
-      const unlinkedInv = await db.select().from(invTracker).where(sql`deal_id IS NULL`);
-      for (const row of unlinkedInv) {
-        try {
-          const dealType = row.boardType === "Sales" ? "Sale" : "Purchase";
-          const deal = await storage.createCrmDeal({
-            name: row.assetName,
-            propertyId: row.propertyId,
-            status: "REP",
-            dealType,
-            internalAgent: await resolveAgentNames(row.agentUserIds),
-            fee: row.fee ?? undefined,
-          });
-          await db.update(invTracker).set({ dealId: deal.id }).where(eq(invTracker.id, row.id));
-          created++;
-        } catch (e: any) {
-          console.warn(`[backfill] inv-tracker ${row.id} failed:`, e.message);
-        }
-      }
+      created += await backfillInvestmentTrackerDeals();
 
       res.json({ created, skipped, message: `Created ${created} deals for previously unlinked tracker rows` });
     } catch (err: any) {
@@ -7569,26 +7588,29 @@ These terms are indicative only and do not constitute a binding agreement.`;
   app.get("/api/investment-tracker", requireAuth, async (req, res) => {
     try {
       const scopeCompanyId = await resolveCompanyScope(req);
+      // Joined to the backing deal so the Ref column never depends on the
+      // client having the (paged, filtered) deals list in cache.
       let queryText = `SELECT
-        id, property_id AS "propertyId", asset_name AS "assetName", asset_type AS "assetType",
-        tenure, guide_price AS "guidePrice", niy, eqy, sqft,
-        wault_break AS "waultBreak", wault_expiry AS "waultExpiry",
-        current_rent AS "currentRent", erv_pa AS "ervPa", occupancy, capex_required AS "capexRequired",
-        board_type AS "boardType", status, client, client_contact AS "clientContact",
-        vendor, vendor_agent AS "vendorAgent", buyer, address, notes,
-        deal_id AS "dealId", agent_user_ids AS "agentUserIds",
-        client_id AS "clientId", client_contact_id AS "clientContactId",
-        vendor_id AS "vendorId", vendor_agent_id AS "vendorAgentId",
-        completion_date AS "completionDate",
-        fee, fee_type AS "feeType", marketing_date AS "marketingDate", bid_deadline AS "bidDeadline",
-        created_at AS "createdAt", updated_at AS "updatedAt"
-        FROM investment_tracker`;
+        it.id, it.property_id AS "propertyId", it.asset_name AS "assetName", it.asset_type AS "assetType",
+        it.tenure, it.guide_price AS "guidePrice", it.niy, it.eqy, it.sqft,
+        it.wault_break AS "waultBreak", it.wault_expiry AS "waultExpiry",
+        it.current_rent AS "currentRent", it.erv_pa AS "ervPa", it.occupancy, it.capex_required AS "capexRequired",
+        it.board_type AS "boardType", it.status, it.client, it.client_contact AS "clientContact",
+        it.vendor, it.vendor_agent AS "vendorAgent", it.buyer, it.address, it.notes,
+        it.deal_id AS "dealId", d.deal_ref AS "dealRef", it.agent_user_ids AS "agentUserIds",
+        it.client_id AS "clientId", it.client_contact_id AS "clientContactId",
+        it.vendor_id AS "vendorId", it.vendor_agent_id AS "vendorAgentId",
+        it.completion_date AS "completionDate",
+        it.fee, it.fee_type AS "feeType", it.marketing_date AS "marketingDate", it.bid_deadline AS "bidDeadline",
+        it.created_at AS "createdAt", it.updated_at AS "updatedAt"
+        FROM investment_tracker it
+        LEFT JOIN crm_deals d ON d.id = it.deal_id`;
       const params: string[] = [];
       if (scopeCompanyId) {
-        queryText += ` WHERE client_id = $1 OR vendor_id = $1`;
+        queryText += ` WHERE it.client_id = $1 OR it.vendor_id = $1`;
         params.push(scopeCompanyId);
       }
-      queryText += ` ORDER BY created_at DESC`;
+      queryText += ` ORDER BY it.created_at DESC`;
       const result = await pool.query(queryText, params);
       console.log(`[investment-tracker] GET /api/investment-tracker returned ${result.rows.length} rows`);
       res.json(result.rows);
@@ -7809,6 +7831,21 @@ These terms are indicative only and do not constitute a binding agreement.`;
         if ("agentUserIds" in updates) dealPatch.internalAgent = await resolveAgentNames(updates.agentUserIds);
         if ("clientId" in updates) dealPatch.landlordId = updates.clientId || null;
         if ("vendorId" in updates) dealPatch.vendorId = updates.vendorId || null;
+        // Board switch (Sales ⇄ Purchases) retypes the backing deal so the
+        // Deals board, WIP report and the deal form's party rules follow.
+        // The client sits on the deal as the side we act for: purchaser on
+        // an acquisition, vendor on a disposal.
+        if ("boardType" in updates) {
+          dealPatch.dealType = updates.boardType === "Sales" ? "Sale" : "Purchase";
+        }
+        const effectiveBoard = ("boardType" in updates ? updates.boardType : row.boardType) || "Purchases";
+        if ("boardType" in updates || "clientId" in updates) {
+          const clientId = ("clientId" in updates ? updates.clientId : row.clientId) || null;
+          if (clientId) {
+            if (effectiveBoard === "Sales") dealPatch.vendorId = clientId;
+            else dealPatch.purchaserId = clientId;
+          }
+        }
         if (Object.keys(dealPatch).length > 0) {
           try {
             await storage.updateCrmDeal(row.dealId, dealPatch as any);
