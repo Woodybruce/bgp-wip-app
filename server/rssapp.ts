@@ -9,6 +9,12 @@ function authHeader(): string | null {
   return `Bearer ${key}:${secret}`;
 }
 
+// Whether the RSS.app feed service has credentials — the Instagram card
+// reports "not_configured" instead of pretending an account is quiet.
+export function isRssAppConfigured(): boolean {
+  return authHeader() !== null;
+}
+
 export interface RssAppFeed {
   id: string;
   rss_feed_url: string;

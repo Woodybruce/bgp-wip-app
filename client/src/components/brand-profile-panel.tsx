@@ -5201,10 +5201,14 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
 }
 
 // ─── Instagram card — latest posts via the brand's RSS.app feed ────────────
-// Three states from the server:
-//   feed        → grid of recent posts (news_articles from the paid feed)
-//   handle_only → slim card: handle link + follower count, no feed slot yet
-//   no_handle   → card hides itself entirely
+// States from the server (server/instagram-card-state.ts):
+//   feed           → grid of recent posts; feed + zero posts = connected but
+//                    nothing synced yet (never an outage message)
+//   handle_only    → handle on file, no feed slot yet → "Not connected"
+//   feed_error     → feed creation failed at the provider — show the reason
+//   not_configured → the RSS.app feed service has no credentials
+//   no_handle      → card hides itself entirely
+// Every visible state links out to the live instagram.com account.
 export function BrandInstagramCard({ companyId }: { companyId: string }) {
   const { data, isLoading } = useQuery<any>({
     queryKey: ["/api/brand", companyId, "instagram"],
@@ -5230,7 +5234,7 @@ export function BrandInstagramCard({ companyId }: { companyId: string }) {
       <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
         <Instagram className="w-3.5 h-3.5" /> Instagram
         <a
-          href={`https://instagram.com/${data.handle}`}
+          href={data.externalUrl || `https://instagram.com/${data.handle}`}
           target="_blank"
           rel="noreferrer"
           className="ml-auto text-[10px] text-muted-foreground hover:text-foreground normal-case font-normal"
@@ -5248,17 +5252,39 @@ export function BrandInstagramCard({ companyId }: { companyId: string }) {
     </div>
   );
 
+  const lastSyncedLine = data.lastSyncedAt && (
+    <div className="text-[10px] text-muted-foreground">
+      Last synced {new Date(data.lastSyncedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+    </div>
+  );
+
   if (data.status !== "feed" || !data.posts?.length) {
+    const stateMessage =
+      data.status === "not_configured"
+        ? "Instagram feed service isn't configured."
+        : data.status === "feed_error"
+          ? `Feed error: ${data.error || "feed creation failed"}${data.attempts ? ` (${data.attempts} attempts)` : ""}`
+          : data.status === "handle_only"
+            ? "Not connected — view on Instagram ↗"
+            : "Feed connected — no posts synced yet.";
     return (
       <Card>
         {header}
         <CardContent className="p-3 pt-0 space-y-1">
           {statsLine}
-          <p className="text-[11px] text-muted-foreground italic">
-            {data.status === "feed"
-              ? "Feed connected — recent posts appear after the next refresh."
-              : "No live feed slot for this brand yet."}
-          </p>
+          {data.status === "handle_only" ? (
+            <a
+              href={data.externalUrl || `https://instagram.com/${data.handle}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[11px] text-muted-foreground italic hover:text-foreground"
+            >
+              {stateMessage}
+            </a>
+          ) : (
+            <p className="text-[11px] text-muted-foreground italic">{stateMessage}</p>
+          )}
+          {lastSyncedLine}
         </CardContent>
       </Card>
     );
@@ -5269,6 +5295,7 @@ export function BrandInstagramCard({ companyId }: { companyId: string }) {
       {header}
       <CardContent className="p-3 pt-0 space-y-2">
         {statsLine}
+        {lastSyncedLine}
         {/* Grid that fills the card and scrolls DOWN for the rest (Woody,
             2026-08-19: "Instagram should scroll down and fill the board") —
             capped height keeps it in step with the news column beside it. */}

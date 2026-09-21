@@ -4,6 +4,7 @@ import { db, pool } from "./db";
 import { crmCompanies, newsSources, newsArticles, brandSignals } from "@shared/schema";
 import { eq, and, sql, desc, isNotNull, ilike } from "drizzle-orm";
 import { googleNewsRssUrl, createRssAppFeed, rssappHealth } from "./rssapp";
+import { isFeedEligibleCompany } from "./instagram-card-state";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { isBrandNewsRelevant } from "./brand-news-relevance";
 
@@ -513,16 +514,25 @@ export async function previewBrandSocialFeeds(opts?: {
 }): Promise<{ plan: BrandSocialFeedPlan[]; existing: number }> {
   const platforms = opts?.platforms?.length ? opts.platforms : (["instagram", "x", "linkedin"] as SocialPlatform[]);
 
-  const tracked = await db
+  // Tenant brands are eligible exactly as before; landlord-shaped rows
+  // (landlord/investor/REIT/developer/fund) qualify only with a verified
+  // brand identity — the handle must hang off a confirmed official identity.
+  const tracked = (await db
     .select({
       id: crmCompanies.id,
       name: crmCompanies.name,
+      companyType: crmCompanies.companyType,
       instagramHandle: crmCompanies.instagramHandle,
       xHandle: crmCompanies.xHandle,
       linkedinUrl: crmCompanies.linkedinUrl,
+      identityStatus: sql<string | null>`${crmCompanies.aiGeneratedFields}->'brand_identity'->>'status'`,
     })
     .from(crmCompanies)
-    .where(and(ilike(crmCompanies.companyType, "tenant%"), sql`${crmCompanies.mergedIntoId} IS NULL`));
+    .where(and(
+      sql`(${crmCompanies.companyType} ILIKE 'tenant%' OR lower(${crmCompanies.companyType}) IN ('landlord','landlord/freeholder','investor','reit','developer','fund'))`,
+      sql`${crmCompanies.mergedIntoId} IS NULL`,
+    )))
+    .filter(b => isFeedEligibleCompany(b.companyType, b.identityStatus === "verified"));
 
   const existingRows = await db
     .select({ category: newsSources.category, type: newsSources.type })
@@ -695,14 +705,22 @@ export interface CuratedIgPreview {
 // rule: the same handle on 3+ brands is scraper poisoning (t2tea,
 // workwithatom) — only a brand whose own name matches the handle keeps it.
 export async function previewCuratedInstagramFeeds(limit = 100): Promise<CuratedIgPreview> {
-  const tracked = await db
+  // Tenant brands eligible as before + verified-identity landlord accounts
+  // (same predicate as previewBrandSocialFeeds).
+  const tracked = (await db
     .select({
       id: crmCompanies.id,
       name: crmCompanies.name,
+      companyType: crmCompanies.companyType,
       instagramHandle: crmCompanies.instagramHandle,
+      identityStatus: sql<string | null>`${crmCompanies.aiGeneratedFields}->'brand_identity'->>'status'`,
     })
     .from(crmCompanies)
-    .where(and(ilike(crmCompanies.companyType, "tenant%"), sql`${crmCompanies.mergedIntoId} IS NULL`));
+    .where(and(
+      sql`(${crmCompanies.companyType} ILIKE 'tenant%' OR lower(${crmCompanies.companyType}) IN ('landlord','landlord/freeholder','investor','reit','developer','fund'))`,
+      sql`${crmCompanies.mergedIntoId} IS NULL`,
+    )))
+    .filter(b => isFeedEligibleCompany(b.companyType, b.identityStatus === "verified"));
 
   const excluded = { junkHandle: 0, duplicateHandle: 0, alreadyFed: 0, failedRepeatedly: 0, overLimit: 0 };
 
@@ -752,13 +770,17 @@ export async function previewCuratedInstagramFeeds(limit = 100): Promise<Curated
     return true;
   });
 
-  // Rank: pinned operators first (never lose their slot), then brands
-  // sitting on a deal, then brands whose news feeds have produced signals
-  // recently (they're moving), then name.
+  // Rank: pinned operators first (never lose their slot), then companies
+  // sitting on a deal — as tenant OR as landlord, so active landlord
+  // accounts rank fairly against tenant brands for the shared quota — then
+  // companies whose news feeds have produced signals recently (they're
+  // moving), then name.
   const dealRows = await pool.query(
-    `SELECT DISTINCT tenant_id FROM crm_deals WHERE tenant_id IS NOT NULL`
+    `SELECT DISTINCT tenant_id AS id FROM crm_deals WHERE tenant_id IS NOT NULL
+      UNION
+     SELECT DISTINCT landlord_id AS id FROM crm_deals WHERE landlord_id IS NOT NULL`
   );
-  const onDeal = new Set(dealRows.rows.map((r: any) => String(r.tenant_id)));
+  const onDeal = new Set(dealRows.rows.map((r: any) => String(r.id)));
   const signalRows = await pool.query(
     `SELECT brand_company_id, COUNT(*)::int AS n FROM brand_signals
       WHERE created_at > now() - interval '180 days'

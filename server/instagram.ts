@@ -25,6 +25,8 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { storeImageFromBuffer } from "./image-studio";
+import { isRssAppConfigured } from "./rssapp";
+import { instagramCardState } from "./instagram-card-state";
 
 const router = Router();
 
@@ -394,11 +396,18 @@ router.get("/api/instagram/probe", requireAuth, async (req: Request, res: Respon
 // Brand profile Instagram card — fed by the brand's RSS.app Instagram feed
 // (Meta rejected Public Content Access, so Business Discovery never went
 // live for lookups; getBrandInstagram above remains for anything Meta does
-// still serve from cache). Three states for the UI:
-//   feed        → latest posts from the RSS.app feed (news_articles rows)
-//   handle_only → handle on file but no paid feed slot yet
-//   no_handle   → nothing to show; the card hides itself
-// Follower counts come from brand_social_stats — the weekly scrape.
+// still serve from cache). States for the UI (instagramCardState):
+//   feed           → latest posts from the RSS.app feed (news_articles rows);
+//                    feed + zero posts = connected-but-empty, not an outage
+//   handle_only    → handle on file but no paid feed slot yet ("Not connected")
+//   feed_error     → feed creation failed at the provider; carries the
+//                    specific rssapp_feed_failures error, not a generic shrug
+//   not_configured → RSS.app credentials absent; never pretend the account
+//                    is quiet
+//   no_handle      → nothing to show; the card hides itself
+// Every state with a handle carries externalUrl so the card can always link
+// out to the live account. Follower counts come from brand_social_stats —
+// the weekly scrape.
 router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, res: Response) => {
   try {
     const companyId = String(req.params.companyId);
@@ -406,7 +415,8 @@ router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, 
       `SELECT instagram_handle FROM crm_companies WHERE id = $1`, [companyId]
     );
     const handle = extractUsername(handleRow.rows[0]?.instagram_handle);
-    if (!handle) return res.json({ status: "no_handle", handle: null, posts: [] });
+    const configured = isRssAppConfigured();
+    if (!handle) return res.json({ status: "no_handle", handle: null, externalUrl: null, lastSyncedAt: null, posts: [] });
 
     // brand_social_stats is created lazily by the weekly scraper — on a
     // fresh DB it doesn't exist yet, which 500'd the whole card. Treat a
@@ -427,8 +437,27 @@ router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, 
         WHERE category = $1 AND type = 'rssapp_instagram' AND active = true
         LIMIT 1`, [`brand:${companyId}`]
     );
+
+    // Provider failure ledger — keyed on the profile URL the provisioning
+    // path tried to create a feed for. Missing table (fresh DB) = no
+    // recorded failure.
+    const failure = !src.rows[0]
+      ? await pool.query<{ attempts: number; last_error: string | null }>(
+          `SELECT attempts, last_error FROM rssapp_feed_failures WHERE url = $1 LIMIT 1`,
+          [`https://www.instagram.com/${handle}/`]
+        ).catch((e: any) => {
+          if (e?.code === "42P01") return { rows: [] } as any;
+          throw e;
+        })
+      : { rows: [] as Array<{ attempts: number; last_error: string | null }> };
+    const failureRow = failure.rows[0] ?? null;
+
     if (!src.rows[0]) {
-      return res.json({ status: "handle_only", handle, followers, postCount, posts: [] });
+      const state = instagramCardState({
+        configured, handle, hasFeedSource: false, lastSyncedAt: null,
+        failure: failureRow ? { attempts: failureRow.attempts, lastError: failureRow.last_error } : null,
+      });
+      return res.json({ ...state, handle, followers, postCount, posts: [] });
     }
 
     const posts = await pool.query(
@@ -461,7 +490,9 @@ router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, 
     // the card is one row deep and scrolls sideways.
     const withMedia = shaped.filter((p) => p.imageUrl || p.videoUrl);
     const visible = withMedia.length ? withMedia : shaped.slice(0, 9);
-    res.json({ status: "feed", handle, followers, postCount, posts: visible });
+    const lastSyncedAt = posts.rows[0]?.publishedAt ?? null;
+    const state = instagramCardState({ configured, handle, hasFeedSource: true, lastSyncedAt, failure: null });
+    res.json({ ...state, handle, followers, postCount, posts: visible });
   } catch (e: any) {
     console.error("[/api/brand/:companyId/instagram]", e?.message);
     res.status(500).json({ error: e?.message || "failed" });
