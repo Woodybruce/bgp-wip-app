@@ -34,7 +34,6 @@ import {
   TrendingUp,
   Building2,
   Percent,
-  DollarSign,
   ArrowRight,
   ChevronDown,
   ChevronUp,
@@ -59,6 +58,18 @@ import {
   CloudUpload,
   ExternalLink,
   Info,
+  ShieldCheck,
+  AlertTriangle,
+  PoundSterling,
+  Hammer,
+  Clock,
+  LogIn,
+  LogOut,
+  Banknote,
+  Receipt,
+  KeySquare,
+  Landmark,
+  RefreshCw,
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ExcelTemplate, ExcelModelRun } from "@shared/schema";
@@ -81,6 +92,7 @@ interface TemplateWithMeta extends Omit<ExcelTemplate, "inputMapping" | "outputM
   outputMapping: Record<string, OutputField>;
   analysis?: { sheets: { name: string; rows: number; cols: number }[]; properties: string[] };
   sampleOutputs?: Record<string, any>;
+  sampleInputs?: Record<string, any>;
 }
 
 interface InputField {
@@ -124,6 +136,73 @@ function formatOutputValue(value: any, format?: string): string {
     }
   }
   return String(value);
+}
+
+// ── Sectioned model chrome ────────────────────────────────────────────────
+// Templates declare `group` per mapped field (the REX flagship mirrors its own
+// Inputs sheet sections: Timing / Entry / Acquisition / Exit / …). These order
+// lists keep the scenario builder and the results view in the modeller's
+// mental order instead of JSON key order; unknown groups sort after, "Other"
+// last.
+const INPUT_GROUP_ORDER = [
+  "Timing", "Entry", "Acquisition", "Exit", "Fees & Growth",
+  "Leasing", "Senior Debt", "Refinance", "Income", "Costs", "Tax", "Financing",
+];
+const OUTPUT_GROUP_ORDER = [
+  "Returns — Levered", "Returns — Unlevered", "Returns",
+  "Pricing & Capital", "Yields & Income", "Yields", "Capex", "Property",
+];
+
+function sortGroupEntries<T>(groups: Record<string, T>, order: string[]): [string, T][] {
+  return Object.entries(groups).sort(([a], [b]) => {
+    if (a === "Other" && b !== "Other") return 1;
+    if (b === "Other" && a !== "Other") return -1;
+    const ai = order.findIndex((o) => o.toLowerCase() === a.toLowerCase());
+    const bi = order.findIndex((o) => o.toLowerCase() === b.toLowerCase());
+    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi) || a.localeCompare(b);
+  });
+}
+
+function groupIcon(group: string, className = "w-3.5 h-3.5") {
+  const g = group.toLowerCase();
+  if (g.includes("check")) return <ShieldCheck className={className} />;
+  if (g.includes("return")) return <TrendingUp className={className} />;
+  if (g.includes("pricing") || g.includes("capital")) return <PoundSterling className={className} />;
+  if (g.includes("yield") || g.includes("income")) return <Percent className={className} />;
+  if (g.includes("capex")) return <Hammer className={className} />;
+  if (g.includes("timing")) return <Clock className={className} />;
+  if (g.includes("entry")) return <LogIn className={className} />;
+  if (g.includes("acquisition")) return <Banknote className={className} />;
+  if (g.includes("exit")) return <LogOut className={className} />;
+  if (g.includes("debt") || g.includes("financ")) return <Landmark className={className} />;
+  if (g.includes("refi")) return <RefreshCw className={className} />;
+  if (g.includes("leas")) return <KeySquare className={className} />;
+  if (g.includes("property")) return <Building2 className={className} />;
+  if (g.includes("fee") || g.includes("growth") || g.includes("cost") || g.includes("tax")) return <Receipt className={className} />;
+  return <Layers className={className} />;
+}
+
+/** Format a template's cached input value for display as the field's default
+ *  (users type percents as raw numbers — 5.5 means 5.5% — so fractions come
+ *  back ×100). */
+function formatInputDefault(value: any, type: string): string {
+  if (value === null || value === undefined || value === "") return "";
+  if (type === "percent" && typeof value === "number") {
+    const pct = value * 100;
+    return String(parseFloat(pct.toFixed(4)));
+  }
+  if (typeof value === "number") {
+    return Math.abs(value) >= 1000
+      ? value.toLocaleString("en-GB", { maximumFractionDigits: 0 })
+      : value.toLocaleString("en-GB");
+  }
+  return String(value);
+}
+
+function inputUnit(field: InputField): string {
+  if (field.type === "percent") return "%";
+  if (field.label.includes("£")) return "£";
+  return "";
 }
 
 function TemplateUpload() {
@@ -282,48 +361,83 @@ function RunModelForm({ template, onClose }: { template: TemplateWithMeta; onClo
   });
 
   const inputMapping = template.inputMapping || {};
-  const groups = Object.entries(inputMapping).reduce<Record<string, { key: string; field: InputField }[]>>((acc, [key, field]) => {
-    const g = field.group || "Other";
-    if (!acc[g]) acc[g] = [];
-    acc[g].push({ key, field });
-    return acc;
-  }, {});
+  const defaults = template.sampleInputs || {};
+  const groups = useMemo(() => {
+    const grouped = Object.entries(inputMapping).reduce<Record<string, { key: string; field: InputField }[]>>((acc, [key, field]) => {
+      const g = field.group || "Other";
+      if (!acc[g]) acc[g] = [];
+      acc[g].push({ key, field });
+      return acc;
+    }, {});
+    return sortGroupEntries(grouped, INPUT_GROUP_ORDER);
+  }, [inputMapping]);
+
+  const overrideCount = Object.values(inputValues).filter((v) => v !== "").length;
 
   return (
     <div className="space-y-6">
-      <div>
-        <Label htmlFor="run-name">Run Name</Label>
+      <div className="space-y-1.5">
+        <Label htmlFor="run-name">Scenario name</Label>
         <Input
           id="run-name"
-          placeholder="e.g. Chelsea Retail Q1 2025"
+          placeholder={`e.g. ${template.name} — Base case`}
           value={runName}
           onChange={(e) => setRunName(e.target.value)}
           data-testid="input-run-name"
         />
       </div>
 
-      {Object.entries(groups).map(([groupName, fields]) => (
-        <div key={groupName}>
-          <h4 className="text-sm font-medium text-muted-foreground mb-3">{groupName}</h4>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {fields.map(({ key, field }) => (
-              <div key={key}>
-                <Label htmlFor={`input-${key}`} className="text-xs">
-                  {field.label}
-                </Label>
-                <Input
-                  id={`input-${key}`}
-                  type={field.type === "text" ? "text" : "number"}
-                  step={field.type === "percent" ? "0.1" : "1"}
-                  placeholder={field.type === "percent" ? "e.g. 5" : field.type === "number" ? "e.g. 72000" : ""}
-                  value={inputValues[key] || ""}
-                  onChange={(e) => setInputValues((prev) => ({ ...prev, [key]: e.target.value }))}
-                  data-testid={`input-field-${key}`}
-                />
-              </div>
-            ))}
+      <div className="flex items-start gap-2 rounded-md bg-muted/50 px-3 py-2">
+        <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+        <p className="text-xs text-muted-foreground">
+          Grey values are the template's current assumptions — leave a field blank to keep it, or type to override.
+        </p>
+      </div>
+
+      {groups.map(([groupName, fields]) => (
+        <section key={groupName}>
+          <header className="flex items-center gap-2 mb-3">
+            <span className="w-6 h-6 rounded-md bg-primary/10 text-primary flex items-center justify-center shrink-0">
+              {groupIcon(groupName)}
+            </span>
+            <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+              {groupName}
+            </h4>
+            <div className="flex-1 h-px bg-border" />
+            <span className="text-[10px] text-muted-foreground/70 font-mono">{fields.length}</span>
+          </header>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+            {fields.map(({ key, field }) => {
+              const unit = inputUnit(field);
+              const defaultHint = formatInputDefault(defaults[key], field.type);
+              return (
+                <div key={key} className="space-y-1">
+                  <Label htmlFor={`input-${key}`} className="text-xs">
+                    {field.label}
+                  </Label>
+                  <div className="relative">
+                    {unit === "£" && (
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">£</span>
+                    )}
+                    <Input
+                      id={`input-${key}`}
+                      type={field.type === "text" ? "text" : "number"}
+                      step={field.type === "percent" ? "0.01" : "any"}
+                      placeholder={defaultHint || (field.type === "percent" ? "e.g. 5.5" : "")}
+                      value={inputValues[key] || ""}
+                      onChange={(e) => setInputValues((prev) => ({ ...prev, [key]: e.target.value }))}
+                      className={`${unit === "%" ? "pr-7" : ""} ${unit === "£" ? "pl-6" : ""} placeholder:text-muted-foreground/60`}
+                      data-testid={`input-field-${key}`}
+                    />
+                    {unit === "%" && (
+                      <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">%</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        </div>
+        </section>
       ))}
 
       <Separator />
@@ -335,11 +449,14 @@ function RunModelForm({ template, onClose }: { template: TemplateWithMeta; onClo
         data-testid="button-run-model"
       >
         {createRunMutation.isPending ? (
-          "Running Model..."
+          <>
+            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            Running scenario…
+          </>
         ) : (
           <>
             <Play className="w-4 h-4 mr-2" />
-            Run Model
+            Run scenario{overrideCount > 0 ? ` · ${overrideCount} override${overrideCount === 1 ? "" : "s"}` : " · template defaults"}
           </>
         )}
       </Button>
@@ -347,50 +464,122 @@ function RunModelForm({ template, onClose }: { template: TemplateWithMeta; onClo
   );
 }
 
-function OutputCard({ outputs, mapping }: { outputs: Record<string, any>; mapping: Record<string, OutputField> }) {
-  const groups = Object.entries(mapping).reduce<Record<string, { key: string; field: OutputField; value: any }[]>>(
-    (acc, [key, field]) => {
-      const g = field.group || "Other";
-      if (!acc[g]) acc[g] = [];
-      acc[g].push({ key, field, value: outputs[key] });
-      return acc;
-    },
-    {}
+function ChecksBanner({ outputs, mapping }: { outputs: Record<string, any>; mapping: Record<string, OutputField> }) {
+  const checkEntries = Object.entries(mapping).filter(
+    ([key, f]) => (f.group || "").toLowerCase().includes("check") || key.toLowerCase().includes("check"),
   );
+  if (checkEntries.length === 0) return null;
+  const values = checkEntries.map(([key]) => String(outputs[key] ?? "").trim()).filter(Boolean);
+  const ok = values.length > 0 && values.every((v) => /^(ok|pass|passed|true|✓)$/i.test(v));
 
-  const getIcon = (group: string) => {
-    switch (group) {
-      case "Returns": return <TrendingUp className="w-4 h-4" />;
-      case "Yields": return <Percent className="w-4 h-4" />;
-      case "Property": return <Building2 className="w-4 h-4" />;
-      default: return <DollarSign className="w-4 h-4" />;
-    }
-  };
+  if (ok) {
+    return (
+      <div
+        className="flex items-center gap-2.5 rounded-lg border border-emerald-600/30 bg-emerald-50 dark:bg-emerald-950/20 px-4 py-2.5"
+        data-testid="banner-checks-ok"
+      >
+        <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+        <p className="text-sm font-medium text-emerald-800 dark:text-emerald-300">All model checks passed</p>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="flex items-start gap-2.5 rounded-lg border border-red-600/30 bg-red-50 dark:bg-red-950/20 px-4 py-2.5"
+      data-testid="banner-checks-failed"
+    >
+      <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-red-800 dark:text-red-300">Model checks need attention</p>
+        <p className="text-xs text-red-700/80 dark:text-red-400/80 mt-0.5 break-words">{values.join(" · ") || "No check output"}</p>
+      </div>
+    </div>
+  );
+}
+
+interface OutputEntry { key: string; field: OutputField; value: any }
+
+function OutputsOverview({ outputs, mapping }: { outputs: Record<string, any>; mapping: Record<string, OutputField> }) {
+  const returnsGroups: Record<string, OutputEntry[]> = {};
+  const statGroups: Record<string, OutputEntry[]> = {};
+  for (const [key, field] of Object.entries(mapping)) {
+    const g = field.group || "Other";
+    if (g.toLowerCase().includes("check") || key.toLowerCase().includes("check")) continue;
+    const bucket = g.toLowerCase().startsWith("returns") ? returnsGroups : statGroups;
+    if (!bucket[g]) bucket[g] = [];
+    bucket[g].push({ key, field, value: outputs[key] });
+  }
+  const returnsList = sortGroupEntries(returnsGroups, OUTPUT_GROUP_ORDER);
+  const statsList = sortGroupEntries(statGroups, OUTPUT_GROUP_ORDER);
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      {Object.entries(groups).map(([groupName, fields]) => (
-        <Card key={groupName}>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              {getIcon(groupName)}
-              {groupName}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {fields.map(({ key, field, value }) => (
-                <div key={key} className="flex justify-between items-center text-sm">
-                  <span className="text-muted-foreground">{field.label}</span>
-                  <span className="font-mono font-medium" data-testid={`output-${key}`}>
-                    {formatOutputValue(value, field.format)}
-                  </span>
+    <div className="space-y-4">
+      {returnsList.length > 0 && (
+        <div className={`grid gap-4 ${returnsList.length > 1 ? "md:grid-cols-2" : "md:grid-cols-1 max-w-xl"}`}>
+          {returnsList.map(([groupName, fields], idx) => {
+            const headline = fields.find((f) => /irr/i.test(f.key) || /\birr\b/i.test(f.field.label));
+            const rest = headline ? fields.filter((f) => f.key !== headline.key) : fields;
+            const subtitle = groupName.replace(/^returns\s*[—-]\s*/i, "") || "Returns";
+            return (
+              <Card key={groupName} className={idx === 0 ? "border-primary/40 shadow-sm" : ""} data-testid={`card-returns-${idx}`}>
+                <CardContent className="p-5">
+                  <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    {groupIcon(groupName)}
+                    {subtitle}
+                  </div>
+                  {headline && (
+                    <div className="mt-2">
+                      <p className="text-4xl font-serif font-semibold tracking-tight" data-testid={`output-${headline.key}`}>
+                        {formatOutputValue(headline.value, headline.field.format)}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{headline.field.label}</p>
+                    </div>
+                  )}
+                  {rest.length > 0 && (
+                    <div className={`mt-4 grid gap-3 ${rest.length > 1 ? "grid-cols-2" : ""}`}>
+                      {rest.map(({ key, field, value }) => (
+                        <div key={key} className="rounded-md bg-muted/40 px-3 py-2" data-testid={`output-${key}`}>
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{field.label}</p>
+                          <p className="text-base font-semibold font-mono tabular-nums mt-0.5">
+                            {formatOutputValue(value, field.format)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {statsList.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {statsList.map(([groupName, fields]) => (
+            <Card key={groupName}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  {groupIcon(groupName, "w-4 h-4")}
+                  {groupName}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {fields.map(({ key, field, value }) => (
+                    <div key={key} className="flex justify-between items-center gap-3 text-sm">
+                      <span className="text-muted-foreground truncate" title={field.label}>{field.label}</span>
+                      <span className="font-mono font-medium tabular-nums shrink-0" data-testid={`output-${key}`}>
+                        {formatOutputValue(value, field.format)}
+                      </span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      ))}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -556,31 +745,14 @@ function RunDetails({ runId }: { runId: string }) {
       {activeTab === "summary" && (
         <div className="space-y-6">
           {run.outputValues && (
-            <OutputCard outputs={run.outputValues} mapping={run.outputMapping || {}} />
+            <>
+              <ChecksBanner outputs={run.outputValues} mapping={run.outputMapping || {}} />
+              <OutputsOverview outputs={run.outputValues} mapping={run.outputMapping || {}} />
+            </>
           )}
 
           {run.inputValues && Object.keys(run.inputValues).length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <Layers className="w-4 h-4" />
-                  Input Assumptions
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
-                  {Object.entries(run.inputValues).map(([key, value]) => {
-                    const fieldLabel = run.inputMapping?.[key]?.label || key;
-                    return (
-                      <div key={key} className="flex justify-between">
-                        <span className="text-muted-foreground">{fieldLabel}:</span>
-                        <span className="font-medium">{String(value)}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </CardContent>
-            </Card>
+            <InputAssumptionsCard inputValues={run.inputValues} inputMapping={run.inputMapping || {}} />
           )}
 
           <Separator />
@@ -595,6 +767,57 @@ function RunDetails({ runId }: { runId: string }) {
         <EmbeddedExcel runId={runId} runName={run.name} />
       )}
     </div>
+  );
+}
+
+function InputAssumptionsCard({ inputValues, inputMapping }: {
+  inputValues: Record<string, any>;
+  inputMapping: Record<string, InputField>;
+}) {
+  const overridden = Object.entries(inputValues).filter(([, v]) => v !== "" && v !== null && v !== undefined);
+  if (overridden.length === 0) return null;
+
+  const groups: Record<string, { key: string; label: string; display: string }[]> = {};
+  for (const [key, value] of overridden) {
+    const field = inputMapping[key];
+    const g = field?.group || "Other";
+    if (!groups[g]) groups[g] = [];
+    const unit = field ? inputUnit(field) : "";
+    const display = unit === "%" ? `${value}%` : unit === "£" ? `£${Number(value).toLocaleString("en-GB")}` : String(value);
+    groups[g].push({ key, label: field?.label || key, display });
+  }
+  const sorted = sortGroupEntries(groups, INPUT_GROUP_ORDER);
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Layers className="w-4 h-4" />
+          Scenario inputs
+        </CardTitle>
+        <CardDescription className="text-xs">
+          Overrides vs the template defaults — blank fields kept the workbook's own values.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {sorted.map(([groupName, fields]) => (
+          <div key={groupName}>
+            <div className="flex items-center gap-1.5 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              {groupIcon(groupName, "w-3 h-3")}
+              {groupName}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1.5 text-sm">
+              {fields.map(({ key, label, display }) => (
+                <div key={key} className="flex justify-between gap-2">
+                  <span className="text-muted-foreground truncate">{label}</span>
+                  <span className="font-medium font-mono tabular-nums shrink-0" data-testid={`assumption-${key}`}>{display}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -743,66 +966,6 @@ function ModelQA({ endpoint, title }: { endpoint: string; title: string }) {
         )}
       </CardContent>
     </Card>
-  );
-}
-
-function ModelDashboard({ outputs, mapping }: {
-  outputs: Record<string, any>;
-  mapping: Record<string, OutputField>;
-}) {
-  const groups = Object.entries(mapping).reduce<Record<string, { key: string; field: OutputField; value: any }[]>>(
-    (acc, [key, field]) => {
-      const g = field.group || "Other";
-      if (!acc[g]) acc[g] = [];
-      acc[g].push({ key, field, value: outputs[key] });
-      return acc;
-    },
-    {}
-  );
-
-  const groupOrder = ["Returns", "Yields", "Property"];
-  const sortedGroups = Object.entries(groups).sort(([a], [b]) => {
-    const ai = groupOrder.indexOf(a);
-    const bi = groupOrder.indexOf(b);
-    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-  });
-
-  const getGroupColor = (group: string) => {
-    switch (group) {
-      case "Returns": return "border-l-green-500 bg-green-50/50 dark:bg-green-950/20";
-      case "Yields": return "border-l-blue-500 bg-blue-50/50 dark:bg-blue-950/20";
-      case "Property": return "border-l-orange-500 bg-orange-50/50 dark:bg-orange-950/20";
-      default: return "border-l-gray-400 bg-muted/30";
-    }
-  };
-
-  const getValueColor = (group: string) => {
-    switch (group) {
-      case "Returns": return "text-green-700 dark:text-green-400";
-      case "Yields": return "text-blue-700 dark:text-blue-400";
-      case "Property": return "text-orange-700 dark:text-orange-400";
-      default: return "text-foreground";
-    }
-  };
-
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-      {sortedGroups.map(([groupName, fields]) => (
-        <div key={groupName} className={`rounded-md border border-l-4 p-3 ${getGroupColor(groupName)}`}>
-          <p className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground mb-2">{groupName}</p>
-          <div className="space-y-1.5">
-            {fields.map(({ key, field, value }) => (
-              <div key={key} className="flex justify-between items-baseline gap-2" data-testid={`metric-${key}`}>
-                <span className="text-xs text-muted-foreground truncate">{field.label}</span>
-                <span className={`text-sm font-semibold font-mono tabular-nums flex-shrink-0 ${getValueColor(groupName)}`}>
-                  {formatOutputValue(value, field.format)}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -1391,6 +1554,15 @@ function TemplateCard({ template }: { template: ExcelTemplate & { sheetCount?: n
 
   const sheetCount = template.sheetCount || 0;
   const createdDate = template.createdAt ? new Date(template.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
+  const mappingCounts = useMemo(() => {
+    try {
+      const inputs = Object.keys(JSON.parse((template.inputMapping as unknown as string) || "{}")).length;
+      const outputs = Object.keys(JSON.parse((template.outputMapping as unknown as string) || "{}")).length;
+      return { inputs, outputs };
+    } catch {
+      return { inputs: 0, outputs: 0 };
+    }
+  }, [template.inputMapping, template.outputMapping]);
 
   return (
     <div
@@ -1406,34 +1578,38 @@ function TemplateCard({ template }: { template: ExcelTemplate & { sheetCount?: n
         <p className="text-xs text-muted-foreground truncate">
           {template.originalFileName || template.description}
           {sheetCount > 0 && <> · {sheetCount} sheets</>}
+          {mappingCounts.inputs > 0 && <> · {mappingCounts.inputs} inputs / {mappingCounts.outputs} outputs</>}
           {createdDate && <> · {createdDate}</>}
         </p>
       </div>
-      <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
-        <Button variant="ghost" size="icon" className="h-7 w-7" title="Auto-map inputs/outputs with AI"
-          onClick={() => setAutoMapOpen(true)}
-          data-testid={`button-automap-template-${template.id}`}
-        >
-          <Sparkles className="w-3.5 h-3.5" />
-        </Button>
-        <Button variant="ghost" size="icon" className="h-7 w-7" title="Run model"
+      <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+        <Button size="sm" className="h-7 px-2.5 text-xs"
           onClick={() => setRunOpen(true)}
           data-testid={`button-run-template-${template.id}`}
         >
-          <Play className="w-3.5 h-3.5" />
+          <Play className="w-3.5 h-3.5 mr-1" />
+          Run
         </Button>
-        <Button variant="ghost" size="icon" className="h-7 w-7" title="Download Excel"
-          onClick={() => window.open(`/api/models/templates/${template.id}/download`, "_blank")}
-          data-testid={`button-download-template-${template.id}`}
-        >
-          <Download className="w-3.5 h-3.5" />
-        </Button>
-        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" title="Delete"
-          onClick={() => setConfirmDelete(true)}
-          data-testid={`button-delete-template-${template.id}`}
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </Button>
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <Button variant="ghost" size="icon" className="h-7 w-7" title="Auto-map inputs/outputs with AI"
+            onClick={() => setAutoMapOpen(true)}
+            data-testid={`button-automap-template-${template.id}`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7" title="Download Excel"
+            onClick={() => window.open(`/api/models/templates/${template.id}/download`, "_blank")}
+            data-testid={`button-download-template-${template.id}`}
+          >
+            <Download className="w-3.5 h-3.5" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" title="Delete"
+            onClick={() => setConfirmDelete(true)}
+            data-testid={`button-delete-template-${template.id}`}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </Button>
+        </div>
       </div>
 
       <SpreadsheetViewer
@@ -1447,9 +1623,9 @@ function TemplateCard({ template }: { template: ExcelTemplate & { sheetCount?: n
       <AutoMapDialog template={template} open={autoMapOpen} onClose={() => setAutoMapOpen(false)} />
 
       <Dialog open={runOpen} onOpenChange={setRunOpen}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
           <DialogHeader>
-            <DialogTitle>Run model — {template.name}</DialogTitle>
+            <DialogTitle>Run scenario — {template.name}</DialogTitle>
           </DialogHeader>
           {templateDetail ? (
             <RunModelForm template={templateDetail} onClose={() => setRunOpen(false)} />
@@ -1616,32 +1792,26 @@ function SmartRunPanel() {
             {extractedData.outputValues && (
               <>
                 <h4 className="font-medium">Model Results</h4>
-                <OutputCard
-                  outputs={extractedData.outputValues}
-                  mapping={Object.entries(extractedData.outputValues).reduce<Record<string, OutputField>>((acc, [key]) => {
+                {(() => {
+                  const smartMapping = Object.entries(extractedData.outputValues).reduce<Record<string, OutputField>>((acc, [key]) => {
                     const mapped = templateDetail?.outputMapping?.[key];
                     acc[key] = mapped || { sheet: "", cell: "", label: key, format: "", group: "Results" };
                     return acc;
-                  }, {})}
-                />
+                  }, {});
+                  return (
+                    <>
+                      <ChecksBanner outputs={extractedData.outputValues} mapping={smartMapping} />
+                      <OutputsOverview outputs={extractedData.outputValues} mapping={smartMapping} />
+                    </>
+                  );
+                })()}
               </>
             )}
             {extractedData.inputValues && Object.keys(extractedData.inputValues).length > 0 && (
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">Extracted Input Values</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
-                    {Object.entries(extractedData.inputValues).map(([key, value]) => (
-                      <div key={key} className="flex justify-between">
-                        <span className="text-muted-foreground">{key}:</span>
-                        <span className="font-medium">{String(value)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
+              <InputAssumptionsCard
+                inputValues={extractedData.inputValues}
+                inputMapping={templateDetail?.inputMapping || {}}
+              />
             )}
             {extractedData.id && (
               <EmbeddedExcel runId={extractedData.id} runName={extractedData.name} />

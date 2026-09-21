@@ -450,6 +450,22 @@ function extractOutputs(wb: XLSX.WorkBook, mapping: Record<string, any>): Record
   return outputs;
 }
 
+/** Raw cached values of the mapped input cells — the template's current
+ *  assumptions, used by the scenario builder as per-field defaults. */
+function extractInputs(wb: XLSX.WorkBook, mapping: Record<string, any>): Record<string, any> {
+  const inputs: Record<string, any> = {};
+  for (const [key, config] of Object.entries(mapping)) {
+    try {
+      const ws = wb.Sheets[config.sheet];
+      if (!ws) continue;
+      inputs[key] = readCellValue(ws, config.cell);
+    } catch {
+      inputs[key] = null;
+    }
+  }
+  return inputs;
+}
+
 interface EngineRunOutcome {
   /** true when the engine recalculated the workbook and output cells were refreshed. */
   computed: boolean;
@@ -1039,7 +1055,8 @@ export function setupModelsRoutes(app: Express) {
       const wb = XLSX.readFile(template.filePath, { sheetStubs: true });
         analysis = analyzeWorkbook(wb);
         const existingOutputs = extractOutputs(wb, outputMapping);
-        res.json({ ...template, inputMapping, outputMapping, analysis, sampleOutputs: existingOutputs });
+        const currentInputs = extractInputs(wb, inputMapping);
+        res.json({ ...template, inputMapping, outputMapping, analysis, sampleOutputs: existingOutputs, sampleInputs: currentInputs });
       } catch {
         res.json({ ...template, inputMapping, outputMapping, analysis });
       }
