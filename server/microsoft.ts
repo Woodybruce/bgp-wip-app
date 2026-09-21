@@ -2580,32 +2580,25 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     }
   });
 
-  // Client folder tree — a top-level folder named after the client (e.g.
-  // "Landsec") under the BGP share drive, with a per-property subfolder tree
-  // for every property that client owns. Woody, 2026-07: "Set up a new folder
-  // in our share drive as landsec … folder trees in there for all of their
-  // properties." Reuses createFolderByPath + the retail/leasing template.
+  // Client folder tree — the standard client tree (Delivery 5) bound into
+  // the client's existing SharePoint root, with genuinely missing folders
+  // created empty inside it. Woody, 2026-07: "Set up a new folder in our
+  // share drive as landsec … folder trees in there for all of their
+  // properties."
   //
-  // Runs as a BACKGROUND JOB: the edge proxy 504s requests at ~45s and a
-  // full client run (properties × ~20 folders) can exceed that even in
-  // parallel batches. POST validates + creates the root + stamps the folder
-  // URL (fast), kicks off the tree build, and returns 202; the UI polls
-  // GET /client-folders/status/:companyId. Same pattern as AI curation.
-  const clientFolderJobs = new Map<string, {
-    status: "running" | "done" | "failed";
-    startedAt: number;
-    companyName: string;
-    properties: number;
-    created: number;
-    errors: number;
-    total: number;
-    message?: string;
-  }>();
-
+  // Runs as a DURABLE background job (server/client-folder-jobs.ts,
+  // modelled on runPreparationStage): one system_settings row per company,
+  // advisory-locked, per-node resume. The old in-memory Map lied about
+  // completion ("done" whenever the batch loop returned) and died with the
+  // process; the durable job ends "done" ONLY when every node is
+  // bound|created, survives restarts, and never creates a duplicate tree.
+  // POST returns 202 straight away (the edge proxy 504s at ~45s); the UI
+  // polls GET /client-folders/status/:companyId.
   app.get("/api/microsoft/client-folders/status/:companyId", async (req: Request, res: Response) => {
-    const job = clientFolderJobs.get(String(req.params.companyId));
-    if (!job) return res.json({ status: "none" });
-    res.json(job);
+    const { readClientFolderJobState, clientFolderJobWire } = await import("./client-folder-jobs");
+    const state = await readClientFolderJobState(String(req.params.companyId), { pool }).catch(() => null);
+    if (!state) return res.json({ status: "none" });
+    res.json(clientFolderJobWire(state));
   });
 
   app.post("/api/microsoft/client-folders", async (req: Request, res: Response) => {
@@ -2617,117 +2610,76 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       const { companyId } = req.body || {};
       if (!companyId) return res.status(400).json({ message: "companyId is required" });
 
-      // Resolve the client and every property they own (landlord row +
-      // linked company-property rows), across same-named duplicate company
-      // records so we don't miss a property hung off a second "Landsec" row.
       const companyQ = await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [companyId]);
       if (!companyQ.rows[0]) return res.status(404).json({ message: "Company not found" });
       const companyName = String(companyQ.rows[0].name).trim().replace(/[\/\\<>:"|?*]/g, "_");
 
-      const propsQ = await pool.query(`
-        WITH board AS (
-          SELECT id FROM crm_companies WHERE id = $1
-          UNION
-          SELECT c2.id FROM crm_companies c1 JOIN crm_companies c2
-            ON lower(trim(c2.name)) = lower(trim(c1.name)) AND c2.id <> c1.id
-           WHERE c1.id = $1 AND c2.merged_into_id IS NULL
-        )
-        SELECT DISTINCT p.name FROM crm_properties p WHERE p.landlord_id IN (SELECT id FROM board)
-        UNION
-        SELECT DISTINCT p.name FROM crm_company_properties cp
-          JOIN crm_properties p ON p.id = cp.property_id
-         WHERE cp.company_id IN (SELECT id FROM board)
-      `, [companyId]);
-      const properties = propsQ.rows
-        .map((r: any) => String(r.name || "").trim().replace(/[\/\\<>:"|?*]/g, "_"))
-        .filter((n: string) => n.length > 0);
+      const {
+        runClientFolderJob, readClientFolderJobState, clientFolderJobWire, pgClientFolderJobStore,
+      } = await import("./client-folder-jobs");
+      const { resolveAccountView } = await import("./account-resolver");
+      const { buildExpectedFolderTree } = await import("@shared/client-folder-tree");
+      const { createChildrenLister, resolveClientRoot } = await import("./account-folder-inventory");
+      const { resolveItemByPath, createFolderInItem } = await import("./sharepoint-graph");
 
-      const spInfo = await getSharePointDriveId(token);
-      if (!spInfo) return res.status(404).json({ message: "Could not find BGP SharePoint site" });
-
-      // Top-level client folder under the share drive root.
-      const clientRoot = `${SHAREPOINT_ROOT_FOLDER}/${companyName}`;
-      const rootResult = await createFolderByPath(token, spInfo.driveId, SHAREPOINT_ROOT_FOLDER, companyName);
-      if (!rootResult.success) {
-        return res.status(500).json({ message: `Failed to create ${companyName} folder: ${rootResult.error}` });
+      // A live run wins — double-clicks and concurrent POSTs are no-ops.
+      const existing = await readClientFolderJobState(companyId, { pool }).catch(() => null);
+      if (existing?.status === "running" && new Date(existing.leaseUntil || 0).getTime() > Date.now()) {
+        return res.status(202).json({ started: false, alreadyRunning: true, ...clientFolderJobWire(existing) });
       }
 
-      // Stamp the client folder's webUrl on the company (and same-named
-      // duplicate rows) — the client app's jailed SharePoint browser reads
-      // crm_companies.sharepoint_folder_url as its root, so without this
-      // the Landsec login sees "no folder linked" even after setup.
-      try {
-        const pathUrl = `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${clientRoot.split("/").map(encodeURIComponent).join("/")}`;
-        const itemRes = await fetch(pathUrl, { headers: { Authorization: `Bearer ${token}` } });
-        if (itemRes.ok) {
-          const item = await itemRes.json();
-          if (item?.webUrl) {
-            await pool.query(
-              `UPDATE crm_companies SET sharepoint_folder_url = $1
-                WHERE id = $2
-                   OR (lower(trim(name)) = (SELECT lower(trim(name)) FROM crm_companies WHERE id = $2)
-                       AND merged_into_id IS NULL
-                       AND sharepoint_folder_url IS NULL)`,
-              [item.webUrl, companyId]
-            );
-          }
-        }
-      } catch (e: any) {
-        console.warn("[client-folders] folder URL stamp failed:", e?.message);
-      }
+      // The plan counts for the wire response come from the resolver's
+      // portfolio (stable property ids), never the old SELECT DISTINCT name.
+      const view = await resolveAccountView(companyId, {}, { pool });
+      const total = buildExpectedFolderTree({
+        companyId,
+        clientName: companyName,
+        entities: view.entities.filter(e => e.relation !== "self").map(e => ({
+          entityKind: e.relation === "trading_entity" ? "trading_entity" as const : "company" as const,
+          entityId: e.companyId, name: e.name, companiesHouseNumber: e.companiesHouseNumber,
+        })),
+        properties: view.properties.map(p => ({ propertyId: p.propertyId, name: p.name })),
+      }).length;
 
-      // Per-property tree — the retail/leasing template (best fit for
-      // shopping-centre lettings). Toggle a different template here if needed.
-      const propertyTree = TEAM_FOLDER_TREES["London Retail"] || TEAM_FOLDER_TREES["London F&B"] || [];
-
-      const existing = clientFolderJobs.get(companyId);
-      if (existing?.status === "running") {
-        return res.status(202).json({ started: false, alreadyRunning: true, ...existing });
-      }
-
-      const job: {
-        status: "running" | "done" | "failed";
-        startedAt: number; companyName: string; properties: number;
-        created: number; errors: number; total: number; message?: string;
-      } = {
-        status: "running",
-        startedAt: Date.now(),
-        companyName,
-        properties: properties.length,
-        created: 1,
-        errors: 0,
-        total: 1 + properties.length * (1 + propertyTree.length),
+      const graph = {
+        resolveRoot: () => resolveClientRoot(companyId, companyName, token, { pool }),
+        ensureRoot: async (clientName: string) => {
+          const spInfo = await getSharePointDriveId(token);
+          if (!spInfo) throw new Error("Could not find BGP SharePoint site");
+          const created = await createFolderByPath(token, spInfo.driveId, SHAREPOINT_ROOT_FOLDER, clientName);
+          if (!created.success) throw new Error(`Failed to create ${clientName} folder: ${created.error}`);
+          const ref = await resolveItemByPath(token, spInfo.driveId, `${SHAREPOINT_ROOT_FOLDER}/${clientName}`);
+          if (!ref) throw new Error(`Created ${clientName} but could not resolve its item id`);
+          return ref;
+        },
+        listChildren: createChildrenLister(
+          async (url) => {
+            const pageRes = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+            if (!pageRes.ok) throw new Error(`Graph listing failed: ${pageRes.status}`);
+            return pageRes.json();
+          },
+          (driveId, itemId) =>
+            `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=200&$select=id,name,folder,file,size,webUrl`,
+        ),
+        createFolder: (driveId: string, parentItemId: string, name: string) =>
+          createFolderInItem(token, driveId, parentItemId, name),
       };
-      clientFolderJobs.set(companyId, job);
 
-      // Fire-and-forget: property roots in bounded-parallel batches, then
-      // each property's tree level-by-level. Folder creates are idempotent
-      // (409 counts as success) so a re-run after a crash just resumes.
-      (async () => {
-        try {
-          const rootResults = await runChunked(properties, 5, async (propertyName) => {
-            const propRes = await createFolderByPath(token, spInfo.driveId, clientRoot, propertyName);
-            if (propRes.success) job.created++; else job.errors++;
-            return { propertyRoot: `${clientRoot}/${propertyName}`, success: propRes.success };
-          });
-          await runChunked(rootResults.filter(r => r.success), 3, async (r) => {
-            const tree = await createTreeBatched(token, spInfo.driveId, r.propertyRoot, propertyTree);
-            for (const t of tree) { if (t.success) job.created++; else job.errors++; }
-          });
-          job.status = "done";
-        } catch (err: any) {
-          console.error("Client folders job error:", err);
-          job.status = "failed";
-          job.message = err?.message || "Folder creation failed part-way — re-run to resume.";
-        }
-      })();
+      // Fire-and-forget, but durable: the runner persists per-node state as
+      // it goes, so a process restart loses nothing — the next POST resumes.
+      // The token is this request's delegated token, never persisted.
+      const userId = (req.session as any)?.userId || (req as any).tokenUserId || null;
+      void runClientFolderJob(
+        { companyId, companyName, userId },
+        { store: pgClientFolderJobStore(pool as any, companyId), pool, graph },
+      ).catch(err => console.error("[client-folders] durable job crashed:", err?.message));
 
       res.status(202).json({
         started: true,
         companyName,
-        rootPath: clientRoot,
-        properties: properties.length,
-        total: job.total,
+        rootPath: `${SHAREPOINT_ROOT_FOLDER}/${companyName}`,
+        properties: view.properties.length,
+        total,
       });
     } catch (err: any) {
       console.error("Client folders error:", err);

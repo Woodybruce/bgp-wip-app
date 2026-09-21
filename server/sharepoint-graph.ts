@@ -172,3 +172,62 @@ export async function resolveItemByPath(
     fullPath: itemFullPath(item),
   };
 }
+
+// Create a folder as the child of a known parent ITEM ID (not a path) — the
+// durable client-folder job uses this so renamed ancestors never break the
+// create. Same semantics as createFolderByPath: 409 (already exists) counts
+// as success and resolves the existing child by name (complete pagination,
+// so a >200-child parent still resolves); 429 honours Retry-After twice.
+export async function createFolderInItem(
+  token: string,
+  driveId: string,
+  parentItemId: string,
+  folderName: string,
+): Promise<{ success: boolean; item?: { id: string; webUrl: string | null }; error?: string }> {
+  const createUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${parentItemId}/children`;
+
+  const resolveExisting = async (): Promise<{ id: string; webUrl: string | null } | undefined> => {
+    try {
+      const { listAllChildren } = await import("./microsoft-graph-pagination");
+      const children = await listAllChildren(async (pageUrl) => {
+        const res = await fetch(pageUrl, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) throw new Error(`list failed: ${res.status}`);
+        return res.json();
+      }, `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${parentItemId}/children?$top=200&$select=id,name,webUrl,folder`);
+      const hit = children.find((c: any) => c?.folder && c?.name === folderName);
+      return hit ? { id: hit.id, webUrl: hit.webUrl ?? null } : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(createUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: folderName,
+        folder: {},
+        "@microsoft.graph.conflictBehavior": "fail",
+      }),
+    });
+
+    if (response.ok) {
+      const item = await response.json();
+      return { success: true, item: { id: item.id, webUrl: item.webUrl ?? null } };
+    }
+    if (response.status === 409) {
+      return { success: true, item: await resolveExisting() };
+    }
+    if (response.status === 429 && attempt < 2) {
+      const wait = Math.min(10, Number(response.headers.get("Retry-After")) || 2);
+      await new Promise(r => setTimeout(r, wait * 1000));
+      continue;
+    }
+    const errText = await response.text();
+    return { success: false, error: `${response.status}: ${errText.slice(0, 100)}` };
+  }
+}

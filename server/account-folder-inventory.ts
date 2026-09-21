@@ -64,6 +64,7 @@ export interface PhysicalNode {
   itemId: string;
   name: string;
   isFolder: boolean;
+  webUrl?: string | null;
   children: PhysicalNode[];
 }
 
@@ -118,8 +119,8 @@ export async function walkPhysicalTree(
   let foldersWalked = 0;
   let itemsSeen = 0;
 
-  const walk = async (itemId: string, name: string, depth: number): Promise<PhysicalNode> => {
-    const node: PhysicalNode = { itemId, name, isFolder: true, children: [] };
+  const walk = async (itemId: string, name: string, depth: number, webUrl: string | null = null): Promise<PhysicalNode> => {
+    const node: PhysicalNode = { itemId, name, isFolder: true, webUrl, children: [] };
     if (depth >= maxDepth) return node;
     foldersWalked++;
     const page = await listChildren(driveId, itemId);
@@ -129,15 +130,15 @@ export async function walkPhysicalTree(
     }
     for (const child of page.items) {
       if (!child?.folder) {
-        node.children.push({ itemId: child?.id || "", name: child?.name || "", isFolder: false, children: [] });
+        node.children.push({ itemId: child?.id || "", name: child?.name || "", isFolder: false, webUrl: child?.webUrl ?? null, children: [] });
         continue;
       }
-      node.children.push(await walk(child.id, child.name || "", depth + 1));
+      node.children.push(await walk(child.id, child.name || "", depth + 1, child?.webUrl ?? null));
     }
     return node;
   };
 
-  const rootNode = await walk(root.itemId, root.name, 0);
+  const rootNode = await walk(root.itemId, root.name, 0, root.webUrl ?? null);
   return { root: rootNode, foldersWalked, itemsSeen, warnings };
 }
 
