@@ -60,21 +60,22 @@ export function KeyContactRow({ contact, companyId, discovery }: { contact: any;
         <div className="font-medium truncate flex items-center gap-1 text-sm">
           <Link href={`/contacts/${contact.id}`} className="hover:underline">{contact.name}</Link>
           {discovery?.bgp?.threadCount ? (
-            <span className="text-[11px] px-1 py-0 rounded bg-muted text-primary border border-border shrink-0" title="BGP has real email history with this person">
+            <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 bg-primary/10 text-primary border-primary/30" title="BGP has real email history with this person">
               known · {discovery.bgp.threadCount} threads
-            </span>
+            </Badge>
           ) : discovery?.ai?.confidence != null ? (
-            <span className="text-[11px] px-1 py-0 rounded bg-muted text-primary border border-border shrink-0 tabular-nums" title={discovery.ai?.reason || "AI-verified against RocketReach/Apollo"}>
+            <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 tabular-nums bg-primary/10 text-primary border-primary/30" title={discovery.ai?.reason || "AI-verified against RocketReach/Apollo"}>
               AI {discovery.ai.confidence}
-            </span>
+            </Badge>
           ) : null}
           {touches > 0 && (
-            <span
-              className="ml-auto text-[11px] px-1 py-0 rounded bg-muted text-muted-foreground border border-border shrink-0"
+            <Badge
+              variant="outline"
+              className="ml-auto text-[9px] px-1 py-0 shrink-0 tabular-nums text-muted-foreground"
               title={lastTouch ? `${touches} touch${touches === 1 ? "" : "es"} · last ${new Date(lastTouch).toLocaleDateString("en-GB")}` : `${touches} touches`}
             >
               {touches}{lastTouchLabel ? ` · ${lastTouchLabel}` : ""}
-            </span>
+            </Badge>
           )}
         </div>
         {editingRole ? (
@@ -108,15 +109,15 @@ export function KeyContactRow({ contact, companyId, discovery }: { contact: any;
         {(contact.employerName || (contact.via && contact.via.length > 0) || (contact.propertyNames && contact.propertyNames.length > 0)) && (
           <div className="flex items-center gap-1 flex-wrap mt-0.5">
             {contact.employerName && (
-              <span className="text-[9px] text-muted-foreground bg-muted/60 rounded px-1 py-px">{contact.employerName}</span>
+              <Badge variant="outline" className="text-[9px] px-1 py-0 text-muted-foreground">{contact.employerName}</Badge>
             )}
             {(contact.via || []).filter((v: string) => v !== "employer").map((v: string) => (
-              <span key={v} className="text-[9px] text-muted-foreground bg-muted/60 rounded px-1 py-px">
+              <Badge key={v} variant="outline" className="text-[9px] px-1 py-0 text-muted-foreground">
                 {v === "property" ? "property link" : v === "property_client" ? "property client" : v}
-              </span>
+              </Badge>
             ))}
             {(contact.propertyNames || []).map((p: string) => (
-              <span key={p} className="text-[9px] text-primary/80 bg-primary/5 rounded px-1 py-px">{p}</span>
+              <Badge key={p} variant="outline" className="text-[9px] px-1 py-0 bg-primary/10 text-primary border-primary/30">{p}</Badge>
             ))}
           </div>
         )}
@@ -381,15 +382,17 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
           <Badge variant="outline" className="text-[11px] font-mono tabular-nums">{crmVisible.length + discoveredVisible.length}{hiddenCount > 0 ? ` / ${allContacts.length + discovered.length}` : ""}</Badge>
         </CardTitle>
         {!kcIsClient && (
-        <button
+        <Button
+          variant="outline"
+          size="sm"
           onClick={() => rescan()}
           disabled={scanning}
-          className="min-h-11 text-sm px-2 rounded border border-border bg-card hover:bg-muted disabled:opacity-50 inline-flex items-center gap-1"
+          className="min-h-11 text-sm shrink-0"
           data-testid="contact-cascade-refresh"
           title="Refresh contact discovery"
         >
           {scanning ? <><Loader2 className="w-3 h-3 animate-spin" /> Scanning…</> : <><RefreshCw className="w-3 h-3" /> Refresh contacts</>}
-        </button>
+        </Button>
         )}
       </CardHeader>
       <CardContent className="p-3 pt-0">
@@ -468,9 +471,9 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
                     </p>
                   </div>
                   {conf != null && (
-                    <Badge variant="outline" className={`text-[11px] shrink-0 tabular-nums ${confCls}`} title={k.ai?.reason || ""}>{conf}</Badge>
+                    <Badge variant="outline" className={`text-[9px] px-1 py-0 shrink-0 tabular-nums ${confCls}`} title={k.ai?.reason || ""}>{conf}</Badge>
                   )}
-                  <Badge variant="outline" className={`text-[11px] shrink-0 ${src.cls}`}>{src.label}</Badge>
+                  <Badge variant="outline" className={`text-[9px] px-1 py-0 shrink-0 ${src.cls}`}>{src.label}</Badge>
                   {added ? (
                     <Link href={`/contacts/${added.id}`} className="inline-flex min-h-11 items-center text-sm underline" data-testid={`contact-cascade-open-${rowKey}`}>In CRM · open</Link>
                   ) : !kcIsClient ? (
