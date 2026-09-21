@@ -203,3 +203,131 @@ describe("groupEntitiesDeniedForScope", () => {
     assert.equal(mod.groupEntitiesDeniedForScope(undefined), false);
   });
 });
+
+// ─── Task 7: per-entity KYC writes ───────────────────────────────────────
+
+function writePool(handlers: { entity?: any; intervalDays?: number } = {}) {
+  const calls: { sql: string; params?: any[] }[] = [];
+  return {
+    calls,
+    async query(sql: string, params?: any[]) {
+      calls.push({ sql, params });
+      if (/FROM crm_companies WHERE id/.test(sql)) {
+        return { rows: handlers.entity && "kyc_status" in (handlers.entity || {}) ? [] : handlers.entity ? [handlers.entity] : [] };
+      }
+      if (/FROM crm_trading_entities WHERE id/.test(sql)) return { rows: handlers.entity ? [handlers.entity] : [] };
+      if (/FROM aml_settings/.test(sql)) return { rows: [{ recheck_interval_days: handlers.intervalDays ?? 182 }] };
+      if (/INTO crm_entity_kyc/.test(sql)) return { rows: [{ id: "kyc-1", entity_kind: params![0], entity_id: params![1] }] };
+      if (/INTO aml_recheck_reminders/.test(sql)) return { rows: [] };
+      if (/INTO kyc_audit_log/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected SQL: ${sql}`);
+    },
+  };
+}
+
+describe("approveEntityKyc", () => {
+  it("writes exactly one entity's row + audit + reminder, approver NAME, configured cadence", async () => {
+    const pool = writePool({ entity: { id: "CHILD", name: "Landsec SPV" }, intervalDays: 90 });
+    const { status, body } = await mod.approveEntityKyc("company", "CHILD", "Woody", { pool });
+    assert.equal(status, 200);
+    assert.equal(body.entity_id, "CHILD");
+
+    const upsert = pool.calls.find(c => /INTO crm_entity_kyc/.test(c.sql))!;
+    assert.equal(upsert.params[0], "company");
+    assert.equal(upsert.params[1], "CHILD");
+    assert.equal(upsert.params[2], "Woody", "the approver is the session user's NAME");
+    const expires = new Date(upsert.params[3]);
+    const days = Math.round((expires.getTime() - Date.now()) / 86_400_000);
+    assert.equal(days, 90, "expires_at follows aml_settings.recheck_interval_days");
+
+    const reminder = pool.calls.find(c => /INTO aml_recheck_reminders/.test(c.sql))!;
+    assert.equal(reminder.params[0], "CHILD");
+    assert.equal(reminder.params[1], "Landsec SPV");
+
+    const audit = pool.calls.find(c => /INTO kyc_audit_log/.test(c.sql))!;
+    assert.deepEqual(audit.params.slice(0, 3), ["CHILD", "entity_kyc_approved", "Woody"]);
+    assert.deepEqual(audit.params.slice(4), ["company", "CHILD"]);
+
+    // A child approve NEVER touches the parent — or any other table's KYC.
+    assert.equal(pool.calls.some(c => /UPDATE crm_companies/.test(c.sql)), false);
+    assert.equal(pool.calls.some(c => /crm_deals/.test(c.sql)), false, "no deal-gate side effects (shadow only)");
+    assert.equal(pool.calls.some(c => c.params?.includes("ROOT")), false);
+  });
+
+  it("404s for an unknown entity and writes nothing", async () => {
+    const pool = writePool({ entity: null });
+    const { status } = await mod.approveEntityKyc("company", "NOPE", "Woody", { pool });
+    assert.equal(status, 404);
+    assert.equal(pool.calls.some(c => /INTO crm_entity_kyc/.test(c.sql)), false);
+  });
+
+  it("audits trading-entity approvals with a NULL company_id and the entity columns", async () => {
+    const pool = writePool({ entity: { id: "TE-1", name: "Landsec Trading" } });
+    const { status } = await mod.approveEntityKyc("trading_entity", "TE-1", "Woody", { pool });
+    assert.equal(status, 200);
+    const audit = pool.calls.find(c => /INTO kyc_audit_log/.test(c.sql))!;
+    assert.equal(audit.params[0], null);
+    assert.deepEqual(audit.params.slice(4), ["trading_entity", "TE-1"]);
+  });
+});
+
+describe("putEntityKyc", () => {
+  it("moves the entity to in_review with the outstanding list and merged evidence notes", async () => {
+    const pool = writePool({ entity: { id: "TE-1", name: "Landsec Trading" } });
+    const { status } = await mod.putEntityKyc("trading_entity", "TE-1", {
+      outstanding: [{ key: "ubos", label: "UBO declaration" }],
+      evidenceNotes: "Waiting on the corporate structure chart",
+    }, "Woody", { pool });
+    assert.equal(status, 200);
+    const upsert = pool.calls.find(c => /INTO crm_entity_kyc/.test(c.sql))!;
+    assert.match(upsert.sql, /'in_review'/);
+    assert.deepEqual(JSON.parse(upsert.params[2]), [{ key: "ubos", label: "UBO declaration" }]);
+    assert.deepEqual(JSON.parse(upsert.params[3]), { notes: "Waiting on the corporate structure chart" });
+  });
+});
+
+describe("rejectEntityKyc", () => {
+  it("stamps rejected with the actor name and audits the reason", async () => {
+    const pool = writePool({ entity: { id: "CHILD", name: "Landsec SPV" } });
+    const { status } = await mod.rejectEntityKyc("company", "CHILD", "failed sanctions", "Woody", { pool });
+    assert.equal(status, 200);
+    const upsert = pool.calls.find(c => /INTO crm_entity_kyc/.test(c.sql))!;
+    assert.match(upsert.sql, /'rejected'/);
+    const audit = pool.calls.find(c => /INTO kyc_audit_log/.test(c.sql))!;
+    assert.deepEqual(audit.params.slice(1, 4), ["entity_kyc_rejected", "Woody", "failed sanctions"]);
+    assert.equal(pool.calls.some(c => /crm_deals/.test(c.sql)), false);
+  });
+});
+
+describe("entity KYC routes require admin", () => {
+  it("all three write routes are behind requireAdmin (non-admin → 403)", async () => {
+    const { requireAdmin } = await import("./auth");
+    const router = (await import("./account-entities")).default as any;
+    for (const path of ["/api/entities/:kind/:id/kyc", "/api/entities/:kind/:id/kyc/approve", "/api/entities/:kind/:id/kyc/reject"]) {
+      const layer = router.stack.find((l: any) => l.route?.path === path);
+      assert.ok(layer, `route ${path} registered`);
+      const handles = layer.route.stack.map((s: any) => s.handle);
+      assert.ok(handles.includes(requireAdmin), `${path} is behind requireAdmin`);
+    }
+  });
+});
+
+describe("Task 6+7 integration", () => {
+  it("an entity approved through the write path reads back as current in the group view", async () => {
+    const view = fakeView([
+      entity({ companyId: "ROOT", name: "Landsec", relation: "self", evidence: "self" }),
+      entity({ companyId: "TE-1", name: "Landsec Trading", relation: "trading_entity", evidence: "crm_trading_entities" }),
+    ]);
+    const pool = mockPool({
+      companyRows: [{ id: "ROOT", trading_entities: null, kyc_status: "approved", kyc_checked_at: "2026-01-01T00:00:00Z", kyc_approved_by: "Woody", kyc_expires_at: null }],
+      kycRows: [{
+        entity_kind: "trading_entity", entity_id: "TE-1", kyc_status: "approved",
+        checked_at: "2026-09-01T00:00:00Z", approved_by: "Woody", approved_at: "2026-09-01T00:00:00Z",
+        expires_at: "2027-03-01T00:00:00Z", next_review_at: "2027-03-01T00:00:00Z",
+        outstanding: [], last_check_job_at: null,
+      }],
+    });
+    const report = await mod.getAccountEntities("ROOT", {}, { pool, view: view as any, now: () => NOW });
+    assert.deepEqual(report.summary, { total: 2, current: 2, inReview: 0, unchecked: 0, expired: 0, rejected: 0 });
+  });
+});

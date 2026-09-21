@@ -47,6 +47,7 @@ import { isLandlordCompany } from "@/lib/company-kind";
 import { AccountDealsBoard } from "@/components/account-deals-board";
 import { LandlordAccountGallery } from "@/components/account-media-gallery";
 import { AccountNextActionsCard, AccountTeamCard, InvestmentRequirementsCard, AccountFolderTreeCard, useAccountWorkspace } from "@/components/account-workspace-cards";
+import { AccountEntitiesPanel } from "@/components/account-entities-panel";
 
 interface BrandProfile {
   identity?: { status: "verified" | "review"; domain: string | null };
@@ -1537,6 +1538,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     bind/match/missing/conflict report. Staff-only: renders
                     nothing for scoped viewers or without an M365 session. */}
                 <AccountFolderTreeCard companyId={companyId} />
+                {/* Canonical group entities + per-entity KYC (Delivery 5) —
+                    staff-only, renders nothing for scoped viewers. */}
+                <AccountEntitiesPanel companyId={companyId} />
               </div>
             )}
 

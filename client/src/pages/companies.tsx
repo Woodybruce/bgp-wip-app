@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
 import { CompanyPropertiesBoard } from "@/components/CompanyPropertiesBoard";
+import { AccountEntitiesPanel } from "@/components/account-entities-panel";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -291,6 +292,7 @@ function TradingEntitiesPanel({ company }: { company: CrmCompany }) {
           <Building2 className="w-3 h-3" />
           Trading entities
           <Badge variant="secondary" className="text-[9px]">{entities.length}</Badge>
+          <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-300" title="These per-row KYC flags are the legacy jsonb store — canonical per-entity KYC lives in the Group entities panel">legacy</Badge>
         </div>
         <Button size="sm" variant="ghost" className="h-5 text-[10px] gap-0.5 px-1.5" onClick={() => setAdding(v => !v)}>
           <Plus className="w-3 h-3" />Add
@@ -313,7 +315,7 @@ function TradingEntitiesPanel({ company }: { company: CrmCompany }) {
             onChange={(ev) => setStatus(i, ev.target.value)}
             disabled={saving}
             className="text-[10px] h-5 rounded border px-1 bg-white dark:bg-slate-800"
-            title="KYC status for this entity"
+            title="Legacy jsonb KYC flag — canonical per-entity KYC lives in the Group entities panel"
           >
             <option value="">KYC: —</option>
             <option value="pending">Pending</option>
@@ -1431,6 +1433,10 @@ function CompanyDetail({ id }: { id: string }) {
               is finalised. */}
 
           <SubCompaniesPanel parentId={id} parentName={company.name} />
+          {/* Canonical group entity list (Delivery 5): deduplicated legal
+              entities with per-entity KYC — staff-only, renders nothing for
+              scoped viewers. */}
+          <AccountEntitiesPanel companyId={id} />
 
           {isLenderCo ? <LenderPanel companyId={id} company={company} /> : <BrandProfilePanel companyId={id} showPropertiesBoard={usePropertiesBoard} />}
 
