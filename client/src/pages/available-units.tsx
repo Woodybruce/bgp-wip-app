@@ -23,7 +23,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins, Flame,
-  ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2, MoreVertical, Ban } from "lucide-react";
+  ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2, MoreVertical, Ban, CheckCircle2 } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -100,23 +100,72 @@ function websiteMissing(u: any, property: any): string[] {
   if (!(u.leaseTerms || "").trim()) m.push("lease terms");
   return m;
 }
-function WebsitePill({ unit, property, code, onToggle }: { unit: any; property: any; code: DealStatusCode; onToggle: () => void }) {
+// The five things the public feed requires, with WHERE each one gets added.
+// Shared by the pill popover and the unit form's checklist so the app tells
+// the user exactly what's missing instead of hiding it in a hover tooltip
+// (Carly, 2026-09-21: "tell us what we are missing on the lettings tracker").
+const WEBSITE_REQS: { key: string; label: string; where: string }[] = [
+  { key: "address", label: "Address", where: "Comes from the linked property record" },
+  { key: "rent or POA", label: "Rent or POA", where: "Edit unit → Quoting Rent, or tick POA" },
+  { key: "size", label: "Size (sq ft)", where: "Edit unit → Size" },
+  { key: "photo", label: "At least one photo", where: "Files on this row → Photos" },
+  { key: "lease terms", label: "Lease terms", where: "Edit unit → Lease terms" },
+];
+function WebsitePill({ unit, property, code, onToggle, onEdit, onFiles }: { unit: any; property: any; code: DealStatusCode; onToggle: () => void; onEdit: () => void; onFiles: () => void }) {
   const on = !!unit.showOnWebsite;
   const missing = websiteMissing(unit, property);
-  let label = "Off", cls = "bg-muted text-muted-foreground", title = "Not on the website — click to display";
-  if (on && !PUBLIC_CODES.has(code)) { label = "Hidden"; cls = "bg-gray-400 text-white"; title = "Ticked for the website, but the deal status keeps it off (only Marketing → Solicitors show)"; }
-  else if (on && missing.length) { label = `Missing ${missing.length}`; cls = "bg-amber-500 text-white"; title = `Not live yet — add: ${missing.join(", ")}`; }
-  else if (on) { label = "Live"; cls = "bg-emerald-500 text-white"; title = "Live on bgp.uk.com — click to remove"; }
+  let label = "Off", cls = "bg-muted text-muted-foreground";
+  let header = "Not on the website. Everything below is needed before it can go live on bgp.uk.com:";
+  if (on && !PUBLIC_CODES.has(code)) { label = "Hidden"; cls = "bg-gray-400 text-white"; header = "Ticked for the website, but the deal status keeps it off — only Marketing → Solicitors show publicly."; }
+  else if (on && missing.length) { label = `Missing ${missing.length}`; cls = "bg-amber-500 text-white"; header = "Ticked for the website but NOT live yet — the amber items are still needed:"; }
+  else if (on) { label = "Live"; cls = "bg-emerald-500 text-white"; header = "Live on bgp.uk.com — the website has everything it needs."; }
+  const needsEdit = missing.some(k => k === "rent or POA" || k === "size" || k === "lease terms");
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      title={title}
-      className={`${cls} font-medium rounded-full text-[11px] px-2.5 py-1 whitespace-nowrap hover:opacity-90 transition-opacity`}
-      data-testid={`website-pill-${unit.id}`}
-    >
-      {label}
-    </button>
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={`${cls} font-medium rounded-full text-[11px] px-2.5 py-1 whitespace-nowrap hover:opacity-90 transition-opacity`}
+          data-testid={`website-pill-${unit.id}`}
+        >
+          {label}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[300px] p-3 space-y-2.5" align="end">
+        <p className="text-xs text-muted-foreground">{header}</p>
+        <div className="space-y-1.5">
+          {WEBSITE_REQS.map(req => {
+            const ok = !missing.includes(req.key);
+            return (
+              <div key={req.key} className="flex items-start gap-2" data-testid={`website-req-${unit.id}-${req.key.replace(/\s+/g, "-")}`}>
+                {ok
+                  ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 mt-0.5 shrink-0" />
+                  : <AlertTriangle className="w-3.5 h-3.5 text-amber-500 mt-0.5 shrink-0" />}
+                <div className="min-w-0">
+                  <p className={`text-xs font-medium ${ok ? "" : "text-amber-700 dark:text-amber-400"}`}>{req.label}</p>
+                  {!ok && <p className="text-[11px] text-muted-foreground">{req.where}</p>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="flex flex-wrap gap-1.5 pt-0.5">
+          {missing.includes("photo") && (
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onFiles} data-testid={`website-add-photos-${unit.id}`}>
+              <Upload className="w-3 h-3 mr-1" /> Add photos
+            </Button>
+          )}
+          {needsEdit && (
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onEdit} data-testid={`website-edit-unit-${unit.id}`}>
+              <Pencil className="w-3 h-3 mr-1" /> Edit unit
+            </Button>
+          )}
+          <Button size="sm" variant={on ? "ghost" : "default"} className="h-7 text-xs" onClick={onToggle} data-testid={`website-toggle-${unit.id}`}>
+            {on ? "Remove from website" : "Show on website"}
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 // Files dialog — click-to-set focal point the website crops photos around.
@@ -2391,6 +2440,8 @@ export default function AvailableUnitsPage() {
                           property={propertyMap[u.propertyId]}
                           code={rowCode}
                           onToggle={() => inlineUpdate(u.id, "showOnWebsite", !(u as any).showOnWebsite)}
+                          onEdit={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }}
+                          onFiles={() => setFilesUnit(u)}
                         />
                       </TableCell>
                       )}
@@ -2853,6 +2904,7 @@ export default function AvailableUnitsPage() {
         onSubmit={() => createMutation.mutate({ data: formToPayload(form), feeRows: unitFeeRows, feeAllocType: unitFeeAllocType })}
         isPending={createMutation.isPending}
         isEdit={false}
+        photoCount={null}
       />
 
       <UnitFormDialog
@@ -2874,6 +2926,10 @@ export default function AvailableUnitsPage() {
         onSubmit={() => editItem && updateMutation.mutate({ id: editItem.id, data: formToPayload(form) })}
         isPending={updateMutation.isPending}
         isEdit={true}
+        photoCount={(editItem as any)?.photoCount ?? 0}
+        // Opens the row's Files dialog ON TOP of the edit form (photos live
+        // there, not in the form) — form edits survive underneath.
+        onOpenFiles={() => editItem && setFilesUnit(editItem)}
       />
 
       <Dialog open={!!deleteItem} onOpenChange={v => { if (!v) setDeleteItem(null); }}>
@@ -4298,6 +4354,14 @@ function MarketingFilesDialog({
               </Pill>
             ))}
           </div>
+          {/* This is THE place unit photos are added — say so, and what the
+              website does with them (Carly, 2026-09-21: "clearer where we
+              are adding the photo"). */}
+          {(section === "photo" || files.filter(f => catOf(f) === "photo").length === 0) && (
+            <p className="text-[11px] text-muted-foreground -mt-2" data-testid="text-photo-website-hint">
+              <span className="font-medium text-foreground/80">Photos for the website are added here:</span> select the <span className="font-medium">Photos</span> pill, then Upload. The website uses these photos (tap one to set the crop focal point) — at least one is required before the unit can go live, along with address, rent or POA, size and lease terms.
+            </p>
+          )}
           <div className="flex flex-wrap gap-2">
             <input
               ref={fileInputRef}
@@ -4530,7 +4594,7 @@ function UnitFormDialog({
   open, onOpenChange, title, form, setForm, properties, propertyUnits = [], bgpUsers, crmCompanies = [],
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
   showAllFields, setShowAllFields, isEdit,
-  onSubmit, isPending,
+  onSubmit, isPending, photoCount, onOpenFiles,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -4550,6 +4614,11 @@ function UnitFormDialog({
   isEdit: boolean;
   onSubmit: () => void;
   isPending: boolean;
+  // Website checklist inputs: how many photos the unit already has (null =
+  // new unit, photos can only be added once it exists) and a way to open
+  // the row's Files dialog for photo uploads without losing form edits.
+  photoCount?: number | null;
+  onOpenFiles?: () => void;
 }) {
   const upd = (field: keyof UnitFormState, value: string) => setForm({ ...form, [field]: value });
 
@@ -4643,6 +4712,62 @@ function UnitFormDialog({
             Saving will auto-create a linked Leasing deal on the <a href="/deals" className="underline">deals board</a>.
           </DialogDescription>
         </DialogHeader>
+        {(() => {
+          // Live website checklist — the same five requirements the public
+          // feed enforces, computed from what's typed so far, so the user
+          // can see exactly what the website still needs while filling the
+          // form in (Carly, 2026-09-21).
+          const prop = properties.find(p => p.id === form.propertyId);
+          const addr = prop?.address as any;
+          const hasAddr = !!(addr && (typeof addr === "string" ? addr.trim() : (addr.formatted || addr.address || addr.street || addr.postcode)));
+          const hasPhoto = (photoCount ?? 0) > 0;
+          const checks: { label: string; ok: boolean; hint?: string; action?: { label: string; run: () => void } }[] = [
+            { label: "Address", ok: hasAddr, hint: "comes from the linked property record" },
+            { label: "Rent or POA", ok: !!form.askingRent.trim() || form.rentPoa, hint: "Quoting Rent below, or tick POA" },
+            { label: "Size", ok: !!form.sqft.trim(), hint: "Size (sq ft) below" },
+            {
+              label: "Photo", ok: hasPhoto,
+              hint: isEdit
+                ? "photos live in Files on the unit row, under Photos — not in this form"
+                : "save the unit first, then add photos via Files on its row (Photos section)",
+              action: isEdit && onOpenFiles ? { label: "Open Files", run: onOpenFiles } : undefined,
+            },
+            {
+              label: "Lease terms", ok: !!form.leaseTerms.trim(),
+              hint: showAllFields ? "Lease terms box below" : "hidden in the extra fields",
+              action: !showAllFields ? { label: "Show field", run: () => setShowAllFields(true) } : undefined,
+            },
+          ];
+          const outstanding = checks.filter(c => !c.ok);
+          return (
+            <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-1.5" data-testid="website-checklist">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Website checklist — {outstanding.length === 0 ? "ready to go live on bgp.uk.com" : `${outstanding.length} thing${outstanding.length > 1 ? "s" : ""} still needed for bgp.uk.com`}
+              </p>
+              <div className="flex flex-wrap gap-x-3 gap-y-1">
+                {checks.map(c => (
+                  <span key={c.label} className="inline-flex items-center gap-1 text-xs">
+                    {c.ok
+                      ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      : <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />}
+                    <span className={c.ok ? "" : "text-amber-700 dark:text-amber-400 font-medium"}>{c.label}</span>
+                  </span>
+                ))}
+              </div>
+              {outstanding.map(c => (
+                <p key={c.label} className="text-[11px] text-muted-foreground">
+                  <span className="font-medium text-foreground/80">{c.label}:</span> {c.hint}
+                  {c.action && (
+                    <button type="button" className="ml-1.5 underline text-primary" onClick={c.action.run} data-testid={`checklist-action-${c.label.toLowerCase().replace(/\s+/g, "-")}`}>
+                      {c.action.label}
+                    </button>
+                  )}
+                </p>
+              ))}
+              <p className="text-[11px] text-muted-foreground">The unit only appears on the website once all five are in AND the row's Website pill is switched on.</p>
+            </div>
+          );
+        })()}
         <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2">
             <Label>Property *</Label>
