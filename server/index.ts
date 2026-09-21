@@ -2603,6 +2603,50 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     // fetch), so the feed only produced error noise. Removed from the seed
     // list in news-feeds.ts; this deactivates the existing DB row.
     `UPDATE news_sources SET active = false WHERE url LIKE '%londonpropertynews.co.uk%' AND active = true`,
+
+    // Delivery 2 — mirrors migrations/0041–0044 (all additive + idempotent).
+    // Company↔property relationship roles:
+    `ALTER TABLE crm_company_properties ADD COLUMN IF NOT EXISTS relationship_role text`,
+    `ALTER TABLE crm_company_properties ADD COLUMN IF NOT EXISTS ownership_stake_pct real`,
+    `ALTER TABLE crm_company_properties ADD COLUMN IF NOT EXISTS relationship_confidence text`,
+    `ALTER TABLE crm_company_properties ADD COLUMN IF NOT EXISTS relationship_source text`,
+    `ALTER TABLE crm_company_properties ADD COLUMN IF NOT EXISTS valid_from timestamptz`,
+    `ALTER TABLE crm_company_properties ADD COLUMN IF NOT EXISTS valid_to timestamptz`,
+    `ALTER TABLE crm_company_properties ADD COLUMN IF NOT EXISTS relationship_notes text`,
+    // Entity graph lookup indexes:
+    `CREATE INDEX IF NOT EXISTS idx_crm_companies_parent ON crm_companies(parent_company_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_trading_entities_parent ON crm_trading_entities(parent_company_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_properties_freeholder ON crm_properties(freeholder_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_properties_long_leaseholder ON crm_properties(long_leaseholder_id)`,
+    // Property country + geocode provenance:
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS country text`,
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS geocode_status text`,
+    // Account reconciliation tables:
+    `CREATE TABLE IF NOT EXISTS account_reconciliation_baselines (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      company_id text NOT NULL,
+      baseline_name text NOT NULL,
+      destination_name text NOT NULL,
+      official_group_key text,
+      expected_crm_property_count int NOT NULL DEFAULT 1,
+      category text NOT NULL DEFAULT 'destination',
+      country text,
+      source_url text,
+      source_date date,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_account_recon_baselines_company
+      ON account_reconciliation_baselines(company_id, baseline_name)`,
+    `CREATE TABLE IF NOT EXISTS account_reconciliation_runs (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      company_id text NOT NULL,
+      baseline_name text NOT NULL,
+      generated_at timestamptz NOT NULL DEFAULT now(),
+      generated_by text,
+      rows jsonb NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_account_recon_runs_company
+      ON account_reconciliation_runs(company_id, baseline_name, generated_at DESC)`,
   ];
 
   let ok = 0, skipped = 0;
