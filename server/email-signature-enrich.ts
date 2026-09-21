@@ -396,6 +396,16 @@ export async function enrichSignaturesForDomain(domain: string, emails: string[]
           msg.id,
         ],
       );
+
+      // Complete the deduplicated CRM person from this signature — fills
+      // missing fields only, never overwrites, creates nothing.
+      try {
+        const { applySignatureToCrmContact } = await import("./signature-contact-sync");
+        const sync = await applySignatureToCrmContact(email);
+        if (sync.updated > 0) console.log(`[email-signature] CRM contact completed for ${email} (${sync.fields.join(", ")})`);
+      } catch (e: any) {
+        console.warn(`[email-signature] CRM sync failed for ${email}: ${e?.message}`);
+      }
     }
   } finally {
     inFlight.delete(keyId);
