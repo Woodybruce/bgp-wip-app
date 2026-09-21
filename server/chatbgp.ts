@@ -14780,7 +14780,7 @@ export function setupChatBGPRoutes(app: Express) {
       const CAP = 40;
       const capped = wanted.slice(0, CAP);
       if (capped.length === 0) {
-        return { data: { error: `No ${which.replace("_", " ")} documents on ${ref}. The application has ${docs.length} documents in total — try which:'everything' to see them all.`, caseSummary, documentList: docs.map((d) => ({ date: d.date, type: d.type, description: d.description })) } };
+        return { data: { error: `No ${which.replace("_", " ")} documents on ${ref}. The application has ${docs.length} documents in total — try which:'everything' to see them all.`, caseSummary, documentList: docs.map((d) => ({ date: d.date, type: d.type, description: d.description, category: d.category, url: d.url })) } };
       }
 
       // House style (v19): bordeaux front cover with the white wordmark, then a
@@ -14901,7 +14901,8 @@ export function setupChatBGPRoutes(app: Express) {
           truncated: wanted.length > CAP ? `Only the first ${CAP} of ${wanted.length} matching documents were bundled.` : undefined,
           downloadUrl,
           downloadMarkdown: `[Download ${title}.pdf](${downloadUrl}) — ${merged} drawings, ${out.getPageCount()} pages`,
-          documentList: docs.map((d) => ({ date: d.date, type: d.type, description: d.description, category: d.category })),
+          // url is a durable register link: pass it to measure_plan (source.url) or vision_describe_image (imageUrl) to work on one sheet.
+          documentList: docs.map((d) => ({ date: d.date, type: d.type, description: d.description, category: d.category, label: d.label, url: d.url })),
           message: `Bundled ${merged} ${which === "everything" ? "documents" : "drawings"} from RBKC ${ref}${caseSummary?.address ? " (" + caseSummary.address + ")" : ""} into one PDF (${out.getPageCount()} pages). The download link is ready for the user.`,
         },
       };
