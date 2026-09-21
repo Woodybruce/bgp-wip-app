@@ -23,7 +23,7 @@ import { readBrandFactReview } from "./brand-fact-review";
 import { candidateBrandWebsite, readBrandOfficialEvidence, verifyBrandIdentityFromOfficialSite } from "./brand-identity-verification";
 import { currentOfficialProfileEvidence, prepareOfficialProfileEvidence, retainedProfileFactsCorroborated, type OfficialProfilePage } from "./brand-profile-evidence";
 import { CLIENT_CRM_CATEGORIES } from "@shared/tenant-categories";
-import { BRAND_PREPARATION_STAGES, readPreparationStates, runPreparationStage, summarizeBrandPreparation, type BrandPreparationStage, type PreparationOutcome } from "./brand-preparation-jobs";
+import { BRAND_PREPARATION_STAGES, readPreparationStates, runPreparationStage, shouldEnqueueOnPageOpen, summarizeBrandPreparation, type BrandPreparationStage, type PreparationOutcome } from "./brand-preparation-jobs";
 
 const router = Router();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -261,7 +261,7 @@ export async function enrichBrandById(companyId: string): Promise<Record<string,
 // Each stage reserves a daily run before calling providers. A profile run can use
 // one web-research call and at most three model attempts; the existing Google
 // spending guard still applies independently to store/image requests.
-const DAILY_LIMITS: Record<BrandPreparationStage, number> = { identity: 40, profile: 30, apollo: 30, rocketreach: 20, stores: 20, images: 20, logo: 40, brief: 30, contacts: 0 };
+const DAILY_LIMITS: Record<BrandPreparationStage, number> = { identity: 40, profile: 30, apollo: 30, rocketreach: 20, stores: 20, images: 20, logo: 40, brief: 30, contacts: 0, portfolio: 5, financials: 20 };
 const configured = (stage: BrandPreparationStage) => {
   if (stage === "profile" || stage === "brief") return !!process.env.ANTHROPIC_API_KEY;
   if (stage === "apollo") return !!process.env.APOLLO_API_KEY;
@@ -277,10 +277,31 @@ export async function enqueueBrandPreparation(companyId: string): Promise<void> 
   [`brand-preparation-request:${companyId}`, JSON.stringify({ requestedAt: new Date().toISOString() })]);
 }
 
+// Stage applicability (Delivery 4, Task 5). Portfolio discovery only makes
+// sense for landlord-shaped companies (same type vocabulary as the
+// isLandlord rule); market data only for companies with a stored ticker.
+// Inapplicable stages short-circuit before runPreparationStage — nothing
+// persisted, nothing charged — and simply don't render in the UI.
+const PORTFOLIO_STAGE_TYPES = new Set(["landlord", "landlord/freeholder", "investor", "reit", "developer", "fund"]);
+export function isPortfolioStageApplicable(company: { company_type?: string | null }): boolean {
+  return PORTFOLIO_STAGE_TYPES.has((company.company_type || "").trim().toLowerCase());
+}
+export function isFinancialsStageApplicable(company: { stock_ticker?: string | null }): boolean {
+  return !!(company.stock_ticker || "").trim();
+}
+
 export async function prepareBrandStage(companyId: string, stage: BrandPreparationStage, force = false, options: { tab?: "brand" | "uk" | "activity" | "intel" } = {}) {
   const company = (await pool.query("SELECT * FROM crm_companies WHERE id=$1 AND merged_into_id IS NULL", [companyId])).rows[0];
   if (!company) throw new Error("Company not found");
   const identity = getBrandIdentity(company);
+  // Not-applicable stages never persist and never charge — the UI simply
+  // doesn't render them (they stay absent from readPreparationStates).
+  if (stage === "portfolio" && !isPortfolioStageApplicable(company)) {
+    return { ran: false, state: { stage, fingerprint: identity.fingerprint, status: "not_applicable" }, reason: "not_applicable", result: undefined };
+  }
+  if (stage === "financials" && !isFinancialsStageApplicable(company)) {
+    return { ran: false, state: { stage, fingerprint: identity.fingerprint, status: "not_applicable" }, reason: "not_applicable", result: undefined };
+  }
   const usable = stage === "identity" ? identity.status !== "verified" && !!candidateBrandWebsite(company) && !company.ai_disabled : identity.status === "verified" && !company.ai_disabled && configured(stage)
     && !(stage === "brief" && company.ai_generated_fields?.brand_identity?.previousFactsNeedReview && !currentOfficialProfileEvidence(company));
   let result: any;
@@ -288,7 +309,7 @@ export async function prepareBrandStage(companyId: string, stage: BrandPreparati
     if (stage === "identity" && !company.ai_disabled) {
       const verified = await verifyBrandIdentityFromOfficialSite(pool, company);
       const current = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
-      return { ...verified, fingerprint: getBrandIdentity(current).fingerprint };
+      return { ...verified, source: "official website", fingerprint: getBrandIdentity(current).fingerprint };
     }
     if (identity.status !== "verified") return { status: "needs_review", reason: identity.reason || "Confirm the official website" };
     if (company.ai_disabled) return { status: "unavailable", reason: "Automatic enrichment is disabled for this brand" };
@@ -296,31 +317,53 @@ export async function prepareBrandStage(companyId: string, stage: BrandPreparati
     if (stage === "profile") {
       result = await enrichCompany(companyId);
       if (result.reason) {
-        if (/No verified profile/.test(result.reason)) return { status: "no_match", reason: result.reason };
+        if (/No verified profile/.test(result.reason)) return { status: "no_match", source: "official website + AI research", reason: result.reason };
         throw new Error(result.reason);
       }
-      return { status: "ready" };
+      return { status: "ready", source: "official website + AI research" };
     }
     if (stage === "apollo" || stage === "rocketreach") {
       result = stage === "apollo" ? await (await import("./apollo-company")).refreshApolloCompany(companyId)
         : await (await import("./rocketreach-company")).refreshRocketReachCompany(companyId);
-      return { status: result.status === "matched" ? "ready" : result.status === "blocked" ? "needs_review" : "no_match", reason: result.reason };
+      return { status: result.status === "matched" ? "ready" : result.status === "blocked" ? "needs_review" : "no_match", source: stage === "apollo" ? "Apollo" : "RocketReach", reason: result.reason };
     }
     if (stage === "stores") {
       result = await (await import("./brand-profile")).researchBrandStores(companyId);
-      return { status: result.found > 0 ? "ready" : "no_match", reason: result.found > 0 ? undefined : "No verified stores found" };
+      return { status: result.found > 0 ? "ready" : "no_match", source: "Google Places", reason: result.found > 0 ? undefined : "No verified stores found" };
     }
     if (stage === "images") {
       result = await (await import("./brand-images")).refreshBrandImages(companyId, { target: 3 });
-      return { status: result.imported > 0 || result.qualified > 0 ? "ready" : "no_match", reason: result.skipped || undefined };
+      return { status: result.imported > 0 || result.qualified > 0 ? "ready" : "no_match", source: "official site / photo providers", reason: result.skipped || undefined };
     }
     if (stage === "logo") return (await import("./image-studio")).prepareBrandLogo(companyId);
+    if (stage === "portfolio") {
+      // The weekly landlord scrape is the source of truth; only scrape when
+      // its findings are older than its own 14-day freshness cadence.
+      const findings = await pool.query<{ scraped_at: string }>(
+        `SELECT scraped_at FROM landlord_website_findings WHERE company_id = $1`, [companyId]
+      ).catch(() => ({ rows: [] as Array<{ scraped_at: string }> }));
+      const scrapedAt = Date.parse(findings.rows[0]?.scraped_at || "");
+      if (Number.isFinite(scrapedAt) && scrapedAt > Date.now() - 14 * 86400000) {
+        return { status: "ready", source: "landlord website scrape" };
+      }
+      const scrape = await (await import("./landlord-scraper")).scrapeLandlordWebsite(companyId);
+      if (!scrape.ok) throw new Error(scrape.error || "The landlord website could not be scraped");
+      return { status: "ready", source: "landlord website scrape" };
+    }
+    if (stage === "financials") {
+      const snapshot = await (await import("./stock-price")).getStockSnapshotState(company.stock_ticker);
+      if (snapshot.status === "ok") {
+        return { status: "ready", source: snapshot.provider === "stooq" ? "stooq" : snapshot.provider === "cnbc" ? "CNBC" : "Yahoo Finance" };
+      }
+      if (snapshot.status === "invalid-symbol") return { status: "no_match", reason: "The stored ticker did not resolve to a listed instrument" };
+      throw new Error("Market data providers did not answer for the stored ticker");
+    }
     if (stage === "brief") {
       if (company.ai_generated_fields?.brand_identity?.previousFactsNeedReview && !currentOfficialProfileEvidence(company)) return { status: "needs_review", reason: "The official website could not corroborate the profile yet. Refresh the profile to retry the automatic check." };
       const prepared = await readPreparationStates(pool, companyId, identity.fingerprint);
       if (prepared.find(section => section.stage === "profile")?.status !== "ready") return { status: "needs_review", reason: "Prepare the factual profile before generating the BGP brief" };
       result = await (await import("./brand-ai-take")).prepareBrandAiTake(companyId, options.tab || "brand");
-      return { status: result.text ? "ready" : "no_match", reason: result.reason };
+      return { status: result.text ? "ready" : "no_match", source: "BGP brief (Claude)", reason: result.reason };
     }
     // Existing linked people are usable immediately; a missing contact needs a
     // real discovery/review workflow, never a guessed name or job title.
@@ -409,6 +452,19 @@ router.get("/api/brand/:companyId/preparation", requireAuth, async (req: Request
     const identity = getBrandIdentity(company);
     const stages = await readPreparationStates(pool, companyId, identity.fingerprint);
     const factReview = readBrandFactReview(company);
+    // Page-open nudge: queue genuinely stale/missing work ONCE into the
+    // durable request marker the nightly batch consumes. Never re-runs fresh
+    // AI — each stage's own nextAttemptAt cooldown decides what runs. The
+    // marker write is idempotent; not-applicable stages don't count.
+    if (process.env.BRAND_PREPARATION_ENABLED !== "false" && !company.ai_disabled) {
+      const applicable = stages.filter(stage =>
+        !(stage.stage === "portfolio" && !isPortfolioStageApplicable(company)) &&
+        !(stage.stage === "financials" && !isFinancialsStageApplicable(company)));
+      const marker = await pool.query("SELECT 1 FROM system_settings WHERE key=$1", [`brand-preparation-request:${companyId}`]);
+      if (shouldEnqueueOnPageOpen(applicable, (marker.rowCount ?? 0) > 0)) {
+        await enqueueBrandPreparation(companyId).catch((error: any) => console.warn("[brand-enrich] page-open enqueue failed:", error?.message));
+      }
+    }
     res.json({ identity, stages, factReview, officialProfileReady: !!currentOfficialProfileEvidence(company), ...summarizeBrandPreparation(identity.status, stages, factReview.required) });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });

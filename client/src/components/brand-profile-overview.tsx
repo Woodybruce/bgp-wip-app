@@ -29,7 +29,7 @@ export function BrandPreparationStatus({ companyId, refreshedAt }: { companyId: 
     factReviewRequired: boolean;
     officialProfileReady?: boolean;
     identity: { status: string; domain?: string; reason?: string };
-    stages: Array<{ stage: string; status: string; lastSuccessAt?: string | null; reason?: string; lastError?: string }>;
+    stages: Array<{ stage: string; status: string; lastSuccessAt?: string | null; reason?: string; lastError?: string; source?: string | null }>;
   }>({
     queryKey: ["/api/brand", companyId, "preparation"],
     queryFn: async () => (await apiRequest("GET", `/api/brand/${companyId}/preparation`)).json(),
@@ -42,7 +42,7 @@ export function BrandPreparationStatus({ companyId, refreshedAt }: { companyId: 
   const needsReview = data?.factReviewRequired || data?.identity?.status === "review" || coreStages.some(stage => stage.status === "needs_review");
   const running = coreStages.some(stage => stage.status === "running");
   const label = data?.officialProfileReady && data.factReviewRequired ? "Official profile prepared" : data?.ready ? "Core facts prepared" : needsReview ? "Core facts need review" : running ? "Preparing core facts" : coreStages.some(stage => ["error", "no_match", "unavailable"].includes(stage.status)) ? "Core preparation needs attention" : "Core preparation pending";
-  const stageLabels: Record<string, string> = { identity: "Official identity", profile: "Core facts", apollo: "Company data", rocketreach: "Company match", stores: "Store locations", images: "Brand image", logo: "Brand logo", brief: "BGP action brief", contacts: "Contacts" };
+  const stageLabels: Record<string, string> = { identity: "Official identity", profile: "Core facts", apollo: "Company data", rocketreach: "Company match", stores: "Store locations", images: "Brand image", logo: "Brand logo", brief: "BGP action brief", contacts: "Contacts", portfolio: "Portfolio discovery", financials: "Market data" };
   const statusLabels: Record<string, string> = { pending: "Queued", running: "Preparing", ready: "Prepared", no_match: "No match found", error: "Retry needed", needs_review: "Needs review", unavailable: "Unavailable" };
   return (
     <details className="text-[11px] text-muted-foreground" data-testid="brand-preparation-status">
@@ -57,7 +57,7 @@ export function BrandPreparationStatus({ companyId, refreshedAt }: { companyId: 
         {data?.factReviewRequired && <p>{data.officialProfileReady ? "The official profile is prepared and can support a new BGP brief. Older retained description, industry, head office and LinkedIn fields still need a separate review." : "Review the description, industry, head office and LinkedIn kept from the previous identity before relying on those retained fields."}</p>}
         {data && <p><span className="font-mono tabular-nums">{data.preparedSections} of {data.totalSections}</span> automatic sections prepared. Contact review is separate and does not hold up the factual profile.</p>}
         {stages.map(stage => <div key={stage.stage} className="border-t border-border pt-2">
-          <p className="flex flex-wrap justify-between gap-x-3"><span>{stageLabels[stage.stage] || stage.stage}</span><span>{stage.stage === "profile" && data?.factReviewRequired ? data.officialProfileReady ? "Official profile prepared · Retained fields need review" : "Facts need review" : statusLabels[stage.status] || "Pending"}{shortDate(stage.lastSuccessAt) ? ` · ${shortDate(stage.lastSuccessAt)}` : ""}</span></p>
+          <p className="flex flex-wrap justify-between gap-x-3"><span>{stageLabels[stage.stage] || stage.stage}</span><span>{stage.stage === "profile" && data?.factReviewRequired ? data.officialProfileReady ? "Official profile prepared · Retained fields need review" : "Facts need review" : statusLabels[stage.status] || "Pending"}{shortDate(stage.lastSuccessAt) ? ` · ${shortDate(stage.lastSuccessAt)}` : ""}{stage.source ? ` · ${stage.source}` : ""}</span></p>
           {(stage.reason || stage.lastError) && <p className="mt-1 break-words">{stage.stage === "contacts" && stage.reason?.includes("before marking this section complete") ? "Linked contacts are available. Check who currently handles property matters before contacting them; background preparation does not verify people." : stage.reason || stage.lastError}</p>}
         </div>)}
         {needsReview && <p>{data?.identity?.status === "review" ? "Confirm the brand’s official website or review its conflicting identity details." : "Open the section details above to see what needs attention. Other sections can continue preparing."}</p>}

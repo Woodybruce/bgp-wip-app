@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 
-export const BRAND_PREPARATION_STAGES = ["identity", "profile", "apollo", "rocketreach", "stores", "images", "logo", "brief", "contacts"] as const;
+export const BRAND_PREPARATION_STAGES = ["identity", "profile", "apollo", "rocketreach", "stores", "images", "logo", "brief", "contacts", "portfolio", "financials"] as const;
 export type BrandPreparationStage = typeof BRAND_PREPARATION_STAGES[number];
-export type PreparationOutcome = { status: "ready" | "no_match" | "needs_review" | "unavailable"; reason?: string; fingerprint?: string };
+export type PreparationOutcome = { status: "ready" | "no_match" | "needs_review" | "unavailable"; reason?: string; fingerprint?: string; source?: string };
 export type PreparationState = {
   stage: BrandPreparationStage; fingerprint: string; status: string;
   lastAttemptAt?: string; lastSuccessAt?: string; nextAttemptAt?: string;
   lastError?: string | null; reason?: string | null; failures?: number;
+  source?: string | null;
   claim?: string; leaseUntil?: string;
 };
 type Queryable = { query: (sql: string, values?: any[]) => Promise<any> };
@@ -36,6 +37,9 @@ export function nextPreparationState(previous: Partial<PreparationState>, outcom
   return {
     status: outcome.status, failures, reason: outcome.reason || null,
     lastError: outcome.status === "error" ? outcome.reason : null,
+    // Where the content came from — kept on ready/no_match/needs_review,
+    // cleared on error so a failure never advertises a source it didn't use.
+    source: outcome.status === "error" ? null : ("source" in outcome && outcome.source) || previous.source || null,
     ...(outcome.status === "ready" ? { lastSuccessAt: now.toISOString() } : {}),
     nextAttemptAt: new Date(now.getTime() + delay).toISOString(),
   };
@@ -116,4 +120,22 @@ export async function readPreparationStates(db: Queryable, companyId: string, fi
     if (claim && new Date(leaseUntil || 0).getTime() <= Date.now()) return { ...publicState, status: "pending" };
     return publicState;
   });
+}
+
+// Page-open nudge (Delivery 4, Task 5): should opening the profile enqueue
+// one durable preparation request? True only when some stage is genuinely
+// missing (pending) or due (nextAttemptAt in the past), nothing is running
+// right now, and no unconsumed request marker exists — so a page open never
+// re-runs fresh AI, only queues stale/missing work, once. Callers filter
+// out not-applicable stages before asking.
+export function shouldEnqueueOnPageOpen(
+  states: Array<Pick<PreparationState, "status" | "nextAttemptAt">>,
+  requestMarkerExists: boolean,
+  now: Date = new Date(),
+): boolean {
+  if (requestMarkerExists) return false;
+  if (states.some(stage => stage.status === "running")) return false;
+  return states.some(stage =>
+    stage.status === "pending" ||
+    (!!stage.nextAttemptAt && Date.parse(stage.nextAttemptAt) <= now.getTime()));
 }

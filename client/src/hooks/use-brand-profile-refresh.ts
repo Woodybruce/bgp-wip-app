@@ -7,10 +7,18 @@ type ProfileRefreshStatus = {
   reason?: string;
   updated?: string[];
   finishedAt?: number | string;
+  sections?: Array<{ stage: string; status: string; lastSuccessAt?: string | null; source?: string | null; reason?: string | null }>;
 };
 type SavedProfileRefreshStatus = ProfileRefreshStatus & { companyId: string };
 
 const profileRefreshKey = (companyId: string) => ["/api/brand", companyId, "refresh-profile", "status"];
+
+// A core refresh can finish its identity/profile/brief stages while other
+// sections (photos, market data, …) failed or are still pending — "done"
+// must not read as full success.
+export function profileRefreshHasFailingSections(status?: ProfileRefreshStatus): boolean {
+  return !!status?.sections?.some(section => ["error", "needs_review", "unavailable"].includes(section.status));
+}
 
 export function profileRefreshMessage(status?: ProfileRefreshStatus): string {
   if (!status || status.status === "idle") return "";
@@ -18,7 +26,10 @@ export function profileRefreshMessage(status?: ProfileRefreshStatus): string {
   if (status.status === "running") return "Refreshing saved facts. You can leave this page and return to check progress.";
   if (status.status === "needs_review") return "Profile refresh needs review. Check the official website and retained facts.";
   if (status.status === "error") return "The profile could not be refreshed. Please try again.";
-  if (status.status === "done") return status.updated?.length ? "Profile refreshed. New information has been saved." : "Profile checked. No saved facts changed.";
+  if (status.status === "done") {
+    const base = status.updated?.length ? "Profile refreshed. New information has been saved." : "Profile checked. No saved facts changed.";
+    return profileRefreshHasFailingSections(status) ? `${base} Some sections need attention — see preparation details.` : base;
+  }
   return "The refresh has not reported an outcome yet.";
 }
 

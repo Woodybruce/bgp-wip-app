@@ -7,16 +7,33 @@ import { readPreparationStates } from "./brand-preparation-jobs";
 type Tab = "brand" | "uk" | "activity" | "intel";
 type CoreStatus = { status: "idle" | "running" | "done" | "error" | "needs_review";
   tab?: Tab; reason?: string; updated?: string[]; startedAt?: string; finishedAt?: string; expiresAt?: string; claim?: string };
+// Compact per-stage view so a finished core refresh can say "Profile + brief
+// ready · photos failed: <reason> · market data pending" instead of an
+// unconditional success (Delivery 4, Task 5).
+type CoreSection = { stage: string; status: string; lastSuccessAt?: string | null; source?: string | null; reason?: string | null };
 const keyFor = (id: string) => `brand-core-refresh:${id}`;
 
-export async function readBrandCoreRefresh(companyId: string): Promise<CoreStatus> {
+async function readCoreSections(companyId: string): Promise<CoreSection[]> {
+  const company = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
+  if (!company) return [];
+  const states = await readPreparationStates(pool, companyId, getBrandIdentity(company).fingerprint);
+  return states.map(stage => ({
+    stage: stage.stage, status: stage.status,
+    lastSuccessAt: stage.lastSuccessAt ?? null,
+    source: stage.source ?? null,
+    reason: stage.reason ?? stage.lastError ?? null,
+  }));
+}
+
+export async function readBrandCoreRefresh(companyId: string): Promise<CoreStatus & { sections?: CoreSection[] }> {
   const saved = (await pool.query("SELECT value FROM system_settings WHERE key=$1", [keyFor(companyId)])).rows[0]?.value;
-  if (!saved) return { status: "idle" };
+  const sections = await readCoreSections(companyId).catch(() => undefined);
+  if (!saved) return { status: "idle", ...(sections ? { sections } : {}) };
   const { claim, ...publicState } = saved;
   if (saved.status === "running" && !(Date.parse(saved.expiresAt || "") >= Date.now())) {
-    return { ...publicState, status: "error", reason: "Profile preparation was interrupted or took too long. Refresh to try again; saved information has been kept." };
+    return { ...publicState, status: "error", reason: "Profile preparation was interrupted or took too long. Refresh to try again; saved information has been kept.", ...(sections ? { sections } : {}) };
   }
-  return publicState;
+  return { ...publicState, ...(sections ? { sections } : {}) };
 }
 
 export async function prepareBrandCore(companyId: string, options: { refreshProfile?: boolean; tab?: Tab } = {}, progress: (reason: string) => Promise<void> = async () => {}): Promise<CoreStatus> {
