@@ -675,24 +675,42 @@ export async function getStockSnapshots(tickers: string[]): Promise<Map<string, 
             : { status: "invalid-symbol", snapshot: null, provider: null });
         }
       } else {
-        // No crumb — fall back to per-ticker chart lookups, 4 at a time.
-        // (Batch stays Yahoo-only: Stooq is per-ticker and would be 50
-        // serial CSV fetches here. The single-quote path has the fallback.)
+        // No crumb — fall back to per-ticker lookups, 4 at a time: Yahoo's
+        // chart endpoint first, then CNBC. (Stooq stays single-quote-only —
+        // it would be 50 serial CSV fetches here.)
         for (let j = 0; j < chunk.length; j += 4) {
-          const outcomes = await Promise.all(chunk.slice(j, j + 4).map(async (symbol) => ({
-            symbol,
-            outcome: await snapshotViaChart(symbol)
+          const outcomes = await Promise.all(chunk.slice(j, j + 4).map(async (symbol) => {
+            const chartOutcome: StockSnapshotLookup = await snapshotViaChart(symbol)
               .then((c): StockSnapshotLookup => c.snapshot
                 ? { status: "ok", snapshot: c.snapshot, provider: "yahoo" }
                 : { status: c.notFound ? "invalid-symbol" : "provider-error", snapshot: null, provider: null })
-              .catch((): StockSnapshotLookup => ({ status: "provider-error", snapshot: null, provider: null })),
-          })));
+              .catch((): StockSnapshotLookup => ({ status: "provider-error", snapshot: null, provider: null }));
+            if (chartOutcome.status !== "provider-error") return { symbol, outcome: chartOutcome };
+            // Yahoo unreachable for this symbol — try CNBC before recording
+            // an error, or a Yahoo outage poisons the shared cache with
+            // provider-error for every listed company (the single-quote path
+            // then keeps reading those entries instead of serving CNBC).
+            const cnbc = await fetchSnapshotFromCnbc(symbol).catch(() => null);
+            if (cnbc?.status === "ok" && cnbc.snapshot) {
+              return { symbol, outcome: { status: "ok", snapshot: cnbc.snapshot, provider: "cnbc" } as StockSnapshotLookup };
+            }
+            return { symbol, outcome: chartOutcome };
+          }));
           for (const { symbol, outcome } of outcomes) record(symbol, outcome);
         }
       }
     } catch (err: any) {
       console.warn(`[stock-price] batch fetch failed: ${err.message}`);
-      chunk.forEach(symbol => record(symbol, { status: "provider-error", snapshot: null, provider: null }));
+      // Whole chunk blew up (e.g. auth dance threw) — same CNBC fallback
+      // before recording errors.
+      for (let j = 0; j < chunk.length; j += 4) {
+        await Promise.all(chunk.slice(j, j + 4).map(async (symbol) => {
+          const cnbc = await fetchSnapshotFromCnbc(symbol).catch(() => null);
+          record(symbol, cnbc?.status === "ok" && cnbc.snapshot
+            ? { status: "ok", snapshot: cnbc.snapshot, provider: "cnbc" }
+            : { status: "provider-error", snapshot: null, provider: null });
+        }));
+      }
     }
   }
 

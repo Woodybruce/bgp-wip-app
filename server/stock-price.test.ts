@@ -46,7 +46,7 @@ const KNOWN_QUOTES: Record<string, any> = {
     shortName: "Batch One",
   },
 };
-const DOWN = new Set(["DOWNCO", "STOOQONLY.L", "DENIEDCO.L", "HEADERONLY.L", "CNBCONLY.L", "CNBCDOWN.L"]);
+const DOWN = new Set(["DOWNCO", "STOOQONLY.L", "DENIEDCO.L", "HEADERONLY.L", "CNBCONLY.L", "CNBCDOWN.L", "BATCHCNBC.L"]);
 // Q1BLOCKED symbols get a 429 on query1.finance.yahoo.com but succeed on
 // query2 — mirrors production, where Yahoo's edge blocks Railway's egress
 // IP on query1 only.
@@ -88,12 +88,21 @@ const CNBC_QUOTES: Record<string, any> = {
     last_time: "2026-09-18", currencyCode: "GBp", exchange: "London Stock Exchange",
     pe: "8.61", mktcapView: "2.01B", yrhiprice: "391.80", yrloprice: "280.40",
   },
+  "BATCHCNBC-GB": {
+    symbol: "BATCHCNBC-GB", code: 0, name: "Batch Cnbc PLC", last: "100.00",
+    last_time: "2026-09-18", currencyCode: "GBp", exchange: "London Stock Exchange",
+    mktcapView: "750M",
+  },
 };
 const CNBC_CHARTS: Record<string, any[]> = {
   "CNBCONLY-GB": [
     { close: "280.00", tradeTimeinMills: Date.parse("2025-09-18T00:00:00Z") },
     { close: "312.00", tradeTimeinMills: Date.parse("2026-03-18T00:00:00Z") },
     { close: "343.40", tradeTimeinMills: Date.parse("2026-09-18T00:00:00Z") },
+  ],
+  "BATCHCNBC-GB": [
+    { close: "90.00", tradeTimeinMills: Date.parse("2025-09-18T00:00:00Z") },
+    { close: "100.00", tradeTimeinMills: Date.parse("2026-09-18T00:00:00Z") },
   ],
 };
 const CNBC_DOWN = new Set(["CNBCDOWN-GB"]);
@@ -439,5 +448,20 @@ describe("getStockSnapshots (batch)", () => {
     assert.equal(map.get("HMSO.L")?.ticker, "HMSO.L");
     assert.equal(map.get("HMSON")?.ticker, "HMSO.L");
     assert.equal(map.has("BATCHBAD"), false);
+  });
+
+  it("falls back to CNBC per symbol when Yahoo is down (no cache poisoning)", async () => {
+    const map = await getStockSnapshots(["LSE: BATCHCNBC"]);
+    const s = map.get("LSE: BATCHCNBC");
+    assert.equal(s?.price, 100);
+    assert.equal(s?.ticker, "BATCHCNBC.L");
+    assert.equal(s?.signals.largeCap, true); // £750m cap from CNBC
+    // And the shared cache now holds an ok entry — the single-quote path
+    // serves it without a refetch instead of reading a provider-error.
+    const before = calls.length;
+    const state = await getStockSnapshotState("BATCHCNBC.L");
+    assert.equal(state.status, "ok");
+    assert.equal(state.provider, "cnbc");
+    assert.equal(calls.length, before);
   });
 });
