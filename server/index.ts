@@ -3224,6 +3224,7 @@ import accountMediaRouter from "./account-media";
 import signatureContactSyncRouter from "./signature-contact-sync";
 import accountFolderInventoryRouter from "./account-folder-inventory";
 import accountEntitiesRouter from "./account-entities";
+import accountEntityChecksRouter from "./account-entity-checks";
 import brandEnrichmentRouter, { runNightlyBrandEnrichment } from "./brand-enrichment";
 import brandAiTakeRouter from "./brand-ai-take";
 import goadTenantResolverRouter from "./goad-tenant-resolver";
@@ -4222,6 +4223,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(signatureContactSyncRouter);
   app.use(accountFolderInventoryRouter);
   app.use(accountEntitiesRouter);
+  app.use(accountEntityChecksRouter);
   app.use(brandEnrichmentRouter);
   app.use(brandAiTakeRouter);
   app.use(goadTenantResolverRouter);
