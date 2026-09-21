@@ -17,7 +17,7 @@
  */
 import crypto from "node:crypto";
 import { getFile, saveFile, findChatMediaByOriginalName } from "./file-storage";
-import { pdfPageInfos, pdfPageText, rasterisePdfPageBuffer, sheetSizeName, sheetLongEdgePt, type PdfTextItem } from "./pdf-raster";
+import { pdfPageInfos, pdfPageText, rasterisePdfPageBuffer, sheetSizeName, sheetLongEdgePt, extractFilledPaths, unionAreaPt, paintedAreaByColour, type PdfTextItem } from "./pdf-raster";
 
 const PT_TO_MM = 25.4 / 72;
 const SQM_TO_SQFT = 10.7639;
@@ -47,6 +47,8 @@ export interface MeasurePlanArgs {
   render?: boolean | { region?: { x: number; y: number; w: number; h: number }; targetDpi?: number };
   /** Shapes to measure. Coordinates default to fractions of the full page (0–1, origin top-left). */
   shapes?: MeasureShape[];
+  /** Measure the sheet's solid colour fills (the shaded extent on GIA/NIA demise plans). */
+  fills?: boolean;
   /** How shape/calibrate points are expressed. "pixel" needs `image`. */
   coords?: "fraction" | "point" | "pixel";
   /** For pixel coordinates: the rendered image they were read off (from a previous render result). */
@@ -180,9 +182,13 @@ function titleFromText(items: PdfTextItem[], widthPt: number): { title: string |
   const dnLabel = strip.find((it) => /^drawing\s+(no\.?|number)$/i.test(it.str));
   let drawingNumber: string | null = null;
   if (dnLabel) {
-    const near = strip.filter((it) => it !== dnLabel && Math.abs(it.x - dnLabel.x) < widthPt * 0.08 && Math.abs(it.y - dnLabel.y) < 40 && /\d/.test(it.str) && it.str.length <= 30);
+    const near = strip.filter((it) => it !== dnLabel && Math.abs(it.x - dnLabel.x) < widthPt * 0.08 && Math.abs(it.y - dnLabel.y) < 40 && /\d/.test(it.str) && it.str.length <= 30 && !/^rev/i.test(it.str));
     near.sort((a, b) => Math.abs(a.y - dnLabel.y) - Math.abs(b.y - dnLabel.y));
-    drawingNumber = near[0]?.str || null;
+    if (near[0]) {
+      // Drawing numbers are often split across text items ("21846" + "-06-210") — join the row.
+      const row = strip.filter((it) => Math.abs(it.y - near[0].y) < near[0].h * 0.6 && it.x >= near[0].x - 2 && it.x < near[0].x + widthPt * 0.12 && it.str.length <= 30 && !/^[A-Z]$/.test(it.str)).sort((a, b) => a.x - b.x);
+      drawingNumber = row.map((it) => it.str).join(" ").replace(/\s+-/g, "-").replace(/-\s+/g, "-").trim() || near[0].str;
+    }
   }
   const titleBlock = strip.filter((it) => it.h >= 7).sort((a, b) => b.y - a.y || a.x - b.x).map((it) => it.str).slice(0, 40);
   return { title, drawingNumber, titleBlock };
@@ -319,6 +325,63 @@ export async function measurePlanFromBuffer(buffer: Buffer, name: string, args: 
     if (measurements.filter((m) => m.type === "area").length > 1) measurements.push({ label: "Total of areas", type: "total", sqm: round(totalSqm, 2), sqft: round(totalSqm * SQM_TO_SQFT, 0) });
   }
 
+  // ── Shaded regions (demise plans) ────────────────────────────────────────
+  // Architects' GIA/NIA sheets rarely print figures — the shaded polygon IS
+  // the area. Pull every solid fill off the vector page, group by colour,
+  // union each colour's polygons (overlaps and holes handled by rasterising)
+  // and convert at the drawn scale. White, black and greys are paper and
+  // linework, not demise.
+  let fillRegions: any[] | undefined;
+  if (args.fills) {
+    const { paths, patternFills } = await extractFilledPaths(buffer, pageNo);
+    const isNeutral = (hex: string) => {
+      const m = hex.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+      if (!m) return true;
+      const [r, g, b] = [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
+      const spread = Math.max(r, g, b) - Math.min(r, g, b);
+      // True greys (white, black, #c0c0c0…) have zero spread; demise tints
+      // can be very pale — the Plaza GIA lilac #ddd2df is only 13 apart.
+      return spread < 6;
+    };
+    const byColour = new Map<string, typeof paths>();
+    for (const p of paths) { if (isNeutral(p.colour)) continue; const list = byColour.get(p.colour) || []; list.push(p); byColour.set(p.colour, list); }
+    fillRegions = [];
+    // What is actually PAINTED in each colour (respects clips and white
+    // overpaint of cores/voids) is the figure; the polygon union is the
+    // cross-reference — a big gap between them means masks sit on the fill.
+    const painted = byColour.size ? await paintedAreaByColour(buffer, pageNo, [...byColour.keys()], 1.25) : {};
+    for (const [colour, list] of byColour) {
+      const sumPt = list.reduce((s, p) => s + p.areaPt, 0);
+      const { areaPt: unionPt } = await unionAreaPt(list.map((p) => p.subpaths), widthPt, heightPt, 1);
+      const pix = painted[colour];
+      const areaPt = pix && pix.areaPt > 0 ? pix.areaPt : unionPt;
+      const bboxPt = pix?.bboxPt || null;
+      const m2 = metresPerPoint ? areaPt * metresPerPoint * metresPerPoint : null;
+      if (m2 !== null && m2 < 0.5) continue;
+      const largest = [...list].sort((a, b) => b.areaPt - a.areaPt)[0];
+      fillRegions.push({
+        colour,
+        polygons: list.length,
+        sqm: m2 !== null ? round(m2, 1) : null,
+        sqft: m2 !== null ? round(m2 * SQM_TO_SQFT, 0) : null,
+        basis: pix && pix.areaPt > 0 ? "painted pixels (clips and overpaint respected)" : "vector polygon union",
+        vectorUnionSqm: metresPerPoint ? round(unionPt * metresPerPoint * metresPerPoint, 1) : null,
+        summedPolygonsSqm: metresPerPoint ? round(sumPt * metresPerPoint * metresPerPoint, 1) : null,
+        largestPolygonSqm: metresPerPoint ? round(largest.areaPt * metresPerPoint * metresPerPoint, 1) : null,
+        bboxFraction: bboxPt ? { x: round(bboxPt[0] / widthPt, 4), y: round(bboxPt[1] / heightPt, 4), w: round((bboxPt[2] - bboxPt[0]) / widthPt, 4), h: round((bboxPt[3] - bboxPt[1]) / heightPt, 4) } : null,
+        // Fills sitting in the right-hand title-block strip are key swatches /
+        // location keys, not demise — flag them so they aren't summed.
+        inTitleStrip: bboxPt ? bboxPt[0] / widthPt > 0.78 : false,
+        areaPt2: round(areaPt, 0),
+      });
+    }
+    fillRegions.sort((a, b) => (b.areaPt2 || 0) - (a.areaPt2 || 0));
+    if (patternFills) notes.push(`${patternFills} hatched/pattern fill${patternFills === 1 ? "" : "s"} on this sheet could not be measured (only solid colour fills are).`);
+    if (!fillRegions.length) notes.push("No solid coloured fills on this sheet — it isn't a shaded demise plan (or the shading is a hatch pattern / raster image).");
+    else if (!metresPerPoint) notes.push("Fill regions were found but can't be converted to metres without a scale — see the scale note above.");
+    else notes.push("fillRegions: the largest tinted fill on a GIA/NIA sheet is normally the demise; check bboxFraction against the render and that the colour matches the sheet's legend swatch (the swatch itself is tiny). Small tinted regions can be key swatches or overlays.");
+  }
+
   return {
     file: name,
     page: pageNo,
@@ -339,6 +402,7 @@ export async function measurePlanFromBuffer(buffer: Buffer, name: string, args: 
     scheduleLines: scheduleLines.slice(0, 40),
     titleBlock,
     ...(render ? { render } : {}),
+    ...(fillRegions ? { fillRegions } : {}),
     ...(measurements.length ? { measurements } : {}),
     notes,
     guidance: measurements.length

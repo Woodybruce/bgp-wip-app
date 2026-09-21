@@ -124,6 +124,163 @@ export async function pdfPageText(pdfBuffer: Buffer, pageNo: number): Promise<{ 
   return { items, widthPt: vp.width, heightPt: vp.height };
 }
 
+/**
+ * Filled vector paths on a page, with their fill colour, in display
+ * coordinates (points, origin top-left after the page's own rotation). This
+ * is how demise plans encode area: the shaded GIA/NIA extent is a solid fill,
+ * so its polygon IS the measurement. pdf.js ≥5 folds the paint operator into
+ * constructPath(paintOp, [Float32Array per subpath: op,x,y,…], minMax) with
+ * draw ops moveTo 0 / lineTo 1 / curveTo 2 / closePath 3.
+ */
+export interface FilledPath { colour: string; subpaths: Array<Array<[number, number]>>; areaPt: number }
+
+export async function extractFilledPaths(pdfBuffer: Buffer, pageNo: number): Promise<{ paths: FilledPath[]; widthPt: number; heightPt: number; patternFills: number }> {
+  const { pdfjsLib } = await libs();
+  const OPS = pdfjsLib.OPS;
+  const doc = await loadPdf(pdfBuffer);
+  const page = await doc.getPage(pageNo);
+  const vp = page.getViewport({ scale: 1 });
+  const ops = await page.getOperatorList();
+  const FILL_OPS = new Set([OPS.fill, OPS.eoFill, OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke]);
+  type M = [number, number, number, number, number, number];
+  const mul = (m: M, n: number[]): M => [m[0]*n[0]+m[2]*n[1], m[1]*n[0]+m[3]*n[1], m[0]*n[2]+m[2]*n[3], m[1]*n[2]+m[3]*n[3], m[0]*n[4]+m[2]*n[5]+m[4], m[1]*n[4]+m[3]*n[5]+m[5]];
+  const toDisplay = (m: M, x: number, y: number): [number, number] => {
+    const ux = m[0]*x + m[2]*y + m[4], uy = m[1]*x + m[3]*y + m[5];
+    const [dx, dy] = vp.convertToViewportPoint(ux, uy);
+    return [dx, dy];
+  };
+  const signedArea = (pts: Array<[number, number]>) => { let a = 0; for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; a += p[0]*q[1] - q[0]*p[1]; } return a / 2; };
+  const toHex = (args: any): string => {
+    if (Array.isArray(args) && typeof args[0] === "string" && /^#/.test(args[0])) return args[0].toLowerCase();
+    if (Array.isArray(args) && args.length >= 3 && typeof args[0] === "number") return "#" + [args[0], args[1], args[2]].map((v) => Math.round(v <= 1 ? v * 255 : v).toString(16).padStart(2, "0")).join("");
+    if (Array.isArray(args) && args.length === 1 && typeof args[0] === "number") { const g = Math.round(args[0] <= 1 ? args[0] * 255 : args[0]).toString(16).padStart(2, "0"); return `#${g}${g}${g}`; }
+    return String(args?.[0] ?? "unknown");
+  };
+  let ctm: M = [1, 0, 0, 1, 0, 0];
+  let fill = "#000000";
+  const stack: Array<{ ctm: M; fill: string }> = [];
+  const paths: FilledPath[] = [];
+  let patternFills = 0;
+  for (let i = 0; i < ops.fnArray.length; i++) {
+    const fn = ops.fnArray[i], args = ops.argsArray[i];
+    if (fn === OPS.save) stack.push({ ctm, fill });
+    else if (fn === OPS.restore) { const s = stack.pop(); if (s) { ctm = s.ctm; fill = s.fill; } }
+    else if (fn === OPS.transform) ctm = mul(ctm, args as number[]);
+    else if (fn === OPS.setFillRGBColor || fn === OPS.setFillGray || fn === OPS.setFillCMYKColor) fill = toHex(args);
+    else if (fn === OPS.setFillColorN) fill = "pattern";
+    else if (fn === OPS.constructPath) {
+      const paintOp = args[0];
+      if (!FILL_OPS.has(paintOp)) continue;
+      if (fill === "pattern") { patternFills++; continue; }
+      const raw = args[1];
+      const segs: ArrayLike<number>[] = Array.isArray(raw) && raw.length && typeof raw[0] !== "number" ? raw : [raw];
+      const subpaths: Array<Array<[number, number]>> = [];
+      let cur: Array<[number, number]> = [];
+      for (const d of segs) {
+        for (let k = 0; k < d.length;) {
+          const op = d[k];
+          if (op === 0) { if (cur.length >= 3) subpaths.push(cur); cur = [toDisplay(ctm, d[k + 1], d[k + 2])]; k += 3; }
+          else if (op === 1) { cur.push(toDisplay(ctm, d[k + 1], d[k + 2])); k += 3; }
+          else if (op === 2) {
+            // Bézier: sample the curve so curved demise lines keep their area.
+            const p0 = cur[cur.length - 1] || toDisplay(ctm, d[k + 1], d[k + 2]);
+            const c1 = toDisplay(ctm, d[k + 1], d[k + 2]), c2 = toDisplay(ctm, d[k + 3], d[k + 4]), p3 = toDisplay(ctm, d[k + 5], d[k + 6]);
+            for (let t = 0.25; t <= 1.0001; t += 0.25) {
+              const u = 1 - t;
+              cur.push([u*u*u*p0[0] + 3*u*u*t*c1[0] + 3*u*t*t*c2[0] + t*t*t*p3[0], u*u*u*p0[1] + 3*u*u*t*c1[1] + 3*u*t*t*c2[1] + t*t*t*p3[1]]);
+            }
+            k += 7;
+          }
+          else if (op === 3) { if (cur.length >= 3) subpaths.push(cur); cur = []; k += 1; }
+          else break;
+        }
+      }
+      if (cur.length >= 3) subpaths.push(cur);
+      if (!subpaths.length) continue;
+      // Even-odd / nonzero both make opposite-wound inner rings subtract.
+      const areaPt = Math.abs(subpaths.reduce((s, sp) => s + signedArea(sp), 0));
+      paths.push({ colour: fill, subpaths, areaPt });
+    }
+  }
+  return { paths, widthPt: vp.width, heightPt: vp.height, patternFills };
+}
+
+/**
+ * Union area (in pt²) of a set of polygons, by rasterising them onto an
+ * offscreen canvas and counting covered pixels — overlapping fills and
+ * holes come out right without a polygon-clipping library.
+ */
+export async function unionAreaPt(polys: Array<Array<Array<[number, number]>>>, widthPt: number, heightPt: number, pxPerPt = 2): Promise<{ areaPt: number; bboxPt: [number, number, number, number] | null }> {
+  const { createCanvas } = await libs();
+  const w = Math.ceil(widthPt * pxPerPt), h = Math.ceil(heightPt * pxPerPt);
+  const canvas = createCanvas(w, h); const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = "#fff";
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const subpaths of polys) {
+    ctx.beginPath();
+    for (const sp of subpaths) {
+      sp.forEach(([x, y], i) => { if (i === 0) ctx.moveTo(x * pxPerPt, y * pxPerPt); else ctx.lineTo(x * pxPerPt, y * pxPerPt); minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); });
+      ctx.closePath();
+    }
+    ctx.fill("evenodd");
+  }
+  const data = ctx.getImageData(0, 0, w, h).data;
+  let n = 0;
+  for (let i = 0; i < data.length; i += 4) if (data[i] > 127) n++;
+  return { areaPt: n / (pxPerPt * pxPerPt), bboxPt: isFinite(minX) ? [minX, minY, maxX, maxY] : null };
+}
+
+/**
+ * Painted area per colour, from an actual render of the page. Unlike the
+ * vector polygons this respects clipping and overpainting (cores, voids and
+ * white masks drawn on top of a demise fill), so it is the figure to trust;
+ * the polygon union is the cross-reference. Anti-aliased edge pixels are
+ * assigned to the nearest listed colour within `tolerance` (0–441).
+ */
+export async function paintedAreaByColour(pdfBuffer: Buffer, pageNo: number, colours: string[], pxPerPt = 1.5, tolerance = 28): Promise<Record<string, { areaPt: number; bboxPt: [number, number, number, number] | null }>> {
+  const { pdfjsLib, createCanvas } = await libs();
+  const doc = await loadPdf(pdfBuffer);
+  const page = await doc.getPage(pageNo);
+  const vp = page.getViewport({ scale: pxPerPt });
+  const factory = new NapiCanvasFactory(createCanvas);
+  const w = Math.ceil(vp.width), h = Math.ceil(vp.height);
+  const { canvas, context } = factory.create(w, h);
+  context.fillStyle = "#ffffff"; context.fillRect(0, 0, w, h);
+  await page.render({ canvasContext: context, viewport: vp, canvasFactory: factory }).promise;
+  const data = context.getImageData(0, 0, w, h).data;
+  const targets = colours.map((hex) => {
+    const m = hex.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+    return m ? { hex, r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) } : null;
+  }).filter(Boolean) as Array<{ hex: string; r: number; g: number; b: number }>;
+  const counts: Record<string, { n: number; minX: number; minY: number; maxX: number; maxY: number }> = {};
+  for (const t of targets) counts[t.hex] = { n: 0, minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  const tol2 = tolerance * tolerance;
+  void pdfjsLib;
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    const r = data[i], g = data[i + 1], b = data[i + 2];
+    if (r > 250 && g > 250 && b > 250) continue; // paper
+    // Neutral pixels are linework and its anti-aliasing, never a tint —
+    // without this a pale lilac fill "matches" every grey edge on the sheet.
+    if (Math.max(r, g, b) - Math.min(r, g, b) < 5) continue;
+    let best: { hex: string } | null = null, bestD = tol2;
+    for (const t of targets) {
+      const d = (r - t.r) ** 2 + (g - t.g) ** 2 + (b - t.b) ** 2;
+      if (d <= bestD) { bestD = d; best = t; }
+    }
+    if (!best) continue;
+    const c = counts[best.hex]; c.n++;
+    const x = p % w, y = (p - x) / w;
+    if (x < c.minX) c.minX = x; if (x > c.maxX) c.maxX = x; if (y < c.minY) c.minY = y; if (y > c.maxY) c.maxY = y;
+  }
+  factory.destroy({ canvas, context });
+  const out: Record<string, { areaPt: number; bboxPt: [number, number, number, number] | null }> = {};
+  for (const [hex, c] of Object.entries(counts)) {
+    out[hex] = { areaPt: c.n / (pxPerPt * pxPerPt), bboxPt: c.n ? [c.minX / pxPerPt, c.minY / pxPerPt, c.maxX / pxPerPt, c.maxY / pxPerPt] : null };
+  }
+  return out;
+}
+
 /** Render one page (or a fractional region of it) to PNG/JPEG at a DPI-aware scale. */
 export async function rasterisePdfPageBuffer(pdfBuffer: Buffer, pageNo: number, opts: RasteriseOptions = {}): Promise<RasterisedPage> {
   const { pdfjsLib, createCanvas } = await libs();
