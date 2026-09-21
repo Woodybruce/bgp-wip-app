@@ -177,6 +177,12 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
       skipped.push("instagram_handle (already set)");
       continue;
     }
+    // Instagram is not tracked for landlord-shaped companies (same type set
+    // as the authoritative isLandlord flag in brand-profile.ts).
+    if (field === "instagram_handle" && /landlord|investor|reit|developer|fund/i.test((c as any).company_type || "")) {
+      skipped.push("instagram_handle (landlord — not tracked)");
+      continue;
+    }
     if (aiVal === null || aiVal === undefined) continue;
 
     // Validate rollout_status

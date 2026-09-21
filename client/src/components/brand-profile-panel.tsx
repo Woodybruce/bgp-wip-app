@@ -1115,11 +1115,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               <Label className="text-xs">Backers / investors</Label>
               <Input value={(form.backers as string) || ""} onChange={(e) => setForm({ ...form, backers: e.target.value })} placeholder="e.g. Sequoia, Index Ventures" />
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label className="text-xs">Instagram handle</Label>
-                <Input value={(form.instagram_handle as string) || ""} onChange={(e) => setForm({ ...form, instagram_handle: e.target.value })} placeholder="@brandname" />
-              </div>
+            <div className={`grid gap-2 ${isLandlord ? "grid-cols-1" : "grid-cols-2"}`}>
+              {!isLandlord && (
+                <div>
+                  <Label className="text-xs">Instagram handle</Label>
+                  <Input value={(form.instagram_handle as string) || ""} onChange={(e) => setForm({ ...form, instagram_handle: e.target.value })} placeholder="@brandname" />
+                </div>
+              )}
               <div>
                 <Label className="text-xs">TikTok handle</Label>
                 <Input value={(form.tiktok_handle as string) || ""} onChange={(e) => setForm({ ...form, tiktok_handle: e.target.value })} placeholder="@brandname" />
@@ -1251,7 +1253,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             <div className="flex items-center gap-2 flex-wrap" data-testid="brand-overview-actions">
               {(c.domain_url || c.domain) && <Button variant="outline" size="sm" asChild><a href={c.domain_url || `https://${c.domain}`} target="_blank" rel="noreferrer" data-testid="link-website"><Globe />Website</a></Button>}
               {c.linkedin_url && <Button variant="outline" size="sm" asChild><a href={c.linkedin_url} target="_blank" rel="noreferrer" data-testid="link-linkedin"><Linkedin />LinkedIn</a></Button>}
-              {c.instagram_handle && <Button variant="outline" size="sm" asChild><a href={`https://instagram.com/${c.instagram_handle.replace(/^@/, "")}`} target="_blank" rel="noreferrer" data-testid="link-instagram"><Instagram />Instagram</a></Button>}
+              {c.instagram_handle && !isLandlord && <Button variant="outline" size="sm" asChild><a href={`https://instagram.com/${c.instagram_handle.replace(/^@/, "")}`} target="_blank" rel="noreferrer" data-testid="link-instagram"><Instagram />Instagram</a></Button>}
               {c.phone && <Button variant="outline" size="sm" asChild><a href={`tel:${c.phone}`} data-testid="link-phone"><Phone />Call</a></Button>}
               {data.contacts.find(contact => contact.email) && <Button variant="outline" size="sm" asChild><a href={`mailto:${data.contacts.find(contact => contact.email)?.email}`}><Mail />Email</a></Button>}
               {!isClientViewer && <>
@@ -1424,7 +1426,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   })()}
                 </div>
               )}
-              {c.instagram_handle && (() => {
+              {c.instagram_handle && !isLandlord && (() => {
                 const ig = data.socialStats?.find((s: any) => s.platform === "instagram");
                 return (
                   <div>
@@ -4975,7 +4977,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         );
       })()}
 
-      <BrandInstagramCard companyId={companyId} />
+      {!isLandlord && <BrandInstagramCard companyId={companyId} />}
       </div>
 
       {/* Menu / Best-sellers moved up — paired with Key contacts

@@ -367,7 +367,8 @@ export async function backfillInstagramHandles(limit = 500): Promise<{
       WHERE (instagram_handle IS NULL OR instagram_handle = '')
         AND (domain IS NOT NULL OR domain_url IS NOT NULL)
         AND merged_into_id IS NULL
-      ORDER BY (company_type ILIKE 'tenant%') DESC, name
+        AND company_type ILIKE 'tenant%'
+      ORDER BY name
       LIMIT $1`,
     [limit]
   );
