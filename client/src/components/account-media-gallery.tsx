@@ -64,7 +64,13 @@ function MediaSection({
   onDelete: (id: string) => void;
   testPrefix: string;
 }) {
-  if (images.length === 0) return null;
+  if (images.length === 0) {
+    return (
+      <div className="text-[11px] text-muted-foreground/70" data-testid={`${testPrefix}-empty`}>
+        {title} <span className="font-mono tabular-nums">(0)</span> — none yet.
+      </div>
+    );
+  }
   return (
     <div>
       <div className="text-[11px] text-muted-foreground mb-1.5">
@@ -113,6 +119,69 @@ function MediaSection({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// Properties sub-grouping: one labelled block per property so a 75-image
+// portfolio isn't a single flat grid. Alphabetical, "Unassigned" last.
+function PropertiesSection({
+  images,
+  canEdit,
+  onOpen,
+  onDelete,
+}: {
+  images: AccountMediaRow[];
+  canEdit: boolean;
+  onOpen: (img: AccountMediaRow) => void;
+  onDelete: (id: string) => void;
+}) {
+  if (images.length === 0) {
+    return (
+      <div className="text-[11px] text-muted-foreground/70" data-testid="account-media-properties-empty">
+        Properties <span className="font-mono tabular-nums">(0)</span> — none yet.
+      </div>
+    );
+  }
+  const byProperty = new Map<string, AccountMediaRow[]>();
+  for (const img of images) {
+    const key = img.property_name || "";
+    if (!byProperty.has(key)) byProperty.set(key, []);
+    byProperty.get(key)!.push(img);
+  }
+  const names = [...byProperty.keys()].sort((a, b) => {
+    if (!a) return 1;
+    if (!b) return -1;
+    return a.localeCompare(b);
+  });
+  if (names.length === 1) {
+    return (
+      <MediaSection
+        title={names[0] ? `Properties — ${names[0]}` : "Properties"}
+        images={images}
+        canEdit={canEdit}
+        onOpen={onOpen}
+        onDelete={onDelete}
+        testPrefix="account-media-properties"
+      />
+    );
+  }
+  return (
+    <div className="space-y-3" data-testid="account-media-properties">
+      <div className="text-[11px] text-muted-foreground">
+        Properties <span className="font-mono tabular-nums">({images.length})</span>
+      </div>
+      {names.map(name => (
+        <MediaSection
+          key={name || "unassigned"}
+          title={name || "Unassigned"}
+          images={byProperty.get(name)!}
+          canEdit={canEdit}
+          onOpen={onOpen}
+          onDelete={onDelete}
+          testPrefix={`account-media-properties-${(name || "unassigned").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+        />
+      ))}
     </div>
   );
 }
@@ -168,7 +237,7 @@ export function LandlordAccountGallery({
       </div>
       <MediaSection title="BGP-approved" images={data.groups.approved} canEdit={canEdit} onOpen={onOpen} onDelete={onDelete} testPrefix="account-media-approved" />
       <MediaSection title="Corporate" images={data.groups.corporate} canEdit={canEdit} onOpen={onOpen} onDelete={onDelete} testPrefix="account-media-corporate" />
-      <MediaSection title="Properties" images={data.groups.properties} canEdit={canEdit} onOpen={onOpen} onDelete={onDelete} testPrefix="account-media-properties" />
+      <PropertiesSection images={data.groups.properties} canEdit={canEdit} onOpen={onOpen} onDelete={onDelete} />
     </div>
   );
 }
