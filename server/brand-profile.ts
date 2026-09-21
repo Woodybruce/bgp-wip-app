@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import { isOfficialBrandWebsite, publishableBrandImage, publishableBrandStore, prepareBrandIdentityUpdate, quarantineBrandIdentityDependents } from "./brand-publishing";
 import { PENDING_CONTACT_SUGGESTIONS_SQL } from "./brand-profile-suggestions";
 import { dealTotalsSql, isActiveDealStatus, isCompletedDealStatus } from "./brand-profile-deals";
+import { inferCountryFromAddress } from "../shared/geo-country";
 
 const router = Router();
 
@@ -29,34 +30,8 @@ pool.query(`
     ON brand_signals(brand_company_id, dedupe_key) WHERE dedupe_key IS NOT NULL;
 `).catch((e) => console.warn("[brand-signals] v2 columns:", e?.message));
 
-// Cheap ISO 3166-1 alpha-2 inference from Google Places formatted_address.
-// We only get formatted_address back from Text Search (no structured
-// components without an extra Place Details call), so we parse the tail.
-// Falls back to null when nothing matches — the UI treats null as "Other".
-const COUNTRY_TAIL_TO_ISO: Array<[RegExp, string]> = [
-  [/\b(UK|United Kingdom)\.?$/i, "GB"],
-  [/\bUSA\.?$/i, "US"], [/\bUnited States\.?$/i, "US"],
-  [/\bFrance\.?$/i, "FR"], [/\bItaly\.?$/i, "IT"], [/\bSpain\.?$/i, "ES"],
-  [/\bGermany\.?$/i, "DE"], [/\bNetherlands\.?$/i, "NL"],
-  [/\bBelgium\.?$/i, "BE"], [/\bSwitzerland\.?$/i, "CH"],
-  [/\bAustria\.?$/i, "AT"], [/\bIreland\.?$/i, "IE"],
-  [/\bDenmark\.?$/i, "DK"], [/\bSweden\.?$/i, "SE"],
-  [/\bNorway\.?$/i, "NO"], [/\bFinland\.?$/i, "FI"],
-  [/\bPortugal\.?$/i, "PT"], [/\bPoland\.?$/i, "PL"],
-  [/\b(UAE|United Arab Emirates)\.?$/i, "AE"],
-  [/\bSaudi Arabia\.?$/i, "SA"], [/\bQatar\.?$/i, "QA"],
-  [/\bJapan\.?$/i, "JP"], [/\bSouth Korea\.?$/i, "KR"],
-  [/\bChina\.?$/i, "CN"], [/\bHong Kong\.?$/i, "HK"],
-  [/\bSingapore\.?$/i, "SG"], [/\bThailand\.?$/i, "TH"],
-  [/\bAustralia\.?$/i, "AU"], [/\bNew Zealand\.?$/i, "NZ"],
-  [/\bCanada\.?$/i, "CA"], [/\bBrazil\.?$/i, "BR"], [/\bMexico\.?$/i, "MX"],
-];
-
-function inferCountryFromAddress(addr: string | null | undefined): string | null {
-  if (!addr) return null;
-  for (const [re, iso] of COUNTRY_TAIL_TO_ISO) if (re.test(addr.trim())) return iso;
-  return null;
-}
+// Country inference lives in shared/geo-country.ts (Delivery 2) — reused by
+// landlord discovery, the geocoder and the reconciliation report.
 
 // ─── Rent affordability helper ───────────────────────────────────────────
 // Returns { avgRentPsf, avgTurnoverPsf, rentToTurnoverPct, peerRentPsf, sample }.

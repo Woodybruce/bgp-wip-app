@@ -22,6 +22,7 @@ import { pool } from "./db";
 import { scraperFetch, isScraperApiAvailable } from "./utils/scraperapi";
 import { callClaude, safeParseJSON, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { geocodeBatch } from "./geocode";
+import { buildGeocodeQuery } from "../shared/geo-country";
 import { saveFile } from "./file-storage";
 import { discoverCompanyPhotographyPages, extractCompanyImageUrls, isPublicImageSourceUrl } from "./company-image-discovery";
 
@@ -52,6 +53,10 @@ async function ensureTable() {
   `);
   // Additive for rows that pre-date image_urls.
   await pool.query(`ALTER TABLE landlord_website_findings ADD COLUMN IF NOT EXISTS image_urls JSONB`).catch(() => {});
+  // Landlord-level home country (ISO-2 from the site's own footer/contact
+  // page) — the fallback hint when an asset page carries no country of its
+  // own. Additive; NULL on pre-existing rows.
+  await pool.query(`ALTER TABLE landlord_website_findings ADD COLUMN IF NOT EXISTS home_country TEXT`).catch(() => {});
   // User-dismissed discovery rows (wrong matches, dupes already in the
   // CRM under a different name). Keyed by the same stable discovery key
   // the board uses ("scraped:<name>" / "lr:<title_number>") so a
@@ -74,7 +79,12 @@ interface LandlordFindings {
   ir_contact: { name?: string; email?: string; phone?: string; role?: string } | null;
   board_members: Array<{ name: string; role?: string }>;
   annual_report_url: string | null;
-  properties: Array<{ name: string; address?: string; postcode?: string; sector?: string; lat?: number | null; lng?: number | null; formatted_address?: string | null }>;
+  // ISO-2 country per asset, evidenced by the asset page's own context
+  // (/ie/ URLs, Irish addresses, French copy) — NULL when not evidenced,
+  // never guessed. home_country is the landlord-level equivalent from the
+  // footer/contact/about page and only acts as the geocode fallback.
+  home_country?: string | null;
+  properties: Array<{ name: string; address?: string; postcode?: string; sector?: string; country?: string | null; lat?: number | null; lng?: number | null; formatted_address?: string | null }>;
   // High-quality image URLs harvested from the landlord's own
   // /portfolio + /our-places pages — passed into the image pipeline
   // as a priority source so the gallery uses the landlord's own
@@ -123,7 +133,7 @@ function buildPrompt(landlordName: string, domain: string, pages: Array<{ url: s
     .map((p, i) => `--- PAGE ${i + 1}: ${p.url} ---\n${p.text}`)
     .join("\n\n");
 
-  return `You are extracting structured intel from a UK commercial landlord's website for a property brokerage's CRM.
+  return `You are extracting structured intel from a commercial landlord's website for a property brokerage's CRM.
 
 Landlord: ${landlordName}
 Domain: ${domain}
@@ -135,8 +145,9 @@ I've fetched ${pages.length} pages from their site (rendered with JavaScript). P
 3. **ir_contact** — investor-relations contact: { name, email, phone, role }. Only fill in fields you actually see; omit fields not present.
 4. **board_members** — array of senior leadership / board members visible on the site: [{ name, role }]. Cap at 12.
 5. **annual_report_url** — direct URL to the most recent annual report PDF. Look in the investor section for "annual report" / "results" PDFs.
-6. **properties** — array of properties / assets they own, each: { name, address (optional), postcode (optional), sector (retail / office / mixed / residential / industrial / leisure / hotel) }. Pull every named asset you can find; for a big REIT this might be 20-100+ items.
-7. **raw_notes** — 1-2 sentence summary of anything else interesting (e.g. "Disposed of Bluewater stake Apr 2025", "Pivoting to BTR").
+6. **home_country** — the landlord's home country as an ISO 3166-1 alpha-2 code (e.g. "GB", "IE", "FR"), evidenced by the site's footer / contact page / about page. Null when not evidenced — never guess.
+7. **properties** — array of properties / assets they own, each: { name, address (optional), postcode (optional), sector (retail / office / mixed / residential / industrial / leisure / hotel), country (ISO 3166-1 alpha-2, optional) }. Landlords operate across borders — set country from the asset page's own context (/ie/ URLs, Irish addresses, French copy) and use null when nothing evidences it. Pull every named asset you can find; for a big REIT this might be 20-100+ items.
+8. **raw_notes** — 1-2 sentence summary of anything else interesting (e.g. "Disposed of Bluewater stake Apr 2025", "Pivoting to BTR").
 
 Return ONLY a JSON object with these exact keys. No markdown, no preamble. Use null for fields you can't find; use [] for empty arrays.
 
@@ -271,23 +282,25 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
     ir_contact: aiOut?.ir_contact || null,
     board_members: Array.isArray(aiOut?.board_members) ? aiOut.board_members.slice(0, 12) : [],
     annual_report_url: aiOut?.annual_report_url || null,
-    properties: Array.isArray(aiOut?.properties) ? aiOut.properties.slice(0, 200) : [],
+    home_country: typeof aiOut?.home_country === "string" ? aiOut.home_country.toUpperCase() : null,
+    properties: (Array.isArray(aiOut?.properties) ? aiOut.properties.slice(0, 200) : [])
+      .map((p: any) => ({ ...p, country: typeof p?.country === "string" ? p.country.toUpperCase() : (p?.country ?? null) })),
     image_urls: imageUrls,
     raw_notes: aiOut?.raw_notes || null,
   };
 
-  // Geocode each scraped property so the map can plot them. Query
-  // strategy: "Name, Postcode UK" when both present, else "Name UK".
-  // Caps at 60 to keep the Google bill predictable on a big REIT —
-  // Land Sec has ~30 named places, far below the cap. Postcodes
-  // already plot for free via the cache so re-scraping the same
-  // landlord later is essentially zero-cost.
+  // Geocode each scraped property so the map can plot them. Country-aware
+  // (Delivery 2): the query tail is the asset's evidenced country (falling
+  // back to the landlord's home_country, then "UK" only when nothing was
+  // evidenced), and the hint goes to the geocoder, which validates the
+  // result's country against it — a mismatch stays unplotted rather than
+  // acquiring a guessed location (Dundrum → Newcastle). Caps at 60 to keep
+  // the Google bill predictable on a big REIT — Land Sec has ~30 named
+  // places, far below the cap. Postcodes already plot for free via the
+  // cache so re-scraping the same landlord later is essentially zero-cost.
   if (findings.properties.length > 0) {
     progress[companyId] = { state: "geocoding", updatedAt: new Date().toISOString() };
-    const toGeocode = findings.properties.slice(0, 60).map(p => {
-      const parts = [p.name, p.postcode, p.address, "UK"].filter(Boolean);
-      return parts.join(", ");
-    });
+    const toGeocode = findings.properties.slice(0, 60).map(p => buildGeocodeQuery(p, findings.home_country));
     const results = await geocodeBatch(toGeocode, 4);
     for (let i = 0; i < results.length; i++) {
       findings.properties[i].lat = results[i].lat;
@@ -299,8 +312,8 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
   await pool.query(
     `INSERT INTO landlord_website_findings
        (company_id, source_urls, logo_url, share_ticker, ir_contact,
-        board_members, annual_report_url, properties, image_urls, raw_notes, error)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL)
+        board_members, annual_report_url, properties, image_urls, raw_notes, home_country, error)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL)
      ON CONFLICT (company_id) DO UPDATE SET
        scraped_at = NOW(),
        source_urls = $2,
@@ -312,6 +325,7 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
        properties = $8,
        image_urls = $9,
        raw_notes = $10,
+       home_country = $11,
        error = NULL`,
     [
       companyId,
@@ -324,6 +338,7 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
       JSON.stringify(findings.properties),
       JSON.stringify(findings.image_urls),
       findings.raw_notes,
+      findings.home_country ?? null,
     ]
   );
 
@@ -419,7 +434,9 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
 // collapses whitespace. So "Bluewater Shopping Centre" and "Bluewater"
 // both reduce to "bluewater"; "St David's Dewi Sant" reduces to "st
 // davids dewi sant" and matches "St. David's Dewi Sant" in CRM.
-function normalisePropertyName(raw: string | null | undefined): string {
+// Exported for the account resolver, reconciliation report and repair
+// script — the same strict matching rules everywhere.
+export function normalisePropertyName(raw: string | null | undefined): string {
   if (!raw) return "";
   return String(raw)
     .toLowerCase()
@@ -430,7 +447,7 @@ function normalisePropertyName(raw: string | null | undefined): string {
     .trim();
 }
 
-function normalisePostcode(raw: string | null | undefined): string {
+export function normalisePostcode(raw: string | null | undefined): string {
   if (!raw) return "";
   return String(raw).toUpperCase().replace(/\s+/g, "");
 }
@@ -531,20 +548,33 @@ export async function autoLinkScrapedProperties(
 
 // Create a new crm_properties row from a scraped property record,
 // pre-linked to this landlord. Address goes in as a JSONB shell so the
-// existing property views render it.
+// existing property views render it. The scraped source country is
+// preserved on the row (migration 0043) — with a retry without the column
+// so the write path works before that migration is applied.
 export async function createPropertyFromScraped(
   companyId: string,
-  item: { name: string; address?: string; postcode?: string; sector?: string },
+  item: { name: string; address?: string; postcode?: string; sector?: string; country?: string | null },
 ): Promise<{ id: string }> {
   const addr = item.address || item.postcode ? { formatted: item.address || null, postcode: item.postcode || null } : null;
   const assetClass = item.sector ? item.sector.charAt(0).toUpperCase() + item.sector.slice(1).toLowerCase() : null;
-  const { rows } = await pool.query<{ id: string }>(
-    `INSERT INTO crm_properties (name, postcode, address, landlord_id, asset_class)
-     VALUES ($1, $2, $3::jsonb, $4, $5)
-     RETURNING id`,
-    [item.name, item.postcode || null, addr ? JSON.stringify(addr) : null, companyId, assetClass]
-  );
-  return { id: rows[0].id };
+  try {
+    const { rows } = await pool.query<{ id: string }>(
+      `INSERT INTO crm_properties (name, postcode, address, landlord_id, asset_class, country)
+       VALUES ($1, $2, $3::jsonb, $4, $5, $6)
+       RETURNING id`,
+      [item.name, item.postcode || null, addr ? JSON.stringify(addr) : null, companyId, assetClass, item.country || null]
+    );
+    return { id: rows[0].id };
+  } catch (e: any) {
+    if (e?.code !== "42703") throw e;
+    const { rows } = await pool.query<{ id: string }>(
+      `INSERT INTO crm_properties (name, postcode, address, landlord_id, asset_class)
+       VALUES ($1, $2, $3::jsonb, $4, $5)
+       RETURNING id`,
+      [item.name, item.postcode || null, addr ? JSON.stringify(addr) : null, companyId, assetClass]
+    );
+    return { id: rows[0].id };
+  }
 }
 
 // Discovery keys this landlord has dismissed from the Properties board.
@@ -581,7 +611,7 @@ export async function getLandlordFindings(companyId: string): Promise<LandlordFi
   await ensureTable();
   const { rows } = await pool.query(
     `SELECT scraped_at, source_urls, logo_url, share_ticker, ir_contact,
-            board_members, annual_report_url, properties, image_urls, raw_notes, error
+            board_members, annual_report_url, properties, image_urls, raw_notes, error, home_country
        FROM landlord_website_findings WHERE company_id = $1`,
     [companyId]
   );
