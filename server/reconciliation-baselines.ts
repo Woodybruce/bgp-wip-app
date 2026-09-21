@@ -149,6 +149,84 @@ export const LANDSEC_OFFICIAL_PORTFOLIO: BaselineSeed[] = [
   landsecSeed("Kings Gate", "disposed", LANDSEC_FY26_URL),              // resi scheme sold out
 ];
 
+// ── CEG (Commercial Estates Group) ───────────────────────────────────────
+// CAVEAT: ceg.co.uk is currently unreachable (DNS/bot-check), so this list
+// is built from Wayback captures of ceg.co.uk (workspaces page 11 Jan 2025,
+// development page 14 Jan 2025, news to Nov 2025) cross-checked against the
+// OakNorth £64.5m refinancing announcement (20 Nov 2024, eight office-led
+// sites) and the 2020 locations archive. Re-verify against the live site
+// when accessible.
+//
+// CORPORATE EVENT: Commercial Estates Group Ltd entered administration on
+// 10 Oct 2025; the operating business was sold to RPG1 Management Ltd /
+// Dooba Finance (14 Oct 2025), and RPG1 moved inside the Dooba Group in
+// Feb 2026. The CEG brand continues — Leeds City Council still names CEG
+// as its Temple Works partner (Feb 2026) and the Kirkstall Forge
+// housebuilder partner was announced Nov 2025 — but the property-owning
+// SPVs are separate from the insolvent management company, so ownership
+// and counterparty records for this account need review before any
+// reliance is placed on them.
+//
+// Categories: destination = standing income-producing workspace (2025
+// workspaces page, several cross-confirmed by OakNorth 2024), development
+// = named development/land-promotion projects (2025 development page).
+// The unnamed "3 Yorkshire offices" sale to Regional REIT (Jul 2022) and
+// the unconfirmed-date "M Industrial" portfolio sale are not nameable and
+// are therefore not seeded; Skipton Road is the only named disposal.
+
+export const CEG_BASELINE_NAME = "ceg-official-portfolio";
+
+const CEG_PORTFOLIO_URL = "https://www.ceg.co.uk/";
+const CEG_OAKNORTH_URL = "https://oaknorth.co.uk/press/the-ceg-group-refinancing-of-eight-major-office-led-sites-following-64-5m-loan-from-oaknorth/";
+const CEG_SOURCE_DATE = "2026-09-21";
+
+const cegSeed = (
+  destination_name: string,
+  category: BaselineSeed["category"],
+  source_url = CEG_PORTFOLIO_URL,
+): BaselineSeed => ({
+  destination_name,
+  country: "GB",
+  official_group_key: null,
+  expected_crm_property_count: 1,
+  category,
+  source_url,
+  source_date: CEG_SOURCE_DATE,
+});
+
+export const CEG_OFFICIAL_PORTFOLIO: BaselineSeed[] = [
+  // Standing workspace — ceg.co.uk/workspaces (Jan 2025 capture)
+  cegSeed("Alpha", "destination"),                          // Birmingham
+  cegSeed("Tricorn House", "destination"),                  // Birmingham
+  cegSeed("Central House", "destination"),                  // Harrogate
+  cegSeed("Crown House", "destination"),                    // Ipswich
+  cegSeed("Jackson House", "destination"),                  // Sale
+  cegSeed("Witan Studios", "destination"),                  // Milton Keynes
+  cegSeed("69 Park Lane", "destination"),                   // Croydon
+  cegSeed("Verdant", "destination"),                        // Edinburgh
+  cegSeed("Norfolk & Ashton", "destination"),               // Milton Keynes
+  cegSeed("Number One Kirkstall Forge", "destination"),     // Leeds
+  // Cross-confirmed standing assets — OakNorth refinancing (Nov 2024)
+  cegSeed("East West", "destination", CEG_OAKNORTH_URL),    // Nottingham
+  cegSeed("Onyx", "destination", CEG_OAKNORTH_URL),         // Glasgow
+  cegSeed("The Stones", "destination", CEG_OAKNORTH_URL),   // Edinburgh
+  cegSeed("Infinity House", "destination", CEG_OAKNORTH_URL), // Crewe
+  cegSeed("Concentric", "destination", CEG_OAKNORTH_URL),   // Warrington
+  cegSeed("196 Deansgate", "destination", CEG_OAKNORTH_URL), // Manchester
+  // Developments — ceg.co.uk/development (Jan 2025 capture) + 2025 news
+  cegSeed("Kirkstall Forge Development Land", "development"), // Leeds
+  cegSeed("Temple Works", "development"),                   // Leeds
+  cegSeed("EQ", "development"),                             // Bristol
+  cegSeed("Smallbrook Queensway", "development"),           // Birmingham
+  cegSeed("Vesuvius", "development"),                       // Worksop
+  cegSeed("Carlyon Bay", "development"),                    // Cornwall
+  cegSeed("Thurmaston", "development"),                     // Leicestershire
+  cegSeed("Culham", "development"),                         // Oxfordshire (land)
+  cegSeed("Oughtibridge", "development"),                   // Sheffield (land)
+  // Named disposal — sold to Home Group pre-2020
+  cegSeed("Skipton Road, Harrogate", "disposed"),
+];
+
 // ── Registry ─────────────────────────────────────────────────────────────
 // One baseline per account, chosen by company name; the ?baseline= query
 // param remains an explicit override. Adding a pilot = one more entry here.
@@ -162,6 +240,7 @@ export interface BaselineDef {
 export const RECONCILIATION_BASELINES: BaselineDef[] = [
   { name: HAMMERSON_BASELINE_NAME, companyPattern: /hammerson/i, seeds: HAMMERSON_OFFICIAL_DESTINATIONS },
   { name: LANDSEC_BASELINE_NAME, companyPattern: /\blandsec\b|land securities/i, seeds: LANDSEC_OFFICIAL_PORTFOLIO },
+  { name: CEG_BASELINE_NAME, companyPattern: /\bceg\b|commercial estates/i, seeds: CEG_OFFICIAL_PORTFOLIO },
 ];
 
 export function defaultBaselineForCompany(companyName: string): BaselineDef | undefined {

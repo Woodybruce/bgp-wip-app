@@ -25,6 +25,8 @@ let ensureBaselineSeeded: typeof import("./account-reconciliation").ensureBaseli
 let HAMMERSON_OFFICIAL_DESTINATIONS: typeof import("./reconciliation-baselines").HAMMERSON_OFFICIAL_DESTINATIONS;
 let LANDSEC_OFFICIAL_PORTFOLIO: typeof import("./reconciliation-baselines").LANDSEC_OFFICIAL_PORTFOLIO;
 let LANDSEC_BASELINE_NAME: typeof import("./reconciliation-baselines").LANDSEC_BASELINE_NAME;
+let CEG_OFFICIAL_PORTFOLIO: typeof import("./reconciliation-baselines").CEG_OFFICIAL_PORTFOLIO;
+let CEG_BASELINE_NAME: typeof import("./reconciliation-baselines").CEG_BASELINE_NAME;
 let defaultBaselineForCompany: typeof import("./reconciliation-baselines").defaultBaselineForCompany;
 
 before(async () => {
@@ -34,7 +36,7 @@ before(async () => {
   destinationGatePassed = recon.destinationGatePassed;
   reconciliationDeniedForScope = recon.reconciliationDeniedForScope;
   ensureBaselineSeeded = recon.ensureBaselineSeeded;
-  ({ HAMMERSON_OFFICIAL_DESTINATIONS, LANDSEC_OFFICIAL_PORTFOLIO, LANDSEC_BASELINE_NAME, defaultBaselineForCompany } = await import("./reconciliation-baselines"));
+  ({ HAMMERSON_OFFICIAL_DESTINATIONS, LANDSEC_OFFICIAL_PORTFOLIO, LANDSEC_BASELINE_NAME, CEG_OFFICIAL_PORTFOLIO, CEG_BASELINE_NAME, defaultBaselineForCompany } = await import("./reconciliation-baselines"));
 });
 
 import type { AccountProperty, AccountView } from "./account-resolver";
@@ -200,6 +202,19 @@ describe("ensureBaselineSeeded", () => {
     assert.equal(await ensureBaselineSeeded(wrongAccount, "HAM", LANDSEC_BASELINE_NAME, "Hammerson plc"), 0);
     assert.equal(wrongAccount.inserts.length, 0);
   });
+
+  it("seeds the CEG portfolio for the CEG account only", async () => {
+    const pool = mockPool(0);
+    const n = await ensureBaselineSeeded(pool, "CEG", CEG_BASELINE_NAME, "CEG");
+    assert.equal(n, CEG_OFFICIAL_PORTFOLIO.length);
+    assert.equal(pool.inserts.length, CEG_OFFICIAL_PORTFOLIO.length);
+    const categories = new Set(CEG_OFFICIAL_PORTFOLIO.map(s => s.category));
+    assert.deepEqual([...categories].sort(), ["destination", "development", "disposed"]);
+    assert.ok(CEG_OFFICIAL_PORTFOLIO.every(s => s.country === "GB"), "CEG baseline is all GB");
+    const wrongAccount = mockPool(0);
+    assert.equal(await ensureBaselineSeeded(wrongAccount, "HAM", CEG_BASELINE_NAME, "Hammerson plc"), 0);
+    assert.equal(wrongAccount.inserts.length, 0);
+  });
 });
 
 describe("defaultBaselineForCompany", () => {
@@ -207,7 +222,16 @@ describe("defaultBaselineForCompany", () => {
     assert.equal(defaultBaselineForCompany("Hammerson plc")?.name, "hammerson-official-destinations");
     assert.equal(defaultBaselineForCompany("Landsec")?.name, "landsec-official-portfolio");
     assert.equal(defaultBaselineForCompany("Land Securities Group PLC")?.name, "landsec-official-portfolio");
+    assert.equal(defaultBaselineForCompany("CEG")?.name, "ceg-official-portfolio");
+    assert.equal(defaultBaselineForCompany("Commercial Estates Group")?.name, "ceg-official-portfolio");
     assert.equal(defaultBaselineForCompany("Beauty Pie"), undefined);
+  });
+
+  it("CEG seed rows match the cleaned CRM naming (normalised)", async () => {
+    const { normalisePropertyName } = await import("./landlord-scraper");
+    const names = CEG_OFFICIAL_PORTFOLIO.map(s => normalisePropertyName(s.destination_name));
+    assert.equal(new Set(names).size, names.length, "no two baseline rows may normalise to the same key");
+    for (const n of names) assert.ok(n.length > 0, "every baseline row keeps a matchable name");
   });
 
   it("Landsec seed rows match the cleaned CRM naming (normalised)", async () => {
