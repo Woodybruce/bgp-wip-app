@@ -92,6 +92,17 @@ async function autoPromoteDealToInvoiced(dealId: string, xeroStatus: string): Pr
   }
 }
 
+// Sales nominal on the live chart of accounts. Accounts moved sales from
+// 200 to 4000 with the September 2026 chart (server/assets/
+// xero-chart-of-accounts-2026-09.csv); anything still sending the old code
+// is rewritten so a stale client can't post to a retired account.
+export const SALES_ACCOUNT_CODE = process.env.XERO_SALES_ACCOUNT_CODE || "4000";
+const LEGACY_SALES_CODES = new Set(["200"]);
+export function salesAccountCode(requested?: string | null): string {
+  const code = (requested || "").trim();
+  return !code || LEGACY_SALES_CODES.has(code) ? SALES_ACCOUNT_CODE : code;
+}
+
 const createInvoiceSchema = z.object({
   dealId: z.string().min(1),
   xeroContactId: z.string().nullable().optional(),
@@ -653,6 +664,13 @@ export function setupXeroRoutes(app: Express) {
 
   app.post("/api/xero/initialise-chart", requireAuth, async (req: Request, res: Response) => {
     try {
+      // The provisioning list in xero-chart-setup.ts is the pre-September-2026
+      // chart (sales 200, travel 470s…). Accounts now own the chart in Xero
+      // (server/assets/xero-chart-of-accounts-2026-09.csv is the reference
+      // copy), so running this would recreate retired codes. Explicit opt-in only.
+      if (req.body?.force !== true) {
+        return res.status(409).json({ success: false, error: "The chart of accounts is maintained by Accounts in Xero (September 2026 chart: sales 4000, expenses 6xxx–8xxx). This provisioning list is the old chart and has been disabled — pass force:true only if you really mean to create the legacy codes." });
+      }
       const { initialiseXeroChart } = await import("./xero-chart-setup");
       const result = await initialiseXeroChart(req.session);
       res.json({ success: true, ...result });
@@ -785,13 +803,13 @@ export function setupXeroRoutes(app: Express) {
         }
       }
 
-      const invoiceLines = lineItems && lineItems.length > 0 ? lineItems : [{
+      const invoiceLines = (lineItems && lineItems.length > 0 ? lineItems : [{
         Description: deal.name || "Professional fees",
         Quantity: 1,
         UnitAmount: deal.fee || 0,
-        AccountCode: accountCode || "200",
+        AccountCode: accountCode,
         TaxType: "OUTPUT2",
-      }];
+      }]).map((l) => ({ ...l, AccountCode: salesAccountCode(l.AccountCode || accountCode) }));
 
       const resolvedPoNumber = poNumber || deal.poNumber || null;
       if (resolvedPoNumber && !deal.poNumber) {
@@ -803,12 +821,16 @@ export function setupXeroRoutes(app: Express) {
         Contact: { ContactID: xeroContactId },
         LineItems: invoiceLines,
         Date: new Date().toISOString().split("T")[0],
-        DueDate: dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
         Reference: reference || deal.name,
         Status: "DRAFT",
         CurrencyCode: "GBP",
         LineAmountTypes: "Exclusive",
       };
+      // No DueDate unless the user set one: Xero then applies the
+      // organisation's default sales terms (BGP's are "by return"). The
+      // old +30 days here was overriding that on every invoice (Accounts,
+      // 2026-09-21).
+      if (dueDate) xeroInvoiceObj.DueDate = dueDate;
       if (resolvedPoNumber) {
         xeroInvoiceObj.Reference = `${xeroInvoiceObj.Reference} | PO: ${resolvedPoNumber}`;
       }
@@ -834,7 +856,7 @@ export function setupXeroRoutes(app: Express) {
         status: xeroInvoice?.Status || "DRAFT",
         totalAmount: xeroInvoice?.Total || deal.fee || 0,
         currency: "GBP",
-        dueDate: dueDate || null,
+        dueDate: xeroInvoice?.DueDateString ? String(xeroInvoice.DueDateString).slice(0, 10) : (dueDate || null),
         sentToXero: true,
         xeroUrl: xeroInvoice?.InvoiceID ? `https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${xeroInvoice.InvoiceID}` : null,
         // Cache so the edit form can pre-fill without an extra round-trip.
@@ -950,7 +972,7 @@ export function setupXeroRoutes(app: Express) {
           Description: lineDescription,
           Quantity: 1,
           UnitAmount: lineAmount,
-          AccountCode: "200",
+          AccountCode: SALES_ACCOUNT_CODE,
           TaxType: "OUTPUT2",
         }],
       };
