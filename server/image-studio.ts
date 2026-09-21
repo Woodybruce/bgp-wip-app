@@ -3091,13 +3091,15 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
         ? await pool.query(`
             SELECT category, COUNT(*)::int as count
             FROM image_studio_images
-            WHERE company_id = $1 OR property_id IN (${SCOPED_PROPS_SQL})
+            WHERE (company_id = $1 OR property_id IN (${SCOPED_PROPS_SQL}))
+              AND NOT ('trashed' = ANY(COALESCE(tags, '{}')))
             GROUP BY category
             ORDER BY count DESC
           `, [catScope])
         : await pool.query(`
             SELECT category, COUNT(*)::int as count
             FROM image_studio_images
+            WHERE NOT ('trashed' = ANY(COALESCE(tags, '{}')))
             GROUP BY category
             ORDER BY count DESC
           `);
