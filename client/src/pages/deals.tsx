@@ -1972,7 +1972,7 @@ function SimplifiedCreateBody({
       {counterpartyKind === "investment" && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="space-y-1.5">
-            <Label>Vendor{clientRole === "vendor" ? " * (client)" : " *"}</Label>
+            <Label>Vendor{clientRole === "vendor" ? " * (client)" : " (optional)"}</Label>
             <EntityCombobox
               testId="select-deal-vendor"
               placeholder="Link vendor"
@@ -2003,7 +2003,7 @@ function SimplifiedCreateBody({
             )}
           </div>
           <div className="space-y-1.5">
-            <Label>Purchaser{clientRole === "purchaser" ? " * (client)" : " *"}</Label>
+            <Label>Purchaser{clientRole === "purchaser" ? " * (client)" : " (optional)"}</Label>
             <EntityCombobox
               testId="select-deal-purchaser"
               placeholder="Link purchaser"
@@ -2485,10 +2485,19 @@ export function DealFormDialog({
       // tenant check, which fails confusingly.
       const investmentTypes = new Set(["Sale", "Purchase", "Investment Sale", "Investment Acquisition"]);
       if (investmentTypes.has(form.dealType)) {
-        if (!form.vendorId || !form.purchaserId) {
+        // Only the client side is required (Woody, 2026-09-21, Star City
+        // pre-funding advice for Ekistics): on a Purchase the purchaser is
+        // our client and the one invoiced, on a Sale the vendor is. The
+        // counterparty is usually unknown until under offer — link it
+        // later. AML runs on whichever parties are linked.
+        const purchaserIsClient = form.dealType === "Purchase" || form.dealType === "Investment Acquisition";
+        const missingClient = purchaserIsClient ? !form.purchaserId : !form.vendorId;
+        if (missingClient) {
           toast({
-            title: "Vendor and Purchaser required",
-            description: "Both parties on an investment deal — link or create each so AML can run on both sides.",
+            title: purchaserIsClient ? "Purchaser required" : "Vendor required",
+            description: purchaserIsClient
+              ? "Link or create the purchaser — they're the client being invoiced on an acquisition. The vendor can be added later."
+              : "Link or create the vendor — they're the client being invoiced on a disposal. The purchaser can be added later.",
             variant: "destructive",
           });
           return;
