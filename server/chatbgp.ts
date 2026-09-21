@@ -4135,18 +4135,20 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "capture_pdf_pages",
-      description: "Render a PDF brochure into images and save each page to the Image Studio. Use when the user says 'take images of this brochure', 'capture the pages', 'save brochure images', or similar. Requires the SharePoint driveId and itemId from a browse_sharepoint_folder result. Works silently in the background — no viewer needed.",
+      description: "Render a PDF into page images and save each page to the Image Studio. Use when the user says 'take images of this brochure', 'capture the pages', 'save brochure images', or similar. Source is EITHER a SharePoint file (driveId + itemId from browse_sharepoint_folder) OR a PDF dropped into chat (chatMediaFilename). Pages render DPI-aware from their physical size (an A1 drawing sheet comes out ~7,000px wide, PNG for vector pages) so drawing text survives for vision. For long documents capture in chunks with fromPage + maxPages (e.g. 15 pages per call) so the request doesn't time out. Works silently in the background — no viewer needed.",
       parameters: {
         type: "object",
         properties: {
-          driveId: { type: "string", description: "SharePoint driveId of the PDF file" },
-          itemId: { type: "string", description: "SharePoint itemId of the PDF file" },
+          driveId: { type: "string", description: "SharePoint driveId of the PDF file (with itemId)" },
+          itemId: { type: "string", description: "SharePoint itemId of the PDF file (with driveId)" },
+          chatMediaFilename: { type: "string", description: "Alternative source: a PDF the user dropped into chat — the chat-media filename or /api/chat-media/ path." },
           fileName: { type: "string", description: "Display name for the saved images, e.g. '18-22 Haymarket Brochure'" },
           propertyName: { type: "string", description: "Property name for tagging, e.g. '18-22 Haymarket'" },
           category: { type: "string", description: "Image Studio category. Default: Marketing", enum: ["Exteriors", "Interiors", "Floor Plans", "Properties", "Areas", "Marketing", "Brands", "Generated", "Other"] },
-          maxPages: { type: "number", description: "Maximum pages to capture (default: all). Use 1 for cover-only." },
+          fromPage: { type: "number", description: "First page to capture (1-based, default 1). Combine with maxPages to chunk long PDFs." },
+          maxPages: { type: "number", description: "Maximum pages to capture from fromPage (default: all remaining). Use 1 for cover-only." },
         },
-        required: ["driveId", "itemId", "fileName"],
+        required: ["fileName"],
       },
     },
   });
@@ -7911,8 +7913,8 @@ export async function executeCrmToolRaw(
 
   if (fnName === "capture_pdf_pages") {
     try {
-      const { driveId, itemId, fileName, propertyName, category = "Marketing", maxPages } = fnArgs as any;
-      if (!driveId || !itemId) return { data: { success: false, error: "driveId and itemId are required — browse SharePoint first to find the PDF." } };
+      const { driveId, itemId, chatMediaFilename, fileName, propertyName, category = "Marketing", maxPages, fromPage } = fnArgs as any;
+      if (!chatMediaFilename && (!driveId || !itemId)) return { data: { success: false, error: "Give either chatMediaFilename (a PDF dropped into chat) or driveId + itemId (browse SharePoint first to find the PDF)." } };
       const userId = req.session?.userId || (req as any).tokenUserId;
       const sessionCookie = req.headers.cookie || "";
       const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol;
@@ -7921,11 +7923,12 @@ export async function executeCrmToolRaw(
       const captureRes = await fetch(`${baseUrl}/api/image-studio/capture-pdf`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Cookie: sessionCookie },
-        body: JSON.stringify({ driveId, itemId, fileName, propertyName, category, maxPages }),
+        body: JSON.stringify({ driveId, itemId, chatMediaFilename, fileName, propertyName, category, maxPages, fromPage }),
       });
       const data = await captureRes.json() as any;
       if (!captureRes.ok) return { data: { success: false, error: data.error || `Capture failed: ${captureRes.status}` } };
-      return { data: { success: true, pages: data.pages, message: `Captured ${data.pages} page${data.pages === 1 ? "" : "s"} from "${fileName}" and saved to Image Studio under ${category}.` } };
+      const remaining = data.totalPages && data.toPage ? data.totalPages - data.toPage : 0;
+      return { data: { success: true, pages: data.pages, totalPages: data.totalPages, fromPage: data.fromPage, toPage: data.toPage, images: data.images, message: `Captured ${data.pages} page${data.pages === 1 ? "" : "s"}${data.totalPages ? ` (${data.fromPage}–${data.toPage} of ${data.totalPages})` : ""} from "${fileName}" and saved to Image Studio under ${category}.${remaining > 0 ? ` ${remaining} page${remaining === 1 ? "" : "s"} remain — call again with fromPage ${data.toPage + 1}.` : ""}` } };
     } catch (err: any) {
       return { data: { success: false, error: `PDF capture error: ${err?.message}` } };
     }
@@ -8235,6 +8238,16 @@ export async function executeCrmToolRaw(
       const sharpOpts = { limitInputPixels: false as const, failOn: "none" as const };
       let meta = await sharpMod(imgBuf, sharpOpts).metadata();
       let srcW = meta.width || 0, srcH = meta.height || 0;
+      // A blank white frame is a failed capture, not a page with nothing on
+      // it (66 of the 72 Plaza sheets captured by the old renderer were
+      // blank). Say so instead of spending vision calls to return "".
+      try {
+        const st = await sharpMod(imgBuf, sharpOpts).greyscale().stats();
+        const ch = st.channels[0];
+        if (ch && ch.mean > 253 && ch.stdev < 2) {
+          return { data: { success: false, blank: true, imageSize: { width: srcW, height: srcH }, bytesSource, error: `This image is a blank white frame (${srcW}×${srcH}) — the page capture failed, so there is nothing to read. Re-capture the page with capture_pdf_pages (the renderer has since been fixed) or read the source PDF directly by passing it as imageUrl with a page number.` } };
+        }
+      } catch {}
       const region = fnArgs.region && typeof fnArgs.region === "object" ? fnArgs.region as { x: number; y: number; w: number; h: number } : null;
       if (region && srcW && srcH && region.w > 0 && region.h > 0) {
         const left = Math.round(Math.min(Math.max(0, region.x), 0.999) * srcW);

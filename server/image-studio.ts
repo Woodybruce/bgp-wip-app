@@ -3645,11 +3645,20 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
 
   // Render a PDF (local path or SharePoint driveId+itemId) to images and save each page
   app.post("/api/image-studio/capture-pdf", requireAuth, async (req: Request, res: Response) => {
-    const { driveId, itemId, localPath: localFilePath, fileName, category = "Marketing", propertyName, tags = [], maxPages } = req.body;
-    if (!driveId && !localFilePath) return res.status(400).json({ error: "driveId+itemId or localPath required" });
+    const { driveId, itemId, localPath: localFilePath, chatMediaFilename, fileName, category = "Marketing", propertyName, tags = [], maxPages, fromPage } = req.body;
+    if (!driveId && !localFilePath && !chatMediaFilename) return res.status(400).json({ error: "driveId+itemId, chatMediaFilename or localPath required" });
     try {
       let pdfBuffer: Buffer;
-      if (driveId && itemId) {
+      let sourceName: string | undefined;
+      if (chatMediaFilename) {
+        // PDFs dragged into ChatBGP live in file_storage under chat-media/.
+        const { findChatMediaByOriginalName } = await import("./file-storage");
+        const bare = String(chatMediaFilename).replace(/^.*\/api\/chat-media\//, "").replace(/^chat-media\//, "").trim();
+        const file = (await getFile(`chat-media/${bare}`)) || (await findChatMediaByOriginalName(bare));
+        if (!file) return res.status(404).json({ error: `Chat upload not found: ${bare}` });
+        pdfBuffer = file.data;
+        sourceName = file.originalName || bare;
+      } else if (driveId && itemId) {
         const { getValidMsToken } = await import("./microsoft");
         const token = await getValidMsToken(req as any);
         if (!token) return res.status(401).json({ error: "Not signed into Microsoft" });
@@ -3669,13 +3678,15 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
       // why the Plaza area tables came back blank from vision (2026-09-21).
       const { pdfPageInfos, rasterisePdfPageBuffer } = await import("./pdf-raster");
       const infos = await pdfPageInfos(pdfBuffer);
-      const numPages = Math.min(infos.length, maxPages || 999);
-      const baseName = (fileName || "brochure").replace(/\.pdf$/i, "");
+      const firstPage = Math.max(1, Math.min(infos.length, Math.floor(Number(fromPage) || 1)));
+      const lastPage = Math.min(infos.length, firstPage - 1 + (Number(maxPages) || 999));
+      const numPages = infos.length;
+      const baseName = (fileName || sourceName || "brochure").replace(/\.pdf$/i, "");
       const userId = req.session?.userId || (req as any).tokenUserId;
       const saved: { id: string; page: number; fileName: string; width: number; height: number; dpi: number }[] = [];
       const pageTags = [...(Array.isArray(tags) ? tags : []), "brochure", "pdf-capture", ...(propertyName ? [propertyName] : [])];
 
-      for (let p = 1; p <= numPages; p++) {
+      for (let p = firstPage; p <= lastPage; p++) {
         const rendered = await rasterisePdfPageBuffer(pdfBuffer, p, { targetDpi: Number(req.body.targetDpi) || 220, maxSide: 8000 });
         const ext = rendered.mimeType === "image/png" ? "png" : "jpg";
         const pageLabel = numPages > 1 ? ` p${p}` : "";
@@ -3694,8 +3705,8 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
         saved.push({ id: inserted.id, page: p, fileName: imgFileName, width, height, dpi: Math.round(rendered.dpi) });
       }
 
-      console.log(`[image-studio] capture-pdf: saved ${saved.length} pages from "${fileName}"`);
-      res.json({ success: true, pages: saved.length, images: saved });
+      console.log(`[image-studio] capture-pdf: saved ${saved.length} pages (${firstPage}–${lastPage} of ${numPages}) from "${baseName}"`);
+      res.json({ success: true, pages: saved.length, totalPages: numPages, fromPage: firstPage, toPage: lastPage, images: saved });
     } catch (e: any) {
       console.error("[image-studio] capture-pdf error:", e.message);
       res.status(500).json({ error: e.message });
