@@ -228,7 +228,7 @@ test('a late system session save cannot overwrite a newer refresh rotation', asy
 
 function postingFixture({ state = {}, lockAvailable = true, onPost = async () => {}, onUnlock = async () => {} } = {}) {
   let expense = { id: 'expense', status: 'approved', amountPence: 1200, merchant: 'Synthetic Merchant',
-    createdAt: new Date('2026-09-01T12:00:00Z'), ...state };
+    category: 'travel', createdAt: new Date('2026-09-01T12:00:00Z'), ...state };
   const calls = [], releases = [];
   const columns = new Proxy({}, { get: (_, key) => key });
   const db = {
@@ -292,6 +292,15 @@ test('a lost provider response releases the lock and retries with the same key a
   const unlockFailed = postingFixture({ onUnlock: async () => { throw new Error('synthetic connection loss'); } });
   await unlockFailed.post();
   assert.deepEqual(unlockFailed.releases, [true]);
+});
+
+test('an uncoded expense fails closed before any Xero call and releases the lock', async () => {
+  const f = postingFixture({ state: { category: null } });
+  await assert.rejects(f.post(), /isn't in your Xero chart of accounts/);
+  assert.equal(f.calls.length, 0, 'no Xero request may be attempted with an unrecognised account code');
+  assert.deepEqual(f.releases, [false]);
+  const read = f.read();
+  assert.notEqual(read.status, 'posted', 'a failed post must not mark the expense posted');
 });
 
 test('weekly schedules parse full times and roll past an elapsed scheduled instant', () => {
