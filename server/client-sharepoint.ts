@@ -15,6 +15,8 @@ import { pool } from "./db";
 import { graphRequest } from "./shared-mailbox";
 import { resolveCompanyScope } from "./company-scope";
 import { listAllChildren } from "./microsoft-graph-pagination";
+import { resolveAccountView, type AccountView, type Querier } from "./account-resolver";
+import { getAccountFolderMap, resolveNodeFolder, nodeKey } from "./account-folder-map";
 
 const router = Router();
 
@@ -30,6 +32,14 @@ interface RootRef {
 const rootCache = new Map<string, RootRef>();
 const ROOT_TTL_MS = 10 * 60_000;
 
+// Injectable surface so tests run without Graph/DB (Delivery 5, Task 5).
+export interface SharePointDeps {
+  pool?: Querier;
+  graphGet?: (path: string) => Promise<any>;
+  cache?: Map<string, RootRef>;
+  now?: () => number;
+}
+
 function sharesId(url: string): string {
   const b64 = Buffer.from(url, "utf8").toString("base64")
     .replace(/=+$/, "").replace(/\//g, "_").replace(/\+/g, "-");
@@ -41,14 +51,44 @@ function itemFullPath(item: any): string {
   return `${parent}/${item?.name || ""}`.toLowerCase();
 }
 
-async function resolveRoot(companyId: string): Promise<RootRef | null> {
-  const cached = rootCache.get(companyId);
-  if (cached && Date.now() - cached.resolvedAt < ROOT_TTL_MS) return cached;
+export async function resolveRoot(companyId: string, deps: SharePointDeps = {}): Promise<RootRef | null> {
+  const q = deps.pool ?? pool;
+  const graphGet = deps.graphGet ?? graphRequest;
+  const cache = deps.cache ?? rootCache;
+  const now = deps.now ?? Date.now;
+  const cached = cache.get(companyId);
+  if (cached && now() - cached.resolvedAt < ROOT_TTL_MS) return cached;
 
-  // The folder link can sit on a duplicate company row (a second "Landsec"
-  // record) — same hazard the team board handles. Prefer the scope row's own
-  // URL, fall back to any same-named unmerged sibling that has one.
-  const r = await pool.query(
+  // 1. The durable binding wins (Delivery 5): drive/item identity directly,
+  //    no URL resolution and rename-safe. The item meta is still fetched by
+  //    id to derive the jail path prefix fresh (a rename never breaks the
+  //    jail); a binding whose item was deleted falls through to the legacy
+  //    URL resolution below.
+  const { rows: mapRows } = await q.query(
+    `SELECT drive_id, item_id FROM account_folder_map
+      WHERE owner_kind = 'company' AND owner_id = $1 AND logical_key = 'root'
+        AND bind_status IN ('bound', 'created')
+      LIMIT 1`,
+    [companyId],
+  ).catch((e: any) => (e?.code === "42P01" ? { rows: [] as any[] } : Promise.reject(e)));
+  if (mapRows[0]) {
+    const bound = mapRows[0];
+    const item = await graphGet(`/drives/${bound.drive_id}/items/${bound.item_id}?$select=id,name,webUrl,parentReference,folder`).catch(() => null);
+    if (item?.id) {
+      const ref: RootRef = {
+        driveId: bound.drive_id, itemId: bound.item_id, name: item.name,
+        pathPrefix: itemFullPath(item), resolvedAt: now(),
+      };
+      cache.set(companyId, ref);
+      return ref;
+    }
+  }
+
+  // 2. Legacy: the folder link can sit on a duplicate company row (a second
+  //    "Landsec" record) — same hazard the team board handles. Prefer the
+  //    scope row's own URL, fall back to any same-named unmerged sibling
+  //    that has one.
+  const r = await q.query(
     `SELECT sharepoint_folder_url FROM crm_companies
       WHERE (id = $1 OR (merged_into_id IS NULL AND lower(trim(name)) =
               (SELECT lower(trim(name)) FROM crm_companies WHERE id = $1)))
@@ -60,7 +100,7 @@ async function resolveRoot(companyId: string): Promise<RootRef | null> {
   const url: string | null = r.rows[0]?.sharepoint_folder_url || null;
   if (!url) return null;
 
-  const item = await graphRequest(`/shares/${sharesId(url)}/driveItem?$select=id,name,webUrl,parentReference,folder`);
+  const item = await graphGet(`/shares/${sharesId(url)}/driveItem?$select=id,name,webUrl,parentReference,folder`);
   if (!item?.id || !item?.parentReference?.driveId) return null;
 
   const ref: RootRef = {
@@ -68,9 +108,9 @@ async function resolveRoot(companyId: string): Promise<RootRef | null> {
     itemId: item.id,
     name: item.name,
     pathPrefix: itemFullPath(item),
-    resolvedAt: Date.now(),
+    resolvedAt: now(),
   };
-  rootCache.set(companyId, ref);
+  cache.set(companyId, ref);
   return ref;
 }
 
@@ -86,14 +126,61 @@ async function requireClientScope(req: Request, res: Response): Promise<string |
 }
 
 // Verify an item sits inside the client's root folder.
-async function assertInRoot(root: RootRef, itemId: string): Promise<any | null> {
+async function assertInRoot(root: RootRef, itemId: string, graphGet: (path: string) => Promise<any> = graphRequest): Promise<any | null> {
   if (itemId === root.itemId) return { id: root.itemId, name: root.name };
-  const item = await graphRequest(`/drives/${root.driveId}/items/${itemId}?$select=id,name,webUrl,parentReference,folder,file,size,lastModifiedDateTime`);
+  const item = await graphGet(`/drives/${root.driveId}/items/${itemId}?$select=id,name,webUrl,parentReference,folder,file,size,lastModifiedDateTime`);
   if (!item?.id) return null;
   const full = itemFullPath(item);
   if (full !== root.pathPrefix && !full.startsWith(root.pathPrefix + "/")) return null;
   return item;
 }
+
+// The bound property folder for the client Files board (Delivery 5, Task
+// 5): identity is the account_folder_map row, never a name match. Returns
+// null when the property is outside the caller's scoped portfolio, when no
+// binding exists (the UI falls back to the legacy "unverified" name match),
+// or when the bound item fails the jail check — a binding pointing outside
+// the client root is a data problem to fix, never something to expose.
+export async function resolveBoundPropertyRoot(
+  scope: string,
+  propertyId: string,
+  deps: SharePointDeps & { view?: AccountView } = {},
+): Promise<{ id: string; name: string; webUrl: string | null } | null> {
+  const q = deps.pool ?? pool;
+  const view = deps.view ?? await resolveAccountView(scope, { scopeCompanyId: scope }, { pool: q });
+  if (!view.properties.some(p => p.propertyId === propertyId)) return null;
+
+  const map = await getAccountFolderMap(scope, { scopeCompanyId: scope }, { pool: q, view });
+  const bound = resolveNodeFolder(map, "property", propertyId, "property");
+  if (!bound) return null;
+
+  const root = await resolveRoot(scope, deps);
+  if (!root) return null;
+  const item = await assertInRoot(root, bound.itemId, deps.graphGet ?? graphRequest).catch(() => null);
+  if (!item) {
+    console.warn(`[client-sharepoint] property binding ${propertyId} failed the root jail — not exposing it`);
+    return null;
+  }
+  const row = map.byNode.get(nodeKey("property", propertyId, "property"));
+  return { id: bound.itemId, name: item.name || row?.display_name || "", webUrl: item.webUrl ?? row?.web_url ?? null };
+}
+
+// GET /api/client/sharepoint/property-root?propertyId= — the verified
+// property folder binding, 404 when nothing is bound (UI falls back).
+router.get("/api/client/sharepoint/property-root", requireAuth, async (req, res) => {
+  try {
+    const scope = await requireClientScope(req, res);
+    if (!scope) return;
+    const propertyId = String(req.query.propertyId || "");
+    if (!propertyId) return res.status(400).json({ message: "propertyId required" });
+    const bound = await resolveBoundPropertyRoot(scope, propertyId);
+    if (!bound) return res.status(404).json({ message: "No verified folder is bound to that property" });
+    res.json(bound);
+  } catch (e: any) {
+    console.error("[client-sharepoint] property-root failed:", e?.message);
+    res.status(500).json({ message: "Couldn't reach SharePoint" });
+  }
+});
 
 // GET /api/client/sharepoint/root — the client's root folder (name + id).
 router.get("/api/client/sharepoint/root", requireAuth, async (req, res) => {

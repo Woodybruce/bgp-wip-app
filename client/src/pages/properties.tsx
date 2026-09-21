@@ -2231,7 +2231,7 @@ export function TaggedConversationsPanel({ entityType, entityId }: { entityType:
   );
 }
 
-export function ClientPropertyFoldersPanel({ propertyName }: { propertyName: string }) {
+export function ClientPropertyFoldersPanel({ propertyName, propertyId }: { propertyName: string; propertyId?: string }) {
   // The client login's Files board (Woody, 2026-08-03: "put back the files
   // board but remove the name of the team that set up the folder tree").
   // Browses the client's jailed SharePoint area (/api/client/sharepoint —
@@ -2254,6 +2254,22 @@ export function ClientPropertyFoldersPanel({ propertyName }: { propertyName: str
     staleTime: 5 * 60_000,
   });
 
+  // The verified binding wins (Delivery 5): the server resolves the
+  // account_folder_map row by stable property id and jail-checks it. 404 =
+  // nothing bound yet → fall back to the legacy name match below.
+  const { data: boundFolder } = useQuery<{ id: string; name: string } | null>({
+    queryKey: ["/api/client/sharepoint/property-root", propertyId],
+    queryFn: async () => {
+      const r = await fetch(`/api/client/sharepoint/property-root?propertyId=${encodeURIComponent(propertyId!)}`, { credentials: "include", headers: getAuthHeaders() });
+      if (r.status === 404) return null;
+      if (!r.ok) throw new Error("Couldn't resolve the property folder");
+      return r.json();
+    },
+    enabled: !!propertyId,
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+
   const { data: rootListing } = useQuery<{ items: any[] }>({
     queryKey: ["/api/client/sharepoint/list", root?.id],
     queryFn: async () => {
@@ -2261,18 +2277,21 @@ export function ClientPropertyFoldersPanel({ propertyName }: { propertyName: str
       if (!r.ok) throw new Error("Couldn't list folder");
       return r.json();
     },
-    enabled: !!root?.id,
+    enabled: !!root?.id && !boundFolder,
     staleTime: 60_000,
   });
 
-  // The property's own folder under the client root, matched loosely by name
-  // ("Bluewater" folder ↔ "Bluewater Shopping Centre" property).
+  // The property's own folder under the client root: the verified binding
+  // when one exists, otherwise the legacy loose name match ("Bluewater"
+  // folder ↔ "Bluewater Shopping Centre" property) — flagged unverified.
   const propFolder = useMemo(() => {
+    if (boundFolder) return { ...boundFolder, isFolder: true, verified: true };
     const items = rootListing?.items || [];
     const p = norm(propertyName);
     if (!p) return null;
-    return items.find((i: any) => i.isFolder && (p.includes(norm(i.name)) || norm(i.name).includes(p))) || null;
-  }, [rootListing, propertyName]);
+    const hit = items.find((i: any) => i.isFolder && (p.includes(norm(i.name)) || norm(i.name).includes(p)));
+    return hit ? { ...hit, verified: false } : null;
+  }, [rootListing, propertyName, boundFolder]);
 
   const base = propFolder ? { id: propFolder.id, name: propFolder.name } : root ? { id: root.id, name: root.name } : null;
   const currentId = trail.length > 0 ? trail[trail.length - 1].id : base?.id;
@@ -2352,8 +2371,11 @@ export function ClientPropertyFoldersPanel({ propertyName }: { propertyName: str
         {base && (
           <div className="flex items-center gap-1 mb-2 text-[11px] flex-wrap">
             <button onClick={() => setTrail([])} className={trail.length ? "text-primary hover:underline" : "text-foreground font-medium"} data-testid="client-folders-breadcrumb-root">
-              {propFolder ? propertyName : base.name}
+              {propFolder ? (propertyName || propFolder.name) : base.name}
             </button>
+            {propFolder && !propFolder.verified && (
+              <Badge variant="outline" className="text-[9px] px-1 py-0 font-normal" data-testid="client-folders-unverified-badge">unverified match</Badge>
+            )}
             {trail.map((t, i) => (
               <span key={t.id} className="flex items-center gap-1">
                 <ChevronRight className="w-3 h-3 text-muted-foreground" />

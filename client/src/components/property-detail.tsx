@@ -1090,7 +1090,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   // defaults true while it loads, so staff loads briefly
                   // mounted this panel and fired a doomed client-scoped
                   // sharepoint fetch (403 on every staff property view).
-                  pdViewer ? <ClientPropertyFoldersPanel propertyName={property.name} /> : null
+                  pdViewer ? <ClientPropertyFoldersPanel propertyName={property.name} propertyId={property.id} /> : null
                 ) : (
                   <>
                     <PropertyFoldersPanel propertyName={property.name} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} />
