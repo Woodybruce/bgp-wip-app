@@ -160,6 +160,18 @@ export interface StockSnapshot {
   peRatio: number | null;
   exchange: string | null;
   shortName: string | null;
+  // Day stats — populated by the richer providers (Yahoo v7, CNBC); null/absent
+  // on the chart-only and Stooq daily-close paths.
+  dayChange?: number | null;        // absolute, native currency
+  dayChangePct?: number | null;     // percent number, e.g. -2.0 = down 2%
+  previousClose?: number | null;
+  dayOpen?: number | null;
+  dayHigh?: number | null;
+  dayLow?: number | null;
+  volume?: number | null;
+  dividendYieldPct?: number | null; // percent number, e.g. 5.31
+  fiftyTwoWeekHighDate?: string | null; // ISO date, when the provider says
+  fiftyTwoWeekLowDate?: string | null;
   fetchedAt: string;
   // When the quote itself is as-of (Yahoo regularMarketTime / Stooq's daily
   // close date). Stale/delayed feeds stay honest — the card shows this, not
@@ -255,6 +267,15 @@ function mapV7Quote(q: any, fallbackTicker: string): StockSnapshot {
     fiftyTwoWeekLow: typeof q.fiftyTwoWeekLow === "number" ? q.fiftyTwoWeekLow : null,
     fiftyTwoWeekChange,
     peRatio: typeof q.trailingPE === "number" ? q.trailingPE : null,
+    dayChange: typeof q.regularMarketChange === "number" ? q.regularMarketChange : null,
+    dayChangePct: typeof q.regularMarketChangePercent === "number" ? q.regularMarketChangePercent : null,
+    previousClose: typeof q.regularMarketPreviousClose === "number" ? q.regularMarketPreviousClose : null,
+    dayOpen: typeof q.regularMarketOpen === "number" ? q.regularMarketOpen : null,
+    dayHigh: typeof q.regularMarketDayHigh === "number" ? q.regularMarketDayHigh : null,
+    dayLow: typeof q.regularMarketDayLow === "number" ? q.regularMarketDayLow : null,
+    volume: typeof q.regularMarketVolume === "number" ? q.regularMarketVolume : null,
+    // Yahoo reports this as a fraction (0.053); store as a percent number.
+    dividendYieldPct: typeof q.trailingAnnualDividendYield === "number" ? q.trailingAnnualDividendYield * 100 : null,
     exchange: q.fullExchangeName ?? q.exchange ?? null,
     shortName: q.shortName ?? q.longName ?? null,
     fetchedAt: new Date().toISOString(),
@@ -480,6 +501,21 @@ function cnbcScaledNum(v: any): number | null {
   return base * mult;
 }
 
+// "-2.00%" / "5.31%" → percent number (sign preserved).
+function cnbcPct(v: any): number | null {
+  if (typeof v !== "string") return cnbcNum(v);
+  const n = parseFloat(v.replace(/[,%]/g, ""));
+  return isFinite(n) ? n : null;
+}
+
+// CNBC dates are US-format MM/DD/YY ("08/04/26") → ISO date.
+function cnbcUsDate(v: any): string | null {
+  if (typeof v !== "string") return null;
+  const m = v.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+  if (!m) return null;
+  return `20${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+}
+
 async function cnbcChartBars(cnbcSymbol: string, range: "1Y" | "3M"): Promise<PricePoint[]> {
   const url = `https://ts-api.cnbc.com/harmony/app/charts/${range}.json?symbol=${encodeURIComponent(cnbcSymbol)}`;
   const resp = await fetch(url, { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(15_000) });
@@ -544,8 +580,18 @@ async function fetchSnapshotFromCnbc(symbol: string): Promise<(StockSnapshotLook
       marketCapGBP,
       fiftyTwoWeekHigh: cnbcNum(q.yrhiprice),
       fiftyTwoWeekLow: cnbcNum(q.yrloprice),
+      fiftyTwoWeekHighDate: cnbcUsDate(q.yrhidate),
+      fiftyTwoWeekLowDate: cnbcUsDate(q.yrlodate),
       fiftyTwoWeekChange,
       peRatio: cnbcNum(q.pe),
+      dayChange: cnbcNum(q.change),
+      dayChangePct: cnbcPct(q.change_pct),
+      previousClose: cnbcNum(q.previous_day_closing),
+      dayOpen: cnbcNum(q.open),
+      dayHigh: cnbcNum(q.high),
+      dayLow: cnbcNum(q.low),
+      volume: cnbcNum(q.volume),
+      dividendYieldPct: cnbcPct(q.dividendyield),
       exchange: typeof q.exchange === "string" ? q.exchange : null,
       shortName: typeof q.name === "string" ? q.name : null,
       fetchedAt: new Date().toISOString(),

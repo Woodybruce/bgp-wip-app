@@ -1495,9 +1495,14 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 </div>
               )}
               {c.stock_ticker ? (
+                // Landlords: the card renders full-width below the
+                // chat + key-facts row (see below) — not squeezed into a
+                // quarter-width corner of this grid.
+                isLandlord ? null : (
                 <div className="col-span-2">
                   <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />
                 </div>
+                )
               ) : isBrand && !isClientViewer ? (
                 <div className="col-span-2">
                   <TickerSuggestPicker
@@ -1508,6 +1513,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               ) : null}
             </div>
             </div>
+
+            {/* PLC market data — full-width row in the middle of the landlord
+                overview, below chat + key facts. Tenants keep the card inside
+                the key-facts grid above. */}
+            {isLandlord && c.stock_ticker && (
+              <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />
+            )}
 
             {/* Parent group */}
             {data.parentGroup && (
@@ -3314,7 +3326,12 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
         </div>
       </div>
       {/* Stats row */}
-      <div className="flex items-center gap-3 px-2.5 pb-1.5 text-xs">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-2.5 pb-1.5 text-xs">
+        {s.dayChangePct != null && (
+          <span className={`font-medium ${s.dayChangePct >= 0 ? "text-green-600" : "text-red-600"}`}>
+            {s.dayChangePct >= 0 ? "▲" : "▼"} {Math.abs(s.dayChangePct).toFixed(2)}% today
+          </span>
+        )}
         {chg != null && (
           <span className={`font-medium ${chgColor}`}>
             {chg >= 0 ? "+" : ""}{chg.toFixed(1)}% YoY
@@ -3322,12 +3339,29 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
         )}
         {capLabel && <span className="text-muted-foreground">Cap {capLabel}</span>}
         {typeof s.peRatio === "number" && <span className="text-muted-foreground">P/E {s.peRatio.toFixed(1)}</span>}
+        {typeof s.dividendYieldPct === "number" && s.dividendYieldPct > 0 && (
+          <span className="text-muted-foreground">Yield {s.dividendYieldPct.toFixed(1)}%</span>
+        )}
         {s.fiftyTwoWeekHigh != null && s.fiftyTwoWeekLow != null && (
-          <span className="text-muted-foreground ml-auto text-[10px]">
+          <span
+            className="text-muted-foreground ml-auto text-[10px]"
+            title={`52-week range${s.fiftyTwoWeekLowDate ? ` · low ${s.fiftyTwoWeekLowDate}` : ""}${s.fiftyTwoWeekHighDate ? ` · high ${s.fiftyTwoWeekHighDate}` : ""}`}
+          >
             {currencySymbol}{s.fiftyTwoWeekLow.toFixed(0)}–{currencySymbol}{s.fiftyTwoWeekHigh.toFixed(0)} 52w
           </span>
         )}
       </div>
+      {/* Day detail row — only when the provider supplies intraday stats */}
+      {(s.previousClose != null || s.dayOpen != null || (s.dayHigh != null && s.dayLow != null) || s.volume != null) && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-2.5 pb-1.5 text-[10px] text-muted-foreground">
+          {s.previousClose != null && <span>Prev {currencySymbol}{s.previousClose.toFixed(2)}</span>}
+          {s.dayOpen != null && <span>Open {currencySymbol}{s.dayOpen.toFixed(2)}</span>}
+          {s.dayHigh != null && s.dayLow != null && <span>Day {currencySymbol}{s.dayLow.toFixed(2)}–{currencySymbol}{s.dayHigh.toFixed(2)}</span>}
+          {s.volume != null && (
+            <span>Vol {s.volume >= 1_000_000 ? `${(s.volume / 1_000_000).toFixed(1)}M` : s.volume >= 1_000 ? `${(s.volume / 1_000).toFixed(0)}k` : s.volume}</span>
+          )}
+        </div>
+      )}
       {/* Price chart */}
       {history.length >= 5 && (
         <div className="px-1 pb-1">
