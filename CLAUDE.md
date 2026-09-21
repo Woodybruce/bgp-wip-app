@@ -59,6 +59,14 @@ explicit permission.
 - Don't add comments, docstrings, or type annotations to code you didn't change.
 - Ask before making architectural changes or touching shared schemas
   (`shared/schema.ts`, migrations).
+- **Migrations do not run on deploy.** Railway's build is plain `npm run
+  build`; drizzle-kit is never run and `script/build.ts --migrate-only` is
+  manual. The live schema comes from the boot `MIGRATIONS` array in
+  `server/index.ts` plus `server/schema-drift.ts`, which at boot applies the
+  files in `IDEMPOTENT_SQL_MIGRATIONS` and adds any column in
+  `shared/schema.ts` the DB lacks (nullable). New additive migration files
+  go on that list; CREATE TABLE still needs a boot statement or a listed
+  file. `GET /api/admin/schema-drift` shows what's missing.
 - For UI changes, say explicitly when you haven't verified in a browser.
 
 ## Landsec client brand access (DECIDED — do not re-litigate in merges)
