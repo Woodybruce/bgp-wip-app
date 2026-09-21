@@ -4086,11 +4086,12 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
         xeroContactId: xeroContactId || null,
         contactName: xeroContactName || deal.name,
         poNumber: poNumber || deal.poNumber || null,
+        // No AccountCode: the server applies the live sales nominal (4000 on
+        // the Sept 2026 chart) so a stale client can't post to a retired code.
         lineItems: [{
           Description: deal.name || "Professional fees",
           Quantity: 1,
           UnitAmount: amount || deal.fee || 0,
-          AccountCode: "200",
           TaxType: "OUTPUT2",
         }],
         reference: reference || deal.name,

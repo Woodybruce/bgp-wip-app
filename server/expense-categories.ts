@@ -17,50 +17,70 @@ import { xeroApiWithFallback } from "./xero";
 // receipt-categorisation prompt's training list. Lives here now so the
 // expense pipeline doesn't depend on the legacy Stripe module.
 export const EXPENSE_CATEGORY_MAP: Record<string, { code: string; name: string }> = {
-  // Codes aligned to the firm's live Xero chart of accounts (confirmed Jun 2026).
-  // Live Xero stays the source of truth (getExpenseCategories); this static map
-  // is only the fallback when Xero is unreachable or a name doesn't match.
-  // Codes still marked "(seed)" below are pre-Xero guesses — they're protected
-  // by the post-time guard until the full chart is supplied.
+  // Codes aligned to the September 2026 chart of accounts from Accounts
+  // (reference copy: server/assets/xero-chart-of-accounts-2026-09.csv).
+  // Live Xero stays the source of truth (getExpenseCategories); this static
+  // map is only the fallback when Xero is unreachable or a name doesn't match.
   "Client Entertainment":           { code: "7403", name: "Client Entertainment" },
-  "Agent Entertainment (External)": { code: "740321", name: "Agent Entertainment (External)" },
+  "Agent Entertainment (External)": { code: "740321", name: "Agent Entertainment" },
   "Staff Entertainment":            { code: "740319", name: "Staff Entertainment" },
-  "Directors Meetings":             { code: "413", name: "Directors Meetings" },           // seed
+  "Directors Meetings":             { code: "740320", name: "Directors Meetings" },
   "Subsistence":                    { code: "74017", name: "Subsistence" },
-  "Meals & Drinks":                 { code: "416", name: "Meals & Drinks" },               // seed
-  "Travel - Train":                 { code: "471", name: "Travel - Train" },               // seed
-  "Travel - Tube":                  { code: "472", name: "Travel - Tube" },                // seed
-  "Travel - Taxi":                  { code: "74014", name: "Travel - Taxi" },
-  "Travel - Flights":               { code: "474", name: "Travel - Flights" },             // seed
-  "Travel - Hotels":                { code: "475", name: "Travel - Hotels" },              // seed
-  "Travel - Car Hire":              { code: "476", name: "Travel - Car Hire" },            // seed
-  "Travel - Parking & Tolls":       { code: "477", name: "Travel - Parking & Tolls" },     // seed
-  "Travel - TFL Bike":              { code: "74019", name: "Travel - TFL Bike" },
-  "Mileage Claims (HMRC 45p)":      { code: "479", name: "Mileage Claims (HMRC 45p)" },     // seed
-  "Marketing & Advertising":        { code: "480", name: "Marketing & Advertising" },      // seed
-  "PR (Literature & Brochures)":    { code: "481", name: "PR (Literature & Brochures)" },  // seed
-  "Advertising":                    { code: "482", name: "Advertising" },                  // seed
-  "Office Supplies / Stationery":   { code: "500", name: "Office Supplies / Stationery" }, // seed
-  "Office Expenses (general)":      { code: "501", name: "Office Expenses (general)" },     // seed
-  "Printing - Pitch Documents":     { code: "512", name: "Printing - Pitch Documents" },   // seed
-  "Software (subscriptions)":       { code: "750301", name: "Software (subscriptions)" },
-  "IT Charges":                     { code: "750301", name: "IT Charges" },
+  "Meals & Drinks":                 { code: "74017", name: "Subsistence" },
+  "Travel - Train":                 { code: "74015", name: "Trains" },
+  "Travel - Tube":                  { code: "74016", name: "Tube" },
+  "Travel - Taxi":                  { code: "74014", name: "Taxi" },
+  "Travel - Flights":               { code: "74011", name: "Flights" },
+  "Travel - Hotels":                { code: "74013", name: "Hotels" },
+  "Travel - Car Hire":              { code: "74012", name: "Car Hire" },
+  "Travel - Parking & Tolls":       { code: "74018", name: "Parking & Tolls" },
+  "Travel - TFL Bike":              { code: "74019", name: "TFL Bike" },
+  "Mileage Claims (HMRC 45p)":      { code: "7306", name: "Mileage Claims" },
+  "Marketing & Advertising":        { code: "6201", name: "Advertising" },
+  "PR (Literature & Brochures)":    { code: "6203", name: "PR (literature & brochures)" },
+  "Advertising":                    { code: "6201", name: "Advertising" },
+  "Office Supplies / Stationery":   { code: "750401", name: "Office Supplies/Stationery" },
+  "Office Expenses (general)":      { code: "750401", name: "Office Supplies/Stationery" },
+  "Office Supplies - Equipment":    { code: "750402", name: "Office Supplies - Equipment" },
+  "Printing - Pitch Documents":     { code: "750001", name: "Printing - Pitch Documents" },
+  "Printing - Non Day to Day":      { code: "750002", name: "Printing - Non Day to Day" },
+  "Printing BGP Own":               { code: "7500", name: "Printing BGP Own" },
+  "Software (subscriptions)":       { code: "750301", name: "Subscriptions - IT Charges/Software" },
+  "IT Charges":                     { code: "750301", name: "Subscriptions - IT Charges/Software" },
   // Computer Equipment is capitalised to a balance-sheet fixed-asset account
   // (0032), not a P&L expense code. This map entry lets it past the poster's
   // isKnownExpenseCode guard; BALANCE_SHEET_ALLOWLIST (below) surfaces it in
   // the live picker, which otherwise only lists expense-type accounts.
-  "Computer Equipment":             { code: "0032", name: "Computer Equipment" },
-  "Mobile Phone":                   { code: "611", name: "Mobile Phone" },                 // seed
-  "Phone & Internet":               { code: "612", name: "Phone & Internet" },            // seed
-  "Premises Expenses":              { code: "700", name: "Premises Expenses" },            // seed
-  "RICS Fees":                      { code: "750", name: "RICS Fees" },                    // seed
-  "Training":                       { code: "751", name: "Training" },                     // seed
-  "Subscriptions - Magazines/Memberships": { code: "753", name: "Subscriptions - Magazines/Memberships" }, // seed
-  "Staff Gifts":                    { code: "780", name: "Staff Gifts" },                  // seed
-  "Client Gifts":                   { code: "781", name: "Client Gifts" },                 // seed
-  "Other Expenses":                 { code: "900", name: "Other Expenses" },               // seed
-  "Personal (deduct from payroll)": { code: "1106", name: "Personal (deduct from payroll)" },
-  "Sainsburys / Tesco / Ocado":     { code: "8205", name: "Sainsburys / Tesco / Ocado" },
+  "Computer Equipment":             { code: "0032", name: "Computer Equipment Additions" },
+  "Mobile Phone":                   { code: "750202", name: "Mobile Phone" },
+  "Phone & Internet":               { code: "750201", name: "Telephone" },
+  "WIFI":                           { code: "750203", name: "WIFI" },
+  "Postage & Carriage":             { code: "7501", name: "Postage & Carriage" },
+  "Premises Expenses":              { code: "7803", name: "Premises Expenses" },
+  "Room Hire":                      { code: "7106", name: "Room Hire" },
+  "RICS Fees":                      { code: "820101", name: "Subscriptions - RICS" },
+  "Training":                       { code: "8203", name: "Training" },
+  "Seminar/Conferences":            { code: "820201", name: "Seminar/Conferences" },
+  "Winter Conference":              { code: "820208", name: "Winter Conference" },
+  "Subscriptions - Magazines/Memberships": { code: "820102", name: "Subscriptions - Magazines/Memberships" },
+  "Staff Gifts":                    { code: "6202", name: "Staff & Client Gifts" },
+  "Client Gifts":                   { code: "6202", name: "Staff & Client Gifts" },
+  "Donations":                      { code: "8200", name: "Donations" },
+  "Land Registry":                  { code: "6302", name: "Land Registry" },
+  "Flu Jabs & Covid Tests":         { code: "7014", name: "Flu Jabs & Covid Tests" },
+  "Eye Tests":                      { code: "7017", name: "Eye Tests" },
+  "Equipment Hire":                 { code: "7700", name: "Equipment Hire" },
+  "Repairs & Maintenance":          { code: "7800", name: "Repairs & Maintenance" },
+  "Cleaning":                       { code: "7801", name: "Cleaning" },
+  "Bank Fees":                      { code: "7901", name: "Bank Fees" },
+  "Legal & Professional Fees":      { code: "7600", name: "Legal & Professional Fees" },
+  "Consultancy Fees":               { code: "7602", name: "Consultancy Fees" },
+  "Motor Vehicle Expenses":         { code: "7304", name: "Motor Vehicle Expenses" },
+  "Client Recharges":               { code: "6300", name: "Client Recharges" },
+  // No "Other Expenses" nominal on the 2026 chart — an unmatched category
+  // must be coded properly before posting (the poster's guard enforces it).
+  "Personal (deduct from payroll)": { code: "1106", name: "Personal/Staff Loan" },
+  "Sainsburys / Tesco / Ocado":     { code: "8205", name: "Sainsburys/Tesco/Ocado" },
 };
 
 export type ExpenseCategory = {

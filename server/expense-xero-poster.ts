@@ -145,12 +145,12 @@ async function postExpenseToXeroOnce(args: {
     let accountCode = opts.accountCode
       || (opts.category ? await getCategoryCode(opts.category) : null)
       || (opts.category ? EXPENSE_CATEGORY_MAP[opts.category]?.code : null)
-      || exp.xeroAccountCode || "900";
+      || exp.xeroAccountCode || "";
     // Guard: never post a code Xero doesn't recognise. If the resolved code
     // isn't in the live chart (or our static map), re-resolve from the
     // category name; if it still isn't recognised, fail with the reason
     // rather than letting Xero bounce the whole batch with a cryptic error.
-    if (!(await isKnownExpenseCode(accountCode))) {
+    if (!accountCode || !(await isKnownExpenseCode(accountCode))) {
       const reResolved = opts.category ? await getCategoryCode(opts.category) : undefined;
       if (reResolved && (await isKnownExpenseCode(reResolved))) {
         accountCode = reResolved;

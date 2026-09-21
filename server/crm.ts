@@ -35,7 +35,7 @@ import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { contentDispositionFor } from "./utils/http-headers";
 import { searchPipnetRequirements } from "./pipnet";
-import { xeroApi, refreshXeroToken } from "./xero";
+import { xeroApi, refreshXeroToken, SALES_ACCOUNT_CODE } from "./xero";
 import { scrapeTrlPage, KNOWN_TRL_PAGES, discoverTrlPages, scrapeTrlOccupierDirectory, scrapeTrlAgencyDirectory, scrapeTrlAgencyListing, scrapeTrlAgencyDetailPage, scrapeTrlRequirementSearch } from "./trl";
 import { getPlanningSummary } from "./planning-summary";
 import { parseRequirementBrochure } from "./requirement-vision-parser";
@@ -4147,11 +4147,11 @@ Only return the JSON object. If uncertain, return {"role": null}.`
                       Description: deal.name || "Professional fees",
                       Quantity: 1,
                       UnitAmount: deal.fee || 0,
-                      AccountCode: "200",
+                      AccountCode: SALES_ACCOUNT_CODE,
                       TaxType: "OUTPUT2",
                     }],
                     Date: new Date().toISOString().split("T")[0],
-                    DueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+                    // No DueDate: Xero applies the org's default terms (by return).
                     Reference: deal.poNumber ? `${deal.name} | PO: ${deal.poNumber}` : deal.name,
                     Status: "DRAFT",
                     CurrencyCode: "GBP",

@@ -6,6 +6,12 @@
  * Idempotent: existing accounts are skipped, new ones created.
  * Pushes ~50 accounts and 2 tracking categories.
  *
+ * LEGACY (September 2026): Accounts now maintain the chart in Xero directly
+ * and moved to a new numbering (sales 4000, direct costs 6xxx, overheads
+ * 7xxx–8xxx — see server/assets/xero-chart-of-accounts-2026-09.csv). The
+ * list below is the OLD chart; the /api/xero/initialise-chart route refuses
+ * to run it without force:true so the retired codes aren't recreated.
+ *
  * VAT/Tax treatment follows HMRC rules:
  *   - Client Entertainment: NONE (input VAT not recoverable, disallowed corp tax)
  *   - Donations / Trivial Benefits / Mileage: NONE
