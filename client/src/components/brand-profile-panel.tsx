@@ -45,6 +45,7 @@ import { brandComplianceStatus } from "@shared/brand-compliance-status";
 import { displayTicker, normalizeTicker } from "@shared/stock-ticker";
 import { isLandlordCompany } from "@/lib/company-kind";
 import { AccountDealsBoard } from "@/components/account-deals-board";
+import { LandlordAccountGallery } from "@/components/account-media-gallery";
 import { AccountNextActionsCard, AccountTeamCard, InvestmentRequirementsCard, useAccountWorkspace } from "@/components/account-workspace-cards";
 
 interface BrandProfile {
@@ -4616,6 +4617,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
     onSuccess: () => {
       toast({ title: "Image removed" });
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "media"] });
       setLightboxImg(null);
     },
     onError: (e: any) => toast({ title: "Couldn't delete", description: e?.message, variant: "destructive" }),
@@ -4641,6 +4643,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       toast({ title: vars.isHero ? "Cover photo unpinned" : "Cover photo selected" });
       setLightboxImg((current: any) => current?.id === vars.imageId ? { ...current, tags: vars.isHero ? vars.currentTags.filter(tag => tag !== "brand-hero") : Array.from(new Set([...vars.currentTags, "brand-hero"])) } : current);
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "media"] });
     },
     onError: (e: any) => toast({ title: "Couldn't update", description: e?.message, variant: "destructive" }),
   });
@@ -5037,9 +5040,11 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           )}
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+              {!isLandlord && (
               <div className="text-[11px] text-muted-foreground">
                 <span className="font-mono tabular-nums">{data.images.length}</span> saved image{data.images.length === 1 ? "" : "s"}
               </div>
+              )}
               {!sbIsClient && <BrandImageRefreshButton companyId={companyId} />}
               {/* Image Studio is the full library + enhance / retag /
                   upload UI — deep-link with the brand name so it lands
@@ -5054,7 +5059,18 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
               </Link>
               )}
             </div>
-            {data.images.length > 0 && (
+            {isLandlord && (
+              // One account media view: company assets + photos attached only
+              // to the account's properties, grouped approved / corporate /
+              // properties (server: /api/accounts/:id/media).
+              <LandlordAccountGallery
+                companyId={companyId}
+                canEdit={!sbIsClient}
+                onOpen={setLightboxImg}
+                onDelete={(imageId) => deleteImageMutation.mutate(imageId)}
+              />
+            )}
+            {!isLandlord && data.images.length > 0 && (
               // Scrollable grid — show every image, capped at a sensible
               // height so the gallery doesn't dominate the sidebar. 3-col
               // gives bigger thumbnails than the previous 4-col.

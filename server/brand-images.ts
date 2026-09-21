@@ -689,7 +689,7 @@ export async function refreshBrandImages(companyId: string, opts: {
         description: candidate.pageUrl ? `Photo from ${candidate.source} (${candidate.pageUrl}) for ${brand.name}. Image quality reviewed.`
           : `Photo from a verified store listing for ${brand.name}. Image quality reviewed.`,
         source: candidate.source, brandName: brand.name, companyId: brand.id,
-        propertyId: matchPropertyId(candidate.url), mimeType: photo.mime, filenameHint: `${brand.name}-${candidate.source}`,
+        propertyId: matchPropertyId(candidate.url) ?? matchPropertyId(candidate.pageUrl || ""), mimeType: photo.mime, filenameHint: `${brand.name}-${candidate.source}`,
       });
       imported++;
       await deduper.remember(photo.buffer);
