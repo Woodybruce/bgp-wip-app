@@ -44,6 +44,8 @@ import { NewsTagFilterChips } from "@/components/news-tags-manager";
 import { brandComplianceStatus } from "@shared/brand-compliance-status";
 import { displayTicker, normalizeTicker } from "@shared/stock-ticker";
 import { isLandlordCompany } from "@/lib/company-kind";
+import { AccountDealsBoard } from "@/components/account-deals-board";
+import { AccountNextActionsCard, AccountTeamCard, InvestmentRequirementsCard, useAccountWorkspace } from "@/components/account-workspace-cards";
 
 interface BrandProfile {
   identity?: { status: "verified" | "review"; domain: string | null };
@@ -1059,11 +1061,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
         {!isClientViewer && enrichMutation.message && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{enrichMutation.message}</p>}
         {!editing && (
           <div className="flex flex-wrap gap-1.5 md:hidden pt-2" data-testid="brand-panel-sections">
-            <Pill active={panelSection === "profile"} onClick={() => setPanelSection("profile")} data-testid="brand-section-profile">Profile</Pill>
-            <Pill active={panelSection === "stores"} onClick={() => setPanelSection("stores")} data-testid="brand-section-stores">{isLandlord ? "Ownership" : "Stores"}</Pill>
-            <Pill active={panelSection === "relationship"} onClick={() => setPanelSection("relationship")} data-testid="brand-section-relationship">Relationship</Pill>
+            <Pill active={panelSection === "profile"} onClick={() => setPanelSection("profile")} data-testid="brand-section-profile">{isLandlord ? "Overview" : "Profile"}</Pill>
+            <Pill active={panelSection === "stores"} onClick={() => setPanelSection("stores")} data-testid="brand-section-stores">{isLandlord ? "Portfolio" : "Stores"}</Pill>
+            <Pill active={panelSection === "relationship"} onClick={() => setPanelSection("relationship")} data-testid="brand-section-relationship">{isLandlord ? "Deals & activity" : "Relationship"}</Pill>
             <Pill active={panelSection === "intel"} onClick={() => setPanelSection("intel")} data-testid="brand-section-intel">Intel</Pill>
-            <Pill active={panelSection === "more"} onClick={() => setPanelSection("more")} data-testid="brand-section-more">Contacts &amp; media</Pill>
+            <Pill active={panelSection === "more"} onClick={() => setPanelSection("more")} data-testid="brand-section-more">{isLandlord ? "People" : "Contacts & media"}</Pill>
           </div>
         )}
         {editing ? (
@@ -1521,6 +1523,16 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />
             )}
 
+            {/* Account workspace cards (Delivery 3): open next actions and
+                real investment requirements for the landlord's entity set.
+                Both render nothing when there is nothing to show. */}
+            {isLandlord && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
+                <AccountNextActionsCard companyId={companyId} />
+                <InvestmentRequirementsCard companyId={companyId} />
+              </div>
+            )}
+
             {/* Parent group */}
             {data.parentGroup && (
               <div className="text-xs flex items-center gap-1 text-muted-foreground">
@@ -1815,6 +1827,12 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     this zone keeps just the headline counts. */}
               </div>
             )}
+
+            {/* Landlord account deal list (Delivery 3) — the full resolver
+                deal universe (instructions ∪ related market activity),
+                paginated and filterable, replacing the capped profile query
+                for landlords. */}
+            {isLandlord && <AccountDealsBoard companyId={companyId} />}
 
             {isBrand && <BrandViewingActivity companyId={companyId} />}
             {/* Active requirements moved into the unified Expansion intelligence zone below. */}
@@ -4635,6 +4653,27 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         ? "bg-rose-500"
         : "bg-zinc-300";
   const topContacts = (data.contacts || []).slice(0, 5);
+  // Landlord workspace (Delivery 3): the account resolver's unified contact
+  // set (employer ∪ property ∪ property_client links) replaces the plain
+  // profile contacts on the board, carrying employer/property provenance.
+  // The same query also feeds the account team card in the BGP Team block.
+  const { data: accountWorkspace } = useAccountWorkspace(isLandlord ? companyId : undefined);
+  const boardContacts = isLandlord && accountWorkspace
+    ? accountWorkspace.contacts.map(ct => ({
+        id: ct.contactId,
+        name: ct.name,
+        role: ct.role,
+        email: ct.email,
+        phone: ct.phone,
+        avatar_url: ct.avatarUrl,
+        linkedin_url: ct.linkedinUrl,
+        interaction_count: ct.interactionCount,
+        last_interaction_at: ct.lastInteractionAt,
+        via: ct.via,
+        employerName: ct.employerName,
+        propertyNames: ct.propertyNames,
+      }))
+    : data.contacts || [];
   // On the full-width landlord/brand layout the sidebar cards render as
   // stacked full-width boards — pair the related ones half-width instead
   // (Compliance+Covenant, Key contacts+Files, News+Instagram; Woody,
@@ -4658,7 +4697,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           Best sellers. The chat moved up into the banner's second pane at
           the very top of the profile. */}
       <div className={pairCls}>
-      <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={data.contacts || []} pendingSenders={data.pendingContactSuggestions || []} isLandlord={isLandlord} />
+      <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} isLandlord={isLandlord} />
       {!isLandlord && (
         <MenuIntelCard
           companyId={companyId}
@@ -4951,6 +4990,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
               <Users className="w-3.5 h-3.5 text-muted-foreground" />
               BGP Team
             </h3>
+            {/* Account team read-out (Delivery 3) — resolver team with lead
+                + provenance pills. The org chart below stays the editor. */}
+            <AccountTeamCard companyId={companyId} />
             <ClientTeamOrgChart clientCompanyId={companyId} />
           </CardContent>
         </Card>

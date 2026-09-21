@@ -102,6 +102,24 @@ export function KeyContactRow({ contact, companyId, discovery }: { contact: any;
             {contact.role || <span className="italic text-muted-foreground/70">add role…</span>}
           </button>
         )}
+        {/* Account-mode provenance (Delivery 3): where this contact enters
+            the account — employer, property links, portfolio names. Only
+            renders when the caller passes workspace-shaped contacts. */}
+        {(contact.employerName || (contact.via && contact.via.length > 0) || (contact.propertyNames && contact.propertyNames.length > 0)) && (
+          <div className="flex items-center gap-1 flex-wrap mt-0.5">
+            {contact.employerName && (
+              <span className="text-[9px] text-muted-foreground bg-muted/60 rounded px-1 py-px">{contact.employerName}</span>
+            )}
+            {(contact.via || []).filter((v: string) => v !== "employer").map((v: string) => (
+              <span key={v} className="text-[9px] text-muted-foreground bg-muted/60 rounded px-1 py-px">
+                {v === "property" ? "property link" : v === "property_client" ? "property client" : v}
+              </span>
+            ))}
+            {(contact.propertyNames || []).map((p: string) => (
+              <span key={p} className="text-[9px] text-primary/80 bg-primary/5 rounded px-1 py-px">{p}</span>
+            ))}
+          </div>
+        )}
       </div>
       {/* Tap actions — call / email / LinkedIn, same anatomy as the brand
           search results (Woody, 2026-08-25: "easily click and call or
@@ -228,7 +246,11 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   // counts are visible right under the main list instead of a full page of
   // scrolling (Woody, 2026-08-05: "can we have headers instead?").
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
-  
+  // Account-mode filters (Delivery 3): only active when contacts carry the
+  // workspace shape (via / employerName / propertyNames).
+  const [employerFilter, setEmployerFilter] = useState("");
+  const [propertyFilter, setPropertyFilter] = useState("");
+  const [roleFilter, setRoleFilter] = useState("");
 
   // Property-relevant roles only by default. Most of what RocketReach imports
   // is C-suite + store-dev — but historical Apollo data has store managers,
@@ -294,12 +316,26 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   // small anyway, gating a handful of contacts behind "Show all 1" is pure
   // friction — just list them (UX #85). The gate keeps working for long lists.
   // Landlords bypass the tier entirely (see the isLandlord prop above).
+  const accountMode = allContacts.some((c: any) => c.via || c.employerName || c.propertyNames);
+  const employerOptions = accountMode
+    ? [...new Set(allContacts.map((c: any) => c.employerName).filter(Boolean))].sort() as string[]
+    : [];
+  const propertyOptions = accountMode
+    ? [...new Set(allContacts.flatMap((c: any) => c.propertyNames || []))].sort() as string[]
+    : [];
+  const accountFiltered = !accountMode ? allContacts : allContacts.filter((c: any) => {
+    if (employerFilter && c.employerName !== employerFilter) return false;
+    if (propertyFilter && !(c.propertyNames || []).includes(propertyFilter)) return false;
+    if (roleFilter && !String(c.role || "").toLowerCase().includes(roleFilter.toLowerCase())) return false;
+    return true;
+  });
+  const accountFiltersActive = !!(employerFilter || propertyFilter || roleFilter);
   const applyTierFilter = filterPropertyTier && !isLandlord;
-  const tierEmpty = allContacts.every((c: any) => !isPropertyTier(c.role)) && discovered.every((k: any) => !isPropertyTier(k.title));
-  const effectiveShowAll = showAll || (tierEmpty && allContacts.length + discovered.length <= 5);
-  const crmVisible = effectiveShowAll || !applyTierFilter ? allContacts : allContacts.filter((c: any) => isPropertyTier(c.role));
+  const tierEmpty = accountFiltered.every((c: any) => !isPropertyTier(c.role)) && discovered.every((k: any) => !isPropertyTier(k.title));
+  const effectiveShowAll = showAll || (tierEmpty && accountFiltered.length + discovered.length <= 5);
+  const crmVisible = effectiveShowAll || !applyTierFilter ? accountFiltered : accountFiltered.filter((c: any) => isPropertyTier(c.role));
   const discoveredVisible = effectiveShowAll || !applyTierFilter ? discovered : discovered.filter((k: any) => isPropertyTier(k.title));
-  const hiddenCount = (allContacts.length - crmVisible.length) + (discovered.length - discoveredVisible.length);
+  const hiddenCount = (accountFiltered.length - crmVisible.length) + (discovered.length - discoveredVisible.length);
   const summary = cascade?.summary;
 
   const addToCrm = async (k: any) => {
@@ -357,6 +393,50 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
         )}
       </CardHeader>
       <CardContent className="p-3 pt-0">
+        {accountMode && (employerOptions.length > 0 || propertyOptions.length > 0) && (
+          <div className="flex flex-wrap items-center gap-1.5 mb-2">
+            {employerOptions.length > 0 && (
+              <select
+                value={employerFilter}
+                onChange={e => setEmployerFilter(e.target.value)}
+                className="h-7 text-[11px] rounded border border-border bg-background px-1.5"
+                aria-label="Filter by employer"
+                data-testid="account-contacts-filter-employer"
+              >
+                <option value="">All employers</option>
+                {employerOptions.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            )}
+            {propertyOptions.length > 0 && (
+              <select
+                value={propertyFilter}
+                onChange={e => setPropertyFilter(e.target.value)}
+                className="h-7 text-[11px] rounded border border-border bg-background px-1.5"
+                aria-label="Filter by property"
+                data-testid="account-contacts-filter-property"
+              >
+                <option value="">All properties</option>
+                {propertyOptions.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            )}
+            <input
+              value={roleFilter}
+              onChange={e => setRoleFilter(e.target.value)}
+              placeholder="Role…"
+              className="h-7 text-[11px] rounded border border-border bg-background px-1.5 w-24"
+              aria-label="Filter by role"
+              data-testid="account-contacts-filter-role"
+            />
+            {accountFiltersActive && (
+              <button
+                onClick={() => { setEmployerFilter(""); setPropertyFilter(""); setRoleFilter(""); }}
+                className="h-7 text-[11px] text-muted-foreground hover:text-foreground px-1"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        )}
         {crmVisible.length === 0 && discoveredVisible.length === 0 ? (
           <p className="text-sm text-muted-foreground italic">
             {scanning
