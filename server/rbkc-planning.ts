@@ -50,6 +50,92 @@ interface RbkcSession {
   transport: Transport;
   cookie: string;
   ref: string;
+  openedAt?: number;
+}
+
+/**
+ * Pull an application reference out of any RBKC URL shape we see:
+ *   • publisher: …/publisher/mvc/listDocuments?identifier=Planning&ref=PP%2F20%2F01165
+ *   • case SPA:  https://www.rbkc.gov.uk/planningsearch/cases/PP/20/01165
+ *   • legacy:    …/planning/searches/details.aspx?…&simple=PP/20/01165
+ */
+export function extractRbkcRef(url: string | null | undefined): string | null {
+  if (!url) return null;
+  let decoded = url;
+  try { decoded = decodeURIComponent(url); } catch {}
+  try {
+    const q = new URL(url).searchParams.get("ref");
+    if (q && looksLikeRbkcRef(q)) return q.trim().toUpperCase();
+  } catch {}
+  const m = decoded.match(/\b([A-Z]{2,3}\/\d{2}\/\d{4,6})\b/i);
+  return m ? m[1].toUpperCase() : null;
+}
+
+/** Publisher listDocuments URL for a reference (what PlanIt's docs_url points at). */
+export function rbkcDocsUrlFor(ref: string): string {
+  return `${PUBLISHER}/publisher/mvc/listDocuments?identifier=${IDENTIFIER}&ref=${encodeURIComponent(ref.trim().toUpperCase())}`;
+}
+
+/**
+ * The publisher's per-document paths (/publisher/docs/<hex>/Document-<hex>.pdf)
+ * are SESSION TOKENS: every listing mints new hex keys, and a key only works
+ * on the JSESSIONID that listed it. A stored copy is dead within minutes.
+ *
+ * So PlanningDoc.url for RBKC is a durable HANDLE instead — the real
+ * listDocuments URL (opens the register if clicked raw) plus a `doc=` key
+ * derived from the row's date|type|description(+ordinal). At download time we
+ * relist under the ref, match the row, and fetch its current live path on
+ * that same session. The Pathway stores these handles in stage results and
+ * the browser proxy route resolves them any time later.
+ */
+function docKey(date: string, type: string, description: string, ordinal: number): string {
+  return Buffer.from(`${date}|${type}|${description}|${ordinal}`, "utf8").toString("base64url");
+}
+
+function makeHandle(ref: string, key: string): string {
+  return `${rbkcDocsUrlFor(ref)}&doc=${key}`;
+}
+
+function parseHandle(url: string): { ref: string; key: string } | null {
+  try {
+    const u = new URL(url);
+    if (!/(?:^|\.)rbkc\.gov\.uk$/i.test(u.hostname)) return null;
+    const ref = u.searchParams.get("ref");
+    const key = u.searchParams.get("doc");
+    if (!ref || !key || !looksLikeRbkcRef(ref)) return null;
+    return { ref: ref.trim().toUpperCase(), key };
+  } catch { return null; }
+}
+
+/** True for anything downloadPlanningPdf should hand to this module: a handle, or a raw live publisher path. */
+export function isRbkcPublisherDocUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  if (parseHandle(url)) return true;
+  try {
+    const u = new URL(url);
+    return /(?:^|\.)rbkc\.gov\.uk$/i.test(u.hostname) && /^\/publisher\/docs\//i.test(u.pathname);
+  } catch { return false; }
+}
+
+// handle → current live publisher path (refreshed on every listing), and the
+// warm session per reference. Live paths are only valid on the session in
+// sessionByRef for that ref; both are dropped together when a session lapses.
+const liveUrlByHandle = new Map<string, string>();
+const sessionByRef = new Map<string, RbkcSession>();
+const SESSION_TTL_MS = 20 * 60 * 1000;
+const LIVE_URL_CAP = 5000;
+
+function rememberSession(session: RbkcSession) {
+  session.openedAt = Date.now();
+  sessionByRef.set(session.ref, session);
+}
+
+async function sessionFor(ref: string): Promise<RbkcSession | null> {
+  const cached = sessionByRef.get(ref);
+  if (cached && Date.now() - (cached.openedAt || 0) < SESSION_TTL_MS) return cached;
+  const fresh = await openSession(ref);
+  if (fresh) rememberSession(fresh);
+  return fresh;
 }
 
 function mergeSetCookie(existing: string, res: Response): string {
@@ -107,10 +193,10 @@ async function openSession(ref: string): Promise<RbkcSession | null> {
  * List every document held against an RBKC application reference, classified.
  * The PlanningDoc.url is the fully-qualified publisher PDF URL.
  */
-export async function listRbkcDocuments(ref: string): Promise<{ docs: PlanningDoc[]; session: RbkcSession } | null> {
+export async function listRbkcDocuments(ref: string, retried = false): Promise<{ docs: PlanningDoc[]; session: RbkcSession } | null> {
   const clean = ref.trim().toUpperCase();
   if (!looksLikeRbkcRef(clean)) return null;
-  const session = await openSession(clean);
+  const session = await sessionFor(clean);
   if (!session) return null;
 
   const listUrl = `${PUBLISHER}/publisher/mvc/getDocumentList?identifier=${IDENTIFIER}&ref=${encodeURIComponent(clean)}`;
@@ -130,7 +216,12 @@ export async function listRbkcDocuments(ref: string): Promise<{ docs: PlanningDo
     });
     session.cookie = mergeSetCookie(session.cookie, res);
     const ct = res.headers.get("content-type") || "";
-    if (!ct.includes("json")) return { docs: [], session };
+    if (!ct.includes("json")) {
+      // Non-JSON here means the (cached) JSESSIONID has lapsed — reopen once.
+      sessionByRef.delete(clean);
+      if (!retried) return listRbkcDocuments(clean, true);
+      return { docs: [], session };
+    }
     json = await res.json();
   } catch (err: any) {
     console.warn(`[rbkc-planning] getDocumentList failed for ${clean}: ${err?.message}`);
@@ -138,25 +229,87 @@ export async function listRbkcDocuments(ref: string): Promise<{ docs: PlanningDo
   }
 
   const rows: any[] = Array.isArray(json?.data) ? json.data : [];
-  const docs: PlanningDoc[] = rows.map((r) => {
+  const ordinals = new Map<string, number>();
+  const docs: PlanningDoc[] = [];
+  if (liveUrlByHandle.size + rows.length > LIVE_URL_CAP) liveUrlByHandle.clear();
+  for (const r of rows) {
     const date = String(r[0] || "").trim();
     const type = String(r[1] || "").replace(/\s+/g, " ").trim();
     const description = String(r[2] || "").replace(/\s+/g, " ").trim();
     const path = String(r[3] || "").trim();
+    // Publisher path is relative to /publisher; make it absolute.
+    const liveUrl = path.startsWith("http") ? path : `${PUBLISHER}/publisher${path.startsWith("/") ? "" : "/"}${path}`;
+    if (!path || !/\.pdf(\?|$)/i.test(liveUrl)) continue;
     // Idox drawing numbers usually lead the description ("256-P-GA10-P3-…").
     const dnMatch = description.match(/^([0-9A-Z]+(?:[-_][0-9A-Z]+){1,6})/i);
     const drawingNumber = dnMatch ? dnMatch[1] : undefined;
     const { category, label } = classifyDoc(description, type, drawingNumber);
-    // Publisher path is relative to /publisher; make it absolute.
-    const url = path.startsWith("http") ? path : `${PUBLISHER}/publisher${path.startsWith("/") ? "" : "/"}${path}`;
-    return { url, date, description, type, drawingNumber, category, label };
-  }).filter((d) => d.url && /\.pdf(\?|$)/i.test(d.url));
+    const identity = `${date}|${type}|${description}`;
+    const ordinal = ordinals.get(identity) || 0;
+    ordinals.set(identity, ordinal + 1);
+    const url = makeHandle(clean, docKey(date, type, description, ordinal));
+    liveUrlByHandle.set(url, liveUrl);
+    docs.push({ url, date, description, type, drawingNumber, category, label });
+  }
 
   return { docs, session };
 }
 
-/** Download one document's PDF bytes on the session's transport. */
+/**
+ * Resolve a document handle to a live publisher path plus the session that
+ * minted it, relisting when the handle is unknown to this process or its
+ * session has lapsed. Raw live paths are passed through as-is (only valid on
+ * the caller's session).
+ */
+async function resolveLive(url: string, session: RbkcSession | null, allowRelist: boolean): Promise<{ liveUrl: string; session: RbkcSession } | null> {
+  const handle = parseHandle(url);
+  if (!handle) return session ? { liveUrl: url, session } : null;
+  const warm = sessionByRef.get(handle.ref);
+  const cached = liveUrlByHandle.get(url);
+  if (cached && warm && Date.now() - (warm.openedAt || 0) < SESSION_TTL_MS) return { liveUrl: cached, session: warm };
+  if (!allowRelist) return null;
+  sessionByRef.delete(handle.ref);
+  const listed = await listRbkcDocuments(handle.ref);
+  if (!listed) return null;
+  const live = liveUrlByHandle.get(url);
+  if (!live) {
+    console.warn(`[rbkc-planning] document no longer listed on ${handle.ref}: ${url}`);
+    return null;
+  }
+  return { liveUrl: live, session: listed.session };
+}
+
+/**
+ * Download a document by its handle alone — the Pathway's stored stage
+ * results and the browser proxy route only hold the URL. Returns null for a
+ * raw live path this process didn't mint (those are session tokens; there is
+ * no anonymous fallback — the publisher 404s cookieless requests).
+ */
+export async function downloadRbkcPublisherUrl(url: string): Promise<Buffer | null> {
+  if (!parseHandle(url)) {
+    console.warn(`[rbkc-planning] ${url} is a session-bound publisher path, not a document handle — cannot download`);
+    return null;
+  }
+  const first = await resolveLive(url, null, true);
+  if (!first) return null;
+  const buf = await fetchPdf(first.liveUrl, first.session);
+  if (buf) return buf;
+  // The warm session may have lapsed server-side without our TTL noticing —
+  // force a fresh listing once and retry.
+  const handle = parseHandle(url)!;
+  sessionByRef.delete(handle.ref);
+  const second = await resolveLive(url, null, true);
+  return second ? fetchPdf(second.liveUrl, second.session) : null;
+}
+
+/** Download one document's PDF bytes (handle or live path) on the session that listed it. */
 export async function downloadRbkcDocument(url: string, session: RbkcSession): Promise<Buffer | null> {
+  const resolved = await resolveLive(url, session, true);
+  if (!resolved) return null;
+  return fetchPdf(resolved.liveUrl, resolved.session);
+}
+
+async function fetchPdf(url: string, session: RbkcSession): Promise<Buffer | null> {
   try {
     const res = await fetchOn(session.transport, url, {
       headers: {

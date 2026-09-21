@@ -4131,18 +4131,30 @@ async function runStage4(runId: string, req: Request): Promise<void> {
     if (planitResult.status === "fulfilled") planitApps = planitResult.value;
     else console.warn("[pathway stage4] PlanIt skipped:", planitResult.reason?.message);
 
-    const normalise = (a: any) => ({
-      reference: a.reference || a.ref || a.application_number || "",
-      address: a.address || a.site_address || "",
-      description: a.description || a.proposal || a.development_description || "",
-      status: a.status || a.decision || a.application_status || "",
-      date: a.decidedAt || a.decided_at || a.decision_date || a.receivedAt || a.received_at || a.date || "",
-      decidedAt: a.decidedAt || a.decided_at || a.decision_date || null,
-      receivedAt: a.receivedAt || a.received_at || a.received_date || null,
-      documentUrl: a.documentUrl || a.document_url || a.url || null,
-      source: a.source || (a.reference ? "gov" : ""),
-      lpa: a.lpa || "",
-    });
+    const { looksLikeRbkcRef, rbkcDocsUrlFor } = await import("./rbkc-planning");
+    const normalise = (a: any) => {
+      const reference = a.reference || a.ref || a.application_number || "";
+      const address = a.address || a.site_address || "";
+      const lpa = a.lpa || "";
+      let documentUrl = a.documentUrl || a.document_url || a.url || null;
+      // RBKC records from sources without a documents link (planning.data.gov.uk,
+      // PropertyData) can still be scraped — the publisher is ref-addressed.
+      if (!documentUrl && looksLikeRbkcRef(reference) && /kensington|chelsea|rbkc/i.test(`${lpa} ${address}`)) {
+        documentUrl = rbkcDocsUrlFor(reference);
+      }
+      return {
+        reference,
+        address,
+        description: a.description || a.proposal || a.development_description || "",
+        status: a.status || a.decision || a.application_status || "",
+        date: a.decidedAt || a.decided_at || a.decision_date || a.receivedAt || a.received_at || a.date || "",
+        decidedAt: a.decidedAt || a.decided_at || a.decision_date || null,
+        receivedAt: a.receivedAt || a.received_at || a.received_date || null,
+        documentUrl,
+        source: a.source || (a.reference ? "gov" : ""),
+        lpa,
+      };
+    };
 
     const seen = new Set<string>();
     const merged: any[] = [];
