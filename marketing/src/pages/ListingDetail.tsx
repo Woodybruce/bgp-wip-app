@@ -66,6 +66,7 @@ export default function ListingDetail() {
   const lat = Number(listing.latitude);
   const lon = Number(listing.longitude);
   const displayName = listing.unitName.replace(/^\[Sample\]\s*/, "");
+  const propertyDisplay = (listing.propertyName || "").replace(/^\[Sample\]\s*/, "");
 
   const headline = [
     formatSqft(listing.sqft),
@@ -109,15 +110,17 @@ export default function ListingDetail() {
         </p>
         <div className="mt-4 flex flex-wrap items-baseline justify-between gap-x-8 gap-y-2 border-b border-bgp-wine/25 pb-6">
           <div>
-            <h1 className="display text-3xl md:text-5xl leading-tight">{displayName}</h1>
-            {(listing.propertyName !== listing.unitName || listing.addressLine) && (
+            {/* The building leads — "8-14 Meard St" is the headline, the
+                specific unit sits in the smaller line with the address. */}
+            <h1 className="display text-3xl md:text-5xl leading-tight">{propertyDisplay || displayName}</h1>
+            {(propertyDisplay && propertyDisplay !== displayName) || listing.addressLine ? (
               <p className="mt-2 text-[15px] md:text-base font-light text-bgp-ink/80">
                 {[
-                  listing.propertyName && listing.propertyName !== listing.unitName ? listing.propertyName.replace(/^\[Sample\]\s*/, "") : null,
+                  propertyDisplay && propertyDisplay !== displayName ? displayName : null,
                   listing.addressLine,
                 ].filter(Boolean).join(" · ")}
               </p>
-            )}
+            ) : null}
           </div>
           {headline && <p className="font-display italic text-bgp-ink/70 text-lg md:text-xl">{headline}</p>}
         </div>

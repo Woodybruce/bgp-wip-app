@@ -3405,7 +3405,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           useClass: { type: "string", description: "Use class e.g. E, A1, B1, Sui Generis" },
           condition: { type: "string", description: "e.g. Shell & Core, Cat A, Fitted" },
           location: { type: "string", description: "Region/location: Clapham, East Anglia, Ireland, London, Midlands, N. Ireland, National, North East, North West, Scotland, South East, South West, Wales" },
-          availableDate: { type: "string", description: "When available" },
+          availableDate: { type: "string", description: "Month the unit becomes available — month granularity, always the 1st: YYYY-MM-01" },
           marketingStatus: { type: "string", description: "e.g. Available, Under Offer, Let, Withdrawn" },
           epcRating: { type: "string" },
           notes: { type: "string" },

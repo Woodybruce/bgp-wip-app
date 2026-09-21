@@ -4083,8 +4083,23 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   };
   const publicShape = (r: any, files: any[], agentsById: Record<string, any>) => {
     const { agentUserIds, unitAddress, unitPostcode, propertyAddress, ...rest } = r;
+    // Month granularity for the site ("October 2026", never a raw ISO
+    // string); a month that has already passed reads as available now, so
+    // send null and let the site show its "Immediately" default.
+    let availableDate: string | null = rest.availableDate || null;
+    if (availableDate) {
+      const d = new Date(availableDate);
+      if (isNaN(d.getTime())) availableDate = null;
+      else {
+        const now = new Date();
+        availableDate = d.getFullYear() < now.getFullYear() || (d.getFullYear() === now.getFullYear() && d.getMonth() <= now.getMonth())
+          ? null
+          : d.toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+      }
+    }
     return {
       ...rest,
+      availableDate,
       files,
       agents: (agentUserIds || []).map((id: string) => agentsById[id]).filter(Boolean),
     };

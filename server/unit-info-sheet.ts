@@ -210,7 +210,7 @@ router.post("/api/available-units/:id/info-sheet", requireAuth, async (req: Requ
     if (unit.useClass) rows.push(["Use", String(unit.useClass)]);
     if (unit.epcRating) rows.push(["EPC", String(unit.epcRating)]);
     if (unit.condition) rows.push(["Condition", String(unit.condition)]);
-    if (unit.availableDate) rows.push(["Available", new Date(unit.availableDate).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })]);
+    if (unit.availableDate) rows.push(["Available", new Date(unit.availableDate).toLocaleDateString("en-GB", { month: "long", year: "numeric" })]);
 
     page.drawText("PARTICULARS", { x: MARGIN, y, size: 9, font: fontBold, color: grey });
     y -= 8;

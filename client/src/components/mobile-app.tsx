@@ -5522,7 +5522,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   { label: "Use Class", value: selectedUnit.useClass },
                   { label: "Condition", value: selectedUnit.condition },
                   { label: "EPC Rating", value: selectedUnit.epcRating },
-                  { label: "Available Date", value: selectedUnit.availableDate ? new Date(selectedUnit.availableDate).toLocaleDateString("en-GB") : null },
+                  { label: "Available", value: selectedUnit.availableDate ? new Date(selectedUnit.availableDate).toLocaleDateString("en-GB", { month: "long", year: "numeric" }) : null },
                   { label: "Marketing Start", value: selectedUnit.marketingStartDate ? new Date(selectedUnit.marketingStartDate).toLocaleDateString("en-GB") : null },
                   { label: "Restrictions", value: selectedUnit.restrictions },
                 ].filter(r => r.value).map(r => (

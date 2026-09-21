@@ -2579,10 +2579,10 @@ export default function AvailableUnitsPage() {
                             <div className="grid grid-cols-[100px_1fr] items-center gap-2">
                               <Label className="text-xs text-muted-foreground">Available from</Label>
                               <input
-                                type="date"
+                                type="month"
                                 className="h-7 text-xs border rounded px-1.5 bg-background"
-                                defaultValue={u.availableDate ? String(u.availableDate).slice(0, 10) : ""}
-                                onBlur={e => { const v = e.target.value || null; if (v !== (u.availableDate ? String(u.availableDate).slice(0, 10) : null)) inlineUpdate(u.id, "availableDate", v); }}
+                                defaultValue={u.availableDate ? String(u.availableDate).slice(0, 7) : ""}
+                                onBlur={e => { const v = e.target.value ? `${e.target.value}-01` : null; if ((v || "").slice(0, 7) !== (u.availableDate ? String(u.availableDate).slice(0, 7) : "")) inlineUpdate(u.id, "availableDate", v); }}
                               />
                             </div>
                             <div className="grid grid-cols-[100px_1fr] items-center gap-2">
@@ -2927,8 +2927,9 @@ export default function AvailableUnitsPage() {
         isPending={updateMutation.isPending}
         isEdit={true}
         photoCount={(editItem as any)?.photoCount ?? 0}
-        // Opens the row's Files dialog ON TOP of the edit form (photos live
-        // there, not in the form) — form edits survive underneath.
+        unitId={editItem?.id ?? null}
+        // Opens the row's Files dialog ON TOP of the edit form (for
+        // move/delete/focal point) — form edits survive underneath.
         onOpenFiles={() => editItem && setFilesUnit(editItem)}
       />
 
@@ -4594,7 +4595,7 @@ function UnitFormDialog({
   open, onOpenChange, title, form, setForm, properties, propertyUnits = [], bgpUsers, crmCompanies = [],
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
   showAllFields, setShowAllFields, isEdit,
-  onSubmit, isPending, photoCount, onOpenFiles,
+  onSubmit, isPending, photoCount, onOpenFiles, unitId,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -4619,8 +4620,51 @@ function UnitFormDialog({
   // the row's Files dialog for photo uploads without losing form edits.
   photoCount?: number | null;
   onOpenFiles?: () => void;
+  // The unit being edited — enables the in-form Files section (uploads need
+  // an existing row to attach to).
+  unitId?: string | null;
 }) {
   const upd = (field: keyof UnitFormState, value: string) => setForm({ ...form, [field]: value });
+  const { toast } = useToast();
+
+  // In-form file uploads (photos / floor plans). Same endpoint, categories
+  // and cache key as the row's Files dialog, so both views stay in sync.
+  const formPhotoInputRef = useRef<HTMLInputElement>(null);
+  const formPlanInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingCat, setUploadingCat] = useState<"photo" | "floorplan" | null>(null);
+  const { data: unitFiles = [] } = useQuery<UnitMarketingFile[]>({
+    queryKey: ["/api/available-units", unitId, "files"],
+    queryFn: async () => {
+      const r = await fetch(`/api/available-units/${unitId}/files`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      const data = await r.json();
+      return Array.isArray(data) ? data : [];
+    },
+    enabled: open && !!unitId,
+  });
+  // Same categorisation rule as the row's Files dialog (catOf).
+  const catOfUnitFile = (f: UnitMarketingFile) => (((f as any).category === "brochure" && f.mimeType?.startsWith("image/")) ? "photo" : ((f as any).category || "brochure"));
+  const uploadUnitFiles = async (list: File[], category: "photo" | "floorplan") => {
+    if (!unitId || list.length === 0) return;
+    setUploadingCat(category);
+    try {
+      for (const file of list) {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("category", category);
+        const res = await fetch(`/api/available-units/${unitId}/files`, { method: "POST", body: fd, credentials: "include", headers: { ...getAuthHeaders() } });
+        if (!res.ok) throw new Error(`Upload failed (${file.name})`);
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units", unitId, "files"] });
+      // photoCount on the tracker rows feeds the Website pill — refresh it.
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      toast({ title: list.length > 1 ? `${list.length} files uploaded` : "File uploaded" });
+    } catch (e: any) {
+      toast({ title: "Upload failed", description: e.message, variant: "destructive" });
+    } finally {
+      setUploadingCat(null);
+    }
+  };
 
   // Tenancy schedule is the canonical unit source. When a property
   // is picked, we fetch its tenancy rows and let the user pick from
@@ -4720,7 +4764,7 @@ function UnitFormDialog({
           const prop = properties.find(p => p.id === form.propertyId);
           const addr = prop?.address as any;
           const hasAddr = !!(addr && (typeof addr === "string" ? addr.trim() : (addr.formatted || addr.address || addr.street || addr.postcode)));
-          const hasPhoto = (photoCount ?? 0) > 0;
+          const hasPhoto = unitFiles.some(f => catOfUnitFile(f) === "photo") || (unitFiles.length === 0 && (photoCount ?? 0) > 0);
           const checks: { label: string; ok: boolean; hint?: string; action?: { label: string; run: () => void } }[] = [
             { label: "Address", ok: hasAddr, hint: "comes from the linked property record" },
             { label: "Rent or POA", ok: !!form.askingRent.trim() || form.rentPoa, hint: "Quoting Rent below, or tick POA" },
@@ -4728,7 +4772,7 @@ function UnitFormDialog({
             {
               label: "Photo", ok: hasPhoto,
               hint: isEdit
-                ? "photos live in Files on the unit row, under Photos — not in this form"
+                ? "upload in the Files section further down this form"
                 : "save the unit first, then add photos via Files on its row (Photos section)",
               action: isEdit && onOpenFiles ? { label: "Open Files", run: onOpenFiles } : undefined,
             },
@@ -4964,7 +5008,10 @@ function UnitFormDialog({
           </div>
           <div className="min-w-0">
             <Label>Available Date</Label>
-            <Input type="date" className="min-w-0" value={form.availableDate} onChange={e => upd("availableDate", e.target.value)} />
+            {/* Month granularity — "October 2026", not an exact day (Carly,
+                2026-09-21). Stored as the 1st of the month so existing
+                date-string sorting and the public feed keep working. */}
+            <Input type="month" className="min-w-0" value={form.availableDate.slice(0, 7)} onChange={e => upd("availableDate", e.target.value ? `${e.target.value}-01` : "")} />
           </div>
           <div className="col-span-2">
             <Label>BGP Contact</Label>
@@ -5074,6 +5121,54 @@ function UnitFormDialog({
             <Label>Notes</Label>
             <Textarea value={form.notes} onChange={e => upd("notes", e.target.value)} placeholder="Additional notes..." rows={3} />
           </div>
+
+          {/* Files — photos & floor plans uploadable while editing, so the
+              website checklist can be finished without leaving the form
+              (Carly, 2026-09-21). Full management (move/delete/focal point)
+              stays in the row's Files dialog. */}
+          {isEdit && unitId && (
+            <div className="col-span-2 rounded-lg border border-border bg-muted/30 p-3 space-y-2" data-testid="unit-form-files">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Files — photos & floor plans
+                  {unitFiles.length > 0 && (
+                    <span className="ml-2 normal-case tracking-normal font-normal">
+                      <span className="font-mono tabular-nums">{unitFiles.filter(f => catOfUnitFile(f) === "photo").length}</span> photo{unitFiles.filter(f => catOfUnitFile(f) === "photo").length === 1 ? "" : "s"} ·{" "}
+                      <span className="font-mono tabular-nums">{unitFiles.filter(f => catOfUnitFile(f) === "floorplan").length}</span> floor plan{unitFiles.filter(f => catOfUnitFile(f) === "floorplan").length === 1 ? "" : "s"} ·{" "}
+                      <span className="font-mono tabular-nums">{unitFiles.filter(f => !["photo", "floorplan"].includes(catOfUnitFile(f))).length}</span> other
+                    </span>
+                  )}
+                </p>
+                {onOpenFiles && (
+                  <button type="button" className="text-[11px] underline text-primary shrink-0" onClick={onOpenFiles} data-testid="unit-form-open-files">
+                    Full Files dialog
+                  </button>
+                )}
+              </div>
+              {unitFiles.length === 0 && (
+                <p className="text-xs text-muted-foreground">No files yet — the website needs at least one photo.</p>
+              )}
+              {unitFiles.length > 0 && (
+                <div className="max-h-24 overflow-y-auto space-y-0.5">
+                  {unitFiles.map(f => (
+                    <p key={f.id} className="text-xs truncate">
+                      <span className="text-muted-foreground uppercase text-[10px] mr-1.5">{catOfUnitFile(f)}</span>{f.fileName}
+                    </p>
+                  ))}
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <input ref={formPhotoInputRef} type="file" accept="image/*" multiple className="hidden" onChange={e => { const files = Array.from(e.target.files || []); e.target.value = ""; uploadUnitFiles(files, "photo"); }} data-testid="input-unit-form-photos" />
+                <input ref={formPlanInputRef} type="file" accept=".pdf,image/*" multiple className="hidden" onChange={e => { const files = Array.from(e.target.files || []); e.target.value = ""; uploadUnitFiles(files, "floorplan"); }} data-testid="input-unit-form-plans" />
+                <Button type="button" variant="outline" size="sm" onClick={() => formPhotoInputRef.current?.click()} disabled={!!uploadingCat} data-testid="button-unit-form-upload-photos">
+                  {uploadingCat === "photo" ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Upload className="w-3.5 h-3.5 mr-1" />} Upload photos
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => formPlanInputRef.current?.click()} disabled={!!uploadingCat} data-testid="button-unit-form-upload-plans">
+                  {uploadingCat === "floorplan" ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Upload className="w-3.5 h-3.5 mr-1" />} Upload floor plan
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* Less-frequently-set fields collapse behind a toggle, same
               shape Add Deal uses. Always-expanded on edit so an existing

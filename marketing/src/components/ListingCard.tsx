@@ -29,9 +29,11 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
           </span>
         )}
       </Link>
+      {/* The building leads — the property name is the headline, the
+          specific unit sits in the smaller line with the address. */}
       <div className="mt-3 flex items-baseline justify-between gap-3">
         <Link href={`/leasing/${listing.id}`} className="font-display text-bgp-ink text-xl leading-tight hover:text-bgp-wine transition-colors">
-          {listing.unitName}
+          {listing.propertyName || listing.unitName}
         </Link>
         {listing.useClass && (
           <span className="label-caps text-bgp-ink/70 whitespace-nowrap shrink-0">{listing.useClass}</span>
@@ -39,7 +41,7 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
       </div>
       <p className="mt-1 text-sm font-light text-bgp-ink/70">
         {listing.propertyName && listing.propertyName !== listing.unitName && (
-          <span className="text-bgp-ink/85">{listing.propertyName}<br /></span>
+          <span className="text-bgp-ink/85">{listing.unitName}<br /></span>
         )}
         {(listing.addressLine || listing.location || listing.postcode) && (
           <span>{listing.addressLine || listing.location || listing.postcode}<br /></span>
