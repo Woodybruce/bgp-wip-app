@@ -317,7 +317,7 @@ export function registerRetailContextPlanRoutes(app: Express) {
         { label: "Food & Beverage", fill: "#D08F6E" },
         { label: "Services", fill: "#8B9DC3" },
         { label: "Beauty", fill: "#B8A4B6" },
-        { label: "Vacant", fill: "#FF7D00" },
+        { label: "Vacant", fill: "#FC9F8D", stroke: "#6E0C25" },
       ];
       let lx = 24;
       const legendChunks = legendItems.map((it) => {

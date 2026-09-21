@@ -3203,19 +3203,35 @@ app.get("/privacy", (_req, res) => {
 // installed in the production image).
 app.get("/bgp-mark.png", async (_req, res) => {
   try {
-    const { createCanvas } = await import("canvas");
+    const { createCanvas, loadImage } = await import("canvas");
+    const fs = await import("fs");
+    const path = await import("path");
     const SIZE = 1024;
     const canvas = createCanvas(SIZE, SIZE);
     const ctx = canvas.getContext("2d");
 
-    ctx.fillStyle = "#2E5E3F";
+    // v19 house style: bordeaux ground carrying the real white wordmark.
+    ctx.fillStyle = "#6E0C25";
     ctx.fillRect(0, 0, SIZE, SIZE);
 
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 480px serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("BGP", SIZE / 2, SIZE / 2 + 40);
+    let drewWordmark = false;
+    for (const p of [path.join(process.cwd(), "server", "assets", "BGP_WhiteHolder.png"), path.join(process.cwd(), "dist", "server", "assets", "BGP_WhiteHolder.png")]) {
+      if (!fs.existsSync(p)) continue;
+      try {
+        const img = await loadImage(p);
+        const w = SIZE * 0.78, h = w * (img.height / img.width);
+        ctx.drawImage(img, (SIZE - w) / 2, (SIZE - h) / 2, w, h);
+        drewWordmark = true;
+        break;
+      } catch {}
+    }
+    if (!drewWordmark) {
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 480px serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("BGP", SIZE / 2, SIZE / 2 + 40);
+    }
 
     const png = canvas.toBuffer("image/png");
     res.setHeader("Content-Type", "image/png");

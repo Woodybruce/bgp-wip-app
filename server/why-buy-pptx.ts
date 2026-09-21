@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 // BGP "Why Buy" PowerPoint generator.
 //
-// Produces an EDITABLE, branded .pptx deck (green house palette) from real
+// Produces an EDITABLE, branded .pptx deck (v19 Bordeaux house palette) from real
 // property data — the format the team actually edits. The HTML→PDF engine
 // (claude-designed-pdf / why-buy-design) stays for locked finals; this is the
 // editable master. Structure is a fixed, designed Why Buy template (cover →
@@ -13,8 +13,10 @@ import type { Request } from "express";
 import * as fs from "fs";
 import * as path from "path";
 
-// Green house palette (matches the document-templates.ts pptx engine).
-const GREEN = "2E5E3F", DK = "1A3A28", GOLD = "C4A35A", DARK = "232323";
+// v19 house palette — Bordeaux signature, deep Bordeaux, Nectar accent
+// (matches doc-engine BGP_BRAND / deck-engine). Constant names kept so the
+// renderer below reads unchanged.
+const GREEN = "6E0C25", DK = "4A0819", GOLD = "FC9F8D", DARK = "1D1D1B";
 const PANEL = "EFEDE6", MUTE = "5A6468", HAIR = "D7DAD3", WHITE = "FFFFFF", INK = "232323", LIGHT = "E7E5DF";
 const SERIF = "Georgia", SANS = "Calibri";
 const M = 0.5, CW = 13.33 - M * 2;

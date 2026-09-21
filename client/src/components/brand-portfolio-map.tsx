@@ -94,7 +94,7 @@ export function BrandPortfolioMap({
         radius = 8;
         outline = "#1f2937";          // gray-800 ring so gold pops
         outlineWeight = 2;
-      } else if (s.tone === "linked") { colour = "#0f766e"; radius = 6; }
+      } else if (s.tone === "linked") { colour = "#B8672E"; radius = 6; }
       else if (s.tone === "unlinked") colour = "#94a3b8";
       else if (s.status === "closed") colour = "#ef4444";
       else if (s.status === "open")   colour = "#10b981";

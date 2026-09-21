@@ -4,7 +4,7 @@
 // can preview and iterate live in the app. Same brief as the Gamma path; the
 // difference is Claude renders the deck inline as HTML (sandboxed iframe in
 // the UI) rather than handing it to Gamma. Iterations layer on top — the user
-// types "make it more punchy / drop section 3 / use BGP teal" and Claude
+// types "make it more punchy / drop section 3 / more bordeaux" and Claude
 // re-emits the full HTML which we save as a new version.
 
 import type { Express, Request, Response } from "express";
@@ -116,7 +116,7 @@ MAPS — any embedded Google Static Maps image uses maptype=hybrid (satellite wi
 
 BGP LOGO — put the BGP logo on the cover slide (top) and in the footer band of EVERY slide. Use an <img> with the EXACT placeholder src below (do not invent or inline any other logo) and a data-edit-id:
 - On light / cream backgrounds: <img src="__BGP_LOGO_DARK__" class="bgp-logo" alt="BGP" data-edit-id="image-{slide}-logo">
-- On dark backgrounds (teal / charcoal footer bands etc.): <img src="__BGP_LOGO_LIGHT__" class="bgp-logo" alt="BGP" data-edit-id="image-{slide}-logo">
+- On dark backgrounds (bordeaux footer bands, cover etc.): <img src="__BGP_LOGO_LIGHT__" class="bgp-logo" alt="BGP" data-edit-id="image-{slide}-logo">
 Keep it small (height ~28-40px). The placeholders are swapped for the real logo when the deck is rendered — leave the src strings exactly as written.
 
 PROPERTY IMAGERY — for real photos use ONLY these exact placeholder srcs (swapped for the run's saved images at render time; if no image exists the <img> is removed cleanly, so they're always safe to include):

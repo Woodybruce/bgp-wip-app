@@ -93,6 +93,13 @@ Briefs / KYC Clouseau / PLA briefs over time), team preferences live in
 Active rows are prepended to the generation prompt as "House preferences"
 so Claude designs each doc fresh but follows accumulated direction.
 
+The palette and logo rule itself lives in ONE place: `server/doc-engine.ts`
+`BGP_BRAND` (v19 Bordeaux `#6E0C25` / Nectar `#FC9F8D` / Stone, real
+wordmark via `__BGP_LOGO_DARK__` / `__BGP_LOGO_LIGHT__` tokens that the
+renderer swaps for the PNGs). Every new document generator imports it — do
+not write a palette into a prompt or hardcode teal/green/gold, and never let
+a design type its own "BGP" logo. See `docs/DESIGN.md` §1.
+
 **Don't add rigid override fields.** When Nick (or anyone) says "always
 do X on the Why Buy deck", insert one row into
 `document_design_preferences` with scope='why_buy'. ChatBGP can do this

@@ -27,7 +27,7 @@ import { sendSharedMailboxEmail } from "./shared-mailbox";
 import { computeHunterScore } from "./hunter-score";
 
 const router = Router();
-const BGP_GREEN = "#2E5E3F";
+const BGP_GREEN = "#6E0C25"; // v19 Bordeaux (constant name is legacy)
 // Claude brand palette — used for transactional emails.
 const CLAUDE_CORAL = "#C15F3C";
 const CLAUDE_CREAM = "#F0EEE6";

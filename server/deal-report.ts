@@ -19,8 +19,8 @@ import * as fs from "fs";
 import { callClaude, safeParseJSON } from "./utils/anthropic-client";
 
 const router = Router();
-const BGP_GREEN = "#2E5E3F";
-const BGP_DARK_GREEN = "#1A3A28";
+const BGP_GREEN = "#6E0C25";      // v19 Bordeaux (constant names are legacy)
+const BGP_DARK_GREEN = "#4A0819"; // deep Bordeaux
 
 // Publishable key — same one the client embeds (client/src/lib/logokit.ts).
 const LOGOKIT_TOKEN = "pk_fr1c952fceb18ba8753374";

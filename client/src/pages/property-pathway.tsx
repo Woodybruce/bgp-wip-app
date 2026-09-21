@@ -3731,8 +3731,8 @@ function ClaudeDesignPane({ runId }: { runId: string }) {
       style.id = "__bgp_editor_styles";
       style.textContent = `
         [data-edit-id] { cursor: pointer; transition: outline 0.12s ease, background 0.12s ease; }
-        [data-edit-id]:hover { outline: 2px dashed #15616D; outline-offset: 3px; }
-        [data-edit-id].__bgp_editing { outline: 2px solid #FF7D00; outline-offset: 3px; background: rgba(255,125,0,0.04); cursor: text; }
+        [data-edit-id]:hover { outline: 2px dashed #6e0c25; outline-offset: 3px; }
+        [data-edit-id].__bgp_editing { outline: 2px solid #fc9f8d; outline-offset: 3px; background: rgba(252,159,141,0.08); cursor: text; }
         @media print { [data-edit-id] { outline: none !important; cursor: default !important; } }
       `;
       doc.head.appendChild(style);
