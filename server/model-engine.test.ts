@@ -37,6 +37,9 @@ import {
   boundFullRowColRefs,
   foldPositionGuards,
   rewriteBooleanLiterals,
+  acquireTemplateEngine,
+  disposeTemplateEngineCache,
+  engineCacheKeyForFile,
   type ModelEngine,
   type SheetDims,
 } from "./model-engine";
@@ -1062,6 +1065,65 @@ describe("REX-grade Excel semantics", () => {
     const c2 = engine.getCellValue("S", "C2");
     T(c2.ok && c2.value === "z3", `INDEX over the inlined name stays correct, got ${JSON.stringify(c2)}`);
     engine.dispose();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Template engine cache — scenario/sensitivity loops lease one shared engine
+// per template instead of rebuilding the graph per combination.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("template engine cache", () => {
+  after(() => disposeTemplateEngineCache());
+
+  function tinyWb(): never {
+    const ws: Record<string, unknown> = XLSX.utils.aoa_to_sheet([[null], [null]]);
+    ws["A1"] = { t: "n", v: 10 }; // input cell
+    ws["A2"] = { t: "n", f: "A1*2" };
+    return { SheetNames: ["S"], Sheets: { S: ws } } as never;
+  }
+
+  it("reuses the same engine across leases and restores run inputs on release", () => {
+    let builds = 0;
+    const build = () => { builds++; return tinyWb(); };
+
+    const first = acquireTemplateEngine("t1", build);
+    approx(cellNum(first.engine, "S", "A2"), 20, "template default before any run");
+    applyMappedInputs(first.engine, { x: 100 }, { x: { sheet: "S", cell: "A1", type: "number" } });
+    approx(cellNum(first.engine, "S", "A2"), 200, "run sees the applied input");
+    first.release();
+
+    const second = acquireTemplateEngine("t1", build);
+    T(builds === 1, `second lease is a cache hit, builds=${builds}`);
+    T(second.engine === first.engine, "same engine instance reused");
+    approx(cellNum(second.engine, "S", "A1"), 10, "input cell restored to the template value");
+    approx(cellNum(second.engine, "S", "A2"), 20, "dependents recalculated back");
+    second.release();
+
+    const third = acquireTemplateEngine("t1", build);
+    applyMappedInputs(third.engine, { x: 7 }, { x: { sheet: "S", cell: "A1", type: "number" } });
+    approx(cellNum(third.engine, "S", "A2"), 14, "a later run applies its own inputs cleanly");
+    third.release();
+  });
+
+  it("double release is a no-op and independent keys get independent engines", () => {
+    const a1 = acquireTemplateEngine("t2", tinyWb);
+    a1.release();
+    a1.release(); // must not throw or corrupt the cache
+    const b1 = acquireTemplateEngine("t3", tinyWb);
+    const a2 = acquireTemplateEngine("t2", tinyWb);
+    T(b1.engine !== a2.engine, "different cache keys hold different engines");
+    b1.release();
+    a2.release();
+  });
+
+  it("a key per mtime invalidates when the template file changes", () => {
+    T(engineCacheKeyForFile("/definitely/missing.xlsx").endsWith(":unknown"), "missing file degrades to a stable key");
+    const p = join(tmpdir(), `cache-key-${process.pid}.xlsx`);
+    writeFileSync(p, "x");
+    const k1 = engineCacheKeyForFile(p);
+    T(k1.startsWith(`${p}:`) && !k1.endsWith(":unknown"), "key includes the mtime");
+    unlinkSync(p);
   });
 });
 

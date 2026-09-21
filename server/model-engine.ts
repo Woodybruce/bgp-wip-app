@@ -9,8 +9,9 @@
  * only the `ModelEngine` interface and `createEngineFromWorkbook` /
  * `createEngineFromFile`.
  */
-import { HyperFormula, DetailedCellError } from "hyperformula";
+import { HyperFormula, DetailedCellError, type RawCellContent } from "hyperformula";
 import XLSX from "xlsx-js-style";
+import * as fs from "fs";
 import { registerExcelCompatFunctions } from "./model-functions";
 import { desugarLet } from "./model-let";
 import { boundFullRowColRefs, type SheetDims } from "./model-ranges";
@@ -44,6 +45,14 @@ export interface ModelEngine {
   isFormula(sheet: string, cellA1: string): boolean;
   /** All cells currently evaluating to an Excel error (#NAME?, #CYCLE!, ...). Capped. */
   collectErrors(limit?: number): EngineCellError[];
+  /**
+   * Start a run scope: every setCell until endRun() is recorded with its
+   * previous content. Used by the template engine cache to restore a shared
+   * engine to its template state after a run.
+   */
+  beginRun(): void;
+  /** Undo every setCell since the matching beginRun() (reverse order). */
+  endRun(): void;
   dispose(): void;
 }
 
@@ -368,6 +377,8 @@ class HyperFormulaEngine implements ModelEngine {
   readonly sheetNames: string[];
   readonly warnings: string[] = [];
   private sheetIdByName = new Map<string, number>();
+  /** Cells written inside the current run scope, with their prior content. */
+  private runLog: Array<{ address: { sheet: number; row: number; col: number }; prev: RawCellContent }> | null = null;
 
   constructor(hf: HyperFormula, sheetNames: string[], warnings: string[]) {
     this.hf = hf;
@@ -391,7 +402,31 @@ class HyperFormulaEngine implements ModelEngine {
 
   setCell(sheet: string, cellA1: string, value: EngineScalar): void {
     const address = this.addressOf(sheet, cellA1);
+    if (this.runLog && this.runLog.length < 10_000) {
+      // getCellSerialized returns the formula ("=...") for formula cells and
+      // the raw value otherwise, so restoring it reproduces the template cell.
+      this.runLog.push({ address, prev: this.hf.getCellSerialized(address) });
+    }
     this.hf.setCellContents(address, [[value === undefined ? null : value]]);
+  }
+
+  beginRun(): void {
+    this.runLog = [];
+  }
+
+  endRun(): void {
+    const log = this.runLog;
+    this.runLog = null;
+    if (!log || this.disposed) return;
+    for (let i = log.length - 1; i >= 0; i--) {
+      const { address, prev } = log[i];
+      try {
+        this.hf.setCellContents(address, [[prev]]);
+      } catch {
+        // A cell that cannot be restored leaves the shared engine dirty; the
+        // next run's setCell overwrites it anyway (same cell, new value).
+      }
+    }
   }
 
   getCellValue(sheet: string, cellA1: string): EngineReadResult {
@@ -692,4 +727,74 @@ export function createEngineFromFile(filePath: string): ModelEngine {
     throw new EngineLoadError(`Failed to read workbook "${filePath}": ${err?.message || err}`);
   }
   return createEngineFromWorkbook(wb);
+}
+
+// ─── Template engine cache ─────────────────────────────────────────────────
+// Building the HyperFormula graph dominates engine time (~60-80s for an
+// institutional workbook with 200k formulas), and the scenario / sensitivity /
+// run routes rebuild the SAME template for every combination. Cache one engine
+// per template file and lend it out inside a run scope: beginRun() records
+// every input cell the run writes, endRun() restores the template contents.
+// Callers must hold a lease only across synchronous sections (engine work is
+// synchronous CPU work, so a single shared instance per template is safe).
+
+const TEMPLATE_ENGINE_CACHE_MAX = 4;
+const templateEngineCache = new Map<string, { engine: ModelEngine; inUse: boolean }>(); // insertion order = LRU
+
+export interface TemplateEngineLease {
+  engine: ModelEngine;
+  /** Restore run-mutated cells and return the engine to the cache. Idempotent. */
+  release: () => void;
+}
+
+/** Cache key that invalidates when the template file is replaced. */
+export function engineCacheKeyForFile(filePath: string): string {
+  try {
+    return `${filePath}:${fs.statSync(filePath).mtimeMs}`;
+  } catch {
+    return `${filePath}:unknown`;
+  }
+}
+
+/**
+ * Lease the cached engine for a template, building it on first use via
+ * buildWorkbook (which must return the PRISTINE template — run inputs are
+ * applied to the leased engine with applyMappedInputs, not baked into the
+ * workbook, or they would become the cached baseline).
+ */
+export function acquireTemplateEngine(cacheKey: string, buildWorkbook: () => XLSX.WorkBook): TemplateEngineLease {
+  let entry = templateEngineCache.get(cacheKey);
+  if (entry) {
+    templateEngineCache.delete(cacheKey);
+    templateEngineCache.set(cacheKey, entry); // refresh LRU position
+  } else {
+    entry = { engine: createEngineFromWorkbook(buildWorkbook()), inUse: false };
+    templateEngineCache.set(cacheKey, entry);
+    // Evict least-recently-used idle engines beyond the cap. Leased engines
+    // are never evicted (a lease is short and synchronous).
+    for (const [key, candidate] of templateEngineCache) {
+      if (templateEngineCache.size <= TEMPLATE_ENGINE_CACHE_MAX) break;
+      if (candidate.inUse) continue;
+      candidate.engine.dispose();
+      templateEngineCache.delete(key);
+    }
+  }
+  entry.inUse = true;
+  entry.engine.beginRun();
+  let released = false;
+  return {
+    engine: entry.engine,
+    release: () => {
+      if (released) return;
+      released = true;
+      entry!.engine.endRun();
+      entry!.inUse = false;
+    },
+  };
+}
+
+/** Drop every cached engine (tests; cache entries are otherwise LRU-bounded). */
+export function disposeTemplateEngineCache(): void {
+  for (const entry of templateEngineCache.values()) entry.engine.dispose();
+  templateEngineCache.clear();
 }

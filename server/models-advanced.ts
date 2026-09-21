@@ -9,7 +9,7 @@ import * as fs from "fs";
 import * as path from "path";
 import Anthropic from "@anthropic-ai/sdk";
 import PDFDocument from "pdfkit";
-import { createEngineFromWorkbook, applyMappedInputs, readEngineOutputs, type EngineCellError } from "./model-engine";
+import { acquireTemplateEngine, engineCacheKeyForFile, applyMappedInputs, readEngineOutputs, type EngineCellError } from "./model-engine";
 import { autoMapWorkbook, buildWorkbookDigest, validateProposal, type AutoMapProposal } from "./model-automap";
 import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { ensureFileOnDisk } from "./file-storage";
@@ -184,7 +184,8 @@ export function setupAdvancedModelsRoutes(app: Express) {
       const outputLabels = Object.fromEntries(outputKeys.map(([k, c]: [string, any]) => [k, c.label]));
 
       await ensureTemplateFile(template.filePath);
-      const templateWb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
+      const cacheKey = engineCacheKeyForFile(template.filePath);
+      const readTemplate = () => XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
 
       // ── Engine path: recalculate the workbook once per combination ──────
       let engineFailure: string | null = null;
@@ -192,7 +193,10 @@ export function setupAdvancedModelsRoutes(app: Express) {
       const results: any[] = [];
       try {
         for (const combo of combos) {
-          const engine = createEngineFromWorkbook(templateWb);
+          // Lease the cached template engine (build once, reuse across combos);
+          // the lease restores the run's input cells on release.
+          const lease = acquireTemplateEngine(cacheKey, readTemplate);
+          const engine = lease.engine;
           try {
             if (engine.warnings.length && engineWarnings.length < 10) {
               engineWarnings.push(...engine.warnings.slice(0, 10 - engineWarnings.length));
@@ -207,7 +211,7 @@ export function setupAdvancedModelsRoutes(app: Express) {
             if (errors.length) result.outputErrors = errors;
             results.push(result);
           } finally {
-            engine.dispose();
+            lease.release();
           }
         }
       } catch (err: any) {
@@ -257,7 +261,7 @@ export function setupAdvancedModelsRoutes(app: Express) {
         });
       }
 
-      const richContext = extractRichWorkbookContext(templateWb, 60);
+      const richContext = extractRichWorkbookContext(readTemplate(), 60);
 
       let sensitivityPrompt = `You are analysing a property investment model. Given the full workbook with formulas, calculate how key outputs change when inputs are varied.
 
@@ -511,7 +515,8 @@ Be specific with numbers. Use professional property investment language. Keep it
       const outputLabels = Object.fromEntries(outputKeys.map(([k, c]: [string, any]) => [k, c.label]));
 
       await ensureTemplateFile(template.filePath);
-      const templateWb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
+      const cacheKey = engineCacheKeyForFile(template.filePath);
+      const readTemplate = () => XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
 
       // ── Engine path: recalculate the workbook once per scenario ─────────
       let engineFailure: string | null = null;
@@ -520,7 +525,10 @@ Be specific with numbers. Use professional property investment language. Keep it
       try {
         for (let i = 0; i < scenarios.length; i++) {
           const scenario = scenarios[i];
-          const engine = createEngineFromWorkbook(templateWb);
+          // Lease the cached template engine (build once, reuse across
+          // scenarios); the lease restores the run's input cells on release.
+          const lease = acquireTemplateEngine(cacheKey, readTemplate);
+          const engine = lease.engine;
           try {
             if (engine.warnings.length && engineWarnings.length < 10) {
               engineWarnings.push(...engine.warnings.slice(0, 10 - engineWarnings.length));
@@ -534,7 +542,7 @@ Be specific with numbers. Use professional property investment language. Keep it
               outputErrors: errors,
             });
           } finally {
-            engine.dispose();
+            lease.release();
           }
         }
       } catch (err: any) {
@@ -602,7 +610,7 @@ Be specific with numbers. Use professional property investment language. Keep it
         });
       }
 
-      const richContext = extractRichWorkbookContext(templateWb, 60);
+      const richContext = extractRichWorkbookContext(readTemplate(), 60);
       const estimateOutputKeys = outputKeys.slice(0, 8);
 
       const anthropic = getAnthropicClient();

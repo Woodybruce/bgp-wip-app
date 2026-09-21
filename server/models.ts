@@ -15,7 +15,7 @@ import { performPropertyLookup, formatPropertyReport } from "./property-lookup";
 import { crmDeals, crmContacts, crmCompanies, crmProperties, chatbgpLearnings, appFeedbackLog, appChangeRequests, excelTemplates, excelModelRuns, excelModelRunVersions } from "@shared/schema";
 import { ilike, or, eq, sql, desc, and } from "drizzle-orm";
 import { saveFileFromDisk, ensureFileOnDisk, syncFileToDisk } from "./file-storage";
-import { createEngineFromWorkbook, type EngineCellError } from "./model-engine";
+import { createEngineFromWorkbook, acquireTemplateEngine, engineCacheKeyForFile, applyMappedInputs, type EngineCellError } from "./model-engine";
 import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 
 const UPLOAD_DIR = path.join(process.cwd(), "ChatBGP", "templates");
@@ -467,8 +467,18 @@ interface EngineRunOutcome {
  * are updated), so both the API response and the written .xlsx show fresh
  * numbers. Returns computed=false when the engine cannot handle the workbook —
  * callers must then fall back to stale cached values and say so.
+ *
+ * When `cache` is given, the engine is leased from the template engine cache
+ * (built once per template file, reused across runs): the lease builds from
+ * the PRISTINE template file and applies `cache.inputValues` engine-side,
+ * because `wb` here already carries the run's inputs baked in. Without
+ * `cache`, the engine is built from `wb` as-is and disposed.
  */
-function recalculateOutputsWithEngine(wb: XLSX.WorkBook, outputMapping: Record<string, any>): EngineRunOutcome {
+function recalculateOutputsWithEngine(
+  wb: XLSX.WorkBook,
+  outputMapping: Record<string, any>,
+  cache?: { templateFilePath: string; inputValues: Record<string, any>; inputMapping: Record<string, any> },
+): EngineRunOutcome {
   const noRun: EngineRunOutcome = { computed: false, engineWarnings: [], calculationErrors: [] };
   if (!outputMapping || Object.keys(outputMapping).length === 0) {
     // Nothing to read back: no stale numbers can be presented, nothing to compute.
@@ -476,10 +486,25 @@ function recalculateOutputsWithEngine(wb: XLSX.WorkBook, outputMapping: Record<s
   }
 
   let engine;
-  try {
-    engine = createEngineFromWorkbook(wb);
-  } catch (err: any) {
-    return { ...noRun, engineError: err?.message || String(err) };
+  let release: (() => void) | null = null;
+  if (cache) {
+    try {
+      const lease = acquireTemplateEngine(engineCacheKeyForFile(cache.templateFilePath), () =>
+        XLSX.readFile(cache.templateFilePath, { cellFormula: true, sheetStubs: true }),
+      );
+      engine = lease.engine;
+      release = lease.release;
+      applyMappedInputs(engine, cache.inputValues || {}, cache.inputMapping);
+    } catch (err: any) {
+      if (release) release();
+      return { ...noRun, engineError: err?.message || String(err) };
+    }
+  } else {
+    try {
+      engine = createEngineFromWorkbook(wb);
+    } catch (err: any) {
+      return { ...noRun, engineError: err?.message || String(err) };
+    }
   }
 
   try {
@@ -514,7 +539,8 @@ function recalculateOutputsWithEngine(wb: XLSX.WorkBook, outputMapping: Record<s
   } catch (err: any) {
     return { ...noRun, engineError: err?.message || String(err) };
   } finally {
-    engine.dispose();
+    if (release) release();
+    else engine.dispose();
   }
 }
 
@@ -1413,8 +1439,14 @@ export function setupModelsRoutes(app: Express) {
 
       // Recalculate with the model engine: refreshes the cached values of the
       // mapped output cells inside wb before it is written to disk. On failure
-      // we fall back to the stale Excel cache and say so.
-      const engineResult = recalculateOutputsWithEngine(wb, outputMapping);
+      // we fall back to the stale Excel cache and say so. The engine is leased
+      // from the per-template cache (inputs applied engine-side) — wb already
+      // carries the inputs baked in for the file artifact.
+      const engineResult = recalculateOutputsWithEngine(wb, outputMapping, {
+        templateFilePath: template.filePath,
+        inputValues: inputValues || {},
+        inputMapping,
+      });
 
       const runFileName = `run-${Date.now()}-${name.replace(/[^a-zA-Z0-9]/g, "_")}.xlsx`;
       const runFilePath = path.join(RUNS_DIR, runFileName);
@@ -2300,7 +2332,11 @@ function coerceSmartRunInput(value: any, type: string | undefined): number | str
       }
 
       // Recalculate with the model engine (same as POST /api/models/runs).
-      const engineResult = recalculateOutputsWithEngine(wb, outputMapping);
+      const engineResult = recalculateOutputsWithEngine(wb, outputMapping, {
+        templateFilePath: template.filePath,
+        inputValues,
+        inputMapping,
+      });
 
       const runName = name || extracted.dealName || `Smart Run ${new Date().toLocaleDateString()}`;
       const runFileName = `run-${Date.now()}-${runName.replace(/[^a-zA-Z0-9]/g, "_")}.xlsx`;
