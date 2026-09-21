@@ -12,8 +12,8 @@ const { source, find, evaluate, ts } = require('./source-harness.cjs');
 test('prepared factual profile is usable while contact review remains explicit', () => {
   const stages = BRAND_PREPARATION_STAGES.map(stage => ({stage,fingerprint:'verified',status:stage==='contacts'?'needs_review':'ready'}));
   const result=summarizeBrandPreparation('verified',stages);
-  assert.deepEqual(result,{ready:true,factReviewRequired:false,preparedSections:8,totalSections:8,contactReviewRequired:true});
-  assert.equal(stages.at(-1).status,'needs_review');
+  assert.deepEqual(result,{ready:true,factReviewRequired:false,preparedSections:BRAND_PREPARATION_STAGES.length-1,totalSections:BRAND_PREPARATION_STAGES.length-1,contactReviewRequired:true});
+  assert.equal(stages.find(s=>s.stage==='contacts').status,'needs_review');
 });
 
 test('retained facts from a corrected identity cannot be labelled prepared until explicitly reviewed', () => {
@@ -25,7 +25,7 @@ test('retained facts from a corrected identity cannot be labelled prepared until
 });
 test('optional no-match or unavailable sources do not mislabel prepared core facts', () => {
   const stages=BRAND_PREPARATION_STAGES.map(stage=>({stage,fingerprint:'verified',status:['identity','profile'].includes(stage)?'ready':stage==='contacts'?'needs_review':'unavailable'}));
-  const result=summarizeBrandPreparation('verified',stages);assert.equal(result.ready,true);assert.equal(result.preparedSections,2);assert.equal(result.totalSections,8);
+  const result=summarizeBrandPreparation('verified',stages);assert.equal(result.ready,true);assert.equal(result.preparedSections,2);assert.equal(result.totalSections,BRAND_PREPARATION_STAGES.length-1);
   stages.find(s=>s.stage==='profile').status='no_match';assert.equal(summarizeBrandPreparation('verified',stages).ready,false);
   stages.find(s=>s.stage==='profile').status='ready';assert.equal(summarizeBrandPreparation('review',stages).ready,false);
 });

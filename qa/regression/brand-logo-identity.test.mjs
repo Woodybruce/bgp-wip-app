@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { getBrandIdentity, normalizeBrandDomain } from '../../server/brand-identity.ts';
 import { publishableBrandImage, brandImageIdentityTag } from '../../server/brand-publishing.ts';
+import { planLogoSources, isCheckedLogoDownload, LOGO_MAX_BYTES } from '../../server/brand-logo-sources.ts';
 const require = createRequire(import.meta.url);
 const { find, route, evaluate, ts } = require('./source-harness.cjs');
 const fn = name => find('server/image-studio.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === name);
@@ -54,7 +55,7 @@ test('unverified brand logo read neither publishes the old wrong cache nor queue
 test('verified logo cache records exact company and fingerprint, and never guesses a domain', async () => {
   let stored, requested; const row = company();
   const { prepareBrandLogo } = evaluate(fn('prepareBrandLogo'), {
-    ...helpers, getBrandIdentity, brandImageIdentityTag, process: { env: { LOGO_DEV_TOKEN: 'synthetic' } }, AbortSignal,
+    ...helpers, getBrandIdentity, brandImageIdentityTag, planLogoSources, isCheckedLogoDownload, LOGO_MAX_BYTES, process: { env: { LOGO_DEV_TOKEN: 'synthetic' } }, AbortSignal,
     pool: { query: async sql => ({ rows: sql.includes('FROM crm_companies') ? [row] : [] }) }, readPersistedImage: async () => null,
     fetch: async url => { requested = url; return new Response(new Uint8Array(200), { headers: { 'content-type': 'image/png' } }); },
     storeImageFromBuffer: async args => { stored = args; return { id: 'new-logo' }; },
@@ -68,7 +69,7 @@ test('verified logo cache records exact company and fingerprint, and never guess
 test('identity changed while storing a downloaded logo marks it for review', async () => {
   let companyReads = 0; const writes = [], row = company();
   const { prepareBrandLogo } = evaluate(fn('prepareBrandLogo'), {
-    ...helpers, getBrandIdentity, brandImageIdentityTag, process: { env: { LOGO_DEV_TOKEN: 'synthetic' } }, AbortSignal,
+    ...helpers, getBrandIdentity, brandImageIdentityTag, planLogoSources, isCheckedLogoDownload, LOGO_MAX_BYTES, process: { env: { LOGO_DEV_TOKEN: 'synthetic' } }, AbortSignal,
     pool: { query: async (sql, values) => {
       if (sql.includes('FROM crm_companies')) { companyReads++; return { rows: [companyReads > 2 ? { ...row, domain: 'changed.example' } : row] }; }
       if (sql.startsWith('UPDATE')) writes.push({ sql, values }); return { rows: [] };

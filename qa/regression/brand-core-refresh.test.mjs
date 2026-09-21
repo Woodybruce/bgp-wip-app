@@ -153,6 +153,9 @@ function jobFixture(work, { failInitialWrite = false, failUpdates = false } = {}
   };
   const compiled = evaluate(keySource + '\n' + fn('readBrandCoreRefresh') + '\n' + fn('startBrandCoreRefresh'), {
     pool, randomUUID: () => 'test-claim', prepareBrandCore: work, console: { error() {} },
+    // readBrandCoreRefresh optionally joins per-stage preparation sections
+    // (Delivery 4); the refresh lifecycle under test doesn't depend on them.
+    readCoreSections: async () => undefined,
   });
   return { ...compiled, states, queries, connections, finished: finished.promise, lockHeld: () => held };
 }
