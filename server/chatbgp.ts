@@ -8140,6 +8140,7 @@ export async function executeCrmToolRaw(
       let mimeType = String(fnArgs.mimeType || "image/jpeg") as "image/jpeg" | "image/png" | "image/gif" | "image/webp";
       let base64: string | null = null;
       let imageStudioId: string | null = fnArgs.imageStudioId ? String(fnArgs.imageStudioId) : null;
+      let bytesSource: "original" | "sharepoint" | "thumbnail" | "url" | "base64" = fnArgs.base64Data ? "base64" : "url";
 
       // ── Source the image bytes ────────────────────────────────────────
       if (imageStudioId) {
@@ -8150,24 +8151,33 @@ export async function executeCrmToolRaw(
         if (r.rows.length === 0) return { data: { success: false, error: "Image not found in image_studio_images." } };
         const row = r.rows[0];
         mimeType = (row.mime_type || "image/jpeg") as any;
-        const fs = await import("fs");
-        if (row.local_path && fs.existsSync(row.local_path)) {
-          base64 = fs.readFileSync(row.local_path).toString("base64");
+        // Originals live on disk AND in file_storage (image-studio/<file>);
+        // Railway's disk is wiped on every deploy, so a bare existsSync check
+        // used to fall straight through to the 400px thumbnail and tile THAT
+        // (Woody's retest, 2026-09-21: imageSize 400×400 on 4291×3031 sheets).
+        // readPersistedImage is the loader the app itself serves files with.
+        const { readPersistedImage } = await import("./image-studio");
+        const original = await readPersistedImage(row.local_path);
+        if (original) {
+          base64 = original.toString("base64");
+          bytesSource = "original";
         } else if (row.sharepoint_drive_id && row.sharepoint_item_id) {
           const token = await getValidMsToken(req);
-          if (!token) return { data: { success: false, error: "Local file missing and not signed into Microsoft to fetch from SharePoint." } };
+          if (!token) return { data: { success: false, error: "Original not in storage and not signed into Microsoft to fetch it from SharePoint." } };
           const cr = await fetch(
             `https://graph.microsoft.com/v1.0/drives/${row.sharepoint_drive_id}/items/${row.sharepoint_item_id}/content`,
             { headers: { Authorization: `Bearer ${token}` }, redirect: "follow" },
           );
           if (!cr.ok) return { data: { success: false, error: `SharePoint fetch failed: HTTP ${cr.status}` } };
           base64 = Buffer.from(await cr.arrayBuffer()).toString("base64");
+          bytesSource = "sharepoint";
         } else if (row.thumbnail_data) {
-          // Last resort — thumbnail is small but classification still works.
+          // Last resort — good enough to classify, useless for OCR. Say so.
           base64 = String(row.thumbnail_data).replace(/^data:image\/\w+;base64,/, "");
           mimeType = "image/jpeg";
+          bytesSource = "thumbnail";
         } else {
-          return { data: { success: false, error: "Image bytes unavailable (no local file, no SharePoint refs, no thumbnail)." } };
+          return { data: { success: false, error: "Image bytes unavailable (no stored original, no SharePoint refs, no thumbnail)." } };
         }
       } else if (fnArgs.imageUrl) {
         const url = String(fnArgs.imageUrl);
@@ -8362,6 +8372,8 @@ export async function executeCrmToolRaw(
         data: {
           success: true, task, ...parsed, applied: applied.length ? applied : undefined,
           imageSize: { width: srcW, height: srcH },
+          bytesSource,
+          ...(bytesSource === "thumbnail" ? { warning: "Only the 400px THUMBNAIL of this Image Studio row could be loaded — the original is missing from storage and SharePoint. OCR/region results from a thumbnail are unreliable; re-capture the page (capture_pdf_pages) or point at the source PDF instead." } : {}),
           ...(region ? { region } : {}),
           ...(sourcePdfPage ? { pdfPage: sourcePdfPage } : {}),
           ...(tiling ? { tiling, note: `Image exceeded the vision API's ${API_MAX}px ceiling, so it was read as ${tiling.tiles} overlapping tiles at native resolution. Text near tile edges can repeat across neighbouring tiles — de-duplicate when stitching a table.` } : (longEdge > API_MAX ? { note: `Image (${srcW}×${srcH}) was downscaled to ${API_MAX}px for the vision API — small text may be lost. Re-run with autoTile:true or a region for detail.` } : {})),
