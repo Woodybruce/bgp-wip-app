@@ -173,7 +173,14 @@ function titleFromText(items: PdfTextItem[], widthPt: number): { title: string |
   if (label) {
     const below = strip.filter((it) => it !== label && Math.abs(it.x - label.x) < widthPt * 0.08 && it.y > label.y - 60 && it.y < label.y + 60 && it.h >= 9 && !/^(scale|date|drawn|checked|rev|status)$/i.test(it.str));
     below.sort((a, b) => b.h - a.h || Math.abs(a.y - label.y) - Math.abs(b.y - label.y));
-    if (below[0]) title = below[0].str;
+    if (below[0]) {
+      // Long titles wrap onto a second line in the title cell ("PROPOSED
+      // GROUND FLOOR PLAN -" / "GIA") — join the lines in the same column.
+      const first = below[0];
+      const lines = strip.filter((it) => Math.abs(it.x - first.x) < 8 && Math.abs(it.h - first.h) < 2 && it.y <= first.y + first.h * 0.6 && it.y >= first.y - first.h * 2.6)
+        .sort((a, b) => b.y - a.y || a.x - b.x);
+      title = (lines.length ? lines : [first]).map((it) => it.str).join(" ").replace(/\s+/g, " ").trim();
+    }
   }
   if (!title) {
     const big = [...strip].filter((it) => it.h >= 11 && it.str.length > 4 && !SCALE_RE.test(it.str)).sort((a, b) => b.h - a.h);
