@@ -22,7 +22,7 @@ import { pool } from "./db";
 import { scraperFetch, isScraperApiAvailable } from "./utils/scraperapi";
 import { callClaude, safeParseJSON, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { geocodeBatch } from "./geocode";
-import { buildGeocodeQuery } from "../shared/geo-country";
+import { buildGeocodeQuery, UK_POSTCODE_RE } from "../shared/geo-country";
 import { saveFile } from "./file-storage";
 import { discoverCompanyPhotographyPages, extractCompanyImageUrls, isPublicImageSourceUrl } from "./company-image-discovery";
 
@@ -459,18 +459,81 @@ export function normalisePostcode(raw: string | null | undefined): string {
 //   2. Exact postcode match — covers the cases where the landlord
 //      brands the property differently to the CRM ("St David's Cardiff"
 //      vs "St. David's Dewi Sant").
-// Only links when the CRM row currently has no landlord_id, so we never
-// clobber an existing assignment. Returns the link report so the panel
-// + ChatBGP can see exactly what was tried for each scraped item.
+// Both strategies are unique-or-skip: an ambiguous postcode (two CRM rows
+// sharing it) or ambiguous name produces NO automatic ownership change —
+// the item lands in `skipped` with the ambiguity reason for human review.
+// A scraped item with an evidenced non-UK country but a UK-shaped postcode
+// is skipped as a country/postcode mismatch. Only links when the CRM row
+// currently has no landlord_id, so we never clobber an existing assignment.
+// Returns the link report so the panel + ChatBGP can see exactly what was
+// tried for each scraped item.
 export interface LinkReport {
   linked: number;
   skipped: Array<{ name: string; reason: string; existingLandlordId?: string; existingLandlordName?: string }>;
   hits: Array<{ scrapedName: string; crmId: string; via: "name" | "postcode" }>;
 }
 
+export interface PropertyLinkCandidate {
+  id: string;
+  name: string;
+  postcode: string | null;
+  landlord_id: string | null;
+}
+
+export type PropertyLinkDecision =
+  | { action: "link"; crmId: string; via: "name" | "postcode" }
+  | { action: "already_linked"; crmId: string; via: "name" | "postcode" }
+  | { action: "skip"; reason: string; existingLandlordId?: string };
+
+// The pure match decision, factored out for testing. `candidates` is every
+// CRM property (linked + unlinked) so the decision can tell "no row matches"
+// apart from "the matching row belongs to someone else".
+export function decidePropertyLink(
+  scraped: { name: string; postcode?: string | null; country?: string | null },
+  candidates: PropertyLinkCandidate[],
+  companyId: string,
+): PropertyLinkDecision {
+  const country = scraped.country?.trim().toUpperCase() || null;
+  if (country && country !== "GB" && scraped.postcode && UK_POSTCODE_RE.test(scraped.postcode.trim())) {
+    return { action: "skip", reason: `country/postcode mismatch — country ${country} with UK-shaped postcode ${scraped.postcode}` };
+  }
+
+  const nameKey = normalisePropertyName(scraped.name);
+  const pcKey = normalisePostcode(scraped.postcode);
+
+  let match: PropertyLinkCandidate | undefined;
+  let via: "name" | "postcode" = "name";
+  if (nameKey) {
+    const byName = candidates.filter(r => normalisePropertyName(r.name) === nameKey);
+    if (byName.length > 1) {
+      return { action: "skip", reason: `ambiguous name — ${byName.length} CRM rows normalise to "${nameKey}"` };
+    }
+    match = byName[0];
+  }
+  if (!match && pcKey) {
+    const byPostcode = candidates.filter(r => normalisePostcode(r.postcode) === pcKey);
+    if (byPostcode.length > 1) {
+      return { action: "skip", reason: `ambiguous postcode — ${byPostcode.length} CRM rows share it` };
+    }
+    match = byPostcode[0];
+    via = "postcode";
+  }
+
+  if (!match) {
+    return { action: "skip", reason: "no CRM property matches name or postcode" };
+  }
+  if (match.landlord_id && match.landlord_id !== companyId) {
+    return { action: "skip", reason: "CRM row already linked to a different landlord", existingLandlordId: match.landlord_id };
+  }
+  if (match.landlord_id === companyId) {
+    return { action: "already_linked", crmId: match.id, via };
+  }
+  return { action: "link", crmId: match.id, via };
+}
+
 export async function autoLinkScrapedProperties(
   companyId: string,
-  scraped: Array<{ name: string; address?: string; postcode?: string; sector?: string }>,
+  scraped: Array<{ name: string; address?: string; postcode?: string; sector?: string; country?: string | null }>,
 ): Promise<LinkReport> {
   const report: LinkReport = { linked: 0, skipped: [], hits: [] };
   if (!scraped || scraped.length === 0) return report;
@@ -486,59 +549,42 @@ export async function autoLinkScrapedProperties(
     return report;
   }
 
-  const byName = new Map<string, typeof all[number]>();
-  const byPostcode = new Map<string, typeof all[number]>();
-  for (const row of all) {
-    const n = normalisePropertyName(row.name);
-    if (n) byName.set(n, row);
-    const p = normalisePostcode(row.postcode);
-    if (p) byPostcode.set(p, row);
-  }
-
+  const candidates: PropertyLinkCandidate[] = [...all];
   for (const item of scraped) {
-    const nameKey = normalisePropertyName(item.name);
-    const pcKey = normalisePostcode(item.postcode);
-    let match = nameKey ? byName.get(nameKey) : undefined;
-    let via: "name" | "postcode" = "name";
-    if (!match && pcKey) { match = byPostcode.get(pcKey); via = "postcode"; }
+    const decision = decidePropertyLink(item, candidates, companyId);
 
-    if (!match) {
-      report.skipped.push({ name: item.name, reason: "no CRM property matches name or postcode" });
+    if (decision.action === "skip") {
+      const entry: LinkReport["skipped"][number] = { name: item.name, reason: decision.reason };
+      if (decision.existingLandlordId) {
+        // Don't clobber — surface what's blocking. Looks up the other
+        // landlord's display name for the UI message.
+        entry.existingLandlordId = decision.existingLandlordId;
+        entry.existingLandlordName = await pool.query<{ name: string }>(
+          `SELECT name FROM crm_companies WHERE id = $1`, [decision.existingLandlordId]
+        ).then(r => r.rows[0]?.name).catch(() => undefined);
+      }
+      report.skipped.push(entry);
       continue;
     }
-    if (match.landlord_id && match.landlord_id !== companyId) {
-      // Don't clobber — surface what's blocking. Looks up the other
-      // landlord's display name for the UI message.
-      const otherName = await pool.query<{ name: string }>(
-        `SELECT name FROM crm_companies WHERE id = $1`, [match.landlord_id]
-      ).then(r => r.rows[0]?.name).catch(() => undefined);
-      report.skipped.push({
-        name: item.name,
-        reason: "CRM row already linked to a different landlord",
-        existingLandlordId: match.landlord_id,
-        existingLandlordName: otherName,
-      });
-      continue;
-    }
-    if (match.landlord_id === companyId) {
+    if (decision.action === "already_linked") {
       // Already wired up — count toward linked so the UI shows it
       // green, but don't issue a no-op UPDATE.
-      report.hits.push({ scrapedName: item.name, crmId: match.id, via });
+      report.hits.push({ scrapedName: item.name, crmId: decision.crmId, via: decision.via });
       report.linked++;
       continue;
     }
     const { rowCount } = await pool.query(
       `UPDATE crm_properties SET landlord_id = $1
         WHERE id = $2 AND (landlord_id IS NULL OR landlord_id = '')`,
-      [companyId, match.id]
+      [companyId, decision.crmId]
     );
     if ((rowCount ?? 0) > 0) {
       report.linked++;
-      report.hits.push({ scrapedName: item.name, crmId: match.id, via });
-      // Burn this CRM row from the lookup tables so two scraped
+      report.hits.push({ scrapedName: item.name, crmId: decision.crmId, via: decision.via });
+      // Burn this CRM row from the candidate list so two scraped
       // names can't both win the same row in a single pass.
-      if (nameKey) byName.delete(nameKey);
-      if (pcKey) byPostcode.delete(pcKey);
+      const idx = candidates.findIndex(c => c.id === decision.crmId);
+      if (idx >= 0) candidates.splice(idx, 1);
     } else {
       report.skipped.push({ name: item.name, reason: "UPDATE returned 0 rows (race or RLS?)" });
     }

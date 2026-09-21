@@ -68,6 +68,7 @@ interface ScrapedProperty {
   address?: string;
   postcode?: string;
   sector?: string;
+  country?: string | null;
   lat?: number | null;
   lng?: number | null;
   formatted_address?: string;
@@ -125,7 +126,10 @@ interface DiscoveredItem {
   lat: number | null;
   lng: number | null;
   source: string;
-  seed: { name: string; address?: string; postcode?: string; sector?: string };
+  seed: { name: string; address?: string; postcode?: string; sector?: string; country?: string | null };
+  // Postcode is shared by more than one CRM property — auto-linking skips
+  // these server-side, so the board shows a Review badge instead of Add.
+  ambiguous?: boolean;
 }
 
 function isExpiringSoon(d: string | null): boolean {
@@ -520,10 +524,23 @@ export function CompanyPropertiesBoard({
       const pc = (bp.postcode || "").toUpperCase().replace(/\s+/g, "");
       if (pc) linkedSigs.add(`pc:${pc}`);
     }
+    // Postcode sharing across the WHOLE CRM (not just this board) — the
+    // server-side auto-linker skips ambiguous postcodes, so a discovery
+    // whose postcode matches >1 CRM property stays visible with a Review
+    // badge instead of being silently hidden or blindly addable.
+    const postcodeCounts = new Map<string, number>();
+    for (const p of allProperties) {
+      const pc = (p.postcode || "").toUpperCase().replace(/\s+/g, "");
+      if (pc) postcodeCounts.set(pc, (postcodeCounts.get(pc) || 0) + 1);
+    }
+    const isAmbiguousPostcode = (postcode?: string | null) => {
+      const pc = (postcode || "").toUpperCase().replace(/\s+/g, "");
+      return !!pc && (postcodeCounts.get(pc) || 0) > 1;
+    };
     const alreadyLinked = (name?: string | null, postcode?: string | null) => {
       if (normName(name) && linkedSigs.has(`name:${normName(name)}`)) return true;
       const pc = (postcode || "").toUpperCase().replace(/\s+/g, "");
-      return !!(pc && linkedSigs.has(`pc:${pc}`));
+      return !!(pc && linkedSigs.has(`pc:${pc}`) && !isAmbiguousPostcode(postcode));
     };
     const out: DiscoveredItem[] = [];
     for (const p of brand?.landlordWebsiteFindings?.properties || []) {
@@ -535,7 +552,8 @@ export function CompanyPropertiesBoard({
         postcode: p.postcode || null,
         lat: toNum(p.lat), lng: toNum(p.lng),
         source: "website",
-        seed: { name: p.name, address: p.address, postcode: p.postcode, sector: p.sector },
+        ambiguous: isAmbiguousPostcode(p.postcode),
+        seed: { name: p.name, address: p.address, postcode: p.postcode, sector: p.sector, country: p.country ?? null },
       });
     }
     for (const t of brand?.landRegistryTitles || []) {
@@ -547,11 +565,12 @@ export function CompanyPropertiesBoard({
         postcode: t.postcode || null,
         lat: toNum(t.lat), lng: toNum(t.lng),
         source: "land-registry",
+        ambiguous: isAmbiguousPostcode(t.postcode),
         seed: { name: t.property_address || `Title ${t.title_number}`, address: t.property_address || undefined, postcode: t.postcode || undefined },
       });
     }
     return out.filter(d => !dismissed.has(d.key));
-  }, [kind, brand, boardProperties]);
+  }, [kind, brand, boardProperties, allProperties]);
 
   // ── Map markers ──
   const mapStores = useMemo(() => {
@@ -722,16 +741,26 @@ export function CompanyPropertiesBoard({
                 <p className="text-sm font-medium truncate">{d.name}</p>
                 <p className="text-[10px] text-muted-foreground truncate">{[d.address, d.source === "website" ? "found on website" : "Land Registry"].filter(Boolean).join(" · ")}</p>
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-6 text-[10px] shrink-0"
-                disabled={createPropertyMutation.isPending}
-                onClick={() => createPropertyMutation.mutate(d.seed)}
-                data-testid={`btn-add-to-crm-${d.key}`}
-              >
-                <Plus className="w-3 h-3 mr-1" />Add to CRM
-              </Button>
+              {d.ambiguous ? (
+                <Badge
+                  variant="outline"
+                  className="text-[9px] border-amber-300 text-amber-600 shrink-0"
+                  title="This postcode is shared by more than one CRM property — auto-linking skips it. Use the property's manage actions to place it by hand."
+                >
+                  Review — shared postcode
+                </Badge>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 text-[10px] shrink-0"
+                  disabled={createPropertyMutation.isPending}
+                  onClick={() => createPropertyMutation.mutate(d.seed)}
+                  data-testid={`btn-add-to-crm-${d.key}`}
+                >
+                  <Plus className="w-3 h-3 mr-1" />Add to CRM
+                </Button>
+              )}
               <Button
                 size="icon"
                 variant="ghost"
