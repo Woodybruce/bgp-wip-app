@@ -87,6 +87,9 @@ const CNBC_QUOTES: Record<string, any> = {
     symbol: "CNBCONLY-GB", code: 0, name: "Cnbc Only PLC", last: "343.40",
     last_time: "2026-09-18", currencyCode: "GBp", exchange: "London Stock Exchange",
     pe: "8.61", mktcapView: "2.01B", yrhiprice: "391.80", yrloprice: "280.40",
+    change: "-7.00", change_pct: "-2.00%", previous_day_closing: "350.40",
+    open: "344.00", high: "348.20", low: "343.00", volume: "3,482,592",
+    dividendyield: "5.31%", yrhidate: "08/04/26", yrlodate: "10/13/25",
   },
   "BATCHCNBC-GB": {
     symbol: "BATCHCNBC-GB", code: 0, name: "Batch Cnbc PLC", last: "100.00",
@@ -330,6 +333,18 @@ describe("CNBC fallback", () => {
     assert.equal(r.snapshot?.signals.largeCap, true);
     // CNBC carries the trading date only — the timestamp stays date-level.
     assert.equal(r.snapshot?.quoteTimestamp, "2026-09-18T00:00:00.000Z");
+    // Day stats and dividend yield come through as parsed numbers.
+    assert.equal(r.snapshot?.dayChange, -7);
+    assert.equal(r.snapshot?.dayChangePct, -2);
+    assert.equal(r.snapshot?.previousClose, 350.4);
+    assert.equal(r.snapshot?.dayOpen, 344);
+    assert.equal(r.snapshot?.dayHigh, 348.2);
+    assert.equal(r.snapshot?.dayLow, 343);
+    assert.equal(r.snapshot?.volume, 3482592);
+    assert.equal(r.snapshot?.dividendYieldPct, 5.31);
+    // US-format 52w dates land as ISO dates.
+    assert.equal(r.snapshot?.fiftyTwoWeekHighDate, "2026-08-04");
+    assert.equal(r.snapshot?.fiftyTwoWeekLowDate, "2025-10-13");
   });
 
   it("seeds the history cache from the CNBC chart (mini chart works while Yahoo is blocked)", async () => {
