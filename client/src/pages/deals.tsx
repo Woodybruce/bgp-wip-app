@@ -2234,6 +2234,34 @@ export function DealFormDialog({
   users: { id: number; name: string; email: string }[];
 }) {
   const { toast } = useToast();
+  // Search-or-create pickers for the full form — the "Show all fields" /
+  // edit view used plain dropdowns, so a vendor or purchaser missing from
+  // the CRM had to be added on the Companies page first (Woody,
+  // 2026-09-21). Same shape as the quick-create form's pickers.
+  const createPartyCompany = (companyType: string) => async (name: string) => {
+    try {
+      const r = await apiRequest("POST", "/api/crm/companies", { name: name.trim(), companyType });
+      const created = await r.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies-basic"] });
+      toast({ title: `${companyType} created`, description: `${created.name} added to CRM.` });
+      return { id: String(created.id), label: created.name, subLabel: created.companyType };
+    } catch (e: any) {
+      toast({ title: "Couldn't create", description: e?.message, variant: "destructive" });
+      throw e;
+    }
+  };
+  const partyItems = (list: CrmCompany[]) => list.map(c => {
+    const trading = Array.isArray((c as any).tradingEntities) ? (c as any).tradingEntities : [];
+    const aliases = trading.map((t: any) => t?.name).filter((n: any) => typeof n === "string" && n.length > 0);
+    const uk = (c as any).ukEntityName || (c as any).uk_entity_name || null;
+    return {
+      id: c.id,
+      label: c.name,
+      subLabel: uk || aliases[0] || c.companyType || undefined,
+      keywords: [c.companyType || "", c.domainUrl || "", c.domain || "", ...(uk ? [uk] : []), ...aliases].filter(Boolean),
+    };
+  });
   const isEdit = !!deal;
   const { activeTeam } = useTeam();
   const [, navigateTo] = useLocation();
@@ -2863,68 +2891,64 @@ export function DealFormDialog({
                   {showLandlord && (
                     <div>
                       <Label>Landlord</Label>
-                      <Select value={form.landlordId || undefined} onValueChange={(v) => set("landlordId", v === "__clear__" ? "" : v)}>
-                        <SelectTrigger data-testid="select-deal-landlord">
-                          <SelectValue placeholder="Link landlord" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__clear__">None</SelectItem>
-                          {landlordTypes.map((c) => (
-                            <SelectItem key={c.id} value={c.id}>{c.name}{c.companyType ? ` (${c.companyType})` : ""}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <EntityCombobox
+                        testId="select-deal-landlord"
+                        placeholder="Link landlord"
+                        searchPlaceholder="Search landlords…"
+                        value={form.landlordId}
+                        items={partyItems(landlordTypes)}
+                        onChange={(v) => set("landlordId", v)}
+                        onCreate={createPartyCompany("Landlord")}
+                        createLabel="landlord"
+                      />
                     </div>
                   )}
 
                   {showTenant && (
                     <div>
                       <Label>Tenant</Label>
-                      <Select value={form.tenantId || undefined} onValueChange={(v) => set("tenantId", v === "__clear__" ? "" : v)}>
-                        <SelectTrigger data-testid="select-deal-tenant">
-                          <SelectValue placeholder="Link tenant" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__clear__">None</SelectItem>
-                          {tenantTypes.map((c) => (
-                            <SelectItem key={c.id} value={c.id}>{c.name}{c.companyType ? ` (${c.companyType})` : ""}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <EntityCombobox
+                        testId="select-deal-tenant"
+                        placeholder="Link tenant"
+                        searchPlaceholder="Search tenants…"
+                        value={form.tenantId}
+                        items={partyItems(tenantTypes)}
+                        onChange={(v) => set("tenantId", v)}
+                        onCreate={createPartyCompany("Tenant")}
+                        createLabel="tenant"
+                      />
                     </div>
                   )}
 
                   {showVendor && (
                     <div>
                       <Label>Vendor</Label>
-                      <Select value={form.vendorId || undefined} onValueChange={(v) => set("vendorId", v === "__clear__" ? "" : v)}>
-                        <SelectTrigger data-testid="select-deal-vendor">
-                          <SelectValue placeholder="Link vendor" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__clear__">None</SelectItem>
-                          {vendorTypes.map((c) => (
-                            <SelectItem key={c.id} value={c.id}>{c.name}{c.companyType ? ` (${c.companyType})` : ""}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <EntityCombobox
+                        testId="select-deal-vendor"
+                        placeholder="Link vendor"
+                        searchPlaceholder="Search vendors…"
+                        value={form.vendorId}
+                        items={partyItems(vendorTypes)}
+                        onChange={(v) => set("vendorId", v)}
+                        onCreate={createPartyCompany("Vendor")}
+                        createLabel="vendor"
+                      />
                     </div>
                   )}
 
                   {showPurchaser && (
                     <div>
                       <Label>Purchaser</Label>
-                      <Select value={form.purchaserId || undefined} onValueChange={(v) => set("purchaserId", v === "__clear__" ? "" : v)}>
-                        <SelectTrigger data-testid="select-deal-purchaser">
-                          <SelectValue placeholder="Link purchaser" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__clear__">None</SelectItem>
-                          {purchaserTypes.map((c) => (
-                            <SelectItem key={c.id} value={c.id}>{c.name}{c.companyType ? ` (${c.companyType})` : ""}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <EntityCombobox
+                        testId="select-deal-purchaser"
+                        placeholder="Link purchaser"
+                        searchPlaceholder="Search purchasers…"
+                        value={form.purchaserId}
+                        items={partyItems(purchaserTypes)}
+                        onChange={(v) => set("purchaserId", v)}
+                        onCreate={createPartyCompany("Purchaser")}
+                        createLabel="purchaser"
+                      />
                     </div>
                   )}
 
