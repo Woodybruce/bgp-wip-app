@@ -878,7 +878,7 @@ function PartiesCell({
         .map(c => ({ id: c.id, name: c.name }));
     }
     return companies
-      .filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.companyType === "Investor" || c.id === deal[role.key])
+      .filter(c => c.companyType === "Purchaser" || c.companyType === "Investor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType === "Vendor" || c.id === deal[role.key])
       .map(c => ({ id: c.id, name: c.name }));
   };
 
@@ -1646,8 +1646,10 @@ function SimplifiedCreateBody({
     c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client"
     || c.id === form.vendorId
   );
+  // Purchasers of investments are owners/investors, not tenant brands
+  // (Woody, 2026-09-21: "purchaser is current brands, needs to be landlords").
   const purchaserOptions = companies.filter(c =>
-    (c.companyType?.startsWith("Tenant") || false) || c.companyType === "Purchaser" || c.companyType === "Investor"
+    c.companyType === "Purchaser" || c.companyType === "Investor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType === "Vendor"
     || c.id === form.purchaserId
   );
 
@@ -2893,7 +2895,7 @@ export function DealFormDialog({
               const tenantTypes = companies.filter(c => c.companyType?.startsWith("Tenant") || c.id === form.tenantId);
               const landlordTypes = companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === form.landlordId);
               const vendorTypes = companies.filter(c => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === form.vendorId);
-              const purchaserTypes = companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.companyType === "Investor" || c.id === form.purchaserId);
+              const purchaserTypes = companies.filter(c => c.companyType === "Purchaser" || c.companyType === "Investor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType === "Vendor" || c.id === form.purchaserId);
 
               return (
                 <>
@@ -6873,7 +6875,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           <div className="w-[110px] overflow-hidden">
                             <InlineLinkSelect
                               value={deal.purchaserId}
-                              options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.companyType === "Investor" || c.id === deal.purchaserId).map(c => ({ id: c.id, name: c.name }))}
+                              options={companies.filter(c => c.companyType === "Purchaser" || c.companyType === "Investor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType === "Vendor" || c.id === deal.purchaserId).map(c => ({ id: c.id, name: c.name }))}
                               href={deal.purchaserId ? `/companies/${deal.purchaserId}` : undefined}
                               onSave={(v) => handleInlineSave(deal.id, "purchaserId", v || null)}
                               onCreate={(name) => createCompanyForDeal(deal.id, "purchaserId", "Purchaser", name)}
