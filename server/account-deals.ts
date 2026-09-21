@@ -201,7 +201,7 @@ export async function listAccountDeals(
             d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id,
             p.name AS property_name,
             pu.unit_name AS unit_name,
-            tsu.unit_name AS tenancy_unit_name,
+            COALESCE(tsu.unit_number, tsu.premises) AS tenancy_unit_name,
             lc.name AS landlord_name, tc.name AS tenant_name,
             vc.name AS vendor_name, pc.name AS purchaser_name
        FROM crm_deals d
