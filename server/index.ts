@@ -3100,6 +3100,7 @@ import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestr
 import perplexityRouter from "./perplexity";
 import brandDedupeRouter from "./brand-dedupe";
 import brandProfileRouter from "./brand-profile";
+import accountReconciliationRouter from "./account-reconciliation";
 import brandEnrichmentRouter, { runNightlyBrandEnrichment } from "./brand-enrichment";
 import brandAiTakeRouter from "./brand-ai-take";
 import goadTenantResolverRouter from "./goad-tenant-resolver";
@@ -4075,6 +4076,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(perplexityRouter);
   app.use(brandDedupeRouter);
   app.use(brandProfileRouter);
+  app.use(accountReconciliationRouter);
   app.use(brandEnrichmentRouter);
   app.use(brandAiTakeRouter);
   app.use(goadTenantResolverRouter);

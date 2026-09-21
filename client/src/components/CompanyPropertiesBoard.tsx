@@ -4,7 +4,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Building2, ChevronDown, ChevronRight, Plus, Loader2, ExternalLink, X, Unlink, ArrowRightLeft, Trash2 } from "lucide-react";
+import { Building2, ChevronDown, ChevronRight, Plus, Loader2, ExternalLink, X, Unlink, ArrowRightLeft, Trash2, Scale } from "lucide-react";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
@@ -72,6 +72,31 @@ interface ScrapedProperty {
   lat?: number | null;
   lng?: number | null;
   formatted_address?: string;
+}
+
+// Delivery 2, Task 5 — staff-only account-vs-official-baseline report
+// (GET /api/accounts/:id/reconciliation). Shape mirrors the server's
+// ReconciliationReport; the card renders nothing when the route 403/404s.
+interface ReconciliationRow {
+  destination_name: string;
+  country: string | null;
+  category: string | null;
+  relationship_role: string | null;
+  ownership_stake_pct: number | null;
+  crm_property_ids: string[];
+  owning_entity_names: string[];
+  bgp_instruction: boolean;
+  media_count: number;
+  status: "matched" | "partial" | "unresolved" | "extra_in_crm";
+  unresolved_differences: string[];
+}
+
+interface ReconciliationReport {
+  companyId: string;
+  baselineName: string;
+  generatedAt: string;
+  gate: { destinationsAccountedFor: boolean };
+  rows: ReconciliationRow[];
 }
 
 interface BrandProfileSlice {
@@ -363,6 +388,23 @@ export function CompanyPropertiesBoard({
   const { data: cpbViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const cpbIsClient = cpbViewer?.role === "Client" || !!cpbViewer?.companyScopeId;
 
+  // ── Reconciliation (Delivery 2, Task 5) — staff-only report checking the
+  //    account's CRM portfolio against the official destination baseline.
+  //    The route 403s client logins and 404s companies with no baseline;
+  //    either way the card simply doesn't render. ──
+  const { data: reconciliation } = useQuery<ReconciliationReport | null>({
+    queryKey: ["/api/accounts", companyId, "reconciliation"],
+    queryFn: async () => {
+      const res = await fetch(`/api/accounts/${companyId}/reconciliation`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: kind === "landlord" && !!companyId && !!cpbViewer && !cpbIsClient,
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+  const reconRows = reconciliation?.rows ?? [];
+
   useEffect(() => {
     if (kind !== "landlord") return;
     if (cpbIsClient) return;
@@ -604,9 +646,80 @@ export function CompanyPropertiesBoard({
   });
   const showDiscovered = filter === "all" || filter === "discovered";
 
-  if (boardProperties.length === 0 && discovered.length === 0) return null;
+  if (boardProperties.length === 0 && discovered.length === 0 && reconRows.length === 0) return null;
+
+  const reconStatusClass: Record<ReconciliationRow["status"], string> = {
+    matched: "border-emerald-300 text-emerald-600",
+    partial: "border-amber-300 text-amber-600",
+    unresolved: "border-red-300 text-red-600",
+    extra_in_crm: "border-slate-300 text-slate-500",
+  };
 
   return (
+    <>
+    {reconRows.length > 0 && reconciliation && (
+      <Card>
+        <CardContent className="p-3 space-y-2" data-testid="account-reconciliation-card">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <h3 className="font-semibold text-xs flex items-center gap-1.5">
+              <Scale className="w-3.5 h-3.5 text-muted-foreground" />
+              Reconciliation
+              <span className="font-normal text-muted-foreground">vs official destinations</span>
+            </h3>
+            <span className={`text-[10px] ${reconciliation.gate.destinationsAccountedFor ? "text-emerald-600" : "text-amber-600"}`}>
+              {reconciliation.gate.destinationsAccountedFor
+                ? "All official destinations accounted for"
+                : "Official destinations outstanding"}
+              {" · "}
+              {new Date(reconciliation.generatedAt).toLocaleDateString()}
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[11px]">
+              <thead>
+                <tr className="text-left text-[10px] text-muted-foreground border-b">
+                  <th className="py-1 pr-2 font-medium">Destination</th>
+                  <th className="py-1 pr-2 font-medium">Country</th>
+                  <th className="py-1 pr-2 font-medium">Role</th>
+                  <th className="py-1 pr-2 font-medium">Stake</th>
+                  <th className="py-1 pr-2 font-medium">CRM</th>
+                  <th className="py-1 pr-2 font-medium">BGP instruction</th>
+                  <th className="py-1 pr-2 font-medium">Media</th>
+                  <th className="py-1 font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reconRows.map(r => (
+                  <tr key={`${r.category ?? "extra"}-${r.destination_name}`} className="border-b last:border-0" data-testid={`recon-row-${r.destination_name}`}>
+                    <td className="py-1 pr-2 font-medium">
+                      {r.destination_name}
+                      {r.owning_entity_names.length > 0 && (
+                        <span className="block text-[9px] font-normal text-muted-foreground">{r.owning_entity_names.join(", ")}</span>
+                      )}
+                      {r.unresolved_differences.length > 0 && (
+                        <span className="block text-[9px] font-normal text-muted-foreground">{r.unresolved_differences.join("; ")}</span>
+                      )}
+                    </td>
+                    <td className="py-1 pr-2">{r.country ?? "—"}</td>
+                    <td className="py-1 pr-2">{r.relationship_role ?? "—"}</td>
+                    <td className="py-1 pr-2">{r.ownership_stake_pct != null ? `${r.ownership_stake_pct}%` : "—"}</td>
+                    <td className="py-1 pr-2">{r.crm_property_ids.length}</td>
+                    <td className="py-1 pr-2">{r.bgp_instruction ? "Yes" : "No"}</td>
+                    <td className="py-1 pr-2">{r.media_count}</td>
+                    <td className="py-1">
+                      <Badge variant="outline" className={`text-[9px] ${reconStatusClass[r.status]}`}>
+                        {r.status === "extra_in_crm" ? "extra in CRM" : r.status}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+    )}
+    {(boardProperties.length > 0 || discovered.length > 0) && (
     <Card>
       <CardContent className="p-3 space-y-3" data-testid="company-properties-board">
         <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -783,5 +896,7 @@ export function CompanyPropertiesBoard({
         )}
       </CardContent>
     </Card>
+    )}
+    </>
   );
 }
