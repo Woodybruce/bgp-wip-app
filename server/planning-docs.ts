@@ -26,13 +26,13 @@
  * them and the auto-download path can prioritise what's worth pulling into
  * the SharePoint pathway folder.
  *
- * RBKC (Kensington & Chelsea) is NOT Idox — it runs an in-house planning
- * search at www.rbkc.gov.uk/planning/searches/details.aspx (refs like
- * PP/25/06454) and 403s non-browser fetches, so its tier goes via the same
- * proxy chain and gets its own parser (parseRbkcDocsHtml). The details page
- * may render only the active tab server-side, so if the first fetch has no
- * document links we sweep the page's other tab ids (bounded) and any
- * anchor labelled "documents".
+ * RBKC (Kensington & Chelsea) is NOT Idox Public Access. Since the 2026
+ * rebuild its documents live on a ref-addressed Idox *publisher*
+ * (planningsearch.rbkc.gov.uk) whose list is filled by AJAX, so any RBKC URL
+ * is routed to rbkc-planning.ts (listRbkcDocuments / downloadRbkcPublisherUrl)
+ * — see that file. The legacy HTML tier below (parseRbkcDocsHtml /
+ * fetchRbkcDocs, written for the retired details.aspx site) is kept only as a
+ * fallback for RBKC URLs that carry no application reference.
  */
 
 const SCRAPERAPI_ENDPOINT = "https://api.scraperapi.com/";
@@ -118,6 +118,10 @@ export function classifyDoc(desc: string, type: string, drawingNumber?: string):
   if (/photograph|photo\b/.test(s)) return { category: "photo", label: "Photograph" };
   if (/cil\b|community\s*infrastructure/.test(s)) return { category: "cil", label: "CIL" };
   if (/correspondence|letter|email/.test(s)) return { category: "correspondence", label: "Correspondence" };
+  // Register rows typed "Drawing" / "Drawing - Approved" / "Plans" whose
+  // description doesn't say what the sheet shows ("INFO DRAWINGS PART 2",
+  // "APPR. EXCEPT: 7131A" — RBKC's approved-drawings packs). Still drawings.
+  if (/\bdrawings?\b/.test(s) || /^plans?\b/i.test(type.trim())) return { category: "drawing", label: "Drawing" };
   return { category: "other", label: type || "Document" };
 }
 
@@ -442,7 +446,19 @@ export async function fetchPlanningDocs(rawUrl: string): Promise<PlanningDoc[]> 
   try {
     let docs: PlanningDoc[];
     if (isRbkcUrl(docsUrl)) {
-      docs = await fetchRbkcDocs(docsUrl);
+      const { extractRbkcRef, listRbkcDocuments } = await import("./rbkc-planning");
+      const ref = extractRbkcRef(docsUrl);
+      if (ref) {
+        const listed = await listRbkcDocuments(ref);
+        if (!listed) {
+          // Publisher unreachable right now — don't cache the miss for 7 days.
+          console.warn(`[planning-docs] RBKC publisher unreachable for ${ref}`);
+          return [];
+        }
+        docs = listed.docs;
+      } else {
+        docs = await fetchRbkcDocs(docsUrl);
+      }
     } else {
       const html = await fetchDocsHtml(docsUrl);
       if (!html) return [];
@@ -468,6 +484,7 @@ export const DOC_PRIORITY: Record<string, number> = {
   section_proposed: 75,
   section_existing: 72,
   section: 70,
+  drawing: 65,
   site_plan: 60,
   decision: 50,
   officer_report: 45,
@@ -500,6 +517,17 @@ export function getPlanningDownloadLastError(): string { return lastDownloadErro
 export async function downloadPlanningPdf(url: string, refererUrl?: string): Promise<Buffer | null> {
   lastDownloadError = "";
   const apiKey = process.env.SCRAPERAPI_KEY;
+
+  // RBKC publisher documents need the ref-bound JSESSIONID that listed them;
+  // none of the proxy strategies below can supply that, so hand off entirely.
+  {
+    const { isRbkcPublisherDocUrl, downloadRbkcPublisherUrl } = await import("./rbkc-planning");
+    if (isRbkcPublisherDocUrl(url)) {
+      const buf = await downloadRbkcPublisherUrl(url);
+      if (!buf) lastDownloadError = "RBKC publisher: could not resolve this document on the council's register (portal unreachable, or the link is a stale session path)";
+      return buf;
+    }
+  }
 
   const isPdfBuffer = (buf: Buffer): boolean =>
     buf.length >= 1024 && buf.slice(0, 4).toString("latin1") === "%PDF";
@@ -705,7 +733,7 @@ export function pickDrawingsToDownload(
     "floor_plan_proposed", "floor_plan_existing", "floor_plan",
     "elevation_proposed", "elevation_existing", "elevation",
     "section_proposed", "section_existing", "section",
-    "site_plan",
+    "drawing", "site_plan",
   ]);
   const out: Array<{ ref: string; doc: PlanningDoc }> = [];
   for (const app of apps) {
