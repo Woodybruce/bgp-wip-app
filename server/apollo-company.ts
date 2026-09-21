@@ -84,9 +84,12 @@ export function normaliseApolloOrg(org: any): any {
 
 // Auto-fetch on brand open (Woody, 2026-08-26: "make apollo automatic" —
 // same no-ask rule as store research). One attempt per brand per 6h process
-// window; a stored payload counts as fresh for 30 days. Landlord-type
-// companies are skipped — the Momentum card never renders for them, so a
-// fetch would just burn Apollo credits.
+// window; a stored payload counts as fresh for 30 days. Landlord/client
+// companies used to be skipped ("Momentum card never renders for them") —
+// that predates the landlord boards: the client Financials section, the AI
+// take and the crm_companies gap-fill all consume this payload now, so a
+// verified-identity account earns one cached enrich per 30 days like any
+// brand. The preparation-stage daily cap still bounds batch spend.
 const autoKickFired = new Map<string, number>();
 export async function autoRefreshApolloIfStale(companyId: string): Promise<void> {
   const last = autoKickFired.get(companyId);
@@ -96,8 +99,6 @@ export async function autoRefreshApolloIfStale(companyId: string): Promise<void>
   const co = (await pool.query(`SELECT * FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
   const identity = getBrandIdentity(co);
   if (!co || identity.status !== "verified") return;
-  const type = (co.company_type || "").toLowerCase();
-  if (["landlord", "landlord/freeholder", "investor", "reit", "developer", "fund"].includes(type)) return;
   const row = (await pool.query(
     `SELECT payload, fetched_at FROM brand_apollo_data WHERE company_id = $1`, [companyId])).rows[0];
   if (row?.payload?._brandIdentity?.fingerprint === identity.fingerprint

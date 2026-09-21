@@ -57,6 +57,8 @@ const ROWS = [
   { id: "IMG-PROP", file_name: "brent-cross-entrance.jpg", thumbnail_data: null, mime_type: "image/jpeg", tags: ["brand-auto"], category: "Property", source: "official-website", description: null, width: 800, height: 600, created_at: "2026-06-01T10:00:00Z", company_id: null, property_id: "P1", property_name: "Brent Cross" },
   // A property outside the account's portfolio — must never leak in.
   { id: "IMG-OTHER", file_name: "other.jpg", thumbnail_data: null, mime_type: "image/jpeg", tags: ["brand-auto"], category: "Property", source: "official-website", description: null, width: 800, height: 600, created_at: "2026-06-05T10:00:00Z", company_id: null, property_id: "P9", property_name: "Elsewhere" },
+  // Soft-deleted (tagged 'trashed') — must never surface anywhere.
+  { id: "IMG-TRASHED", file_name: "dup-logo.jpg", thumbnail_data: null, mime_type: "image/png", tags: ["brand-auto", "trashed"], category: "Brands", source: "official-website", description: null, width: 256, height: 256, created_at: "2026-06-06T10:00:00Z", company_id: "HAM", property_id: null, property_name: null },
 ];
 
 function makePool() {
@@ -66,9 +68,11 @@ function makePool() {
       calls.push({ sql, params });
       const [entityIds, portfolioIds, entityNames] = params as [string[], string[], string[]];
       const rows = ROWS.filter(r =>
-        (r.company_id && entityIds.includes(r.company_id)) ||
-        (r.property_id && portfolioIds.includes(r.property_id)) ||
-        (!r.company_id && !r.property_id && entityNames.includes("hammerson") && r.id === "IMG-LEGACY"),
+        !r.tags.includes("trashed") && (
+          (r.company_id && entityIds.includes(r.company_id)) ||
+          (r.property_id && portfolioIds.includes(r.property_id)) ||
+          (!r.company_id && !r.property_id && entityNames.includes("hammerson") && r.id === "IMG-LEGACY")
+        ),
       );
       return { rows, rowCount: rows.length };
     },
@@ -159,5 +163,13 @@ describe("listAccountMedia", () => {
     await listAccountMedia("HAM", {}, { pool, resolveView: fakeResolveView(VIEW) });
     assert.ok(calls.length >= 1);
     for (const c of calls) assert.match(c.sql.trim(), /^SELECT/i, `mutating statement: ${c.sql}`);
+  });
+
+  it("trashed (soft-deleted) images never surface, and the SQL carries the guard", async () => {
+    const { pool, calls } = makePool();
+    const res = await listAccountMedia("HAM", {}, { pool, resolveView: fakeResolveView(VIEW) });
+    const ids = [...res.groups.corporate, ...res.groups.properties, ...res.groups.approved].map(r => r.id);
+    assert.ok(!ids.includes("IMG-TRASHED"));
+    assert.match(calls[calls.length - 1].sql, /'trashed' = ANY/, "media query must exclude trashed rows");
   });
 });

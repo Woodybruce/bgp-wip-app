@@ -244,9 +244,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               i.tags, i.mime_type, i.description, i.source, i.company_id, i.property_id, i.brand_name,
               i.width, i.height, i.file_size
          FROM image_studio_images i
-        WHERE i.company_id = $1
+        WHERE NOT ('trashed' = ANY(COALESCE(i.tags, '{}')))
+          AND (i.company_id = $1
            OR (i.brand_name IS NOT NULL
-               AND lower(i.brand_name) = (SELECT lower(name) FROM crm_companies WHERE id = $1))
+               AND lower(i.brand_name) = (SELECT lower(name) FROM crm_companies WHERE id = $1)))
         ORDER BY
           -- Hero images first so the UI doesn't have to re-sort
           ('brand-hero' = ANY(i.tags))::int DESC,

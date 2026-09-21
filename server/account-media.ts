@@ -96,10 +96,11 @@ export async function listAccountMedia(
             p.name AS property_name
        FROM image_studio_images i
        LEFT JOIN crm_properties p ON p.id = i.property_id
-      WHERE i.company_id = ANY($1::varchar[])
+      WHERE NOT ('trashed' = ANY(COALESCE(i.tags, '{}')))
+        AND (i.company_id = ANY($1::varchar[])
          OR i.property_id = ANY($2::varchar[])
          OR (i.company_id IS NULL AND i.property_id IS NULL AND i.brand_name IS NOT NULL
-             AND lower(trim(i.brand_name)) = ANY($3::text[]))
+             AND lower(trim(i.brand_name)) = ANY($3::text[])))
       ORDER BY ('brand-hero' = ANY(i.tags))::int DESC, i.created_at DESC
       LIMIT 300`,
     [entityIds, portfolioIds, entityNames],
