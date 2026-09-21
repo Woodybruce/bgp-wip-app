@@ -18,6 +18,8 @@
 // Keep it deliberately small: a brand constant, sanitisers, and one
 // renderHtmlWithClaude(). Doc-type structure lives in the registry/briefs.
 
+import fs from "node:fs";
+
 // The model used for all HTML design. One constant so a bump is one line.
 // Fable 5 — the most design-sensitive output in the product (Why Buy decks,
 // document briefs, designed PDFs) gets the strongest model.
@@ -26,15 +28,40 @@ export const DESIGN_MODEL = "claude-fable-5";
 // House brand cues, injected into every design prompt. Single source of
 // truth — was previously duplicated verbatim in three files.
 export const BGP_BRAND = `
-BGP brand cues:
-- Primary teal: #15616D
-- Cream: #FBF5DF
-- Charcoal: #001524
-- Accent gold: #FF7D00
-- Typography: serif headlines (display), sans-serif body. Tight tracking on headlines.
+BGP brand (2026 rebrand, v19 — the ONLY palette allowed):
+- Bordeaux #6E0C25 — THE brand colour: titles, key rules, stat blocks, cover/divider backgrounds (white text on it).
+- Ink #1D1D1B for body text. Cream #FCF8F4 or white grounds. Blush #E4D8D3 for panels and hairline dividers.
+- Nectar #FC9F8D — one warm highlight per spread at most. Stone #C2BAA3 for muted supporting tints.
+- FORBIDDEN: teal, green, orange, gold, navy, black backgrounds. Never invent a logo, monogram, "BGP" box or letter-mark.
+- Logo: the real BGP wordmark image, and only this. On light grounds: <img src="__BGP_LOGO_DARK__" alt="Bruce Gillingham Pollard" style="height:34px"> ; on bordeaux/dark grounds: <img src="__BGP_LOGO_LIGHT__" alt="Bruce Gillingham Pollard" style="height:34px">. Keep the placeholder tokens EXACTLY as written — they are swapped for the image at render time. Small, top-left of the cover and in the running footer; never stretched, never recoloured, never accompanied by the firm name typed out as a second wordmark.
+- Typography: serif display (Georgia / Lora) in sentence case, sans-serif body (Lato / Helvetica). Tight tracking on headlines; small caps labels letter-spaced.
 - Tone: confident, evidence-led, never hyperbolic. UK property language ('instructions', 'completions', 'lease events').
 - Layout: generous whitespace, clear sections, big numbers, supporting evidence underneath.
 `;
+
+// The real BGP wordmark PNGs (server/assets) as data URIs, swapped in for the
+// __BGP_LOGO_*__ tokens at render time so every design path ships the actual
+// logo rather than whatever the model draws.
+let _logoCache: { dark: string; light: string } | null = null;
+export function bgpLogoDataUris(): { dark: string; light: string } {
+  if (_logoCache) return _logoCache;
+  const read = (file: string): string => {
+    for (const p of [`${process.cwd()}/server/assets/${file}`, `${process.cwd()}/dist/server/assets/${file}`]) {
+      try {
+        if (fs.existsSync(p)) return `data:image/png;base64,${fs.readFileSync(p).toString("base64")}`;
+      } catch {}
+    }
+    return "";
+  };
+  _logoCache = { dark: read("BGP_BlackHolder.png"), light: read("BGP_WhiteHolder.png") };
+  return _logoCache;
+}
+
+export function injectBgpLogos(html: string): string {
+  if (!html.includes("__BGP_LOGO_")) return html;
+  const { dark, light } = bgpLogoDataUris();
+  return html.replaceAll("__BGP_LOGO_DARK__", dark).replaceAll("__BGP_LOGO_LIGHT__", light);
+}
 
 // Strip a leading ```html fence / trailing ``` if Claude wrapped the output.
 export function stripCodeFences(raw: string): string {

@@ -668,6 +668,7 @@ function getToolProgressLabel(toolName: string): string {
     property_lookup: "Looking up property data...",
     get_property_planning: "Pulling planning constraints + recent applications...",
     get_planning_drawings: "Fetching planning drawings from the council portal...",
+    measure_plan: "Reading the drawing's scale and measuring...",
     property_data_lookup: "Querying PropertyData...",
     deep_investigate: "Running deep investigation...",
     rocketreach_person_lookup: "Looking up verified contact details...",
@@ -1364,7 +1365,7 @@ Identifying the owner/parcel for a title or address is ALWAYS this free register
 8. **NEVER FAKE ACTIONS.** Only claim you read/created/saved something if there's a corresponding successful tool call. Never invent IDs or filenames. If a tool fails, say so honestly.
 9. **Fix bugs yourself when admin.** You have list_project_files, read_source_file, edit_source_file, run_shell_command, add_database_column, restart_application — admin-only. By default \`edit_source_file\` runs in **branch-mode**: the change is committed to a \`chatbgp/<YYYY-MM-DD>\` git branch and is NOT live until merged. After editing, surface the branch + commit hash and the \`nextStep\` instruction from the response — the admin reviews and runs \`merge_chatbgp_branch\` (or merges manually) to apply. If the admin says "go direct" or "skip the branch", pass \`direct: true\`. Use \`list_chatbgp_branches\` to see what's pending. Never say "this needs a developer" to an admin caller.
 10. **log_app_feedback** is SECONDARY only. If user asks you to DO something, do it first.
-11. **Vision (vision_describe_image)** — use to auto-classify untagged images, OCR floor plans / brochure pages, identify brands from shopfronts, write captions. Use task='structured' with applyToImageStudio=true to backfill description+category+tags in one shot.
+11. **Vision (vision_describe_image)** — use to auto-classify untagged images, OCR floor plans / drawing sheets / brochure pages, identify brands from shopfronts, write captions. Use task='structured' with applyToImageStudio=true to backfill description+category+tags in one shot. It accepts PDFs (chat uploads, RBKC register links) with a page number and auto-tiles big sheets so small table text is read at full resolution — use region:{x,y,w,h} to zoom on an area schedule. **Measuring plans (measure_plan)** — for "how big is this unit / what's the floor area" on a drawing PDF, calibrate from the drawn scale with measure_plan (render:true to get a high-res image to read corners off), then pass shapes to get m²/sq ft; quote the sheet's own dimension strings and area figures first, and always call scaled areas approximate.
 12. **Scheduled jobs (scheduled_jobs table)** — for any "run this every day at X" or "remind me weekly" request, INSERT into scheduled_jobs via sql_write. Columns: name, description, schedule_kind ('daily'|'weekly'|'hourly'|'cron'), schedule_value ('07:00' | 'MON:09:00' | '00' | '0 9 * * 1-5'), action_kind ('sql_query'|'sql_write'|'send_chat_message'|'send_email'), action_payload (JSONB matching the action), next_run_at (compute first occurrence — server tz; if uncertain set to NOW() and the worker will recompute). The worker polls every 60s. Use send_chat_message with a threadId for digests; sql_query for periodic "show me X" reports stored in last_run_output; sql_write for periodic cleanups. Three consecutive errors auto-disable a job. NEVER use this for one-off tasks — for those just run the action directly.
 
 ## Response Format
@@ -4154,16 +4155,19 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "vision_describe_image",
-      description: "Look at an image and return structured intelligence about it via Claude vision. Use to: classify untagged Image Studio rows, OCR floor plans / brochure pages / business rates letters, identify a brand from a shopfront photo, write a caption for a hero shot, or extract structured data from a document scan. Pass either an Image Studio image id (preferred — loads from the local file or fetches from SharePoint), a public https image URL, or base64 data. Optionally apply the result back to the row with applyToImageStudio:true (writes description / category / tags). Cheap (Sonnet) and fast.",
+      description: "Look at an image and return structured intelligence about it via Claude vision. Use to: classify untagged Image Studio rows, OCR floor plans / drawing sheets / brochure pages / business rates letters, identify a brand from a shopfront photo, write a caption for a hero shot, or extract structured data from a document scan. Sources: an Image Studio image id (preferred), a public https image or PDF URL, a chat-media path (image OR PDF — give `page` for PDFs; the page is rendered at high DPI server-side), an RBKC planning-register document link from get_planning_drawings, or base64 data. LARGE SHEETS: the vision API downsizes anything over ~1568px, which used to make small area-schedule text on A1 CAD sheets unreadable — OCR/structured tasks now auto-tile big images (overlapping tiles read at native resolution and stitched), and `region` crops to just the part you care about (e.g. the area table) for maximum legibility. Optionally apply the result back to the Image Studio row with applyToImageStudio:true. Cheap (Sonnet) and fast.",
       parameters: {
         type: "object",
         properties: {
           imageStudioId: { type: "string", description: "Preferred — image_studio_images.id. Loads from disk or SharePoint." },
-          imageUrl: { type: "string", description: "Public https image URL (alternative to imageStudioId)." },
+          imageUrl: { type: "string", description: "Public https image/PDF URL, a /api/chat-media/<file> path (image or PDF), or an RBKC register document link (alternative to imageStudioId)." },
           base64Data: { type: "string", description: "Base64-encoded image bytes (alternative)." },
           mimeType: { type: "string", description: "Required if base64Data is used. e.g. 'image/jpeg', 'image/png'." },
+          page: { type: "integer", description: "For PDF sources: which page to look at (1-based, default 1)." },
+          region: { type: "object", description: "Optional crop as fractions of the image/page, origin top-left: {x, y, w, h} each 0–1. Use to zoom on a table, title block or one room so the text is read at full resolution.", properties: { x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" } } },
+          autoTile: { type: "boolean", description: "Default true for ocr/structured, false otherwise. When the (cropped) image's long edge exceeds 1568px, slice it into overlapping tiles, read each at native resolution and stitch the text. Set false to force a single-shot read." },
           task: { type: "string", enum: ["describe", "classify", "ocr", "tag", "structured"], description: "describe = free-text caption. classify = pick a category from the Image Studio list. ocr = extract all readable text. tag = generate 3-8 short tags. structured = describe + classify + ocr + tag in one pass (recommended for backfill jobs)." },
-          customPrompt: { type: "string", description: "Optional extra instructions appended to the task prompt — e.g. 'this is a UK retail unit, focus on the brand name and shopfront condition'." },
+          customPrompt: { type: "string", description: "Optional extra instructions appended to the task prompt — e.g. 'this is a UK retail unit, focus on the brand name and shopfront condition' or 'transcribe the GIA/NIA area schedule table exactly, one row per line'." },
           applyToImageStudio: { type: "boolean", description: "Default false. When true and imageStudioId is set, writes the result back to the row (description for describe/structured, category for classify/structured, tags for tag/structured, description ← OCR text for ocr)." },
         },
         required: ["task"],
@@ -4201,6 +4205,59 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           query: { type: "string", description: "A SELECT or WITH … SELECT query. Single statement, no trailing semicolon needed. Example: SELECT id, file_name FROM image_studio_images WHERE source = 'pexels' LIMIT 20" },
         },
         required: ["query"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "measure_plan",
+      description: "Measure architects' drawing PDFs to real-world metres / m² / sq ft using the DRAWN SCALE. Reads the sheet's title block ('1 : 125@A1'), checks it against the physical page size (corrects for a 1:100@A1 sheet saved at A3), and returns an exact calibration (metres per PDF point), the drawing title/number, every dimension string printed on the sheet ('8.9m', '12,450') and any area figures (GIA/NIA/sq m/sq ft) with their positions. With render:true it also saves a high-resolution PNG of the page (or a region of it) to chat-media that you can look at with vision_describe_image and the user can open. Pass shapes to get areas/lengths: points as fractions of the page (0–1, origin top-left) or as pixels on a previous render (coords:'pixel' + image). Sources: a chat upload (chatMediaFilename), a storage key, an https PDF URL, or an RBKC register document link from get_planning_drawings — so 'measure the ground floor of the Plaza plans' is: get_planning_drawings → measure_plan on the ground floor sheet with render:true → read the unit corners off the render → measure_plan with shapes. Always report scaled areas as approximate and name the scale used. Vector PDFs only; for a scan/photo the user calibrates on the Cann CAD page (/cad-measure).",
+      parameters: {
+        type: "object",
+        properties: {
+          source: {
+            type: "object",
+            description: "Exactly one of: chatMediaFilename (a chat upload — filename or /api/chat-media/ path), storageKey (file_storage key), url (https PDF or an RBKC register document link).",
+            properties: {
+              chatMediaFilename: { type: "string" },
+              storageKey: { type: "string" },
+              url: { type: "string" },
+            },
+          },
+          page: { type: "integer", description: "1-based page of the PDF (default 1). One drawing per page in planning bundles — the drawing title tells you which floor." },
+          scale: { type: "string", description: "Override the drawn scale when the sheet doesn't state it or states it wrongly, e.g. '1:100' or '1:50@A1'." },
+          sheet: { type: "string", description: "Override the paper size the stated scale refers to (A0–A4) if the title block omits '@A1'." },
+          calibrate: {
+            type: "object",
+            description: "Calibrate from a known real-world distance instead of (or as a check on) the printed scale: two points and the metres between them, e.g. the ends of an '8.9m' dimension string, or a 0.9 m door.",
+            properties: {
+              points: { type: "array", items: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } } }, minItems: 2, maxItems: 2 },
+              metres: { type: "number" },
+            },
+          },
+          render: {
+            description: "true to save a high-res PNG of the whole page; or {region:{x,y,w,h}, targetDpi} to render just part of it (fractions of the page, origin top-left). Default 200 dpi, PNG.",
+            oneOf: [{ type: "boolean" }, { type: "object", properties: { region: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" } } }, targetDpi: { type: "integer" } } }],
+          },
+          shapes: {
+            type: "array",
+            description: "Shapes to measure. type 'area' = closed polygon (≥3 points) → sqm, sqft, perimeter; type 'length' = polyline (≥2 points) → metres.",
+            items: {
+              type: "object",
+              properties: {
+                label: { type: "string" },
+                type: { type: "string", enum: ["area", "length"] },
+                points: { type: "array", items: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } }, required: ["x", "y"] } },
+              },
+              required: ["type", "points"],
+            },
+          },
+          coords: { type: "string", enum: ["fraction", "point", "pixel"], description: "How shape/calibrate points are expressed. 'fraction' (default) = fractions of the full page, origin top-left. 'point' = PDF points, origin top-left. 'pixel' = pixels on a render — also pass image:{width,height,region} from that render result." },
+          image: { type: "object", description: "For coords:'pixel': the render the points were read off — width, height and region exactly as returned by the render.", properties: { width: { type: "integer" }, height: { type: "integer" }, region: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" } } } } },
+        },
+        required: ["source"],
       },
     },
   });
@@ -8126,14 +8183,23 @@ export async function executeCrmToolRaw(
           mimeType = (file.contentType?.split(";")[0].trim() || (mediaName.match(/\.(png|jpe?g|gif|webp)$/i)?.[1] === "png" ? "image/png" : "image/jpeg")) as any;
           base64 = Buffer.from(file.data).toString("base64");
         } else if (!url.startsWith("https://")) {
-          return { data: { success: false, error: "imageUrl must be https:// or a chat-media path" } };
+          return { data: { success: false, error: "imageUrl must be https://, a chat-media path, or an RBKC register document link" } };
         } else {
-          const resp = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(15000) });
-          if (!resp.ok) return { data: { success: false, error: `Image fetch failed: HTTP ${resp.status}` } };
-          const ctype = resp.headers.get("content-type") || "image/jpeg";
-          if (!ctype.startsWith("image/")) return { data: { success: false, error: `URL did not return an image (${ctype})` } };
-          mimeType = (ctype.split(";")[0].trim() as any);
-          base64 = Buffer.from(await resp.arrayBuffer()).toString("base64");
+          const { isRbkcPublisherDocUrl, downloadRbkcPublisherUrl } = await import("./rbkc-planning");
+          if (isRbkcPublisherDocUrl(url)) {
+            // A drawing straight off the planning register — session-bound, so go through the publisher module.
+            const buf = await downloadRbkcPublisherUrl(url);
+            if (!buf) return { data: { success: false, error: "Couldn't fetch that drawing from the RBKC register (session lapsed or portal unreachable). Call get_planning_drawings again to refresh the document list, then retry." } };
+            mimeType = "application/pdf" as any;
+            base64 = buf.toString("base64");
+          } else {
+            const resp = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(30000) });
+            if (!resp.ok) return { data: { success: false, error: `Image fetch failed: HTTP ${resp.status}` } };
+            const ctype = resp.headers.get("content-type") || "image/jpeg";
+            if (!ctype.startsWith("image/") && !ctype.includes("pdf")) return { data: { success: false, error: `URL did not return an image or PDF (${ctype})` } };
+            mimeType = (ctype.split(";")[0].trim() as any);
+            base64 = Buffer.from(await resp.arrayBuffer()).toString("base64");
+          }
         }
       } else if (fnArgs.base64Data) {
         base64 = String(fnArgs.base64Data).replace(/^data:image\/\w+;base64,/, "");
@@ -8141,32 +8207,116 @@ export async function executeCrmToolRaw(
         return { data: { success: false, error: "Provide imageStudioId, imageUrl, or base64Data." } };
       }
 
+      // ── Normalise the pixels: PDF page → raster, optional crop, size ──
+      // A1 CAD sheets used to arrive as one downscaled frame (the API caps
+      // images at ~1568px) so the 6pt area tables were unreadable while the
+      // title block OCR'd fine. Render PDFs at a DPI that keeps small text,
+      // crop to the requested region, and tile anything still oversized.
+      let imgBuf = Buffer.from(base64, "base64");
+      let sourcePdfPage: number | undefined;
+      if (String(mimeType).includes("pdf") || imgBuf.subarray(0, 4).toString("latin1") === "%PDF") {
+        const { rasterisePdfPageBuffer } = await import("./pdf-raster");
+        sourcePdfPage = Math.max(1, Math.floor(Number(fnArgs.page) || 1));
+        const r = await rasterisePdfPageBuffer(imgBuf, sourcePdfPage, { targetDpi: 220, maxSide: 7000, format: "png" });
+        imgBuf = r.buffer;
+        mimeType = "image/png";
+      }
+      const sharpMod = (await import("sharp")).default;
+      const sharpOpts = { limitInputPixels: false as const, failOn: "none" as const };
+      let meta = await sharpMod(imgBuf, sharpOpts).metadata();
+      let srcW = meta.width || 0, srcH = meta.height || 0;
+      const region = fnArgs.region && typeof fnArgs.region === "object" ? fnArgs.region as { x: number; y: number; w: number; h: number } : null;
+      if (region && srcW && srcH && region.w > 0 && region.h > 0) {
+        const left = Math.round(Math.min(Math.max(0, region.x), 0.999) * srcW);
+        const top = Math.round(Math.min(Math.max(0, region.y), 0.999) * srcH);
+        const width = Math.max(8, Math.min(srcW - left, Math.round(region.w * srcW)));
+        const height = Math.max(8, Math.min(srcH - top, Math.round(region.h * srcH)));
+        imgBuf = await sharpMod(imgBuf, sharpOpts).extract({ left, top, width, height }).png().toBuffer();
+        mimeType = "image/png";
+        meta = await sharpMod(imgBuf, sharpOpts).metadata();
+        srcW = meta.width || width; srcH = meta.height || height;
+      }
+      const API_MAX = 1568;
+      const longEdge = Math.max(srcW, srcH);
+      const wantsTiles = fnArgs.autoTile === undefined ? (task === "ocr" || task === "structured") : fnArgs.autoTile === true;
+      const encodeForApi = async (buf: Buffer): Promise<{ data: string; media: "image/png" | "image/jpeg" }> => {
+        // Line art / text stays PNG; photos go JPEG. Cap to the API's ceiling
+        // ourselves so we're not shipping megabytes the server will shrink.
+        const m = await sharpMod(buf, sharpOpts).metadata();
+        const needsResize = Math.max(m.width || 0, m.height || 0) > API_MAX;
+        const pipeline = sharpMod(buf, sharpOpts).rotate();
+        const resized = needsResize ? pipeline.resize({ width: API_MAX, height: API_MAX, fit: "inside", withoutEnlargement: true }) : pipeline;
+        const usePng = String(mimeType) === "image/png" || String(mimeType) === "image/gif";
+        const out = usePng ? await resized.png({ compressionLevel: 8 }).toBuffer() : await resized.jpeg({ quality: 88 }).toBuffer();
+        return { data: out.toString("base64"), media: usePng ? "image/png" : "image/jpeg" };
+      };
+
       // ── Build the prompt for the chosen task ──────────────────────────
       const CATEGORIES = ["Exteriors", "Interiors", "Floor Plans", "Properties", "Areas", "Marketing", "Brands", "Generated", "Headshots", "Other"];
       const taskPrompts: Record<string, string> = {
         describe: "Write a single-paragraph factual description of this image — what it shows, key visible details, mood/condition. No flowery language.",
         classify: `Classify this image into ONE of these categories: ${CATEGORIES.join(", ")}. Respond ONLY with the category name, nothing else.`,
-        ocr: "Extract all readable text from this image. Preserve line breaks and structure. If there is no text, respond with 'NO_TEXT'.",
+        ocr: "Extract all readable text from this image. Preserve line breaks and structure; keep table rows as rows with cells separated by ' | '. Transcribe numbers exactly as printed (units, decimals, thousands separators). If there is no text, respond with 'NO_TEXT'.",
         tag: "Generate 3 to 8 short, lower-case tags describing this image (subject matter, location type, brand if visible, condition, style). Respond as a JSON array of strings, e.g. [\"shopfront\",\"belgravia\",\"luxury-retail\"].",
         structured: `Analyse this image and respond ONLY with valid minified JSON, no other text, in this exact shape: {"description": "single paragraph factual description", "category": "ONE OF: ${CATEGORIES.join("|")}", "tags": ["tag1","tag2",...], "ocr": "all readable text or empty string"}. Tags 3-8, lower-case, hyphen-separated. OCR preserves line breaks with \\n.`,
       };
       const prompt = taskPrompts[task] + (customPrompt ? `\n\nAdditional context: ${customPrompt}` : "");
 
-      // ── Call Claude vision ────────────────────────────────────────────
+      // ── Call Claude vision (single shot, or tiled OCR) ────────────────
       const anthropic = getAnthropicClient(false);
-      const visionResp = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1500,
-        messages: [{
-          role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type: mimeType, data: base64 } },
-            { type: "text", text: prompt },
-          ],
-        }],
-      });
-      const textBlock = visionResp.content.find(b => b.type === "text") as { type: "text"; text: string } | undefined;
-      const raw = textBlock?.text?.trim() || "";
+      const askVision = async (img: { data: string; media: "image/png" | "image/jpeg" }, text: string, maxTokens = 1500): Promise<string> => {
+        const resp = await anthropic.messages.create({
+          model: "claude-sonnet-4-6",
+          max_tokens: maxTokens,
+          messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: img.media, data: img.data } }, { type: "text", text }] }],
+        });
+        const tb = resp.content.find(b => b.type === "text") as { type: "text"; text: string } | undefined;
+        return tb?.text?.trim() || "";
+      };
+
+      let raw = "";
+      let tiling: { rows: number; cols: number; tiles: number; tilePx: number } | undefined;
+      const tileOcr = async (): Promise<string> => {
+        const TILE_TARGET = 1500, OVERLAP = 0.1, MAX_GRID = 4;
+        const cols = Math.min(MAX_GRID, Math.max(1, Math.ceil(srcW / TILE_TARGET)));
+        const rows = Math.min(MAX_GRID, Math.max(1, Math.ceil(srcH / TILE_TARGET)));
+        const tileW = Math.ceil(srcW / cols), tileH = Math.ceil(srcH / rows);
+        const padX = Math.round(tileW * OVERLAP), padY = Math.round(tileH * OVERLAP);
+        tiling = { rows, cols, tiles: rows * cols, tilePx: Math.max(tileW + padX, tileH + padY) };
+        const jobs: Array<{ r: number; c: number; run: () => Promise<string> }> = [];
+        for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+          const left = Math.max(0, c * tileW - padX), top = Math.max(0, r * tileH - padY);
+          const width = Math.min(srcW - left, tileW + 2 * padX), height = Math.min(srcH - top, tileH + 2 * padY);
+          jobs.push({ r, c, run: async () => {
+            const tileBuf = await sharpMod(imgBuf, sharpOpts).extract({ left, top, width, height }).png().toBuffer();
+            const tilePrompt = `${taskPrompts.ocr}\n\nThis is tile row ${r + 1} of ${rows}, column ${c + 1} of ${cols} of a larger sheet; tiles overlap by ~10% so text at the edges may repeat in neighbouring tiles — transcribe what you see in this tile fully anyway.${customPrompt ? `\n\nAdditional context: ${customPrompt}` : ""}`;
+            return askVision(await encodeForApi(tileBuf), tilePrompt, 2500);
+          } });
+        }
+        const results: string[] = new Array(jobs.length).fill("");
+        let next = 0;
+        const worker = async () => { while (next < jobs.length) { const i = next++; try { results[i] = await jobs[i].run(); } catch (e: any) { results[i] = `[tile failed: ${e?.message}]`; } } };
+        await Promise.all(Array.from({ length: Math.min(3, jobs.length) }, worker));
+        return jobs.map((j, i) => `=== Tile r${j.r + 1}c${j.c + 1} ===\n${results[i] === "NO_TEXT" ? "(no text)" : results[i]}`).join("\n\n");
+      };
+
+      if (wantsTiles && longEdge > API_MAX && srcW && srcH) {
+        if (task === "ocr") {
+          raw = await tileOcr();
+        } else {
+          // structured: overview from the downscaled frame, OCR from the tiles.
+          const [overview, ocrText] = await Promise.all([askVision(await encodeForApi(imgBuf), prompt), tileOcr()]);
+          raw = overview;
+          try {
+            const cleaned = overview.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+            const o = JSON.parse(cleaned);
+            o.ocr = ocrText;
+            raw = JSON.stringify(o);
+          } catch { /* fall through — parse below reports the problem */ }
+        }
+      } else {
+        raw = await askVision(await encodeForApi(imgBuf), prompt);
+      }
 
       // ── Parse the response ────────────────────────────────────────────
       let parsed: any = { raw };
@@ -8209,12 +8359,39 @@ export async function executeCrmToolRaw(
       }
 
       return {
-        data: { success: true, task, ...parsed, applied: applied.length ? applied : undefined },
+        data: {
+          success: true, task, ...parsed, applied: applied.length ? applied : undefined,
+          imageSize: { width: srcW, height: srcH },
+          ...(region ? { region } : {}),
+          ...(sourcePdfPage ? { pdfPage: sourcePdfPage } : {}),
+          ...(tiling ? { tiling, note: `Image exceeded the vision API's ${API_MAX}px ceiling, so it was read as ${tiling.tiles} overlapping tiles at native resolution. Text near tile edges can repeat across neighbouring tiles — de-duplicate when stitching a table.` } : (longEdge > API_MAX ? { note: `Image (${srcW}×${srcH}) was downscaled to ${API_MAX}px for the vision API — small text may be lost. Re-run with autoTile:true or a region for detail.` } : {})),
+        },
         ...(applied.length ? { action: { type: "image_studio_changed" as const } } : {}),
       };
     } catch (err: any) {
       console.error("[chatbgp] vision_describe_image error:", err?.message);
       return { data: { success: false, error: `Vision failed: ${err?.message}` } };
+    }
+  }
+
+  // ─── Scale-aware measuring on drawing PDFs ──────────────────────────────
+  if (fnName === "measure_plan") {
+    try {
+      const { measurePlan } = await import("./plan-measure");
+      const result = await measurePlan({
+        source: (fnArgs.source as any) || {},
+        page: fnArgs.page as number | undefined,
+        scale: fnArgs.scale as string | undefined,
+        sheet: fnArgs.sheet as string | undefined,
+        calibrate: fnArgs.calibrate as any,
+        render: fnArgs.render as any,
+        shapes: fnArgs.shapes as any,
+        coords: fnArgs.coords as any,
+        image: fnArgs.image as any,
+      });
+      return { data: result };
+    } catch (err: any) {
+      return { data: { error: `measure_plan failed: ${err?.message || String(err)}` } };
     }
   }
 
@@ -14606,22 +14783,96 @@ export function setupChatBGPRoutes(app: Express) {
         return { data: { error: `No ${which.replace("_", " ")} documents on ${ref}. The application has ${docs.length} documents in total — try which:'everything' to see them all.`, caseSummary, documentList: docs.map((d) => ({ date: d.date, type: d.type, description: d.description })) } };
       }
 
+      // House style (v19): bordeaux front cover with the white wordmark, then a
+      // cream divider per drawing with the dark wordmark — never an invented
+      // "BGP" mark (Woody, 2026-09-21, on the Plaza pack).
       const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
       const out = await PDFDocument.create();
-      const font = await out.embedFont(StandardFonts.HelveticaBold);
+      const serif = await out.embedFont(StandardFonts.TimesRoman);
+      const serifBold = await out.embedFont(StandardFonts.TimesRomanBold);
+      const sans = await out.embedFont(StandardFonts.Helvetica);
+      const sansBold = await out.embedFont(StandardFonts.HelveticaBold);
+      const BORDEAUX = rgb(110 / 255, 12 / 255, 37 / 255);
+      const INK = rgb(29 / 255, 29 / 255, 27 / 255);
+      const CREAM = rgb(252 / 255, 248 / 255, 244 / 255);
+      const BLUSH = rgb(228 / 255, 216 / 255, 211 / 255);
+      const MUTED = rgb(0.45, 0.42, 0.42);
+      const readAsset = (file: string): Buffer | null => {
+        for (const p of [path.join(process.cwd(), "server", "assets", file), path.join(process.cwd(), "dist", "server", "assets", file)]) {
+          try { if (fs.existsSync(p)) return fs.readFileSync(p); } catch {}
+        }
+        return null;
+      };
+      const wmLightPng = readAsset("BGP_WhiteHolder.png");
+      const wmDarkPng = readAsset("BGP_BlackHolder.png");
+      const wmLight = wmLightPng ? await out.embedPng(wmLightPng) : null;
+      const wmDark = wmDarkPng ? await out.embedPng(wmDarkPng) : null;
+      const drawWordmark = (page: any, img: any, x: number, y: number, h: number) => {
+        if (!img) { page.drawText("Bruce Gillingham Pollard", { x, y, size: 9, font: sansBold, color: INK }); return; }
+        const w = h * (img.width / img.height);
+        page.drawImage(img, { x, y, width: w, height: h });
+      };
+      const fit = (s: string, max: number) => (s.length > max ? s.slice(0, max - 1).trimEnd() + "…" : s);
+      const wrap = (s: string, font: any, size: number, maxW: number): string[] => {
+        const words = s.split(/\s+/); const lines: string[] = []; let cur = "";
+        for (const w of words) {
+          const t = cur ? `${cur} ${w}` : w;
+          if (font.widthOfTextAtSize(t, size) > maxW && cur) { lines.push(cur); cur = w; } else cur = t;
+        }
+        if (cur) lines.push(cur);
+        return lines;
+      };
       const addrLine = caseSummary?.address || "";
+      const bundleTitle = String(tcArgs.title || "").trim() || (which === "everything" ? "Planning documents" : which === "existing" ? "Existing building drawings" : which === "proposed" ? "Proposed scheme drawings" : "Planning drawings");
+      const today = new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+
+      // Front cover.
+      {
+        const cover = out.addPage([595, 842]);
+        cover.drawRectangle({ x: 0, y: 0, width: 595, height: 842, color: BORDEAUX });
+        drawWordmark(cover, wmLight, 48, 760, 30);
+        cover.drawText("PLANNING DRAWINGS", { x: 48, y: 560, size: 9, font: sansBold, color: rgb(1, 1, 1), opacity: 0.8 });
+        let y = 520;
+        for (const line of wrap(fit(bundleTitle, 90), serifBold, 30, 500).slice(0, 3)) { cover.drawText(line, { x: 48, y, size: 30, font: serifBold, color: rgb(1, 1, 1) }); y -= 36; }
+        y -= 6;
+        if (addrLine) { for (const line of wrap(fit(addrLine, 120), serif, 15, 500).slice(0, 2)) { cover.drawText(line, { x: 48, y, size: 15, font: serif, color: rgb(1, 1, 1) }); y -= 20; } }
+        y -= 14;
+        cover.drawLine({ start: { x: 48, y }, end: { x: 547, y }, thickness: 0.6, color: rgb(1, 1, 1), opacity: 0.5 });
+        y -= 24;
+        const meta = [
+          `RBKC planning reference ${ref}`,
+          caseSummary?.decision ? `${caseSummary.decision}${caseSummary.dateDecision ? " · " + caseSummary.dateDecision : ""}` : (caseSummary?.status ? caseSummary.status : ""),
+          caseSummary?.description ? fit(caseSummary.description, 160) : "",
+        ].filter(Boolean);
+        for (const m of meta) { for (const line of wrap(m, sans, 10, 500).slice(0, 2)) { cover.drawText(line, { x: 48, y, size: 10, font: sans, color: rgb(1, 1, 1), opacity: 0.9 }); y -= 14; } y -= 4; }
+        cover.drawText(`Compiled by Bruce Gillingham Pollard · ${today} · ${capped.length} document${capped.length === 1 ? "" : "s"} from the RBKC planning register`, { x: 48, y: 78, size: 8.5, font: sans, color: rgb(1, 1, 1), opacity: 0.85 });
+        cover.drawText("Drawings reproduced from the public planning register; architect's copyright acknowledged. For information only — not to be scaled unless the sheet says otherwise.", { x: 48, y: 62, size: 7.5, font: sans, color: rgb(1, 1, 1), opacity: 0.7 });
+      }
+
       let merged = 0;
       const failed: string[] = [];
+      let idx = 0;
       for (const d of capped) {
         const buf = await downloadRbkcDocument(d.url, session);
         if (!buf) { failed.push(d.description.slice(0, 50)); continue; }
         try {
-          const cover = out.addPage([595, 842]);
-          if (addrLine) cover.drawText(addrLine.slice(0, 70), { x: 40, y: 792, size: 11, font, color: rgb(0.4, 0.4, 0.4) });
-          cover.drawText(`${d.label}`, { x: 40, y: 762, size: 15, font });
-          cover.drawText(d.description.slice(0, 80), { x: 40, y: 738, size: 10, font, color: rgb(0.3, 0.3, 0.3) });
-          cover.drawText(`RBKC ${ref}${d.date ? "  ·  " + d.date : ""}`, { x: 40, y: 714, size: 9, font, color: rgb(0.5, 0.5, 0.5) });
           const src = await PDFDocument.load(buf, { ignoreEncryption: true });
+          idx++;
+          const divider = out.addPage([595, 842]);
+          divider.drawRectangle({ x: 0, y: 0, width: 595, height: 842, color: CREAM });
+          drawWordmark(divider, wmDark, 48, 770, 24);
+          divider.drawText(String(idx).padStart(2, "0"), { x: 48, y: 620, size: 12, font: sansBold, color: BORDEAUX });
+          divider.drawLine({ start: { x: 48, y: 612 }, end: { x: 96, y: 612 }, thickness: 1.5, color: BORDEAUX });
+          let y = 578;
+          for (const line of wrap(d.label, serifBold, 26, 500).slice(0, 2)) { divider.drawText(line, { x: 48, y, size: 26, font: serifBold, color: BORDEAUX }); y -= 31; }
+          y -= 4;
+          for (const line of wrap(fit(d.description, 140), serif, 13, 500).slice(0, 3)) { divider.drawText(line, { x: 48, y, size: 13, font: serif, color: INK }); y -= 17; }
+          y -= 10;
+          divider.drawLine({ start: { x: 48, y }, end: { x: 547, y }, thickness: 0.6, color: BLUSH });
+          y -= 18;
+          const facts = [d.drawingNumber ? `Drawing ${d.drawingNumber}` : "", d.type, d.date ? `Dated ${d.date}` : "", `${src.getPageCount()} sheet${src.getPageCount() === 1 ? "" : "s"}`].filter(Boolean).join("   ·   ");
+          divider.drawText(facts, { x: 48, y, size: 9, font: sans, color: MUTED });
+          divider.drawText(`${addrLine ? fit(addrLine, 60) + "  ·  " : ""}RBKC ${ref}`, { x: 48, y: 48, size: 8, font: sans, color: MUTED });
           for (const p of await out.copyPages(src, src.getPageIndices())) out.addPage(p);
           merged++;
         } catch { failed.push(d.description.slice(0, 50)); }

@@ -184,10 +184,32 @@ async function readPdfPageCount(buffer: Buffer): Promise<number | null> {
 
 async function rasteriseFirstPages(buffer: Buffer, pages: number): Promise<Array<{ index: number; mimeType: string; base64: string }>> {
   const out: Array<{ index: number; mimeType: string; base64: string }> = [];
+  // DPI from the physical page: 130dpi suits a letter but leaves an A1 sheet's
+  // small text unreadable, while 130dpi on A1 would be a 10k-pixel image. Aim
+  // for a ~2600px long edge (A4 ≈ 220dpi, A1 ≈ 80dpi) — the detail path for
+  // big sheets is vision_describe_image's tiling / measure_plan's render.
+  let infos: Array<{ widthPt: number; heightPt: number }> = [];
+  try {
+    const { pdfPageInfos } = await import("./pdf-raster");
+    infos = await pdfPageInfos(buffer);
+  } catch {}
   for (let p = 1; p <= pages; p++) {
-    const img = await rasterisePdfPage({ pdfBuffer: buffer, page: p, dpi: 130 });
+    const info = infos[p - 1];
+    const longPt = info ? Math.max(info.widthPt, info.heightPt) : 842;
+    const dpi = Math.max(60, Math.min(220, Math.round((2600 / longPt) * 72)));
+    let img = await rasterisePdfPage({ pdfBuffer: buffer, page: p, dpi });
+    let mime = "image/jpeg";
+    if (!img) {
+      // No poppler on this box (local dev) — fall back to the pdf.js rasteriser.
+      try {
+        const { rasterisePdfPageBuffer } = await import("./pdf-raster");
+        if (infos.length && p > infos.length) break;
+        const r = await rasterisePdfPageBuffer(buffer, p, { targetDpi: dpi, maxSide: 2600, format: "jpeg" });
+        img = r.buffer; mime = r.mimeType;
+      } catch { break; }
+    }
     if (!img) break;
-    out.push({ index: p, mimeType: "image/jpeg", base64: img.toString("base64") });
+    out.push({ index: p, mimeType: mime, base64: img.toString("base64") });
   }
   return out;
 }
