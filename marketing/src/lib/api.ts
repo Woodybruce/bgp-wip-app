@@ -152,6 +152,21 @@ export function fileUrl(fileId: string): string {
   return `${API_BASE}/api/public/unit-files/${fileId}`;
 }
 
+// Listing title hierarchy (Carly, 2026-09-21): a building named by its
+// street address ("8-14 Meard St") leads with the address and the unit sits
+// in the smaller line; a named scheme ("Brent Cross Shopping Centre") leads
+// with the unit, centre name below. Address-named = starts with a street
+// number ("8-14 …", "30 Grosvenor Square").
+const ADDRESS_NAME_RE = /^\d+[\w-]*\s/;
+export function listingNames(listing: Listing): { title: string; secondary: string | null } {
+  const unit = (listing.unitName || "").replace(/^\[Sample\]\s*/, "");
+  const prop = (listing.propertyName || "").replace(/^\[Sample\]\s*/, "");
+  if (!prop || prop === unit) return { title: unit, secondary: null };
+  return ADDRESS_NAME_RE.test(prop)
+    ? { title: prop, secondary: unit }
+    : { title: unit, secondary: prop };
+}
+
 export async function newsletterSignup(email: string): Promise<void> {
   if (!API_BASE) throw new Error("Newsletter signup unavailable");
   const res = await fetch(`${API_BASE}/api/public/newsletter-signup`, {

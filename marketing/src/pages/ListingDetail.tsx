@@ -6,7 +6,7 @@ import KeyContacts from "../components/KeyContacts";
 import ListingMap from "../components/ListingMap";
 import { CONTACT, LEASING_CONTACTS, OFFICE_PHONE, type Person } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
-import { Listing, fetchListing, fetchListings, fileUrl, focalPosition, formatSqft, isImage, rentLabel } from "../lib/api";
+import { Listing, fetchListing, fetchListings, fileUrl, focalPosition, formatSqft, isImage, listingNames, rentLabel } from "../lib/api";
 import { downloadParticulars } from "../lib/particulars-pdf";
 
 // WhatsApp goes to the head of the leasing contact list — same number the
@@ -66,7 +66,7 @@ export default function ListingDetail() {
   const lat = Number(listing.latitude);
   const lon = Number(listing.longitude);
   const displayName = listing.unitName.replace(/^\[Sample\]\s*/, "");
-  const propertyDisplay = (listing.propertyName || "").replace(/^\[Sample\]\s*/, "");
+  const names = listingNames(listing);
 
   const headline = [
     formatSqft(listing.sqft),
@@ -110,17 +110,14 @@ export default function ListingDetail() {
         </p>
         <div className="mt-4 flex flex-wrap items-baseline justify-between gap-x-8 gap-y-2 border-b border-bgp-wine/25 pb-6">
           <div>
-            {/* The building leads — "8-14 Meard St" is the headline, the
-                specific unit sits in the smaller line with the address. */}
-            <h1 className="display text-3xl md:text-5xl leading-tight">{propertyDisplay || displayName}</h1>
-            {(propertyDisplay && propertyDisplay !== displayName) || listing.addressLine ? (
+            {/* Title hierarchy per listingNames: address-named buildings
+                lead with the address, named centres lead with the unit. */}
+            <h1 className="display text-3xl md:text-5xl leading-tight">{names.title}</h1>
+            {(names.secondary || listing.addressLine) && (
               <p className="mt-2 text-[15px] md:text-base font-light text-bgp-ink/80">
-                {[
-                  propertyDisplay && propertyDisplay !== displayName ? displayName : null,
-                  listing.addressLine,
-                ].filter(Boolean).join(" · ")}
+                {[names.secondary, listing.addressLine].filter(Boolean).join(" · ")}
               </p>
-            ) : null}
+            )}
           </div>
           {headline && <p className="font-display italic text-bgp-ink/70 text-lg md:text-xl">{headline}</p>}
         </div>

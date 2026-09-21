@@ -1,6 +1,6 @@
 import { Link } from "wouter";
 import Placeholder from "./Placeholder";
-import { Listing, fileUrl, focalPosition, formatRent, formatSqft, isImage } from "../lib/api";
+import { Listing, fileUrl, focalPosition, formatRent, formatSqft, isImage, listingNames } from "../lib/api";
 
 // v2c card: photo, serif address + TYPE label, details line, CONTACT rule-link
 export default function ListingCard({ listing, wide = false }: { listing: Listing; wide?: boolean }) {
@@ -29,19 +29,19 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
           </span>
         )}
       </Link>
-      {/* The building leads — the property name is the headline, the
-          specific unit sits in the smaller line with the address. */}
+      {/* Title hierarchy per listingNames: address-named buildings lead
+          with the address, named centres lead with the unit. */}
       <div className="mt-3 flex items-baseline justify-between gap-3">
         <Link href={`/leasing/${listing.id}`} className="font-display text-bgp-ink text-xl leading-tight hover:text-bgp-wine transition-colors">
-          {listing.propertyName || listing.unitName}
+          {listingNames(listing).title}
         </Link>
         {listing.useClass && (
           <span className="label-caps text-bgp-ink/70 whitespace-nowrap shrink-0">{listing.useClass}</span>
         )}
       </div>
       <p className="mt-1 text-sm font-light text-bgp-ink/70">
-        {listing.propertyName && listing.propertyName !== listing.unitName && (
-          <span className="text-bgp-ink/85">{listing.unitName}<br /></span>
+        {listingNames(listing).secondary && (
+          <span className="text-bgp-ink/85">{listingNames(listing).secondary}<br /></span>
         )}
         {(listing.addressLine || listing.location || listing.postcode) && (
           <span>{listing.addressLine || listing.location || listing.postcode}<br /></span>
