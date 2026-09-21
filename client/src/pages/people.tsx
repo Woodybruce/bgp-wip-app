@@ -1754,6 +1754,13 @@ function PeopleHub() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Header shortcut to the meetings tab — the pill alone was too
+              easy to miss (Carly, 2026-09-21: "it needs to be way clearer"). */}
+          {!isLandsec && (
+            <Button size="sm" onClick={() => setTab("meetings")} data-testid="button-crm-meetings">
+              <ClipboardList className="w-4 h-4 mr-1" /> CRM Meetings
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => setHubAddContactOpen(true)} data-testid="button-hub-add-contact">
             <Plus className="w-4 h-4 mr-1" /> Add contact
           </Button>
