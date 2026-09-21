@@ -2813,6 +2813,26 @@ export async function registerRoutes(
   // comparables (status 'Investment Comp' / group 'Investment Comps'); ids:[...]
   // removes specific rows (the junk stubs). Dry-run unless confirm:true.
   // Manual trigger for the client team-diary → events sync (Landsec).
+  // Schema drift: what shared/schema.ts expects that the live DB lacks.
+  // GET is a dry run; POST adds the missing columns (nullable). The same
+  // heal runs automatically at boot — see server/schema-drift.ts.
+  app.get("/api/admin/schema-drift", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { listSchemaDrift } = await import("./schema-drift");
+      res.json(await listSchemaDrift(pool));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "schema drift check failed" });
+    }
+  });
+  app.post("/api/admin/schema-drift/heal", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { healSchemaDrift } = await import("./schema-drift");
+      res.json(await healSchemaDrift(pool));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "schema drift heal failed" });
+    }
+  });
+
   app.post("/api/admin/sync-client-events", requireAuth, requireAdmin, async (req, res) => {
     try {
       const { syncClientTeamEvents, syncAllClientTeamEvents } = await import("./client-team-events-sync");

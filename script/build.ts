@@ -158,15 +158,12 @@ async function runPreMigrations() {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_aml_training_attempts_user ON aml_training_attempts(user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_aml_training_attempts_module ON aml_training_attempts(module_id)`);
 
-    // Delivery 2 SQL-file migrations (additive + idempotent: every statement
-    // uses IF NOT EXISTS, so re-applying on each deploy is safe).
-    const delivery2Migrations = [
-      "0041_company_property_relationships.sql",
-      "0042_entity_graph_indexes.sql",
-      "0043_property_country.sql",
-      "0044_reconciliation.sql",
-    ];
-    for (const file of delivery2Migrations) {
+    // Additive, idempotent SQL-file migrations. The list lives in
+    // server/schema-drift.ts so the server applies the same files at boot —
+    // this --migrate-only path is NOT run by the Railway build (buildCommand
+    // is plain `npm run build`), which is how 0043 went unapplied for weeks.
+    const { IDEMPOTENT_SQL_MIGRATIONS } = await import("../server/schema-drift");
+    for (const file of IDEMPOTENT_SQL_MIGRATIONS) {
       const sql = await readFile(path.join(process.cwd(), "migrations", file), "utf8");
       await pool.query(sql);
       console.log(`Pre-migration: applied ${file}`);

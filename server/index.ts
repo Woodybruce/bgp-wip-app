@@ -2662,6 +2662,17 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
   }
   console.log(`[auto-migrate] Schema migration complete — ${ok} applied, ${skipped} skipped`);
 
+  // Catch whatever the hand-maintained list above missed: apply the
+  // idempotent SQL-file migrations and add any column shared/schema.ts
+  // expects that the live DB lacks (2026-09-21: migration 0043's
+  // crm_properties.country never reached production).
+  try {
+    const { runSchemaDriftGuard } = await import("./schema-drift");
+    await runSchemaDriftGuard(pool);
+  } catch (e: any) {
+    console.warn("[schema-drift] guard failed:", e?.message);
+  }
+
   // ── One-off (per Woody, 2026-08): staff headshots. Point profile_pic_url
   // at the committed /headshots/<slug>.jpg assets for the people whose photos
   // Woody supplied. Only fills a photo that's absent or an auto-synced M365
