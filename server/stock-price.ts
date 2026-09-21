@@ -506,6 +506,17 @@ async function historyViaCnbc(key: string): Promise<PricePoint[] | null> {
   return bars.length ? bars.slice(-63) : null;
 }
 
+// CNBC's last_time is just the trading date outside market hours
+// ("2026-09-18") but a full ISO timestamp with numeric offset while the
+// market is open ("2026-09-21T09:09:38.000+0100"). Date-only stays
+// midnight-UTC so the UI knows to render a day, not a clock time.
+function cnbcQuoteTimestamp(lastTime: any): string | null {
+  if (typeof lastTime !== "string" || !lastTime) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(lastTime)) return `${lastTime}T00:00:00.000Z`;
+  const d = new Date(lastTime);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 async function fetchSnapshotFromCnbc(symbol: string): Promise<(StockSnapshotLookup & { history?: PricePoint[] }) | null> {
   const cnbcSymbol = toCnbcSymbol(symbol);
   if (!cnbcSymbol) return null;
@@ -538,9 +549,9 @@ async function fetchSnapshotFromCnbc(symbol: string): Promise<(StockSnapshotLook
       exchange: typeof q.exchange === "string" ? q.exchange : null,
       shortName: typeof q.name === "string" ? q.name : null,
       fetchedAt: new Date().toISOString(),
-      // CNBC's payload carries the trading date but no time-of-day — keep the
-      // timestamp date-level so the UI shows a day, not a bogus midnight.
-      quoteTimestamp: typeof q.last_time === "string" ? `${q.last_time}T00:00:00.000Z` : null,
+      // Date-level outside market hours, a real timestamp while trading —
+      // see cnbcQuoteTimestamp.
+      quoteTimestamp: cnbcQuoteTimestamp(q.last_time),
       signals: {
         largeCap:        marketCapGBP != null && marketCapGBP >= 500_000_000,
         midCap:          marketCapGBP != null && marketCapGBP >= 50_000_000 && marketCapGBP < 500_000_000,

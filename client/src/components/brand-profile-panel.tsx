@@ -3286,13 +3286,13 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
     : `£${(s.marketCapGBP / 1_000).toFixed(0)}k`;
   const currencySymbol = s.currency === "GBp" ? "p" : s.currency === "GBP" ? "£" : s.currency === "USD" ? "$" : s.currency === "EUR" ? "€" : "";
   const priceLabel = s.price != null ? `${currencySymbol}${s.price.toFixed(2)}` : "—";
-  // Show when the QUOTE is as-of, not when we fetched it — the fallback
-  // providers serve date-level timestamps (Stooq's delayed daily close,
-  // CNBC's trading date), so they render a day, not a bogus clock time.
+  // Show when the QUOTE is as-of, not when we fetched it. Date-level
+  // timestamps (midnight UTC — Stooq's daily close, CNBC off-hours) render
+  // as a day; real timestamps render as a clock time.
   const quoteTs = s.quoteTimestamp ?? s.fetchedAt;
-  const dateLevelProvider = data?.provider === "stooq" || data?.provider === "cnbc";
+  const dateLevelQuote = typeof quoteTs === "string" && quoteTs.endsWith("T00:00:00.000Z");
   const fetchedLabel = quoteTs
-    ? dateLevelProvider
+    ? dateLevelQuote
       ? new Date(quoteTs).toLocaleDateString("en-GB", { day: "numeric", month: "short" })
       : new Date(quoteTs).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
     : null;

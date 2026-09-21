@@ -46,7 +46,7 @@ const KNOWN_QUOTES: Record<string, any> = {
     shortName: "Batch One",
   },
 };
-const DOWN = new Set(["DOWNCO", "STOOQONLY.L", "DENIEDCO.L", "HEADERONLY.L", "CNBCONLY.L", "CNBCDOWN.L", "BATCHCNBC.L"]);
+const DOWN = new Set(["DOWNCO", "STOOQONLY.L", "DENIEDCO.L", "HEADERONLY.L", "CNBCONLY.L", "CNBCDOWN.L", "BATCHCNBC.L", "CNBCLIVE.L"]);
 // Q1BLOCKED symbols get a 429 on query1.finance.yahoo.com but succeed on
 // query2 — mirrors production, where Yahoo's edge blocks Railway's egress
 // IP on query1 only.
@@ -92,6 +92,12 @@ const CNBC_QUOTES: Record<string, any> = {
     symbol: "BATCHCNBC-GB", code: 0, name: "Batch Cnbc PLC", last: "100.00",
     last_time: "2026-09-18", currencyCode: "GBp", exchange: "London Stock Exchange",
     mktcapView: "750M",
+  },
+  // Market-hours variant: last_time is a full ISO timestamp with numeric
+  // offset, not a bare date.
+  "CNBCLIVE-GB": {
+    symbol: "CNBCLIVE-GB", code: 0, name: "Cnbc Live PLC", last: "343.80",
+    last_time: "2026-09-21T09:09:38.000+0100", currencyCode: "GBp", exchange: "London Stock Exchange",
   },
 };
 const CNBC_CHARTS: Record<string, any[]> = {
@@ -356,6 +362,14 @@ describe("CNBC fallback", () => {
     assert.equal(r.status, "ok");
     assert.equal(r.provider, "yahoo");
     assert.ok(!calls.some((u) => u.includes("cnbc.com")), "CNBC must not be queried when Yahoo succeeded");
+  });
+
+  it("parses the market-hours last_time (ISO with offset) into a real timestamp", async () => {
+    const r = await getStockSnapshotState("CNBCLIVE.L");
+    assert.equal(r.status, "ok");
+    assert.equal(r.provider, "cnbc");
+    // 09:09:38 +0100 → 08:09:38 UTC — not an Invalid Date, not midnight.
+    assert.equal(r.snapshot?.quoteTimestamp, "2026-09-21T08:09:38.000Z");
   });
 });
 
