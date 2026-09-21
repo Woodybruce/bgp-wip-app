@@ -20,7 +20,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { resolveAccountView, type AccountProperty, type AccountView, type Querier } from "./account-resolver";
 import { normalisePropertyName } from "./landlord-scraper";
-import { HAMMERSON_BASELINE_NAME, HAMMERSON_OFFICIAL_DESTINATIONS } from "./reconciliation-baselines";
+import { HAMMERSON_BASELINE_NAME, RECONCILIATION_BASELINES, defaultBaselineForCompany } from "./reconciliation-baselines";
 
 export { HAMMERSON_BASELINE_NAME };
 
@@ -183,10 +183,10 @@ export function destinationGatePassed(rows: ReconciliationRow[]): boolean {
     .every(r => r.status === "matched");
 }
 
-// Seed the Hammerson official-destinations baseline for a company on first
-// use. Rows key off company_id, which no migration can know — and the seed
-// is only meaningful for the Hammerson account, so other companies get
-// nothing. Returns the baseline row count after the call.
+// Seed an account's official baseline on first use. Rows key off
+// company_id, which no migration can know — and each seed is only
+// meaningful for its own account, so companies matching no registered
+// baseline get nothing. Returns the baseline row count after the call.
 export async function ensureBaselineSeeded(
   q: Querier,
   companyId: string,
@@ -199,8 +199,9 @@ export async function ensureBaselineSeeded(
   );
   const existing = rows[0]?.n ?? 0;
   if (existing > 0) return existing;
-  if (baselineName !== HAMMERSON_BASELINE_NAME || !/hammerson/i.test(companyName)) return 0;
-  for (const seed of HAMMERSON_OFFICIAL_DESTINATIONS) {
+  const def = RECONCILIATION_BASELINES.find(b => b.name === baselineName);
+  if (!def || !def.companyPattern.test(companyName)) return 0;
+  for (const seed of def.seeds) {
     await q.query(
       `INSERT INTO account_reconciliation_baselines
          (company_id, baseline_name, destination_name, official_group_key, expected_crm_property_count, category, country, source_url, source_date)
@@ -208,7 +209,7 @@ export async function ensureBaselineSeeded(
       [companyId, baselineName, seed.destination_name, seed.official_group_key, seed.expected_crm_property_count, seed.category, seed.country, seed.source_url, seed.source_date]
     );
   }
-  return HAMMERSON_OFFICIAL_DESTINATIONS.length;
+  return def.seeds.length;
 }
 
 export interface ReconciliationReport {
@@ -269,8 +270,10 @@ export async function generateReconciliationReport(
 }
 
 // ─── Route ───────────────────────────────────────────────────────────────
-// GET /api/accounts/:id/reconciliation?baseline=hammerson-official-destinations
-// Staff only: any resolved client scope → 403.
+// GET /api/accounts/:id/reconciliation[?baseline=<name>]
+// Default baseline is chosen by company name (see RECONCILIATION_BASELINES);
+// ?baseline= is an explicit override. Staff only: any resolved client
+// scope → 403.
 
 const router = Router();
 
@@ -283,13 +286,16 @@ router.get("/api/accounts/:id/reconciliation", requireAuth, async (req: Request,
     }
     const q = await defaultPool();
     const companyId = String(req.params.id);
-    const baselineName = String(req.query.baseline || HAMMERSON_BASELINE_NAME);
 
     const { rows: companyRows } = await q.query(
       `SELECT name FROM crm_companies WHERE id = $1`,
       [companyId]
     );
     if (!companyRows[0]) return res.status(404).json({ error: "Company not found" });
+
+    const baselineName = req.query.baseline
+      ? String(req.query.baseline)
+      : (defaultBaselineForCompany(companyRows[0].name)?.name ?? HAMMERSON_BASELINE_NAME);
 
     const seeded = await ensureBaselineSeeded(q, companyId, baselineName, companyRows[0].name);
     if (seeded === 0) {
