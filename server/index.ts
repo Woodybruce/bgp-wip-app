@@ -3156,6 +3156,8 @@ import perplexityRouter from "./perplexity";
 import brandDedupeRouter from "./brand-dedupe";
 import brandProfileRouter from "./brand-profile";
 import accountReconciliationRouter from "./account-reconciliation";
+import accountDealsRouter from "./account-deals";
+import accountWorkspaceRouter from "./account-workspace";
 import brandEnrichmentRouter, { runNightlyBrandEnrichment } from "./brand-enrichment";
 import brandAiTakeRouter from "./brand-ai-take";
 import goadTenantResolverRouter from "./goad-tenant-resolver";
@@ -4148,6 +4150,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(brandDedupeRouter);
   app.use(brandProfileRouter);
   app.use(accountReconciliationRouter);
+  app.use(accountDealsRouter);
+  app.use(accountWorkspaceRouter);
   app.use(brandEnrichmentRouter);
   app.use(brandAiTakeRouter);
   app.use(goadTenantResolverRouter);
