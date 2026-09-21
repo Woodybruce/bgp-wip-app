@@ -25,7 +25,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
-  Search, Plus, Pencil, Trash2, Link2, Eye, FileText, Send, CalendarDays, HandCoins, Users, Mail, Phone, ChevronDown, ChevronUp, Filter, X, Paperclip, Download, Upload, Loader2, Check, ArrowRightLeft, Unlink, ExternalLink,
+  Search, Plus, Pencil, Trash2, Link2, Eye, FileText, Send, CalendarDays, HandCoins, Users, Mail, Phone, ChevronDown, ChevronUp, Filter, X, Paperclip, Download, Upload, Loader2, Check, ExternalLink,
 } from "lucide-react";
 import { Link } from "wouter";
 import { CardContent } from "@/components/ui/card";
@@ -1154,25 +1154,7 @@ export default function InvestmentTrackerPage() {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const unlinkDealMutation = useMutation({
-    mutationFn: (id: string) => apiRequest("POST", `/api/investment-tracker/${id}/unlink-deal`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
-      invalidateDealCaches();
-      toast({ title: "Deal unlinked" });
-    },
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
 
-  const createDealMutation = useMutation({
-    mutationFn: (id: string) => apiRequest("POST", `/api/investment-tracker/${id}/create-deal`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
-      invalidateDealCaches();
-      toast({ title: "WIP deal created and linked" });
-    },
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
 
   const inlineUpdate = (id: string, field: string, value: any) => {
     updateMutation.mutate({ id, data: { [field]: value } });
@@ -1864,14 +1846,13 @@ export default function InvestmentTrackerPage() {
                   <TableHead className="w-[50px] text-center">Offers</TableHead>
                   <TableHead className="w-[50px] text-center">Sent</TableHead>
                   <TableHead className="w-[180px]">Notes</TableHead>
-                  <TableHead className="w-[100px]">WIP Deal</TableHead>
                   <TableHead className="w-[50px]"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={boardType === "Purchases" ? 23 : 22} className="text-center py-8 text-muted-foreground text-sm">
+                    <TableCell colSpan={boardType === "Purchases" ? 22 : 21} className="text-center py-8 text-muted-foreground text-sm">
                       {boardItems.length === 0 ? `No ${boardType.toLowerCase()} tracked yet. Click 'Add Asset' to start.` : "No assets match your filters."}
                     </TableCell>
                   </TableRow>
@@ -1883,7 +1864,7 @@ export default function InvestmentTrackerPage() {
                     onClick={() => togglePortfolio(entry.pf.id)}
                     data-testid={`portfolio-head-${entry.pf.id}`}
                   >
-                    <TableCell colSpan={boardType === "Purchases" ? 23 : 22} className="px-3 py-2">
+                    <TableCell colSpan={boardType === "Purchases" ? 22 : 21} className="px-3 py-2">
                       <div className="flex items-center gap-3 text-xs flex-wrap">
                         {expandedPortfolios.has(entry.pf.id) ? <ChevronUp className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
                         <span className="font-semibold text-sm">{entry.pf.name}</span>
@@ -1919,10 +1900,14 @@ export default function InvestmentTrackerPage() {
                     </TableCell>
                     <TableCell className="px-2 py-1.5 font-mono text-muted-foreground text-xs">
                       {(() => {
+                        // The WIP Deal column used to sit at the far right showing the
+                        // same deal — one link only (Woody, 2026-09-21). A row with no
+                        // backing deal yet (backfill pending, or unlinked by hand)
+                        // offers "Link" to attach an existing deal instead.
                         const ref = (item as any).dealRef ?? (item.dealId ? dealRefMap.get(item.dealId) : null);
                         return item.dealId && ref
-                          ? <a href={`/deals/${item.dealId}`} className="text-primary hover:underline" data-testid={`link-deal-ref-${item.id}`}>#{ref}</a>
-                          : "—";
+                          ? <a href={`/deals/${item.dealId}`} className="text-primary hover:underline" title="Open deal page" data-testid={`link-deal-ref-${item.id}`}>#{ref}</a>
+                          : <Button variant="ghost" size="sm" className="h-6 px-1 text-[10px]" onClick={() => { setLinkDealOpen(item); setLinkDealId(""); }} title="Link an existing deal" data-testid={`button-link-deal-${item.id}`}><Link2 className="h-3 w-3 mr-0.5" />Link</Button>;
                       })()}
                     </TableCell>
                     <TableCell className="px-2 py-1.5 font-medium max-w-[200px]">
@@ -2198,27 +2183,6 @@ export default function InvestmentTrackerPage() {
                         multiline
                         maxLines={2}
                       />
-                    </TableCell>
-                    <TableCell className="px-2 py-1.5">
-                      {item.dealId ? (
-                        <div className="flex items-center gap-1">
-                          <a href={`/deals/${item.dealId}`} className="text-[10px] text-primary hover:underline truncate max-w-[80px]" data-testid={`link-deal-${item.id}`}>
-                            {dealMap.get(item.dealId) || "View Deal"}
-                          </a>
-                          <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0" onClick={() => unlinkDealMutation.mutate(item.id)} title="Unlink deal" data-testid={`button-unlink-deal-${item.id}`}>
-                            <Unlink className="w-3 h-3 text-muted-foreground" />
-                          </Button>
-                        </div>
-                      ) : (
-                        <div className="flex gap-1">
-                          <Button variant="ghost" size="sm" className="h-6 px-1 text-xs" onClick={() => { setLinkDealOpen(item); setLinkDealId(""); }} title="Link existing deal" data-testid={`button-link-deal-${item.id}`}>
-                            <Link2 className="h-3 w-3" />
-                          </Button>
-                          <Button variant="ghost" size="sm" className="h-6 px-1 text-xs" onClick={() => createDealMutation.mutate(item.id)} title="Auto-create deal" data-testid={`button-create-deal-${item.id}`}>
-                            <ArrowRightLeft className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      )}
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
                       <div className="flex gap-0.5">
