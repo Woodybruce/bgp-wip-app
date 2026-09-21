@@ -112,6 +112,18 @@ function extractDomain(raw: string | null | undefined): string | null {
 
 function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | null | undefined; name: string | null | undefined; size?: number }) {
   const [failCount, setFailCount] = useState(0);
+  // A 404 here can mean "logo preparation is running on the server right
+  // now" (/api/brand-logo/:name kicks prepareBrandStage before 404ing).
+  // Retry the same source with a cache-buster before settling on initials,
+  // so the header picks the asset up as soon as it becomes ready.
+  const [retry, setRetry] = useState(0);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setFailCount(0);
+    setRetry(0);
+    return () => { if (retryTimer.current) clearTimeout(retryTimer.current); };
+  }, [name, domain]);
 
   const d = extractDomain(domain);
   const guessedDomain = guessDomain(name);
@@ -135,15 +147,25 @@ function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | null | u
     );
   }
 
+  const base = logoSources[failCount];
+  const src = retry > 0 ? `${base}${base.includes("?") ? "&" : "?"}logoRetry=${retry}` : base;
+
   return (
     <img
-      src={logoSources[failCount]}
+      src={src}
       alt={name || "Company logo"}
       loading="lazy"
       decoding="async"
       className="rounded-lg shrink-0 object-contain bg-white border"
       style={{ width: size, height: size }}
-      onError={() => setFailCount(c => c + 1)}
+      onError={() => {
+        if (retry < 2) {
+          retryTimer.current = setTimeout(() => setRetry(r => r + 1), retry === 0 ? 6000 : 15000);
+        } else {
+          setRetry(0);
+          setFailCount(c => c + 1);
+        }
+      }}
       data-testid="company-logo"
     />
   );

@@ -22,6 +22,7 @@ import OpenAI from "openai";
 import { saveFile, getFile } from "./file-storage";
 import { getBrandIdentity, normalizeBrandDomain } from "./brand-identity";
 import { brandImageIdentityTag, publishableBrandImage } from "./brand-publishing";
+import { planLogoSources, isCheckedLogoDownload, LOGO_MAX_BYTES } from "./brand-logo-sources";
 
 // --- Multi-provider image generation helpers ---
 
@@ -743,7 +744,7 @@ export function isPublishableBrandLogo(company: any, image: any): boolean {
     || image.category === "Brands" && label === String(company.name || "").trim().toLowerCase();
 }
 
-export async function prepareBrandLogo(companyId: string): Promise<{ status: "ready" | "no_match" | "needs_review" | "unavailable"; reason?: string }> {
+export async function prepareBrandLogo(companyId: string): Promise<{ status: "ready" | "no_match" | "needs_review" | "unavailable"; reason?: string; source?: string }> {
   const company = (await pool.query("SELECT * FROM crm_companies WHERE id=$1 AND merged_into_id IS NULL", [companyId])).rows[0];
   if (!company) return { status: "needs_review", reason: "Company not found" };
   const identity = getBrandIdentity(company);
@@ -751,35 +752,105 @@ export async function prepareBrandLogo(companyId: string): Promise<{ status: "re
   const existing = (await pool.query(`SELECT * FROM image_studio_images
     WHERE company_id=$1 OR (company_id IS NULL AND LOWER(TRIM(brand_name))=LOWER($2))
     ORDER BY created_at DESC LIMIT 60`, [companyId, company.name])).rows;
+  // An existing publishable logo — above all a MANUALLY chosen one — is
+  // never replaced. Preparation stops here.
   for (const image of existing.filter((row: any) => isPublishableBrandLogo(company, row))) {
     if (await readPersistedImage(image.local_path) || /^data:image\/[^;]+;base64,/.test(String(image.thumbnail_data || ""))) return { status: "ready" };
   }
+
+  // The landlord website scraper's official logo finding — preferred over
+  // logo.dev because it's the company's own published asset. Runtime table;
+  // read defensively like the brand-profile reader does.
+  const findingsLogoUrl: string | null = await pool.query(
+    "SELECT logo_url FROM landlord_website_findings WHERE company_id=$1", [companyId]
+  ).then(r => r.rows[0]?.logo_url || null).catch(() => null);
+
   const token = process.env.LOGO_DEV_TOKEN;
-  if (!token) return { status: "unavailable", reason: "The logo source is not configured" };
-  const response = await fetch(`https://img.logo.dev/${encodeURIComponent(identity.domain)}?token=${token}&size=256&format=png`, { signal: AbortSignal.timeout(10000) });
-  const mime = response.headers.get("content-type") || "";
-  if (response.status === 404 || response.status === 204) return { status: "no_match", reason: "No logo was found for the verified domain" };
-  if (!response.ok) throw new Error(`Logo source returned ${response.status}`);
-  if (!mime.startsWith("image/") || !response.body) return { status: "no_match", reason: "The logo source did not return an image" };
-  const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
-  try {
-    while (true) { const chunk = await reader.read(); if (chunk.done) break; size += chunk.value.length; if (size > 2 * 1024 * 1024) throw new Error("Logo exceeds the size limit"); chunks.push(chunk.value); }
-  } finally { await reader.cancel(); }
-  if (size < 100) return { status: "no_match", reason: "The returned logo was empty" };
-  const current = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
-  if (getBrandIdentity(current).fingerprint !== identity.fingerprint || getBrandIdentity(current).status !== "verified") return { status: "needs_review", reason: "The brand identity changed during logo preparation" };
-  const stored = await storeImageFromBuffer({
-    buffer: Buffer.concat(chunks), fileName: `${company.name} — Logo`, category: "Brands",
-    tags: ["brand-logo", "brand-auto", "logo-dev-cache", brandImageIdentityTag(company)],
-    description: `Logo from the verified domain ${identity.domain}`, source: "logo-dev-cache", companyId,
-    brandName: company.name, mimeType: mime, filenameHint: company.name,
+  const steps = planLogoSources({
+    hasExistingPublishable: false,
+    findingsLogoUrl,
+    logoDevConfigured: !!token,
+    domain: identity.domain,
   });
-  const after = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
-  if (getBrandIdentity(after).fingerprint !== identity.fingerprint || getBrandIdentity(after).status !== "verified") {
-    await pool.query("UPDATE image_studio_images SET tags=array_append(tags,'identity-review') WHERE id=$1", [stored.id]);
-    return { status: "needs_review", reason: "The brand identity changed; the downloaded logo was held for review" };
+  if (!steps.length) return { status: "unavailable", reason: "The logo source is not configured" };
+
+  const identityUnchanged = async (): Promise<boolean> => {
+    const current = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
+    return getBrandIdentity(current).fingerprint === identity.fingerprint && getBrandIdentity(current).status === "verified";
+  };
+  const storeOfficialLogo = async (buffer: Buffer, mime: string, origin: string): Promise<{ status: "ready" | "needs_review"; reason?: string; source?: string }> => {
+    if (!(await identityUnchanged())) return { status: "needs_review", reason: "The brand identity changed during logo preparation" };
+    const stored = await storeImageFromBuffer({
+      buffer, fileName: `${company.name} — Logo`, category: "Brands",
+      tags: ["brand-logo", "brand-auto", "official-website", brandImageIdentityTag(company)],
+      description: `Official logo from ${origin}`, source: "official-website", companyId,
+      brandName: company.name, mimeType: mime, filenameHint: company.name,
+    });
+    if (!(await identityUnchanged())) {
+      await pool.query("UPDATE image_studio_images SET tags=array_append(tags,'identity-review') WHERE id=$1", [stored.id]);
+      return { status: "needs_review", reason: "The brand identity changed; the downloaded logo was held for review" };
+    }
+    return { status: "ready", source: "official-website" };
+  };
+  const downloadChecked = async (url: string): Promise<{ buffer: Buffer; mime: string } | null> => {
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(10000),
+        headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15", Accept: "image/*,*/*;q=0.8" },
+      });
+      const mime = response.headers.get("content-type") || "";
+      const buffer = response.ok ? Buffer.from(await response.arrayBuffer()) : Buffer.alloc(0);
+      if (!isCheckedLogoDownload({ status: response.status, mime, bytes: buffer.length }).ok) return null;
+      return { buffer, mime };
+    } catch { return null; }
+  };
+
+  const failures: string[] = [];
+  for (const step of steps) {
+    if (step === "findings") {
+      const got = await downloadChecked(findingsLogoUrl!);
+      if (got) return storeOfficialLogo(got.buffer, got.mime, `the company website (${findingsLogoUrl})`);
+      failures.push("the official logo from the website findings could not be downloaded");
+      continue;
+    }
+    if (step === "logo_dev") {
+      const response = await fetch(`https://img.logo.dev/${encodeURIComponent(identity.domain)}?token=${token}&size=256&format=png`, { signal: AbortSignal.timeout(10000) });
+      const mime = response.headers.get("content-type") || "";
+      if (response.status === 404 || response.status === 204) { failures.push("logo.dev has no logo for the verified domain"); continue; }
+      if (!response.ok) throw new Error(`Logo source returned ${response.status}`);
+      if (!mime.startsWith("image/") || !response.body) { failures.push("the logo source did not return an image"); continue; }
+      const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
+      try {
+        while (true) { const chunk = await reader.read(); if (chunk.done) break; size += chunk.value.length; if (size > LOGO_MAX_BYTES) throw new Error("Logo exceeds the size limit"); chunks.push(chunk.value); }
+      } finally { await reader.cancel(); }
+      if (size < 100) { failures.push("the returned logo was empty"); continue; }
+      const current = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
+      if (getBrandIdentity(current).fingerprint !== identity.fingerprint || getBrandIdentity(current).status !== "verified") return { status: "needs_review", reason: "The brand identity changed during logo preparation" };
+      const stored = await storeImageFromBuffer({
+        buffer: Buffer.concat(chunks), fileName: `${company.name} — Logo`, category: "Brands",
+        tags: ["brand-logo", "brand-auto", "logo-dev-cache", brandImageIdentityTag(company)],
+        description: `Logo from the verified domain ${identity.domain}`, source: "logo-dev-cache", companyId,
+        brandName: company.name, mimeType: mime, filenameHint: company.name,
+      });
+      const after = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
+      if (getBrandIdentity(after).fingerprint !== identity.fingerprint || getBrandIdentity(after).status !== "verified") {
+        await pool.query("UPDATE image_studio_images SET tags=array_append(tags,'identity-review') WHERE id=$1", [stored.id]);
+        return { status: "needs_review", reason: "The brand identity changed; the downloaded logo was held for review" };
+      }
+      return { status: "ready", source: "logo.dev" };
+    }
+    if (step === "website_scrape") {
+      // logo.dev missed — fall back to the official logo published on the
+      // company's own verified domain (schema.org / og / apple-touch / nav).
+      const { scrapeLogoFromWebsite } = await import("./website-logo-scraper");
+      const scraped = await scrapeLogoFromWebsite(identity.domain).catch(() => null);
+      if (scraped && isCheckedLogoDownload({ status: 200, mime: scraped.mime, bytes: scraped.buffer.length }).ok) {
+        return storeOfficialLogo(scraped.buffer, scraped.mime, `the official website (${scraped.url})`);
+      }
+      failures.push("no logo could be scraped from the official website");
+    }
   }
-  return { status: "ready" };
+  return { status: "no_match", reason: failures.length ? `No logo was found for the verified domain (${failures.join("; ")})` : "No logo was found for the verified domain" };
 }
 
 async function ensureRunCollection(args: {
