@@ -1,12 +1,12 @@
 /**
  * instagram-card-state.test.ts — Delivery 4 Task 4: explicit Instagram card
- * states + feed eligibility for verified landlords.
+ * states + tenant-only feed eligibility.
  *
  * Pure helpers, no database. Covers the full state matrix
  * (not_configured / no_handle / feed_error / handle_only / feed-empty /
  * feed), lastSyncedAt passthrough, externalUrl whenever a handle exists, and
- * isFeedEligibleCompany: tenant unchanged, landlord requires a verified
- * identity, tenant-typed rows never treated as landlords.
+ * isFeedEligibleCompany: tenants eligible, landlord-shaped and other types
+ * never eligible (Instagram removed from landlord boards, Woody 2026-09-21).
  *
  * Run with: node --import tsx --test server/instagram-card-state.test.ts
  */
@@ -71,9 +71,9 @@ describe("isFeedEligibleCompany", () => {
     assert.equal(isFeedEligibleCompany("Tenant", true), true);
   });
 
-  it("landlord vocabulary requires a verified identity", () => {
+  it("landlord vocabulary is never eligible, verified or not", () => {
     for (const t of ["Landlord", "Landlord/Freeholder", "Investor", "REIT", "Developer", "Fund"]) {
-      assert.equal(isFeedEligibleCompany(t, true), true, `${t} verified should be eligible`);
+      assert.equal(isFeedEligibleCompany(t, true), false, `${t} verified should not be eligible`);
       assert.equal(isFeedEligibleCompany(t, false), false, `${t} unverified should not be eligible`);
     }
   });

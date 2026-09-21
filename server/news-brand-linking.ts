@@ -514,9 +514,8 @@ export async function previewBrandSocialFeeds(opts?: {
 }): Promise<{ plan: BrandSocialFeedPlan[]; existing: number }> {
   const platforms = opts?.platforms?.length ? opts.platforms : (["instagram", "x", "linkedin"] as SocialPlatform[]);
 
-  // Tenant brands are eligible exactly as before; landlord-shaped rows
-  // (landlord/investor/REIT/developer/fund) qualify only with a verified
-  // brand identity — the handle must hang off a confirmed official identity.
+  // Tenant brands only — Instagram/feed provisioning was taken off
+  // landlords entirely (Woody, 2026-09-21: not of interest).
   const tracked = (await db
     .select({
       id: crmCompanies.id,
@@ -529,7 +528,7 @@ export async function previewBrandSocialFeeds(opts?: {
     })
     .from(crmCompanies)
     .where(and(
-      sql`(${crmCompanies.companyType} ILIKE 'tenant%' OR lower(${crmCompanies.companyType}) IN ('landlord','landlord/freeholder','investor','reit','developer','fund'))`,
+      sql`(${crmCompanies.companyType} ILIKE 'tenant%')`,
       sql`${crmCompanies.mergedIntoId} IS NULL`,
     )))
     .filter(b => isFeedEligibleCompany(b.companyType, b.identityStatus === "verified"));
@@ -705,8 +704,8 @@ export interface CuratedIgPreview {
 // rule: the same handle on 3+ brands is scraper poisoning (t2tea,
 // workwithatom) — only a brand whose own name matches the handle keeps it.
 export async function previewCuratedInstagramFeeds(limit = 100): Promise<CuratedIgPreview> {
-  // Tenant brands eligible as before + verified-identity landlord accounts
-  // (same predicate as previewBrandSocialFeeds).
+  // Tenant brands only (same predicate as previewBrandSocialFeeds —
+  // landlords get no Instagram provisioning at all).
   const tracked = (await db
     .select({
       id: crmCompanies.id,
@@ -717,7 +716,7 @@ export async function previewCuratedInstagramFeeds(limit = 100): Promise<Curated
     })
     .from(crmCompanies)
     .where(and(
-      sql`(${crmCompanies.companyType} ILIKE 'tenant%' OR lower(${crmCompanies.companyType}) IN ('landlord','landlord/freeholder','investor','reit','developer','fund'))`,
+      sql`(${crmCompanies.companyType} ILIKE 'tenant%')`,
       sql`${crmCompanies.mergedIntoId} IS NULL`,
     )))
     .filter(b => isFeedEligibleCompany(b.companyType, b.identityStatus === "verified"));
@@ -771,14 +770,10 @@ export async function previewCuratedInstagramFeeds(limit = 100): Promise<Curated
   });
 
   // Rank: pinned operators first (never lose their slot), then companies
-  // sitting on a deal — as tenant OR as landlord, so active landlord
-  // accounts rank fairly against tenant brands for the shared quota — then
-  // companies whose news feeds have produced signals recently (they're
-  // moving), then name.
+  // sitting on a deal as tenant, then companies whose news feeds have
+  // produced signals recently (they're moving), then name.
   const dealRows = await pool.query(
-    `SELECT DISTINCT tenant_id AS id FROM crm_deals WHERE tenant_id IS NOT NULL
-      UNION
-     SELECT DISTINCT landlord_id AS id FROM crm_deals WHERE landlord_id IS NOT NULL`
+    `SELECT DISTINCT tenant_id AS id FROM crm_deals WHERE tenant_id IS NOT NULL`
   );
   const onDeal = new Set(dealRows.rows.map((r: any) => String(r.id)));
   const signalRows = await pool.query(

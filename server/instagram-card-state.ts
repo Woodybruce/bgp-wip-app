@@ -6,10 +6,11 @@
 // provider", "not connected", and "connected but no posts yet" — today all
 // four collapse into an empty card that reads as a quiet account.
 //
-// Feed eligibility (isFeedEligibleCompany) widens feed provisioning beyond
-// tenant brands: landlord-shaped company types qualify only when the brand
-// identity is verified (the handle hangs off a confirmed official identity).
-// Tenants keep today's behaviour exactly.
+// Feed eligibility stays tenant-only: Woody (2026-09-21) took Instagram off
+// landlord boards entirely ("not of interest") — landlords get no feed
+// provisioning, no handle backfill, no card. Tenants keep today's behaviour
+// exactly; the identityVerified argument is accepted for caller compatibility
+// but no longer widens eligibility.
 // ─────────────────────────────────────────────────────────────────────────
 
 export type InstagramCardStatus = "not_configured" | "no_handle" | "feed_error" | "handle_only" | "feed";
@@ -48,15 +49,9 @@ export function instagramCardState(input: InstagramCardStateInput): InstagramCar
   return { ...base, status: "handle_only" };
 }
 
-// Landlord-shaped company types — the same vocabulary as the isLandlord SQL
-// rule in brand-profile.ts. Anything tenant-prefixed stays eligible exactly
-// as before; landlord-shaped rows must carry a verified brand identity.
-const LANDLORD_FEED_TYPES = new Set(["landlord", "landlord/freeholder", "investor", "reit", "developer", "fund"]);
-
-export function isFeedEligibleCompany(companyType: string | null | undefined, identityVerified: boolean): boolean {
+// Tenant-only per Woody's call (see header): landlord-shaped company types
+// are never feed-eligible, whatever their identity status.
+export function isFeedEligibleCompany(companyType: string | null | undefined, _identityVerified: boolean): boolean {
   const t = (companyType || "").trim().toLowerCase();
-  if (!t) return false;
-  if (t.startsWith("tenant")) return true;
-  if (LANDLORD_FEED_TYPES.has(t)) return identityVerified;
-  return false;
+  return t.startsWith("tenant");
 }

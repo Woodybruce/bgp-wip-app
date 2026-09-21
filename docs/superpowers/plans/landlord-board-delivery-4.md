@@ -158,3 +158,15 @@ Acceptance gates (from the brief):
 - The landlord isLandlord rule lives as SQL in `brand-profile.ts:886-895`; the feed-eligibility helper reuses its type vocabulary (`landlord, landlord/freeholder, investor, reit, developer, fund`) as the closest pure-function equivalent — deal/freeholder evidence can't be evaluated in the drizzle predicate, so landlord-typed-but-inactive companies may enter the feed *preview* list; the curated ranking's deal bonus (now checking `landlord_id` too) is what allocates actual paid slots, keeping the behaviour honest without a second scope language.
 - Adding two stages changes `summarizeBrandPreparation.totalSections` (9 → 11 of the array minus contacts). `BrandPreparationStatus` renders counts from the API, so no client constant drift; `selectPreparationCompanies`' `< 9` heuristic counts existing keys and simply admits companies with missing stages more readily — same direction as intended (prepare the unprepared).
 - The page-open enqueue writes a `system_settings` marker from a GET handler. It is idempotent (ON CONFLICT), gated on actual staleness, and does no provider work inline; the alternative (client-fired POST on mount) would double-fire under React StrictMode — the server-side check is the single writer.
+
+## Addendum (2026-09-21): Instagram taken off landlords
+
+After implementation, Woody ruled Instagram "not of interest" for landlords
+(and JOGQK commit 263c68f0 independently removed landlord IG tracking from
+scrape backfill, enrichment and the profile UI). The landlord widening in
+Task 4 was therefore reverted before merge: `isFeedEligibleCompany` is
+tenant-only, `previewBrandSocialFeeds` / `previewCuratedInstagramFeeds` query
+`tenant%` only, and the deal-ranking bonus checks `tenant_id` only. The
+explicit card states (not_configured / feed_error / handle_only / feed with
+lastSyncedAt) are kept — they improve the tenant/brand boards, where
+Instagram stays.
