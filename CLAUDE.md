@@ -140,6 +140,36 @@ lines there in the same commit**. Stale lines become confident wrong
 answers to the team (that's how this file came to exist — ChatBGP sent
 Woody to a Settings page the phone app can't reach, 2026-08-23).
 
+## Marketing site (bgp.uk.com) deploys
+
+The public website is a **separate Railway service** (root directory
+`marketing/`) from the dashboard. A push to the working branch redeploys
+the dashboard but has NOT been redeploying the site — after changing
+anything under `marketing/`, the marketing service needs a redeploy for
+bgp.uk.com to update.
+
+A Railway project token exists for this (Carly, 2026-09-22, "so we can
+edit the website") — starts `3a1b0459-…`. It is a live credential, so the
+FULL token is deliberately NOT in this repo: Carly and Woody hold it (keep
+it in the team password manager / Railway → Tokens; Carly can paste it
+into a session when a redeploy is needed).
+
+- **Terminal Claude Code / any machine with open network**: with the
+  Railway CLI, `RAILWAY_TOKEN=<token> railway redeploy` (pick the
+  marketing service if prompted, or pass `--service`). Or via the API:
+  `POST https://backboard.railway.app/graphql/v2` with header
+  `Project-Access-Token: <token>` — query `projectToken { projectId
+  environmentId }`, list the environment's services, then run the
+  `serviceInstanceRedeploy` mutation on the marketing service.
+- **Web (claude.ai/code) sessions**: the sandbox network policy blocks
+  backboard.railway.app (proxy 403), so web sessions CANNOT trigger the
+  redeploy even with the token — say so and hand off to a terminal
+  session or the Railway UI (project → marketing service → Redeploy).
+- **The real fix** (do this once, then no token is ever needed): in
+  Railway → marketing service → Settings → Source, make sure it deploys
+  from `claude/terminal-coding-interface-JOGQK` (the working branch) —
+  then every push updates bgp.uk.com automatically like the dashboard.
+
 ## Key files
 
 | Area | Path |
