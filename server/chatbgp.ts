@@ -669,6 +669,7 @@ function getToolProgressLabel(toolName: string): string {
     get_property_planning: "Pulling planning constraints + recent applications...",
     get_planning_drawings: "Fetching planning drawings from the council portal...",
     measure_plan: "Reading the drawing's scale and measuring...",
+    annotate_image: "Stamping labels onto the drawing...",
     property_data_lookup: "Querying PropertyData...",
     deep_investigate: "Running deep investigation...",
     rocketreach_person_lookup: "Looking up verified contact details...",
@@ -1365,7 +1366,7 @@ Identifying the owner/parcel for a title or address is ALWAYS this free register
 8. **NEVER FAKE ACTIONS.** Only claim you read/created/saved something if there's a corresponding successful tool call. Never invent IDs or filenames. If a tool fails, say so honestly.
 9. **Fix bugs yourself when admin.** You have list_project_files, read_source_file, edit_source_file, run_shell_command, add_database_column, restart_application — admin-only. By default \`edit_source_file\` runs in **branch-mode**: the change is committed to a \`chatbgp/<YYYY-MM-DD>\` git branch and is NOT live until merged. After editing, surface the branch + commit hash and the \`nextStep\` instruction from the response — the admin reviews and runs \`merge_chatbgp_branch\` (or merges manually) to apply. If the admin says "go direct" or "skip the branch", pass \`direct: true\`. Use \`list_chatbgp_branches\` to see what's pending. Never say "this needs a developer" to an admin caller.
 10. **log_app_feedback** is SECONDARY only. If user asks you to DO something, do it first.
-11. **Vision (vision_describe_image)** — use to auto-classify untagged images, OCR floor plans / drawing sheets / brochure pages, identify brands from shopfronts, write captions. Use task='structured' with applyToImageStudio=true to backfill description+category+tags in one shot. It accepts PDFs (chat uploads, RBKC register links) with a page number and auto-tiles big sheets so small table text is read at full resolution — use region:{x,y,w,h} to zoom on an area schedule. **Measuring plans (measure_plan)** — for "how big is this unit / what's the floor area" on a drawing PDF, calibrate from the drawn scale with measure_plan (render:true to get a high-res image to read corners off), then pass shapes to get m²/sq ft; quote the sheet's own dimension strings and area figures first, and always call scaled areas approximate.
+11. **Vision (vision_describe_image)** — use to auto-classify untagged images, OCR floor plans / drawing sheets / brochure pages, identify brands from shopfronts, write captions. Use task='structured' with applyToImageStudio=true to backfill description+category+tags in one shot. It accepts PDFs (chat uploads, RBKC register links) with a page number and auto-tiles big sheets so small table text is read at full resolution — use region:{x,y,w,h} to zoom on an area schedule. **Measuring plans (measure_plan)** — for "how big is this unit / what's the floor area" on a drawing PDF, calibrate from the drawn scale with measure_plan (render:true to get a high-res image to read corners off), then pass shapes to get m²/sq ft; quote the sheet's own dimension strings and area figures first, and always call scaled areas approximate. **Marking up plans (annotate_image)** — to mark uses or write areas ON a drawing, use annotate_image (deterministic overlay at native resolution, autoAreaLabels on vector sheets), NEVER edit_image, which regenerates and garbles CAD sheets.
 12. **Scheduled jobs (scheduled_jobs table)** — for any "run this every day at X" or "remind me weekly" request, INSERT into scheduled_jobs via sql_write. Columns: name, description, schedule_kind ('daily'|'weekly'|'hourly'|'cron'), schedule_value ('07:00' | 'MON:09:00' | '00' | '0 9 * * 1-5'), action_kind ('sql_query'|'sql_write'|'send_chat_message'|'send_email'), action_payload (JSONB matching the action), next_run_at (compute first occurrence — server tz; if uncertain set to NOW() and the worker will recompute). The worker polls every 60s. Use send_chat_message with a threadId for digests; sql_query for periodic "show me X" reports stored in last_run_output; sql_write for periodic cleanups. Three consecutive errors auto-disable a job. NEVER use this for one-off tasks — for those just run the action directly.
 
 ## Response Format
@@ -4259,6 +4260,29 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           },
           coords: { type: "string", enum: ["fraction", "point", "pixel"], description: "How shape/calibrate points are expressed. 'fraction' (default) = fractions of the full page, origin top-left. 'point' = PDF points, origin top-left. 'pixel' = pixels on a render — also pass image:{width,height,region} from that render result." },
           image: { type: "object", description: "For coords:'pixel': the render the points were read off — width, height and region exactly as returned by the render.", properties: { width: { type: "integer" }, height: { type: "integer" }, region: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" } } } } },
+        },
+        required: ["source"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "annotate_image",
+      description: "Stamp crisp labels, an area/notes box and a legend onto a drawing or photo WITHOUT altering it — a deterministic 2D overlay composited onto the original pixels at native resolution (6,000px+ CAD sheets stay pixel-perfect: linework, grid references and title block untouched). Use this, never edit_image, to 'mark the uses on the plans' or 'add the areas to the plans': edit_image is a generative editor that redraws the whole sheet at ~1k px and garbles the drawing. Sources: an Image Studio row, a chat upload (image or PDF + page), an https image/PDF, or an RBKC register drawing link. On a vector drawing PDF, autoAreaLabels:true measures each tinted fill region at the drawn scale (same engine as measure_plan fills) and labels it with m² / sq ft plus a legend — give areaNames to name the tints (e.g. retail / office / BOH from the sheet's own legend). Coordinates are fractions of the image (0–1, origin top-left); read positions off a measure_plan render or the sheet's fill centroidFraction/bboxFraction. The architect's title block occupies the right-hand strip (x > ~0.78) — keep boxes and legends clear of it (bottom-left / top-centre of the plan area are safe). Returns a PNG (and optionally an A1 PDF page) in chat-media.",
+      parameters: {
+        type: "object",
+        properties: {
+          source: { type: "object", description: "Exactly one of imageStudioId, chatMediaFilename (image or PDF), url (https image/PDF or RBKC register link).", properties: { imageStudioId: { type: "string" }, chatMediaFilename: { type: "string" }, url: { type: "string" } } },
+          page: { type: "integer", description: "PDF sources: 1-based page (default 1)." },
+          labels: { type: "array", description: "Text labels on white plates. size sm|md|lg|xl (default md); colour ink|bordeaux|white; align center (default) or left; plate:false for bare text.", items: { type: "object", properties: { text: { type: "string" }, x: { type: "number" }, y: { type: "number" }, size: { type: "string", enum: ["sm", "md", "lg", "xl"] }, align: { type: "string", enum: ["center", "left"] }, colour: { type: "string", enum: ["ink", "bordeaux", "white"] }, plate: { type: "boolean" } }, required: ["text", "x", "y"] } },
+          boxes: { type: "array", description: "Annotation boxes (bordeaux rule + title, body lines). anchor picks which corner x,y refers to (default top-left); w is a fraction of image width.", items: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, title: { type: "string" }, lines: { type: "array", items: { type: "string" } }, size: { type: "string", enum: ["sm", "md", "lg"] }, anchor: { type: "string", enum: ["top-left", "top-right", "bottom-left", "bottom-right"] } }, required: ["x", "y", "lines"] } },
+          legend: { type: "object", description: "Colour legend. items: [{colour:'#aaddd6', label:'Retail / restaurant NIA'}].", properties: { x: { type: "number" }, y: { type: "number" }, title: { type: "string" }, anchor: { type: "string", enum: ["top-left", "top-right", "bottom-left", "bottom-right"] }, items: { type: "array", items: { type: "object", properties: { colour: { type: "string" }, label: { type: "string" } }, required: ["colour", "label"] } } }, required: ["x", "y", "items"] },
+          autoAreaLabels: { type: "boolean", description: "PDF drawings: label every tinted fill region with its measured area and add a legend (scaled from the sheet, approximate)." },
+          areaNames: { type: "object", description: "Names for the auto labels keyed by fill colour hex, e.g. {\"#aaddd6\":\"Retail / restaurant\",\"#d8ddce\":\"Office reception\",\"#8ba6b2\":\"Back of house\"}. Get the hexes from measure_plan fills or a previous annotate_image result (measured.regions).", additionalProperties: { type: "string" } },
+          fileName: { type: "string", description: "Display name for the output (default: source name + 'annotated')." },
+          output: { type: "string", enum: ["png", "pdf", "both"], description: "png (default) for viewing; pdf/both to drop straight into a tenant pack (page sized to the sheet)." },
         },
         required: ["source"],
       },
@@ -8397,6 +8421,27 @@ export async function executeCrmToolRaw(
     } catch (err: any) {
       console.error("[chatbgp] vision_describe_image error:", err?.message);
       return { data: { success: false, error: `Vision failed: ${err?.message}` } };
+    }
+  }
+
+  // ─── Deterministic overlays on drawings (no generative edit) ────────────
+  if (fnName === "annotate_image") {
+    try {
+      const { annotateImage } = await import("./image-annotate");
+      const result = await annotateImage({
+        source: (fnArgs.source as any) || {},
+        page: fnArgs.page as number | undefined,
+        labels: fnArgs.labels as any,
+        boxes: fnArgs.boxes as any,
+        legend: fnArgs.legend as any,
+        autoAreaLabels: fnArgs.autoAreaLabels === true,
+        areaNames: fnArgs.areaNames as any,
+        fileName: fnArgs.fileName as string | undefined,
+        output: fnArgs.output as any,
+      });
+      return { data: result, action: result.downloadUrl ? { type: "show_image", imageUrl: result.downloadUrl, prompt: fnArgs.fileName || "Annotated drawing" } : undefined };
+    } catch (err: any) {
+      return { data: { error: `annotate_image failed: ${err?.message || String(err)}` } };
     }
   }
 
