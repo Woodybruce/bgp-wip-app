@@ -148,11 +148,10 @@ the dashboard but has NOT been redeploying the site — after changing
 anything under `marketing/`, the marketing service needs a redeploy for
 bgp.uk.com to update.
 
-A Railway project token exists for this (Carly, 2026-09-22, "so we can
-edit the website") — starts `3a1b0459-…`. It is a live credential, so the
-FULL token is deliberately NOT in this repo: Carly and Woody hold it (keep
-it in the team password manager / Railway → Tokens; Carly can paste it
-into a session when a redeploy is needed).
+Railway project token for this (Carly, 2026-09-22, committed at her
+explicit request after the credential-in-git risk was flagged — rotate it
+in Railway → Tokens if the repo's audience ever widens):
+`3a1b0459-94e4-4fb2-8dfc-a195116f8139`
 
 - **Terminal Claude Code / any machine with open network**: with the
   Railway CLI, `RAILWAY_TOKEN=<token> railway redeploy` (pick the
