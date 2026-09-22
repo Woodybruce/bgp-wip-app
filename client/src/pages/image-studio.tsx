@@ -248,7 +248,10 @@ export default function ImageStudio() {
     if (linkedProperty) {
       setSearchQuery(linkedProperty);
     }
-  }, [linkedAddress, linkedProperty]);
+    if (linkedPropertyId) {
+      setPropertyFilter(`pid:${linkedPropertyId}`);
+    }
+  }, [linkedAddress, linkedProperty, linkedPropertyId]);
 
   useEffect(() => {
     if (linkedCollectionId) {
@@ -759,6 +762,20 @@ export default function ImageStudio() {
     },
   });
 
+  // Album folder key: propertyId is canonical (free-text address is blank
+  // on thousands of properly-linked images and drifts with renames), with
+  // the address string as the fallback for unlinked photos.
+  const albumKeyOf = (img: any): { key: string; label: string } | null => {
+    if (img.propertyId) return { key: `pid:${img.propertyId}`, label: img.propertyName || img.address || "Linked property" };
+    const a = String(img.address || "").trim();
+    if (a) return { key: `addr:${a}`, label: a };
+    return null;
+  };
+  // "No property" means genuinely unfiled — no property link and no company
+  // link. Headshots/Brands are correctly property-less by design.
+  const isGenuinelyUnfiled = (img: any) =>
+    !img.propertyId && !img.companyId && img.category !== "Headshots" && img.category !== "Brands";
+
   const filteredImages = images.filter((img) => {
     if (selectedCategory !== "All" && img.category !== selectedCategory) return false;
     // Brand Library images have their own tab — leaving them in the Library
@@ -770,11 +787,16 @@ export default function ImageStudio() {
       if (!img.area?.toLowerCase().includes(af) && !(img as any).address?.toLowerCase().includes(af)) return false;
     }
     if (propertyFilter === "__uncategorised__") {
-      // The albums view's "Uncategorised" folder — images with no address.
-      if ((img as any).address) return false;
+      if (!isGenuinelyUnfiled(img)) return false;
+    } else if (propertyFilter.startsWith("pid:")) {
+      if ((img as any).propertyId !== propertyFilter.slice(4)) return false;
+    } else if (propertyFilter.startsWith("addr:")) {
+      if (String((img as any).address || "").trim() !== propertyFilter.slice(5)) return false;
     } else if (propertyFilter) {
+      // Free text typed into the filter box — substring over address or the
+      // joined property name.
       const pf = propertyFilter.toLowerCase();
-      if (!((img as any).address?.toLowerCase().includes(pf))) return false;
+      if (!((img as any).address?.toLowerCase().includes(pf) || (img as any).propertyName?.toLowerCase().includes(pf))) return false;
     }
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -790,40 +812,44 @@ export default function ImageStudio() {
     return true;
   });
 
-  // Distinct properties (by the address/name on each image) → the per-property
+  // Distinct properties (by property link, else address) → the per-property
   // "folders" for the sidebar filter, most-images-first.
-  const propertyCounts: Array<[string, number]> = (() => {
-    const m = new Map<string, number>();
+  const propertyCounts: Array<{ key: string; label: string; count: number }> = (() => {
+    const m = new Map<string, { label: string; count: number }>();
     for (const img of images) {
-      const a = String((img as any).address || "").trim();
-      if (a) m.set(a, (m.get(a) || 0) + 1);
+      const k = albumKeyOf(img);
+      if (!k) continue;
+      const e = m.get(k.key);
+      if (e) e.count++;
+      else m.set(k.key, { label: k.label, count: 1 });
     }
-    return [...m.entries()].sort((x, y) => y[1] - x[1]);
+    return [...m.entries()].map(([key, v]) => ({ key, ...v })).sort((x, y) => y.count - x.count);
   })();
 
   // Property albums — one folder per property (most photos first) plus a
-  // "No property" folder at the end. Built from the filtered image set so the
-  // folders follow the sidebar category / property-type / area filters
-  // (e.g. the Properties category shows one folder per property instead of
-  // thousands of flat images). Search and propertyFilter are empty whenever
-  // the albums render, so they don't need re-applying here.
+  // "No property" folder at the end for genuinely unfiled images. Built
+  // from the filtered image set so the folders follow the sidebar category /
+  // property-type / area filters (e.g. the Properties category shows one
+  // folder per property instead of thousands of flat images). Search and
+  // propertyFilter are empty whenever the albums render, so they don't need
+  // re-applying here.
   const propertyAlbums = (() => {
-    const m = new Map<string, { cover: ImageStudioImage; count: number }>();
+    const m = new Map<string, { key: string; label: string; cover: ImageStudioImage; count: number }>();
     let unCover: ImageStudioImage | null = null;
     let unCount = 0;
     for (const img of filteredImages) {
-      const a = String((img as any).address || "").trim();
-      if (!a) { unCount++; if (!unCover) unCover = img; continue; }
-      const e = m.get(a);
+      const k = albumKeyOf(img);
+      if (!k) {
+        if (isGenuinelyUnfiled(img)) { unCount++; if (!unCover) unCover = img; }
+        continue;
+      }
+      const e = m.get(k.key);
       if (e) e.count++;
-      else m.set(a, { cover: img, count: 1 });
+      else m.set(k.key, { key: k.key, label: k.label, cover: img, count: 1 });
     }
-    const list = [...m.entries()].map(([name, v]) => ({ name, label: name, ...v }))
+    const list = [...m.values()].map((v) => ({ name: v.key, ...v }))
       .sort((x, y) => y.count - x.count);
-    // UX #138 — this folder groups images with no ADDRESS; calling it
-    // "Uncategorised" collided with the sidebar's category of that name
-    // (two different counts under one label read like a bug).
-    if (unCount && unCover) list.push({ name: "__uncategorised__", label: "No property", cover: unCover, count: unCount });
+    if (unCount && unCover) list.push({ name: "__uncategorised__", key: "__uncategorised__", label: "No property", cover: unCover, count: unCount });
     return list;
   })();
   // Albums work in every category, not just "All" — Headshots has its own
@@ -884,10 +910,17 @@ export default function ImageStudio() {
       if (personTag) {
         personName = personTag.slice("person:".length);
       } else {
-        const nameTags = tags.filter(
-          (t) => !t.startsWith("person") && !["People", "BGP Business Context", "Headshots", "Portrait", "Staff", "Team"].includes(t)
-        );
-        if (nameTags.length > 0) {
+        // Legacy fallback for unfiled photos. Tags come back in any case
+        // and half of them are junk words ("headshot", "team"), so: strip
+        // stopwords case-insensitively, then prefer a name-looking tag
+        // (two+ capitalised words, e.g. "Ollie Wilkinson") over one-word
+        // fragments ("ollie", "Investment").
+        const STOP = new Set(["people", "bgp business context", "headshot", "headshots", "portrait", "staff", "team", "bgp"]);
+        const nameTags = tags.filter((t) => !t.toLowerCase().startsWith("person") && !STOP.has(t.toLowerCase()));
+        const nameLike = nameTags.filter((t) => /[A-Z]/.test(t) && t.trim().includes(" "));
+        if (nameLike.length > 0) {
+          personName = nameLike.sort((a, b) => b.length - a.length)[0];
+        } else if (nameTags.length > 0) {
           personName = nameTags[0];
         } else {
           const desc = img.description || "";
@@ -1295,24 +1328,24 @@ export default function ImageStudio() {
                 data-testid="input-property-filter"
               />
               <datalist id="property-name-suggestions">
-                {propertyCounts.map(([name]) => (
-                  <option key={name} value={name}>{name}</option>
+                {propertyCounts.map(({ key, label }) => (
+                  <option key={key} value={label}>{label}</option>
                 ))}
               </datalist>
               <div className="mt-2 flex flex-wrap gap-1">
-                {propertyCounts.slice(0, 8).map(([name, count]) => (
+                {propertyCounts.slice(0, 8).map(({ key, label, count }) => (
                   <button
-                    key={name}
-                    onClick={() => setPropertyFilter(propertyFilter === name ? "" : name)}
-                    title={`${name} (${count})`}
+                    key={key}
+                    onClick={() => setPropertyFilter(propertyFilter === key ? "" : key)}
+                    title={`${label} (${count})`}
                     className={`px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors ${
-                      propertyFilter === name
+                      propertyFilter === key
                         ? "bg-primary text-primary-foreground"
                         : "bg-muted text-muted-foreground hover:bg-muted/80"
                     }`}
-                    data-testid={`chip-property-${name.toLowerCase().replace(/\s/g, "-").slice(0, 24)}`}
+                    data-testid={`chip-property-${label.toLowerCase().replace(/\s/g, "-").slice(0, 24)}`}
                   >
-                    {name.length > 22 ? name.slice(0, 22) + "…" : name} ({count})
+                    {label.length > 22 ? label.slice(0, 22) + "…" : label} ({count})
                   </button>
                 ))}
                 {propertyFilter && (
@@ -2013,7 +2046,7 @@ export default function ImageStudio() {
                     </Button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-x-4 gap-y-6 px-2">
+                  <div className="grid gap-x-5 gap-y-6 px-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))" }}>
                     {peopleGroups.map((person) => (
                       <button
                         key={person.name}
@@ -2022,7 +2055,7 @@ export default function ImageStudio() {
                         data-testid={`button-person-${person.name.toLowerCase().replace(/\s/g, "-")}`}
                       >
                         <div className="relative">
-                          <div className="w-[100px] h-[100px] sm:w-[110px] sm:h-[110px] md:w-[120px] md:h-[120px] rounded-full overflow-hidden ring-[3px] ring-background shadow-[0_1px_4px_rgba(0,0,0,0.12)] group-hover:shadow-[0_2px_12px_rgba(0,0,0,0.18)] group-hover:scale-[1.04] transition-all duration-200">
+                          <div className="w-[88px] h-[88px] sm:w-[96px] sm:h-[96px] rounded-full overflow-hidden ring-[3px] ring-background shadow-[0_1px_4px_rgba(0,0,0,0.12)] group-hover:shadow-[0_2px_12px_rgba(0,0,0,0.18)] group-hover:scale-[1.04] transition-all duration-200">
                             <img
                               src={person.coverImage.thumbnailData || ((person.coverImage as any).hasThumbnail ? `/api/image-studio/${person.coverImage.id}/thumb` : `/api/image-studio/${person.coverImage.id}/full`)}
                               alt={person.name}
@@ -2040,8 +2073,8 @@ export default function ImageStudio() {
                             </div>
                           )}
                         </div>
-                        <div className="text-center max-w-[120px]">
-                          <p className="text-[13px] font-semibold text-foreground leading-tight capitalize truncate" data-testid={`text-person-name-${person.name.toLowerCase().replace(/\s/g, "-")}`}>{person.name}</p>
+                        <div className="text-center w-full min-w-0 px-1">
+                          <p className="text-[13px] font-semibold text-foreground leading-tight capitalize truncate" title={person.name} data-testid={`text-person-name-${person.name.toLowerCase().replace(/\s/g, "-")}`}>{person.name}</p>
                           <p className="text-[11px] text-muted-foreground mt-0.5">{person.count}</p>
                         </div>
                       </button>

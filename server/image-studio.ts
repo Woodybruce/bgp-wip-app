@@ -3,7 +3,7 @@ import { requireAuth } from "./auth";
 import { logAiUsage } from "./api-usage";
 import { pool } from "./db";
 import { db } from "./db";
-import { imageStudioImages, imageStudioCollections, imageStudioCollectionImages, propertyImageryAssets, propertyPathwayRuns } from "@shared/schema";
+import { imageStudioImages, imageStudioCollections, imageStudioCollectionImages, propertyImageryAssets, propertyPathwayRuns, crmProperties } from "@shared/schema";
 
 // Image kinds accepted on the property_imagery_assets row when a capture
 // or upload is linked to a property. Mirrors ImageryKind in property-imagery.ts.
@@ -1530,7 +1530,8 @@ export function registerImageStudioRoutes(app: Express) {
       // Trashed rows stay in the DB (restorable via /:id/restore) but are
       // hidden from the library — this is what makes the prune workflow
       // reversible instead of a hard delete.
-      const images = await db.select(LIST_COLS).from(imageStudioImages)
+      const images = await db.select({ ...LIST_COLS, propertyName: crmProperties.name }).from(imageStudioImages)
+        .leftJoin(crmProperties, eq(imageStudioImages.propertyId, crmProperties.id))
         .where(sql`NOT ('trashed' = ANY(COALESCE(${imageStudioImages.tags}, '{}')))`)
         .orderBy(desc(imageStudioImages.createdAt));
       // Client logins only see imagery filed against their own properties or
