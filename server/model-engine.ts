@@ -1,0 +1,800 @@
+/**
+ * model-engine.ts — server-side spreadsheet calculation engine.
+ *
+ * Wraps HyperFormula so the rest of the server never touches the underlying
+ * library directly: load an .xlsx workbook (via SheetJS, which keeps formulas
+ * in `cell.f`), set input cells, read freshly computed outputs, dispose.
+ *
+ * Swap note: everything HyperFormula-specific lives in this file. Callers use
+ * only the `ModelEngine` interface and `createEngineFromWorkbook` /
+ * `createEngineFromFile`.
+ */
+import { HyperFormula, DetailedCellError, type RawCellContent } from "hyperformula";
+import XLSX from "xlsx-js-style";
+import * as fs from "fs";
+import { registerExcelCompatFunctions } from "./model-functions";
+import { desugarLet } from "./model-let";
+import { boundFullRowColRefs, type SheetDims } from "./model-ranges";
+import { foldPositionGuards, rewriteBooleanLiterals } from "./model-guards";
+import { analyzeSpills, cellKey, constrainSpillToRef, rewriteDynamicArrays } from "./model-spill";
+
+export { desugarLet };
+export { boundFullRowColRefs, foldPositionGuards, rewriteBooleanLiterals };
+export { analyzeSpills, rewriteDynamicArrays, constrainSpillToRef };
+export type { SheetDims };
+
+export type EngineScalar = number | string | boolean | null;
+
+export type EngineReadResult =
+  | { ok: true; value: EngineScalar }
+  | { ok: false; error: string };
+
+export interface EngineCellError {
+  sheet: string;
+  cell: string;
+  error: string;
+}
+
+export interface ModelEngine {
+  readonly sheetNames: string[];
+  /** Non-fatal problems found while loading (e.g. named ranges that failed to register). */
+  readonly warnings: string[];
+  setCell(sheet: string, cellA1: string, value: EngineScalar): void;
+  getCellValue(sheet: string, cellA1: string): EngineReadResult;
+  /** True when the cell exists and holds a formula. */
+  isFormula(sheet: string, cellA1: string): boolean;
+  /** All cells currently evaluating to an Excel error (#NAME?, #CYCLE!, ...). Capped. */
+  collectErrors(limit?: number): EngineCellError[];
+  /**
+   * Start a run scope: every setCell until endRun() is recorded with its
+   * previous content. Used by the template engine cache to restore a shared
+   * engine to its template state after a run.
+   */
+  beginRun(): void;
+  /** Undo every setCell since the matching beginRun() (reverse order). */
+  endRun(): void;
+  dispose(): void;
+}
+
+/** Thrown when a workbook cannot be turned into a runnable engine at all. */
+export class EngineLoadError extends Error {}
+
+const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30); // SheetJS / Excel 1900 date system
+const MAX_CELLS_PER_SHEET = 1_000_000;
+const EMPTY_ANCHORS: ReadonlyMap<string, string> = new Map();
+
+function dateToExcelSerial(d: Date): number {
+  return (d.getTime() - EXCEL_EPOCH_MS) / 86400000;
+}
+
+type HFScalar = string | number | boolean | null;
+
+/** Where a cell lives, so load-time rewrites can use sheet bounds and position. */
+interface CellContext {
+  sheetName: string;
+  dimsBySheet: ReadonlyMap<string, SheetDims>;
+  /** Same-sheet dynamic-array anchors (anchor A1 -> spill range), when present. */
+  anchors: ReadonlyMap<string, string>;
+  /** Computed defined names to inline (name -> expression without "="). */
+  computedNames?: ReadonlyMap<string, string>;
+  row: number; // 0-based
+  col: number; // 0-based
+}
+
+/**
+ * Inline-expand references to COMPUTED defined names (e.g.
+ * Import_Key = TRIM(CLEAN(range))&"|"&TRIM(CLEAN(range))).
+ *
+ * HyperFormula cannot hold an array-valued named expression: a reference in
+ * an aggregating context (SUMPRODUCT(--(K=x))) evaluates fine, but it poisons
+ * the name's cached vertex with the intermediate comparison results, so plain
+ * references (INDEX(K,n)) read booleans; and the same reference in a scalar
+ * context reduces to the top-left element. Verified against HyperFormula 3.4
+ * with and without the compat plugin. Expanding the expression at each
+ * reference site sidesteps the named-expression machinery entirely; the name
+ * itself is never registered, so a missed reference fails loudly (#NAME?).
+ */
+function inlineComputedNames(f: string, computed: ReadonlyMap<string, string>): string {
+  if (computed.size === 0) return f;
+  let hit = false;
+  for (const name of computed.keys()) {
+    if (f.includes(name)) { hit = true; break; }
+  }
+  if (!hit) return f;
+  let out = "";
+  let inString = false;
+  let i = 0;
+  while (i < f.length) {
+    const ch = f[i];
+    if (inString) {
+      out += ch;
+      if (ch === '"') {
+        if (f[i + 1] === '"') { out += '"'; i++; }
+        else inString = false;
+      }
+      i++;
+      continue;
+    }
+    if (ch === '"') { inString = true; out += ch; i++; continue; }
+    if (/[A-Za-z_]/.test(ch)) {
+      let matched = false;
+      for (const [name, expr] of computed) {
+        if (!f.startsWith(name, i)) continue;
+        const before = i > 0 ? f[i - 1] : "";
+        const after = f[i + name.length] ?? "";
+        // Not part of a longer identifier, not sheet-qualified (Sheet!Name),
+        // not a function call.
+        if (/[A-Za-z0-9_.$!']/.test(before) || /[A-Za-z0-9_(]/.test(after)) continue;
+        out += `(${expr})`;
+        i += name.length;
+        matched = true;
+        break;
+      }
+      if (matched) continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
+/** A defined name whose Ref is a plain sheet(-qualified) cell/range reference. */
+const PURE_REF_RE = /^=?(?:'[^']+'|[A-Za-z_0-9. ]+)?!?\$?[A-Za-z]{1,3}\$?[0-9]+(?::\$?[A-Za-z]{1,3}\$?[0-9]+)?$/;
+
+/** Every load-time formula rewrite, in order. Also used for deferred anchors. */
+function transformFormula(f: string, ctx?: CellContext): string {
+  // Computed defined names are inlined first so later rewrites see the
+  // expanded expression (see inlineComputedNames for why names can't stay).
+  if (ctx?.computedNames) f = inlineComputedNames(f, ctx.computedNames);
+  // Excel 365 spill syntax: _xlws.FILTER -> FILTER, D52# -> D52:D53
+  // (model-spill.ts). No-ops fast on formulas without spill syntax.
+  f = rewriteDynamicArrays(f, ctx?.anchors ?? EMPTY_ANCHORS);
+  if (ctx) {
+    // Bound full-row/full-column refs (CF!$8:$8 -> CF!$A$8:$GG$8) to the used
+    // range of the referenced sheet: keeps HyperFormula's static dependency
+    // ranges at real cells instead of 16,384 phantom columns (model-ranges.ts).
+    f = boundFullRowColRefs(f, ctx.sheetName, ctx.dimsBySheet);
+    // Fold IF(COLUMN()=k,...) / IF(ROW()=k,...) guards whose outcome is fixed
+    // by the host cell's position. Removes the dead edge that closes false
+    // circular references in running-total rows (model-guards.ts).
+    f = foldPositionGuards(f, ctx.row, ctx.col);
+  }
+  // Excel's bare TRUE/FALSE literals are 0-arg calls to HyperFormula
+  // (model-guards.ts).
+  f = rewriteBooleanLiterals(f);
+  // HyperFormula has no LET: inline it away (see model-let.ts). Cheap gate
+  // first so the 99% of formulas without LET skip the parser.
+  return /\bLET\s*\(/i.test(f) ? desugarLet(f) : f;
+}
+
+function cellToHFValue(cell: XLSX.CellObject | undefined, ctx?: CellContext): HFScalar {
+  if (!cell) return null;
+
+  if (typeof cell.f === "string" && cell.f.length > 0) {
+    const f = cell.f.startsWith("=") ? cell.f : `=${cell.f}`;
+    return transformFormula(f, ctx);
+  }
+
+  const v = cell.v;
+  if (v === undefined || v === null) return null;
+
+  switch (cell.t) {
+    case "n":
+      return typeof v === "number" ? v : null;
+    case "b":
+      return typeof v === "boolean" ? v : Boolean(v);
+    case "d":
+      return v instanceof Date ? dateToExcelSerial(v) : null;
+    case "e":
+      // Error literal cached in the file (e.g. a stale #REF!). There is no
+      // formula to recompute, so keep the text — it will not poison
+      // downstream arithmetic any worse than the original error did.
+      return typeof v === "string" ? v : null;
+    case "s":
+    default:
+      return typeof v === "string" ? v : String(v);
+  }
+}
+
+/** A multi-cell spill anchor whose formula is loaded after the initial build. */
+interface DeferredAnchor {
+  sheetName: string;
+  row: number; // 0-based
+  col: number; // 0-based
+  formula: string; // fully transformed, "=" prefixed
+}
+
+function worksheetToHFArray(
+  ws: XLSX.WorkSheet,
+  sheetName?: string,
+  dimsBySheet?: ReadonlyMap<string, SheetDims>,
+  deferred?: DeferredAnchor[],
+  computedNames?: ReadonlyMap<string, string>,
+): HFScalar[][] {
+  const ref = ws["!ref"];
+  if (!ref) return [];
+  const range = XLSX.utils.decode_range(ref);
+  const rowCount = range.e.r + 1;
+  const colCount = range.e.c + 1;
+  if (rowCount * colCount > MAX_CELLS_PER_SHEET) {
+    throw new EngineLoadError(
+      `Sheet range ${ref} exceeds engine capacity (${rowCount} x ${colCount} cells)`,
+    );
+  }
+  const rows: HFScalar[][] = new Array(rowCount);
+  // Excel 365 dynamic arrays: cells covered by a neighbour's spill hold cached
+  // values only; they must stay empty or HyperFormula's spill hits a wall
+  // (#SPILL!). Anchors are resolved up front so D52# can become D52:D53.
+  const spills = analyzeSpills(ws);
+  const deferredKeys = new Map(spills.multiAnchors.map((a) => [cellKey(a.row, a.col), a]));
+  for (let r = 0; r <= range.e.r; r++) {
+    const row: HFScalar[] = new Array(colCount).fill(null);
+    for (let c = 0; c <= range.e.c; c++) {
+      if (spills.covered.has(cellKey(r, c))) continue; // leave room for the spill
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      const ctx: CellContext | undefined =
+        sheetName && dimsBySheet
+          ? { sheetName, dimsBySheet, anchors: spills.anchors, row: r, col: c, computedNames }
+          : undefined;
+      const anchorMeta = deferredKeys.get(cellKey(r, c));
+      if (deferred && anchorMeta && sheetName && cell && typeof cell.f === "string") {
+        // Multi-cell spill anchor: HyperFormula's build-time array-size
+        // prediction gives FILTER its full input height, which never fits an
+        // occupied grid (#SPILL!). Loaded after the build with the prediction
+        // pinned to the stored spill extent via ARRAY_CONSTRAIN (model-spill.ts).
+        const f = cell.f.startsWith("=") ? cell.f : `=${cell.f}`;
+        deferred.push({
+          sheetName,
+          row: r,
+          col: c,
+          formula: constrainSpillToRef(transformFormula(f, ctx), anchorMeta.height, anchorMeta.width),
+        });
+        continue;
+      }
+      row[c] = cellToHFValue(cell, ctx);
+    }
+    rows[r] = row;
+  }
+  return rows;
+}
+
+function describeError(err: unknown): string {
+  if (err instanceof DetailedCellError) return err.value;
+  if (err && typeof err === "object" && "value" in (err as any)) {
+    return String((err as any).value);
+  }
+  return String(err);
+}
+
+interface HFAddress {
+  sheet: number;
+  row: number;
+  col: number;
+}
+
+function isCycleError(v: unknown): boolean {
+  return v instanceof DetailedCellError && v.value === "#CYCLE!";
+}
+
+function findFirstCycle(hf: HyperFormula, sheetIdByName: Map<string, number>): HFAddress | null {
+  for (const [, sheetId] of sheetIdByName) {
+    const dims = hf.getSheetDimensions(sheetId);
+    for (let r = 0; r < dims.height; r++) {
+      for (let c = 0; c < dims.width; c++) {
+        if (isCycleError(hf.getCellValue({ sheet: sheetId, row: r, col: c }))) {
+          return { sheet: sheetId, row: r, col: c };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Follow #CYCLE! precedents until the walk repeats a cell. Any closed walk in
+ * the static dependency graph is a genuine circular reference, so the repeated
+ * cell is guaranteed to be a member of a cycle. Returns null if the walk
+ * dead-ends (then the caller should freeze the start cell itself).
+ */
+function walkToCycleMember(hf: HyperFormula, start: HFAddress): HFAddress | null {
+  const seen = new Set<string>();
+  let cur = start;
+  for (let step = 0; step < 500; step++) {
+    const key = `${cur.sheet}:${cur.row}:${cur.col}`;
+    if (seen.has(key)) return cur;
+    seen.add(key);
+    const preds = hf.getCellPrecedents(cur) as any[];
+    let next: HFAddress | null = null;
+    for (const p of preds) {
+      if (p.start) {
+        // Range precedent: scan for a cyclic cell inside (bounded for safety).
+        let scanned = 0;
+        for (let r = p.start.row; r <= p.end.row && !next; r++) {
+          for (let c = p.start.col; c <= p.end.col && !next; c++) {
+            if (++scanned > 100_000) break;
+            if (isCycleError(hf.getCellValue({ sheet: p.start.sheet, row: r, col: c }))) {
+              next = { sheet: p.start.sheet, row: r, col: c };
+            }
+          }
+        }
+        if (next) break;
+      } else if (isCycleError(hf.getCellValue(p))) {
+        next = p;
+        break;
+      }
+    }
+    if (!next) return null;
+    cur = next;
+  }
+  return null;
+}
+
+/**
+ * Excel with iterative calculation OFF resolves circular references to 0 (and
+ * shows a warning); HyperFormula instead marks the whole SCC #CYCLE! and the
+ * error poisons every downstream cell. To reproduce the workbook's observable
+ * state we freeze one member of each genuine cycle at the value Excel cached
+ * in the file (0 when there is none), which breaks the SCC, and repeat until
+ * the graph is acyclic. This is only reachable after the load-time transforms
+ * (model-ranges / model-guards) have already removed FALSE cycles, so what
+ * remains is circular in Excel too.
+ */
+function breakCircularReferences(
+  hf: HyperFormula,
+  wb: XLSX.WorkBook,
+  sheetIdByName: Map<string, number>,
+  warnings: string[],
+): void {
+  const MAX_FREEZES = 200;
+  const frozen: string[] = [];
+  for (let i = 0; i < MAX_FREEZES; i++) {
+    const start = findFirstCycle(hf, sheetIdByName);
+    if (!start) break;
+    const member = walkToCycleMember(hf, start) ?? start;
+    const sheet = hf.getSheetName(member.sheet) ?? String(member.sheet);
+    const a1 = XLSX.utils.encode_cell({ r: member.row, c: member.col });
+    const cached = wb.Sheets[sheet]?.[a1]?.v;
+    const value =
+      typeof cached === "number" || typeof cached === "string" || typeof cached === "boolean"
+        ? cached
+        : 0;
+    hf.setCellContents(member, [[value]]);
+    frozen.push(`${sheet}!${a1}`);
+  }
+  if (frozen.length > 0) {
+    warnings.push(
+      `Circular reference(s) with iterative calculation off; froze ${frozen.length} cell(s) at Excel-cached values: ${frozen.join(", ")}`,
+    );
+  }
+  if (findFirstCycle(hf, sheetIdByName)) {
+    warnings.push("Some circular references could not be resolved");
+  }
+}
+
+class HyperFormulaEngine implements ModelEngine {
+  private hf: HyperFormula;
+  private disposed = false;
+  readonly sheetNames: string[];
+  readonly warnings: string[] = [];
+  private sheetIdByName = new Map<string, number>();
+  /** Cells written inside the current run scope, with their prior content. */
+  private runLog: Array<{ address: { sheet: number; row: number; col: number }; prev: RawCellContent }> | null = null;
+
+  constructor(hf: HyperFormula, sheetNames: string[], warnings: string[]) {
+    this.hf = hf;
+    this.sheetNames = sheetNames;
+    this.warnings = warnings;
+    for (const name of sheetNames) {
+      const id = hf.getSheetId(name);
+      if (id !== undefined) this.sheetIdByName.set(name, id);
+    }
+  }
+
+  private addressOf(sheet: string, cellA1: string): { sheet: number; row: number; col: number } {
+    if (this.disposed) throw new EngineLoadError("Engine has been disposed");
+    const sheetId = this.sheetIdByName.get(sheet);
+    if (sheetId === undefined) {
+      throw new EngineLoadError(`Sheet not found in workbook: "${sheet}"`);
+    }
+    const { row, col } = a1ToRowCol(cellA1);
+    return { sheet: sheetId, row, col };
+  }
+
+  setCell(sheet: string, cellA1: string, value: EngineScalar): void {
+    const address = this.addressOf(sheet, cellA1);
+    if (this.runLog && this.runLog.length < 10_000) {
+      // getCellSerialized returns the formula ("=...") for formula cells and
+      // the raw value otherwise, so restoring it reproduces the template cell.
+      this.runLog.push({ address, prev: this.hf.getCellSerialized(address) });
+    }
+    this.hf.setCellContents(address, [[value === undefined ? null : value]]);
+  }
+
+  beginRun(): void {
+    this.runLog = [];
+  }
+
+  endRun(): void {
+    const log = this.runLog;
+    this.runLog = null;
+    if (!log || this.disposed) return;
+    for (let i = log.length - 1; i >= 0; i--) {
+      const { address, prev } = log[i];
+      try {
+        this.hf.setCellContents(address, [[prev]]);
+      } catch {
+        // A cell that cannot be restored leaves the shared engine dirty; the
+        // next run's setCell overwrites it anyway (same cell, new value).
+      }
+    }
+  }
+
+  getCellValue(sheet: string, cellA1: string): EngineReadResult {
+    try {
+      const address = this.addressOf(sheet, cellA1);
+      const value = this.hf.getCellValue(address);
+      if (value instanceof DetailedCellError) {
+        return { ok: false, error: value.value };
+      }
+      if (value === null || value === undefined) return { ok: true, value: null };
+      if (typeof value === "number" || typeof value === "string" || typeof value === "boolean") {
+        return { ok: true, value };
+      }
+      return { ok: true, value: String(value) };
+    } catch (err) {
+      return { ok: false, error: describeError(err) };
+    }
+  }
+
+  isFormula(sheet: string, cellA1: string): boolean {
+    try {
+      const address = this.addressOf(sheet, cellA1);
+      return this.hf.doesCellHaveFormula(address);
+    } catch {
+      return false;
+    }
+  }
+
+  collectErrors(limit = 50): EngineCellError[] {
+    const errors: EngineCellError[] = [];
+    if (this.disposed) return errors;
+    for (const [name, sheetId] of this.sheetIdByName) {
+      const dims = this.hf.getSheetDimensions(sheetId);
+      for (let r = 0; r < dims.height; r++) {
+        for (let c = 0; c < dims.width; c++) {
+          const value = this.hf.getCellValue({ sheet: sheetId, row: r, col: c });
+          if (value instanceof DetailedCellError) {
+            errors.push({
+              sheet: name,
+              cell: XLSX.utils.encode_cell({ r, c }),
+              error: value.value,
+            });
+            if (errors.length >= limit) return errors;
+          }
+        }
+      }
+    }
+    return errors;
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    try {
+      this.hf.destroy();
+    } catch {
+      // already destroyed / partially built — nothing more to release
+    }
+  }
+}
+
+const A1_RE = /^([A-Za-z]{1,3})([0-9]+)$/;
+
+function a1ToRowCol(a1: string): { row: number; col: number } {
+  const m = A1_RE.exec(a1.trim());
+  if (!m) throw new EngineLoadError(`Invalid cell reference: "${a1}"`);
+  return {
+    row: parseInt(m[2], 10) - 1,
+    col: XLSX.utils.decode_col(m[1].toUpperCase()),
+  };
+}
+
+const HF_OPTIONS = {
+  licenseKey: "gpl-v3", // see licence note in project docs; swap for a commercial key if required
+  // Excel 1900 date system; DATE() serials match SheetJS serials (verified).
+  leapYear1900: false,
+  // Excel 365 semantics: range arithmetic evaluates elementwise. Required by
+  // workbooks whose named expressions are array formulas (e.g.
+  // Import_Key = TRIM(CLEAN(range)) & "|" & TRIM(CLEAN(range))); without it
+  // those evaluate to #VALUE! and poison every dependent cell.
+  useArrayArithmetic: true,
+};
+
+/** Shape of one entry in a template's inputMapping / outputMapping. */
+export interface MappedCell {
+  sheet: string;
+  cell: string;
+  type?: string;
+  format?: string;
+}
+
+/**
+ * Convert a UI input value to the raw scalar stored in the workbook.
+ * Mirrors writeCellValue in models.ts: "percent" inputs arrive as e.g. 5.5
+ * and are stored as 0.055. Returns undefined when the value should not be
+ * written at all (empty / non-numeric for a numeric input).
+ */
+export function normalizeInputValue(value: unknown, type?: string): EngineScalar | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
+  if (type === "text") return String(value);
+  const num = type === "percent" ? parseFloat(String(value)) / 100 : parseFloat(String(value));
+  if (isNaN(num)) return undefined;
+  return num;
+}
+
+/** Write every mapped input into the engine. Returns the keys actually set. */
+export function applyMappedInputs(
+  engine: ModelEngine,
+  inputValues: Record<string, unknown>,
+  inputMapping: Record<string, MappedCell>,
+): string[] {
+  const applied: string[] = [];
+  for (const [key, value] of Object.entries(inputValues || {})) {
+    const mapping = inputMapping[key];
+    if (!mapping?.sheet || !mapping?.cell) continue;
+    const normalized = normalizeInputValue(value, mapping.type);
+    if (normalized === undefined) continue;
+    engine.setCell(mapping.sheet, mapping.cell, normalized);
+    applied.push(key);
+  }
+  return applied;
+}
+
+/**
+ * Format a raw engine scalar the same way extractOutputs in models.ts does,
+ * so engine-computed runs and any remaining file-based reads agree.
+ */
+export function formatOutputValue(raw: EngineScalar, format?: string): unknown {
+  if (raw === null) return null;
+  if (format === "percent") {
+    return typeof raw === "number" ? (raw * 100).toFixed(2) + "%" : raw;
+  }
+  if (format === "number0") {
+    return typeof raw === "number" ? Math.round(raw).toLocaleString() : raw;
+  }
+  if (format === "number2") {
+    return typeof raw === "number" ? raw.toFixed(2) : raw;
+  }
+  return raw;
+}
+
+/**
+ * Read every cell in an output mapping from the engine, formatted per its
+ * `format` hint. Cells that evaluate to an Excel error come back as the
+ * error string (e.g. "#CYCLE!") and are also listed in `errors`.
+ */
+export function readEngineOutputs(
+  engine: ModelEngine,
+  outputMapping: Record<string, MappedCell>,
+): { outputs: Record<string, unknown>; errors: EngineCellError[] } {
+  const outputs: Record<string, unknown> = {};
+  const errors: EngineCellError[] = [];
+  for (const [key, config] of Object.entries(outputMapping || {})) {
+    if (!config?.sheet || !config?.cell) {
+      outputs[key] = null;
+      continue;
+    }
+    const result = engine.getCellValue(config.sheet, config.cell);
+    if (result.ok) {
+      outputs[key] = formatOutputValue(result.value, config.format);
+    } else {
+      outputs[key] = result.error;
+      errors.push({ sheet: config.sheet, cell: config.cell, error: result.error });
+    }
+  }
+  return { outputs, errors };
+}
+
+/**
+ * Build a runnable engine from a SheetJS workbook. The workbook must have been
+ * read with formulas retained (the SheetJS default, `cellFormula: true`).
+ * Throws EngineLoadError when the workbook cannot be loaded at all; individual
+ * unsupported functions surface as per-cell Excel errors instead.
+ */
+export function createEngineFromWorkbook(wb: XLSX.WorkBook): ModelEngine {
+  registerExcelCompatFunctions(); // static, once per process; must precede buildFromSheets
+  const warnings: string[] = [];
+  const sheets: Record<string, HFScalar[][]> = {};
+  const sheetNames: string[] = [];
+
+  // Used-range dimensions per sheet, from SheetJS !ref. Needed up front so
+  // full-row/column refs in any sheet can be bounded against the sheet they
+  // point at (which may be parsed later in the loop).
+  const dimsBySheet = new Map<string, SheetDims>();
+  for (const name of wb.SheetNames) {
+    const ref = wb.Sheets[name]?.["!ref"];
+    if (!ref) continue;
+    const range = XLSX.utils.decode_range(ref);
+    dimsBySheet.set(name, {
+      firstRow: range.s.r,
+      firstCol: range.s.c,
+      lastRow: range.e.r,
+      lastCol: range.e.c,
+    });
+  }
+
+  const deferred: DeferredAnchor[] = [];
+
+  // Split defined names: plain cell/range references are registered as
+  // HyperFormula named expressions after the build; computed names (formulas
+  // with functions/operators) are inlined at each reference site, because
+  // HyperFormula's array-valued named expressions are unreliable (see
+  // inlineComputedNames). First definition wins on duplicates, matching the
+  // old registration behaviour.
+  const computedNames = new Map<string, string>();
+  const pureNames: Array<{ name: string; ref: string }> = [];
+  {
+    const seen = new Set<string>();
+    for (const nameDef of (wb.Workbook?.Names ?? []) as any[]) {
+      const name = nameDef?.Name;
+      const ref = nameDef?.Ref;
+      if (!name || !ref || typeof name !== "string" || typeof ref !== "string") continue;
+      if (name.startsWith("_xlnm") || name.startsWith("_")) continue; // print areas etc.
+      if (seen.has(name)) continue;
+      seen.add(name);
+      if (PURE_REF_RE.test(ref.trim())) {
+        pureNames.push({ name, ref });
+      } else {
+        computedNames.set(name, ref.trim().replace(/^=/, ""));
+      }
+    }
+  }
+
+  for (const name of wb.SheetNames) {
+    const ws = wb.Sheets[name];
+    if (!ws) continue;
+    if (sheetNames.includes(name)) {
+      warnings.push(`Duplicate sheet name skipped: "${name}"`);
+      continue;
+    }
+    sheets[name] = worksheetToHFArray(ws, name, dimsBySheet, deferred, computedNames);
+    sheetNames.push(name);
+  }
+
+  if (sheetNames.length === 0) {
+    throw new EngineLoadError("Workbook has no sheets");
+  }
+
+  let hf: HyperFormula;
+  try {
+    hf = HyperFormula.buildFromSheets(sheets, HF_OPTIONS);
+  } catch (err: any) {
+    throw new EngineLoadError(`Failed to build calculation engine: ${err?.message || err}`);
+  }
+
+  // Register the workbook's (pure-reference) defined names. Done after the
+  // build on purpose: HyperFormula recalculates dependents when a
+  // previously-unknown name appears, and a broken name must not abort the
+  // whole load.
+  for (const { name, ref } of pureNames) {
+    try {
+      hf.addNamedExpression(name, ref.startsWith("=") ? ref : `=${ref}`);
+    } catch (err: any) {
+      warnings.push(`Named range "${name}" could not be registered: ${err?.message || err}`);
+    }
+  }
+
+  // Genuine circular references (still present after the false-cycle
+  // transforms): emulate Excel's no-iterative-calc behaviour by freezing one
+  // member of each cycle at its Excel-cached value.
+  {
+    const ids = new Map<string, number>();
+    for (const name of sheetNames) {
+      const id = hf.getSheetId(name);
+      if (id !== undefined) ids.set(name, id);
+    }
+    breakCircularReferences(hf, wb, ids, warnings);
+  }
+
+  // Deferred multi-cell spill anchors (Excel 365 dynamic arrays): loaded after
+  // the build so HyperFormula sizes each array vertex from the actual FILTER /
+  // SORT result instead of its static worst-case prediction (model-spill.ts).
+  for (const anchor of deferred) {
+    const id = hf.getSheetId(anchor.sheetName);
+    if (id === undefined) continue;
+    try {
+      hf.setCellContents({ sheet: id, row: anchor.row, col: anchor.col }, [[anchor.formula]]);
+    } catch (err: any) {
+      const a1 = XLSX.utils.encode_cell({ r: anchor.row, c: anchor.col });
+      warnings.push(`Spill anchor ${anchor.sheetName}!${a1} failed to load: ${err?.message || err}`);
+    }
+  }
+
+  return new HyperFormulaEngine(hf, sheetNames, warnings);
+}
+
+/**
+ * Build an engine from an .xlsx file on disk. Reads with `cellFormula: true`
+ * so formulas (not just cached values) reach the engine, and `sheetStubs: true`
+ * so formula cells written without a cached value (e.g. by ExcelJS) are not
+ * dropped by SheetJS.
+ */
+export function createEngineFromFile(filePath: string): ModelEngine {
+  let wb: XLSX.WorkBook;
+  try {
+    wb = XLSX.readFile(filePath, { cellFormula: true, cellDates: false, sheetStubs: true });
+  } catch (err: any) {
+    throw new EngineLoadError(`Failed to read workbook "${filePath}": ${err?.message || err}`);
+  }
+  return createEngineFromWorkbook(wb);
+}
+
+// ─── Template engine cache ─────────────────────────────────────────────────
+// Building the HyperFormula graph dominates engine time (~60-80s for an
+// institutional workbook with 200k formulas), and the scenario / sensitivity /
+// run routes rebuild the SAME template for every combination. Cache one engine
+// per template file and lend it out inside a run scope: beginRun() records
+// every input cell the run writes, endRun() restores the template contents.
+// Callers must hold a lease only across synchronous sections (engine work is
+// synchronous CPU work, so a single shared instance per template is safe).
+
+const TEMPLATE_ENGINE_CACHE_MAX = 4;
+const templateEngineCache = new Map<string, { engine: ModelEngine; inUse: boolean }>(); // insertion order = LRU
+
+export interface TemplateEngineLease {
+  engine: ModelEngine;
+  /** Restore run-mutated cells and return the engine to the cache. Idempotent. */
+  release: () => void;
+}
+
+/** Cache key that invalidates when the template file is replaced. */
+export function engineCacheKeyForFile(filePath: string): string {
+  try {
+    return `${filePath}:${fs.statSync(filePath).mtimeMs}`;
+  } catch {
+    return `${filePath}:unknown`;
+  }
+}
+
+/**
+ * Lease the cached engine for a template, building it on first use via
+ * buildWorkbook (which must return the PRISTINE template — run inputs are
+ * applied to the leased engine with applyMappedInputs, not baked into the
+ * workbook, or they would become the cached baseline).
+ */
+export function acquireTemplateEngine(cacheKey: string, buildWorkbook: () => XLSX.WorkBook): TemplateEngineLease {
+  let entry = templateEngineCache.get(cacheKey);
+  if (entry) {
+    templateEngineCache.delete(cacheKey);
+    templateEngineCache.set(cacheKey, entry); // refresh LRU position
+  } else {
+    entry = { engine: createEngineFromWorkbook(buildWorkbook()), inUse: false };
+    templateEngineCache.set(cacheKey, entry);
+    // Evict least-recently-used idle engines beyond the cap. Leased engines
+    // are never evicted (a lease is short and synchronous).
+    for (const [key, candidate] of templateEngineCache) {
+      if (templateEngineCache.size <= TEMPLATE_ENGINE_CACHE_MAX) break;
+      if (candidate.inUse) continue;
+      candidate.engine.dispose();
+      templateEngineCache.delete(key);
+    }
+  }
+  entry.inUse = true;
+  entry.engine.beginRun();
+  let released = false;
+  return {
+    engine: entry.engine,
+    release: () => {
+      if (released) return;
+      released = true;
+      entry!.engine.endRun();
+      entry!.inUse = false;
+    },
+  };
+}
+
+/** Drop every cached engine (tests; cache entries are otherwise LRU-bounded). */
+export function disposeTemplateEngineCache(): void {
+  for (const entry of templateEngineCache.values()) entry.engine.dispose();
+  templateEngineCache.clear();
+}

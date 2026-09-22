@@ -165,12 +165,25 @@ function MessageThread({
 
   const sendMutation = useMutation({
     mutationFn: async (body: string) => {
-      const res = await apiRequest("POST", "/api/whatsapp/messages", {
-        to: data?.conversation.waPhoneNumber,
-        body,
-        contactName: data?.conversation.contactName,
+      const res = await fetch("/api/whatsapp/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          to: data?.conversation.waPhoneNumber,
+          body,
+          contactName: data?.conversation.contactName,
+        }),
       });
-      return res.json();
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const err: any = new Error(json?.message || "Send failed");
+        err.code = json?.code;
+        err.subcode = json?.subcode;
+        err.metaStatus = json?.status;
+        throw err;
+      }
+      return json;
     },
     onSuccess: () => {
       setNewMessage("");
@@ -179,10 +192,11 @@ function MessageThread({
       });
       queryClient.invalidateQueries({ queryKey: ["/api/whatsapp/conversations"] });
     },
-    onError: () => {
+    onError: (err: any) => {
+      const codePart = err?.code ? ` (Meta ${err.code}${err.subcode ? `/${err.subcode}` : ""})` : "";
       toast({
-        title: "Failed to send",
-        description: "Could not send the message. Please try again.",
+        title: "WhatsApp send failed",
+        description: `${err?.message || "Unknown error"}${codePart}`,
         variant: "destructive",
       });
     },
@@ -339,7 +353,14 @@ export default function WhatsApp() {
   const [searchQuery, setSearchQuery] = useState("");
   const { toast } = useToast();
 
-  const { data: status, isLoading: statusLoading } = useQuery<{ connected: boolean }>({
+  const { data: status, isLoading: statusLoading } = useQuery<{
+    connected: boolean;
+    tokenValid?: boolean;
+    displayPhoneNumber?: string;
+    verifiedName?: string;
+    qualityRating?: string;
+    error?: { status?: number; code?: number; subcode?: number; message?: string; type?: string };
+  }>({
     queryKey: ["/api/whatsapp/status"],
     queryFn: getQueryFn({ on401: "throw" }),
   });
@@ -390,25 +411,67 @@ export default function WhatsApp() {
     );
   }
 
-  if (!status?.connected) {
+  if (!status?.connected || status.tokenValid === false) {
+    const e = status?.error;
+    const codeLine = e?.code ? `Meta error ${e.code}${e.subcode ? `/${e.subcode}` : ""}${e.status ? ` (HTTP ${e.status})` : ""}` : null;
     return (
       <div className="p-4 sm:p-6">
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16">
             <AlertCircle className="w-12 h-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-2">WhatsApp Not Connected</h3>
+            <h3 className="text-lg font-semibold mb-2">
+              {!status?.connected ? "WhatsApp Not Configured" : "WhatsApp Token Invalid"}
+            </h3>
             <p className="text-muted-foreground text-center max-w-md">
-              WhatsApp Business API credentials are not configured. Please add your access token and phone number ID to connect.
+              {!status?.connected
+                ? "WhatsApp Business API credentials are missing. Add WHATSAPP_TOKEN_V2 and WHATSAPP_PHONE_NUMBER_ID to the server env."
+                : e?.message || "The Graph API rejected the configured token. Generate a new permanent system-user token in Meta Business Manager and update WHATSAPP_TOKEN_V2."}
             </p>
+            {codeLine && (
+              <p className="text-xs text-muted-foreground mt-3 font-mono">{codeLine}</p>
+            )}
           </CardContent>
         </Card>
       </div>
     );
   }
 
+  const qualityColor =
+    status?.qualityRating === "GREEN"
+      ? "bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/30"
+      : status?.qualityRating === "YELLOW"
+        ? "bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 border-yellow-500/30"
+        : status?.qualityRating === "RED"
+          ? "bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/30"
+          : "bg-muted text-muted-foreground";
+
   return (
-    <div className="h-[calc(100vh-3rem)]">
-      <div className="flex h-full">
+    <div className="h-[calc(100vh-3rem)] flex flex-col">
+      <div className="border-b bg-muted/30 px-4 py-1.5 flex items-center gap-2 text-xs shrink-0">
+        <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" data-testid="indicator-connected" />
+        <span className="text-muted-foreground">Connected as</span>
+        <span className="font-medium truncate" data-testid="text-verified-name">
+          {status.verifiedName || "WhatsApp Business"}
+        </span>
+        {status.displayPhoneNumber && (
+          <>
+            <span className="text-muted-foreground">·</span>
+            <span className="font-mono" data-testid="text-display-phone">
+              {status.displayPhoneNumber}
+            </span>
+          </>
+        )}
+        {status.qualityRating && (
+          <Badge
+            variant="outline"
+            className={`ml-auto text-[10px] h-4 px-1.5 ${qualityColor}`}
+            data-testid="badge-quality-rating"
+          >
+            {status.qualityRating}
+          </Badge>
+        )}
+      </div>
+      <div className="flex flex-1 min-h-0">
         <div className="w-80 shrink-0 hidden md:flex flex-col">
           <ConversationList
             conversations={conversations}

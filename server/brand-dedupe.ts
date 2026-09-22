@@ -33,6 +33,14 @@ const COMPANY_REFS: Array<{ table: string; column: string }> = [
   { table: "crm_deals",                column: "purchaser_agent_id" },
   { table: "crm_deals",                column: "leasing_agent_id" },
   { table: "crm_properties",           column: "landlord_id" },
+  { table: "crm_properties",           column: "freeholder_id" },
+  { table: "crm_properties",           column: "long_leaseholder_id" },
+  { table: "crm_properties",           column: "senior_lender_id" },
+  { table: "crm_properties",           column: "junior_lender_id" },
+  { table: "crm_company_properties",   column: "company_id" },
+  { table: "crm_company_deals",        column: "company_id" },
+  { table: "crm_property_tenants",     column: "company_id" },
+  { table: "crm_trading_entities",     column: "parent_company_id" },
   { table: "crm_requirements_leasing", column: "company_id" },
   { table: "crm_comps",                column: "company_id" },
   { table: "kyc_documents",            column: "company_id" },
@@ -132,6 +140,27 @@ router.post("/api/brand/dedupe/scan", requireAuth, async (req: Request, res: Res
         const idSet = new Set(list.map(c => c.id));
         const alreadyCovered = candidates.some(c => c.companies.every(x => idSet.has(x.id)));
         if (!alreadyCovered) candidates.push({ clusterKey: `name:${k}`, companies: list, reason: `Similar normalised name ("${k}")`, needsAI: true });
+      }
+    }
+
+    // Prefix containment — "200 Degrees" vs "200 Degrees Coffee" normalise
+    // to different keys, so exact clustering never pairs them. Pair names
+    // where one is a word-boundary prefix of the other (shorter ≥5 chars);
+    // AI judges each pair like any other fuzzy cluster.
+    {
+      const keys = [...nameClusters.keys()].sort();
+      for (let i = 0; i < keys.length - 1; i++) {
+        for (let j = i + 1; j < keys.length && keys[j].startsWith(keys[i]); j++) {
+          const a = keys[i], b = keys[j];
+          if (a.length < 5 || a === b) continue;
+          if (b[a.length] !== " ") continue; // word boundary — "leon" ≠ "leonardo"
+          const pair = [...nameClusters.get(a)!, ...nameClusters.get(b)!];
+          const idSet = new Set(pair.map(c => c.id));
+          const alreadyCovered = candidates.some(c => c.companies.every(x => idSet.has(x.id)));
+          if (!alreadyCovered) {
+            candidates.push({ clusterKey: `prefix:${a}~${b}`, companies: pair, reason: `One name contains the other ("${a}" ⊂ "${b}")`, needsAI: true });
+          }
+        }
       }
     }
 

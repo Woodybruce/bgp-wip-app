@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -11,11 +12,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Users, ChevronDown, ChevronRight, ShieldCheck, AlertTriangle, CheckCircle2, Loader2, Building, Contact, Home, Trash2, Mail, RefreshCw, Play, Inbox, Activity, Wifi, WifiOff, Shield, Clock, MessageSquare, Eye, ExternalLink, User, Landmark, Plus, Power, FolderOpen, Upload, Download, FileText } from "lucide-react";
+import { Users, ChevronDown, ChevronRight, ShieldCheck, AlertTriangle, CheckCircle2, Loader2, Building, Contact, Home, Trash2, Mail, RefreshCw, Play, Inbox, Activity, Wifi, WifiOff, Shield, Clock, MessageSquare, Eye, ExternalLink, User, Landmark, Plus, Power, FolderOpen, Upload, Download, FileText, KeyRound } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
+import { ProfilePhotoCard } from "@/components/profile-photo-card";
 
 interface TeamMember {
   id: string;
@@ -27,11 +29,12 @@ interface TeamMember {
   isActive?: boolean;
 }
 
-const TEAM_GROUPS = ["Investment", "London Leasing", "Lease Advisory", "Office / Corporate", "National Leasing", "Tenant Rep", "Development", "Landsec"] as const;
+const TEAM_GROUPS = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"] as const;
 
 const TEAM_GROUP_MEMBERS: Record<string, string[]> = {
   Investment: ["Investment"],
-  "London Leasing": ["London Leasing"],
+  "London F&B": ["London F&B"],
+  "London Retail": ["London Retail"],
   "Lease Advisory": ["Lease Advisory"],
   "Office / Corporate": ["Office / Corporate"],
   "National Leasing": ["National Leasing"],
@@ -40,20 +43,10 @@ const TEAM_GROUP_MEMBERS: Record<string, string[]> = {
   Landsec: ["Landsec"],
 };
 
-const teamColors: Record<string, string> = {
-  Investment: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-  "London Leasing": "bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300",
-  "Lease Advisory": "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300",
-  "Office / Corporate": "bg-slate-100 text-slate-800 dark:bg-slate-900/30 dark:text-slate-300",
-  "National Leasing": "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
-  "Tenant Rep": "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
-  Development: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
-  Landsec: "bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-300",
-};
-
 const teamDotColors: Record<string, string> = {
   Investment: "bg-blue-500",
-  "London Leasing": "bg-sky-500",
+  "London F&B": "bg-rose-500",
+  "London Retail": "bg-teal-500",
   "Lease Advisory": "bg-indigo-500",
   "Office / Corporate": "bg-slate-500",
   "National Leasing": "bg-emerald-500",
@@ -73,7 +66,7 @@ function getTeamGroup(memberTeam: string | null): string | null {
 export default function SettingsPage() {
   const { toast } = useToast();
   const [expandedTeams, setExpandedTeams] = useState<Record<string, boolean>>({
-    Investment: true, "London Leasing": true, "Lease Advisory": true,
+    Investment: true, "Lease Advisory": true,
     "Office / Corporate": true, "National Leasing": true, "Tenant Rep": true, Development: true,
   });
 
@@ -111,6 +104,24 @@ export default function SettingsPage() {
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message || "Failed to update access.", variant: "destructive" });
+    },
+  });
+
+  const resetPassword = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("POST", `/api/admin/users/${id}/reset-password`, {});
+      return res.json();
+    },
+    onSuccess: async (data: any) => {
+      try { await navigator.clipboard.writeText(data.tempPassword); } catch {}
+      toast({
+        title: `Password reset for ${data.name}`,
+        description: `New password: ${data.tempPassword} (copied to clipboard). They're logged out everywhere — hand it over securely.`,
+        duration: 30000,
+      });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message || "Failed to reset password.", variant: "destructive" });
     },
   });
 
@@ -153,6 +164,8 @@ export default function SettingsPage() {
         </p>
       </div>
 
+      <ProfilePhotoCard />
+
       <div className="flex items-center gap-3 flex-wrap">
         {teamCounts.map((t) => (
           <Card
@@ -162,10 +175,9 @@ export default function SettingsPage() {
           >
             <CardContent className="p-3">
               <div className="flex items-center gap-2">
-                <Badge variant="secondary" className={`text-[10px] ${teamColors[t.name] || ""}`}>
-                  {t.name}
-                </Badge>
-                <span className="text-lg font-bold ml-auto">{t.count}</span>
+                <span className={`w-2 h-2 rounded-full shrink-0 ${teamDotColors[t.name] || "bg-muted-foreground"}`} />
+                <span className="text-xs font-medium whitespace-nowrap truncate">{t.name}</span>
+                <span className="text-lg font-bold font-mono tabular-nums ml-auto">{t.count}</span>
               </div>
             </CardContent>
           </Card>
@@ -209,10 +221,15 @@ export default function SettingsPage() {
                         if (subTeamMembers.length === 0) return null;
                         return (
                           <div key={subTeam}>
+                            {/* Skip the micro-label when the sub-team just repeats
+                                the group name (e.g. Development → DEVELOPMENT) —
+                                duplicate section labelling, design review 2026-08-23. */}
+                            {subTeam !== group && (
                             <div className="flex items-center gap-2 mb-2">
                               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{subTeam}</span>
                               <div className="flex-1 border-t border-border/50" />
                             </div>
+                            )}
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
                               {subTeamMembers.map((member) => (
                                 <div
@@ -239,6 +256,14 @@ export default function SettingsPage() {
                                       >
                                         {member.isActive === false ? <Power className="w-3.5 h-3.5" /> : <Shield className="w-3.5 h-3.5" />}
                                       </button>
+                                      <button
+                                        onClick={() => { if (window.confirm(`Reset ${member.name}'s password? They'll be logged out everywhere.`)) resetPassword.mutate(member.id); }}
+                                        className="p-1 rounded-md hover:bg-muted text-muted-foreground transition-colors"
+                                        title="Reset password"
+                                        data-testid={`reset-password-${member.username}`}
+                                      >
+                                        <KeyRound className="w-3.5 h-3.5" />
+                                      </button>
                                       {member.isActive !== false && (
                                         <button
                                           onClick={() => forceLogout.mutate(member.id)}
@@ -256,7 +281,7 @@ export default function SettingsPage() {
                                     onValueChange={(val) => updateTeam.mutate({ id: member.id, team: val })}
                                   >
                                     <SelectTrigger
-                                      className="h-7 w-[100px] text-[10px] border-transparent bg-transparent hover:bg-background hover:border-border shrink-0"
+                                      className="h-7 w-auto min-w-[120px] text-[10px] border-transparent bg-transparent hover:bg-background hover:border-border shrink-0"
                                       data-testid={`select-team-${member.username}`}
                                     >
                                       <SelectValue />
@@ -319,6 +344,14 @@ export default function SettingsPage() {
                           >
                             {member.isActive === false ? <Power className="w-3.5 h-3.5" /> : <Shield className="w-3.5 h-3.5" />}
                           </button>
+                                      <button
+                                        onClick={() => { if (window.confirm(`Reset ${member.name}'s password? They'll be logged out everywhere.`)) resetPassword.mutate(member.id); }}
+                                        className="p-1 rounded-md hover:bg-muted text-muted-foreground transition-colors"
+                                        title="Reset password"
+                                        data-testid={`reset-password-${member.username}`}
+                                      >
+                                        <KeyRound className="w-3.5 h-3.5" />
+                                      </button>
                           {member.isActive !== false && (
                             <button
                               onClick={() => forceLogout.mutate(member.id)}
@@ -336,7 +369,7 @@ export default function SettingsPage() {
                         onValueChange={(val) => updateTeam.mutate({ id: member.id, team: val })}
                       >
                         <SelectTrigger
-                          className="h-7 w-[100px] text-[10px] shrink-0"
+                          className="h-7 w-auto min-w-[120px] text-[10px] shrink-0"
                           data-testid={`select-team-${member.username}`}
                         >
                           <SelectValue placeholder="Assign..." />
@@ -366,9 +399,9 @@ export default function SettingsPage() {
           <Card data-testid="card-landsec-demo">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
-                <Landmark className="w-4 h-4 text-blue-500" />
+                <Landmark className="w-4 h-4 text-muted-foreground" />
                 Landsec Demo Account
-                <Badge className="bg-blue-500 text-white text-[10px] ml-1">Demo</Badge>
+                <Badge variant="secondary" className="text-[10px] ml-1">Demo</Badge>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -491,7 +524,7 @@ function UserActivitySection() {
                 {summary.usersOnline} online
               </span>
               <span className="flex items-center gap-1">
-                <Shield className="w-3 h-3 text-blue-500" />
+                <Shield className="w-3 h-3 text-muted-foreground" />
                 {summary.usersWithO365} O365
               </span>
               <span className="flex items-center gap-1">
@@ -511,21 +544,21 @@ function UserActivitySection() {
           <>
             {summary && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-                <div className="bg-green-50 dark:bg-green-950/30 rounded-lg p-3 text-center">
-                  <div className="text-lg font-bold text-green-700 dark:text-green-400">{summary.usersOnline}</div>
-                  <div className="text-[10px] text-green-600 dark:text-green-500 uppercase tracking-wider">Online Now</div>
+                <div className="bg-muted/40 border border-border rounded-lg p-3 text-center">
+                  <div className="text-lg font-bold font-mono tabular-nums">{summary.usersOnline}</div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Online Now</div>
                 </div>
-                <div className="bg-blue-50 dark:bg-blue-950/30 rounded-lg p-3 text-center">
-                  <div className="text-lg font-bold text-blue-700 dark:text-blue-400">{summary.usersWithO365}</div>
-                  <div className="text-[10px] text-blue-600 dark:text-blue-500 uppercase tracking-wider">O365 Linked</div>
+                <div className="bg-muted/40 border border-border rounded-lg p-3 text-center">
+                  <div className="text-lg font-bold font-mono tabular-nums">{summary.usersWithO365}</div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">O365 Linked</div>
                 </div>
-                <div className="bg-purple-50 dark:bg-purple-950/30 rounded-lg p-3 text-center">
-                  <div className="text-lg font-bold text-purple-700 dark:text-purple-400">{summary.usersActiveThisWeek}</div>
-                  <div className="text-[10px] text-purple-600 dark:text-purple-500 uppercase tracking-wider">Active This Week</div>
+                <div className="bg-muted/40 border border-border rounded-lg p-3 text-center">
+                  <div className="text-lg font-bold font-mono tabular-nums">{summary.usersActiveThisWeek}</div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Active This Week</div>
                 </div>
-                <div className="bg-amber-50 dark:bg-amber-950/30 rounded-lg p-3 text-center">
-                  <div className="text-lg font-bold text-amber-700 dark:text-amber-400">{summary.totalAiMessages}</div>
-                  <div className="text-[10px] text-amber-600 dark:text-amber-500 uppercase tracking-wider">ChatBGP Messages</div>
+                <div className="bg-muted/40 border border-border rounded-lg p-3 text-center">
+                  <div className="text-lg font-bold font-mono tabular-nums">{summary.totalAiMessages}</div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">ChatBGP Messages</div>
                 </div>
               </div>
             )}
@@ -580,7 +613,7 @@ function UserActivitySection() {
                       </div>
                       <div className="flex justify-center">
                         {o365Status ? (
-                          <Badge className="text-[9px] px-1.5 py-0 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-0">
+                          <Badge variant="secondary" className="text-[9px] px-1.5 py-0 border-0">
                             <Shield className="w-2.5 h-2.5 mr-0.5" />
                             Linked
                           </Badge>
@@ -853,7 +886,26 @@ function EmailIntelligenceSection() {
             {engagementLoading ? (
               <div className="space-y-2">{[1,2,3].map(i => <Skeleton key={i} className="h-8 w-full" />)}</div>
             ) : engagementData?.scores.length ? (
-              <div className="max-h-96 overflow-y-auto">
+              <>
+              {/* Phone: one row per contact (docs/DESIGN.md §7) — the table below is desktop-only. */}
+              <div className="md:hidden max-h-96 overflow-y-auto divide-y divide-border">
+                {engagementData.scores.slice(0, 30).map(s => (
+                  <div key={s.contactId} className="py-2.5" data-testid={`engagement-row-${s.contactId}-card`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="min-w-0 text-sm font-medium truncate">{s.contactName}</span>
+                      <Badge variant={s.engagementScore > 50 ? "default" : "secondary"} className="shrink-0 text-xs">{s.engagementScore}</Badge>
+                    </div>
+                    {s.companyName && <p className="text-[11px] text-muted-foreground truncate mt-0.5">{s.companyName}</p>}
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                      <Badge variant="outline" className="text-[10px] whitespace-nowrap">{trendIcon(s.trend)} {s.trend}</Badge>
+                      <Badge variant="outline" className="text-[10px] whitespace-nowrap">{s.emailsIn + s.emailsOut} emails</Badge>
+                      <Badge variant="outline" className="text-[10px] whitespace-nowrap">{s.meetings} meetings</Badge>
+                      {s.bgpAgents.length > 0 && <span className="ml-auto text-[10px] text-muted-foreground truncate">{s.bgpAgents.join(", ")}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="hidden md:block max-h-96 overflow-y-auto overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-background">
                     <tr className="text-xs text-muted-foreground border-b">
@@ -884,6 +936,7 @@ function EmailIntelligenceSection() {
                   </tbody>
                 </table>
               </div>
+              </>
             ) : <div className="text-sm text-muted-foreground text-center py-4">No engagement data yet</div>}
           </div>
         )}
@@ -893,7 +946,29 @@ function EmailIntelligenceSection() {
             {leaderboardLoading ? (
               <div className="space-y-2">{[1,2,3].map(i => <Skeleton key={i} className="h-8 w-full" />)}</div>
             ) : leaderboardData?.leaderboard.length ? (
-              <div className="max-h-96 overflow-y-auto">
+              <>
+              {/* Phone: one row per agent (docs/DESIGN.md §7) — the table below is desktop-only. */}
+              <div className="md:hidden max-h-96 overflow-y-auto divide-y divide-border">
+                {leaderboardData.leaderboard.map((a, i) => (
+                  <div key={a.agent} className="py-2.5" data-testid={`leaderboard-row-${a.agent}-card`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="min-w-0 text-sm font-medium capitalize truncate">
+                        {i < 3 && <span className="mr-1">{["🥇", "🥈", "🥉"][i]}</span>}
+                        {a.agent}
+                      </span>
+                      <span className="shrink-0 text-sm font-mono tabular-nums font-medium">{a.totalActivity}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                      <Badge variant="outline" className="text-[10px] whitespace-nowrap">{a.emailsSent} sent</Badge>
+                      <Badge variant="outline" className="text-[10px] whitespace-nowrap">{a.emailsReceived} received</Badge>
+                      <Badge variant="outline" className="text-[10px] whitespace-nowrap">{a.meetingsHeld} meetings</Badge>
+                      {a.meetingsUpcoming > 0 && <Badge variant="outline" className="text-[10px] whitespace-nowrap">{a.meetingsUpcoming} upcoming</Badge>}
+                      <Badge variant="outline" className="text-[10px] whitespace-nowrap">{a.uniqueContacts} contacts</Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="hidden md:block max-h-96 overflow-y-auto overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-background">
                     <tr className="text-xs text-muted-foreground border-b">
@@ -926,6 +1001,7 @@ function EmailIntelligenceSection() {
                   </tbody>
                 </table>
               </div>
+              </>
             ) : <div className="text-sm text-muted-foreground text-center py-4">No activity data yet</div>}
           </div>
         )}
@@ -979,6 +1055,11 @@ function DataHealthSection() {
   const { toast } = useToast();
   const [scanResult, setScanResult] = useState<DupeScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
+  const [renamingTeams, setRenamingTeams] = useState(false);
+  const [syncingLeasingSchedule, setSyncingLeasingSchedule] = useState(false);
+  const [numberingUnits, setNumberingUnits] = useState(false);
+  const [splitTeamOpen, setSplitTeamOpen] = useState(false);
 
   const runScan = async () => {
     setScanning(true);
@@ -990,6 +1071,59 @@ function DataHealthSection() {
       toast({ title: "Scan failed", description: err.message, variant: "destructive" });
     } finally {
       setScanning(false);
+    }
+  };
+
+  const runBackfill = async () => {
+    setBackfilling(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/backfill-tracker-deals");
+      const data = await res.json();
+      toast({ title: "Backfill complete", description: data.message || `${data.created || 0} deals created` });
+    } catch (err: any) {
+      toast({ title: "Backfill failed", description: err.message, variant: "destructive" });
+    } finally {
+      setBackfilling(false);
+    }
+  };
+
+  const runRenameTeams = async () => {
+    setRenamingTeams(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/rename-teams");
+      const data = await res.json();
+      toast({ title: "Teams renamed", description: data.message });
+    } catch (err: any) {
+      toast({ title: "Rename failed", description: err.message, variant: "destructive" });
+    } finally {
+      setRenamingTeams(false);
+    }
+  };
+
+  const runSyncLeasingSchedule = async () => {
+    setSyncingLeasingSchedule(true);
+    try {
+      const res = await apiRequest("POST", "/api/available-units/backfill-leasing-schedule");
+      const data = await res.json();
+      toast({ title: "Leasing schedule synced", description: `${data.created || 0} unit${data.created === 1 ? "" : "s"} added to property leasing schedules` });
+    } catch (err: any) {
+      toast({ title: "Sync failed", description: err.message, variant: "destructive" });
+    } finally {
+      setSyncingLeasingSchedule(false);
+    }
+  };
+
+  const runNumberUnits = async () => {
+    if (!window.confirm("Rename every property's units to 'Unit 1', 'Unit 2'… in creation order? Useful for test data — destroys existing unit names.")) return;
+    setNumberingUnits(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/number-test-units");
+      const data = await res.json();
+      toast({ title: "Units renumbered", description: `${data.renamed || 0} unit${data.renamed === 1 ? "" : "s"} renamed` });
+    } catch (err: any) {
+      toast({ title: "Renumber failed", description: err.message, variant: "destructive" });
+    } finally {
+      setNumberingUnits(false);
     }
   };
 
@@ -1035,10 +1169,31 @@ function DataHealthSection() {
             <ShieldCheck className="w-4 h-4" />
             Data Health
           </CardTitle>
-          <Button size="sm" variant="outline" onClick={runScan} disabled={scanning} data-testid="button-scan-duplicates">
-            {scanning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
-            {scanning ? "Scanning..." : "Scan for Duplicates"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={runBackfill} disabled={backfilling} data-testid="button-backfill-tracker-deals">
+              {backfilling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+              {backfilling ? "Backfilling..." : "Backfill Tracker Deals"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={runRenameTeams} disabled={renamingTeams}>
+              {renamingTeams ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+              {renamingTeams ? "Renaming..." : "Rename Legacy Teams"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={runSyncLeasingSchedule} disabled={syncingLeasingSchedule} data-testid="button-sync-leasing-schedule">
+              {syncingLeasingSchedule ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+              {syncingLeasingSchedule ? "Syncing..." : "Sync Tracker → Leasing Schedule"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={runNumberUnits} disabled={numberingUnits} data-testid="button-number-units">
+              {numberingUnits ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+              {numberingUnits ? "Renaming..." : "Renumber Units (test)"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setSplitTeamOpen(true)} data-testid="button-split-teams">
+              <ShieldCheck className="w-4 h-4 mr-2" />Sort Teams
+            </Button>
+            <Button size="sm" variant="outline" onClick={runScan} disabled={scanning} data-testid="button-scan-duplicates">
+              {scanning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+              {scanning ? "Scanning..." : "Scan for Duplicates"}
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
@@ -1154,7 +1309,143 @@ function DataHealthSection() {
           </div>
         )}
       </CardContent>
+      <SortTeamsDialog open={splitTeamOpen} onClose={() => setSplitTeamOpen(false)} />
     </Card>
+  );
+}
+
+// ── Sort Teams dialog ────────────────────────────────────────────────────────
+function SortTeamsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { toast } = useToast();
+  const TEAMS = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate"];
+  const [filterTeam, setFilterTeam] = useState<string>("__all__"); // default: show everyone
+  const [pending, setPending] = useState<Record<string, string>>({});
+
+  const { data: allUsersData = [], isLoading, refetch } = useQuery<Array<{ id: string; name: string; email: string; team: string | null; title: string | null }>>({
+    queryKey: ["/api/admin/users-by-team", "__all__"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/users-by-team?team=", { credentials: "include" });
+      if (!r.ok) return [];
+      // Endpoint returns unassigned when team is empty; fetch everyone in a second pass.
+      const unassigned = await r.json();
+      const teams = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec", "London Leasing"];
+      const perTeam = await Promise.all(teams.map(t =>
+        fetch(`/api/admin/users-by-team?team=${encodeURIComponent(t)}`, { credentials: "include" }).then(r2 => r2.ok ? r2.json() : [])
+      ));
+      const seen = new Set<string>();
+      const all: any[] = [];
+      for (const list of [unassigned, ...perTeam]) {
+        for (const u of list) {
+          if (seen.has(u.id)) continue;
+          seen.add(u.id);
+          all.push(u);
+        }
+      }
+      return all.sort((a, b) => (a.team || "").localeCompare(b.team || "") || a.name.localeCompare(b.name));
+    },
+    enabled: open,
+  });
+  const users = filterTeam === "__all__"
+    ? allUsersData
+    : filterTeam === "__unassigned__"
+      ? allUsersData.filter(u => !u.team)
+      : allUsersData.filter(u => u.team === filterTeam);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const assignments = Object.entries(pending).map(([userId, team]) => ({ userId, team }));
+      if (assignments.length === 0) return { updated: 0 };
+      const r = await apiRequest("POST", "/api/admin/users-bulk-reassign-team", { assignments });
+      return r.json();
+    },
+    onSuccess: (d: any) => {
+      toast({ title: "Teams updated", description: `${d.updated || 0} reassigned` });
+      setPending({});
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/team-summary"] });
+    },
+    onError: (e: any) => toast({ title: "Save failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const teamCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const u of allUsersData) {
+      const k = u.team || "__unassigned__";
+      m.set(k, (m.get(k) || 0) + 1);
+    }
+    return m;
+  }, [allUsersData]);
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Sort teams</DialogTitle>
+          <DialogDescription>
+            Reassign people to the canonical team list. Useful after a rename / merge — e.g. splitting "London Leasing" into London Retail and London F&B.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-wrap gap-1 mb-3">
+          <button
+            onClick={() => setFilterTeam("__all__")}
+            className={`text-[11px] px-2 py-0.5 rounded border ${filterTeam === "__all__"
+              ? "bg-foreground text-background border-foreground"
+              : "bg-card hover:bg-muted/40"
+            }`}
+          >
+            All <span className="text-muted-foreground">({allUsersData.length})</span>
+          </button>
+          {[...teamCounts.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([t, n]) => (
+            <button
+              key={t}
+              onClick={() => setFilterTeam(t)}
+              className={`text-[11px] px-2 py-0.5 rounded border ${filterTeam === t
+                ? "bg-foreground text-background border-foreground"
+                : "bg-card hover:bg-muted/40"
+              }`}
+            >
+              {t === "__unassigned__" ? "Unassigned" : t} <span className="text-muted-foreground">({n})</span>
+            </button>
+          ))}
+        </div>
+
+        {isLoading ? (
+          <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+        ) : users.length === 0 ? (
+          <p className="text-sm text-muted-foreground italic">No users in this bucket.</p>
+        ) : (
+          <div className="space-y-2">
+            {users.map(u => (
+              <div key={u.id} className="flex items-center gap-2 p-2 border rounded">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate">{u.name}</div>
+                  <div className="text-[11px] text-muted-foreground truncate">{u.title || u.email || ""}</div>
+                  <div className="text-[10px] text-muted-foreground">Current: {u.team || "(none)"}</div>
+                </div>
+                <select
+                  className="text-xs border rounded p-1 bg-card"
+                  value={pending[u.id] ?? u.team ?? ""}
+                  onChange={e => setPending(p => ({ ...p, [u.id]: e.target.value }))}
+                >
+                  <option value="">— None —</option>
+                  {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => save.mutate()} disabled={save.isPending || Object.keys(pending).length === 0}>
+            {save.isPending && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}
+            Save {Object.keys(pending).length > 0 ? `(${Object.keys(pending).length})` : ""}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1236,7 +1527,7 @@ function ChatBGPLearningsSection() {
           <div>
             <CardTitle className="text-lg flex items-center gap-2">
               ChatBGP Memory
-              <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">
+              <Badge variant="secondary">
                 {activeCount} active
               </Badge>
             </CardTitle>
@@ -1267,7 +1558,7 @@ function ChatBGPLearningsSection() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <Badge className={`text-[10px] ${LEARNING_CATEGORY_COLORS[item.category] || "bg-gray-100 text-gray-800"}`}>
+                      <Badge variant="outline" className={`border-transparent text-[10px] ${LEARNING_CATEGORY_COLORS[item.category] || "bg-gray-100 text-gray-800"}`}>
                         {LEARNING_CATEGORY_LABELS[item.category] || item.category}
                       </Badge>
                       {!item.active && (
@@ -1381,10 +1672,10 @@ function AppFeedbackSection() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <Badge className={`text-[10px] ${FEEDBACK_CATEGORY_COLORS[item.category] || "bg-gray-100 text-gray-800"}`}>
+                      <Badge variant="outline" className={`border-transparent text-[10px] ${FEEDBACK_CATEGORY_COLORS[item.category] || "bg-gray-100 text-gray-800"}`}>
                         {item.category}
                       </Badge>
-                      <Badge className={`text-[10px] ${FEEDBACK_STATUS_COLORS[item.status] || "bg-gray-100 text-gray-800"}`}>
+                      <Badge variant="outline" className={`border-transparent text-[10px] ${FEEDBACK_STATUS_COLORS[item.status] || "bg-gray-100 text-gray-800"}`}>
                         {item.status.replace("_", " ")}
                       </Badge>
                       {item.pageContext && (
@@ -1671,7 +1962,7 @@ function EmailProcessorSection() {
               </Badge>
             ))}
             {stats.repliesSent > 0 && (
-              <div className="flex items-center gap-1.5 text-xs text-blue-600">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <CheckCircle2 className="w-3 h-3" />
                 {stats.repliesSent} replies sent
               </div>
@@ -1704,7 +1995,7 @@ function EmailProcessorSection() {
                         {classificationLabels[entry.classification] || entry.classification}
                       </Badge>
                       {entry.replySent && (
-                        <Badge variant="outline" className="text-[10px] border-blue-300 text-blue-600">
+                        <Badge variant="outline" className="text-[10px]">
                           Reply sent
                         </Badge>
                       )}

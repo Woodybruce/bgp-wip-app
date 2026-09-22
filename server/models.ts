@@ -9,11 +9,14 @@ import * as path from "path";
 import Anthropic from "@anthropic-ai/sdk";
 import { setupAdvancedModelsRoutes } from "./models-advanced";
 import { buildInvestmentModel, buildDCFModel, analyzeAdvancedWorkbook, applyBGPBranding, buildModelForAddin } from "./excel-builder";
-import { getValidMsToken } from "./microsoft";
+import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
+import { listAllChildren } from "./microsoft-graph-pagination";
 import { performPropertyLookup, formatPropertyReport } from "./property-lookup";
 import { crmDeals, crmContacts, crmCompanies, crmProperties, chatbgpLearnings, appFeedbackLog, appChangeRequests, excelTemplates, excelModelRuns, excelModelRunVersions } from "@shared/schema";
 import { ilike, or, eq, sql, desc, and } from "drizzle-orm";
 import { saveFileFromDisk, ensureFileOnDisk, syncFileToDisk } from "./file-storage";
+import { createEngineFromWorkbook, acquireTemplateEngine, engineCacheKeyForFile, applyMappedInputs, type EngineCellError } from "./model-engine";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 
 const UPLOAD_DIR = path.join(process.cwd(), "ChatBGP", "templates");
 const RUNS_DIR = path.join(process.cwd(), "ChatBGP", "runs");
@@ -286,7 +289,7 @@ function expandQuarterColumns(modelDef: any): void {
       if (decoded.c >= col0Idx) continue;
       if (/XIRR|IRR|NPV/i.test(cd.f)) {
         const original = cd.f;
-        cd.f = cd.f.replace(rangeEndRe, (match, d1, startC, d2, startR, d3, _endC, d4, endR) => {
+        cd.f = cd.f.replace(rangeEndRe, (match: string, d1: string, startC: string, d2: string, startR: string, d3: string, _endC: string, d4: string, endR: string) => {
           const sColIdx = XLSX.utils.decode_col(startC);
           if (sColIdx > col1Idx) return match;
           return `${d1}${startC}${d2}${startR}:${d3}${lastColLetter}${d4}${endR}`;
@@ -445,6 +448,116 @@ function extractOutputs(wb: XLSX.WorkBook, mapping: Record<string, any>): Record
     }
   }
   return outputs;
+}
+
+/** Raw cached values of the mapped input cells — the template's current
+ *  assumptions, used by the scenario builder as per-field defaults. */
+function extractInputs(wb: XLSX.WorkBook, mapping: Record<string, any>): Record<string, any> {
+  const inputs: Record<string, any> = {};
+  for (const [key, config] of Object.entries(mapping)) {
+    try {
+      const ws = wb.Sheets[config.sheet];
+      if (!ws) continue;
+      inputs[key] = readCellValue(ws, config.cell);
+    } catch {
+      inputs[key] = null;
+    }
+  }
+  return inputs;
+}
+
+interface EngineRunOutcome {
+  /** true when the engine recalculated the workbook and output cells were refreshed. */
+  computed: boolean;
+  /** Set when the engine could not run this workbook at all. */
+  engineError?: string;
+  /** Non-fatal load problems (e.g. named ranges that failed to register). */
+  engineWarnings: string[];
+  /** Cells that evaluate to Excel errors (#NAME?, #CYCLE!, #DIV/0!, ...). */
+  calculationErrors: EngineCellError[];
+}
+
+/**
+ * Recalculate a workbook with the model engine and refresh the cached values
+ * of every mapped output cell in place (formula `.f` is kept; only `.v`/`.t`
+ * are updated), so both the API response and the written .xlsx show fresh
+ * numbers. Returns computed=false when the engine cannot handle the workbook —
+ * callers must then fall back to stale cached values and say so.
+ *
+ * When `cache` is given, the engine is leased from the template engine cache
+ * (built once per template file, reused across runs): the lease builds from
+ * the PRISTINE template file and applies `cache.inputValues` engine-side,
+ * because `wb` here already carries the run's inputs baked in. Without
+ * `cache`, the engine is built from `wb` as-is and disposed.
+ */
+function recalculateOutputsWithEngine(
+  wb: XLSX.WorkBook,
+  outputMapping: Record<string, any>,
+  cache?: { templateFilePath: string; inputValues: Record<string, any>; inputMapping: Record<string, any> },
+): EngineRunOutcome {
+  const noRun: EngineRunOutcome = { computed: false, engineWarnings: [], calculationErrors: [] };
+  if (!outputMapping || Object.keys(outputMapping).length === 0) {
+    // Nothing to read back: no stale numbers can be presented, nothing to compute.
+    return { computed: true, engineWarnings: [], calculationErrors: [] };
+  }
+
+  let engine;
+  let release: (() => void) | null = null;
+  if (cache) {
+    try {
+      const lease = acquireTemplateEngine(engineCacheKeyForFile(cache.templateFilePath), () =>
+        XLSX.readFile(cache.templateFilePath, { cellFormula: true, sheetStubs: true }),
+      );
+      engine = lease.engine;
+      release = lease.release;
+      applyMappedInputs(engine, cache.inputValues || {}, cache.inputMapping);
+    } catch (err: any) {
+      if (release) release();
+      return { ...noRun, engineError: err?.message || String(err) };
+    }
+  } else {
+    try {
+      engine = createEngineFromWorkbook(wb);
+    } catch (err: any) {
+      return { ...noRun, engineError: err?.message || String(err) };
+    }
+  }
+
+  try {
+    for (const config of Object.values(outputMapping) as any[]) {
+      if (!config?.sheet || !config?.cell) continue;
+      const ws = wb.Sheets[config.sheet];
+      if (!ws) continue;
+      const result = engine.getCellValue(config.sheet, config.cell);
+      const cell: any = ws[config.cell] || {};
+      if (result.ok) {
+        const v = result.value;
+        if (typeof v === "number") { cell.v = v; cell.t = "n"; }
+        else if (typeof v === "boolean") { cell.v = v; cell.t = "b"; }
+        else if (v === null) { delete cell.v; }
+        else { cell.v = String(v); cell.t = "s"; }
+      } else {
+        cell.v = result.error;
+        cell.t = "e";
+      }
+      delete cell.w; // cached display text no longer matches
+      ws[config.cell] = cell;
+    }
+
+    // Also surface errors anywhere else in the workbook (unsupported functions
+    // show up as #NAME?, circular references as #CYCLE!).
+    const calculationErrors = engine.collectErrors(25);
+    return {
+      computed: true,
+      engineWarnings: engine.warnings,
+      calculationErrors,
+    };
+  } catch (err: any) {
+    return { ...noRun, engineError: err?.message || String(err) };
+  } finally {
+    if (release) release();
+    else engine.dispose();
+  }
 }
 
 function analyzeWorkbook(wb: XLSX.WorkBook): { sheets: { name: string; rows: number; cols: number }[]; properties: string[] } {
@@ -635,13 +748,32 @@ Important:
 - Calculate occupancy from the schedule if possible.
 - Return ONLY the JSON object, no markdown formatting.`;
 
+// Model Studio runs on Fable (Woody, 2026-09-08: "upgrade the model creator
+// to fable") — the same id ChatBGP uses, through the beta endpoint with
+// Anthropic's server-side fallback to Opus, so a Fable-side blip never
+// breaks a model build. Every Studio call goes through here.
+const STUDIO_MODEL = process.env.MODEL_STUDIO_MODEL || "claude-fable-5";
+const STUDIO_FALLBACK_MODEL = "claude-opus-4-8";
+async function studioCreate(anthropic: Anthropic, params: Record<string, any>): Promise<Anthropic.Messages.Message> {
+  const model = params.model || STUDIO_MODEL;
+  if (model.startsWith("claude-fable")) {
+    return (await (anthropic as any).beta.messages.create({
+      ...params,
+      model,
+      betas: ["server-side-fallback-2026-06-01"],
+      fallbacks: [{ model: STUDIO_FALLBACK_MODEL }],
+    })) as Anthropic.Messages.Message;
+  }
+  return await anthropic.messages.create({ ...params, model } as any);
+}
+
 function getAnthropicClient() {
   // Use direct API key first (same dual-key approach as chatbgp.ts)
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
   const baseURL = process.env.ANTHROPIC_API_KEY
     ? undefined
     : process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
-  return new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
+  return new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}), ...anthropicWorkspaceOptions() });
 }
 
 function getGeminiModelClient() {
@@ -652,17 +784,31 @@ function getGeminiModelClient() {
   return new GoogleGenAI({ apiKey, httpOptions: { apiVersion: "", baseUrl } });
 }
 
-async function extractPropertyDataWithAI(documentTexts: { name: string; text: string }[]): Promise<any> {
+function buildTemplateInputSchema(inputMapping: Record<string, any>): string {
+  const entries = Object.entries(inputMapping || {});
+  if (!entries.length) return "";
+  const lines = entries.map(([key, m]: [string, any]) => {
+    const unit = m?.type === "percent"
+      ? "percentage number (5.5 for 5.5%)"
+      : m?.type === "text"
+        ? "string"
+        : "number in FULL units (11000000 for £11m, 500000 for £500k/yr)";
+    return `  "${key}": "${m?.label || key} — ${unit}"`;
+  });
+  return `\n\nCRITICAL — the target model has these EXACT input fields. For every one you can determine from the documents, include it in the JSON keyed EXACTLY as shown below (these keys override the generic fields above where they overlap — e.g. use "purchasePrice" not a variant, in the units specified):\n{\n${lines.join(",\n")}\n}`;
+}
+
+async function extractPropertyDataWithAI(documentTexts: { name: string; text: string }[], inputMapping?: Record<string, any>): Promise<any> {
   const anthropic = getAnthropicClient();
 
   const combinedText = documentTexts
     .map((doc) => `=== DOCUMENT: ${doc.name} ===\n${doc.text.slice(0, 15000)}`)
     .join("\n\n");
 
-  const response = await anthropic.messages.create({
-    model: "claude-opus-4-6",
+  const response = await studioCreate(anthropic, {
+    model: STUDIO_MODEL,
     max_tokens: 8192,
-    system: SMART_EXTRACT_PROMPT,
+    system: SMART_EXTRACT_PROMPT + (inputMapping ? buildTemplateInputSchema(inputMapping) : ""),
     messages: [
       { role: "user", content: combinedText },
     ],
@@ -670,7 +816,15 @@ async function extractPropertyDataWithAI(documentTexts: { name: string; text: st
 
   const content = response.content[0]?.type === "text" ? response.content[0].text : "{}";
   const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-  return JSON.parse(cleaned);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try { return JSON.parse(jsonMatch[0]); } catch {}
+    }
+    throw new Error("AI returned invalid JSON. Please try again.");
+  }
 }
 
 async function analyzeTemplateWithAI(wb: XLSX.WorkBook): Promise<{
@@ -715,8 +869,8 @@ Guidelines:
 - Pay attention to number formats [fmt:...] to determine if a cell is a percentage, currency, etc.
 - Return ONLY the JSON, no markdown`;
 
-  const response = await anthropic.messages.create({
-    model: "claude-opus-4-6",
+  const response = await studioCreate(anthropic, {
+    model: STUDIO_MODEL,
     max_tokens: 8192,
     system: systemPrompt,
     messages: [
@@ -726,7 +880,15 @@ Guidelines:
 
   const content = response.content[0]?.type === "text" ? response.content[0].text : "{}";
   const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-  return JSON.parse(cleaned);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try { return JSON.parse(jsonMatch[0]); } catch {}
+    }
+    throw new Error("AI returned invalid JSON. Please try again.");
+  }
 }
 
 async function askAboutModel(wb: XLSX.WorkBook, question: string, templateName: string, inputMapping?: Record<string, any>, outputMapping?: Record<string, any>): Promise<string> {
@@ -745,8 +907,8 @@ async function askAboutModel(wb: XLSX.WorkBook, question: string, templateName: 
       .join("\n");
   }
 
-  const response = await anthropic.messages.create({
-    model: "claude-opus-4-6",
+  const response = await studioCreate(anthropic, {
+    model: STUDIO_MODEL,
     max_tokens: 8192,
     system: `You are an expert Excel financial modelling analyst at BGP (Bruce Gillingham Pollard), a London property consultancy. You have full visibility of a workbook including:
 - Every cell's value and formula (formulas shown as =FORMULA → calculated_value)
@@ -795,8 +957,8 @@ async function analyzeModelResults(
     })
     .join("\n");
 
-  const response = await anthropic.messages.create({
-    model: "claude-opus-4-6",
+  const response = await studioCreate(anthropic, {
+    model: STUDIO_MODEL,
     max_tokens: 8192,
     system: `You are a senior investment analyst at BGP (Bruce Gillingham Pollard), a London property consultancy. Provide a concise, professional analysis of these model results. Cover:
 1. Overall attractiveness of the investment (based on IRR, MOIC, yields)
@@ -828,8 +990,8 @@ async function suggestInputValues(
     })
     .join("\n");
 
-  const response = await anthropic.messages.create({
-    model: "claude-opus-4-6",
+  const response = await studioCreate(anthropic, {
+    model: STUDIO_MODEL,
     max_tokens: 8192,
     system: `You are a senior property investment analyst at BGP, a London property consultancy. Suggest reasonable default/market-standard values for a property investment model. Base suggestions on current London property market conditions. Return JSON with:
 {
@@ -844,7 +1006,15 @@ Only suggest values for fields that are currently empty. Use numbers (not string
 
   const content = response.content[0]?.type === "text" ? response.content[0].text : "{}";
   const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-  return JSON.parse(cleaned);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try { return JSON.parse(jsonMatch[0]); } catch {}
+    }
+    throw new Error("AI returned invalid JSON. Please try again.");
+  }
 }
 
 export function setupModelsRoutes(app: Express) {
@@ -855,7 +1025,17 @@ export function setupModelsRoutes(app: Express) {
       if (propertyId) {
         templates = templates.filter(t => t.propertyId === propertyId);
       }
-      res.json(templates);
+      const enriched = templates.map((t) => {
+        let sheetCount: number | undefined;
+        try {
+          if (t.filePath && fs.existsSync(t.filePath)) {
+            const wb = XLSX.readFile(t.filePath, { bookSheets: true });
+            sheetCount = wb.SheetNames.length;
+          }
+        } catch {}
+        return { ...t, sheetCount };
+      });
+      res.json(enriched);
     } catch (err: any) {
       res.status(500).json({ message: "Failed to fetch templates" });
     }
@@ -872,10 +1052,11 @@ export function setupModelsRoutes(app: Express) {
       let analysis = null;
       try {
         await ensureTemplateFile(template.filePath);
-      const wb = XLSX.readFile(template.filePath);
+      const wb = XLSX.readFile(template.filePath, { sheetStubs: true });
         analysis = analyzeWorkbook(wb);
         const existingOutputs = extractOutputs(wb, outputMapping);
-        res.json({ ...template, inputMapping, outputMapping, analysis, sampleOutputs: existingOutputs });
+        const currentInputs = extractInputs(wb, inputMapping);
+        res.json({ ...template, inputMapping, outputMapping, analysis, sampleOutputs: existingOutputs, sampleInputs: currentInputs });
       } catch {
         res.json({ ...template, inputMapping, outputMapping, analysis });
       }
@@ -969,7 +1150,10 @@ export function setupModelsRoutes(app: Express) {
       if (!sheet || !cell) return res.status(400).json({ message: "Sheet and cell are required" });
 
       await ensureTemplateFile(template.filePath);
-      const wb = XLSX.readFile(template.filePath);
+      // cellFormula+sheetStubs: without them SheetJS drops formula cells that
+      // have no cached value, and the writeFile below would erase every
+      // uncached formula from the template on disk.
+      const wb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
       const ws = wb.Sheets[sheet];
       if (!ws) return res.status(404).json({ message: `Sheet "${sheet}" not found` });
 
@@ -1089,6 +1273,24 @@ export function setupModelsRoutes(app: Express) {
         }
       }
 
+      // Fallback: if no mappings emerged (AI key absent or analysis came back
+      // empty), run the validated auto-mapper so the template is drivable
+      // immediately after upload.
+      if (Object.keys(inputMapping).length === 0 && Object.keys(outputMapping).length === 0) {
+        try {
+          const { autoMapWorkbook } = await import("./model-automap");
+          const wbForMap = XLSX.readFile(req.file.path, { cellFormula: true, sheetStubs: true });
+          const proposal = await autoMapWorkbook(wbForMap);
+          if (Object.keys(proposal.inputs).length > 0 || Object.keys(proposal.outputs).length > 0) {
+            inputMapping = proposal.inputs as typeof inputMapping;
+            outputMapping = proposal.outputs as typeof outputMapping;
+            console.log(`[upload] auto-mapped "${req.body.name || req.file.originalname}" via ${proposal.source}: ${Object.keys(proposal.inputs).length} inputs, ${Object.keys(proposal.outputs).length} outputs`);
+          }
+        } catch (e: any) {
+          console.error("[upload] auto-map fallback failed:", e?.message);
+        }
+      }
+
       const template = await storage.createExcelTemplate({
         name: req.body.name || path.parse(req.file.originalname).name,
         description: req.body.description || aiDescription,
@@ -1115,7 +1317,7 @@ export function setupModelsRoutes(app: Express) {
       if (propertyId !== undefined) updates.propertyId = propertyId || null;
       if (name !== undefined) updates.name = name;
       if (Object.keys(updates).length === 0) return res.status(400).json({ message: "No updates provided" });
-      await db.update(excelTemplates).set(updates).where(eq(excelTemplates.id, req.params.id));
+      await db.update(excelTemplates).set(updates).where(eq(excelTemplates.id, req.params.id as string));
       const updated = await storage.getExcelTemplate(req.params.id as string);
       if (!updated) return res.status(404).json({ message: "Template not found" });
       res.json(updated);
@@ -1128,7 +1330,7 @@ export function setupModelsRoutes(app: Express) {
     try {
       const { propertyId } = req.body;
       if (propertyId === undefined) return res.status(400).json({ message: "No updates provided" });
-      await db.update(excelModelRuns).set({ propertyId: propertyId || null }).where(eq(excelModelRuns.id, req.params.id));
+      await db.update(excelModelRuns).set({ propertyId: propertyId || null }).where(eq(excelModelRuns.id, req.params.id as string));
       res.json({ message: "Updated" });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to update run" });
@@ -1195,7 +1397,9 @@ export function setupModelsRoutes(app: Express) {
       if (propertyId) {
         runs = runs.filter(r => r.propertyId === propertyId);
       }
-      res.json(runs);
+      const templates = await storage.getExcelTemplates();
+      const templateNameById = new Map(templates.map((t) => [t.id, t.name]));
+      res.json(runs.map((r) => ({ ...r, templateName: templateNameById.get(r.templateId) || null })));
     } catch (err: any) {
       res.status(500).json({ message: "Failed to fetch model runs" });
     }
@@ -1234,7 +1438,7 @@ export function setupModelsRoutes(app: Express) {
       if (!template) return res.status(404).json({ message: "Template not found" });
 
       await ensureTemplateFile(template.filePath);
-      const wb = XLSX.readFile(template.filePath);
+      const wb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
       const inputMapping = JSON.parse(template.inputMapping || "{}");
       const outputMapping = JSON.parse(template.outputMapping || "{}");
 
@@ -1250,13 +1454,27 @@ export function setupModelsRoutes(app: Express) {
         }
       }
 
+      // Recalculate with the model engine: refreshes the cached values of the
+      // mapped output cells inside wb before it is written to disk. On failure
+      // we fall back to the stale Excel cache and say so. The engine is leased
+      // from the per-template cache (inputs applied engine-side) — wb already
+      // carries the inputs baked in for the file artifact.
+      const engineResult = recalculateOutputsWithEngine(wb, outputMapping, {
+        templateFilePath: template.filePath,
+        inputValues: inputValues || {},
+        inputMapping,
+      });
+
       const runFileName = `run-${Date.now()}-${name.replace(/[^a-zA-Z0-9]/g, "_")}.xlsx`;
       const runFilePath = path.join(RUNS_DIR, runFileName);
       XLSX.writeFile(wb, runFilePath);
       try { await saveFileFromDisk(`runs/${runFileName}`, runFilePath, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", `${name}.xlsx`); } catch {}
 
-      const reloadedWb = XLSX.readFile(runFilePath);
-      const outputs = extractOutputs(reloadedWb, outputMapping);
+      // When the engine ran, wb already carries fresh output values; otherwise
+      // read back whatever Excel last cached (stale) and flag it.
+      const outputs = engineResult.computed
+        ? extractOutputs(wb, outputMapping)
+        : extractOutputs(XLSX.readFile(runFilePath, { sheetStubs: true }), outputMapping);
 
       const run = await storage.createExcelModelRun({
         templateId,
@@ -1264,13 +1482,23 @@ export function setupModelsRoutes(app: Express) {
         inputValues: JSON.stringify(inputValues || {}),
         outputValues: JSON.stringify(outputs),
         generatedFilePath: runFilePath,
-        status: "completed",
+        status: engineResult.computed ? "completed" : "uncalculated",
       });
 
       res.json({
         ...run,
         inputValues: inputValues || {},
         outputValues: outputs,
+        ...(engineResult.computed
+          ? {
+              engine: "hyperformula",
+              engineWarnings: engineResult.engineWarnings,
+              calculationErrors: engineResult.calculationErrors,
+            }
+          : {
+              outputsAreStaleCache: true,
+              engineError: engineResult.engineError,
+            }),
       });
     } catch (err: any) {
       console.error("Model run error:", err?.message);
@@ -1334,9 +1562,7 @@ export function setupModelsRoutes(app: Express) {
       const msToken = await getValidMsToken(req);
       if (!msToken) return res.status(401).json({ message: "Microsoft 365 not connected" });
 
-      const SP_HOST = "brucegillinghampollard.sharepoint.com";
-      const SP_SITE = "/sites/BGPsharedrive";
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
       if (!siteRes.ok) return res.status(500).json({ message: "Could not access SharePoint" });
       const site = await siteRes.json();
 
@@ -1403,7 +1629,7 @@ export function setupModelsRoutes(app: Express) {
       let newOutputs: Record<string, any> = {};
       let newInputs: Record<string, any> = JSON.parse(run.inputValues || "{}");
       try {
-        const wb = XLSX.readFile(versionedFilePath);
+        const wb = XLSX.readFile(versionedFilePath, { sheetStubs: true });
         newOutputs = extractOutputs(wb, outputMapping);
         if (inputMapping && typeof inputMapping === "object") {
           const reread: Record<string, any> = {};
@@ -1426,9 +1652,7 @@ export function setupModelsRoutes(app: Express) {
         const { getValidMsToken } = await import("./microsoft");
         const msToken = await getValidMsToken(req);
         if (msToken) {
-          const SP_HOST = "brucegillinghampollard.sharepoint.com";
-          const SP_SITE = "/sites/BGPsharedrive";
-          const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+          const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
           if (siteRes.ok) {
             const site = await siteRes.json();
             const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${msToken}` } });
@@ -1557,9 +1781,7 @@ export function setupModelsRoutes(app: Express) {
       const msToken = await getValidMsToken(req);
       if (!msToken) return res.status(401).json({ message: "Microsoft 365 not connected" });
 
-      const SP_HOST = "brucegillinghampollard.sharepoint.com";
-      const SP_SITE = "/sites/BGPsharedrive";
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
       if (!siteRes.ok) return res.status(500).json({ message: "Could not access SharePoint" });
       const site = await siteRes.json();
 
@@ -1614,9 +1836,7 @@ export function setupModelsRoutes(app: Express) {
       const msToken = await getValidMsToken(req);
       if (!msToken) return res.status(401).json({ message: "Microsoft 365 not connected — required for embedded Excel" });
 
-      const SP_HOST = "brucegillinghampollard.sharepoint.com";
-      const SP_SITE = "/sites/BGPsharedrive";
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
       if (!siteRes.ok) return res.status(500).json({ message: "Could not access SharePoint" });
       const site = await siteRes.json();
 
@@ -1769,7 +1989,9 @@ export function setupModelsRoutes(app: Express) {
       if (!template) return res.status(404).json({ message: "Template not found" });
 
       await ensureTemplateFile(template.filePath);
-      const wb = XLSX.readFile(template.filePath);
+      // cellFormula+sheetStubs keep uncached formula cells alive so the
+      // writeFile on apply-changes cannot strip them from the template.
+      const wb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
       const richContext = extractRichWorkbookContext(wb, 40);
       const inputMapping = JSON.parse(template.inputMapping || "{}");
       const outputMapping = JSON.parse(template.outputMapping || "{}");
@@ -1835,7 +2057,7 @@ Return ONLY valid JSON. No markdown, no code fences.`;
           }
           console.log("[model-design-chat] Using Gemini 3.1 Pro");
           const geminiResponse = await gemini.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-2.5-flash",
             contents: geminiContents,
             config: { maxOutputTokens: 4096, temperature: 0.3, systemInstruction: systemPrompt },
           });
@@ -1848,8 +2070,8 @@ Return ONLY valid JSON. No markdown, no code fences.`;
       if (!responseText) {
         console.log("[model-design-chat] Using Claude Sonnet fallback");
         const anthropic = getAnthropicClient();
-        const response = await anthropic.messages.create({
-          model: "claude-opus-4-6",
+        const response = await studioCreate(anthropic, {
+          model: STUDIO_MODEL,
           max_tokens: 4096,
           system: systemPrompt,
           messages,
@@ -2009,7 +2231,13 @@ Return ONLY valid JSON. No markdown, no code fences.`;
         return res.status(400).json({ message: "Could not extract text from any uploaded documents" });
       }
 
-      const extracted = await extractPropertyDataWithAI(documentTexts);
+      let inputMapping: Record<string, any> | undefined;
+      if (req.body?.templateId) {
+        const template = await storage.getExcelTemplate(req.body.templateId);
+        if (template) inputMapping = JSON.parse(template.inputMapping || "{}");
+      }
+
+      const extracted = await extractPropertyDataWithAI(documentTexts, inputMapping);
 
       for (const file of files) {
         try { fs.unlinkSync(file.path); } catch {}
@@ -2025,10 +2253,38 @@ Return ONLY valid JSON. No markdown, no code fences.`;
     }
   });
 
+/**
+ * Coerce a reviewed smart-run input the same way writeCellValue treats values
+ * at cell-write time: text → String, everything else → plain parseFloat.
+ * Percent stays human-scale here (5.5); writeCellValue divides by 100 when it
+ * writes the cell. Returns undefined for empty/non-numeric values, which means
+ * "do not write this input".
+ */
+function coerceSmartRunInput(value: any, type: string | undefined): number | string | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
+  if (type === "text") return String(value);
+  const n = parseFloat(value);
+  return isNaN(n) ? undefined : n;
+}
+
   app.post("/api/models/smart-run", requireAuth, docUpload.array("documents", 5), async (req: Request, res: Response) => {
     try {
       const files = req.files as Express.Multer.File[];
-      const { templateId, name } = req.body;
+      const { templateId, name, editedInputs: editedInputsRaw } = req.body;
+
+      // Reviewed values from the client arrive as a JSON string (multer text
+      // field). Malformed JSON is ignored — extraction alone decides inputs.
+      let editedInputs: Record<string, any> | null = null;
+      if (typeof editedInputsRaw === "string" && editedInputsRaw.trim()) {
+        try {
+          const parsed = JSON.parse(editedInputsRaw);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            editedInputs = parsed;
+          }
+        } catch {
+          console.warn("[smart-run] Ignoring malformed editedInputs payload");
+        }
+      }
 
       if (!files || files.length === 0) {
         return res.status(400).json({ message: "No documents uploaded" });
@@ -2057,20 +2313,31 @@ Return ONLY valid JSON. No markdown, no code fences.`;
         return res.status(400).json({ message: "Could not extract text from any uploaded documents" });
       }
 
-      const extracted = await extractPropertyDataWithAI(documentTexts);
-
       const inputMapping = JSON.parse(template.inputMapping || "{}");
       const outputMapping = JSON.parse(template.outputMapping || "{}");
 
+      const extracted = await extractPropertyDataWithAI(documentTexts, inputMapping);
+
+      // Precedence: a reviewed value present in editedInputs wins over the
+      // fresh extraction for that key; keys outside the template's
+      // inputMapping are never written. An edited value that coerces to
+      // empty/non-numeric omits the input entirely (the extraction does not
+      // resurrect it), matching writeCellValue's skip semantics.
       const inputValues: Record<string, any> = {};
+      const overriddenKeys: string[] = [];
       for (const [key, mapping] of Object.entries(inputMapping) as [string, any][]) {
-        if (extracted[key] !== undefined && extracted[key] !== null) {
+        if (editedInputs && Object.prototype.hasOwnProperty.call(editedInputs, key)) {
+          const editedValue = coerceSmartRunInput(editedInputs[key], mapping?.type);
+          const extractedValue = coerceSmartRunInput(extracted[key], mapping?.type);
+          if (String(editedValue) !== String(extractedValue)) overriddenKeys.push(key);
+          if (editedValue !== undefined) inputValues[key] = editedValue;
+        } else if (extracted[key] !== undefined && extracted[key] !== null) {
           inputValues[key] = extracted[key];
         }
       }
 
       await ensureTemplateFile(template.filePath);
-      const wb = XLSX.readFile(template.filePath);
+      const wb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
       for (const [key, value] of Object.entries(inputValues)) {
         const mapping = inputMapping[key];
         if (mapping) {
@@ -2081,14 +2348,22 @@ Return ONLY valid JSON. No markdown, no code fences.`;
         }
       }
 
+      // Recalculate with the model engine (same as POST /api/models/runs).
+      const engineResult = recalculateOutputsWithEngine(wb, outputMapping, {
+        templateFilePath: template.filePath,
+        inputValues,
+        inputMapping,
+      });
+
       const runName = name || extracted.dealName || `Smart Run ${new Date().toLocaleDateString()}`;
       const runFileName = `run-${Date.now()}-${runName.replace(/[^a-zA-Z0-9]/g, "_")}.xlsx`;
       const runFilePath = path.join(RUNS_DIR, runFileName);
       XLSX.writeFile(wb, runFilePath);
       try { await saveFileFromDisk(`runs/${runFileName}`, runFilePath, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", `${runName}.xlsx`); } catch {}
 
-      const reloadedWb = XLSX.readFile(runFilePath);
-      const outputs = extractOutputs(reloadedWb, outputMapping);
+      const outputs = engineResult.computed
+        ? extractOutputs(wb, outputMapping)
+        : extractOutputs(XLSX.readFile(runFilePath, { sheetStubs: true }), outputMapping);
 
       const run = await storage.createExcelModelRun({
         templateId,
@@ -2096,7 +2371,7 @@ Return ONLY valid JSON. No markdown, no code fences.`;
         inputValues: JSON.stringify(inputValues),
         outputValues: JSON.stringify(outputs),
         generatedFilePath: runFilePath,
-        status: "completed",
+        status: engineResult.computed ? "completed" : "uncalculated",
       });
 
       for (const file of files) {
@@ -2107,6 +2382,17 @@ Return ONLY valid JSON. No markdown, no code fences.`;
         ...run,
         inputValues,
         outputValues: outputs,
+        overriddenKeys,
+        ...(engineResult.computed
+          ? {
+              engine: "hyperformula",
+              engineWarnings: engineResult.engineWarnings,
+              calculationErrors: engineResult.calculationErrors,
+            }
+          : {
+              outputsAreStaleCache: true,
+              engineError: engineResult.engineError,
+            }),
         extracted,
         documentsProcessed: documentTexts.map((d) => d.name),
       });
@@ -2128,7 +2414,7 @@ Return ONLY valid JSON. No markdown, no code fences.`;
   }).array("documents", 10);
 
   app.get("/api/models/create-model/status/:jobId", requireAuth, (req: Request, res: Response) => {
-    const job = modelJobs.get(req.params.jobId);
+    const job = modelJobs.get(req.params.jobId as string);
     if (!job) return res.json({ status: "error", message: "Model creation was interrupted (server restarted). Please try again." });
     if (job.status === "processing") return res.json({ status: "processing" });
     if (job.status === "error") return res.json({ status: "error", message: job.error });
@@ -2200,8 +2486,8 @@ Also include:
 
 Only include keys where the user has specified or implied a value. Use sensible London commercial property defaults for anything not mentioned. Percentages should be decimals (e.g., 5% = 0.05).`;
 
-          const extractResponse = await anthropic.messages.create({
-            model: "claude-opus-4-6",
+          const extractResponse = await studioCreate(anthropic, {
+            model: STUDIO_MODEL,
             max_tokens: 4000,
             system: extractPrompt,
             messages: [{ role: "user", content: `Create an investment appraisal model for: ${description}${modelType ? `\nModel type: ${modelType}` : ""}` }],
@@ -2318,8 +2604,8 @@ CRITICAL RULES:
       const startTime = Date.now();
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
         const attemptStart = Date.now();
-        fullResponse = await anthropic.messages.create({
-          model: "claude-opus-4-6",
+        fullResponse = await studioCreate(anthropic, {
+          model: STUDIO_MODEL,
           max_tokens: 12000,
           system: systemPrompt,
           messages: currentMessages,
@@ -2655,7 +2941,7 @@ CRITICAL RULES:
           input_schema: {
             type: "object" as const,
             properties: {
-              folderPath: { type: "string", description: "Folder path relative to drive root. Examples: 'BGP share drive', 'BGP share drive/Investment', 'BGP share drive/London Leasing'. Use empty string for root." },
+              folderPath: { type: "string", description: "Folder path relative to drive root. Examples: 'BGP share drive', 'BGP share drive/Investment', 'BGP share drive/London Retail'. Use empty string for root." },
             },
             required: ["folderPath"],
           },
@@ -2673,7 +2959,7 @@ CRITICAL RULES:
         },
         {
           name: "sharepoint_create_folder",
-          description: "Create a new folder on SharePoint. All folders should be inside 'BGP share drive'. Team folders: Investment, London Leasing, National Leasing, Tenant Rep, Development, Lease Advisory, Office / Corporate.",
+          description: "Create a new folder on SharePoint. All folders should be inside 'BGP share drive'. Team folders: Investment, London F&B, London Retail, National Leasing, Tenant Rep, Development, Lease Advisory, Office / Corporate.",
           input_schema: {
             type: "object" as const,
             properties: {
@@ -2740,7 +3026,7 @@ CRITICAL RULES:
             type: "object" as const,
             properties: {
               name: { type: "string", description: "Deal name (usually the property address)" },
-              team: { type: "array", items: { type: "string" }, description: "Team(s): London Leasing, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
+              team: { type: "array", items: { type: "string" }, description: "Team(s): London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
               groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc." },
               dealType: { type: "string", description: "Type: Letting, Acquisition, Sale, Lease Renewal, Rent Review" },
               status: { type: "string", description: "Status of the deal" },
@@ -3010,7 +3296,8 @@ CRITICAL RULES:
             if (!fs.existsSync(template.filePath)) return JSON.stringify({ error: "Template file missing" });
 
             await ensureTemplateFile(template.filePath);
-      const wb = XLSX.readFile(template.filePath);
+      // cellFormula+sheetStubs so the writeFile below preserves uncached formulas.
+      const wb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
             const ws = wb.Sheets[input.sheetName];
             if (!ws) return JSON.stringify({ error: `Sheet "${input.sheetName}" not found. Available: ${wb.SheetNames.join(", ")}` });
 
@@ -3064,7 +3351,8 @@ CRITICAL RULES:
             if (!template) return JSON.stringify({ error: "Template not found" });
 
             await ensureTemplateFile(template.filePath);
-      const wb = XLSX.readFile(template.filePath);
+      // cellFormula+sheetStubs so the writeFile below preserves uncached formulas.
+      const wb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
             if (wb.SheetNames.includes(input.sheetName)) {
               return JSON.stringify({ error: `Sheet "${input.sheetName}" already exists` });
             }
@@ -3114,7 +3402,8 @@ CRITICAL RULES:
             if (!template) return JSON.stringify({ error: "Template not found" });
 
             await ensureTemplateFile(template.filePath);
-      const wb = XLSX.readFile(template.filePath);
+      // cellFormula+sheetStubs so the writeFile below preserves uncached formulas.
+      const wb = XLSX.readFile(template.filePath, { cellFormula: true, sheetStubs: true });
             if (!wb.SheetNames.includes(input.sheetName)) {
               return JSON.stringify({ error: `Sheet "${input.sheetName}" not found` });
             }
@@ -3189,11 +3478,27 @@ CRITICAL RULES:
               itemUrl = `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root:/${encoded}:/children?$top=200&$select=name,size,webUrl,id,file,folder,lastModifiedDateTime`;
             }
 
-            const childrenRes = await fetch(itemUrl, { headers: { Authorization: `Bearer ${msToken}` } });
-            if (!childrenRes.ok) return JSON.stringify({ error: `Could not list folder "${cleanPath}" (${childrenRes.status})` });
-            const children = await childrenRes.json();
+            // Follow @odata.nextLink — folders over one page ($top=200)
+            // silently truncated for the AI browse tool without it.
+            let childrenValue: any[];
+            try {
+              childrenValue = await listAllChildren(
+                async (pageUrl) => {
+                  const pageRes = await fetch(pageUrl, { headers: { Authorization: `Bearer ${msToken}` } });
+                  if (!pageRes.ok) {
+                    const err: any = new Error(`Could not list folder "${cleanPath}" (${pageRes.status})`);
+                    err.graphStatus = pageRes.status;
+                    throw err;
+                  }
+                  return pageRes.json();
+                },
+                itemUrl,
+              );
+            } catch (e: any) {
+              return JSON.stringify({ error: e?.graphStatus ? e.message : `Could not list folder "${cleanPath}"` });
+            }
 
-            const items = (children.value || []).map((c: any) => ({
+            const items = childrenValue.map((c: any) => ({
               name: c.name,
               type: c.folder ? "folder" : "file",
               size: c.size ? `${Math.round(c.size / 1024)}KB` : undefined,
@@ -3564,7 +3869,19 @@ CRITICAL RULES:
               });
               return JSON.stringify({ success: true, action: "email_sent", to: input.to, subject: input.subject });
             } catch (err: any) {
-              return JSON.stringify({ error: `Failed to send email: ${err?.message}` });
+              const msg = err?.message || "unknown error";
+              console.error("[send_email] send failed:", msg);
+              // Surface the LITERAL error and forbid the model from inventing a
+              // cause. The repeated "mailbox is mid-migration, retry in 20 mins"
+              // story was a hallucination — the real error code never appears in
+              // our logs. Likely app-side causes (expired Azure client secret,
+              // missing AZURE_* env var, revoked Graph Mail.Send permission) are
+              // suggested only as possibilities, never asserted.
+              return JSON.stringify({
+                error: `Email send failed. Exact server error: ${msg}`,
+                retryable: false,
+                guidance: "Report this EXACT error text to the user, verbatim. Do NOT paraphrase it as a mailbox migration, do NOT invent any cause, and do NOT promise it will clear on its own or keep offering to retry. If the cause is not stated in the error itself, say you do not know the exact cause and that it most likely needs the app's Microsoft 365 / Azure configuration checked — e.g. an expired Azure client secret, a missing credential, or a revoked Graph Mail.Send permission. The user can send from their own Outlook in the meantime.",
+              });
             }
           }
 
@@ -3629,8 +3946,8 @@ Available keys (with defaults): purchasePrice (10000000), stampDutyRate (0.05), 
 
 Also include: "modelName" (string), "quarters" (integer, default holdPeriodYears*4). Percentages as decimals (5% = 0.05).`;
 
-              const extractResp = await anthropic.messages.create({
-                model: "claude-opus-4-6",
+              const extractResp = await studioCreate(anthropic, {
+                model: STUDIO_MODEL,
                 max_tokens: 4000,
                 system: extractPrompt,
                 messages: [{ role: "user", content: `Create an investment appraisal for: ${input.description}${input.modelType ? `\nType: ${input.modelType}` : ""}` }],
@@ -3693,8 +4010,8 @@ Formats: £#,##0;(£#,##0);"-" (GBP), #,##0;(#,##0);"-" (int), #,##0.0%;(#,##0.0
 
 CRITICAL: For Cash Flow, ONLY define 2 quarter columns (E,F). Keep JSON under 30KB. Use numeric 0 for nil values.`;
 
-            const createResponse = await anthropic.messages.create({
-              model: "claude-opus-4-6",
+            const createResponse = await studioCreate(anthropic, {
+              model: STUDIO_MODEL,
               max_tokens: 12000,
               system: createSystemPrompt,
               messages: [{
@@ -3706,8 +4023,8 @@ CRITICAL: For Cash Flow, ONLY define 2 quarter columns (E,F). Keep JSON under 30
             let raw = createResponse.content[0]?.type === "text" ? createResponse.content[0].text : "";
 
             if (createResponse.stop_reason === "max_tokens") {
-              const contResponse = await anthropic.messages.create({
-                model: "claude-opus-4-6",
+              const contResponse = await studioCreate(anthropic, {
+                model: STUDIO_MODEL,
                 max_tokens: 12000,
                 system: createSystemPrompt,
                 messages: [
@@ -3916,8 +4233,8 @@ Use professional UK property investment language. Format currency as GBP (£).`;
       const maxIterations = 10;
 
       for (let i = 0; i < maxIterations; i++) {
-        const response = await anthropic.messages.create({
-          model: "claude-opus-4-6",
+        const response = await studioCreate(anthropic, {
+          model: STUDIO_MODEL,
           max_tokens: 8192,
           system: systemPrompt,
           tools,
@@ -3925,8 +4242,8 @@ Use professional UK property investment language. Format currency as GBP (£).`;
         });
 
         if (response.stop_reason === "tool_use") {
-          const toolBlocks = response.content.filter((b: any) => b.type === "tool_use");
-          const textBlocks = response.content.filter((b: any) => b.type === "text");
+          const toolBlocks = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+          const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
 
           currentMessages.push({ role: "assistant", content: response.content });
 
@@ -3953,7 +4270,7 @@ Use professional UK property investment language. Format currency as GBP (£).`;
 
           currentMessages.push({ role: "user", content: toolResults });
         } else {
-          const text = response.content.find((b: any) => b.type === "text");
+          const text = response.content.find((b): b is Anthropic.TextBlock => b.type === "text");
           finalAnswer = text?.text || "I completed the request but have no additional comments.";
           break;
         }

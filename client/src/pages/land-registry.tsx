@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { usePropertyContext } from "@/lib/property-context";
 import { useLocation, Link } from "wouter";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -9,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Pill } from "@/components/ui/pill";
 import {
   Select,
   SelectContent,
@@ -25,6 +27,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import { OfficialCopyButton } from "@/components/official-copy-button";
 import {
   Popover,
   PopoverContent,
@@ -61,8 +64,6 @@ import {
   Link2,
   Check,
 } from "lucide-react";
-import { PageLayout } from "@/components/page-layout";
-import { EmptyState } from "@/components/empty-state";
 
 interface Transaction {
   id: string;
@@ -242,7 +243,15 @@ function statusColor(status: string | null): string {
 
 function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, label: string) => void }) {
   const [, navigate] = useLocation();
-  const [query, setQuery] = useState("");
+  const ctxProperty = usePropertyContext();
+  const [query, setQuery] = useState(ctxProperty?.name ? `${ctxProperty.name}${ctxProperty.postcode ? ", " + ctxProperty.postcode : ""}` : "");
+  // Refresh when the parent Property Intelligence resolves a different property
+  useEffect(() => {
+    if (ctxProperty?.name) {
+      const v = `${ctxProperty.name}${ctxProperty.postcode ? ", " + ctxProperty.postcode : ""}`;
+      setQuery(v);
+    }
+  }, [ctxProperty?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [results, setResults] = useState<AddressResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [selectedAddress, setSelectedAddress] = useState<AddressResult | null>(null);
@@ -263,6 +272,9 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
   const [aiSummary, setAiSummary] = useState<PropertySummaryData | null>(null);
   const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
   const [aiSummaryError, setAiSummaryError] = useState(false);
+  const [noTitleData, setNoTitleData] = useState(false);
+  const [pdErrors, setPdErrors] = useState<Array<{ endpoint: string; status?: number; body?: string }>>([]);
+  const [manualTitleInput, setManualTitleInput] = useState("");
   const [showAllTitles, setShowAllTitles] = useState(false);
   const [activeSection, setActiveSection] = useState<string>("overview");
   const requestIdRef = useRef(0);
@@ -469,6 +481,9 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
     setIntelligence({});
     setAiSummary(null);
     setAiSummaryError(false);
+    setNoTitleData(false);
+    setPdErrors([]);
+    setManualTitleInput("");
     setShowAllTitles(false);
     setActiveSection("overview");
 
@@ -488,6 +503,8 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
       try {
         // UPRN-accurate title resolution: Google address → PropertyData
         // address-match-uprn → uprn-title. Wider postcode data follows.
+        // Tagging source as 'direct' so the LR board distinguishes manual
+        // searches from Clouseau/Pathway-driven ones.
         const resolvePromise = fetch("/api/land-registry/resolve", {
           method: "POST",
           credentials: "include",
@@ -497,6 +514,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
             postcode: cleanPc,
             lat: addr.lat,
             lng: addr.lng,
+            source: "direct",
           }),
         }).then(r => r.ok ? r.json() : null).catch(() => null);
 
@@ -534,12 +552,16 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
           rows.map(r => ({ ...r, _match: matchSource }));
 
         if (matchedFh.length > 0 || matchedLh.length > 0) {
-          fetchedFreeholds = [...tag(matchedFh, "uprn"), ...tag(contextFh, "postcode")];
-          fetchedLeaseholds = [...tag(matchedLh, "uprn"), ...tag(contextLh, "postcode")];
+          // UPRN-confirmed titles only — no postcode dilution. Every other
+          // freehold in this postcode is unrelated to this building.
+          fetchedFreeholds = tag(matchedFh, "uprn");
+          fetchedLeaseholds = tag(matchedLh, "uprn");
         } else if (fallbackFh.length > 0 || fallbackLh.length > 0) {
-          fetchedFreeholds = [...tag(fallbackFh, "street"), ...tag(contextFh, "postcode")];
-          fetchedLeaseholds = [...tag(fallbackLh, "street"), ...tag(contextLh, "postcode")];
+          // Street-number fallback when UPRN match failed — show only those.
+          fetchedFreeholds = tag(fallbackFh, "street");
+          fetchedLeaseholds = tag(fallbackLh, "street");
         } else {
+          // Last resort: postcode-wide. Clearly labelled, but it's all we have.
           fetchedFreeholds = tag(contextFh, "postcode");
           fetchedLeaseholds = tag(contextLh, "postcode");
         }
@@ -572,7 +594,25 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
         }
         setIntelligence(intel);
 
-        fetchAiSummary(thisReqId, addr.label, pc, fetchedFreeholds, fetchedLeaseholds, intel);
+        // The /api/land-registry/resolve call already persisted this search
+        // server-side, so re-pull the saved-searches list now to surface it
+        // on the board immediately. Previously we only refreshed the list
+        // after fetchAiSummary succeeded, which meant searches went missing
+        // from the board when the AI summary failed or was skipped.
+        fetch("/api/land-registry/searches", { credentials: "include", headers: getAuthHeaders() })
+          .then(r => r.ok ? r.json() : null)
+          .then(data => { if (Array.isArray(data)) setSavedSearches(data); })
+          .catch(() => {});
+
+        if (fetchedFreeholds.length > 0 || fetchedLeaseholds.length > 0) {
+          setNoTitleData(false);
+          setPdErrors([]);
+          fetchAiSummary(thisReqId, addr.label, pc, fetchedFreeholds, fetchedLeaseholds, intel);
+        } else {
+          setNoTitleData(true);
+          setPdErrors(resolvedPayload?.pdErrors || []);
+          setAiSummaryLoading(false);
+        }
       } catch {} finally {
         setFreeholdsLoading(false);
         setIntelLoading(false);
@@ -626,6 +666,9 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
     setDocResults({});
     setIntelligence({});
     setAiSummary(null);
+    setNoTitleData(false);
+    setPdErrors([]);
+    setManualTitleInput("");
     setShowAllTitles(false);
   };
 
@@ -743,6 +786,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
         )}
 
         <div className="flex flex-wrap gap-1.5">
+          <OfficialCopyButton titleNumber={tn} className="text-xs h-7" />
           {["register", "plan", "both"].map(docType => {
             const key = tn + docType;
             const result = docResults[key];
@@ -811,7 +855,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
         <div className="relative flex items-center">
           <Search className="absolute left-3 w-4 h-4 text-muted-foreground pointer-events-none" />
           <Input
-            placeholder="Search by address, building name, or postcode..."
+            placeholder="Search address or postcode…"
             value={query}
             onChange={(e) => handleQueryChange(e.target.value)}
             className="pl-9 pr-9"
@@ -896,7 +940,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
                             <MapPin className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                             <p className="text-sm font-medium truncate">{s.address}</p>
                           </div>
-                          <Badge className={`text-[9px] shrink-0 ${statusColor(s.status)}`}>
+                          <Badge variant="outline" className={`border-transparent text-[9px] shrink-0 ${statusColor(s.status)}`}>
                             {s.status || "New"}
                           </Badge>
                         </div>
@@ -1008,13 +1052,8 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
               ))}
             </div>
           )}
-          {!searchesLoading && savedSearches.length === 0 && (
-            <EmptyState
-              icon={MapPin}
-              title="No searches yet"
-              description="Search for a property to get started"
-            />
-          )}
+          {/* The "Search for any UK property" hero above is the single empty
+              state — no second "No searches yet" block stacked under it. */}
         </div>
       )}
 
@@ -1068,7 +1107,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
             </Card>
           )}
 
-          {aiSummaryError && !aiSummaryLoading && !aiSummary && (
+          {aiSummaryError && !aiSummaryLoading && !aiSummary && !noTitleData && (
             <Card className="border-red-200 dark:border-red-800">
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
@@ -1090,6 +1129,69 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
                     Retry
                   </Button>
                 </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {noTitleData && !freeholdsLoading && (
+            <Card className="border-amber-200 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-950/20">
+              <CardContent className="p-4 space-y-3">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">No Land Registry title data found via PropertyData</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Common for large commercial and mixed-use properties in Central London. If you know the title number (e.g. from a previous search or a solicitor), enter it below to order directly from HMLR.
+                    </p>
+                  </div>
+                </div>
+                {pdErrors.length > 0 && (
+                  <div className="space-y-0.5">
+                    {pdErrors.slice(0, 3).map((e, i) => (
+                      <p key={i} className="text-[10px] font-mono text-red-600 dark:text-red-400 truncate">
+                        {e.endpoint}{e.status ? ` HTTP ${e.status}` : ""} — {e.body || "unknown error"}
+                      </p>
+                    ))}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <Input
+                    className="h-8 text-xs font-mono uppercase"
+                    placeholder="Title number e.g. LN59572"
+                    value={manualTitleInput}
+                    onChange={e => setManualTitleInput(e.target.value.toUpperCase())}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && manualTitleInput.trim()) {
+                        purchaseDocuments(manualTitleInput.trim(), "both");
+                      }
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    className="h-8 text-xs shrink-0"
+                    disabled={!manualTitleInput.trim() || docPurchasing[manualTitleInput.trim() + "both"]}
+                    onClick={() => purchaseDocuments(manualTitleInput.trim(), "both")}
+                  >
+                    {docPurchasing[manualTitleInput.trim() + "both"] ? <Loader2 className="w-3 h-3 animate-spin" /> : "Order Title"}
+                  </Button>
+                  {manualTitleInput.trim() && (
+                    <OfficialCopyButton titleNumber={manualTitleInput.trim()} className="h-8 text-xs shrink-0" />
+                  )}
+                </div>
+                {(() => {
+                  const tn = manualTitleInput.trim();
+                  const result = docResults[tn + "both"];
+                  const url = result?.data?.document_url || result?.document_url;
+                  if (!url) return null;
+                  return (
+                    <a href={url} target="_blank" rel="noopener noreferrer">
+                      <Button variant="outline" size="sm" className="h-8 text-xs gap-1 text-emerald-600">
+                        <Download className="w-3 h-3" />
+                        Download Register &amp; Plan
+                      </Button>
+                    </a>
+                  );
+                })()}
               </CardContent>
             </Card>
           )}
@@ -1221,21 +1323,21 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
           )}
 
           {(freeholds || leaseholds || Object.keys(intelligence).length > 0) && !freeholdsLoading && (
-            <div className="flex gap-1 border-b pb-2">
+            <div className="flex flex-wrap gap-1.5">
               {[
-                { id: "overview", label: "Market Data", icon: BarChart3 },
-                { id: "titles", label: `Titles (${(freeholds?.length || 0) + (leaseholds?.length || 0)})`, icon: Landmark },
-                { id: "sold", label: "Sales", icon: PoundSterling },
+                { id: "overview", label: "Market Data" },
+                { id: "titles", label: "Titles", count: (freeholds?.length || 0) + (leaseholds?.length || 0) },
+                { id: "sold", label: "Sales" },
               ].map(tab => (
-                <button
+                <Pill
                   key={tab.id}
+                  active={activeSection === tab.id}
                   onClick={() => setActiveSection(tab.id)}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors ${activeSection === tab.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
                   data-testid={`tab-section-${tab.id}`}
                 >
-                  <tab.icon className="w-3.5 h-3.5" />
                   {tab.label}
-                </button>
+                  {tab.count !== undefined && <span className="font-mono normal-case opacity-70">{tab.count}</span>}
+                </Pill>
               ))}
             </div>
           )}
@@ -1578,7 +1680,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
                     </div>
                   )}
 
-                  {freeholds && freeholds.length === 0 && (!leaseholds || leaseholds.length === 0) && (
+                  {freeholds && freeholds.length === 0 && (!leaseholds || leaseholds.length === 0) && !noTitleData && (
                     <Card>
                       <CardContent className="p-6 text-center text-sm text-muted-foreground">
                         <Landmark className="w-8 h-8 mx-auto mb-2 opacity-40" />
@@ -1605,7 +1707,27 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <div className="overflow-x-auto">
+                      {/* Phone: one card per sale (§7) — the table never ships below md. */}
+                      <div className="md:hidden divide-y divide-border">
+                        {soldRows.slice(0, 15).map((s: any, si: number) => (
+                          <div key={si} className="py-3" data-testid={`sold-card-${si}`}>
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="text-sm font-medium min-w-0 truncate">{s.address || s.full_address || "—"}</span>
+                              <span className="text-sm font-mono tabular-nums font-semibold shrink-0">{formatPrice(s.price || s.amount)}</span>
+                            </div>
+                            <p className="text-[11px] text-muted-foreground mt-0.5">{s.date || s.sold_date || "—"}</p>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                              <Badge variant="outline" className="text-[10px] whitespace-nowrap">
+                                {s.type || s.property_type || "—"}
+                              </Badge>
+                              {s.tenure && (
+                                <Badge variant="outline" className="text-[10px] whitespace-nowrap">{s.tenure}</Badge>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="hidden md:block overflow-x-auto">
                         <Table>
                           <TableHeader>
                             <TableRow>
@@ -1737,6 +1859,35 @@ function PricePaidSearch() {
             <SummaryStats transactions={data.items} />
           )}
 
+          {/* Phone: one card per transaction (§7) — the table never ships below md. */}
+          <div className="md:hidden divide-y divide-border border-t border-border">
+            {data.items.map((tx) => (
+              <div key={tx.id} className="py-3" data-testid={`card-transaction-${tx.id}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm font-medium min-w-0">{formatAddress(tx.address)}</span>
+                  <span className="text-sm font-mono tabular-nums font-semibold shrink-0">{formatPrice(tx.pricePaid)}</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-0.5">{formatDate(tx.date)}</p>
+                <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                  <Badge variant="secondary" className="text-[10px] capitalize whitespace-nowrap">
+                    {tx.propertyType || "—"}
+                  </Badge>
+                  <Badge variant="outline" className="text-[10px] capitalize whitespace-nowrap">
+                    {tx.estateType || "—"}
+                  </Badge>
+                  {tx.newBuild && (
+                    <Badge variant="outline" className="text-[10px] whitespace-nowrap">New build</Badge>
+                  )}
+                </div>
+              </div>
+            ))}
+            {data.items.length === 0 && (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                No transactions found. Try adjusting your search.
+              </p>
+            )}
+          </div>
+          <div className="hidden md:block">
           <ScrollableTable minWidth={900}>
             <Table>
               <TableHeader>
@@ -1792,6 +1943,7 @@ function PricePaidSearch() {
               </TableBody>
             </Table>
           </ScrollableTable>
+          </div>
         </>
       )}
 
@@ -1856,219 +2008,43 @@ function SummaryStats({ transactions }: { transactions: Transaction[] }) {
   );
 }
 
-function HousePriceIndex() {
-  const [selectedRegion, setSelectedRegion] = useState("city-of-westminster");
-
-  const { data: regions } = useQuery<Region[]>({
-    queryKey: ["/api/land-registry/regions"],
-    queryFn: async () => {
-      const res = await fetch("/api/land-registry/regions", { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) throw new Error("Failed to fetch");
-      return res.json();
-    },
-  });
-
-  const { data, isLoading } = useQuery<UKHPIResult>({
-    queryKey: ["/api/land-registry/ukhpi", selectedRegion],
-    queryFn: async () => {
-      const res = await fetch(`/api/land-registry/ukhpi?region=${selectedRegion}&months=12`, { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) throw new Error("Failed to fetch");
-      return res.json();
-    },
-  });
-
-  const latest = data?.data?.[data.data.length - 1];
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-        <Select value={selectedRegion} onValueChange={setSelectedRegion}>
-          <SelectTrigger className="w-full sm:w-[280px]" data-testid="select-region">
-            <SelectValue placeholder="Select region" />
-          </SelectTrigger>
-          <SelectContent>
-            {(regions || []).map((r) => (
-              <SelectItem key={r.slug} value={r.slug}>
-                {r.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <p className="text-xs text-muted-foreground">Last 12 months of UK House Price Index data</p>
-      </div>
-
-      {isLoading && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-24" />
-          ))}
-        </div>
-      )}
-
-      {latest && !isLoading && (
-        <>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3" data-testid="stats-ukhpi">
-            <Card>
-              <CardContent className="p-3">
-                <p className="text-xs text-muted-foreground">Average Price</p>
-                <p className="text-lg font-bold" data-testid="text-ukhpi-avg-price">
-                  {formatPrice(latest.averagePrice)}
-                </p>
-                <p className="text-xs text-muted-foreground">{latest.month}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-3">
-                <p className="text-xs text-muted-foreground">Annual Change</p>
-                <div className="text-lg font-bold" data-testid="text-ukhpi-annual-change">
-                  <ChangeIndicator value={latest.annualChange} />
-                </div>
-                <p className="text-xs text-muted-foreground">Year on year</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-3">
-                <p className="text-xs text-muted-foreground">House Price Index</p>
-                <p className="text-lg font-bold" data-testid="text-ukhpi-index">
-                  {latest.housePriceIndex?.toFixed(1) || "—"}
-                </p>
-                <p className="text-xs text-muted-foreground">Base: Jan 2015 = 100</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-3">
-                <p className="text-xs text-muted-foreground">Monthly Change</p>
-                <div className="text-lg font-bold" data-testid="text-ukhpi-monthly-change">
-                  <ChangeIndicator value={latest.monthlyChange} />
-                </div>
-                <p className="text-xs text-muted-foreground">Month on month</p>
-              </CardContent>
-            </Card>
-          </div>
-
-          {(latest.averagePriceFlat != null || latest.averagePriceDetached != null) && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-semibold">Average Prices by Property Type</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Flat / Maisonette</p>
-                    <p className="text-sm font-semibold">{formatPrice(latest.averagePriceFlat)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Terraced</p>
-                    <p className="text-sm font-semibold">{formatPrice(latest.averagePriceTerraced)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Semi-Detached</p>
-                    <p className="text-sm font-semibold">{formatPrice(latest.averagePriceSemiDetached)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Detached</p>
-                    <p className="text-sm font-semibold">{formatPrice(latest.averagePriceDetached)}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold">Buyer Type Breakdown — {latest.month}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <p className="text-xs text-muted-foreground">Cash Buyers</p>
-                  <p className="text-sm font-semibold">{formatPrice(latest.averagePriceCash)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Mortgage Buyers</p>
-                  <p className="text-sm font-semibold">{formatPrice(latest.averagePriceMortgage)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">First Time Buyers</p>
-                  <p className="text-sm font-semibold">{formatPrice(latest.averagePriceFirstTimeBuyer)}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </>
-      )}
-
-      {data && !isLoading && data.data.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold">Monthly Trend</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Month</TableHead>
-                    <TableHead className="text-right">Avg Price</TableHead>
-                    <TableHead className="text-right">HPI</TableHead>
-                    <TableHead className="text-right">Annual Change</TableHead>
-                    <TableHead className="text-right">Monthly Change</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {[...data.data].reverse().map((row) => (
-                    <TableRow key={row.month} data-testid={`row-ukhpi-${row.month}`}>
-                      <TableCell className="font-medium text-sm">{row.month}</TableCell>
-                      <TableCell className="text-right text-sm">{formatPrice(row.averagePrice)}</TableCell>
-                      <TableCell className="text-right text-sm">{row.housePriceIndex?.toFixed(1) || "—"}</TableCell>
-                      <TableCell className="text-right">
-                        <ChangeIndicator value={row.annualChange} />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <ChangeIndicator value={row.monthlyChange} />
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  );
-}
-
 export default function LandRegistry() {
   const [activeTab, setActiveTab] = useState("property-search");
 
+  // This page renders inside the Property Intelligence wrapper, which owns
+  // the page title + top-level tab row — one 2xl title per view (§5), so
+  // this page carries only its own pill row.
   return (
-    <PageLayout
-      title="Land Registry & Property Intelligence"
-      icon={Landmark}
-      subtitle="Address search, free market intelligence, title documents, yields, rents, planning & KYC investigation"
-      tabs={[
-        { label: "Property Search", value: "property-search" },
-        { label: "Price Paid", value: "price-paid" },
-        { label: "House Price Index", value: "hpi" },
-      ]}
-      activeTab={activeTab}
-      onTabChange={setActiveTab}
-      className="space-y-6"
-    >
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsContent value="property-search">
-          <PropertySearch onSelectPostcode={() => {}} />
-        </TabsContent>
+    <div className="h-full flex flex-col">
+      <div className="px-4 sm:px-6 pt-4 sm:pt-6 flex-shrink-0">
+        <div className="flex items-center flex-wrap gap-1.5">
+          {[
+            { label: "Property Search", value: "property-search" },
+            { label: "Price Paid", value: "price-paid" },
+          ].map((tab) => (
+            <Pill
+              key={tab.value}
+              active={activeTab === tab.value}
+              onClick={() => setActiveTab(tab.value)}
+            >
+              {tab.label}
+            </Pill>
+          ))}
+        </div>
+      </div>
 
-        <TabsContent value="price-paid">
-          <PricePaidSearch />
-        </TabsContent>
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col px-4 sm:px-6 pb-4 sm:pb-6 pt-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+          <TabsContent value="property-search">
+            <PropertySearch onSelectPostcode={() => {}} />
+          </TabsContent>
 
-        <TabsContent value="hpi">
-          <HousePriceIndex />
-        </TabsContent>
-      </Tabs>
-    </PageLayout>
+          <TabsContent value="price-paid">
+            <PricePaidSearch />
+          </TabsContent>
+
+        </Tabs>
+      </div>
+    </div>
   );
 }

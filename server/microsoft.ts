@@ -4,6 +4,15 @@ import type { Express, Request, Response } from "express";
 import multer from "multer";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
+import { contentDispositionFor } from "./utils/http-headers";
+import { listAllChildren, resolveUploadDestination } from "./microsoft-graph-pagination";
+import {
+  SHAREPOINT_HOST, SHAREPOINT_SITE_PATH, SHAREPOINT_ROOT_FOLDER,
+  getSharePointDriveId, createFolderByPath, runChunked, createTreeBatched,
+} from "./sharepoint-graph";
+
+// Re-exported for the many modules that import these constants from here.
+export { SHAREPOINT_HOST, SHAREPOINT_SITE_PATH, SHAREPOINT_ROOT_FOLDER };
 
 const SCOPES = [
   "User.Read",
@@ -21,10 +30,6 @@ const SCOPES = [
   "Notes.Read.All",
   "Notes.ReadWrite.All",
 ];
-
-const SHAREPOINT_HOST = "brucegillinghampollardlimited.sharepoint.com";
-const SHAREPOINT_SITE_PATH = "/sites/BGP";
-const SHAREPOINT_ROOT_FOLDER = "BGP share drive";
 
 let msalClient: ConfidentialClientApplication | null = null;
 let msalCacheLock: Promise<void> | null = null;
@@ -62,6 +67,59 @@ function getMsalClient(): ConfidentialClientApplication {
     });
   }
   return msalClient;
+}
+
+// App-only (client-credential) Graph token for background jobs that have no
+// logged-in user session — e.g. the Revolut webhook enriching a card
+// transaction with the cardholder's calendar. Uses the same confidential
+// client as SharePoint uploads. Returns null (rather than throwing) so
+// callers can degrade gracefully when Azure creds / app permissions aren't
+// configured yet.
+export async function getAppGraphToken(): Promise<string | null> {
+  try {
+    const client = getMsalClient();
+    const r = await client.acquireTokenByClientCredential({
+      scopes: ["https://graph.microsoft.com/.default"],
+    });
+    return r?.accessToken || null;
+  } catch (e: any) {
+    console.warn("[microsoft] app-only Graph token failed:", e?.message);
+    return null;
+  }
+}
+
+// Session-less delegated Graph token for a specific BGP user, from their
+// stored MSAL cache (same mechanism as getValidMsToken, minus the org
+// fallback — we want *this* user's token so /me/calendarView reads their
+// own calendar). Returns null if the user hasn't connected M365 or the
+// silent refresh fails. Lets background jobs read a user's calendar using
+// the delegated Calendars.Read consent that's already in place, without
+// needing the app-only Application permission.
+export async function getDelegatedGraphTokenForUser(userId: string): Promise<string | null> {
+  if (!userId) return null;
+  return withMsalCacheLock(async () => {
+    try {
+      const client = getMsalClient();
+      const cacheData = await loadMsalCache(String(userId));
+      const homeAccountId = await getHomeAccountId(String(userId));
+      if (!cacheData || !homeAccountId) return null;
+
+      client.getTokenCache().deserialize(cacheData);
+      const accounts = await client.getTokenCache().getAllAccounts();
+      const account = accounts.find((a) => a.homeAccountId === homeAccountId);
+      if (!account) return null;
+
+      const result = await client.acquireTokenSilent({ scopes: SCOPES, account });
+      if (result?.accessToken) {
+        await saveMsalCache(String(userId), homeAccountId);
+        return result.accessToken;
+      }
+      return null;
+    } catch (e: any) {
+      console.warn(`[microsoft] delegated token for user ${userId} failed:`, e?.message);
+      return null;
+    }
+  });
 }
 
 function getRedirectUri(req: Request): string {
@@ -171,6 +229,19 @@ async function getHomeAccountId(userId: string): Promise<string | null> {
 }
 
 export async function getValidMsToken(req: Request): Promise<string | null> {
+  const userId = req.session.userId || (req as any).tokenUserId;
+  if (!userId) return null;
+
+  // Never hand a Microsoft token to an external client — not from the org
+  // fallback AND not from a session that happens to carry msTokens. This
+  // check runs BEFORE any token is returned so a client always gets null.
+  // (Root cause of the client-briefing + /mail/calendar leaks.) (Landsec audit.)
+  const roleRes = await pool.query("SELECT role, email FROM users WHERE id = $1", [userId]);
+  const roleRow = roleRes.rows[0];
+  const isClientPrincipal = roleRow?.role === "Client" ||
+    (roleRow?.email && !String(roleRow.email).toLowerCase().endsWith("@brucegillinghampollard.com"));
+  if (isClientPrincipal) return null;
+
   const expiresOn = req.session.msTokens?.expiresOn;
   const token = req.session.msTokens?.accessToken;
   const isExpired = !expiresOn || new Date(expiresOn) < new Date(Date.now() + 5 * 60 * 1000);
@@ -178,9 +249,6 @@ export async function getValidMsToken(req: Request): Promise<string | null> {
   if (token && !isExpired) {
     return token;
   }
-
-  const userId = req.session.userId || (req as any).tokenUserId;
-  if (!userId) return null;
 
   return withMsalCacheLock(async () => {
     try {
@@ -491,26 +559,37 @@ export function setupMicrosoftRoutes(app: Express) {
         }
       }
 
-      const response = await fetch(url + "?$top=100&$orderby=name&$select=id,name,size,lastModifiedDateTime,webUrl,folder,file,parentReference&$expand=thumbnails", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          delete req.session.msTokens;
-          return res.status(401).json({ message: "Microsoft token expired. Please reconnect." });
+      // Follow @odata.nextLink until exhausted — Graph pages drive-item
+      // children, so a single fetch silently truncates large folders.
+      const fetchPage = async (pageUrl: string) => {
+        const pageRes = await fetch(pageUrl, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!pageRes.ok) {
+          if (pageRes.status === 401) {
+            delete req.session.msTokens;
+            const err: any = new Error("Microsoft token expired");
+            err.status = 401;
+            throw err;
+          }
+          throw new Error(`Graph API error: ${pageRes.status}`);
         }
-        throw new Error(`Graph API error: ${response.status}`);
-      }
+        return pageRes.json();
+      };
 
-      const data = await response.json();
-      const items = data.value || [];
+      const items = await listAllChildren(
+        fetchPage,
+        url + "?$top=100&$orderby=name&$select=id,name,size,lastModifiedDateTime,webUrl,folder,file,parentReference&$expand=thumbnails",
+      );
       if (items.length > 0 && items[0].parentReference?.driveId) {
         res.json({ items, driveId: items[0].parentReference.driveId });
       } else {
         res.json({ items, driveId: driveId || null });
       }
     } catch (err: any) {
+      if (err?.status === 401) {
+        return res.status(401).json({ message: "Microsoft token expired. Please reconnect." });
+      }
       console.error("Files error:", err);
       res.status(500).json({ message: "Failed to fetch files" });
     }
@@ -534,7 +613,7 @@ export function setupMicrosoftRoutes(app: Express) {
       res.setHeader("Content-Type", contentType);
       const fileName = req.query.fileName as string;
       if (fileName) {
-        res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(fileName)}"`);
+        res.setHeader("Content-Disposition", contentDispositionFor(fileName));
       }
       const buffer = Buffer.from(await r.arrayBuffer());
       res.send(buffer);
@@ -566,6 +645,98 @@ export function setupMicrosoftRoutes(app: Express) {
       res.send(buffer);
     } catch (err: any) {
       console.error("Thumbnail error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── File/folder sharing ───────────────────────────────────────────────
+  // Create a shareable link to a drive item. Defaults to an anonymous
+  // "anyone with the link" view link (share-with-anyone). If the tenant's
+  // external-sharing policy blocks anonymous links, Graph returns 403 — we
+  // fall back to an organization-scoped link and flag it, so callers can
+  // tell the user "anyone" wasn't permitted rather than just failing.
+  app.post("/api/microsoft/files/share-link", async (req: Request, res: Response) => {
+    const token = await getValidMsToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    }
+    try {
+      const { driveId, itemId, type, scope, expirationDateTime, password } = req.body || {};
+      if (!driveId || !itemId) return res.status(400).json({ message: "driveId and itemId required" });
+      const linkType = type === "edit" ? "edit" : "view";
+
+      const createLink = async (linkScope: "anonymous" | "organization") => {
+        const body: Record<string, any> = { type: linkType, scope: linkScope };
+        if (linkScope === "anonymous" && expirationDateTime) body.expirationDateTime = expirationDateTime;
+        if (linkScope === "anonymous" && password) body.password = password;
+        const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/createLink`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        return r;
+      };
+
+      const requestedScope: "anonymous" | "organization" = scope === "organization" ? "organization" : "anonymous";
+      let r = await createLink(requestedScope);
+      let fellBackToOrg = false;
+
+      // Anonymous blocked by tenant policy → retry org-scoped.
+      if (!r.ok && requestedScope === "anonymous" && (r.status === 403 || r.status === 400)) {
+        r = await createLink("organization");
+        fellBackToOrg = r.ok;
+      }
+      if (!r.ok) {
+        const detail = await r.text().catch(() => "");
+        return res.status(r.status).json({ error: `Graph createLink failed (${r.status})`, detail });
+      }
+      const data = await r.json();
+      res.json({
+        webUrl: data?.link?.webUrl || null,
+        scope: data?.link?.scope || (fellBackToOrg ? "organization" : requestedScope),
+        type: data?.link?.type || linkType,
+        fellBackToOrg,
+      });
+    } catch (err: any) {
+      console.error("Share link error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Invite named people (internal or external) to a drive item by email.
+  // Used when anonymous links are disallowed, or for granting edit access
+  // to a specific external person rather than anyone-with-the-link.
+  app.post("/api/microsoft/files/invite", async (req: Request, res: Response) => {
+    const token = await getValidMsToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    }
+    try {
+      const { driveId, itemId, emails, role, message, requireSignIn } = req.body || {};
+      if (!driveId || !itemId) return res.status(400).json({ message: "driveId and itemId required" });
+      const recipients = (Array.isArray(emails) ? emails : [emails])
+        .filter((e: any) => typeof e === "string" && e.includes("@"))
+        .map((email: string) => ({ email }));
+      if (!recipients.length) return res.status(400).json({ message: "At least one valid email is required" });
+      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/invite`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipients,
+          roles: [role === "write" ? "write" : "read"],
+          requireSignIn: requireSignIn !== false,
+          sendInvitation: true,
+          message: message || "Sharing a document with you from Bruce Gillingham Pollard.",
+        }),
+      });
+      if (!r.ok) {
+        const detail = await r.text().catch(() => "");
+        return res.status(r.status).json({ error: `Graph invite failed (${r.status})`, detail });
+      }
+      const data = await r.json();
+      res.json({ invited: recipients.map(x => x.email), value: data?.value || [] });
+    } catch (err: any) {
+      console.error("Share invite error:", err.message);
       res.status(500).json({ error: err.message });
     }
   });
@@ -660,25 +831,34 @@ export function setupMicrosoftRoutes(app: Express) {
       const endDate = new Date(now);
       endDate.setDate(endDate.getDate() + 14);
 
-      const url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${mondayStart.toISOString()}&endDateTime=${endDate.toISOString()}&$top=50&$orderby=start/dateTime&$select=subject,start,end,location,organizer,isOnlineMeeting,onlineMeetingUrl,onlineMeeting,attendees,bodyPreview,isAllDay,showAs,categories`;
+      // Follow Graph's pagination: the old single request with $top=50 silently
+      // truncated busy weeks — a 3-week window across a full team easily tops
+      // 50 events, so later days showed stale/missing meetings.
+      const events: any[] = [];
+      let url: string | null = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${mondayStart.toISOString()}&endDateTime=${endDate.toISOString()}&$top=250&$orderby=start/dateTime&$select=subject,start,end,location,organizer,isOnlineMeeting,onlineMeetingUrl,onlineMeeting,attendees,bodyPreview,isAllDay,showAs,categories`;
+      let pageGuard = 0;
+      while (url && pageGuard < 8) {
+        pageGuard++;
+        const response: any = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Prefer: 'outlook.timezone="Europe/London"',
+          },
+        });
 
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Prefer: 'outlook.timezone="Europe/London"',
-        },
-      });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          delete req.session.msTokens;
-          return res.status(401).json({ message: "Microsoft token expired. Please reconnect." });
+        if (!response.ok) {
+          if (response.status === 401) {
+            delete req.session.msTokens;
+            return res.status(401).json({ message: "Microsoft token expired. Please reconnect." });
+          }
+          throw new Error(`Calendar API error: ${response.status}`);
         }
-        throw new Error(`Calendar API error: ${response.status}`);
-      }
 
-      const data = await response.json();
-      res.json(data.value || []);
+        const data = await response.json();
+        events.push(...(data.value || []));
+        url = data["@odata.nextLink"] || null;
+      }
+      res.json(events);
     } catch (err: any) {
       console.error("Calendar error:", err);
       res.status(500).json({ message: "Failed to fetch calendar" });
@@ -796,34 +976,101 @@ export function setupMicrosoftRoutes(app: Express) {
     }
   });
 
-  app.get("/api/microsoft/calendar/insights", async (req: Request, res: Response) => {
+  app.get("/api/microsoft/calendar/insights", requireAuth, async (req: Request, res: Response) => {
     try {
       const insights: { type: string; title: string; detail: string; priority: number }[] = [];
+      // Client viewers get insights computed ONLY from their own company's
+      // deals/events/viewings/properties, with fees nulled out — the staff
+      // feed aggregates the whole BGP book and must not cross over.
+      const { resolveCompanyScope } = await import("./company-scope");
+      const insightsScope = await resolveCompanyScope(req);
 
-      const dealsResult = await pool.query(`
-        SELECT d.name, d.status, d.created_at, d.internal_agent, d.fee, d.rent_pa,
-               d.pricing, d.deal_type, p.name as property_name
-        FROM crm_deals d
-        LEFT JOIN crm_properties p ON d.property_id = p.id
-        WHERE d.status NOT IN ('Dead', 'Completed', 'Lost')
-        ORDER BY d.created_at DESC
-      `);
+      const dealsResult = insightsScope
+        ? await pool.query(`
+            SELECT d.name, d.status, d.created_at, d.internal_agent, NULL::text as fee, d.rent_pa,
+                   d.pricing, d.deal_type, p.name as property_name
+            FROM crm_deals d
+            LEFT JOIN crm_properties p ON d.property_id = p.id
+            WHERE d.status NOT IN ('WIT', 'COM', 'INV')
+              AND (d.tenant_id = $1 OR d.landlord_id = $1 OR d.purchaser_id = $1 OR d.vendor_id = $1
+                   OR d.property_id IN (SELECT id FROM crm_properties WHERE landlord_id = $1))
+            ORDER BY d.created_at DESC
+          `, [insightsScope])
+        : await pool.query(`
+            SELECT d.name, d.status, d.created_at, d.internal_agent, d.fee, d.rent_pa,
+                   d.pricing, d.deal_type, p.name as property_name
+            FROM crm_deals d
+            LEFT JOIN crm_properties p ON d.property_id = p.id
+            WHERE d.status NOT IN ('WIT', 'COM', 'INV')
+            ORDER BY d.created_at DESC
+          `);
       const activeDealRows = dealsResult.rows;
 
-      const eventsResult = await pool.query(`
-        SELECT te.title, te.event_type, te.start_time, te.property_name, te.company_name,
-               te.created_by, te.attendees
-        FROM team_events te
-        WHERE te.start_time >= NOW() - INTERVAL '30 days'
-        ORDER BY te.start_time DESC
-      `);
+      const eventsResult = insightsScope
+        ? await pool.query(`
+            SELECT te.title, te.event_type, te.start_time, te.property_name, te.company_name,
+                   te.created_by, te.attendees
+            FROM team_events te
+            WHERE te.start_time >= NOW() - INTERVAL '30 days'
+              AND lower(trim(te.company_name)) = (SELECT lower(trim(name)) FROM crm_companies WHERE id = $1)
+            ORDER BY te.start_time DESC
+          `, [insightsScope])
+        : await pool.query(`
+            SELECT te.title, te.event_type, te.start_time, te.property_name, te.company_name,
+                   te.created_by, te.attendees
+            FROM team_events te
+            WHERE te.start_time >= NOW() - INTERVAL '30 days'
+            ORDER BY te.start_time DESC
+          `);
       const recentEvents = eventsResult.rows;
 
-      const propertiesResult = await pool.query(`
-        SELECT p.name, p.address, p.status, p.asset_class
-        FROM crm_properties p
-        ORDER BY p.created_at DESC
-      `);
+      // Letting Tracker viewings (manual + diary-synced) — the canonical
+      // viewing record. team_events only carries manually-tagged 'viewing'
+      // rows, which in practice are rare, so without this the viewing
+      // insights sit permanently empty.
+      const unitViewingsResult = insightsScope
+        ? await pool.query(`
+            SELECT uv.viewing_date, uv.viewing_time, uv.company_name, p.name AS property_name
+            FROM unit_viewings uv
+            JOIN available_units au ON au.id = uv.unit_id
+            JOIN crm_properties p ON p.id = au.property_id
+            WHERE uv.viewing_date ~ '^\\d{4}-\\d{2}-\\d{2}'
+              AND uv.viewing_date::date >= (NOW() - INTERVAL '30 days')::date
+              AND (p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
+          `, [insightsScope])
+        : await pool.query(`
+            SELECT uv.viewing_date, uv.viewing_time, uv.company_name, p.name AS property_name
+            FROM unit_viewings uv
+            JOIN available_units au ON au.id = uv.unit_id
+            JOIN crm_properties p ON p.id = au.property_id
+            WHERE uv.viewing_date ~ '^\\d{4}-\\d{2}-\\d{2}'
+              AND uv.viewing_date::date >= (NOW() - INTERVAL '30 days')::date
+          `);
+      const eventsForInsights = [
+        ...recentEvents,
+        ...unitViewingsResult.rows.map((v: any) => ({
+          title: null,
+          event_type: "viewing",
+          start_time: `${v.viewing_date}T${v.viewing_time || "09:00"}:00`,
+          property_name: v.property_name,
+          company_name: v.company_name,
+          created_by: null,
+          attendees: null,
+        })),
+      ];
+
+      const propertiesResult = insightsScope
+        ? await pool.query(`
+            SELECT p.name, p.address, p.status, p.asset_class
+            FROM crm_properties p
+            WHERE p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+            ORDER BY p.created_at DESC
+          `, [insightsScope])
+        : await pool.query(`
+            SELECT p.name, p.address, p.status, p.asset_class
+            FROM crm_properties p
+            ORDER BY p.created_at DESC
+          `);
 
       const viewingsByProp = new Map<string, number>();
       const viewingsByCompany = new Map<string, number>();
@@ -835,7 +1082,7 @@ export function setupMicrosoftRoutes(app: Express) {
       const weekAgo = new Date(now.getTime() - 7 * 86400000);
       const twoWeeksAgo = new Date(now.getTime() - 14 * 86400000);
 
-      recentEvents.forEach((e: any) => {
+      eventsForInsights.forEach((e: any) => {
         const d = new Date(e.start_time);
         const dayKey = d.toLocaleDateString("en-GB", { weekday: "short" });
         eventsByDay.set(dayKey, (eventsByDay.get(dayKey) || 0) + 1);
@@ -855,7 +1102,7 @@ export function setupMicrosoftRoutes(app: Express) {
         insights.push({
           type: "hotProperty",
           title: "Hottest Property",
-          detail: `${top[0]} — ${top[1]} viewings in 30 days${sorted.length > 1 ? `, followed by ${sorted[1][0]} (${sorted[1][1]})` : ""}`,
+          detail: `${top[0]} — ${top[1]} viewing${top[1] === 1 ? "" : "s"} in 30 days${sorted.length > 1 ? `, followed by ${sorted[1][0]} (${sorted[1][1]})` : ""}`,
           priority: 10,
         });
       }
@@ -867,7 +1114,7 @@ export function setupMicrosoftRoutes(app: Express) {
         insights.push({
           type: "viewingTrend",
           title: "Viewing Momentum",
-          detail: `${thisW} viewings this week${lastW > 0 ? ` (${trend > 0 ? "↑" : trend < 0 ? "↓" : "→"} ${Math.abs(trend)}% vs last week)` : ""}`,
+          detail: `${thisW} viewing${thisW === 1 ? "" : "s"} this week${lastW > 0 ? ` (${trend > 0 ? "↑" : trend < 0 ? "↓" : "→"} ${Math.abs(trend)}% vs last week)` : ""}`,
           priority: 9,
         });
       }
@@ -878,7 +1125,7 @@ export function setupMicrosoftRoutes(app: Express) {
         insights.push({
           type: "activeTenant",
           title: "Most Active Tenant",
-          detail: `${top[0]} — ${top[1]} viewings booked`,
+          detail: `${top[0]} — ${top[1]} viewing${top[1] === 1 ? "" : "s"} booked`,
           priority: 8,
         });
       }
@@ -942,7 +1189,12 @@ export function setupMicrosoftRoutes(app: Express) {
         insights.push({
           type: "pipeline",
           title: "CRM Deals",
-          detail: `${activeDealRows.length} active deals across ${new Set(activeDealRows.map((d: any) => d.deal_type).filter(Boolean)).size} categories`,
+          detail: (() => {
+            const n = activeDealRows.length;
+            const cats = new Set(activeDealRows.map((d: any) => d.deal_type).filter(Boolean)).size;
+            const dealPart = `${n} active deal${n === 1 ? "" : "s"}`;
+            return cats > 0 ? `${dealPart} across ${cats} categor${cats === 1 ? "y" : "ies"}` : dealPart;
+          })(),
           priority: 3,
         });
       }
@@ -951,12 +1203,12 @@ export function setupMicrosoftRoutes(app: Express) {
         insights.push({
           type: "busiestDay",
           title: "Portfolio",
-          detail: `${allProps.length} properties tracked, ${availableProps.length} currently available`,
+          detail: `${allProps.length} propert${allProps.length === 1 ? "y" : "ies"} tracked, ${availableProps.length} currently available`,
           priority: 2,
         });
       }
 
-      const todayEvents = recentEvents.filter((e: any) => {
+      const todayEvents = eventsForInsights.filter((e: any) => {
         const d = new Date(e.start_time);
         return d.toDateString() === now.toDateString();
       });
@@ -985,12 +1237,14 @@ export function setupMicrosoftRoutes(app: Express) {
     }
   });
 
-  app.post("/api/microsoft/calendar/briefing", async (req: Request, res: Response) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Not authenticated" });
-    }
-
+  // requireAuth (not a raw session check): client logins authenticate with
+  // Bearer tokens, so the session-only gate made "Retry AI Briefing" fail
+  // unconditionally for Mark. Scoped callers get a company-jailed, fee-free
+  // context below.
+  app.post("/api/microsoft/calendar/briefing", requireAuth, async (req: Request, res: Response) => {
     try {
+      const { resolveCompanyScope } = await import("./company-scope");
+      const briefingScope = await resolveCompanyScope(req);
       const { subject, attendees, propertyName, companyName, location, startTime, endTime, bodyPreview, eventType } = req.body;
 
       if (!subject) {
@@ -1004,13 +1258,17 @@ export function setupMicrosoftRoutes(app: Express) {
       const bgpEmails = attendeeEmails.filter((e: string) => e.includes("brucegillinghampollard"));
 
       const contactsResult = await pool.query(`
-        SELECT c.id, c.name, c.email, c.phone, c.job_title, c.notes, c.contact_type,
+        SELECT c.id, c.name, c.email, c.phone, c.role as job_title, c.notes, c.contact_type,
                comp.name as company_name, comp.id as company_id
         FROM crm_contacts c
         LEFT JOIN crm_companies comp ON c.company_id = comp.id
         WHERE LOWER(c.email) = ANY($1)
       `, [externalEmails]);
-      const matchedContacts = contactsResult.rows;
+      // A client caller only gets contact context for their OWN company —
+      // other attendees' CRM records are BGP intel.
+      const matchedContacts = briefingScope
+        ? contactsResult.rows.filter((c: any) => c.company_id === briefingScope)
+        : contactsResult.rows;
 
       const matchedCompanyIds = matchedContacts
         .map((c: any) => c.company_id)
@@ -1019,7 +1277,7 @@ export function setupMicrosoftRoutes(app: Express) {
       let companyDetails: any[] = [];
       if (matchedCompanyIds.length > 0) {
         const compResult = await pool.query(`
-          SELECT id, name, sector, notes, website
+          SELECT id, name, company_type as sector, NULL::text as notes, website
           FROM crm_companies
           WHERE id = ANY($1)
         `, [matchedCompanyIds]);
@@ -1028,7 +1286,7 @@ export function setupMicrosoftRoutes(app: Express) {
 
       if (companyName && companyDetails.length === 0) {
         const compByName = await pool.query(`
-          SELECT id, name, sector, notes, website
+          SELECT id, name, company_type as sector, NULL::text as notes, website
           FROM crm_companies
           WHERE LOWER(name) LIKE $1
           LIMIT 3
@@ -1039,25 +1297,44 @@ export function setupMicrosoftRoutes(app: Express) {
       const allCompanyIds = [...new Set([...matchedCompanyIds, ...companyDetails.map((c: any) => c.id)])];
 
       let relatedDeals: any[] = [];
-      if (allCompanyIds.length > 0) {
-        const dealsResult = await pool.query(`
-          SELECT d.id, d.name, d.status, d.deal_type, d.fee, d.rent_pa, d.pricing,
-                 d.internal_agent, d.notes,
-                 p.name as property_name, p.address as property_address
-          FROM crm_deals d
-          LEFT JOIN crm_properties p ON d.property_id = p.id
-          WHERE d.company_id = ANY($1) AND d.status NOT IN ('Dead', 'Lost')
-          ORDER BY d.created_at DESC
-          LIMIT 10
-        `, [allCompanyIds]);
+      const dealCompanyIds = briefingScope
+        ? allCompanyIds.filter((id: any) => id === briefingScope)
+        : allCompanyIds;
+      if (dealCompanyIds.length > 0) {
+        // Client callers never receive fee/pricing/internal notes — same rule
+        // as the client deal reads elsewhere.
+        // Deals hang off the parties (tenant/landlord/purchaser/vendor), not a
+        // single company_id — the old company_id filter errored the whole
+        // briefing ("Failed to generate briefing" for everyone).
+        const dealPartySql = `(d.tenant_id = ANY($1) OR d.landlord_id = ANY($1) OR d.purchaser_id = ANY($1) OR d.vendor_id = ANY($1))`;
+        const dealsResult = briefingScope
+          ? await pool.query(`
+              SELECT d.id, d.name, d.status, d.deal_type, d.rent_pa,
+                     p.name as property_name, p.address as property_address
+              FROM crm_deals d
+              LEFT JOIN crm_properties p ON d.property_id = p.id
+              WHERE ${dealPartySql} AND d.status NOT IN ('WIT')
+              ORDER BY d.created_at DESC
+              LIMIT 10
+            `, [dealCompanyIds])
+          : await pool.query(`
+              SELECT d.id, d.name, d.status, d.deal_type, d.fee, d.rent_pa, d.pricing,
+                     d.internal_agent, d.comments as notes,
+                     p.name as property_name, p.address as property_address
+              FROM crm_deals d
+              LEFT JOIN crm_properties p ON d.property_id = p.id
+              WHERE ${dealPartySql} AND d.status NOT IN ('WIT')
+              ORDER BY d.created_at DESC
+              LIMIT 10
+            `, [dealCompanyIds]);
         relatedDeals = dealsResult.rows;
       }
 
       let relatedProperties: any[] = [];
       if (propertyName) {
         const propResult = await pool.query(`
-          SELECT p.id, p.name, p.address, p.status, p.asset_class, p.area_sq_ft,
-                 p.asking_rent, p.service_charge, p.rates_payable, p.floor_count, p.notes
+          SELECT p.id, p.name, p.address, p.status, p.asset_class, p.sqft as area_sq_ft,
+                 NULL::text as asking_rent, NULL::text as service_charge, p.notes
           FROM crm_properties p
           WHERE LOWER(p.name) LIKE $1 OR LOWER(p.address) LIKE $1
           LIMIT 5
@@ -1069,8 +1346,8 @@ export function setupMicrosoftRoutes(app: Express) {
         const propNames = relatedDeals.map((d: any) => d.property_name).filter(Boolean);
         if (propNames.length > 0) {
           const propResult = await pool.query(`
-            SELECT p.id, p.name, p.address, p.status, p.asset_class, p.area_sq_ft,
-                   p.asking_rent, p.service_charge, p.rates_payable, p.floor_count, p.notes
+            SELECT p.id, p.name, p.address, p.status, p.asset_class, p.sqft as area_sq_ft,
+                   NULL::text as asking_rent, NULL::text as service_charge, p.notes
             FROM crm_properties p
             WHERE LOWER(p.name) = ANY($1)
             LIMIT 5
@@ -1116,6 +1393,8 @@ export function setupMicrosoftRoutes(app: Express) {
           status: d.status,
           dealType: d.deal_type,
           property: d.property_name,
+          // Scoped rows were selected without fee/agent; undefined drops the
+          // keys in JSON.stringify so nothing fee-shaped reaches the prompt.
           fee: d.fee,
           rentPA: d.rent_pa,
           agent: d.internal_agent,
@@ -1141,7 +1420,41 @@ export function setupMicrosoftRoutes(app: Express) {
       const hasContext = crmContext.contacts.length > 0 || crmContext.companies.length > 0 ||
                          crmContext.deals.length > 0 || crmContext.properties.length > 0;
 
+      // Emails associated with the meeting: recent shared-mailbox threads
+      // with the external attendees, so the briefing can explain WHY the
+      // meeting exists. Staff briefings only — BGP's internal email candour
+      // must never surface in a client-visible briefing.
+      let emailContext: { subject: string; from: string; date: string; preview: string }[] = [];
+      if (!briefingScope && externalEmails.length > 0) {
+        try {
+          const { graphRequest } = await import("./shared-mailbox");
+          const seenMail = new Set<string>();
+          for (const addr of externalEmails.slice(0, 3)) {
+            const r = await graphRequest(
+              `/users/chatbgp@brucegillinghampollard.com/messages?$search="participants:${encodeURIComponent(addr)}"&$top=4&$select=subject,bodyPreview,from,receivedDateTime`
+            ).catch(() => null);
+            for (const m of r?.value || []) {
+              const key = `${m.subject}|${m.receivedDateTime}`;
+              if (seenMail.has(key)) continue;
+              seenMail.add(key);
+              emailContext.push({
+                subject: m.subject || "(no subject)",
+                from: m.from?.emailAddress?.address || "",
+                date: m.receivedDateTime ? new Date(m.receivedDateTime).toLocaleDateString("en-GB") : "",
+                preview: (m.bodyPreview || "").slice(0, 280),
+              });
+            }
+          }
+          emailContext = emailContext
+            .sort((a, b) => (b.date > a.date ? 1 : -1))
+            .slice(0, 6);
+        } catch (mailErr: any) {
+          console.warn("[briefing] email context skipped:", mailErr?.message);
+        }
+      }
+
       let aiBriefing = null;
+      let aiError: string | null = null;
       try {
         const Anthropic = (await import("@anthropic-ai/sdk")).default;
         const anthropic = new Anthropic({
@@ -1178,6 +1491,9 @@ EVENT:
 CRM DATA:
 ${hasContext ? JSON.stringify(crmContext, null, 2) : "No CRM data found for this meeting's attendees or properties."}
 
+RECENT EMAILS WITH THE ATTENDEES (shared mailbox — use these to infer what the meeting is really about and what's outstanding):
+${emailContext.length ? JSON.stringify(emailContext, null, 2) : "None found."}
+
 Return JSON with these fields:
 {
   "summary": "1-2 sentence overview of what this meeting is about and its strategic importance",
@@ -1205,10 +1521,14 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
         }
       } catch (aiErr: any) {
         console.error("AI briefing generation error:", aiErr.message);
+        // Surface the real reason ("credit balance", "overloaded", timeout…)
+        // instead of a bare red "Failed" in the panel.
+        aiError = aiErr?.message || "AI request failed";
       }
 
       res.json({
         crmContext,
+        aiError,
         briefing: aiBriefing || {
           summary: hasContext
             ? `Meeting regarding ${subject}. ${crmContext.contacts.length} known contact(s) attending.`
@@ -1224,7 +1544,7 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       });
     } catch (err: any) {
       console.error("Calendar briefing error:", err);
-      res.status(500).json({ message: "Failed to generate briefing" });
+      res.status(500).json({ message: "Failed to generate briefing", detail: err?.message || null });
     }
   });
 
@@ -1319,7 +1639,7 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
             messages: [
               {
                 role: "system",
-                content: "You are an executive assistant for BGP (Bruce Gillingham Pollard), a London property consultancy. Provide a brief, professional summary of today's BUSINESS diary only. Personal items (lunch, gym, school runs, appointments, etc.) have already been filtered out — do not mention them. Focus exclusively on business-relevant meetings: client meetings, viewings, team catch-ups, calls with agents/tenants/landlords, legal meetings, and deal-related activity. Highlight key meetings, who they're with, and any scheduling clashes. Keep it to 2-3 sentences maximum. Use a warm but professional tone. IMPORTANT: Identify any meetings that appear to be with occupiers, tenants, retailers, or external clients (i.e. not internal BGP meetings). Flag these as 'Occupier/Tenant meetings' and name them specifically. For the London Leasing team this is especially important - highlight any leasing meetings, viewings, or tenant discussions.",
+                content: "You are an executive assistant for BGP (Bruce Gillingham Pollard), a London property consultancy. Provide a brief, professional summary of today's BUSINESS diary only. Personal items (lunch, gym, school runs, appointments, etc.) have already been filtered out — do not mention them. Focus exclusively on business-relevant meetings: client meetings, viewings, team catch-ups, calls with agents/tenants/landlords, legal meetings, and deal-related activity. Highlight key meetings, who they're with, and any scheduling clashes. Keep it to 2-3 sentences maximum. Use a warm but professional tone. IMPORTANT: Identify any meetings that appear to be with occupiers, tenants, retailers, or external clients (i.e. not internal BGP meetings). Flag these as 'Occupier/Tenant meetings' and name them specifically. For the London F&B and London Retail teams this is especially important - highlight any leasing meetings, viewings, or tenant discussions.",
               },
               {
                 role: "user",
@@ -1765,25 +2085,6 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     }
   });
 
-  async function getSharePointDriveId(token: string): Promise<{ driveId: string; siteId: string } | null> {
-    const siteUrl = `https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`;
-    const siteRes = await fetch(siteUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!siteRes.ok) return null;
-    const site = await siteRes.json();
-
-    const drivesUrl = `https://graph.microsoft.com/v1.0/sites/${site.id}/drives`;
-    const drivesRes = await fetch(drivesUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!drivesRes.ok) return null;
-    const drivesData = await drivesRes.json();
-    const docsDrive = drivesData.value?.find((d: any) => d.name === "Documents" || d.name === "Shared Documents") || drivesData.value?.[0];
-    if (!docsDrive) return null;
-    return { driveId: docsDrive.id, siteId: site.id };
-  }
-
   app.post("/api/microsoft/folders", async (req: Request, res: Response) => {
     const token = await getValidMsToken(req);
     if (!token) {
@@ -1843,7 +2144,93 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     }
   });
 
-  const TEAM_FOLDERS = ["Investment", "London Leasing", "Lease Advisory", "National Leasing", "Tenant Rep", "Development", "Office / Corporate"];
+  // Rename and/or move a file or folder. Graph does both in one PATCH:
+  // a `name` renames, a `parentReference.id` moves. Pass either or both.
+  app.patch("/api/microsoft/files/item", async (req: Request, res: Response) => {
+    const token = await getValidMsToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    }
+    try {
+      const { driveId, itemId, name, parentId } = req.body || {};
+      if (!driveId || !itemId) return res.status(400).json({ message: "driveId and itemId required" });
+      if (!name && !parentId) return res.status(400).json({ message: "Provide a new name and/or a parentId to move to" });
+      const body: Record<string, any> = {};
+      if (name) body.name = name;
+      if (parentId) body.parentReference = { id: parentId };
+      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        if (r.status === 409) return res.status(409).json({ message: `An item named "${name}" already exists here` });
+        const detail = await r.text().catch(() => "");
+        return res.status(r.status).json({ error: `Graph update failed (${r.status})`, detail });
+      }
+      res.json(await r.json());
+    } catch (err: any) {
+      console.error("Rename/move error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Create a folder in the current location (drive root when parentId is
+  // omitted). Conflict on name returns 409 rather than silently renaming.
+  app.post("/api/microsoft/files/folder", async (req: Request, res: Response) => {
+    const token = await getValidMsToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    }
+    try {
+      const { driveId, parentId, name } = req.body || {};
+      const trimmed = typeof name === "string" ? name.trim() : "";
+      if (!driveId || !trimmed) return res.status(400).json({ message: "driveId and name required" });
+      const base = parentId ? `items/${parentId}` : "root";
+      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/${base}/children`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }),
+      });
+      if (!r.ok) {
+        if (r.status === 409) return res.status(409).json({ message: `A folder named "${trimmed}" already exists here` });
+        const detail = await r.text().catch(() => "");
+        return res.status(r.status).json({ error: `Graph create failed (${r.status})`, detail });
+      }
+      res.json(await r.json());
+    } catch (err: any) {
+      console.error("Create folder error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Delete a file or folder. Graph sends it to the SharePoint recycle bin
+  // (recoverable), so this is a soft delete from the user's perspective.
+  app.delete("/api/microsoft/files/item", async (req: Request, res: Response) => {
+    const token = await getValidMsToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    }
+    try {
+      const driveId = (req.body?.driveId || req.query.driveId) as string;
+      const itemId = (req.body?.itemId || req.query.itemId) as string;
+      if (!driveId || !itemId) return res.status(400).json({ message: "driveId and itemId required" });
+      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok && r.status !== 204) {
+        const detail = await r.text().catch(() => "");
+        return res.status(r.status).json({ error: `Graph delete failed (${r.status})`, detail });
+      }
+      res.json({ deleted: true, itemId });
+    } catch (err: any) {
+      console.error("Delete item error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  const TEAM_FOLDERS = ["Investment", "London F&B", "London Retail", "Lease Advisory", "National Leasing", "Tenant Rep", "Development", "Office / Corporate"];
 
   const TEAM_FOLDER_TREES: Record<string, string[]> = {
     "Investment": [
@@ -1867,7 +2254,28 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       "Correspondence",
       "Client Reporting",
     ],
-    "London Leasing": [
+    "London F&B": [
+      "Marketing",
+      "Marketing/Brochure",
+      "Marketing/Photography",
+      "Marketing/Floorplans",
+      "Marketing/Window Cards",
+      "Marketing/Social Media",
+      "Heads of Terms",
+      "Legal",
+      "Legal/Lease Drafts",
+      "Legal/Licence for Works",
+      "Inspections",
+      "Inspections/Measured Survey",
+      "Inspections/Schedule of Condition",
+      "Tenant Information",
+      "Tenant Information/References",
+      "Tenant Information/Accounts",
+      "Comparable Evidence",
+      "Correspondence",
+      "Rent Review",
+    ],
+    "London Retail": [
       "Marketing",
       "Marketing/Brochure",
       "Marketing/Photography",
@@ -2015,35 +2423,6 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     ],
   };
 
-  async function createFolderByPath(token: string, driveId: string, parentPath: string, folderName: string): Promise<{ success: boolean; name: string; error?: string }> {
-    let createUrl: string;
-    if (!parentPath || parentPath === "/") {
-      createUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root/children`;
-    } else {
-      const cleanPath = parentPath.replace(/^\/+|\/+$/g, "");
-      createUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(cleanPath).replace(/%2F/g, "/")}:/children`;
-    }
-
-    const response = await fetch(createUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        name: folderName,
-        folder: {},
-        "@microsoft.graph.conflictBehavior": "fail",
-      }),
-    });
-
-    if (response.ok || response.status === 409) {
-      return { success: true, name: folderName };
-    }
-    const errText = await response.text();
-    return { success: false, name: folderName, error: `${response.status}: ${errText.slice(0, 100)}` };
-  }
-
   app.post("/api/microsoft/property-folders", async (req: Request, res: Response) => {
     const token = await getValidMsToken(req);
     if (!token) {
@@ -2056,7 +2435,16 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
         return res.status(400).json({ message: "propertyName and team are required" });
       }
 
-      const folderTree = TEAM_FOLDER_TREES[team];
+      let folderTree = TEAM_FOLDER_TREES[team];
+      if (!folderTree) {
+        // Client teams (e.g. "Landsec") aren't in the discipline tree map —
+        // file their properties with the same retail/leasing template the
+        // bulk client-folders setup uses, under the client's own top-level
+        // folder, so one-off and bulk setups produce the same structure.
+        const { getCompanyIdForClientTeam } = await import("./company-scope");
+        const clientCompanyId = await getCompanyIdForClientTeam(team);
+        if (clientCompanyId) folderTree = TEAM_FOLDER_TREES["London Retail"];
+      }
       if (!folderTree) {
         return res.status(400).json({ message: `Unknown team: ${team}. Valid teams: ${Object.keys(TEAM_FOLDER_TREES).join(", ")}` });
       }
@@ -2076,23 +2464,8 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
 
       const results: { path: string; success: boolean; error?: string }[] = [
         { path: propertyRoot, success: true },
+        ...await createTreeBatched(token, spInfo.driveId, propertyRoot, folderTree),
       ];
-
-      for (const subPath of folderTree) {
-        const parts = subPath.split("/");
-        const folderName = parts[parts.length - 1];
-        const parentParts = parts.slice(0, -1);
-        const parentPath = parentParts.length > 0
-          ? `${propertyRoot}/${parentParts.join("/")}`
-          : propertyRoot;
-
-        const result = await createFolderByPath(token, spInfo.driveId, parentPath, folderName);
-        results.push({
-          path: `${propertyRoot}/${subPath}`,
-          success: result.success,
-          error: result.error,
-        });
-      }
 
       const successCount = results.filter(r => r.success).length;
       const errorCount = results.filter(r => !r.success).length;
@@ -2207,6 +2580,115 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     }
   });
 
+  // Client folder tree — the standard client tree (Delivery 5) bound into
+  // the client's existing SharePoint root, with genuinely missing folders
+  // created empty inside it. Woody, 2026-07: "Set up a new folder in our
+  // share drive as landsec … folder trees in there for all of their
+  // properties."
+  //
+  // Runs as a DURABLE background job (server/client-folder-jobs.ts,
+  // modelled on runPreparationStage): one system_settings row per company,
+  // advisory-locked, per-node resume. The old in-memory Map lied about
+  // completion ("done" whenever the batch loop returned) and died with the
+  // process; the durable job ends "done" ONLY when every node is
+  // bound|created, survives restarts, and never creates a duplicate tree.
+  // POST returns 202 straight away (the edge proxy 504s at ~45s); the UI
+  // polls GET /client-folders/status/:companyId.
+  app.get("/api/microsoft/client-folders/status/:companyId", async (req: Request, res: Response) => {
+    const { readClientFolderJobState, clientFolderJobWire } = await import("./client-folder-jobs");
+    const state = await readClientFolderJobState(String(req.params.companyId), { pool }).catch(() => null);
+    if (!state) return res.json({ status: "none" });
+    res.json(clientFolderJobWire(state));
+  });
+
+  app.post("/api/microsoft/client-folders", async (req: Request, res: Response) => {
+    const token = await getValidMsToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    }
+    try {
+      const { companyId } = req.body || {};
+      if (!companyId) return res.status(400).json({ message: "companyId is required" });
+
+      const companyQ = await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [companyId]);
+      if (!companyQ.rows[0]) return res.status(404).json({ message: "Company not found" });
+      const companyName = String(companyQ.rows[0].name).trim().replace(/[\/\\<>:"|?*]/g, "_");
+
+      const {
+        runClientFolderJob, readClientFolderJobState, clientFolderJobWire, pgClientFolderJobStore,
+      } = await import("./client-folder-jobs");
+      const { resolveAccountView } = await import("./account-resolver");
+      const { buildExpectedFolderTree } = await import("@shared/client-folder-tree");
+      const { createChildrenLister, resolveClientRoot } = await import("./account-folder-inventory");
+      const { resolveItemByPath, createFolderInItem } = await import("./sharepoint-graph");
+
+      // A live run wins — double-clicks and concurrent POSTs are no-ops.
+      const existing = await readClientFolderJobState(companyId, { pool }).catch(() => null);
+      if (existing?.status === "running" && new Date(existing.leaseUntil || 0).getTime() > Date.now()) {
+        return res.status(202).json({ started: false, alreadyRunning: true, ...clientFolderJobWire(existing) });
+      }
+
+      // The plan counts for the wire response come from the resolver's
+      // portfolio (stable property ids), never the old SELECT DISTINCT name.
+      const view = await resolveAccountView(companyId, {}, { pool });
+      const total = buildExpectedFolderTree({
+        companyId,
+        clientName: companyName,
+        entities: view.entities.filter(e => e.relation !== "self").map(e => ({
+          entityKind: e.relation === "trading_entity" ? "trading_entity" as const : "company" as const,
+          entityId: e.companyId, name: e.name, companiesHouseNumber: e.companiesHouseNumber,
+        })),
+        properties: view.properties.map(p => ({ propertyId: p.propertyId, name: p.name })),
+      }).length;
+
+      const graph = {
+        resolveRoot: () => resolveClientRoot(companyId, companyName, token, { pool }),
+        ensureRoot: async (clientName: string) => {
+          const spInfo = await getSharePointDriveId(token);
+          if (!spInfo) throw new Error("Could not find BGP SharePoint site");
+          const created = await createFolderByPath(token, spInfo.driveId, SHAREPOINT_ROOT_FOLDER, clientName);
+          if (!created.success) throw new Error(`Failed to create ${clientName} folder: ${created.error}`);
+          const ref = await resolveItemByPath(token, spInfo.driveId, `${SHAREPOINT_ROOT_FOLDER}/${clientName}`);
+          if (!ref) throw new Error(`Created ${clientName} but could not resolve its item id`);
+          return ref;
+        },
+        listChildren: createChildrenLister(
+          async (url) => {
+            const pageRes = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+            if (!pageRes.ok) throw new Error(`Graph listing failed: ${pageRes.status}`);
+            return pageRes.json();
+          },
+          (driveId, itemId) =>
+            `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=200&$select=id,name,folder,file,size,webUrl`,
+        ),
+        createFolder: (driveId: string, parentItemId: string, name: string) =>
+          createFolderInItem(token, driveId, parentItemId, name),
+      };
+
+      // Fire-and-forget, but durable: the runner persists per-node state as
+      // it goes, so a process restart loses nothing — the next POST resumes.
+      // The token is this request's delegated token, never persisted.
+      const userId = (req.session as any)?.userId || (req as any).tokenUserId || null;
+      void runClientFolderJob(
+        { companyId, companyName, userId },
+        { store: pgClientFolderJobStore(pool as any, companyId), pool, graph },
+      ).catch(err => console.error("[client-folders] durable job crashed:", err?.message));
+
+      res.status(202).json({
+        started: true,
+        companyName,
+        rootPath: `${SHAREPOINT_ROOT_FOLDER}/${companyName}`,
+        properties: view.properties.length,
+        total,
+      });
+    } catch (err: any) {
+      console.error("Client folders error:", err);
+      if (!res.headersSent) {
+        res.status(500).json({ message: "Failed to create client folder structure" });
+      }
+    }
+  });
+
   app.post("/api/microsoft/team-folders/setup", async (req: Request, res: Response) => {
     const token = await getValidMsToken(req);
     if (!token) {
@@ -2283,6 +2765,58 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     try {
       const { team, propertyName } = req.params;
       const subPath = req.query.path as string || "";
+      const folderUrl = (req.query.folderUrl as string || "").trim();
+
+      // If the caller has a stored SharePoint folder URL on the CRM property
+      // (crm_properties.sharepoint_folder_url) prefer that — it always
+      // resolves to the real folder regardless of whether the CRM record's
+      // `name` matches the on-disk folder name. Falls back to path
+      // synthesis (BGP share drive/{team}/{propertyName}) if no URL.
+      if (folderUrl) {
+        const encoded = Buffer.from(folderUrl).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        const driveItemRes = await fetch(`https://graph.microsoft.com/v1.0/shares/u!${encoded}/driveItem`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!driveItemRes.ok) {
+          if (driveItemRes.status === 404) return res.json({ exists: false, folders: [] });
+          throw new Error(`Failed to resolve folder URL: ${driveItemRes.status}`);
+        }
+        const driveItem = await driveItemRes.json();
+        const driveId = driveItem.parentReference?.driveId;
+        let itemId = driveItem.id;
+        // Walk into subPath if requested.
+        if (subPath && driveId) {
+          const encodedSub = subPath.split("/").map(s => encodeURIComponent(s)).join("/");
+          const subRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}:/${encodedSub}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!subRes.ok) {
+            if (subRes.status === 404) return res.json({ exists: false, folders: [] });
+            throw new Error(`Failed to walk into subPath: ${subRes.status}`);
+          }
+          const subItem = await subRes.json();
+          itemId = subItem.id;
+        }
+        // Paginate: large folders span multiple Graph pages (@odata.nextLink).
+        const childItems = await listAllChildren(async (pageUrl) => {
+          const childrenRes = await fetch(pageUrl, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!childrenRes.ok) throw new Error(`Failed to list children: ${childrenRes.status}`);
+          return childrenRes.json();
+        }, `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=100`);
+        const items = childItems.map((item: any) => ({
+          id: item.id,
+          name: item.name,
+          isFolder: !!item.folder,
+          childCount: item.folder?.childCount || 0,
+          size: item.size || 0,
+          webUrl: item.webUrl,
+          lastModified: item.lastModifiedDateTime,
+        }));
+        return res.json({ exists: true, folders: items, path: driveItem.name, webUrl: driveItem.webUrl, source: "url", driveId, currentItemId: itemId });
+      }
+
       const spInfo = await getSharePointDriveId(token);
       if (!spInfo) {
         return res.status(404).json({ message: "Could not find BGP SharePoint site" });
@@ -2291,21 +2825,30 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       let folderPath = `${SHAREPOINT_ROOT_FOLDER}/${team}/${propertyName}`;
       if (subPath) folderPath = `${folderPath}/${subPath}`;
       const encodedPath = folderPath.split("/").map(s => encodeURIComponent(s)).join("/");
-      const url = `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodedPath}:/children?$top=100`;
 
-      const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!response.ok) {
-        if (response.status === 404) {
+      // Paginate: large folders span multiple Graph pages (@odata.nextLink).
+      // A 404 on the first page means the folder doesn't exist.
+      let childItems: any[];
+      try {
+        childItems = await listAllChildren(async (pageUrl) => {
+          const pageRes = await fetch(pageUrl, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!pageRes.ok) {
+            const err: any = new Error(`Failed to list folders: ${pageRes.status}`);
+            err.status = pageRes.status;
+            throw err;
+          }
+          return pageRes.json();
+        }, `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodedPath}:/children?$top=100`);
+      } catch (err: any) {
+        if (err?.status === 404) {
           return res.json({ exists: false, folders: [] });
         }
-        throw new Error(`Failed to list folders: ${response.status}`);
+        throw err;
       }
 
-      const data = await response.json();
-      const items = (data.value || []).map((item: any) => ({
+      const items = childItems.map((item: any) => ({
         id: item.id,
         name: item.name,
         isFolder: !!item.folder,
@@ -2315,7 +2858,16 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
         lastModified: item.lastModifiedDateTime,
       }));
 
-      res.json({ exists: true, folders: items, path: folderPath });
+      // Resolve the current folder's own item id so the UI can create
+      // subfolders / act on this folder by id (the children call above
+      // doesn't return the parent's id).
+      let currentItemId: string | null = null;
+      try {
+        const selfRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodedPath}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (selfRes.ok) currentItemId = (await selfRes.json())?.id || null;
+      } catch {}
+
+      res.json({ exists: true, folders: items, path: folderPath, source: "path", driveId: spInfo.driveId, currentItemId });
     } catch (err: any) {
       console.error("Property folders list error:", err);
       res.status(500).json({ message: "Failed to list property folders" });
@@ -2387,21 +2939,30 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       }
 
       const encodedPath = folderPath.split("/").map(s => encodeURIComponent(s)).join("/");
-      const url = `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodedPath}:/children?$top=200&$orderby=name`;
 
-      const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!response.ok) {
-        if (response.status === 404) {
+      // Paginate: large folders span multiple Graph pages (@odata.nextLink).
+      // A 404 on the first page means the folder doesn't exist.
+      let childItems: any[];
+      try {
+        childItems = await listAllChildren(async (pageUrl) => {
+          const pageRes = await fetch(pageUrl, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!pageRes.ok) {
+            const err: any = new Error(`Failed to browse: ${pageRes.status}`);
+            err.status = pageRes.status;
+            throw err;
+          }
+          return pageRes.json();
+        }, `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodedPath}:/children?$top=200&$orderby=name`);
+      } catch (err: any) {
+        if (err?.status === 404) {
           return res.json({ exists: false, items: [], path: folderPath });
         }
-        throw new Error(`Failed to browse: ${response.status}`);
+        throw err;
       }
 
-      const data = await response.json();
-      const items = (data.value || []).map((item: any) => ({
+      const items = childItems.map((item: any) => ({
         id: item.id,
         name: item.name,
         isFolder: !!item.folder,
@@ -2438,40 +2999,29 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       const folderId = req.body.folderId as string;
       const folderPath = req.body.folderPath as string;
 
-      if (!driveId && !folderPath) {
-        const spInfo = await getSharePointDriveId(token);
-        if (!spInfo) return res.status(404).json({ message: "Could not find SharePoint site" });
-
-        const uploadUrl = `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodeURIComponent(SHAREPOINT_ROOT_FOLDER)}/${encodeURIComponent(file.originalname)}:/content`;
-        const uploadRes = await fetch(uploadUrl, {
-          method: "PUT",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": file.mimetype || "application/octet-stream",
-          },
-          body: file.buffer,
-        });
-
-        if (!uploadRes.ok) {
-          const err = await uploadRes.text();
-          return res.status(uploadRes.status).json({ message: `Upload failed: ${err.slice(0, 200)}` });
-        }
-
-        const result = await uploadRes.json();
-        return res.json({ id: result.id, name: result.name, webUrl: result.webUrl, size: result.size });
+      // Where does this upload land? A selected folder with missing IDs is a
+      // 4xx — never a silent upload to the SharePoint root. No selection at
+      // all keeps the existing BGP-share-drive-root default.
+      const dest = resolveUploadDestination({ driveId, folderId, folderPath });
+      if (dest.kind === "error") {
+        return res.status(dest.status).json({ message: dest.message });
       }
 
       let uploadUrl: string;
-      if (folderId) {
-        uploadUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(file.originalname)}:/content`;
-      } else if (folderPath) {
+      if (dest.kind === "folder") {
+        uploadUrl = `https://graph.microsoft.com/v1.0/drives/${dest.driveId}/items/${dest.folderId}:/${encodeURIComponent(file.originalname)}:/content`;
+      } else if (dest.kind === "path") {
         const spInfo = await getSharePointDriveId(token);
-        const drive = driveId || spInfo?.driveId;
+        const drive = dest.driveId || spInfo?.driveId;
         if (!drive) return res.status(404).json({ message: "Could not find SharePoint drive" });
-        const cleanPath = folderPath.replace(/^\/+|\/+$/g, "");
+        const cleanPath = dest.folderPath.replace(/^\/+|\/+$/g, "");
         uploadUrl = `https://graph.microsoft.com/v1.0/drives/${drive}/root:/${cleanPath}/${encodeURIComponent(file.originalname)}:/content`;
+      } else if (dest.kind === "drive-root") {
+        uploadUrl = `https://graph.microsoft.com/v1.0/drives/${dest.driveId}/root:/${encodeURIComponent(file.originalname)}:/content`;
       } else {
-        uploadUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(file.originalname)}:/content`;
+        const spInfo = await getSharePointDriveId(token);
+        if (!spInfo) return res.status(404).json({ message: "Could not find SharePoint site" });
+        uploadUrl = `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodeURIComponent(SHAREPOINT_ROOT_FOLDER)}/${encodeURIComponent(file.originalname)}:/content`;
       }
 
       const uploadRes = await fetch(uploadUrl, {
@@ -2491,8 +3041,11 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       const result = await uploadRes.json();
       res.json({ id: result.id, name: result.name, webUrl: result.webUrl, size: result.size });
     } catch (err: any) {
-      console.error("File upload error:", err);
-      res.status(500).json({ message: "Failed to upload file" });
+      // Surface the real reason instead of a blank 500 — otherwise an
+      // upload failure (token expiry, Graph 4xx, oversize, network) is
+      // indistinguishable to the user. The message is safe to show.
+      console.error("[SharePoint upload] error:", err?.message, err?.stack);
+      res.status(500).json({ message: `Upload failed: ${err?.message || "unknown error"}` });
     }
   });
 }

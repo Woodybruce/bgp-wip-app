@@ -15,7 +15,7 @@ export default function CaseStudyStrip({ caseStudy }: { caseStudy: CaseStudy }) 
             <Placeholder className="aspect-[16/9] w-full" src={caseStudy.image} alt={caseStudy.title} />
             <span className="hidden md:block absolute -right-14 top-1/2 -translate-y-1/2 text-bgp-red text-3xl" aria-hidden>›</span>
           </div>
-          <p className="mx-auto mt-6 max-w-md text-sm font-light text-bgp-ink/75 leading-relaxed">
+          <p className="mx-auto mt-6 max-w-md text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">
             {caseStudy.blurb}
           </p>
           <p className="mt-5"><span className="explore-link">Read more</span></p>

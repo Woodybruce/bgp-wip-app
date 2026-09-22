@@ -20,8 +20,8 @@ import * as fs from "fs";
 import { sendSharedMailboxEmail } from "./shared-mailbox";
 
 const router = Router();
-const BGP_GREEN = "#2E5E3F";
-const BGP_DARK_GREEN = "#1A3A28";
+const BGP_GREEN = "#6E0C25";
+const BGP_DARK_GREEN = "#4A0819";
 
 async function loadContact(contactId: string) {
   const q = await pool.query(
@@ -38,8 +38,9 @@ async function loadContact(contactId: string) {
 async function loadClientActivity(contactId: string, sinceDays = 7) {
   // All deals where this contact is the client contact
   const dealsQ = pool.query(
-    `SELECT d.id, d.name, d.stage, d.status, d.deal_type, d.pricing, d.rent_pa, d.completion_date,
-            d.updated_at, d.hots_completed_at,
+    `SELECT d.id, d.name, d.stage, d.status, d.deal_type, d.pricing, d.rent_pa,
+            d.instructed_at, d.target_date, d.exchanged_at, d.completed_at, d.invoiced_at,
+            d.updated_at,
             p.name AS property_name, p.address AS property_address,
             lc.name AS landlord_name, tc.name AS tenant_name, vc.name AS vendor_name, pc.name AS purchaser_name
        FROM crm_deals d
@@ -82,7 +83,7 @@ async function renderWeeklyReportPdf(contact: any, activity: any): Promise<Buffe
   doc.on("data", (c: Buffer) => chunks.push(c));
   const pageW = 495;
   const leftM = 50;
-  const logoPath = path.join(process.cwd(), "server", "assets", "branding", "BGP_BlackWordmark.png");
+  const logoPath = path.join(process.cwd(), "server", "assets", "branding", "BGP_BlackWordmark_trimmed.png");
   const logoExists = fs.existsSync(logoPath);
 
   doc.rect(0, 0, 595, 8).fill(BGP_GREEN);
@@ -104,7 +105,7 @@ async function renderWeeklyReportPdf(contact: any, activity: any): Promise<Buffe
   // Headline summary
   const activeCount = activity.deals.filter((d: any) => d.status !== "completed" && d.status !== "lost").length;
   const eventsThisWeek = activity.recentEvents.length;
-  doc.rect(leftM, y, pageW, 50).fill("#F4F7F5");
+  doc.rect(leftM, y, pageW, 50).fill("#F9F4F0");
   doc.font("Helvetica-Bold").fontSize(7).fillColor("#888").text("ACTIVE DEALS", leftM + 10, y + 10);
   doc.font("Helvetica-Bold").fontSize(18).fillColor(BGP_DARK_GREEN).text(String(activeCount), leftM + 10, y + 22);
   doc.font("Helvetica-Bold").fontSize(7).fillColor("#888").text("EVENTS THIS WEEK", leftM + pageW / 2, y + 10);

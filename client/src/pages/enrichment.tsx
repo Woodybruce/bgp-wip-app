@@ -37,6 +37,8 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
+import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
+import { countLabel } from "@/lib/utils";
 
 interface EnrichmentStats {
   contacts: {
@@ -94,9 +96,9 @@ function FreshnessBar({ fresh, stale, never, total }: { fresh: number; stale: nu
         <div className="bg-red-400 transition-all" style={{ width: `${neverPct}%` }} title={`Never enriched: ${never}`} />
       </div>
       <div className="flex items-center gap-4 text-[10px] text-muted-foreground">
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />Fresh ({fresh})</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500" />Stale ({stale})</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400" />Never ({never})</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />Fresh <span className="font-mono tabular-nums">{fresh}</span></span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500" />Stale <span className="font-mono tabular-nums">{stale}</span></span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400" />Never <span className="font-mono tabular-nums">{never}</span></span>
       </div>
     </div>
   );
@@ -123,6 +125,11 @@ export default function EnrichmentHub() {
 
   const c = stats?.contacts;
   const co = stats?.companies;
+
+  // One rule for both cards: grey when there's nothing to enrich, red only
+  // when the stale share is genuinely bad.
+  const freshBadgeVariant = (s?: { total: number; fresh: number; stale: number; never_enriched: number }) =>
+    s && s.total > 0 && s.stale + s.never_enriched > s.fresh ? ("destructive" as const) : ("secondary" as const);
 
   if (isLoading) {
     return (
@@ -159,10 +166,10 @@ export default function EnrichmentHub() {
 
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList data-testid="enrichment-tabs">
-          <TabsTrigger value="overview" data-testid="tab-overview">Overview</TabsTrigger>
-          <TabsTrigger value="contacts" data-testid="tab-contacts">Contacts</TabsTrigger>
-          <TabsTrigger value="companies" data-testid="tab-companies">Companies</TabsTrigger>
+        <TabsList data-testid="enrichment-tabs" className={pillTabsList}>
+          <TabsTrigger value="overview" className={pillTabsTrigger} data-testid="tab-overview">Overview</TabsTrigger>
+          <TabsTrigger value="contacts" className={pillTabsTrigger} data-testid="tab-contacts">Contacts</TabsTrigger>
+          <TabsTrigger value="companies" className={pillTabsTrigger} data-testid="tab-companies">Companies</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6 mt-4">
@@ -172,9 +179,9 @@ export default function EnrichmentHub() {
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
                     <Users className="w-4 h-4 text-violet-500" />
-                    Contacts ({c?.total || 0})
+                    {countLabel(c?.total || 0, "contact")}
                   </CardTitle>
-                  <Badge variant={c && c.stale + c.never_enriched > c.fresh ? "destructive" : "secondary"} className="text-[10px]">
+                  <Badge variant={freshBadgeVariant(c)} className="text-[10px]">
                     {c ? Math.round((c.fresh / Math.max(c.total, 1)) * 100) : 0}% fresh
                   </Badge>
                 </div>
@@ -212,9 +219,9 @@ export default function EnrichmentHub() {
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
                     <Building2 className="w-4 h-4 text-blue-500" />
-                    Companies ({co?.total || 0})
+                    {countLabel(co?.total || 0, "company", "companies")}
                   </CardTitle>
-                  <Badge variant={co && co.stale + co.never_enriched > co.fresh ? "destructive" : "secondary"} className="text-[10px]">
+                  <Badge variant={freshBadgeVariant(co)} className="text-[10px]">
                     {co ? Math.round((co.fresh / Math.max(co.total, 1)) * 100) : 0}% fresh
                   </Badge>
                 </div>
@@ -337,7 +344,39 @@ export default function EnrichmentHub() {
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              <ScrollArea className="w-full">
+              {/* Phone: one card per contact (§7) — the table never ships below md. */}
+              <div className="md:hidden divide-y divide-border">
+                {stats?.staleContacts?.length === 0 && (
+                  <div className="text-center py-8 text-sm text-muted-foreground">
+                    <CheckCircle2 className="w-6 h-6 mx-auto mb-2 text-emerald-500" />
+                    All contacts are up to date!
+                  </div>
+                )}
+                {stats?.staleContacts?.map(contact => (
+                  <div key={contact.id} className="px-4 py-3" data-testid={`card-stale-contact-${contact.id}`}>
+                    <Link href={`/contacts/${contact.id}`}>
+                      <span className="text-blue-600 hover:underline cursor-pointer font-medium text-sm" data-testid={`link-contact-card-${contact.id}`}>{contact.name}</span>
+                    </Link>
+                    <p className="text-[11px] text-muted-foreground truncate">
+                      {[contact.company_name, contact.email].filter(Boolean).join(" · ") || "—"}
+                    </p>
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {contact.role && <Badge variant="outline" className="text-[10px] whitespace-nowrap">{contact.role}</Badge>}
+                      {contact.last_enriched_at ? (
+                        <Badge variant="outline" className="text-[10px] border-amber-300 whitespace-nowrap">
+                          <Clock className="w-2.5 h-2.5 mr-0.5" />
+                          {new Date(contact.last_enriched_at).toLocaleDateString("en-GB")}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] border-red-300 text-red-600 whitespace-nowrap">Never</Badge>
+                      )}
+                      {contact.enrichment_source && <Badge variant="outline" className="text-[10px] whitespace-nowrap">{contact.enrichment_source}</Badge>}
+                      <Badge variant="outline" className="text-[10px] whitespace-nowrap">Pending</Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <ScrollArea className="w-full hidden md:block">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -404,7 +443,37 @@ export default function EnrichmentHub() {
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              <ScrollArea className="w-full">
+              {/* Phone: one card per company (§7) — the table never ships below md. */}
+              <div className="md:hidden divide-y divide-border">
+                {stats?.staleCompanies?.length === 0 && (
+                  <div className="text-center py-8 text-sm text-muted-foreground">
+                    <CheckCircle2 className="w-6 h-6 mx-auto mb-2 text-emerald-500" />
+                    All companies are up to date!
+                  </div>
+                )}
+                {stats?.staleCompanies?.map(company => (
+                  <div key={company.id} className="px-4 py-3" data-testid={`card-stale-company-${company.id}`}>
+                    <Link href={`/companies/${company.id}`}>
+                      <span className="text-blue-600 hover:underline cursor-pointer font-medium text-sm" data-testid={`link-company-card-${company.id}`}>{company.name}</span>
+                    </Link>
+                    <p className="text-[11px] text-muted-foreground truncate">
+                      {[company.domain, company.industry].filter(Boolean).join(" · ") || "—"}
+                    </p>
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {company.last_enriched_at ? (
+                        <Badge variant="outline" className="text-[10px] border-amber-300 whitespace-nowrap">
+                          <Clock className="w-2.5 h-2.5 mr-0.5" />
+                          {new Date(company.last_enriched_at).toLocaleDateString("en-GB")}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] border-red-300 text-red-600 whitespace-nowrap">Never</Badge>
+                      )}
+                      {company.enrichment_source && <Badge variant="outline" className="text-[10px] whitespace-nowrap">{company.enrichment_source}</Badge>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <ScrollArea className="w-full hidden md:block">
                 <Table>
                   <TableHeader>
                     <TableRow>
