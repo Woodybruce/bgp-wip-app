@@ -210,6 +210,17 @@ function polygonAreaPt(points: Array<{ x: number; y: number }>): number {
   return Math.abs(a) / 2;
 }
 
+function polygonCentroid(points: Array<[number, number]>): [number, number] {
+  let a = 0, cx = 0, cy = 0;
+  for (let i = 0; i < points.length; i++) {
+    const [x0, y0] = points[i], [x1, y1] = points[(i + 1) % points.length];
+    const f = x0 * y1 - x1 * y0;
+    a += f; cx += (x0 + x1) * f; cy += (y0 + y1) * f;
+  }
+  if (Math.abs(a) < 1e-6) { const n = points.length || 1; return [points.reduce((s, p) => s + p[0], 0) / n, points.reduce((s, p) => s + p[1], 0) / n]; }
+  return [cx / (3 * a), cy / (3 * a)];
+}
+
 function pathLengthPt(points: Array<{ x: number; y: number }>, closed: boolean): number {
   let l = 0;
   const n = closed ? points.length : points.length - 1;
@@ -366,6 +377,11 @@ export async function measurePlanFromBuffer(buffer: Buffer, name: string, args: 
       const m2 = metresPerPoint ? areaPt * metresPerPoint * metresPerPoint : null;
       if (m2 !== null && m2 < 0.5) continue;
       const largest = [...list].sort((a, b) => b.areaPt - a.areaPt)[0];
+      // Centroid of the largest single polygon — a point that is actually ON
+      // the fill (the union bbox centre of a U-shaped floor is the courtyard).
+      const ring = [...largest.subpaths].sort((a, b) => Math.abs(polygonAreaPt(a.map(([x, y]) => ({ x, y })))) - Math.abs(polygonAreaPt(b.map(([x, y]) => ({ x, y })))))[largest.subpaths.length - 1];
+      const centroid = ring ? polygonCentroid(ring) : null;
+      const centroidFraction = centroid ? { x: round(centroid[0] / widthPt, 4), y: round(centroid[1] / heightPt, 4) } : null;
       fillRegions.push({
         colour,
         polygons: list.length,
@@ -376,9 +392,11 @@ export async function measurePlanFromBuffer(buffer: Buffer, name: string, args: 
         summedPolygonsSqm: metresPerPoint ? round(sumPt * metresPerPoint * metresPerPoint, 1) : null,
         largestPolygonSqm: metresPerPoint ? round(largest.areaPt * metresPerPoint * metresPerPoint, 1) : null,
         bboxFraction: bboxPt ? { x: round(bboxPt[0] / widthPt, 4), y: round(bboxPt[1] / heightPt, 4), w: round((bboxPt[2] - bboxPt[0]) / widthPt, 4), h: round((bboxPt[3] - bboxPt[1]) / heightPt, 4) } : null,
-        // Fills sitting in the right-hand title-block strip are key swatches /
-        // location keys, not demise — flag them so they aren't summed.
-        inTitleStrip: bboxPt ? bboxPt[0] / widthPt > 0.78 : false,
+        centroidFraction,
+        // Fills whose main polygon sits in the right-hand title-block strip
+        // are key swatches / location keys, not demise — flag them so they
+        // aren't summed or labelled.
+        inTitleStrip: centroidFraction ? centroidFraction.x > 0.78 : (bboxPt ? bboxPt[0] / widthPt > 0.78 : false),
         areaPt2: round(areaPt, 0),
       });
     }
