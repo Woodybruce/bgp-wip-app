@@ -5,8 +5,9 @@
  * other modules (PIPnet, TRL, Companies House PDFs, Rightmove etc) can
  * delegate without copy-pasting the URL-building boilerplate.
  *
- * BGP is on the Business plan which includes UK geotargeting, premium
- * residential IPs, and 50+ concurrency. Defaults below assume that —
+ * BGP was on the Business plan which includes UK geotargeting, premium
+ * residential IPs, and 50+ concurrency (UK geotargeting is now refused —
+ * see ukGeotargetingRefused). Defaults below assume that —
  * downgrade callers (or the plan) and they'll keep working but with
  * generic IPs.
  *
@@ -37,6 +38,11 @@ const SCRAPERAPI_ENDPOINT = "https://api.scraperapi.com/";
 // is out of credits. Any caller seeing 401/403 should report it here; all
 // callers should skip ScraperAPI entirely while the breaker is tripped.
 let scraperBreakerUntil = 0;
+// The plan stopped including UK geotargeting (2026-09-23: every request
+// 403'd "Your plan does not include geotargeting for this country", which
+// the breaker read as out-of-credits and paused ScraperAPI app-wide). Once
+// refused, requests go out without country_code until the next boot.
+let ukGeotargetingRefused = false;
 const SCRAPER_BREAKER_MS = 10 * 60 * 1000;
 
 export function scraperApiExhausted(): boolean {
@@ -79,7 +85,7 @@ function buildScraperUrl(targetUrl: string, opts: ScraperOptions = {}): string {
   if (opts.ultraPremium === true) params.set("ultra_premium", "true");
   else if (opts.premium !== false) params.set("premium", "true");
   if (opts.render === true) params.set("render", "true");
-  if (opts.uk !== false) params.set("country_code", "uk");
+  if (opts.uk !== false && !ukGeotargetingRefused) params.set("country_code", "uk");
   if (opts.keepHeaders !== false) params.set("keep_headers", "true");
   if (opts.sessionNumber != null) params.set("session_number", String(opts.sessionNumber));
   const finalUrl = `${SCRAPERAPI_ENDPOINT}?${params.toString()}`;
@@ -112,6 +118,11 @@ export async function scraperFetch(
     ...fetchInit,
     signal: fetchInit.signal ?? AbortSignal.timeout(timeoutMs ?? defaultTimeout),
   });
+  if (res.status === 403 && uk !== false && !ukGeotargetingRefused && /geotargeting/i.test(await res.clone().text().catch(() => ""))) {
+    ukGeotargetingRefused = true;
+    console.warn("[scraperapi] plan does not include UK geotargeting — continuing without country_code");
+    return scraperFetch(targetUrl, init);
+  }
   noteScraperApiResponse(res.status);
   return res;
 }

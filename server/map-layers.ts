@@ -100,7 +100,7 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
         if (scraperKey && urls && urls.length > 0 && anthropicKey) {
           for (const url of urls) {
             try {
-              const proxied = `https://api.scraperapi.com/?api_key=${encodeURIComponent(scraperKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=true`;
+              const proxied = `https://api.scraperapi.com/?api_key=${encodeURIComponent(scraperKey)}&url=${encodeURIComponent(url)}&render=true`;
               const r = await fetch(proxied, { signal: AbortSignal.timeout(60000) });
               if (!r.ok) continue;
               const html = await r.text();

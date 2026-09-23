@@ -4156,7 +4156,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
     // residential rotation matches the origin's expected traffic profile
     // (slightly faster + fewer soft-throttles on UK gov sites).
     const tRes = await fetch(
-      `https://api.scraperapi.com/?api_key=${encodeURIComponent(key)}&url=${encodeURIComponent(testUrl)}&country_code=uk&render=false`,
+      `https://api.scraperapi.com/?api_key=${encodeURIComponent(key)}&url=${encodeURIComponent(testUrl)}&render=false`,
       { signal: AbortSignal.timeout(25000) }
     );
     const elapsed = Date.now() - t0;
