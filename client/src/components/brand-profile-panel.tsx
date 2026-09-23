@@ -3051,7 +3051,7 @@ export function ApolloDetailChips({ companyId }: { companyId: string }) {
   if (!payload) return null;
   return <>
     {payload.totalFunding && <span className="text-xs text-muted-foreground tabular-nums">Funding {payload.totalFunding}</span>}
-    {payload.latestFundingStage && <span className="text-xs text-muted-foreground">{payload.latestFundingStage}</span>}
+    {payload.latestFundingStage && !/^(other|unknown|n\/a)$/i.test(String(payload.latestFundingStage).trim()) && <span className="text-xs text-muted-foreground">{payload.latestFundingStage}</span>}
   </>;
 }
 
