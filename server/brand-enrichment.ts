@@ -556,6 +556,19 @@ router.post("/api/brand/website-sweep", requireAuth, async (req: Request, res: R
     res.status(202).json(await startWebsiteSweep({ restart: req.body?.restart === true }));
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
+// Staff check that JavaScript-built sites can be read on this server.
+router.get("/api/brand/website-sweep/render-test", requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!await checkBrandScope(req)) return res.status(403).json({ error: "Access denied" });
+    const domain = String(req.query.domain || "").replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain)) return res.status(400).json({ error: "domain required" });
+    const mod = await import("./render-page");
+    const started = Date.now();
+    const page = await mod.renderPageHtml(`https://${domain}/`);
+    const text = page ? page.html.replace(/<(script|style|noscript)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "";
+    res.json({ ok: !!page, finalUrl: page?.url || null, chars: text.length, sample: text.slice(0, 300), ms: Date.now() - started, error: page ? null : mod.lastRenderError });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
 router.get("/api/brand/website-sweep", requireAuth, async (req: Request, res: Response) => {
   try {
     if (!await checkBrandScope(req)) return res.status(403).json({ error: "The website sweep is available in the staff view" });

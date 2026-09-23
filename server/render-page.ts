@@ -6,6 +6,7 @@
 let browserPromise: Promise<any> | null = null;
 let idleTimer: NodeJS.Timeout | null = null;
 let active = 0;
+export let lastRenderError: string | null = null;
 
 async function browser(): Promise<any> {
   if (!browserPromise) {
@@ -41,7 +42,9 @@ export async function renderPageHtml(url: string, timeoutMs = 25_000): Promise<{
     await page.goto(url, { waitUntil: "networkidle2", timeout: timeoutMs }).catch(() => {});
     const html: string = await page.content();
     return { html: html.slice(0, 2 * 1024 * 1024), url: page.url() };
-  } catch {
+  } catch (error: any) {
+    lastRenderError = String(error?.message || error).slice(0, 300);
+    console.warn(`[render-page] ${url}: ${lastRenderError}`);
     return null;
   } finally {
     active--;

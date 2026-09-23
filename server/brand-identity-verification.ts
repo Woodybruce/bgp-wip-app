@@ -63,6 +63,9 @@ ${JSON.stringify(pageText)}` }],
   return safeParseJSON(result.content.map(block => block.type === "text" ? block.text : "").join(""));
 }
 
+const quoteKey = (value: string) => String(value || "").normalize("NFKC").toLowerCase()
+  .replace(/[\u2018\u2019\u00b4`]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/[\u2013\u2014\u2212]/g, "-")
+  .replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim();
 const tradingName = (value: unknown) => legalName(value).replace(/(?:\s+(?:ltd|plc|llp|inc|corp|corporation))+$/, "").trim();
 
 export function supportedWebsiteAssessment(company: any, pages: WebsitePage[], assessment: any): { confidence: number; reason: string; evidence: WebsiteEvidence[] } | null {
@@ -80,7 +83,10 @@ export function supportedWebsiteAssessment(company: any, pages: WebsitePage[], a
     if (item.kind === "operator" && /\b(?:reseller|stockist|we stock|brands we (?:carry|stock|sell))\b/i.test(quote)) return null;
     // A bad extra citation is not proof, but must not discard independent,
     // correctly attributed evidence. Only the retained quotes can verify.
-    if (!page || !visibleText(page.html).replace(/\s+/g, " ").includes(quote)) continue;
+    // Typography is not evidence: curly vs straight quotes, dashes, "&" vs
+    // "and" and case differ between the page and the model's copy (Bird &
+    // Blend Tea Co was verified at 0.98 and still failed, 2026-09-23).
+    if (!page || !quoteKey(visibleText(page.html)).includes(quoteKey(quote))) continue;
     evidence.push({ url: page.url, quote, kind: item.kind });
   }
   if (!evidence.some(item => item.kind === "operator") || !evidence.some(item => item.kind === "business")

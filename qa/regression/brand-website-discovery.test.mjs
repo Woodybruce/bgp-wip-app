@@ -133,3 +133,19 @@ test('stores from the official website are kept only when the page names them', 
   ] });
   assert.deepEqual(kept.map(s => `${s.country}:${s.name}:${s.status}`), ['GB:Canary Wharf:coming_soon', 'ES:Serrano:open']);
 });
+
+test('typography differences between the page and the quoted evidence do not fail a verified site', async () => {
+  const { supportedWebsiteAssessment } = await import('../../server/brand-identity-verification.ts');
+  const company = { name: 'Bird & Blend Tea Co', domain: 'birdandblendtea.com', domain_url: 'https://birdandblendtea.com', website: 'https://birdandblendtea.com' };
+  const pages = [{ url: 'https://birdandblendtea.com/', html: '<p>Bird &amp; Blend Tea Co. — we’re a tea company blending loose leaf teas in Brighton’s own tea lab.</p>' }];
+  const ok = supportedWebsiteAssessment(company, pages, { decision: 'verified', confidence: 0.98, brandName: 'Bird & Blend Tea Co', officialDomain: 'birdandblendtea.com',
+    relationship: 'operator', operatesOfficialWebsite: true, conflicts: [], reason: 'Operator identity stated.',
+    evidence: [{ url: 'https://birdandblendtea.com/', quote: "Bird & Blend Tea Co. - we're a tea company blending loose leaf teas", kind: 'operator' },
+      { url: 'https://birdandblendtea.com/', quote: "blending loose leaf teas in Brighton's own tea lab", kind: 'business' }] });
+  assert.ok(ok);
+  const made = supportedWebsiteAssessment(company, pages, { decision: 'verified', confidence: 0.98, brandName: 'Bird & Blend Tea Co', officialDomain: 'birdandblendtea.com',
+    relationship: 'operator', operatesOfficialWebsite: true, conflicts: [], reason: 'x',
+    evidence: [{ url: 'https://birdandblendtea.com/', quote: 'Bird & Blend Tea Co is the official operator of this website', kind: 'operator' },
+      { url: 'https://birdandblendtea.com/', quote: 'we sell coffee machines across Europe and the USA', kind: 'business' }] });
+  assert.equal(made, null);
+});
