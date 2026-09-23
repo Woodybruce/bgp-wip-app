@@ -362,7 +362,7 @@ router.get("/api/companies-house/document/:id", requireAuth, async (req, res) =>
 // when the website is present but only OVERWRITE an existing number when the
 // website yields a different one — protects against single-page scraper hits
 // while letting us correct historical wrong matches.
-async function performAutoKyc(companyId: string, opts: {
+export async function performAutoKyc(companyId: string, opts: {
   forceFromWebsite?: boolean;
   // Manual user-provided overrides for the "ask for help" UX — surfaced when
   // auto-resolution fails. Highest-confidence one wins (chNumber > entityName
@@ -384,7 +384,7 @@ async function performAutoKyc(companyId: string, opts: {
   filingsTotal?: number;
   companyNumber?: string | null;
   message?: string;
-  resolvedFrom?: "stored" | "website" | "ai_picker" | "name_match" | "exact_name_match";
+  resolvedFrom?: "stored" | "website" | "deal_documents" | "ai_picker" | "name_match" | "exact_name_match";
   diagnostics?: Array<{ step: string; outcome: string; detail?: string }>;
   experian?: any;
   riskLevel?: string;
@@ -399,7 +399,7 @@ async function performAutoKyc(companyId: string, opts: {
   if (!company) throw new Error("Company not found");
 
   let chNumber = opts.forceFromWebsite ? null : company.companiesHouseNumber;
-  let resolvedFrom: "stored" | "website" | "ai_picker" | "name_match" | "exact_name_match" = "stored";
+  let resolvedFrom: "stored" | "website" | "deal_documents" | "ai_picker" | "name_match" | "exact_name_match" = "stored";
   // Per-step trace so the brand panel can show why a re-resolve picked what
   // it picked (or why it picked nothing). Without this the "Wrong company?"
   // button feels like a black box when it lands the same wrong CH again.
@@ -600,6 +600,39 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
         ? "user supplied UK entity name — skipping scrape"
         : "no domain/website on company";
       diagnostics.push({ step: "website_scrape", outcome: "skipped", detail: reason });
+    }
+
+    // BGP's own deal records (HOTs, leases, fee emails) name the contracting
+    // tenant — checked alongside the website, and preferred when the two
+    // disagree because it is the entity the deal was actually done with.
+    if (!opts.manualChNumber && !opts.manualEntityName && !opts.manualTcsUrl) {
+      try {
+        const { findTenantEntityInDealRecords } = await import("./brand-entity-deal-docs");
+        const found = await findTenantEntityInDealRecords(company);
+        if (!found) {
+          diagnostics.push({ step: "deal_records", outcome: "nothing", detail: "No HOTs, lease or deal email naming the tenant entity" });
+        } else {
+          const websiteName = haveSpecificEntityName ? searchName : null;
+          const agrees = !!websiteName && normalizeChTitle(websiteName) === normalizeChTitle(found.entityName);
+          const dealCh = found.chNumber && await verifyChNumber(found.chNumber) ? found.chNumber : null;
+          if (dealCh) { chNumber = dealCh; resolvedFrom = "deal_documents"; }
+          else if (!agrees) {
+            let keep = false;
+            if (chNumber) {
+              try { keep = normalizeChTitle((await chFetch(`/company/${encodeURIComponent(chNumber)}`))?.company_name || "") === normalizeChTitle(found.entityName); } catch { /* re-resolve by name */ }
+            }
+            if (!keep) { chNumber = null; searchName = found.entityName; haveSpecificEntityName = true; resolvedFrom = "deal_documents"; }
+          }
+          websiteContext += `\nDeal record (${found.doc.fileName}): ${found.quote}`;
+          const { pool } = await import("./db");
+          await pool.query(`UPDATE crm_companies SET uk_entity_name=$2,
+              ai_generated_fields = jsonb_set(COALESCE(ai_generated_fields,'{}'::jsonb), '{uk_entity_source}', $3::jsonb, true) WHERE id=$1`,
+            [company.id, found.entityName, JSON.stringify({ kind: "deal_documents", entityName: found.entityName, fileName: found.doc.fileName, fileUrl: found.doc.fileUrl, quote: found.quote, websiteAgrees: agrees, at: new Date().toISOString() })]).catch(() => {});
+          diagnostics.push({ step: "deal_records", outcome: dealCh ? "ch_found" : "entity_only", detail: `${found.entityName}${dealCh ? ` (CH ${dealCh})` : ""} · ${found.doc.fileName}${websiteName ? agrees ? " · matches the website" : ` · website said ${websiteName}` : ""}` });
+        }
+      } catch (err: any) {
+        diagnostics.push({ step: "deal_records", outcome: "error", detail: err?.message || "lookup failed" });
+      }
     }
 
     if (!chNumber && domain) {
@@ -1145,7 +1178,7 @@ async function verifyChNumber(chNumber: string): Promise<boolean> {
 }
 
 // ─── Batch re-KYC — finds stale/dissolved companies and re-runs KYC on them ──
-export async function runBatchReKyc({ limit = 40, forceAll = false }: { limit?: number; forceAll?: boolean } = {}) {
+export async function runBatchReKyc({ limit = 40, forceAll = false, dealTenantsOnly = false }: { limit?: number; forceAll?: boolean; dealTenantsOnly?: boolean } = {}) {
   const { db } = await import("./db");
   const { sql } = await import("drizzle-orm");
 
@@ -1153,7 +1186,8 @@ export async function runBatchReKyc({ limit = 40, forceAll = false }: { limit?: 
 
   const result = await db.execute(sql`
     SELECT id, name FROM crm_companies
-    WHERE ${forceAll ? sql`TRUE` : sql`(
+    WHERE ${dealTenantsOnly ? sql`merged_into_id IS NULL AND COALESCE(companies_house_number,'') = ''
+      AND id IN (SELECT tenant_id FROM crm_deals WHERE tenant_id IS NOT NULL) AND` : sql``} ${forceAll ? sql`TRUE` : sql`(
       kyc_checked_at IS NULL
       OR kyc_checked_at < ${thirtyDaysAgo.toISOString()}
       OR kyc_status IS NULL

@@ -13,7 +13,7 @@
 //   GET  /api/deal/:dealId/completion.pdf     — completion report PDF
 // ─────────────────────────────────────────────────────────────────────────
 import { Router, type Request, type Response } from "express";
-import { requireAuth } from "./auth";
+import { requireAuth, requireAdmin } from "./auth";
 import { pool } from "./db";
 import * as path from "path";
 import * as fs from "fs";
@@ -59,6 +59,33 @@ router.get("/api/deal/:dealId/doc-data", requireAuth, async (req, res) => {
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Fill the deal's empty terms + tenant's agent from its HOTs in the indexed
+// SharePoint files (server/deal-hots-from-records.ts).
+router.post("/api/deal/:dealId/hots-from-records", requireAuth, async (req: Request & { user?: any }, res) => {
+  try {
+    const { isClientRequestUser } = await import("./company-scope");
+    if (await isClientRequestUser(req)) return res.status(403).json({ error: "Staff only" });
+    const { fillDealFromHots } = await import("./deal-hots-from-records");
+    res.json(await fillDealFromHots(String(req.params.dealId)));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Directory pass over deals with a tenant and no HOTs yet; runs in the
+// background, GET reads the last result (incl. the tenant agents named).
+router.post("/api/deals/hots-backfill", requireAuth, requireAdmin, async (_req, res) => {
+  const { backfillDealsFromHots } = await import("./deal-hots-from-records");
+  const key = "deal-hots-backfill";
+  await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ($1,$2::jsonb,now()) ON CONFLICT(key) DO UPDATE SET value=$2::jsonb,updated_at=now()`, [key, JSON.stringify({ status: "running", startedAt: new Date().toISOString() })]);
+  backfillDealsFromHots().then(result => pool.query(`UPDATE system_settings SET value=$2::jsonb,updated_at=now() WHERE key=$1`, [key, JSON.stringify({ status: "done", finishedAt: new Date().toISOString(), ...result })]))
+    .catch(err => pool.query(`UPDATE system_settings SET value=$2::jsonb,updated_at=now() WHERE key=$1`, [key, JSON.stringify({ status: "error", error: String(err?.message || err) })]));
+  res.json({ status: "running" });
+});
+router.get("/api/deals/hots-backfill", requireAuth, async (_req, res) => {
+  res.json((await pool.query(`SELECT value FROM system_settings WHERE key='deal-hots-backfill'`)).rows[0]?.value || { status: "never_run" });
 });
 
 router.post("/api/deal/:dealId/hots", requireAuth, async (req: Request & { user?: any }, res) => {

@@ -138,6 +138,14 @@ export function isDeadWebsiteError(error: any): boolean {
 
 const BROWSER_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15";
 
+async function readViaProxy(url: string): Promise<{ html: string; url: string }> {
+  const { isScraperApiAvailable, scraperFetch } = await import("./utils/scraperapi");
+  if (!isScraperApiAvailable()) throw new Error("Official website blocked automated reading");
+  const res = await scraperFetch(url, { headers: { "User-Agent": BROWSER_UA }, keepHeaders: false, timeoutMs: 45000 });
+  if (!res.ok || !/text\/html|application\/xhtml\+xml/i.test(res.headers.get("content-type") || "")) throw new Error(`Official website did not return a readable page (${res.status})`);
+  return { html: (await res.text()).slice(0, 2 * 1024 * 1024), url };
+}
+
 async function readOfficialPage(url: string, domain: string, redirects = 0, browserUa = false): Promise<{ html: string; url: string }> {
   const parsed = new URL(url);
   if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port) throw new Error("Official-site check cannot follow a different website");
@@ -164,6 +172,12 @@ async function readOfficialPage(url: string, domain: string, redirects = 0, brow
         response.resume();
         readOfficialPage(url, domain, redirects, true).then(resolve, reject); return;
       }
+      // Big retail sites (Adidas, Aldi, Aesop) turn away datacenter IPs even
+      // as a browser. Read the same URL once through the residential proxy.
+      if ([403, 429, 503].includes(response.statusCode || 0) && browserUa) {
+        response.resume();
+        readViaProxy(url).then(resolve, reject); return;
+      }
       if (response.statusCode !== 200 || !/text\/html|application\/xhtml\+xml/i.test(String(response.headers["content-type"]))) {
         response.resume(); reject(new Error(`Official website did not return a readable page (${response.statusCode})`)); return;
       }
@@ -184,7 +198,11 @@ async function readOfficialPage(url: string, domain: string, redirects = 0, brow
       response.on("error", reject);
     });
     const timeout = setTimeout(() => req.destroy(new Error("Official website verification timed out")), 8000);
-    req.on("close", () => clearTimeout(timeout)); req.on("error", reject); req.end();
+    req.on("close", () => clearTimeout(timeout));
+    // A dead domain stays dead; a hung or reset connection is usually bot
+    // protection, so it gets the proxy read too.
+    req.on("error", error => isDeadWebsiteError(error) || /public website/.test(error.message) ? reject(error) : readViaProxy(url).then(resolve, () => reject(error)));
+    req.end();
   });
 }
 
@@ -305,7 +323,11 @@ export async function verifyBrandIdentityFromOfficialSite(
   // the quote-level proof above while being plainly right.
   const obvious = proof || strict ? null : obviousNameMatch(subject, candidate.domain, evidencePages, rawAssessment);
   const assessment = strict || obvious;
-  if (!proof && !assessment) return { status: "needs_review", reason: "The website did not clearly corroborate this business as its operator; check the website match" };
+  if (!proof && !assessment) {
+    const a: any = rawAssessment || {};
+    return { status: "needs_review", reason: "The website did not clearly corroborate this business as its operator; check the website match",
+      verdict: { decision: a.decision ?? null, relationship: a.relationship ?? null, confidence: a.confidence ?? null, conflicts: Array.isArray(a.conflicts) ? a.conflicts.slice(0, 3) : [], note: typeof a.reason === "string" ? a.reason.slice(0, 200) : null } } as any;
+  }
   const client = await db.connect();
   try {
     await client.query("BEGIN");

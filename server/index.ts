@@ -5037,6 +5037,22 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
         setTimeout(() => startAutoTurnoverResearch(), 30000);
         // A directory-wide website sweep survives deploys: pick it back up.
         setTimeout(() => { import("./brand-website-sweep").then(m => m.resumeWebsiteSweep()).catch(() => {}); }, 60000);
+        // One-off (2026-09-23): tenants on BGP deals with no Companies House
+        // entity get re-resolved now that deal records (HOTs, fee emails) are
+        // a source — they would otherwise wait a month in the parked queue.
+        setTimeout(async () => {
+          const marker = await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ('kyc-deal-tenants:2026-09-23','{}'::jsonb,now()) ON CONFLICT(key) DO NOTHING`).catch(() => null);
+          if (marker?.rowCount) runBatchReKyc({ dealTenantsOnly: true, forceAll: true, limit: 600 }).catch(err => console.error("[kyc-deal-tenants] failed:", err?.message));
+        }, 180000);
+        // Deal pages from their HOTs (terms + tenant's agent): one pass after
+        // this deploy, then nightly for HOTs filed since.
+        setTimeout(async () => {
+          const marker = await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ('deal-hots-backfill:2026-09-23','{}'::jsonb,now()) ON CONFLICT(key) DO NOTHING`).catch(() => null);
+          if (!marker?.rowCount) return;
+          const { backfillDealsFromHots } = await import("./deal-hots-from-records");
+          const result = await backfillDealsFromHots().catch(err => ({ status: "error", error: String(err?.message || err) }));
+          await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ('deal-hots-backfill',$1::jsonb,now()) ON CONFLICT(key) DO UPDATE SET value=$1::jsonb,updated_at=now()`, [JSON.stringify({ status: "done", finishedAt: new Date().toISOString(), ...result })]).catch(() => {});
+        }, 240000);
         import("./client-team-events-sync").then(m => m.startClientEventsSyncLoop()).catch(() => {});
         // Heavy crawls (image-sync + archivist) block the event loop and
         // were starving ChatBGP after every redeploy — a single chat turn
@@ -5182,6 +5198,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
             runBatchReKyc({ limit: 120 }).catch(err =>
               console.error("[kyc-refresh] nightly run failed:", err?.message)
             );
+            import("./deal-hots-from-records").then(m => m.backfillDealsFromHots(150)).catch(err =>
+              console.error("[deal-hots] nightly run failed:", err?.message));
           }
         }, 60 * 60 * 1000);
       }

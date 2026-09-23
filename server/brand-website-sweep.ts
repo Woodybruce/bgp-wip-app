@@ -40,17 +40,19 @@ async function checkOne(companyId: string): Promise<"verified" | "unknown"> {
   const company = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
   if (!company) return "unknown";
   if (getBrandIdentity(company).status === "verified") { await stamp(companyId, { status: "verified", domain: getBrandIdentity(company).domain }); return "verified"; }
-  let result: { status: string; reason?: string; domain?: string } = { status: "needs_review" };
+  let result: { status: string; reason?: string; domain?: string; verdict?: unknown } = { status: "needs_review" };
   try {
     if (!hasAnySavedWebsite(company)) result = await discoverAndVerifyBrandWebsite(pool, company);
     else {
       try {
         result = await verifyBrandIdentityFromOfficialSite(pool, company);
+        const verdict = (result as any).verdict;
         // A saved site that loads but doesn't prove out may simply be the
         // wrong site — search for the real one before giving up.
         if (result.status !== "ready") {
           const found = await discoverAndVerifyBrandWebsite(pool, company, { replaceDeadWebsite: true });
           if (found.status === "ready") result = found;
+          else if (verdict) result = { ...result, verdict };
         }
       } catch (error: any) {
         result = await discoverAndVerifyBrandWebsite(pool, company, { replaceDeadWebsite: true });
@@ -64,7 +66,7 @@ async function checkOne(companyId: string): Promise<"verified" | "unknown"> {
   const verified = !!after && getBrandIdentity(after).status === "verified";
   await stamp(companyId, verified
     ? { status: "verified", domain: getBrandIdentity(after).domain }
-    : { status: "unknown", reason: result.reason || "No official website could be proven", suggestion: after?.ai_generated_fields?.website_suggestion?.domain || null });
+    : { status: "unknown", reason: result.reason || "No official website could be proven", suggestion: after?.ai_generated_fields?.website_suggestion?.domain || null, verdict: result.verdict || null });
   return verified ? "verified" : "unknown";
 }
 
@@ -139,7 +141,7 @@ export async function readWebsiteSweep(): Promise<any> {
   const state = await readState();
   const unknown = (await pool.query(`SELECT c.id, c.name, c.company_type, COALESCE(c.domain, c.domain_url, c.website) AS saved_website,
         c.ai_generated_fields->'website_check'->>'reason' AS reason, c.ai_generated_fields->'website_check'->>'suggestion' AS suggestion,
-        c.ai_generated_fields->'website_check'->>'at' AS checked_at
+        c.ai_generated_fields->'website_check'->>'at' AS checked_at, c.ai_generated_fields->'website_check'->'verdict' AS verdict
       FROM crm_companies c WHERE ${BRAND_FILTER} AND c.ai_generated_fields->'website_check'->>'status' = 'unknown'
       ORDER BY (c.company_type ILIKE 'tenant%') DESC, c.name`)).rows;
   const verifiedCount = (await pool.query(`SELECT COUNT(*)::int AS n FROM crm_companies c WHERE c.merged_into_id IS NULL AND c.ai_generated_fields->'brand_identity'->>'status' = 'verified'`)).rows[0].n;

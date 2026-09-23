@@ -3601,6 +3601,11 @@ function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role
 // the user can overwrite the value at any time. The "Find on Companies
 // House" link opens a CH search prefilled with whatever's currently in
 // the input so the user can hand-pick the right registered name.
+const sameEntityName = (a: unknown, b: unknown) => {
+  const norm = (v: unknown) => String(v || "").toLowerCase().replace(/\blimited\b/g, "ltd").replace(/[^a-z0-9]/g, "");
+  return !!norm(a) && norm(a) === norm(b);
+};
+
 export function BrandComplianceCard({
   companyId,
   company,
@@ -3628,18 +3633,20 @@ export function BrandComplianceCard({
   // Re-fire the scraper. Different mutation instance from the parent's
   // auto-fire — having a local one means the "Refresh" button works
   // without prop-drilling and can show its own pending state.
+  // Website legal pages + BGP's own deal records, confirmed on Companies House.
   const rescrape = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/companies-house/find-uk-entity/${companyId}`, {});
+      const res = await apiRequest("POST", `/api/companies-house/auto-kyc/${companyId}`, {});
       return res.json();
     },
     onSuccess: (out: any) => {
-      const found = out?.ukEntityName || out?.scraped?.entityName;
+      const found = out?.success ? out?.profile?.companyName : null;
       toast({
-        title: found ? `Found: ${found}` : "Scraper found nothing",
-        description: found ? "" : "Paste the entity below — UK law requires it on the website but some retailers hide it.",
+        title: found ? `Confirmed: ${found}` : "Not found yet",
+        description: found ? "" : "Nothing on the website or in the deal records named the UK entity — enter it below.",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
     },
     onError: (e: any) => toast({ title: "Scrape failed", description: e.message, variant: "destructive" }),
   });
@@ -3723,7 +3730,7 @@ export function BrandComplianceCard({
             )}
             {rescrape.isPending && (
               <span className="text-[10px] italic flex items-center gap-1 text-muted-foreground">
-                <Loader2 className="w-2.5 h-2.5 animate-spin" /> Scraping website…
+                <Loader2 className="w-2.5 h-2.5 animate-spin" /> Checking…
               </span>
             )}
           </div>
@@ -3734,7 +3741,7 @@ export function BrandComplianceCard({
                   <div className="text-sm font-semibold leading-tight truncate" title={entity}>{entity}</div>
                 ) : (
                   <div className="text-xs italic text-muted-foreground">
-                    {rescrape.isPending ? "Scraping the brand's T&Cs page…" : bcIsClient ? "Not confirmed yet — BGP is identifying the UK trading entity." : "Not found — enter manually or re-run scraper."}
+                    {rescrape.isPending ? "Checking the website and deal records…" : bcIsClient ? "Not confirmed yet — BGP is identifying the UK trading entity." : "Not found — enter manually or re-run scraper."}
                   </div>
                 )}
                 {company.companies_house_number && (
@@ -3746,6 +3753,12 @@ export function BrandComplianceCard({
                   >
                     CH {company.companies_house_number} <ExternalLink className="w-2.5 h-2.5" />
                   </a>
+                )}
+                {hasEntity && company.ai_generated_fields?.uk_entity_source?.kind === "deal_documents"
+                  && sameEntityName(company.ai_generated_fields.uk_entity_source.entityName, entity) && (
+                  <div className="text-[10px] text-muted-foreground truncate mt-0.5" title={company.ai_generated_fields.uk_entity_source.quote || ""}>
+                    From deal records · {company.ai_generated_fields.uk_entity_source.fileName}
+                  </div>
                 )}
               </div>
               {!bcIsClient && (
@@ -3762,7 +3775,7 @@ export function BrandComplianceCard({
                 onClick={() => rescrape.mutate()}
                 disabled={rescrape.isPending}
                 className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted disabled:opacity-50"
-                title="Refresh — run the website scraper again"
+                title="Refresh — check the website and deal records again"
               >
                 {rescrape.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "↻"}
               </button>

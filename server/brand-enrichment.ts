@@ -297,15 +297,11 @@ export async function prepareBrandNow(companyId: string): Promise<void> {
     }
     const company = (await pool.query("SELECT * FROM crm_companies WHERE id=$1 AND merged_into_id IS NULL", [companyId])).rows[0];
     if (company && !company.ai_disabled && getBrandIdentity(company).status === "verified") {
-      const domain = getBrandIdentity(company).domain;
-      if (domain && !(company.uk_entity_name || "").trim()) {
-        try {
-          const { scrapeUkEntityFromWebsite } = await import("./companies-house");
-          const scraped = await scrapeUkEntityFromWebsite(domain, { name: company.name, parentGroup: company.backers });
-          if (scraped?.entityName) {
-            await pool.query(`UPDATE crm_companies SET uk_entity_name=$1 WHERE id=$2 AND (uk_entity_name IS NULL OR uk_entity_name='')`, [scraped.entityName, companyId]);
-          }
-        } catch (error: any) { console.warn(`[brand-prepare-now] UK entity ${company.name}: ${error?.message}`); }
+      // UK trading entity: website legal pages and BGP's own deal records
+      // (HOTs, leases, fee emails), confirmed on Companies House.
+      if (!(company.companies_house_number || "").trim()) {
+        try { await (await import("./companies-house")).performAutoKyc(companyId); }
+        catch (error: any) { console.warn(`[brand-prepare-now] UK entity ${company.name}: ${error?.message}`); }
       }
       if (!company.menu_intel_at) {
         try { await (await import("./brand-profile")).refreshMenuIntelForCompany(companyId); }
