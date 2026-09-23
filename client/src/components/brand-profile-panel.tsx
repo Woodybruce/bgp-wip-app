@@ -1567,7 +1567,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             {/* AI relationship read — the calendar/interaction commentary.
                 Consolidated away in the single-strip pass, missed and asked
                 back (Woody, 2026-07-30). */}
-            <BgpTakeStrip companyId={companyId} tab="activity" entities={commentaryEntities} />
+            <BgpTakeStrip companyId={companyId} tab="activity" entities={commentaryEntities} hideWhenEmpty />
             {/* BGP coverage — who covers this brand internally, plus
                 a click-to-edit role per person so we can label
                 Charlotte = Investment lead, Harriette = Leasing. */}
@@ -1765,35 +1765,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             />
             )}
 
-            {/* Deal ledger + active pipeline — counts are the full-set server
-                aggregates, honest even when the deal list is capped at 20. */}
-            {(completedDealCount > 0 || activeDealCount > 0 || (!isLandlord && requirements.length > 0)) && (
-              <div className="border-t pt-2">
-                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                  <Briefcase className="w-3 h-3" /> Deal ledger &amp; pipeline
-                </div>
-                <div className="flex gap-2 text-xs flex-wrap">
-                  {completedDealCount > 0 && (
-                    <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]">
-                      {completedDealCount} completed
-                    </Badge>
-                  )}
-                  {activeDealCount > 0 && (
-                    <Badge variant="secondary" className="text-[10px]">
-                      {activeDealCount} active
-                    </Badge>
-                  )}
-                  {!isLandlord && requirements.filter(r => r.status === "Active").length > 0 && (
-                    <Badge variant="secondary" className="text-[10px]">
-                      {requirements.filter(r => r.status === "Active").length} active requirement{requirements.filter(r => r.status === "Active").length !== 1 ? "s" : ""}
-                    </Badge>
-                  )}
-                </div>
-                {/* Per-deal list lives on the unified Properties board now —
-                    this zone keeps just the headline counts. */}
-              </div>
-            )}
-
             {/* Landlord account deal list (Delivery 3) — the full resolver
                 deal universe (instructions ∪ related market activity),
                 paginated and filterable, replacing the capped profile query
@@ -1846,7 +1817,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 conflated existing tenancies, fuzzy name mentions and target
                 lists and never saw the letting tracker. Three honest tiers
                 + where to pitch next (Woody, 2026-08-03). */}
-            <PortfolioActivityBlock companyId={companyId} />
+            <PortfolioActivityBlock companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} />
             </div>
 
             {/* Suggested BGP units — parked admin-only (WIP) so it doesn't
@@ -3890,7 +3861,9 @@ export function BrandComplianceCard({
 // a tenant, where they're on a target list (letting tracker + leasing
 // schedule), what's actually been pitched (with the evidence), and which
 // available units we should pitch them next.
-export function PortfolioActivityBlock({ companyId }: { companyId: string }) {
+// `ledger` folds the old separate "Deal ledger & pipeline" counts into this
+// card's header, so each deal is counted in one place (Woody, 2026-09-23).
+export function PortfolioActivityBlock({ companyId, ledger }: { companyId: string; ledger?: { completed: number; active: number; requirements: number } }) {
   const { data: act } = useQuery<any>({
     queryKey: ["/api/brands", companyId, "portfolio-activity"],
     queryFn: async () => {
@@ -3914,7 +3887,12 @@ export function PortfolioActivityBlock({ companyId }: { companyId: string }) {
   const targeted: any[] = act.targeted || [];
   const pitched: any[] = act.pitched || [];
   const suggestions: any[] = sugg?.suggestions || [];
-  if (!tenantAt.length && !targeted.length && !pitched.length && !suggestions.length) return null;
+  const ledgerPills = [
+    ledger?.completed ? `${ledger.completed} completed` : null,
+    ledger?.active ? `${ledger.active} active` : null,
+    ledger?.requirements ? `${ledger.requirements} requirement${ledger.requirements === 1 ? "" : "s"}` : null,
+  ].filter(Boolean) as string[];
+  if (!tenantAt.length && !targeted.length && !pitched.length && !suggestions.length && !ledgerPills.length) return null;
 
   const Row = ({ propertyId, propertyName, unitName, right, title, subline }: any) => (
     <div className="p-1.5 rounded border bg-card min-w-0" title={title || ""}>
@@ -3946,6 +3924,7 @@ export function PortfolioActivityBlock({ companyId }: { companyId: string }) {
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Target className="w-3.5 h-3.5" /> Portfolio activity
+          {ledgerPills.map(label => <Badge key={label} variant="outline" className="text-[10px] normal-case tracking-normal tabular-nums">{label}</Badge>)}
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-3 max-h-[380px] overflow-y-auto">

@@ -20,6 +20,7 @@ export function BrandViewingActivity({ companyId }: { companyId: string }) {
   const attended = brandRows.filter(v => v.status === "completed" && v.detailsConfirmedAt && v.unitId && v.viewingDate >= firstDate && v.viewingDate <= today);
   const upcoming = brandRows.filter(v => v.status === "scheduled" && v.viewingDate >= today);
   const activity = [...upcoming.sort((a, b) => a.viewingDate.localeCompare(b.viewingDate)), ...attended.sort((a, b) => b.viewingDate.localeCompare(a.viewingDate))];
+  if (query.isSuccess && activity.length === 0) return null;
   const formatDate = (value: string) => new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(`${value}T12:00:00Z`));
   return (
     <Card data-testid="brand-viewing-activity">

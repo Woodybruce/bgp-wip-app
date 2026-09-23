@@ -33,7 +33,7 @@ function friendlyTakeError(raw?: string): string {
 // `intro` merges the company description into the same card as the take —
 // one continuous read instead of two stacked blocks saying similar things
 // (Woody, 2026-08-25: "the BGP take and the intro should be combined").
-export function BgpTakeStrip({ companyId, tab, intro, entities }: { companyId: string; tab: Tab; intro?: string | null; entities?: CommentaryEntity[] }) {
+export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty }: { companyId: string; tab: Tab; intro?: string | null; entities?: CommentaryEntity[]; hideWhenEmpty?: boolean }) {
   const { toast } = useToast();
   const queryKey = ["/api/brand", companyId, "ai-take", tab];
   const [refreshError, setRefreshError] = useState<(TakeTarget & { message: string }) | null>(null);
@@ -88,6 +88,8 @@ export function BgpTakeStrip({ companyId, tab, intro, entities }: { companyId: s
   const currentRefreshError = refreshError?.companyId === companyId && refreshError.tab === tab ? refreshError.message : "";
   const reason = currentRefreshError || (isError ? friendlyTakeError((error as Error)?.message) : data?.reason);
   const status = reason || (running ? "Preparing the BGP brief. This section will update when it is ready." : data?.pending && text ? "An updated BGP brief is not ready yet." : !text && !isLoading ? "The BGP take has not been prepared yet." : "");
+
+  if (hideWhenEmpty && !isLoading && !text && !running && !refreshing && !currentRefreshError && !intro) return null;
 
   return (
     <div className="rounded-md border border-border bg-muted/40 p-2.5">
