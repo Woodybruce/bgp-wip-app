@@ -733,7 +733,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     const companyDomain = (c.domain || c.domain_url || "").toString().replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").toLowerCase();
     // Derived from BGP's correspondence log (crm_interactions) — staff-only,
     // like /api/interactions and the interactions field. Clients get none.
-    let pendingContactSuggestions: Array<{ email: string; touches: number; last_touch: string | null }> = [];
+    let pendingContactSuggestions: Array<{ email: string; touches: number; last_touch: string | null; in_crm?: boolean }> = [];
     if (companyDomain && !bpScope) {
       try {
         const ps = await pool.query(

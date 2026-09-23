@@ -527,7 +527,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
             (Woody, 2026-09-23: David Menendez twice on Honest Greens). */}
         <PendingSendersList suggestions={pendingSenders.filter((sender: any) => {
           const e = normEmail(sender.email);
-          return !e || (!crmEmailSet.has(e) && !discovered.some((k: any) => normEmail(k.email) === e));
+          return !sender.in_crm && (!e || (!crmEmailSet.has(e) && !discovered.some((k: any) => normEmail(k.email) === e)));
         })} companyId={companyId} />
       </CardContent>
     </Card>
