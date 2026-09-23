@@ -60,7 +60,7 @@ test('legal entity mismatch or pending legal review prevents treating a linked c
 test('actual brand slice queries only the chosen brand and supplies evidence instead of count-based trajectory inputs', async () => {
   const queries = [];
   const { loadBrandSlice } = evaluate(fn('loadBrandSlice') + '\nexports.loadBrandSlice=loadBrandSlice;', {
-    brandActionEvidence,
+    brandActionEvidence, bgpDealEvidence: deal => ({ property: deal.name }), relationshipEvidence: async company => ({ checked: company.id }),
     pool: { query: async (sql, values) => { queries.push({ sql, values }); assert.equal(values[0], 'cook');
       return { rows: sql.includes('FROM crm_companies') ? [cook()] : sql.includes('crm_requirements_leasing') ? [{ id: 'r1', name: 'Bristol requirement', status: 'Active', size: ['1000'], requirement_locations: ['Bristol'] }] : [] }; } },
   });
@@ -70,6 +70,9 @@ test('actual brand slice queries only the chosen brand and supplies evidence ins
   assert.match(queries.find(row => row.sql.includes('crm_requirements_leasing')).sql, /company_id = \$1 AND LOWER\(TRIM/);
   assert.match(queries.find(row => row.sql.includes('brand_signals')).sql, /brand_company_id = \$1/);
   assert.ok(queries.every(row => row.sql.trim().startsWith('SELECT')));
+  // BGP's own deals and email relationship with the brand feed the one take (2026-09-23).
+  assert.match(queries.find(row => row.sql.includes('FROM crm_deals')).sql, /tenant_id = \$1/);
+  assert.deepEqual(Array.from(data.bgp_deals), []); assert.equal(data.bgp_relationship.checked, 'cook');
 });
 
 test('UK slice with a mismatched legal record withholds financial claims instead of using legacy KYC as credit evidence', async () => {
