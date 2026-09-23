@@ -243,6 +243,15 @@ export function softRedirectTarget(html: string, pageUrl: string, domain: string
   return null;
 }
 
+async function renderedOfficialPage(url: string, domain: string): Promise<WebsitePage | null> {
+  try {
+    const { renderPageHtml } = await import("./render-page");
+    const page = await renderPageHtml(url);
+    if (!page || normalizeBrandDomain(page.url) !== domain || !page.url.startsWith("https://")) return null;
+    return visibleText(page.html).trim().length >= 300 ? page : null;
+  } catch { return null; }
+}
+
 async function readBrandOfficialPages(domain: string, fetchPage: (url: string, domain: string) => Promise<WebsitePage>, preferLegal = false): Promise<WebsitePage[]> {
   const normalized = normalizeBrandDomain(domain);
   if (!normalized || /(^|\.)(localhost|local|internal|invalid|test|onion)$/.test(normalized)) throw new Error("Enter a public official website");
@@ -258,6 +267,12 @@ async function readBrandOfficialPages(domain: string, fetchPage: (url: string, d
   const landing = softRedirectTarget(first.html, first.url, normalized);
   if (landing && landing !== first.url) {
     try { first = await checkedPage(landing); } catch { /* keep the homepage */ }
+  }
+  // Still an empty app shell (the site builds itself in JavaScript) — read it
+  // the way a browser does. Only when using the live reader, never in tests.
+  if (fetchPage === readOfficialPage && visibleText(first.html).trim().length < 300) {
+    const rendered = await renderedOfficialPage(first.url, normalized);
+    if (rendered) first = rendered;
   }
   const pages = [first];
   const links: string[] = [];
@@ -290,6 +305,10 @@ export async function readBrandLocationPages(domain: string, fetchPage: (url: st
   let home = await fetchPage(`https://${normalized}/`, normalized);
   const landing = softRedirectTarget(home.html, home.url, normalized);
   if (landing && landing !== home.url) { try { home = await fetchPage(landing, normalized); } catch { /* keep the homepage */ } }
+  if (fetchPage === readOfficialPage && visibleText(home.html).trim().length < 300) {
+    const rendered = await renderedOfficialPage(home.url, normalized);
+    if (rendered) home = rendered;
+  }
   const LOCATION_RE = /locations?|restaurants?|stores?|shops?|find[\s-]*us|our[\s-]*(sites|venues|cafes)|venues|visit[\s-]*us|locales|restaurantes|tiendas|standorte|boutiques|studios|clubs/i;
   const links: string[] = [];
   for (const match of home.html.matchAll(/<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
