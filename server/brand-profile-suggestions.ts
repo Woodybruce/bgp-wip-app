@@ -52,3 +52,22 @@ export const PENDING_CONTACT_SUGGESTIONS_SQL = `
    GROUP BY LOWER(p)
    ORDER BY touches DESC, last_touch DESC
    LIMIT 20`;
+
+// The brand's whole BGP email history — CRM contacts AND inbox senders at
+// its domain. The relationship line used to count only not-yet-CRM senders,
+// so promoting David Menendez dropped Honest Greens from 49 threads / 69
+// days to 3 / 181 (Woody, 2026-09-23). $1 = '%@domain', $2 = company id.
+export const RELATIONSHIP_STATS_SQL = `
+  WITH hits AS (
+    SELECT i.id, i.interaction_date, LOWER(p) AS person
+      FROM crm_interactions i
+      LEFT JOIN LATERAL jsonb_array_elements_text(
+        CASE WHEN jsonb_typeof(i.participants) = 'array' THEN i.participants ELSE '[]'::jsonb END) AS p ON true
+     WHERE i.interaction_date <= NOW()
+       AND (i.company_id = $2 OR (p ILIKE $1 AND p NOT ILIKE '%@brucegillinghampollard.com'))
+  )
+  SELECT COUNT(DISTINCT id)::int AS threads,
+         COUNT(DISTINCT id) FILTER (WHERE interaction_date > NOW() - interval '90 days')::int AS threads_90d,
+         MAX(interaction_date) AS last_touch,
+         COUNT(DISTINCT person) FILTER (WHERE person ILIKE $1 AND interaction_date > NOW() - interval '90 days')::int AS people_90d
+    FROM hits`;

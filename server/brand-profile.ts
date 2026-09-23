@@ -12,7 +12,7 @@ import { isBrandNewsRelevant, isBrandSignalRelevant } from "./brand-news-relevan
 import { rankCompanyHeroImages } from "../shared/brand-image-selection";
 import { randomUUID } from "node:crypto";
 import { isOfficialBrandWebsite, publishableBrandImage, publishableBrandStore, prepareBrandIdentityUpdate, quarantineBrandIdentityDependents } from "./brand-publishing";
-import { PENDING_CONTACT_SUGGESTIONS_SQL } from "./brand-profile-suggestions";
+import { PENDING_CONTACT_SUGGESTIONS_SQL, RELATIONSHIP_STATS_SQL } from "./brand-profile-suggestions";
 import { dealTotalsSql, isActiveDealStatus, isCompletedDealStatus } from "./brand-profile-deals";
 import { inferCountryFromAddress } from "../shared/geo-country";
 
@@ -734,6 +734,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // Derived from BGP's correspondence log (crm_interactions) — staff-only,
     // like /api/interactions and the interactions field. Clients get none.
     let pendingContactSuggestions: Array<{ email: string; touches: number; last_touch: string | null; in_crm?: boolean }> = [];
+    let relationshipStats: { threads: number; threads_90d: number; last_touch: string | null; people_90d: number } | null = null;
     if (companyDomain && !bpScope) {
       try {
         const ps = await pool.query(
@@ -741,6 +742,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
           [`%@${companyDomain}`, companyId]
         );
         pendingContactSuggestions = ps.rows;
+        relationshipStats = (await pool.query(RELATIONSHIP_STATS_SQL, [`%@${companyDomain}`, companyId])).rows[0] || null;
       } catch (e: any) {
         // Older databases may not have the participants column populated —
         // not fatal; just don't surface suggestions.
@@ -1017,6 +1019,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       covenant,
       coverers,
       pendingContactSuggestions,
+      relationshipStats,
       // Raw correspondence (subjects/previews/bgp_user) is staff-only — clients
       // get no interaction log, matching /api/interactions being sealed.
       interactions: bpScope ? [] : bgpInteractionsList.rows,

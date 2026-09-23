@@ -72,7 +72,33 @@ async function loadBrandSlice(companyId: string) {
       WHERE d.tenant_id = $1 OR d.purchaser_id = $1 OR d.vendor_id = $1
       ORDER BY d.updated_at DESC NULLS LAST LIMIT 10`, [companyId]).catch(() => ({ rows: [] as any[] })),
   ]);
-  return { ...brandActionEvidence(rows[0], requirements.rows, signals.rows), bgp_deals: deals.rows.map((d: any) => bgpDealEvidence(d)) };
+  return { ...brandActionEvidence(rows[0], requirements.rows, signals.rows), bgp_deals: deals.rows.map((d: any) => bgpDealEvidence(d)),
+    bgp_relationship: await relationshipEvidence(rows[0]) };
+}
+
+// Email history with the brand (counts, dates, who) — the relationship read
+// that used to be its own card now feeds the one BGP take. No email content:
+// client logins read this brief.
+async function relationshipEvidence(company: any) {
+  const { normalizeBrandDomain } = await import("./brand-identity");
+  const { RELATIONSHIP_STATS_SQL } = await import("./brand-profile-suggestions");
+  const domain = normalizeBrandDomain(company.domain || company.domain_url || company.website);
+  if (!domain) return null;
+  const like = `%@${domain}`;
+  const [stats, people] = await Promise.all([
+    pool.query(RELATIONSHIP_STATS_SQL, [like, company.id]).then(r => r.rows[0]).catch(() => null),
+    pool.query(`SELECT LOWER(p) AS email, COUNT(*)::int AS threads, MAX(i.interaction_date) AS last_at,
+        (SELECT c.name FROM crm_contacts c WHERE LOWER(c.email) = LOWER(p) LIMIT 1) AS name,
+        (SELECT c.role FROM crm_contacts c WHERE LOWER(c.email) = LOWER(p) LIMIT 1) AS role
+      FROM crm_interactions i CROSS JOIN LATERAL jsonb_array_elements_text(i.participants) AS p
+      WHERE jsonb_typeof(i.participants) = 'array' AND i.interaction_date <= NOW() AND p ILIKE $1
+      GROUP BY LOWER(p) ORDER BY threads DESC LIMIT 3`, [like]).then(r => r.rows).catch(() => []),
+  ]);
+  if (!stats?.threads) return { email_threads_total: 0, note: "No BGP email history with this brand's domain is recorded." };
+  const day = (v: any) => v ? new Date(v).toISOString().slice(0, 10) : null;
+  return { last_email_touch: day(stats.last_touch), email_threads_total: stats.threads, email_threads_last_90_days: stats.threads_90d,
+    brand_people_emailing_last_90_days: stats.people_90d,
+    most_contacted: people.map((r: any) => ({ name: r.name || r.email, role: r.role || null, threads: r.threads, last: day(r.last_at) })) };
 }
 
 const DEAL_STAGE: Record<string, string> = { OPP: "opportunity", AVA: "available", NEG: "negotiating", HOT: "heads of terms agreed", SOL: "with solicitors", EXC: "exchanged", COM: "completed", INV: "completed and invoiced", WIT: "withdrawn" };
@@ -244,20 +270,21 @@ ${BRAND_BRIEF_EVIDENCE_RULES}
 Data — profile_context is displayed separately in the factual overview. Do not repeat it or treat a previous AI narrative, rollout label or static company size as evidence of current demand:
 ${JSON.stringify(d, null, 2)}
 
-Write a short action brief grounded in the recorded requirements, dated site events and BGP's own deal history (bgp_deals — deals BGP has done or is doing with this brand; name the property, stage and BGP agents):
+Write a short action brief grounded in the recorded requirements, dated site events, BGP's own deal history (bgp_deals — deals BGP has done or is doing with this brand; name the property, stage and BGP agents) and BGP's email relationship (bgp_relationship — thread counts, last touch, who at the brand we speak to most):
 - State the strongest recorded property-demand evidence and its limits; if strategy is unconfirmed, say so instead of choosing a trajectory
 - Use a recorded active requirement's stated size, use and locations to suggest a suitable next check or shortlist; do not broaden its geography or assume a live mandate
 - When bgp_deals exist, lead with that relationship: a completed letting shows the brand takes space in this market and BGP knows the decision-makers — use it for the BGP angle and next step (e.g. the agent who ran it follows up on their next site)
-- Propose one concrete next step. Checking current requirements/contact is a useful action when the evidence is insufficient
+- Include one relationship bullet: its temperature from last_email_touch (warm under 30 days, cooling under 90, cold beyond) and the live contact by name and role from most_contacted
+- Propose one concrete next step — who at BGP contacts whom at the brand, about what. Checking current requirements/contact is a useful action when the evidence is insufficient
 
 Never open by describing who they are — the reader just read that. Tone: punchy, specific, broker-to-broker. No fluff, no generic phrases.
 
 FORMAT (the app renders this as a styled card — follow it exactly):
 - Line 1: one bold headline sentence in **double asterisks** — the read in a nutshell.
-- Then 3 short bullets, each starting "- **Label:** " where Label is a 1-3 word lead-in (e.g. **Trajectory:**, **BGP angle:**, **Verdict:**, **Signal:**, **Risk:**, **Next step:**). One sentence each, max ~25 words.
+- Then 3-4 short bullets, each starting "- **Label:** " where Label is a 1-3 word lead-in (e.g. **BGP relationship:**, **Contact:**, **Demand:**, **BGP angle:**, **Next step:**). One sentence each, max ~25 words.
 - The last bullet MUST be "- **Next step:** …" — a concrete check or proposed action, with timing only if recorded evidence supports it.
 - Name people, deals, properties and companies EXACTLY as they appear in the data (the app links them). Attribute evidence briefly in the bullet, such as "CRM requirement dated …" or "reported opening, source, date". No markdown headings or numbered lists.
-Total under 110 words.`;
+Total under 130 words.`;
 }
 
 function ukPrompt(d: any): string {

@@ -265,6 +265,8 @@ async function findPlacesPhotos(company: any, deadlineAt = Date.now() + 50000): 
 // photography, reject logos, text graphics, menus-as-images, headshots and
 // off-brand subjects.
 
+let lastImageReviewError: string | null = null;
+
 async function aiJudgeBrandImage(
   brandName: string,
   industry: string | null,
@@ -292,6 +294,7 @@ async function aiJudgeBrandImage(
     });
     const judgment = parseImageJudgment(msg.content.map((block: any) => block.type === "text" ? block.text : "").join(""));
     if (!judgment) {
+      lastImageReviewError = `review answer did not match the schema (stop: ${msg.stop_reason})`;
       console.warn("[brand-images] image review response did not match the required schema", {
         stopReason: msg.stop_reason,
         contentTypes: msg.content.map(block => block.type),
@@ -301,6 +304,7 @@ async function aiJudgeBrandImage(
     }
     return judgment;
   } catch (e: any) {
+    lastImageReviewError = String(e?.message || e).slice(0, 200);
     console.warn(`[brand-images] image review unavailable: ${e?.message}`);
     return null;
   }
@@ -687,8 +691,11 @@ export async function refreshBrandImages(companyId: string, opts: {
     const photo = await fetchImage(candidate.url);
     if (!photo) { rejected++; continue; }
     if (await deduper.isDuplicate(photo.buffer)) { duplicatesSkipped++; continue; }
-    const judgment = await aiJudgeBrandImage(brand.name, brand.industry, photo.buffer,
-      { landlord: isLandlord, domain, source: candidate.source, pageUrl: candidate.pageUrl, caption: candidate.caption });
+    const context = { landlord: isLandlord, domain, source: candidate.source, pageUrl: candidate.pageUrl, caption: candidate.caption };
+    // One retry: a review that fails is usually a transient API error, and a
+    // lost candidate meant a one-photo gallery (Honest Greens, 2026-09-23).
+    const judgment = await aiJudgeBrandImage(brand.name, brand.industry, photo.buffer, context)
+      || await aiJudgeBrandImage(brand.name, brand.industry, photo.buffer, context);
     if (!judgment) { unavailable++; continue; }
     if (!isSuitableBrandPhoto(judgment, isLandlord)) { rejected++; continue; }
     accepted.push({ candidate, photo, judgment, rank: brandPhotoRank(judgment, photo.width, photo.height, isLandlord) });
@@ -736,7 +743,8 @@ export async function refreshBrandImages(companyId: string, opts: {
     timeLimited ? "Refresh time limit reached; remaining candidates can be checked on the next refresh" : "",
     opts.force && imported > 0 && imported < targetNew ? "Previous photos kept until a complete replacement set is available" : "",
   ].filter(Boolean).join(" · ");
-  return { attempted, imported, bySource, skipped: notes, deleted: 0, retired, reviewed: review.reviewed, qualified: existing + imported - replacedQualified };
+  return { attempted, imported, bySource, skipped: notes, deleted: 0, retired, reviewed: review.reviewed, qualified: existing + imported - replacedQualified,
+    ...(unavailable ? { reviewUnavailable: { existing: review.unavailable, candidates: unavailable - review.unavailable, lastError: typeof lastImageReviewError === "string" ? lastImageReviewError : null } } : {}) };
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────
