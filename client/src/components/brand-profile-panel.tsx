@@ -411,6 +411,15 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   const panelSec = (k: typeof panelSection) => (panelSection === k ? "space-y-2.5" : "hidden md:block md:space-y-2.5");
   const [form, setForm] = useState<Partial<BrandProfile["company"]>>({});
   const [addRep, setAddRep] = useState<"brand" | "agent" | null>(null);
+  useEffect(() => {
+    const open = (event: Event) => {
+      if ((event as CustomEvent).detail?.companyId !== companyId) return;
+      setAddRep("agent"); setRepForm({ ...EMPTY_REP_FORM, agent_type: "tenant_rep" });
+      setTimeout(() => document.querySelector('[data-testid="add-representation-form"]')?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+    };
+    window.addEventListener("brand-add-agent", open);
+    return () => window.removeEventListener("brand-add-agent", open);
+  }, [companyId]);
   const [repForm, setRepForm] = useState<RepForm>(EMPTY_REP_FORM);
   const [repSearch, setRepSearch] = useState("");
   const [signalsShowAll, setSignalsShowAll] = useState(false);
@@ -2131,43 +2140,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               )}
             </div>
 
-            {/* Represented by (agents repping this brand) */}
-            {(data.representedBy.length > 0 || isBrand) && (
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center justify-between">
-                  <span className="flex items-center gap-1"><Handshake className="w-3 h-3" /> Represented by</span>
-                  {!isClientViewer && (
-                  <Button size="sm" variant="outline" onClick={() => { setAddRep("agent"); setRepForm({ ...EMPTY_REP_FORM, agent_type: "tenant_rep" }); }} data-testid="button-add-agent">
-                    <Plus className="w-3 h-3 mr-0.5" /> Add agent
-                  </Button>
-                  )}
-                </div>
-                <div className="space-y-1">
-                  {data.representedBy.map((r: any) => (
-                    <div key={r.id} className="text-sm flex flex-wrap items-center gap-2 group rounded-lg border border-border p-2">
-                      <Pill>{r.agent_type.replace(/_/g, " ")}</Pill>
-                      {r.agent_company_id && r.agent_name
-                        ? <Link href={`/companies/${r.agent_company_id}`} className="text-primary hover:underline font-medium">{r.agent_name}</Link>
-                        : <span className="text-[11px] text-muted-foreground">Firm unconfirmed</span>}
-                      {r.region && <span className="text-[11px] text-muted-foreground">({r.region.replace(/_/g, " ")})</span>}
-                      {r.contact_name && <Link href={`/contacts/${r.primary_contact_id}`} className="text-primary hover:underline">{r.contact_name}</Link>}
-                      {!isClientViewer && (
-                      <button
-                        type="button"
-                        onClick={() => { if (confirm(`End representation by ${r.agent_name || r.contact_name || "this agent"}?`)) endRepMutation.mutate(r.id); }}
-                        className="ml-auto p-2 text-muted-foreground hover:text-destructive transition-opacity"
-                        aria-label="End representation"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                      )}
-                    </div>
-                  ))}
-
-                </div>
-              </div>
-            )}
-
+            {/* Represented by now leads Key contacts (Woody, 2026-09-23: "tenant
+                rep can go at the top of key contacts"); its Add agent button
+                opens the picker below via the brand-add-agent event. */}
             {/* Represents (brands this agent reps) */}
             {(data.representing.length > 0 || isAgent) && (
               <div>
@@ -4465,6 +4440,43 @@ function LandlordSidebarBlock({
   );
 }
 
+// The agents acting for this brand — first thing in Key contacts.
+function TenantRepsBlock({ companyId, reps }: { companyId: string; reps: any[] }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClient = !viewer || viewer.role === "Client" || !!viewer.companyScopeId;
+  const end = useMutation({
+    mutationFn: async (repId: string) => apiRequest("PATCH", `/api/brand/representations/${repId}`, { end_date: new Date().toISOString().slice(0, 10) }),
+    onSuccess: () => { toast({ title: "Representation ended" }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+  if (!reps.length && isClient) return null;
+  return (
+    <div className="mb-3 pb-3 border-b border-border/60" data-testid="key-contacts-tenant-reps">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center gap-1"><Handshake className="w-3 h-3" /> Tenant rep</span>
+        {!isClient && <Button size="sm" variant="outline" className="min-h-11 md:min-h-0 md:h-7 text-sm md:text-xs"
+          onClick={() => window.dispatchEvent(new CustomEvent("brand-add-agent", { detail: { companyId } }))} data-testid="button-add-agent"><Plus className="w-3 h-3 mr-0.5" /> Add agent</Button>}
+      </div>
+      {reps.length === 0 ? <p className="text-xs text-muted-foreground">No agent recorded.</p> : <div className="space-y-1">
+        {reps.map((r: any) => (
+          <div key={r.id} className="text-sm flex flex-wrap items-center gap-2 rounded-lg border border-border p-2">
+            {r.agent_type && r.agent_type !== "tenant_rep" && <Pill>{r.agent_type.replace(/_/g, " ")}</Pill>}
+            {r.agent_company_id && r.agent_name
+              ? <Link href={`/companies/${r.agent_company_id}`} className="text-primary hover:underline font-medium">{r.agent_name}</Link>
+              : <span className="text-[11px] text-muted-foreground">Firm unconfirmed</span>}
+            {r.contact_name && <Link href={`/contacts/${r.primary_contact_id}`} className="text-primary hover:underline">{r.contact_name}</Link>}
+            {r.region && <span className="text-[11px] text-muted-foreground">{r.region.replace(/_/g, " ")}</span>}
+            {!isClient && <button type="button" onClick={() => { if (confirm(`End representation by ${r.agent_name || r.contact_name || "this agent"}?`)) end.mutate(r.id); }}
+              className="ml-auto p-2 text-muted-foreground hover:text-destructive" aria-label="End representation"><X className="w-3 h-3" /></button>}
+          </div>
+        ))}
+      </div>}
+    </div>
+  );
+}
+
 function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyId: string }) {
   const { toast } = useToast();
   const c = data.company;
@@ -4581,7 +4593,8 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           Best sellers. The chat moved up into the banner's second pane at
           the very top of the profile. */}
       <div className={pairCls}>
-      <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} isLandlord={isLandlord} />
+      <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} isLandlord={isLandlord}
+        topSlot={isBrand ? <TenantRepsBlock companyId={companyId} reps={data.representedBy || []} /> : null} />
       {!isLandlord && (
         <MenuIntelCard
           companyId={companyId}

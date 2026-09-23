@@ -208,7 +208,7 @@ function PendingSendersList({ suggestions, companyId }: { suggestions: any[]; co
   );
 }
 
-export function CompanyContactsBoard({ companyId, companyName, contacts, pendingSenders = [], extraSections = [], discovery = true, filterPropertyTier = true, isLandlord = false }: {
+export function CompanyContactsBoard({ companyId, companyName, contacts, pendingSenders = [], extraSections = [], discovery = true, filterPropertyTier = true, isLandlord = false, topSlot = null }: {
   companyId: string;
   companyName: string;
   contacts: any[];
@@ -216,6 +216,8 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   // Additional grouped sections (e.g. the dashboard's "Brands on your deals"
   // and "Agents") rendered under the main list with the same row design.
   extraSections?: Array<{ key: string; title: string; tint?: string; rows: any[] }>;
+  /** Rendered first inside the card — the brand's tenant reps (Woody, 2026-09-23). */
+  topSlot?: React.ReactNode;
   // The discovery cascade burns provider credits — surfaces that just want
   // the list (dashboard widget) turn it off.
   discovery?: boolean;
@@ -387,6 +389,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
         )}
       </CardHeader>
       <CardContent className="p-3 pt-0">
+        {topSlot}
         {accountMode && (employerOptions.length > 0 || propertyOptions.length > 0) && (
           <div className="flex flex-wrap items-center gap-1.5 mb-2">
             {employerOptions.length > 0 && (
