@@ -290,9 +290,14 @@ async function aiJudgeBrandImage(
           `Reject logos, icons, isolated headshots, illustrations, renders, maps, screenshots, collages, text-heavy promotion/menus, watermarks, blur, pixelation, very dark images, awkward crops or a subject too small to see. ` +
           `Score quality 0–100 for clarity, composition, lighting and usefulness as a large profile photo. 70 means a clear useful photo; 90 means excellent. ` +
           `Return only STRICT JSON: {"keep":true|false,"photograph":true|false,"relevant":true|false,"kind":"storefront|interior|building|food|product|people|logo|graphic|other","quality":0}.` },
-      ] }],
+      ] },
+      // Prefilled "{" — the answer has to be the bare object. Without it
+      // some reviews opened with prose and failed the strict parser
+      // (Honest Greens, 2026-09-23: 3 of 9 lost as "did not match the schema").
+      { role: "assistant", content: "{" }],
     });
-    const judgment = parseImageJudgment(msg.content.map((block: any) => block.type === "text" ? block.text : "").join(""));
+    const replyText = msg.content.map((block: any) => block.type === "text" ? block.text : "").join("");
+    const judgment = parseImageJudgment(replyText) || parseImageJudgment("{" + replyText);
     if (!judgment) {
       lastImageReviewError = `review answer did not match the schema (stop: ${msg.stop_reason})`;
       console.warn("[brand-images] image review response did not match the required schema", {
