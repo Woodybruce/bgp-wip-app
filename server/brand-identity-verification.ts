@@ -318,7 +318,23 @@ export async function readBrandLocationPages(domain: string, fetchPage: (url: st
   }
   const pages: Array<{ url: string; text: string }> = [];
   for (const url of links.slice(0, 2)) {
-    try { const page = await fetchPage(url, normalized); pages.push({ url: page.url, text: visibleText(page.html).trim().slice(0, 20000) }); } catch { /* try the next */ }
+    try {
+      const page = await fetchPage(url, normalized);
+      let text = visibleText(page.html).trim();
+      // Store finders are nearly always built in JavaScript — read the
+      // rendered page too and keep whichever has more on it.
+      if (fetchPage === readOfficialPage) {
+        try {
+          const { renderPageHtml } = await import("./render-page");
+          const rendered = await renderPageHtml(page.url);
+          if (rendered && normalizeBrandDomain(rendered.url) === normalized) {
+            const renderedText = visibleText(rendered.html).trim();
+            if (renderedText.length > text.length) text = renderedText;
+          }
+        } catch { /* keep the fetched text */ }
+      }
+      pages.push({ url: page.url, text: text.slice(0, 20000) });
+    } catch { /* try the next */ }
   }
   if (!pages.length) pages.push({ url: home.url, text: visibleText(home.html).trim().slice(0, 20000) });
   return pages;
