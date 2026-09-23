@@ -19,7 +19,9 @@ export function checkedWebsiteStores(pages: Array<{ url: string; text: string }>
     const country = String(s?.country || "").toUpperCase();
     if (!quote || !city || !/^[A-Z]{2}$/.test(country) || quote.length > 400) continue;
     const page = pages.find(p => squash(p.text).toLowerCase().includes(quote.toLowerCase()));
-    if (!page || !quote.toLowerCase().includes(city.toLowerCase())) continue;
+    // The quoted line must name the site — by city, or by its own name
+    // (homepage venue lists read "Soho 21 St Anne's Ct", no city).
+    if (!page || !(quote.toLowerCase().includes(city.toLowerCase()) || (name.length >= 3 && quote.toLowerCase().includes(name.toLowerCase())))) continue;
     const key = `${country}|${(name || city).toLowerCase()}`;
     if (out.some(o => `${o.country}|${(o.name || o.city).toLowerCase()}` === key)) continue;
     out.push({ name: name || city, city, country, status: s?.status === "coming_soon" ? "coming_soon" : "open", quote, url: page.url });

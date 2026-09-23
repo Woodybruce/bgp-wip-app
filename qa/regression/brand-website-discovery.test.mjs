@@ -149,3 +149,23 @@ test('typography differences between the page and the quoted evidence do not fai
       { url: 'https://birdandblendtea.com/', quote: 'we sell coffee machines across Europe and the USA', kind: 'business' }] });
   assert.equal(made, null);
 });
+
+test('a homepage that lists every venue is read as the locations directory', async () => {
+  process.env.DATABASE_URL ||= 'postgres://t:t@127.0.0.1:1/t';
+  const { readBrandLocationPages } = await import('../../server/brand-identity-verification.ts');
+  const { checkedWebsiteStores } = await import('../../server/brand-stores-website.ts');
+  const venues = [['arctriomf-en', 'Arc de Triomf', 'Avinguda Vilanova, 3'], ['born-en', 'Born', 'Pla de Palau, 11'], ['chiado-en', 'Chiado', 'Rua Ivens, 44'],
+    ['serrano-en', 'Serrano', 'Calle de Serrano, 41'], ['soho-en', 'Soho', '21 St Anne&#39;s Ct']];
+  const home = `<nav><a href="/en/#restaurants">Restaurants</a></nav>${'<p>Real food, made with care, for everyone.</p>'.repeat(10)}`
+    + venues.map(([slug, name, addr]) => `<a href="/en/restaurants/${slug}"><h3>${name}</h3><p>${addr}</p></a>`).join('');
+  const fetched = [];
+  const pages = await readBrandLocationPages('honestgreens.com', async (url) => { fetched.push(url); return { url, html: url.endsWith('/') ? home : '<p>One restaurant</p>' }; });
+  assert.equal(pages[0].url, 'https://honestgreens.com/');
+  assert.match(pages[0].text, /Soho 21 St Anne's Ct — https:\/\/honestgreens\.com\/en\/restaurants\/soho-en/);
+  assert.equal(fetched.length, 1, 'single-venue pages are not read when the list is already on the homepage');
+  const kept = checkedWebsiteStores(pages, { stores: [
+    { name: 'Soho', city: 'London', country: 'GB', status: 'open', quote: "Soho 21 St Anne's Ct" },
+    { name: 'Covent Garden', city: 'London', country: 'GB', status: 'open', quote: 'Covent Garden 1 Long Acre' },
+  ] });
+  assert.deepEqual(kept.map(s => `${s.country}:${s.name}`), ['GB:Soho']);
+});

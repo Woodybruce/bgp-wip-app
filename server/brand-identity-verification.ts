@@ -317,12 +317,28 @@ export async function readBrandLocationPages(domain: string, fetchPage: (url: st
   }
   const LOCATION_RE = /locations?|restaurants?|stores?|shops?|find[\s-]*us|our[\s-]*(sites|venues|cafes)|venues|visit[\s-]*us|locales|restaurantes|tiendas|standorte|boutiques|studios|clubs/i;
   const links: string[] = [];
+  const linkText = new Map<string, string>();
   for (const match of home.html.matchAll(/<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
     if (!LOCATION_RE.test(`${match[1]} ${visibleText(match[2])}`)) continue;
-    try { const link = new URL(match[1].replace(/&amp;/g, "&"), home.url); if (link.protocol === "https:" && normalizeBrandDomain(link.toString()) === normalized && !link.hash && !links.includes(link.toString())) links.push(link.toString()); } catch {}
-    if (links.length >= 3) break;
+    try { const link = new URL(match[1].replace(/&amp;/g, "&"), home.url); if (link.protocol === "https:" && normalizeBrandDomain(link.toString()) === normalized && !link.hash && !links.includes(link.toString())) { links.push(link.toString()); linkText.set(link.toString(), visibleText(match[2]).trim()); } } catch {}
+    if (links.length >= 200) break;
   }
+  // The index page (/restaurants/) lists every site; single-venue pages
+  // (/restaurants/arc-de-triomf/) name one. Read the shallowest first.
+  const depth = (url: string) => new URL(url).pathname.split("/").filter(Boolean).length;
+  links.sort((a, b) => depth(a) - depth(b));
   const pages: Array<{ url: string; text: string }> = [];
+  // Many sites list every venue as links on the homepage itself (Honest
+  // Greens: 40+ restaurants, Soho among them) — that list IS the directory.
+  const parent = (url: string) => new URL(url).pathname.replace(/\/+$/, "").replace(/\/[^/]+$/, "");
+  const siblings = new Map<string, string[]>();
+  for (const url of links) if (linkText.get(url)) siblings.set(parent(url), [...(siblings.get(parent(url)) || []), url]);
+  const venues = [...siblings.values()].sort((a, b) => b.length - a.length)[0] || [];
+  if (venues.length >= 4) {
+    pages.push({ url: home.url, text: `Locations listed on ${normalized}:\n${venues.map(url => `${linkText.get(url)} — ${url}`).join("\n")}`.slice(0, 20000) });
+    const shallow = links.filter(url => !venues.includes(url));
+    links.length = 0; links.push(...shallow);
+  }
   for (const url of links.slice(0, 2)) {
     try {
       const page = await fetchPage(url, normalized);
