@@ -80,7 +80,7 @@ const RELATION_LABEL: Record<GroupEntity["relation"], string> = {
   trading_entity: "Trading entity",
 };
 
-export function AccountEntitiesPanel({ companyId }: { companyId: string }) {
+export function AccountEntitiesPanel({ companyId, hideSingleEntity = false }: { companyId: string; hideSingleEntity?: boolean }) {
   const queryClient = useQueryClient();
   // Approve / reject are the MLRO's decisions (MLR 2017 Reg 21).
   const { data: aml } = useQuery<{ isMlro: boolean }>({ queryKey: ["/api/aml/me"], staleTime: 5 * 60_000 });
@@ -111,6 +111,10 @@ export function AccountEntitiesPanel({ companyId }: { companyId: string }) {
   // Staff-only / any error → render nothing (same convention as the other
   // account workspace cards).
   if (!data) return null;
+  // A brand with one legal entity already shows it (and its sign-off) in
+  // Compliance & KYC — a second strip at the top double-counted it
+  // (Woody, 2026-09-23). Groups with several entities keep the list.
+  if (hideSingleEntity && data.entities.length <= 1) return null;
 
   const s = data.summary;
   const rows = [...data.entities].sort((a, b) => BUCKET_ORDER.indexOf(bucketOf(a)) - BUCKET_ORDER.indexOf(bucketOf(b)));

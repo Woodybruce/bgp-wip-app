@@ -163,9 +163,27 @@ async function findWikipediaImages(brandName: string): Promise<FoundImage[]> {
 // ─── Source 3: Homepage hero + store locator ──────────────────────────────
 
 async function findHomepageImages(domain: string, landlord = false, deadlineAt = Date.now() + 70000): Promise<FoundImage[]> {
-  const base = `https://${domain}`;
-  const home = await fetchHtml(base);
+  let base = `https://${domain}`;
+  let home = await fetchHtml(base);
   const kind = landlord ? "landlord" : "brand";
+  // A homepage that is an empty shell — it bounces to /es/ or builds itself
+  // in JavaScript (honestgreens.com, 2026-09-23: 0 candidates) — is followed
+  // to its landing page and read the way a browser does.
+  const shell = (html: string | null, url: string) => !html || (extractCompanyImageCandidates(html, url, { kind, limit: 24 }).length < 4
+    && discoverCompanyPhotographyPages(html, url, { kind, limit: 4 }).length === 0);
+  if (shell(home, base)) {
+    try {
+      const { softRedirectTarget } = await import("./brand-identity-verification");
+      const landing = home ? softRedirectTarget(home, base, domain) : null;
+      if (landing) { const next = await fetchHtml(landing); if (next) { home = next; base = landing; } }
+      if (shell(home, base)) {
+        const { renderPageHtml } = await import("./render-page");
+        const { normalizeBrandDomain } = await import("./brand-identity");
+        const rendered = await renderPageHtml(base).catch(() => null);
+        if (rendered && normalizeBrandDomain(rendered.url) === domain) { home = rendered.html; base = rendered.url; }
+      }
+    } catch { /* keep the fetched homepage */ }
+  }
   const homeImages = home ? extractCompanyImageCandidates(home, base, { kind, limit: 24 }) : [];
   const discovered = home ? discoverCompanyPhotographyPages(home, base, { kind, limit: 4 }) : [];
   const pages = [...discovered, ... (landlord ? ["/portfolio", "/properties"] : ["/stores", "/locations"])
@@ -207,6 +225,7 @@ async function findPlacesPhotos(company: any, deadlineAt = Date.now() + 50000): 
     const { rows: stores } = await pool.query<{ place_id: string; name: string | null }>(
       `SELECT place_id, name, source_type, notes FROM brand_stores
         WHERE brand_company_id = $1 AND place_id IS NOT NULL AND place_id <> ''
+          AND place_id NOT LIKE 'web:%'
         ORDER BY (status = 'open') DESC NULLS LAST, researched_at DESC NULLS LAST
         LIMIT 6`,
       [company.id]
