@@ -66,20 +66,47 @@ ${JSON.stringify(pageText)}` }],
 const quoteKey = (value: string) => String(value || "").normalize("NFKC").toLowerCase()
   .replace(/[\u2018\u2019\u00b4`]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/[\u2013\u2014\u2212]/g, "-")
   .replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim();
+const samePageUrl = (a: unknown, b: unknown) => {
+  const key = (value: unknown) => { try { const u = new URL(String(value)); return `${u.hostname.replace(/^www\./, "").toLowerCase()}${u.pathname.replace(/\/+$/, "")}`; } catch { return null; } };
+  const ka = key(a); return !!ka && ka === key(b);
+};
 const tradingName = (value: unknown) => legalName(value).replace(/(?:\s+(?:ltd|plc|llp|inc|corp|corporation))+$/, "").trim();
+
+// Words a brand's own name adds around its core name ("Boost" → "Boost Juice
+// Bars", "Costain" → "Costain Group"). A different business with a longer
+// name ("Next" vs "Next Level Fitness") adds a distinctive word and fails.
+const GENERIC_NAME_WORDS = new Set(["the", "uk", "london", "group", "and", "co", "company", "juice", "bar", "bars", "restaurant", "restaurants", "cafe", "cafes", "coffee", "kitchen", "pizza", "pizzeria", "burger", "burgers", "tea", "stores", "store", "shop", "shops", "accessories", "hotels", "hotel", "gym", "gyms", "fitness", "clubs", "club", "holdings", "retail", "international", "global", "official", "brand", "brands", "foods", "food", "t1", "t2", "t3", "t4", "t5"]);
+
+/**
+ * The CRM name and the website's own name are the same brand: equal, or one
+ * is the other plus generic words — and the domain carries the core name.
+ * Returns the core name the evidence must mention, or null.
+ */
+export function sameBrandName(crmName: unknown, siteName: unknown, domain: string): string | null {
+  const a = tradingName(crmName).replace(/^the /, ""), b = tradingName(siteName).replace(/^the /, "");
+  if (!a || !b) return null;
+  if (a === b) return a;
+  const [core, longer] = a.length <= b.length ? [a, b] : [b, a];
+  if (core.replace(/ /g, "").length < 4 || !` ${longer} `.includes(` ${core} `)) return null;
+  const extra = ` ${longer} `.replace(` ${core} `, " ").trim().split(" ").filter(Boolean);
+  if (!extra.every(word => GENERIC_NAME_WORDS.has(word))) return null;
+  return (registrableLabel(domain) || "").replace(/[^a-z0-9]/g, "").includes(core.replace(/ /g, "")) ? core : null;
+}
 
 export function supportedWebsiteAssessment(company: any, pages: WebsitePage[], assessment: any): { confidence: number; reason: string; evidence: WebsiteEvidence[] } | null {
   const candidate = candidateBrandWebsite(company);
   if (!candidate || assessment?.decision !== "verified" || assessment.relationship !== "operator" || assessment.operatesOfficialWebsite !== true
     || typeof assessment.confidence !== "number" || !Number.isFinite(assessment.confidence) || assessment.confidence < 0.95 || assessment.confidence > 1
     || !Array.isArray(assessment.conflicts) || assessment.conflicts.length > 0
-    || tradingName(assessment.brandName) !== tradingName(candidate.name) || normalizeBrandDomain(assessment.officialDomain) !== candidate.domain
+    || !sameBrandName(candidate.name, assessment.brandName, candidate.domain) || normalizeBrandDomain(assessment.officialDomain) !== candidate.domain
     || !Array.isArray(assessment.evidence) || assessment.evidence.length > 8) return null;
   const evidence: WebsiteEvidence[] = [];
   for (const item of assessment.evidence) {
     if (!item || !["operator", "business"].includes(item.kind) || typeof item.quote !== "string" || item.quote.trim().length < 20 || item.quote.length > 800) return null;
-    const page = pages.find(page => page.url === item.url && normalizeBrandDomain(page.url) === candidate.domain);
     const quote = item.quote.replace(/\s+/g, " ").trim();
+    // The cited URL may differ cosmetically from the fetched one (www,
+    // trailing slash, query string) — it must still be the same page.
+    const page = pages.find(page => samePageUrl(page.url, item.url) && normalizeBrandDomain(page.url) === candidate.domain);
     if (item.kind === "operator" && /\b(?:reseller|stockist|we stock|brands we (?:carry|stock|sell))\b/i.test(quote)) return null;
     // A bad extra citation is not proof, but must not discard independent,
     // correctly attributed evidence. Only the retained quotes can verify.
@@ -90,7 +117,7 @@ export function supportedWebsiteAssessment(company: any, pages: WebsitePage[], a
     evidence.push({ url: page.url, quote, kind: item.kind });
   }
   if (!evidence.some(item => item.kind === "operator") || !evidence.some(item => item.kind === "business")
-    || !evidence.some(item => ` ${legalName(item.quote)} `.includes(` ${tradingName(candidate.name)} `))) return null;
+    || !evidence.some(item => ` ${legalName(item.quote)} `.replace(/ the /g, " ").includes(` ${sameBrandName(candidate.name, assessment.brandName, candidate.domain)} `))) return null;
   return { confidence: assessment.confidence, reason: typeof assessment.reason === "string" ? assessment.reason.slice(0, 600) : "Official operator and business description corroborated by website text", evidence };
 }
 
@@ -266,7 +293,16 @@ async function readBrandOfficialPages(domain: string, fetchPage: (url: string, d
     if (!page.url.startsWith("https://") || normalizeBrandDomain(page.url) !== normalized) throw new Error("Official-site evidence came from a different website");
     return page;
   };
-  let first = await checkedPage(`https://${normalized}/`);
+  let first: WebsitePage;
+  try { first = await checkedPage(`https://${normalized}/`); }
+  catch (error: any) {
+    // Refused or reset by bot protection (Aldi, Caffè Nero): read it the way
+    // a browser does. Dead domains and off-site redirects stay failures.
+    if (fetchPage !== readOfficialPage || isDeadWebsiteError(error) || error instanceof OfficialSiteRedirectError) throw error;
+    const rendered = await renderedOfficialPage(`https://${normalized}/`, normalized);
+    if (!rendered) throw error;
+    first = rendered;
+  }
   // A near-empty homepage that bounces to a language path by meta refresh
   // or script (honestgreens.com → /es/) has no evidence on it. Follow one
   // same-site soft redirect, preferring the English version.
@@ -409,7 +445,12 @@ export async function verifyBrandIdentityFromOfficialSite(
   if (!proof && !assessment) {
     const a: any = rawAssessment || {};
     return { status: "needs_review", reason: "The website did not clearly corroborate this business as its operator; check the website match",
-      verdict: { decision: a.decision ?? null, relationship: a.relationship ?? null, confidence: a.confidence ?? null, conflicts: Array.isArray(a.conflicts) ? a.conflicts.slice(0, 3) : [], note: typeof a.reason === "string" ? a.reason.slice(0, 200) : null } } as any;
+      verdict: { decision: a.decision ?? null, relationship: a.relationship ?? null, confidence: a.confidence ?? null, conflicts: Array.isArray(a.conflicts) ? a.conflicts.slice(0, 3) : [], note: typeof a.reason === "string" ? a.reason.slice(0, 200) : null,
+        brandName: typeof a.brandName === "string" ? a.brandName.slice(0, 120) : null, officialDomain: typeof a.officialDomain === "string" ? a.officialDomain.slice(0, 120) : null,
+        // Which citations were really on the fetched pages — says why a
+        // model "verified" still failed the proof.
+        citations: Array.isArray(a.evidence) ? a.evidence.slice(0, 6).map((e: any) => ({ url: typeof e?.url === "string" ? e.url.slice(0, 200) : null, kind: e?.kind ?? null,
+          onPage: typeof e?.quote === "string" && evidencePages.some(p => quoteKey(p.html).includes(quoteKey(e.quote))), quote: typeof e?.quote === "string" ? e.quote.slice(0, 120) : null })) : [] } } as any;
   }
   const client = await db.connect();
   try {

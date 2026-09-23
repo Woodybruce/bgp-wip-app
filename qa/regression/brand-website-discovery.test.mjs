@@ -179,3 +179,21 @@ test('website stores keep a street address only when the page shows it', async (
   const [made] = checkedWebsiteStores(pages, { stores: [{ name: 'Soho', city: 'London', country: 'GB', status: 'open', quote: 'Soho 21 St Anne', address: '1 Dean Street' }] });
   assert.equal(made.address, undefined);
 });
+
+test('the CRM name and the site name may differ by generic words, not by a distinctive one', async () => {
+  const { sameBrandName, supportedWebsiteAssessment } = await import('../../server/brand-identity-verification.ts');
+  assert.equal(sameBrandName('Boost', 'Boost Juice Bars', 'boostjuicebars.co.uk'), 'boost');
+  assert.equal(sameBrandName("Claire's Accessories", "Claire's", 'claires.com'), 'claire s');
+  assert.equal(sameBrandName('Bancone T2', 'Bancone', 'bancone.co.uk'), 'bancone');
+  assert.equal(sameBrandName('Botanist', 'The Botanist', 'thebotanist.uk.com'), 'botanist');
+  assert.equal(sameBrandName('Costain Ltd.', 'Costain Group PLC', 'costain.com'), 'costain');
+  assert.equal(sameBrandName('Next', 'Next Level Fitness', 'nextlevelfitness.com'), null);
+  assert.equal(sameBrandName('Boost', 'Boost Juice Bars', 'juicebars.com'), null, 'the domain must carry the core name');
+  const company = { name: 'Boost', domain: 'boostjuicebars.co.uk' };
+  const pages = [{ url: 'https://www.boostjuicebars.co.uk/', html: 'Boost Juice Bars UK serves fresh smoothies and juices across over 20 stores in the UK.' }];
+  const ok = supportedWebsiteAssessment(company, pages, { decision: 'verified', confidence: 0.98, brandName: 'Boost Juice Bars', officialDomain: 'boostjuicebars.co.uk',
+    relationship: 'operator', operatesOfficialWebsite: true, conflicts: [], reason: 'x',
+    evidence: [{ url: 'https://boostjuicebars.co.uk', quote: 'Boost Juice Bars UK serves fresh smoothies and juices', kind: 'operator' },
+      { url: 'https://boostjuicebars.co.uk/', quote: 'fresh smoothies and juices across over 20 stores in the UK', kind: 'business' }] });
+  assert.ok(ok, 'a cosmetically different cited URL still finds the quote on the fetched page');
+});
