@@ -520,7 +520,9 @@ export function PropertyDetail({ id }: { id: string }) {
                   give two ways back; a third row just eats screen. */}
               <Button variant="ghost" size="sm" className="hidden sm:inline-flex gap-1.5 text-muted-foreground hover:text-foreground -ml-2" data-testid="button-back-properties" onClick={() => window.history.length > 1 ? window.history.back() : navigate("/properties")}>
                 <ArrowLeft className="w-3.5 h-3.5" />
-                Properties
+                {/* It returns to wherever you came from (a deal, a brand…), so
+                    say Back — "Properties" read as a link to the list. */}
+                {typeof window !== "undefined" && window.history.length > 1 ? "Back" : "Properties"}
               </Button>
               <span className="hidden sm:inline text-muted-foreground/40">/</span>
               {editingAddress ? (

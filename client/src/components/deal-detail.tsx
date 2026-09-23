@@ -295,7 +295,10 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
 
   useEffect(() => {
     if (deal) {
-      trackRecentItem({ id: deal.id, type: "deal", name: (deal as any).propertyName || deal.name || "Untitled Deal", subtitle: deal.status || undefined, team: Array.isArray(deal.team) ? deal.team[0] : undefined });
+      // Deal's own name first: many deals share a property name ("Canary
+      // Wharf Estate…"), which made the deal and property entries in Quick
+      // Access indistinguishable. The property rides along as the subtitle.
+      trackRecentItem({ id: deal.id, type: "deal", name: deal.name || (deal as any).propertyName || "Untitled Deal", subtitle: (deal as any).propertyName || deal.status || undefined, team: Array.isArray(deal.team) ? deal.team[0] : undefined });
     }
   }, [deal?.id, deal?.name, (deal as any)?.propertyName]);
 

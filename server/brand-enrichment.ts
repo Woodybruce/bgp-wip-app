@@ -275,6 +275,62 @@ export async function enqueueBrandPreparation(companyId: string): Promise<void> 
   await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ($1,$2::jsonb,now())
     ON CONFLICT(key) DO UPDATE SET value=$2::jsonb,updated_at=now()`,
   [`brand-preparation-request:${companyId}`, JSON.stringify({ requestedAt: new Date().toISOString() })]);
+  // Start the work now rather than leaving it for the 6-hourly batch: a
+  // brand someone just opened, confirmed or refreshed used to show empty
+  // stores / images / contacts / menu for hours (Woody, 2026-09-23). Each
+  // stage keeps its own cooldown and daily limit, so this only runs what is
+  // genuinely due.
+  if (process.env.BRAND_PREPARATION_ENABLED !== "false") void prepareBrandNow(companyId);
+}
+
+const preparingNow = new Set<string>();
+/** Run every preparation stage for one brand in the background, then the
+ *  supporting lookups (UK trading entity, menu intel) that sit outside the
+ *  stage queue. De-duplicated per process. */
+export async function prepareBrandNow(companyId: string): Promise<void> {
+  if (preparingNow.has(companyId)) return;
+  preparingNow.add(companyId);
+  try {
+    for (const stage of BRAND_PREPARATION_STAGES) {
+      try { await prepareBrandStage(companyId, stage); }
+      catch (error: any) { console.warn(`[brand-prepare-now] ${companyId} ${stage}: ${error?.message}`); }
+    }
+    const company = (await pool.query("SELECT * FROM crm_companies WHERE id=$1 AND merged_into_id IS NULL", [companyId])).rows[0];
+    if (company && !company.ai_disabled && getBrandIdentity(company).status === "verified") {
+      const domain = getBrandIdentity(company).domain;
+      if (domain && !(company.uk_entity_name || "").trim()) {
+        try {
+          const { scrapeUkEntityFromWebsite } = await import("./companies-house");
+          const scraped = await scrapeUkEntityFromWebsite(domain, { name: company.name, parentGroup: company.backers });
+          if (scraped?.entityName) {
+            await pool.query(`UPDATE crm_companies SET uk_entity_name=$1 WHERE id=$2 AND (uk_entity_name IS NULL OR uk_entity_name='')`, [scraped.entityName, companyId]);
+          }
+        } catch (error: any) { console.warn(`[brand-prepare-now] UK entity ${company.name}: ${error?.message}`); }
+      }
+      if (!company.menu_intel_at) {
+        try { await (await import("./brand-profile")).refreshMenuIntelForCompany(companyId); }
+        catch (error: any) { console.warn(`[brand-prepare-now] menu intel ${company.name}: ${error?.message}`); }
+      }
+    }
+    await pool.query("DELETE FROM system_settings WHERE key=$1", [`brand-preparation-request:${companyId}`]).catch(() => {});
+  } finally {
+    preparingNow.delete(companyId);
+  }
+}
+
+/**
+ * One-off: brands whose identity check failed or was parked before website
+ * discovery and the redirect/size fixes existed (2026-09-23) sit in a
+ * cooldown and would not be retried for weeks. Clear those cooldowns once so
+ * the batch re-checks them with the current code. Guarded by a marker row.
+ */
+async function releaseStaleIdentityCooldowns(): Promise<void> {
+  const marker = "brand-identity-recheck:2026-09-23";
+  const inserted = await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ($1,'{}'::jsonb,now()) ON CONFLICT(key) DO NOTHING`, [marker]);
+  if (!inserted.rowCount) return;
+  const released = await pool.query(`UPDATE system_settings SET value = value - 'nextAttemptAt', updated_at = now()
+    WHERE key LIKE 'brand-preparation:%:identity' AND COALESCE(value->>'status','') IN ('error','needs_review','no_match')`);
+  console.log(`[brand-prepare] released ${released.rowCount} identity checks for re-verification with website discovery`);
 }
 
 // Stage applicability (Delivery 4, Task 5). Portfolio discovery only makes
@@ -400,6 +456,7 @@ async function selectPreparationCompanies(limit: number): Promise<string[]> {
 
 export async function runBrandPreparationBatch(limit = 20) {
   if (process.env.BRAND_PREPARATION_ENABLED === "false") return { processed: 0, results: [], reason: "Background preparation is disabled" };
+  await releaseStaleIdentityCooldowns().catch(error => console.warn("[brand-prepare] identity recheck release failed:", error?.message));
   const ids = await selectPreparationCompanies(limit);
   const results: any[] = [];
   for (const id of ids) {
@@ -484,7 +541,11 @@ router.get("/api/brand/enrich/status", requireAuth, async (req: Request, res: Re
       COUNT(*) FILTER (WHERE merged_into_id IS NULL)::int AS all_companies FROM crm_companies`);
     const stages = (await pool.query("SELECT value->>'stage' AS stage,value->>'status' AS status,COUNT(*)::int AS count FROM system_settings WHERE key LIKE 'brand-preparation:%' GROUP BY 1,2")).rows;
     const dailyUsage = (await pool.query("SELECT split_part(key,':',3) AS stage,COALESCE((value->>'used')::int,0) AS used FROM system_settings WHERE key LIKE $1", [`brand-preparation-budget:${new Date().toISOString().slice(0, 10)}:%`])).rows;
-    res.json({ ...rows[0], stages, dailyLimits: DAILY_LIMITS, dailyUsage });
+    // Why identity checks aren't passing, grouped — the one place staff (and
+    // Claude Code) can see the reasons; system_settings is closed to sql_query.
+    const identityReasons = (await pool.query(`SELECT value->>'status' AS status, LEFT(COALESCE(value->>'reason', value->>'lastError', ''), 160) AS reason, COUNT(*)::int AS count
+      FROM system_settings WHERE key LIKE 'brand-preparation:%:identity' AND COALESCE(value->>'status','') <> 'ready' GROUP BY 1,2 ORDER BY 3 DESC LIMIT 20`)).rows;
+    res.json({ ...rows[0], stages, dailyLimits: DAILY_LIMITS, dailyUsage, identityReasons });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 

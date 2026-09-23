@@ -272,9 +272,9 @@ function QuickAccessSection() {
                   asChild
                   className="h-7"
                   data-testid={`nav-recent-${item.type}-${item.id.substring(0, 8)}`}
-                  tooltip={item.name}
+                  tooltip={item.subtitle && item.subtitle !== item.name ? `${item.type === "deal" ? "Deal" : item.type === "property" ? "Property" : item.type === "company" ? "Company" : "Contact"}: ${item.name} · ${item.subtitle}` : item.name}
                 >
-                  <Link href={`${config.path}/${item.id}`}>
+                  <Link href={`${config.path}/${item.id}`} title={`${item.type === "deal" ? "Deal" : item.type === "property" ? "Property" : item.type === "company" ? "Company" : "Contact"} — ${item.name}${item.subtitle && item.subtitle !== item.name ? ` · ${item.subtitle}` : ""}`}>
                     <Icon className={`w-3.5 h-3.5 ${config.color}`} />
                     <span className="truncate text-xs">{item.name}</span>
                   </Link>
