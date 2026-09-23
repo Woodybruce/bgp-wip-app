@@ -82,8 +82,11 @@ export async function prefillCddForm(companyId: string): Promise<CddForm> {
     (form as any)[key] = value; form.source![key as string] = "app";
   };
 
-  const inv = (await pool.query(`SELECT result, sanctions_match FROM kyc_investigations WHERE crm_company_id=$1 ORDER BY id DESC LIMIT 1`, [companyId])).rows[0];
-  const result = inv?.result || {};
+  // The latest run, but its ownership data from the latest run that HAD
+  // PSCs — a sweep whose Companies House PSC call failed returns none.
+  const inv = (await pool.query(`SELECT result, sanctions_match FROM kyc_investigations WHERE crm_company_id=$1 ORDER BY conducted_at DESC NULLS LAST, id DESC LIMIT 1`, [companyId])).rows[0];
+  const withPscs = (await pool.query(`SELECT result FROM kyc_investigations WHERE crm_company_id=$1 AND jsonb_array_length(COALESCE(result->'pscs','[]'::jsonb)) > 0 ORDER BY conducted_at DESC NULLS LAST, id DESC LIMIT 1`, [companyId])).rows[0];
+  const result = { ...(inv?.result || {}), pscs: (inv?.result?.pscs?.length ? inv.result.pscs : withPscs?.result?.pscs) || [] };
   const profile = c.companies_house_data?.profile || {};
 
   // Ownership chain: the company, then the corporate owners up the chain.
@@ -94,6 +97,7 @@ export async function prefillCddForm(companyId: string): Promise<CddForm> {
     if (name && !chain.some(x => x.name.toLowerCase() === String(name).toLowerCase())) chain.push({ name, country: link?.country || link?.jurisdiction || "UK", orgType: link?.type || "Company" });
   }
   for (const p of result?.pscs || []) {
+    if (p?.ceased_on || p?.ceasedOn) continue;
     if (!/corporate|legal-person/.test(String(p?.kind || ""))) continue;
     if (!chain.some(x => x.name.toLowerCase() === String(p.name).toLowerCase())) chain.push({ name: p.name, country: p?.identification?.country_registered || p?.address?.country || "", orgType: p?.identification?.legal_form || "Company" });
   }
@@ -103,12 +107,14 @@ export async function prefillCddForm(companyId: string): Promise<CddForm> {
   // UBOs: individuals over 25% (or significant control), with how each was verified.
   const docs = (await pool.query(`SELECT doc_type FROM kyc_documents WHERE company_id=$1 AND deleted_at IS NULL`, [companyId])).rows.map((r: any) => r.doc_type);
   const veriff = (await pool.query(`SELECT first_name, last_name FROM veriff_sessions WHERE company_id=$1 AND status='approved'`, [companyId]).catch(() => ({ rows: [] as any[] }))).rows;
+  // CH raw items use snake_case; the auto-KYC record stores camelCase.
   const ubos = (result?.pscs || [])
-    .filter((p: any) => /individual/.test(String(p?.kind || "")) && (p.natures_of_control || []).some((n: string) => /(25-to-50|50-to-75|75-to-100)-percent|significant-influence-or-control/.test(n)))
+    .filter((p: any) => !(p?.ceased_on || p?.ceasedOn) && /individual/.test(String(p?.kind || ""))
+      && ((p.natures_of_control || p.naturesOfControl || []) as string[]).some((n: string) => /(25-to-50|50-to-75|75-to-100)-percent|significant-influence-or-control/.test(n)))
     .map((p: any) => {
       const words = String(p.name || "").toLowerCase().split(/\s+/);
       const viaVeriff = veriff.some((v: any) => [v.first_name, v.last_name].every((w: string) => w && words.includes(String(w).toLowerCase())));
-      return { name: p.name, country: p.country_of_residence || p.nationality || "", idMethod: viaVeriff ? "Veriff (biometric)" : docs.includes("passport") ? "ID documents" : "To verify" };
+      return { name: p.name, country: p.country_of_residence || p.countryOfResidence || p.nationality || "", idMethod: viaVeriff ? "Veriff (biometric)" : docs.includes("passport") ? "ID documents" : "To verify" };
     });
   if (ubos.length) put("ubos", ubos);
 
@@ -148,7 +154,7 @@ export async function prefillCddForm(companyId: string): Promise<CddForm> {
 
 async function recomputeRecommendation(companyId: string, form: CddForm): Promise<CddForm> {
   const c = (await pool.query(`SELECT * FROM crm_companies WHERE id=$1`, [companyId])).rows[0];
-  const inv = (await pool.query(`SELECT sanctions_match FROM kyc_investigations WHERE crm_company_id=$1 ORDER BY id DESC LIMIT 1`, [companyId])).rows[0];
+  const inv = (await pool.query(`SELECT sanctions_match FROM kyc_investigations WHERE crm_company_id=$1 ORDER BY conducted_at DESC NULLS LAST LIMIT 1`, [companyId])).rows[0];
   const { outstandingAmlItems, isHigherRisk } = await import("../shared/aml-checklist");
   const higherRisk = isHigherRisk({ ...c, aml_cdd_form: form });
   const open = outstandingAmlItems(c.aml_checklist, c.aml_subject_type || (c.companies_house_number ? "company" : null), c.aml_edd_required, higherRisk).filter(i => i.id !== "mlro_review");

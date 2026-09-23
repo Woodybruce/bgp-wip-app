@@ -148,7 +148,7 @@ export async function autoTickFromClouseau(
   // Beneficial owners are those holding over 25% (Reg 5). The PSC register
   // IDENTIFIES them; it can't verify them (Reg 28(9)) — ubo_verified needs
   // a Veriff pass on the owner or a UBO declaration / ownership document.
-  const over25 = (result?.pscs || []).filter((p: any) => (p.natures_of_control || []).some((n: string) => /(25-to-50|50-to-75|75-to-100)-percent|significant-influence-or-control/.test(n)));
+  const over25 = (result?.pscs || []).filter((p: any) => !(p?.ceased_on || p?.ceasedOn) && ((p.natures_of_control || p.naturesOfControl || []) as string[]).some((n: string) => /(25-to-50|50-to-75|75-to-100)-percent|significant-influence-or-control/.test(n)));
   const uboCount = Array.isArray(result?.ownershipChain?.ubos) && result.ownershipChain.ubos.length
     ? result.ownershipChain.ubos.length
     : over25.length;
@@ -227,7 +227,7 @@ export async function autoTickFromVeriff(
   let ownerMatch: string | null = null;
   try {
     const sess = (await pool.query(`SELECT first_name, last_name FROM veriff_sessions WHERE session_id = $1`, [sessionId])).rows[0];
-    const inv = (await pool.query(`SELECT result FROM kyc_investigations WHERE crm_company_id = $1 ORDER BY id DESC LIMIT 1`, [companyId])).rows[0];
+    const inv = (await pool.query(`SELECT result FROM kyc_investigations WHERE crm_company_id = $1 AND jsonb_array_length(COALESCE(result->'pscs','[]'::jsonb)) > 0 ORDER BY conducted_at DESC NULLS LAST LIMIT 1`, [companyId])).rows[0];
     const person = `${sess?.first_name || ""} ${sess?.last_name || ""}`.toLowerCase().replace(/[^a-z ]/g, "").split(/\s+/).filter(Boolean);
     for (const p of inv?.result?.pscs || []) {
       const psc = String(p?.name || "").toLowerCase().replace(/\b(mr|mrs|ms|miss|dr|sir)\b/g, "").replace(/[^a-z ]/g, "").split(/\s+/).filter(Boolean);
