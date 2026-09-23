@@ -124,16 +124,18 @@ function BrandRetainedFactsReview({ companyId, identityVerified }: { companyId: 
   </div>;
 }
 
-export function BrandIdentityControl({ companyId, domain, identity, savedAliases = [], previousFactsNeedReview, canConfirm }: {
+export function BrandIdentityControl({ companyId, domain, identity, savedAliases = [], previousFactsNeedReview, canConfirm, suggestedDomain }: {
   companyId: string; domain: string | null; identity?: BrandIdentity | null; savedAliases?: string[]; previousFactsNeedReview?: boolean; canConfirm: boolean;
+  suggestedDomain?: string | null;
 }) {
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(domain || "");
+  const suggestion = !domain && suggestedDomain ? suggestedDomain : null;
+  const [draft, setDraft] = useState(domain || suggestion || "");
   const aliasesText = (Array.isArray(savedAliases) ? savedAliases : []).filter(name => typeof name === "string").join("\n");
   const [draftAliases, setDraftAliases] = useState(aliasesText);
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  useEffect(() => { setDraft(domain || ""); setDraftAliases(aliasesText); setOpen(false); }, [companyId, domain, aliasesText]);
+  useEffect(() => { setDraft(domain || suggestion || ""); setDraftAliases(aliasesText); setOpen(false); }, [companyId, domain, suggestion, aliasesText]);
   const verified = identity?.status === "verified" && !!domainHost(domain) && domainHost(identity.domain) === domainHost(domain);
   const confirm = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/brand/${companyId}/identity`, { domain: draft.trim(),
@@ -158,6 +160,7 @@ export function BrandIdentityControl({ companyId, domain, identity, savedAliases
         </Button>}
       </div>
       {!verified && <p className="text-xs text-muted-foreground">Company information from outside sources is held for review until the brand’s identity is confirmed.</p>}
+      {!verified && suggestion && <p className="text-xs text-muted-foreground" data-testid="brand-website-suggestion">Likely website found: <span className="font-medium text-foreground">{suggestion}</span>{canConfirm ? " — check it and confirm." : "."}</p>}
       {previousFactsNeedReview && <p className="text-xs text-muted-foreground">Previously recorded facts have been kept and still need review.</p>}
       {previousFactsNeedReview && canConfirm && <BrandRetainedFactsReview key={companyId} companyId={companyId} identityVerified={verified} />}
       {open && <form className="space-y-2 border-t border-border pt-3" onSubmit={event => { event.preventDefault(); confirm.mutate(); }}>

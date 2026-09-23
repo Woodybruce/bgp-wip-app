@@ -138,18 +138,62 @@ async function readOfficialPage(url: string, domain: string, redirects = 0): Pro
       if (response.statusCode !== 200 || !/text\/html|application\/xhtml\+xml/i.test(String(response.headers["content-type"]))) {
         response.resume(); reject(new Error(`Official website did not return a readable page (${response.statusCode})`)); return;
       }
-      let size = 0; const chunks: Buffer[] = [];
+      // Modern restaurant/retail sites ship 700KB+ of inlined markup (Honest
+      // Greens' /en/ is 767KB). Keep the first 2MB and stop reading rather
+      // than failing — the visible text used as evidence is capped anyway.
+      const LIMIT = 2 * 1024 * 1024;
+      let size = 0, done = false; const chunks: Buffer[] = [];
+      const finish = () => { if (done) return; done = true; resolve({ html: Buffer.concat(chunks).toString("utf8"), url: parsed.toString() }); };
       response.on("data", (chunk: Buffer) => {
-        size += chunk.length;
-        if (size > 512 * 1024) { req.destroy(new Error("Official website page exceeds the verification size limit")); return; }
-        chunks.push(chunk);
+        if (done) return;
+        const room = LIMIT - size;
+        chunks.push(room < chunk.length ? chunk.subarray(0, room) : chunk);
+        size += Math.min(room, chunk.length);
+        if (size >= LIMIT) { finish(); response.destroy(); }
       });
-      response.on("end", () => resolve({ html: Buffer.concat(chunks).toString("utf8"), url: parsed.toString() }));
+      response.on("end", finish);
       response.on("error", reject);
     });
     const timeout = setTimeout(() => req.destroy(new Error("Official website verification timed out")), 8000);
     req.on("close", () => clearTimeout(timeout)); req.on("error", reject); req.end();
   });
+}
+
+/**
+ * Where a placeholder homepage sends the browser: an English hreflang
+ * alternate, a script language switch that supports "en" (/es/ → /en/), or
+ * a meta refresh. Only pages with almost no visible text qualify, and only
+ * same-site https targets are returned.
+ */
+export function softRedirectTarget(html: string, pageUrl: string, domain: string): string | null {
+  if (visibleText(html).trim().length > 300) return null;
+  const sameSite = (href: string | undefined | null): string | null => {
+    if (!href) return null;
+    try {
+      const u = new URL(href.replace(/&amp;/g, "&"), pageUrl);
+      return u.protocol === "https:" && normalizeBrandDomain(u.toString()) === domain && !u.hash ? u.toString() : null;
+    } catch { return null; }
+  };
+  for (const tag of html.match(/<link\b[^>]*>/gi) || []) {
+    if (!/rel\s*=\s*["']?alternate/i.test(tag)) continue;
+    const lang = tag.match(/hreflang\s*=\s*["']?([a-z-]+)/i)?.[1]?.toLowerCase();
+    const href = tag.match(/href\s*=\s*["']([^"']+)["']/i)?.[1];
+    if (lang && /^en(-gb)?$/.test(lang)) { const t = sameSite(href); if (t) return t; }
+  }
+  const meta = html.match(/<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*content\s*=\s*["'][^"']*url\s*=\s*([^"'>\s]+)/i)?.[1];
+  const script = html.match(/location(?:\.href)?(?:\.replace|\.assign)?\s*(?:=|\()\s*[`"']([^`"']+)[`"']/i)?.[1];
+  // Script language switch: a supported-language list containing "en" and a
+  // path template like `/${lang}/` means the English page is /en/.
+  if (/\[\s*(?:["'][a-z]{2}["']\s*,\s*)*["']en["']/i.test(html) && /\/\$\{[a-z_]+\}\//i.test(script || "")) {
+    const t = sameSite("/en/"); if (t) return t;
+  }
+  if (meta) {
+    const langPath = meta.match(/^\/([a-z]{2})\/?$/i);
+    if (langPath && /["']en["']/.test(html)) { const t = sameSite("/en/"); if (t) return t; }
+    const t = sameSite(meta); if (t) return t;
+  }
+  if (script && !script.includes("${")) return sameSite(script);
+  return null;
 }
 
 async function readBrandOfficialPages(domain: string, fetchPage: (url: string, domain: string) => Promise<WebsitePage>, preferLegal = false): Promise<WebsitePage[]> {
@@ -160,7 +204,14 @@ async function readBrandOfficialPages(domain: string, fetchPage: (url: string, d
     if (!page.url.startsWith("https://") || normalizeBrandDomain(page.url) !== normalized) throw new Error("Official-site evidence came from a different website");
     return page;
   };
-  const first = await checkedPage(`https://${normalized}/`);
+  let first = await checkedPage(`https://${normalized}/`);
+  // A near-empty homepage that bounces to a language path by meta refresh
+  // or script (honestgreens.com → /es/) has no evidence on it. Follow one
+  // same-site soft redirect, preferring the English version.
+  const landing = softRedirectTarget(first.html, first.url, normalized);
+  if (landing && landing !== first.url) {
+    try { first = await checkedPage(landing); } catch { /* keep the homepage */ }
+  }
   const pages = [first];
   const links: string[] = [];
   for (const match of first.html.matchAll(/<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
@@ -185,18 +236,26 @@ export async function verifyBrandIdentityFromOfficialSite(
   db: { query: Function; connect: Function }, company: any,
   fetchPage: (url: string, domain: string) => Promise<{ html: string; url: string }> = readOfficialPage,
   assess: (company: any, pages: WebsitePage[]) => Promise<unknown> = assessOfficialWebsite,
+  opts: { discoveredDomain?: string } = {},
 ): Promise<{ status: "ready" | "no_match" | "needs_review"; reason?: string }> {
   if (getBrandIdentity(company).status === "verified") return { status: "ready" };
   if (company?.ai_disabled) return { status: "needs_review", reason: "Automatic enrichment is disabled for this brand" };
-  const candidate = candidateBrandWebsite(company);
+  // A discovered domain is only ever tried on a brand with NO saved website:
+  // the proof runs against the proposed domain, while the stale-state check
+  // below still compares against the record exactly as it was read.
+  if (opts.discoveredDomain && hasAnySavedWebsite(company)) return { status: "needs_review", reason: "A website is already saved for this brand" };
+  const subject = opts.discoveredDomain
+    ? { ...company, domain: opts.discoveredDomain, domain_url: `https://${opts.discoveredDomain}`, website: `https://${opts.discoveredDomain}` }
+    : company;
+  const candidate = candidateBrandWebsite(subject);
   if (!candidate) return { status: "needs_review", reason: "The brand name or saved websites are missing or conflicting; check the official website" };
-  const known = knownBrandLegalIdentity(company);
+  const known = opts.discoveredDomain ? null : knownBrandLegalIdentity(company);
   const snapshot = verificationSnapshot(company);
   const pages = await readBrandOfficialPages(candidate.domain, fetchPage, !!known);
   const proof = known ? pages.find(page => websiteSupportsBrandLegalIdentity(page.html, known)) : null;
   // Validate model quotations against precisely the same bounded text it sees.
   const evidencePages = pages.map(page => ({ url: page.url, html: visibleText(page.html).trim().slice(0, 18000) }));
-  const assessment = proof ? null : supportedWebsiteAssessment(company, evidencePages, await assess(company, evidencePages));
+  const assessment = proof ? null : supportedWebsiteAssessment(subject, evidencePages, await assess(subject, evidencePages));
   if (!proof && !assessment) return { status: "needs_review", reason: "The website did not clearly corroborate this business as its operator; check the website match" };
   const client = await db.connect();
   try {
@@ -205,7 +264,7 @@ export async function verifyBrandIdentityFromOfficialSite(
     if (!current || verificationSnapshot(current) !== snapshot) {
       throw new Error("The brand identity changed during website verification; the result was not applied");
     }
-    const actor = proof ? "official-website-register-match" : "official-website-ai-evidence";
+    const actor = proof ? "official-website-register-match" : opts.discoveredDomain ? "official-website-discovered" : "official-website-ai-evidence";
     const prepared = prepareBrandIdentityUpdate(current, { domain: candidate.domain,
       ...(proof && known ? { aliases: [...new Set([...(current.ai_generated_fields?.brand_identity?.aliases || []), known.name])], country: "gb" } : {}) }, actor);
     prepared.fields.ai_generated_fields.brand_identity.source = proof && known
@@ -219,4 +278,99 @@ export async function verifyBrandIdentityFromOfficialSite(
     return { status: "ready" };
   } catch (error) { await client.query("ROLLBACK"); throw error; }
   finally { client.release(); }
+}
+
+export function hasAnySavedWebsite(company: any): boolean {
+  return [company?.domain, company?.domain_url, company?.website].some(value => typeof value === "string" && value.trim());
+}
+
+// Hosts that describe a brand but are never its own website.
+const NOT_OFFICIAL = /(^|\.)(instagram|facebook|fb|linkedin|twitter|x|tiktok|youtube|wikipedia|wikidata|google|bing|yelp|tripadvisor|opentable|resy|deliveroo|ubereats|just-eat|justeat|glovo|foodhub|timeout|squaremeal|hardens|thefork|eventbrite|crunchbase|pitchbook|bloomberg|reuters|ft|bbc|standard|thetimes|guardian|telegraph|propelinfo|bighospitality|morningadvertiser|companieshouse|company-information|endole|opencorporates|dnb|zoominfo|apollo|rocketreach|linktr|linktree|beacons|bio|amazon|ebay|etsy|trustpilot|glassdoor|indeed|medium|substack|wix|squarespace|shopify|wordpress|blogspot)\.[a-z.]+$|(^|\.)gov\.uk$/i;
+
+const slug = (name: string) => name.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "");
+
+/**
+ * Propose the brand's likely official domain when none is saved. Sources, in
+ * order: a web-searched answer (Claude web search, else Perplexity), then the
+ * name itself as .com / .co.uk. Every proposal still has to pass the full
+ * official-site proof before anything is written.
+ */
+export async function discoverBrandWebsiteCandidates(company: any): Promise<string[]> {
+  const name = typeof company?.name === "string" ? company.name.trim() : "";
+  if (!name) return [];
+  const context = [company?.industry, company?.description, company?.ai_generated_fields?.instagram_handle || company?.instagram_handle ? `Instagram @${company?.ai_generated_fields?.instagram_handle || company?.instagram_handle}` : ""].filter(Boolean).join(" · ");
+  const prompt = `What is the official website of the brand "${name}"${context ? ` (${context.slice(0, 400)})` : ""}? I need the brand's OWN site, not a social profile, delivery app, directory, news article or retailer. If the brand has a UK site and a global site, give the global one first. Reply with JSON only: {"domains":["example.com"],"confidence":0.0} — at most 3 hostnames, most likely first; an empty list if you are not sure it is this business.`;
+  const found: string[] = [];
+  const take = (text: string) => {
+    const start = text.indexOf("{"), end = text.lastIndexOf("}");
+    if (start < 0 || end <= start) return;
+    try {
+      const parsed = JSON.parse(text.slice(start, end + 1));
+      for (const d of Array.isArray(parsed?.domains) ? parsed.domains : []) { const n = normalizeBrandDomain(d); if (n) found.push(n); }
+    } catch {}
+  };
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+  if (apiKey) {
+    try {
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const client = new Anthropic({ apiKey, ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL } : {}) });
+      const resp: any = await client.messages.create({
+        model: "claude-sonnet-4-6", max_tokens: 800,
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 2 } as any],
+        messages: [{ role: "user", content: prompt }],
+      }, { timeout: 45_000, maxRetries: 0 });
+      take((resp.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n"));
+    } catch (error: any) { console.warn(`[brand-identity] website search failed for "${name}": ${error?.message}`); }
+  }
+  if (!found.length) {
+    try {
+      const { askPerplexity, isPerplexityConfigured } = await import("./perplexity");
+      if (isPerplexityConfigured()) take((await askPerplexity(prompt, { maxTokens: 300, temperature: 0 })).answer || "");
+    } catch (error: any) { console.warn(`[brand-identity] Perplexity website lookup failed for "${name}": ${error?.message}`); }
+  }
+  const s = slug(name);
+  if (s.length >= 4) found.push(`${s}.com`, `${s}.co.uk`);
+  return [...new Set(found)].filter(d => !NOT_OFFICIAL.test(d) && !/(^|\.)(localhost|local|internal|invalid|test|onion)$/.test(d)).slice(0, 4);
+}
+
+/**
+ * No website saved → find it. Each proposal is fetched and must pass the same
+ * strict official-operator proof as a saved website (quoted evidence naming
+ * the business, confidence ≥ 0.95); the first that passes is written as the
+ * verified identity. When none passes, the best proposal is stored as a
+ * suggestion so the Confirm box opens pre-filled.
+ */
+export async function discoverAndVerifyBrandWebsite(
+  db: { query: Function; connect: Function }, company: any,
+  deps: {
+    candidates?: (company: any) => Promise<string[]>;
+    fetchPage?: (url: string, domain: string) => Promise<{ html: string; url: string }>;
+    assess?: (company: any, pages: WebsitePage[]) => Promise<unknown>;
+  } = {},
+): Promise<{ status: "ready" | "no_match" | "needs_review"; reason?: string; domain?: string; tried: string[] }> {
+  if (getBrandIdentity(company).status === "verified") return { status: "ready", tried: [] };
+  if (company?.ai_disabled) return { status: "needs_review", reason: "Automatic enrichment is disabled for this brand", tried: [] };
+  if (hasAnySavedWebsite(company)) return { status: "needs_review", reason: "A website is already saved; it is checked by the normal identity step", tried: [] };
+  const proposals = await (deps.candidates || discoverBrandWebsiteCandidates)(company);
+  const tried: string[] = [];
+  let reachable: string | null = null;
+  for (const domain of proposals) {
+    tried.push(domain);
+    try {
+      const result = await verifyBrandIdentityFromOfficialSite(db, company, deps.fetchPage || readOfficialPage, deps.assess || assessOfficialWebsite, { discoveredDomain: domain });
+      if (result.status === "ready") return { status: "ready", domain, tried };
+      reachable = reachable || domain;
+    } catch (error: any) {
+      if (/changed during website verification/.test(error?.message || "")) throw error;
+      // Unreachable / not a site — try the next proposal.
+    }
+  }
+  if (reachable) {
+    await db.query(
+      `UPDATE crm_companies SET ai_generated_fields = jsonb_set(COALESCE(ai_generated_fields,'{}'::jsonb), '{website_suggestion}', $2::jsonb, true)
+        WHERE id = $1 AND COALESCE(domain,'') = '' AND COALESCE(domain_url,'') = '' AND COALESCE(website,'') = ''`,
+      [company.id, JSON.stringify({ domain: reachable, checkedAt: new Date().toISOString(), tried })]);
+    return { status: "needs_review", reason: `Found ${reachable}, but its pages didn't clearly prove it is this brand's own site — confirm it or enter the right one.`, domain: reachable, tried };
+  }
+  return { status: "no_match", reason: proposals.length ? "None of the likely websites could be read" : "No likely official website was found", tried };
 }

@@ -20,7 +20,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import { getBrandIdentity } from "./brand-identity";
 import { readBrandFactReview } from "./brand-fact-review";
-import { candidateBrandWebsite, readBrandOfficialEvidence, verifyBrandIdentityFromOfficialSite } from "./brand-identity-verification";
+import { candidateBrandWebsite, discoverAndVerifyBrandWebsite, hasAnySavedWebsite, readBrandOfficialEvidence, verifyBrandIdentityFromOfficialSite } from "./brand-identity-verification";
 import { currentOfficialProfileEvidence, prepareOfficialProfileEvidence, retainedProfileFactsCorroborated, type OfficialProfilePage } from "./brand-profile-evidence";
 import { CLIENT_CRM_CATEGORIES } from "@shared/tenant-categories";
 import { BRAND_PREPARATION_STAGES, readPreparationStates, runPreparationStage, shouldEnqueueOnPageOpen, summarizeBrandPreparation, type BrandPreparationStage, type PreparationOutcome } from "./brand-preparation-jobs";
@@ -302,12 +302,17 @@ export async function prepareBrandStage(companyId: string, stage: BrandPreparati
   if (stage === "financials" && !isFinancialsStageApplicable(company)) {
     return { ran: false, state: { stage, fingerprint: identity.fingerprint, status: "not_applicable" }, reason: "not_applicable", result: undefined };
   }
-  const usable = stage === "identity" ? identity.status !== "verified" && !!candidateBrandWebsite(company) && !company.ai_disabled : identity.status === "verified" && !company.ai_disabled && configured(stage)
+  // Identity runs for a saved website (verify it) AND for a brand with no
+  // website at all (find it, then verify it) — the latter used to be a dead
+  // end that blocked every later stage (Honest Greens, 2026-09-23).
+  const usable = stage === "identity" ? identity.status !== "verified" && (!!candidateBrandWebsite(company) || !hasAnySavedWebsite(company)) && !company.ai_disabled : identity.status === "verified" && !company.ai_disabled && configured(stage)
     && !(stage === "brief" && company.ai_generated_fields?.brand_identity?.previousFactsNeedReview && !currentOfficialProfileEvidence(company));
   let result: any;
   const run = await runPreparationStage(pool, companyId, stage, identity.fingerprint, async (): Promise<PreparationOutcome> => {
     if (stage === "identity" && !company.ai_disabled) {
-      const verified = await verifyBrandIdentityFromOfficialSite(pool, company);
+      const verified = hasAnySavedWebsite(company)
+        ? await verifyBrandIdentityFromOfficialSite(pool, company)
+        : await discoverAndVerifyBrandWebsite(pool, company);
       const current = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
       return { ...verified, source: "official website", fingerprint: getBrandIdentity(current).fingerprint };
     }

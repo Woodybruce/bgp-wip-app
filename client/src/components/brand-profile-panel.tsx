@@ -1180,7 +1180,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
         ) : (
           <div className="w-full flex flex-col gap-2.5">
             <div className={panelSec("profile")}>
-            <BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} />
+            <BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} suggestedDomain={c.ai_generated_fields?.website_suggestion?.domain} />
             {/* ── Details card ─────────────────────────────── */}
             {(() => {
               const a: any = c.head_office_address;
