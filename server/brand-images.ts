@@ -297,7 +297,11 @@ async function aiJudgeBrandImage(
       { role: "assistant", content: "{" }],
     });
     const replyText = msg.content.map((block: any) => block.type === "text" ? block.text : "").join("");
-    const judgment = parseImageJudgment(replyText) || parseImageJudgment("{" + replyText);
+    // The prefilled object ends at its first "}" (no nesting) — a rationale
+    // the model adds after it is not part of the answer.
+    const prefilled = "{" + replyText;
+    const judgment = parseImageJudgment(replyText) || parseImageJudgment(prefilled)
+      || (prefilled.indexOf("}") > 0 ? parseImageJudgment(prefilled.slice(0, prefilled.indexOf("}") + 1)) : null);
     if (!judgment) {
       lastImageReviewError = `review answer did not match the schema (stop: ${msg.stop_reason}): ${replyText.replace(/\s+/g, " ").slice(0, 160)}`;
       console.warn("[brand-images] image review response did not match the required schema", {
