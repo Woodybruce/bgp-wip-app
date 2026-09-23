@@ -279,6 +279,32 @@ export async function readBrandOfficialEvidence(domain: string, fetchPage: (url:
   return (await readBrandOfficialPages(domain, fetchPage)).map(page => ({ url: page.url, text: visibleText(page.html).trim().slice(0, 18000) }));
 }
 
+/**
+ * The official site's locations page(s) — "Restaurants", "Locations", "Find
+ * us" — as visible text, for listing a brand's stores from its own website
+ * when map search has nothing (a new UK opening isn't on Google yet).
+ */
+export async function readBrandLocationPages(domain: string, fetchPage: (url: string, domain: string) => Promise<WebsitePage> = readOfficialPage): Promise<Array<{ url: string; text: string }>> {
+  const normalized = normalizeBrandDomain(domain);
+  if (!normalized) return [];
+  let home = await fetchPage(`https://${normalized}/`, normalized);
+  const landing = softRedirectTarget(home.html, home.url, normalized);
+  if (landing && landing !== home.url) { try { home = await fetchPage(landing, normalized); } catch { /* keep the homepage */ } }
+  const LOCATION_RE = /locations?|restaurants?|stores?|shops?|find[\s-]*us|our[\s-]*(sites|venues|cafes)|venues|visit[\s-]*us|locales|restaurantes|tiendas|standorte|boutiques|studios|clubs/i;
+  const links: string[] = [];
+  for (const match of home.html.matchAll(/<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    if (!LOCATION_RE.test(`${match[1]} ${visibleText(match[2])}`)) continue;
+    try { const link = new URL(match[1].replace(/&amp;/g, "&"), home.url); if (link.protocol === "https:" && normalizeBrandDomain(link.toString()) === normalized && !link.hash && !links.includes(link.toString())) links.push(link.toString()); } catch {}
+    if (links.length >= 3) break;
+  }
+  const pages: Array<{ url: string; text: string }> = [];
+  for (const url of links.slice(0, 2)) {
+    try { const page = await fetchPage(url, normalized); pages.push({ url: page.url, text: visibleText(page.html).trim().slice(0, 20000) }); } catch { /* try the next */ }
+  }
+  if (!pages.length) pages.push({ url: home.url, text: visibleText(home.html).trim().slice(0, 20000) });
+  return pages;
+}
+
 export async function verifyBrandIdentityFromOfficialSite(
   db: { query: Function; connect: Function }, company: any,
   fetchPage: (url: string, domain: string) => Promise<{ html: string; url: string }> = readOfficialPage,

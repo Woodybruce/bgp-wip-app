@@ -1661,6 +1661,19 @@ export async function researchBrandStores(
   } catch (error) { await storeTransaction.query("ROLLBACK"); throw error; }
   finally { storeTransaction.release(); }
 
+  // Map search found no UK stores — read the brand's own website, which
+  // lists new openings before Google does (Honest Greens, Canary Wharf).
+  if (scope === "uk" && !allResults.some(p => inferCountryFromAddress(p.formatted_address) === "GB")) {
+    try {
+      const { storesFromOfficialWebsite } = await import("./brand-stores-website");
+      const web = await storesFromOfficialWebsite(company.id);
+      diagnostics.push({ step: "official_website", outcome: web.added ? "found" : "nothing", detail: web.reason || `${web.uk} UK and ${web.countries.filter(c => c !== "GB").length} other countries listed on the website` });
+      upserted += web.added;
+    } catch (error: any) {
+      diagnostics.push({ step: "official_website", outcome: "error", detail: error?.message });
+    }
+  }
+
   // A mapped subset is not the brand's reported store total.
   const openCount = allResults.filter(p => (p.business_status || "OPERATIONAL") === "OPERATIONAL").length;
 

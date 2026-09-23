@@ -120,3 +120,16 @@ test('the obvious rule never overrides a flagged stockist, a different name or a
   assert.equal(obviousNameMatch({ name: '200 Degrees' }, '200degrees.com', [{ url: 'https://200degrees.com/', html: 'Parked domain for sale' }], null), null);
   assert.equal(obviousNameMatch({ name: 'Cook' }, 'cook.com', [{ url: 'https://cook.com/', html: 'Cook kitchenware' }], { conflicts: ['kitchenware, not frozen meals'] }), null);
 });
+
+test('stores from the official website are kept only when the page names them', async () => {
+  process.env.DATABASE_URL ||= 'postgres://t:t@127.0.0.1:1/t';
+  const { checkedWebsiteStores } = await import('../../server/brand-stores-website.ts');
+  const pages = [{ url: 'https://honestgreens.com/en/restaurants', text: 'Our restaurants Madrid Serrano · Lisbon Chiado · London Canary Wharf — opening soon' }];
+  const kept = checkedWebsiteStores(pages, { stores: [
+    { name: 'Canary Wharf', city: 'London', country: 'GB', status: 'coming_soon', quote: 'London Canary Wharf — opening soon' },
+    { name: 'Serrano', city: 'Madrid', country: 'ES', status: 'open', quote: 'Madrid Serrano' },
+    { name: 'Soho', city: 'London', country: 'GB', status: 'open', quote: 'London Soho' },
+    { name: 'Chiado', city: 'Lisbon', country: 'Portugal', status: 'open', quote: 'Lisbon Chiado' },
+  ] });
+  assert.deepEqual(kept.map(s => `${s.country}:${s.name}:${s.status}`), ['GB:Canary Wharf:coming_soon', 'ES:Serrano:open']);
+});

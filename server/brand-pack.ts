@@ -35,8 +35,11 @@ const FAINT = "#9CA394";
 const PANEL_BG = "#F6F3EC";       // Stone-tinted ground
 const RULE = "#E4DFD4";
 
+// Covenant grades in the BGP palette (docs/DESIGN.md: no green). The grade
+// is shown with its verdict, so a "B" can't read as a green light while the
+// commentary says moderate-to-weak (Honest Greens pack, 2026-09-23).
 const GRADE_COLORS: Record<string, string> = {
-  A: "#1E7A3C", B: "#3D8F52", C: "#B7791F", D: "#C2410C", E: "#B91C1C",
+  A: "#43081A", B: "#6E0C25", C: "#9A3B2E", D: "#B4452F", E: "#B4452F",
 };
 
 // Page geometry (A4 = 595 × 842pt)
@@ -95,10 +98,31 @@ async function loadBrandPackData(companyId: string) {
       ORDER BY updated_at DESC NULLS LAST LIMIT 3`,
     [companyId]
   );
-  const [company, signals, reps, contacts, requirements, images] = await Promise.all([
-    companyQ, signalsQ, repsQ, contactsQ, requirementsQ, imagesQ,
+  // BGP's own relationship with the brand — the deals we've done / are doing.
+  const dealsQ = pool.query(
+    `SELECT d.name, d.status, d.deal_type, d.rent_pa, d.total_area_sqft, d.lease_length, d.target_date, d.updated_at,
+            p.name AS property_name,
+            CASE WHEN d.tenant_id = $1 THEN 'tenant' WHEN d.landlord_id = $1 THEN 'landlord' WHEN d.vendor_id = $1 THEN 'vendor' ELSE 'purchaser' END AS role
+       FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
+      WHERE d.tenant_id = $1 OR d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1
+      ORDER BY (d.status IN ('INV','COM','EXC','SOL')) DESC, d.updated_at DESC NULLS LAST LIMIT 6`,
+    [companyId]
+  ).catch(() => ({ rows: [] as any[] }));
+  const storesQ = pool.query(
+    `SELECT name, address, country FROM brand_stores
+      WHERE brand_company_id = $1 AND COALESCE(status, 'open') <> 'closed'
+      ORDER BY (COALESCE(country, 'GB') = 'GB') DESC, name LIMIT 200`,
+    [companyId]
+  ).catch(() => ({ rows: [] as any[] }));
+  const [company, signals, reps, contacts, requirements, images, deals, stores] = await Promise.all([
+    companyQ, signalsQ, repsQ, contactsQ, requirementsQ, imagesQ, dealsQ, storesQ,
   ]);
   if (!company.rows[0]) return null;
+  let brief = "";
+  try {
+    const { readPreparedBrandAiTake } = await import("./brand-ai-take");
+    brief = (await readPreparedBrandAiTake(companyId, "brand")).text || "";
+  } catch { /* the pack degrades to the stored analysis */ }
 
   // Same relevance screen as the news panel, then dedupe stories that
   // arrive from several publishers ("Bill's opens at Heathrow" x3).
@@ -132,7 +156,7 @@ async function loadBrandPackData(companyId: string) {
   }
 
   const photos = rankCompanyHeroImages(images.rows.filter(image => publishableBrandImage(company.rows[0], image)), company.rows[0].company_type);
-  return { company: company.rows[0], signals: cleanSignals, reps: reps.rows, contacts: contacts.rows, requirements: requirements.rows, covenant, images: photos };
+  return { company: company.rows[0], signals: cleanSignals, reps: reps.rows, contacts: contacts.rows, requirements: requirements.rows, covenant, images: photos, deals: deals.rows, stores: stores.rows, brief };
 }
 
 // Read up to 3 gallery images as embeddable JPEG buffers, cropped to the
@@ -228,7 +252,10 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
   try {
     const data = await loadBrandPackData(String(req.params.companyId));
     if (!data) return res.status(404).json({ error: "Company not found" });
-    const { company, signals, reps, contacts, requirements, covenant, images } = data;
+    const { company, signals, reps, contacts, requirements, covenant, images, deals, stores, brief } = data;
+    const ukStores = stores.filter((s: any) => !s.country || s.country === "GB");
+    const byCountry = new Map<string, number>();
+    for (const s of stores) byCountry.set(s.country || "GB", (byCountry.get(s.country || "GB") || 0) + 1);
 
     const HERO_W = Math.floor((PAGE_W - 16) / 3);
     const HERO_H = 96;
@@ -316,7 +343,9 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
 
     // Key-facts strip
     const facts: Array<{ label: string; value: string }> = [];
-    if (company.store_count != null) facts.push({ label: "UK STORES", value: String(company.store_count) });
+    const ukCount = Math.max(Number(company.store_count) || 0, ukStores.length);
+    if (company.store_count != null || ukStores.length) facts.push({ label: "UK STORES", value: String(ukCount) });
+    if (byCountry.size > 1) facts.push({ label: "COUNTRIES", value: String(byCountry.size) });
     if (company.rollout_status) facts.push({ label: "ROLLOUT", value: trim(String(company.rollout_status).replace(/_/g, " "), 16).toUpperCase() });
     if (company.employee_count) facts.push({ label: "HEADCOUNT", value: Number(company.employee_count) ? Number(company.employee_count).toLocaleString() : String(company.employee_count) });
     if (company.annual_revenue) facts.push({ label: "REVENUE", value: Number(company.annual_revenue) ? `£${Number(company.annual_revenue).toLocaleString()}` : trim(String(company.annual_revenue), 14) });
@@ -338,7 +367,7 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
     // Covenant snapshot panel
     if (covenant?.grade) {
       const gradeColor = GRADE_COLORS[covenant.grade] || BGP_GREEN;
-      const verdict = trimAtSentence(covenant.verdict, 520);
+      const verdict = trimAtSentence(covenant.verdict, 950);
       const entityBits: string[] = [];
       if (company.uk_entity_name) entityBits.push(company.uk_entity_name);
       if (company.companies_house_number) entityBits.push(`CH ${company.companies_house_number}`);
@@ -358,17 +387,45 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
         cy = doc.y + 4;
       }
       if (entityBits.length) {
-        doc.font("Helvetica").fontSize(7.5).fillColor(MUTED).text(`UK trading entity: ${entityBits.join("  ·  ")}`, textX, cy);
+        doc.font("Helvetica").fontSize(7.5).fillColor(MUTED).text(`UK trading entity: ${entityBits.join("  ·  ")}  ·  covenant from Companies House filings`, textX, cy);
       }
       y += panelH + 16;
     }
 
-    // BGP take — the AI brand analysis fills what was dead space on v1
-    const analysis = trimAtSentence(company.brand_analysis, 650);
-    if (analysis && y < BOTTOM - 90) {
+    // BGP take — the prepared brief (same text as the profile's "BGP take"),
+    // falling back to the older stored analysis.
+    const briefLines = String(brief || "").split(/\n+/).map(l => l.replace(/\*\*/g, "").replace(/^\s*[-•]\s*/, "• ").trim()).filter(Boolean);
+    const analysis = briefLines.length ? "" : trimAtSentence(company.brand_analysis, 650);
+    if ((briefLines.length || analysis) && y < BOTTOM - 90) {
       y = sectionTitle("BGP take", y);
-      doc.font("Helvetica").fontSize(9.5).fillColor(INK).text(analysis, LEFT, y, { width: PAGE_W, lineGap: 2.5 });
-      y = doc.y + 14;
+      if (briefLines.length) {
+        for (const line of briefLines.slice(0, 8)) {
+          if (y > BOTTOM - 30) break;
+          doc.font(line.startsWith("• ") ? "Helvetica" : "Helvetica-Bold").fontSize(9.5).fillColor(INK).text(trim(line, 420), LEFT + (line.startsWith("• ") ? 6 : 0), y, { width: PAGE_W - 6, lineGap: 2 });
+          y = doc.y + 4;
+        }
+        y += 10;
+      } else {
+        doc.font("Helvetica").fontSize(9.5).fillColor(INK).text(analysis, LEFT, y, { width: PAGE_W, lineGap: 2.5 });
+        y = doc.y + 14;
+      }
+    }
+
+    // BGP relationship — the deals we've done with / for this brand.
+    if (deals.length && y < BOTTOM - 70) {
+      y = sectionTitle("With BGP", y);
+      const STATUS: Record<string, string> = { INV: "Completed & invoiced", COM: "Completed", EXC: "Exchanged", SOL: "With solicitors", HOTs: "Heads of terms agreed", NEG: "In negotiation" };
+      for (const d of deals) {
+        if (y > BOTTOM - 30) break;
+        const title = d.property_name && d.name && !String(d.name).includes(d.property_name) ? `${d.property_name} — ${d.name}` : (d.name || d.property_name || "Deal");
+        const bits = [d.deal_type, STATUS[d.status] || d.status, d.rent_pa ? `£${Number(d.rent_pa).toLocaleString("en-GB")} pa` : null,
+          d.total_area_sqft ? `${Number(d.total_area_sqft).toLocaleString("en-GB")} sq ft` : null, d.lease_length ? `${d.lease_length} yrs` : null, `as ${d.role}`].filter(Boolean);
+        doc.rect(LEFT, y + 2, 2.5, 12).fill(BGP_GREEN);
+        doc.font("Helvetica-Bold").fontSize(9.5).fillColor(INK).text(trim(title, 90), LEFT + 10, y, { width: PAGE_W - 10 });
+        doc.font("Helvetica").fontSize(8).fillColor(MUTED).text(bits.join("  ·  "), LEFT + 10, doc.y + 1, { width: PAGE_W - 10 });
+        y = doc.y + 8;
+      }
+      y += 6;
     }
 
     // Backers
@@ -408,6 +465,25 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
         doc.restore();
       });
       y += HERO_H + 16;
+    }
+
+    // Store footprint — the UK estate by name, the rest by country.
+    if (stores.length && y < BOTTOM - 60) {
+      y = sectionTitle("Store footprint", y);
+      if (ukStores.length) {
+        const list = ukStores.slice(0, 18).map((s: any) => s.name.replace(new RegExp(`^${String(company.name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[-–—,]?\\s*`, "i"), "") || s.name);
+        doc.font("Helvetica-Bold").fontSize(8.5).fillColor(INK).text(`UK (${ukStores.length})`, LEFT, y);
+        doc.font("Helvetica").fontSize(8.5).fillColor(MUTED).text(list.join("  ·  ") + (ukStores.length > 18 ? `  ·  +${ukStores.length - 18} more` : ""), LEFT, doc.y + 1, { width: PAGE_W, lineGap: 1.5 });
+        y = doc.y + 6;
+      }
+      const abroad = [...byCountry.entries()].filter(([c]) => c !== "GB").sort((a, b) => b[1] - a[1]);
+      if (abroad.length) {
+        const names = new Intl.DisplayNames(["en-GB"], { type: "region" });
+        doc.font("Helvetica-Bold").fontSize(8.5).fillColor(INK).text("International", LEFT, y);
+        doc.font("Helvetica").fontSize(8.5).fillColor(MUTED).text(abroad.map(([c, n]) => { let label = c; try { label = names.of(c) || c; } catch {} return `${label} ${n}`; }).join("  ·  "), LEFT, doc.y + 1, { width: PAGE_W });
+        y = doc.y + 6;
+      }
+      y += 8;
     }
 
     // Live requirements — the thing a landlord actually wants to know
