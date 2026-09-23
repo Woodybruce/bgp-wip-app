@@ -221,7 +221,7 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, cachedO
             <p className="text-[11px] text-muted-foreground italic">
               {isClientViewer
                 ? "No commentary yet — your BGP team publishes the relationship read here."
-                : cachedOnly ? "No saved activity analysis yet. Analyse activity when you need a relationship summary." : "No activity commentary has been prepared yet."}
+                : cachedOnly ? "" : "No activity commentary has been prepared yet."}
             </p>
           )}
 

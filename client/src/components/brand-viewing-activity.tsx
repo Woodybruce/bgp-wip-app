@@ -48,7 +48,6 @@ export function BrandViewingActivity({ companyId }: { companyId: string }) {
             ))}</div>
           )}
           {activity.length > 6 && <Button variant="outline" size="sm" asChild><a href={`/available?workspace=viewings&brandId=${encodeURIComponent(companyId)}`}>Show all {brandRows.length} viewing records</a></Button>}
-          <p className="text-[11px] text-muted-foreground">One record per unit viewed. The brand's stated requirements stay unchanged.</p>
         </>}
       </CardContent>
     </Card>

@@ -1219,16 +1219,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     <Building2 className="w-3 h-3" /> Details
                   </span>
                   {c.industry && <span className="text-xs text-foreground">{c.industry}</span>}
-                  {(c.domain_url || c.domain) && (
-                    <a
-                      href={c.domain_url || `https://${c.domain}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs text-primary hover:underline inline-flex items-center gap-0.5"
-                    >
-                      <Globe className="w-2.5 h-2.5 shrink-0" />{(c.domain || c.domain_url || "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/$/, "")}
-                    </a>
-                  )}
                   {hqShort && (
                     <span className="text-xs text-muted-foreground flex items-center gap-0.5" title={hqFull || hqShort}>
                       <MapPin className="w-2.5 h-2.5 shrink-0" />Global HQ: {hqShort}
@@ -1253,9 +1243,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               );
             })()}
             <div className="flex items-center gap-2 flex-wrap" data-testid="brand-overview-actions">
-              {(c.domain_url || c.domain) && <Button variant="outline" size="sm" asChild><a href={c.domain_url || `https://${c.domain}`} target="_blank" rel="noreferrer" data-testid="link-website"><Globe />Website</a></Button>}
               {c.linkedin_url && <Button variant="outline" size="sm" asChild><a href={c.linkedin_url} target="_blank" rel="noreferrer" data-testid="link-linkedin"><Linkedin />LinkedIn</a></Button>}
-              {c.instagram_handle && !isLandlord && <Button variant="outline" size="sm" asChild><a href={`https://instagram.com/${c.instagram_handle.replace(/^@/, "")}`} target="_blank" rel="noreferrer" data-testid="link-instagram"><Instagram />Instagram</a></Button>}
               {c.phone && <Button variant="outline" size="sm" asChild><a href={`tel:${c.phone}`} data-testid="link-phone"><Phone />Call</a></Button>}
               {data.contacts.find(contact => contact.email) && <Button variant="outline" size="sm" asChild><a href={`mailto:${data.contacts.find(contact => contact.email)?.email}`}><Mail />Email</a></Button>}
               {!isClientViewer && <>
@@ -1320,39 +1308,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
             {/* Key facts row */}
             <div className={`grid grid-cols-2 md:grid-cols-4 gap-2 text-sm empty:hidden${isLandlord ? " md:flex-1 md:min-w-0" : ""}`}>
-              {!isLandlord && c.store_count != null && (
-                <div>
-                  <div className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Store className="w-3 h-3" /> Reported store total {aiFields.store_count && <AiChip />}
-                  </div>
-                  <div className="font-semibold font-mono tabular-nums flex items-center gap-1.5">
-                    {c.store_count.toLocaleString()}
-                    {rolloutVelocity && rolloutVelocity.net12m !== 0 && (
-                      <Badge
-                        variant="outline"
-                        className={`text-[10px] ${
-                          rolloutVelocity.net12m > 0
-                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                            : "bg-red-50 text-red-700 border-red-200"
-                        }`}
-                        title={`${rolloutVelocity.openings12m} opened · ${rolloutVelocity.closures12m} closed (last 12m)`}
-                      >
-                        {rolloutVelocity.net12m > 0 ? "+" : ""}{rolloutVelocity.net12m} in 12m
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-              )}
-              {!isLandlord && c.rollout_status && (
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Rollout {aiFields.rollout_status && <AiChip />}</div>
-                  <RolloutBadge status={c.rollout_status} />
-                </div>
-              )}
               {c.backers && (
                 <div className="col-span-2">
                   <div className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
-                    <Coins className="w-3 h-3" /> Backers {aiFields.backers && <AiChip />}
+                    <Coins className="w-3 h-3" /> Backers
                   </div>
                   {(() => {
                     // Build a name → company-id map from every known CRM company,
@@ -1569,7 +1528,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             <div className={panelSec("stores")}>
             {!isLandlord && (stores.length > 0 || !isClientViewer) && <BrandStoresBoard
               companyId={companyId} stores={stores} reportedTotal={c.store_count} canRefresh={!isClientViewer}
-              refreshing={researchStoresMutation.isPending} diagnostic={storesDiagnostic}
+              refreshing={researchStoresMutation.isPending} diagnostic={storesDiagnostic} velocity={rolloutVelocity?.net12m ?? null}
               onRefresh={() => researchStoresMutation.mutate({ scope: "uk" })}
             />}
 
@@ -1647,10 +1606,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                         <div className="font-medium truncate">{c.bgp_contact_crm}</div>
                       </div>
                     )}
-                    <div>
-                      <div className="text-[10px] text-muted-foreground">Contacts</div>
-                      <div className="font-medium">{data.contacts.length}</div>
-                    </div>
                     <div>
                       <div className="text-[10px] text-muted-foreground">Last touch</div>
                       <div className={`font-medium ${
@@ -2275,7 +2230,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                       )}
                     </div>
                   ))}
-                  {data.representedBy.length === 0 && <div className="text-xs text-muted-foreground italic">No agents currently retained.</div>}
+
                 </div>
               </div>
             )}
@@ -2431,11 +2386,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               </div>
             )}
 
-            {c.last_enriched_at && (
-              <div className="text-[10px] text-muted-foreground pt-1 border-t flex items-center gap-1">
-                <Clock className="w-2.5 h-2.5" /> Last enriched {new Date(c.last_enriched_at).toLocaleString("en-GB")}
-              </div>
-            )}
               </div>
             </div>
 
@@ -2505,7 +2455,7 @@ export function PipnetRequirementsRow({ companyId, brandName, isClient }: { comp
       {isLoading ? (
         <p className="text-[11px] text-muted-foreground italic">Loading…</p>
       ) : !hasRows ? (
-        <p className="text-[11px] text-muted-foreground italic">No requirements found for "{brandName}".</p>
+        null
       ) : (
         <div className="space-y-0.5">
           {rows.slice(0, 6).map((r, i) => (
@@ -2606,7 +2556,7 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
         )}
       </div>
       {similarTenants.length === 0 && aiCompetitors.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground italic">{cpIsClient ? "No competitor set yet." : "No AI competitors yet — click Research."}</p>
+        null
       ) : (
         <div>
           {/* One row: CRM same-use-class tenants (linked, with store counts)
@@ -3147,11 +3097,11 @@ export function ApolloIntelCard({ companyId, companyName }: { companyId: string;
       <summary className="text-sm font-medium cursor-pointer min-h-11 sm:min-h-0">Company data sources</summary>
       {open && <div className="space-y-3 mt-3 text-sm">
         <div className="flex flex-wrap justify-between items-center gap-2">
-          <div><p className="font-medium">Apollo</p><p className="text-[11px] text-muted-foreground">External headcount, funding and company information. This does not measure the BGP relationship.</p></div>
+          <div><p className="font-medium">Apollo</p></div>
           {!isClient && <Button size="sm" variant="outline" onClick={() => refresh.mutate()} disabled={refresh.isPending} data-testid="apollo-refresh"><RefreshCw className={refresh.isPending ? "animate-spin" : ""} />{refresh.isPending ? "Refreshing…" : "Refresh source"}</Button>}
         </div>
         {isLoading ? <div className="h-16 rounded bg-muted animate-pulse" aria-label="Loading saved company data" /> : payload ? <>
-          <p className="text-[11px] text-muted-foreground">Matched to the confirmed brand{data?.fetchedAt ? ` · Checked ${new Date(data.fetchedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : ""}</p>
+          {data?.fetchedAt && <p className="text-[11px] text-muted-foreground">Checked {new Date(data.fetchedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</p>}
           <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {employees != null && <div><dt className="text-xs text-muted-foreground">Employees</dt><dd className="font-mono tabular-nums">{employees.toLocaleString()}</dd></div>}
             {growthPct != null && <div><dt className="text-xs text-muted-foreground">Headcount change · {payload.headcountGrowth12m != null ? "12 months" : "6 months"}</dt><dd className="font-mono tabular-nums">{growthPct > 0 ? "+" : ""}{growthPct}%</dd></div>}
@@ -3902,7 +3852,6 @@ export function BrandComplianceCard({
           <div className="mt-2 rounded-md border border-border bg-muted/40 p-3 text-xs space-y-2" data-testid="brand-compliance-review-status" role="status">
             <p className="font-semibold">{complianceStatus.label}</p>
             {complianceStatus.identityIssues.map(issue => <p key={issue}>{issue}</p>)}
-            <p className="text-muted-foreground">Collected checks are supporting records, not an AML approval. The recorded KYC decision is reviewed separately.</p>
             {amlMissing.length > 0 && <p className="text-muted-foreground">Still to collect: {amlMissing.map(row => row.label).join(" · ")}</p>}
           </div>
         </div>
@@ -5286,7 +5235,7 @@ export function BrandInstagramCard({ companyId }: { companyId: string }) {
         : data.status === "feed_error"
           ? `Feed error: ${data.error || "feed creation failed"}${data.attempts ? ` (${data.attempts} attempts)` : ""}`
           : data.status === "handle_only"
-            ? "Not connected — view on Instagram ↗"
+            ? "View on Instagram ↗"
             : "Feed connected — no posts synced yet.";
     return (
       <Card>

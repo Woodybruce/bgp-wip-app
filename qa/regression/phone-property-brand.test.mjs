@@ -167,7 +167,8 @@ test('phone staff refresh displays its pending and completed messages without st
   app.input.refreshMessage = 'Profile checked. No saved facts changed.';
   tree = app.render();
   assert.equal(app.find(tree, 'button-brand-refresh').props.disabled, false);
-  assert.match(content(app.find(tree, 'brand-profile-refresh-status')), /No saved facts changed/);
+  // Success commentary is not shown (Woody, 2026-09-23) — only progress and problems.
+  assert.equal(app.find(tree, 'brand-profile-refresh-status'), undefined);
   assert.deepEqual(app.calls, []);
 });
 

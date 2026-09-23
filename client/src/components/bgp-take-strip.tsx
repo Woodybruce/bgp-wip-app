@@ -87,7 +87,7 @@ export function BgpTakeStrip({ companyId, tab, intro, entities }: { companyId: s
   const text = typeof data?.text === "string" ? data.text.trim() : "";
   const currentRefreshError = refreshError?.companyId === companyId && refreshError.tab === tab ? refreshError.message : "";
   const reason = currentRefreshError || (isError ? friendlyTakeError((error as Error)?.message) : data?.reason);
-  const status = reason || (running ? "Preparing the BGP brief. This section will update when it is ready." : data?.pending && text ? "An updated BGP brief is not ready yet. The saved brief is shown above." : !text && !isLoading ? "The BGP brief has not been prepared yet. Saved facts remain available above." : "");
+  const status = reason || (running ? "Preparing the BGP brief. This section will update when it is ready." : data?.pending && text ? "An updated BGP brief is not ready yet." : !text && !isLoading ? "The BGP take has not been prepared yet." : "");
 
   return (
     <div className="rounded-md border border-border bg-muted/40 p-2.5">

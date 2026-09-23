@@ -33,14 +33,10 @@ test('desktop and phone cover fits the whole original in a bounded frame without
   assert.doesNotMatch(image.props.src, /thumbnail|logo/);
 });
 
-test('logos only give a compact empty state with existing staff refresh restriction', () => {
+test('no cover-photo candidate renders nothing — the gallery keeps Refresh images (Woody, 2026-09-23)', () => {
   const render = component('CompanyProfileImage');
-  const staff = render({ ...props, images: [logo], canRefresh: true });
-  const client = render({ ...props, images: [logo], canRefresh: false });
-  assert.match(text(staff), /No suitable cover photo yet/);
-  assert.equal(nodes(staff).some(node => node.type === 'img'), false);
-  assert.equal(nodes(staff).some(node => node.type === 'BrandImageRefreshButton'), true);
-  assert.equal(nodes(client).some(node => node.type === 'BrandImageRefreshButton'), false);
+  assert.equal(render({ ...props, images: [logo], canRefresh: true }), null);
+  assert.equal(render({ ...props, images: [logo], canRefresh: false }), null);
 });
 
 test('lost original gives an honest error state and does not upscale a thumbnail', () => {

@@ -189,9 +189,9 @@ const storeAddress = (value: unknown) => {
   const address = value as Record<string, unknown>;
   return [address.street, address.city, address.postcode, address.country].filter(Boolean).join(", ");
 };
-export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh, refreshing, diagnostic, onRefresh }: {
+export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh, refreshing, diagnostic, onRefresh, velocity }: {
   companyId: string; stores: OverviewStore[]; reportedTotal: number | null; canRefresh: boolean; refreshing: boolean;
-  diagnostic: string | null; onRefresh: () => void;
+  diagnostic: string | null; onRefresh: () => void; velocity?: number | null;
 }) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
@@ -203,14 +203,22 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
   const maxPage = Math.max(0, Math.ceil(filtered.length / pageSize) - 1);
   const currentPage = Math.min(page, maxPage);
   const visible = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
-  const mapped = locations.filter(store => typeof store.lat === "number" && Number.isFinite(store.lat) && typeof store.lng === "number" && Number.isFinite(store.lng));
+  const abroadCountries = new Set(stores.filter(store => store.country && store.country !== "GB" && store.status !== "closed").map(store => store.country)).size;
   return (
     <section className="rounded-lg border border-border bg-card p-3 space-y-3" data-testid="brand-stores-board">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2"><Store className="w-4 h-4" />Store locations</h3>
-          <p className="text-sm mt-1"><span className="font-mono tabular-nums">{locations.length}</span> saved · <span className="font-mono tabular-nums">{mapped.length}</span> mapped{reportedTotal != null ? <> · <span className="font-mono tabular-nums">{reportedTotal.toLocaleString()}</span> reported total</> : null}</p>
-          <p className="text-[11px] text-muted-foreground mt-1">{locations.filter(store => store.country === "GB").length} UK locations{locations.some(store => !store.country) ? ` · ${locations.filter(store => !store.country).length} countries unconfirmed` : ""}. The reported total may cover a wider footprint.</p>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2"><Store className="w-4 h-4" />Stores</h3>
+          {/* One line, one set of numbers (was saved / mapped / reported
+              total / UK locations / an explanation — Woody, 2026-09-23). */}
+          <p className="text-sm mt-1" data-testid="brand-stores-summary">
+            {[
+              `${locations.length} in the UK`,
+              abroadCountries ? `${abroadCountries} other countr${abroadCountries === 1 ? "y" : "ies"}` : null,
+              reportedTotal != null && reportedTotal !== locations.length ? `${reportedTotal.toLocaleString()} reported in total` : null,
+            ].filter(Boolean).join(" · ")}
+            {velocity && velocity !== 0 ? <span className={`ml-2 text-[11px] ${velocity > 0 ? "text-emerald-700" : "text-red-700"}`}>{velocity > 0 ? "+" : ""}{velocity} in 12m</span> : null}
+          </p>
         </div>
         {canRefresh && <Button type="button" size="sm" variant="outline" disabled={refreshing} onClick={onRefresh} data-testid="btn-research-stores-uk"><RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />{refreshing ? "Refreshing…" : "Refresh stores"}</Button>}
       </div>
@@ -232,7 +240,7 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
             <div className="flex gap-1"><Button type="button" variant="outline" size="sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</Button><Button type="button" variant="outline" size="sm" disabled={currentPage >= maxPage} onClick={() => setPage(currentPage + 1)}>Next</Button></div>
           </div>
         </div>
-      </div> : <p className="text-sm text-muted-foreground border border-dashed border-border rounded-lg p-4">{refreshing ? "Preparing store locations…" : "No store locations have been prepared yet."}{diagnostic && <span className="block mt-1">{diagnostic}</span>}</p>}
+      </div> : (refreshing || diagnostic) ? <p className="text-xs text-muted-foreground">{refreshing ? "Finding stores…" : diagnostic}</p> : null}
     </section>
   );
 }

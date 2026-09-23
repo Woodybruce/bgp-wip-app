@@ -15,6 +15,9 @@ export function CompanyProfileImage({ companyId, companyName, companyType, image
   const [failedImages, setFailedImages] = useState<string[]>([]);
   const hero = candidates.find(image => !failedImages.includes(`${companyId}:${image.id}`));
   const imageKey = hero ? `${companyId}:${hero.id}` : null;
+  // No cover photo → nothing here; the gallery below keeps Refresh images
+  // (the empty box was noise on every brand without photos — 2026-09-23).
+  if (!hero && !candidates.length) return null;
   if (!hero) {
     return <div className="rounded-lg border border-dashed border-border bg-card p-4 flex flex-wrap items-center justify-between gap-3" data-testid="brand-overview-image-empty">
       <p className="text-sm text-muted-foreground flex items-center gap-2"><ImageIcon className="w-4 h-4 shrink-0" />{candidates.length ? "The saved cover photos could not be loaded." : "No suitable cover photo yet."}</p>
