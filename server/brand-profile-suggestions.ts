@@ -34,24 +34,29 @@ export function expandParticipants(participants: unknown): string[] {
 //   already-known contacts back in as suggestions.
 // - interaction_date <= NOW() keeps future-dated rows out of last_touch.
 export const PENDING_CONTACT_SUGGESTIONS_SQL = `
-  SELECT LOWER(p) AS email,
-         COUNT(*)::int AS touches,
-         MAX(interaction_date) AS last_touch,
-         EXISTS (SELECT 1 FROM crm_contacts c WHERE LOWER(c.email) = LOWER(p)) AS in_crm
-    FROM crm_interactions
-    CROSS JOIN LATERAL jsonb_array_elements_text(participants) AS p
-   WHERE participants IS NOT NULL
-     AND jsonb_typeof(participants) = 'array'
-     AND interaction_date <= NOW()
-     AND p ILIKE $1
-     AND p NOT ILIKE '%@brucegillinghampollard.com'
-     AND LOWER(p) NOT IN (
-       SELECT LOWER(email) FROM crm_contacts
-        WHERE company_id = $2 AND email IS NOT NULL
-     )
-   GROUP BY LOWER(p)
-   ORDER BY touches DESC, last_touch DESC
-   LIMIT 20`;
+  WITH senders AS (
+    SELECT LOWER(p) AS email,
+           COUNT(*)::int AS touches,
+           MAX(interaction_date) AS last_touch
+      FROM crm_interactions
+      CROSS JOIN LATERAL jsonb_array_elements_text(participants) AS p
+     WHERE participants IS NOT NULL
+       AND jsonb_typeof(participants) = 'array'
+       AND interaction_date <= NOW()
+       AND p ILIKE $1
+       AND p NOT ILIKE '%@brucegillinghampollard.com'
+       AND LOWER(p) NOT IN (
+         SELECT LOWER(email) FROM crm_contacts
+          WHERE company_id = $2 AND email IS NOT NULL
+       )
+     GROUP BY LOWER(p)
+     ORDER BY touches DESC, last_touch DESC
+     LIMIT 20)
+  -- in_crm is computed after grouping: a correlated subquery on the raw
+  -- participant inside the GROUP BY failed the whole query (2026-09-23).
+  SELECT s.*, EXISTS (SELECT 1 FROM crm_contacts c WHERE LOWER(c.email) = s.email) AS in_crm
+    FROM senders s
+   ORDER BY s.touches DESC, s.last_touch DESC`;
 
 // The brand's whole BGP email history — CRM contacts AND inbox senders at
 // its domain. The relationship line used to count only not-yet-CRM senders,

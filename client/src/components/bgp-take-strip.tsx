@@ -1,3 +1,4 @@
+import type React from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { Sparkles, RefreshCw } from "lucide-react";
@@ -33,7 +34,7 @@ function friendlyTakeError(raw?: string): string {
 // `intro` merges the company description into the same card as the take —
 // one continuous read instead of two stacked blocks saying similar things
 // (Woody, 2026-08-25: "the BGP take and the intro should be combined").
-export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty }: { companyId: string; tab: Tab; intro?: string | null; entities?: CommentaryEntity[]; hideWhenEmpty?: boolean }) {
+export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty, footer }: { companyId: string; tab: Tab; intro?: string | null; entities?: CommentaryEntity[]; hideWhenEmpty?: boolean; footer?: React.ReactNode }) {
   const { toast } = useToast();
   const queryKey = ["/api/brand", companyId, "ai-take", tab];
   const [refreshError, setRefreshError] = useState<(TakeTarget & { message: string }) | null>(null);
@@ -120,6 +121,7 @@ export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty }:
         <div className="space-y-2 animate-pulse" aria-label="Loading saved BGP take"><div className="h-3 rounded bg-muted" /><div className="h-3 w-3/4 rounded bg-muted" /></div>
       ) : text ? <AiCommentary text={text} entities={entities} /> : null}
       {status && <p role="status" aria-live="polite" className={`text-sm text-muted-foreground${text ? " mt-2" : ""}`} data-testid="bgp-take-status">{status}</p>}
+      {footer && <div className="border-t border-border/60 mt-2.5 pt-2.5 space-y-2" data-testid="bgp-take-footer">{footer}</div>}
     </div>
   );
 }
