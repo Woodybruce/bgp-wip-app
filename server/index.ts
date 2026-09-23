@@ -5035,6 +5035,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
       if (isProduction) {
         setTimeout(() => startAutoEnrichment(), 30000);
         setTimeout(() => startAutoTurnoverResearch(), 30000);
+        // A directory-wide website sweep survives deploys: pick it back up.
+        setTimeout(() => { import("./brand-website-sweep").then(m => m.resumeWebsiteSweep()).catch(() => {}); }, 60000);
         import("./client-team-events-sync").then(m => m.startClientEventsSyncLoop()).catch(() => {});
         // Heavy crawls (image-sync + archivist) block the event loop and
         // were starving ChatBGP after every redeploy — a single chat turn

@@ -540,6 +540,24 @@ router.get("/api/brand/:companyId/preparation", requireAuth, async (req: Request
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
+// Directory-wide website sweep (staff): POST starts/resumes, GET returns
+// progress plus the list of brands whose website is genuinely unknown.
+router.post("/api/brand/website-sweep", requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!await checkBrandScope(req)) return res.status(403).json({ error: "The website sweep is available in the staff view" });
+    const { startWebsiteSweep, stopWebsiteSweep } = await import("./brand-website-sweep");
+    if (req.body?.stop === true) { await stopWebsiteSweep(); return res.json({ stopped: true }); }
+    res.status(202).json(await startWebsiteSweep({ restart: req.body?.restart === true }));
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+router.get("/api/brand/website-sweep", requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!await checkBrandScope(req)) return res.status(403).json({ error: "The website sweep is available in the staff view" });
+    const { readWebsiteSweep } = await import("./brand-website-sweep");
+    res.json(await readWebsiteSweep());
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
 router.get("/api/brand/enrich/status", requireAuth, async (req: Request, res: Response) => {
   try {
     if (!await checkBrandScope(req)) return res.status(403).json({ error: "Access denied" });

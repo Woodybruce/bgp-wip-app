@@ -148,19 +148,22 @@ export function BrandIdentityControl({ companyId, domain, identity, savedAliases
     },
     onError: (error: Error) => toast({ title: "Website could not be confirmed", description: error.message, variant: "destructive" }),
   });
+  // One quiet line: the app finds and confirms websites itself (Woody,
+  // 2026-09-23: "we don't want to see all the problems"). Only a brand it
+  // couldn't prove gets an Add/Confirm action, and no warning copy.
   return (
-    <div className="rounded-lg border border-border bg-background p-3 space-y-2" data-testid="brand-identity-control">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0 text-sm">
-          {verified ? <ShieldCheck className="w-4 h-4 shrink-0 text-primary" /> : <Globe className="w-4 h-4 shrink-0 text-muted-foreground" />}
-          <span>{verified ? "Official website confirmed" : "Official website needs confirmation"}</span>
-        </div>
-        {canConfirm && <Button type="button" size="sm" variant="outline" onClick={() => setOpen(value => !value)} aria-expanded={open}>
-          {open ? "Cancel" : verified ? "Review website" : "Confirm official website"}
-        </Button>}
+    <div className={`${open ? "rounded-lg border border-border bg-background p-3 " : ""}space-y-2`} data-testid="brand-identity-control">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+        {verified ? <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-primary" /> : <Globe className="w-3.5 h-3.5 shrink-0" />}
+        <span data-testid={suggestion && !verified ? "brand-website-suggestion" : undefined}>
+          {verified ? <>Website <span className="text-foreground">{domainHost(domain)}</span></>
+            : suggestion ? <>Likely website <span className="text-foreground">{suggestion}</span></>
+            : "Website not found yet"}
+        </span>
+        {canConfirm && <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => setOpen(value => !value)} aria-expanded={open}>
+          {open ? "Cancel" : verified ? "Change" : suggestion ? "Confirm" : "Add website"}
+        </button>}
       </div>
-      {!verified && <p className="text-xs text-muted-foreground">Company information from outside sources is held for review until the brand’s identity is confirmed.</p>}
-      {!verified && suggestion && <p className="text-xs text-muted-foreground" data-testid="brand-website-suggestion">Likely website found: <span className="font-medium text-foreground">{suggestion}</span>{canConfirm ? " — check it and confirm." : "."}</p>}
       {previousFactsNeedReview && <p className="text-xs text-muted-foreground">Previously recorded facts have been kept and still need review.</p>}
       {previousFactsNeedReview && canConfirm && <BrandRetainedFactsReview key={companyId} companyId={companyId} identityVerified={verified} />}
       {open && <form className="space-y-2 border-t border-border pt-3" onSubmit={event => { event.preventDefault(); confirm.mutate(); }}>
