@@ -1229,6 +1229,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     <span className="text-xs text-muted-foreground">Global revenue {fmtRevenue(c.annual_revenue)}</span>
                   )}
                   {c.founded_year && <span className="text-xs text-muted-foreground">Est. {c.founded_year}</span>}
+                  {!isLandlord && <ApolloDetailChips companyId={c.id} />}
                   {c.stock_ticker && (
                     <a
                       href={`https://finance.yahoo.com/quote/${encodeURIComponent(normalizeTicker(c.stock_ticker) ?? c.stock_ticker)}`}
@@ -1520,8 +1521,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 fn is kept in the file for re-use if/when we buy company
                 lookup credits and the rich payload becomes available. */}
 
-            {/* Verified external figures are available as supporting sources. */}
-            {!isLandlord && <ApolloIntelCard companyId={c.id} companyName={c.name} />}
 
             </div>
 
@@ -3037,55 +3036,23 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
 }
 
 // External company information is a source disclosure, not a BGP relationship score.
-export function ApolloIntelCard({ companyId, companyName }: { companyId: string; companyName: string }) {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-  const [open, setOpen] = useState(false);
-  useEffect(() => setOpen(false), [companyId]);
-  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isClient = !viewer || viewer.role === "Client" || !!viewer.companyScopeId;
-  const { data, isLoading } = useQuery<{ payload: any | null; fetchedAt?: string | null; status?: "matched" | "no_match" | "blocked"; reason?: string }>({
+// Apollo's firmographics folded into the Details line (Woody, 2026-09-23:
+// "can't we fold in the Apollo data source?"). Employees, revenue, founded
+// year and LinkedIn are already gap-filled onto the company row; headcount
+// growth feeds Expansion signals. What's left — funding — shows here. Apollo
+// is refreshed by "Refresh profile" (the apollo preparation stage).
+export function ApolloDetailChips({ companyId }: { companyId: string }) {
+  const { data } = useQuery<{ payload: any | null; status?: "matched" | "no_match" | "blocked" }>({
     queryKey: ["/api/brand", companyId, "apollo-company"],
     queryFn: async () => (await apiRequest("GET", `/api/brand/${companyId}/apollo-company`)).json(),
     staleTime: 5 * 60_000,
-    enabled: open,
-  });
-  const refresh = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/brand/${companyId}/apollo-company/refresh`)).json(),
-    onSuccess: (out: { status?: string; reason?: string }) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId] });
-      toast({ title: out.status === "matched" ? "Company data refreshed" : out.status === "blocked" ? "Company match needs review" : "No verified company match",
-        description: out.status === "matched" ? companyName : out.reason || "Existing information has been kept." });
-    },
-    onError: (error: Error) => toast({ title: "Company data could not be refreshed", description: error.message, variant: "destructive" }),
   });
   const payload = data?.status === "matched" ? data.payload : null;
-  const growth = payload?.headcountGrowth12m ?? payload?.headcountGrowth6m;
-  const growthPct = growth != null && Number.isFinite(Number(growth)) ? Math.round(Number(growth) * 100) : null;
-  const employees = payload?.employees != null && Number.isFinite(Number(payload.employees)) && Number(payload.employees) > 0 ? Number(payload.employees) : null;
-  return (
-    <details className="rounded-lg border border-border p-3" open={open} onToggle={event => setOpen(event.currentTarget.open)} data-testid="brand-company-data-source">
-      <summary className="text-sm font-medium cursor-pointer min-h-11 sm:min-h-0">Company data sources</summary>
-      {open && <div className="space-y-3 mt-3 text-sm">
-        <div className="flex flex-wrap justify-between items-center gap-2">
-          <div><p className="font-medium">Apollo</p></div>
-          {!isClient && <Button size="sm" variant="outline" onClick={() => refresh.mutate()} disabled={refresh.isPending} data-testid="apollo-refresh"><RefreshCw className={refresh.isPending ? "animate-spin" : ""} />{refresh.isPending ? "Refreshing…" : "Refresh source"}</Button>}
-        </div>
-        {isLoading ? <div className="h-16 rounded bg-muted animate-pulse" aria-label="Loading saved company data" /> : payload ? <>
-          {data?.fetchedAt && <p className="text-[11px] text-muted-foreground">Checked {new Date(data.fetchedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</p>}
-          <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {employees != null && <div><dt className="text-xs text-muted-foreground">Employees</dt><dd className="font-mono tabular-nums">{employees.toLocaleString()}</dd></div>}
-            {growthPct != null && <div><dt className="text-xs text-muted-foreground">Headcount change · {payload.headcountGrowth12m != null ? "12 months" : "6 months"}</dt><dd className="font-mono tabular-nums">{growthPct > 0 ? "+" : ""}{growthPct}%</dd></div>}
-            {payload.totalFunding && <div><dt className="text-xs text-muted-foreground">Reported funding</dt><dd className="font-mono tabular-nums">{payload.totalFunding}</dd></div>}
-            {payload.latestFundingStage && <div><dt className="text-xs text-muted-foreground">Latest funding round</dt><dd>{payload.latestFundingStage}</dd></div>}
-            {payload.annualRevenue && <div><dt className="text-xs text-muted-foreground">Reported revenue</dt><dd className="font-mono tabular-nums">{payload.annualRevenue}</dd></div>}
-            {payload.hq && <div><dt className="text-xs text-muted-foreground">Reported headquarters</dt><dd>{payload.hq}</dd></div>}
-          </dl>
-          {payload.linkedinUrl && <a href={payload.linkedinUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary"><Linkedin className="w-4 h-4" />Source company page</a>}
-        </> : <p className="text-muted-foreground">{data?.status === "blocked" ? "This source is awaiting an identity review. Its figures are not included in the profile." : "No verified company information is available from this source yet."}</p>}
-      </div>}
-    </details>
-  );
+  if (!payload) return null;
+  return <>
+    {payload.totalFunding && <span className="text-xs text-muted-foreground tabular-nums">Funding {payload.totalFunding}</span>}
+    {payload.latestFundingStage && <span className="text-xs text-muted-foreground">{payload.latestFundingStage}</span>}
+  </>;
 }
 
 function FlagshipImage({ companyId }: { companyId: string }) {

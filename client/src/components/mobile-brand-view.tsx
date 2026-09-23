@@ -22,7 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Building2, TrendingUp, ClipboardList, Instagram, Store, Swords, ExternalLink, Globe, Newspaper } from "lucide-react";
 import {
   CompanyMiniChat, MenuIntelCard, PortfolioActivityBlock, BrandComplianceCard, BrandInstagramCard,
-  AskChatBGPInline, PipnetRequirementsRow, StockSnapshotCard, ApolloIntelCard,
+  AskChatBGPInline, PipnetRequirementsRow, StockSnapshotCard, ApolloDetailChips,
 } from "@/components/brand-profile-panel";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import { CompanyContactsBoard } from "@/components/company-contacts-board";
@@ -387,6 +387,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-1.5">
+            {!isLandlord && <div className="flex flex-wrap gap-x-3"><ApolloDetailChips companyId={companyId} /></div>}
             {c.backers && <div className="text-xs"><span className="text-[11px] uppercase tracking-wider text-muted-foreground mr-1.5">Backers</span>{c.backers}</div>}
             {c.franchise_activity && <div className="text-xs"><span className="text-[11px] uppercase tracking-wider text-muted-foreground mr-1.5">Franchise</span>{c.franchise_activity}</div>}
             {c.dept_store_presence && <div className="text-xs"><span className="text-[11px] uppercase tracking-wider text-muted-foreground mr-1.5">Dept stores</span>{c.dept_store_presence}</div>}
@@ -394,7 +395,6 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           </CardContent>
         </Card>
       )}
-      {!isLandlord && !isClientViewer && <ApolloIntelCard companyId={companyId} companyName={c.name} />}
 
       {/* Portfolio activity — tenant at / targeted / pitched / suggested */}
       <PortfolioActivityBlock companyId={companyId} />

@@ -169,3 +169,13 @@ test('a homepage that lists every venue is read as the locations directory', asy
   ] });
   assert.deepEqual(kept.map(s => `${s.country}:${s.name}`), ['GB:Soho']);
 });
+
+test('website stores keep a street address only when the page shows it', async () => {
+  process.env.DATABASE_URL ||= 'postgres://t:t@127.0.0.1:1/t';
+  const { checkedWebsiteStores } = await import('../../server/brand-stores-website.ts');
+  const pages = [{ url: 'https://honestgreens.com/', text: "Locations listed on honestgreens.com:\nSoho 21 St Anne's Ct — https://honestgreens.com/en/restaurants/soho-en" }];
+  const [soho] = checkedWebsiteStores(pages, { stores: [{ name: 'Soho', city: 'London', country: 'GB', status: 'open', quote: 'Soho 21 St Anne', address: "21 St Anne's Ct" }] });
+  assert.equal(soho.address, "21 St Anne's Ct");
+  const [made] = checkedWebsiteStores(pages, { stores: [{ name: 'Soho', city: 'London', country: 'GB', status: 'open', quote: 'Soho 21 St Anne', address: '1 Dean Street' }] });
+  assert.equal(made.address, undefined);
+});
