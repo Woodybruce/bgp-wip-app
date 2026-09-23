@@ -74,3 +74,14 @@ test('pack files are sorted by type from their names', async () => {
   assert.equal(classifyPackFile('Sample_-_KYC_verification_form_Standard_1_1.xlsx'), 'kyc_form');
   assert.deepEqual(Object.keys(packEvidence(['passport', 'ubo_declaration'])).sort(), ['id_verified', 'ubo_identified', 'ubo_verified']);
 });
+
+test('People & HR records are admin-only through ChatBGP SQL; the SAR register is never readable', async () => {
+  const { hrTableIn, executeSqlQuery } = await import('../../server/sql-tools.ts');
+  assert.equal(hrTableIn("SELECT * FROM staff_reviews WHERE user_id = 'x'"), 'staff_reviews');
+  assert.equal(hrTableIn('SELECT salary_current FROM staff_profiles'), 'staff_profiles');
+  assert.equal(hrTableIn('SELECT * FROM crm_deals'), null);
+  const staff = await executeSqlQuery("SELECT * FROM staff_reviews WHERE kind = 'monthly'", { isAdmin: false });
+  assert.equal(staff.success, false); assert.match(staff.error, /only admins/);
+  const sar = await executeSqlQuery('SELECT * FROM aml_internal_reports', { isAdmin: true });
+  assert.equal(sar.success, false);
+});

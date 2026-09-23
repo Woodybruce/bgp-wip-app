@@ -26,6 +26,7 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { ConnectionStatus } from "@/components/connection-status";
 import DealVerdictAlarm from "@/components/deal-verdict-alarm";
 import { GlobalSearch } from "@/components/global-search";
+import { HeaderBack } from "@/components/header-back";
 import { NotificationCenter } from "@/components/notification-center";
 import { GlobalDropZone } from "@/components/global-drop-zone";
 import bgpLogoDark from "@assets/BGP_BlackHolder_1771853582461.png";
@@ -734,6 +735,7 @@ function AuthenticatedApp() {
               <div className="flex items-center gap-2">
                 {/* Left nav is pinned open (collapsible="none"), so the
                     sidebar toggle is gone. */}
+                <HeaderBack />
                 <GlobalSearch />
               </div>
               <div className="flex items-center gap-2">

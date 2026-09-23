@@ -261,7 +261,7 @@ export async function enrichBrandById(companyId: string): Promise<Record<string,
 // Each stage reserves a daily run before calling providers. A profile run can use
 // one web-research call and at most three model attempts; the existing Google
 // spending guard still applies independently to store/image requests.
-const DAILY_LIMITS: Record<BrandPreparationStage, number> = { identity: 40, profile: 30, apollo: 30, rocketreach: 20, stores: 20, images: 20, logo: 40, brief: 30, contacts: 0, portfolio: 5, financials: 20 };
+const DAILY_LIMITS: Record<BrandPreparationStage, number> = { identity: 40, profile: 30, apollo: 30, rocketreach: 20, stores: 20, images: 20, logo: 40, brief: 30, contacts: 20, portfolio: 5, financials: 20 };
 const configured = (stage: BrandPreparationStage) => {
   if (stage === "profile" || stage === "brief") return !!process.env.ANTHROPIC_API_KEY;
   if (stage === "apollo") return !!process.env.APOLLO_API_KEY;
@@ -431,11 +431,21 @@ export async function prepareBrandStage(companyId: string, stage: BrandPreparati
       result = await (await import("./brand-ai-take")).prepareBrandAiTake(companyId, options.tab || "brand");
       return { status: result.text ? "ready" : "no_match", source: "BGP brief (Claude)", reason: result.reason };
     }
-    // Existing linked people are usable immediately; a missing contact needs a
-    // real discovery/review workflow, never a guessed name or job title.
-    const linked = (await pool.query("SELECT COUNT(*)::int AS count FROM crm_contacts WHERE company_id=$1", [companyId])).rows[0]?.count || 0;
-    return { status: "needs_review", reason: linked ? `${linked} linked contacts are available. Check who currently handles property matters before contacting them; linked contacts have not been automatically verified.` : "No contacts are linked yet. Add the known property contact, then check their current role before contacting them." };
-  }, { dailyLimit: DAILY_LIMITS[stage], force, charge: usable && stage !== "contacts", readyTtlMs: (stage === "brief" || stage === "contacts" ? 7 : 30) * 86400000 });
+    // Contacts refresh weekly in the background (Woody, 2026-09-23: "can't
+    // we just have the contacts refreshed every week"): the same RocketReach
+    // discovery + import as the Refresh contacts button, with its identity
+    // and employer checks, capped at 5 new people per brand per run.
+    const { isRocketReachConfigured, discoverBrandContacts, importBrandContacts } = await import("./rocketreach-contacts");
+    if (!isRocketReachConfigured()) return { status: "unavailable", reason: "RocketReach is not configured" };
+    const found = await discoverBrandContacts(companyId);
+    if (found.status !== 200) throw new Error(found.body?.error || `Contact discovery failed (${found.status})`);
+    const people = (found.body?.people || []).slice(0, 5);
+    if (!people.length) return { status: "ready", source: "RocketReach", reason: "No new contacts this week" };
+    const imported = await importBrandContacts(companyId, people, true);
+    if (imported.status !== 200) throw new Error(imported.body?.error || `Contact import failed (${imported.status})`);
+    result = imported.body;
+    return { status: "ready", source: "RocketReach", reason: `${imported.body.insertedHere} added here, ${imported.body.insertedElsewhere} under their employer, ${imported.body.existing} already in CRM` };
+  }, { dailyLimit: DAILY_LIMITS[stage], force, charge: usable, readyTtlMs: (stage === "brief" || stage === "contacts" ? 7 : 30) * 86400000 });
   return { ...run, result };
 }
 

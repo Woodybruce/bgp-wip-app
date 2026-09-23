@@ -4,7 +4,7 @@ import { CompanyProfileImage, CompanyImageCoverChoice } from "@/components/compa
 import { selectCompanyHeroImage, isCompanyImageLogo } from "@shared/brand-image-selection";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandImageRefreshButton } from "@/components/brand-profile-overview";
-import { ContactImportResults, type ContactImportResult } from "@/components/contact-import-results";
+import { type ContactImportResult } from "@/components/contact-import-results";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { PropertyFoldersPanel, ClientPropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
@@ -418,19 +418,18 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   const [addSignalOpen, setAddSignalOpen] = useState(false);
   const [newSignal, setNewSignal] = useState({ headline: "", signal_type: "opening", sentiment: "positive", source: "", signal_date: "" });
   const [contactsFinding, setContactsFinding] = useState(false);
-  const [contactImport, setContactImport] = useState<{ companyId: string; result?: ContactImportResult; error?: string } | null>(null);
 
   const [kycRunning, setKycRunning] = useState(false);
 
   async function runContactDiscovery() {
     setContactsFinding(true);
-    setContactImport(null);
     try {
       const rrRes = await apiRequest("POST", `/api/brand/${companyId}/rocketreach/discover`, {}).then(r => r.json());
       const result: ContactImportResult = rrRes.people?.length > 0
         ? await apiRequest("POST", `/api/brand/${companyId}/rocketreach/import`, { people: rrRes.people }).then(r => r.json())
         : { inserted: 0, insertedHere: 0, insertedElsewhere: 0, existing: 0, skipped: 0, requested: 0, results: [] };
-      setContactImport({ companyId, result });
+      const summary = [result.insertedHere && `${result.insertedHere} added`, result.insertedElsewhere && `${result.insertedElsewhere} added under their employer`, result.existing && `${result.existing} already in CRM`].filter(Boolean).join(" · ");
+      toast({ title: summary || "No new contacts found", description: "Contacts also refresh automatically every week." });
       void queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
       const employers = new Set(result.results.filter(row => row.status === "inserted" && row.companyId).map(row => row.companyId));
       void queryClient.invalidateQueries({ predicate: query =>
@@ -438,7 +437,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
         || String(query.queryKey[0]).startsWith("/api/company-portfolio")
         || String(query.queryKey[0]).startsWith("/api/crm/companies") });
     } catch (error) {
-      setContactImport({ companyId, error: error instanceof Error ? error.message.replace(/^\d{3}:\s*/, "") : "Please try again." });
+      toast({ title: "Contacts couldn't be refreshed", description: error instanceof Error ? error.message.replace(/^\d{3}:\s*/, "") : "Please try again.", variant: "destructive" });
     } finally {
       setContactsFinding(false);
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
@@ -1060,7 +1059,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
       </CardHeader>
 
       <CardContent className="p-3 space-y-4">
-        {!isClientViewer && enrichMutation.message && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{enrichMutation.message}</p>}
+        {/* Success commentary is dropped (Woody, 2026-09-23 — "we don't need the commentary"); progress and problems still show. */}
+        {!isClientViewer && enrichMutation.message && !/^Profile (refreshed|checked)\./.test(enrichMutation.message) && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{enrichMutation.message}</p>}
         {!editing && (
           <div className="flex flex-wrap gap-1.5 md:hidden pt-2" data-testid="brand-panel-sections">
             <Pill active={panelSection === "profile"} onClick={() => setPanelSection("profile")} data-testid="brand-section-profile">{isLandlord ? "Overview" : "Profile"}</Pill>
@@ -1269,7 +1269,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               </>}
             </div>
 
-            {!isClientViewer && contactImport?.companyId === companyId && <div className="order-1 mt-3"><ContactImportResults result={contactImport.result} error={contactImport.error} /></div>}
+
 
             <div className="space-y-2 pt-2" data-testid="brand-factual-summary">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>

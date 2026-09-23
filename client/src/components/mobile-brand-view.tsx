@@ -174,7 +174,8 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       </div>
       <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
       {!isClientViewer && <Button variant="outline" size="sm" onClick={() => refreshProfile.mutate()} disabled={refreshProfile.isPending} data-testid="button-brand-refresh">{refreshProfile.isPending ? "Refreshing…" : "Refresh profile"}</Button>}
-      {!isClientViewer && refreshProfile.message && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{refreshProfile.message}</p>}
+      {/* Success commentary is dropped (Woody, 2026-09-23 — "we don't need the commentary"); progress and problems still show. */}
+        {!isClientViewer && refreshProfile.message && !/^Profile (refreshed|checked)\./.test(refreshProfile.message) && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{refreshProfile.message}</p>}
       <div className="flex flex-wrap gap-1.5" data-testid="company-phone-sections">
         <Pill active={section === "chat"} onClick={() => setSection("chat")} data-testid="company-section-chat">Overview</Pill>
         <Pill active={section === "contacts"} onClick={() => setSection("contacts")} data-testid="company-section-contacts">Contacts</Pill>

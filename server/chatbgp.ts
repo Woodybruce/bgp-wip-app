@@ -8492,7 +8492,9 @@ export async function executeCrmToolRaw(
 
   if (fnName === "sql_query") {
     const { executeSqlQuery } = await import("./sql-tools");
-    return { data: await executeSqlQuery(String(fnArgs.query || "")) };
+    const sqlUserId = req.session?.userId || (req as any).tokenUserId || null;
+    const sqlIsAdmin = sqlUserId ? (await pool.query(`SELECT is_admin FROM users WHERE id = $1`, [sqlUserId])).rows[0]?.is_admin === true : false;
+    return { data: await executeSqlQuery(String(fnArgs.query || ""), { isAdmin: sqlIsAdmin }) };
   }
 
   if (fnName === "sql_write") {
@@ -8507,7 +8509,8 @@ export async function executeCrmToolRaw(
         where: fnArgs.where as Record<string, any> | undefined,
         returning: fnArgs.returning !== false,
       },
-      { userId, threadId: (req.body?.threadId as string) || undefined },
+      { userId, threadId: (req.body?.threadId as string) || undefined,
+        isAdmin: userId ? (await pool.query(`SELECT is_admin FROM users WHERE id = $1`, [userId])).rows[0]?.is_admin === true : false },
     );
     const action = result.success
       ? { type: "db_changed" as const, table: String(fnArgs.table || ""), op: fnArgs.op }

@@ -296,11 +296,12 @@ async function fetchParentCompany(company: any) {
   return rows[0] || null;
 }
 
-router.post("/api/brand/:companyId/rocketreach/discover", requireAuth, async (req: Request, res: Response) => {
-  try {
-    if (!isRocketReachConfigured()) return res.status(400).json({ error: "ROCKETREACH_API_KEY not configured" });
-    const company = await fetchCompany(String(req.params.companyId));
-    if (!company) return res.status(404).json({ error: "Company not found" });
+/** RocketReach discovery for a brand — shared by the Refresh contacts
+ *  button and the weekly background refresh. */
+export async function discoverBrandContacts(companyId: string): Promise<{ status: number; body: any }> {
+    if (!isRocketReachConfigured()) return { status: 400, body: { error: "ROCKETREACH_API_KEY not configured" } };
+    const company = await fetchCompany(companyId);
+    if (!company) return { status: 404, body: { error: "Company not found" } };
 
     const domain = extractDomain(company);
     const scope = scopeForCompanyType((company as any).companyType ?? (company as any).company_type);
@@ -384,11 +385,17 @@ router.post("/api/brand/:companyId/rocketreach/discover", requireAuth, async (re
       .filter((p) => !(p.email && existingEmails.has(p.email.toLowerCase())))
       .filter((p) => !(p.linkedin_url && existingLinkedIn.has(p.linkedin_url.toLowerCase())));
 
-    res.json({
+    return { status: 200, body: {
       company: { id: company.id, name: company.name, domain },
       parentCompany: parentCompany ? { id: parentCompany.id, name: parentCompany.name } : null,
       people: fresh,
-    });
+    } };
+}
+
+router.post("/api/brand/:companyId/rocketreach/discover", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const out = await discoverBrandContacts(String(req.params.companyId));
+    res.status(out.status).json(out.body);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -429,18 +436,13 @@ type ContactImportResult = {
   reason?: string;
 };
 
-router.post("/api/brand/:companyId/rocketreach/import", requireAuth, async (req: Request, res: Response) => {
-  try {
-    const companyId = String(req.params.companyId);
-    const peopleIn: Array<DiscoveredPerson> = req.body?.people || [];
-    // Default to true: spend the credits to get the rich profile (revealed
-    // emails/phones, job history, education). Without this most of the
-    // RocketReach detail surfaced on the website doesn't make it back.
-    const enrich: boolean = req.body?.enrich !== false;
-    if (!Array.isArray(peopleIn) || peopleIn.length === 0) return res.status(400).json({ error: "people[] required" });
+/** Import discovered people into the CRM (same identity/employer checks as
+ *  the button) — shared with the weekly background refresh. */
+export async function importBrandContacts(companyId: string, peopleIn: Array<DiscoveredPerson>, enrich = true): Promise<{ status: number; body: any }> {
+    if (!Array.isArray(peopleIn) || peopleIn.length === 0) return { status: 400, body: { error: "people[] required" } };
 
     const company = await fetchCompany(companyId);
-    if (!company) return res.status(404).json({ error: "Company not found" });
+    if (!company) return { status: 404, body: { error: "Company not found" } };
 
     // Reveal each profile in parallel (capped concurrency) so we get the full
     // RocketReach detail rather than the search-time preview.
@@ -558,7 +560,7 @@ router.post("/api/brand/:companyId/rocketreach/import", requireAuth, async (req:
       connection.release();
     }
     const inserted = results.filter((result) => result.status === "inserted");
-    res.json({
+    return { status: 200, body: {
       inserted: inserted.length,
       insertedHere: inserted.filter((result) => result.companyId === company.id).length,
       insertedElsewhere: inserted.filter((result) => result.companyId !== company.id).length,
@@ -566,7 +568,16 @@ router.post("/api/brand/:companyId/rocketreach/import", requireAuth, async (req:
       skipped: results.filter((result) => result.status === "skipped").length,
       requested: people.length,
       results,
-    });
+    } };
+}
+
+router.post("/api/brand/:companyId/rocketreach/import", requireAuth, async (req: Request, res: Response) => {
+  try {
+    // Default to true: spend the credits to get the rich profile (revealed
+    // emails/phones, job history, education). Without this most of the
+    // RocketReach detail surfaced on the website doesn't make it back.
+    const out = await importBrandContacts(String(req.params.companyId), req.body?.people || [], req.body?.enrich !== false);
+    res.status(out.status).json(out.body);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

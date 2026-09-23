@@ -34,7 +34,23 @@ const READ_DENY = new Set<string>([
   "sessions",               // session blobs
   "file_storage",           // raw file bytes — too large to ever return
   "ai_write_audit",         // the audit log itself
+  "aml_internal_reports",   // suspicion reports — the MLRO's register (tipping off, POCA s.333A)
 ]);
+
+// People & HR records — 1:1s, reviews, salaries, bonuses, leave. The app
+// shows each person their own and admins everyone's; ChatBGP follows the
+// same rule, so only admins can read or write these via SQL (a staff login
+// could previously ask ChatBGP for a colleague's 1:1 — found 2026-09-23).
+export const HR_ADMIN_ONLY = new Set<string>([
+  "staff_reviews", "staff_review_goals", "staff_profiles", "salary_history", "bonus_history",
+  "pension_contributions", "benefits", "staff_benefit_enrolments", "holiday_requests",
+  "staff_parental_leave", "hr_documents", "staff_promotion_pitches", "staff_competencies",
+  "staff_awards", "staff_kit",
+]);
+export function hrTableIn(sql: string): string | null {
+  for (const t of HR_ADMIN_ONLY) if (new RegExp(`\\b${t}\\b`, "i").test(sql)) return t;
+  return null;
+}
 
 // Tables Claude can read but NEVER write to. Identity, security, billing.
 const WRITE_DENY = new Set<string>([
@@ -123,7 +139,7 @@ export function getSchemaToc(): string {
 
 // ── sql_query ──────────────────────────────────────────────────────────────
 
-export async function executeSqlQuery(query: string): Promise<{
+export async function executeSqlQuery(query: string, opts: { isAdmin?: boolean } = {}): Promise<{
   success: boolean;
   rows?: any[];
   rowCount?: number;
@@ -144,6 +160,9 @@ export async function executeSqlQuery(query: string): Promise<{
       return { success: false, error: `Query contains forbidden pattern: ${pattern.source}. Use sql_write for mutations.` };
     }
   }
+
+  const hr = opts.isAdmin ? null : hrTableIn(trimmed);
+  if (hr) return { success: false, error: `"${hr}" holds private People & HR records — only admins can read them. Each person sees their own in People & HR.` };
 
   // Prevent reading deny-listed tables
   for (const denied of READ_DENY) {
@@ -288,12 +307,15 @@ async function logAudit(entry: {
 
 export async function executeSqlWrite(
   args: SqlWriteArgs,
-  ctx: { userId?: string; threadId?: string } = {}
+  ctx: { userId?: string; threadId?: string; isAdmin?: boolean } = {}
 ): Promise<{ success: boolean; affected?: number; rows?: any[]; error?: string }> {
   const { table, op, data, where, rows: bulkRows, returning = true } = args;
 
   if (!table || !isValidIdent(table)) {
     return { success: false, error: "Invalid or missing table name" };
+  }
+  if (!ctx.isAdmin && HR_ADMIN_ONLY.has(table.toLowerCase())) {
+    return { success: false, error: `"${table}" holds private People & HR records — only admins can change them via ChatBGP.` } as any;
   }
   if (WRITE_DENY.has(table.toLowerCase())) {
     return { success: false, error: `Table "${table}" is not writable via sql_write.` };
