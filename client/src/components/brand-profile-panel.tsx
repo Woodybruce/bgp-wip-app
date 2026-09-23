@@ -1469,7 +1469,43 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 "can't see the pills on ask chat bgp" — parity rule); the
                 chat backend enforces the client tool allowlist. */}
             <div className="mt-2 order-2 space-y-3 empty:hidden">
-              <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} />
+              {/* One card: the BGP take, who covers the brand, last touch and
+                  the deals (Woody, 2026-09-23: "pull this together and
+                  integrate into the BGP take"). */}
+              <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} footer={<>
+            {/* Coverage sits in the header row; when nobody is set by hand the
+                server falls back to the BGP agents on this brand's deals. */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <Handshake className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-[11px] font-medium text-muted-foreground mr-1">BGP team</span>
+              {(data.coverers || []).map((cov: any) => (
+                <CovererChip key={cov.id} cov={cov} companyId={companyId} />
+              ))}
+              {!isClientViewer && <BgpTeamMenu companyId={companyId} coverers={data.coverers || []} />}
+            </div>
+            {/* One line: lead broker, last touch and email volume — from CRM
+                contacts AND the BGP inbox threads with the brand's people
+                (Honest Greens read "Last touch —" beside 49 inbox threads). */}
+            {(() => {
+              // Staff get the brand's whole email history (relationshipStats);
+              // clients fall back to their visible contacts' last touch.
+              const stats = data.relationshipStats;
+              const touches = [...data.contacts.map((ct: any) => ct.last_interaction_at), stats?.last_touch].filter(Boolean) as string[];
+              const last = touches.sort().reverse()[0];
+              const daysSince = last ? Math.floor((Date.now() - new Date(last).getTime()) / 864e5) : null;
+              const threads = stats?.threads || 0;
+              const active90 = stats ? stats.people_90d : data.contacts.filter((ct: any) => ct.last_interaction_at && Date.now() - new Date(ct.last_interaction_at).getTime() < 90 * 864e5).length;
+              const parts = [
+                c.bgp_contact_crm ? <span key="lead">Lead <span className="font-medium text-foreground">{c.bgp_contact_crm}</span></span> : null,
+                <span key="touch">Last touch <span className={`font-medium ${daysSince == null ? "" : daysSince < 30 ? "text-emerald-700" : daysSince < 90 ? "text-amber-600" : "text-red-600"}`}>{daysSince == null ? "—" : daysSince === 0 ? "today" : daysSince === 1 ? "yesterday" : `${daysSince} days ago`}</span></span>,
+                threads ? <span key="threads"><span className="font-mono tabular-nums text-foreground">{threads}</span> email threads</span> : null,
+                active90 ? <span key="active"><span className="font-mono tabular-nums text-foreground">{active90}</span> {active90 === 1 ? "person" : "people"} active in 90 days</span> : null,
+              ].filter(Boolean);
+              return <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground" data-testid="brand-relationship-line">{parts}</div>;
+            })()}
+
+            <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} />
+            </>} />
 
             </div>
 
@@ -1564,49 +1600,18 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 relationship strip and activity summary; team editing and
                 the raw correspondence drawer stay staff-only. */}
             <div className="border-t border-border/40 mt-3 pt-2 order-6">
-            {/* Coverage sits in the header row; when nobody is set by hand the
-                server falls back to the BGP agents on this brand's deals. */}
-            <div className="flex items-center gap-2 flex-wrap mb-2">
-              <Handshake className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-xs font-semibold uppercase tracking-wider text-foreground mr-1">BGP Relationship</span>
-              {(data.coverers || []).map((cov: any) => (
-                <CovererChip key={cov.id} cov={cov} companyId={companyId} />
-              ))}
-              {!isClientViewer && <BgpTeamMenu companyId={companyId} coverers={data.coverers || []} />}
-            </div>
             <div className="space-y-2.5">
             <>
             {/* The relationship read is part of the one BGP take above
                 (Woody, 2026-09-23: "combine this with the BGP take — it's
                 all linked"). */}
 
-            {/* One line: lead broker, last touch and email volume — from CRM
-                contacts AND the BGP inbox threads with the brand's people
-                (Honest Greens read "Last touch —" beside 49 inbox threads). */}
-            {(() => {
-              // Staff get the brand's whole email history (relationshipStats);
-              // clients fall back to their visible contacts' last touch.
-              const stats = data.relationshipStats;
-              const touches = [...data.contacts.map((ct: any) => ct.last_interaction_at), stats?.last_touch].filter(Boolean) as string[];
-              const last = touches.sort().reverse()[0];
-              const daysSince = last ? Math.floor((Date.now() - new Date(last).getTime()) / 864e5) : null;
-              const threads = stats?.threads || 0;
-              const active90 = stats ? stats.people_90d : data.contacts.filter((ct: any) => ct.last_interaction_at && Date.now() - new Date(ct.last_interaction_at).getTime() < 90 * 864e5).length;
-              const parts = [
-                c.bgp_contact_crm ? <span key="lead">Lead <span className="font-medium text-foreground">{c.bgp_contact_crm}</span></span> : null,
-                <span key="touch">Last touch <span className={`font-medium ${daysSince == null ? "" : daysSince < 30 ? "text-emerald-700" : daysSince < 90 ? "text-amber-600" : "text-red-600"}`}>{daysSince == null ? "—" : daysSince === 0 ? "today" : daysSince === 1 ? "yesterday" : `${daysSince} days ago`}</span></span>,
-                threads ? <span key="threads"><span className="font-mono tabular-nums text-foreground">{threads}</span> email threads</span> : null,
-                active90 ? <span key="active"><span className="font-mono tabular-nums text-foreground">{active90}</span> {active90 === 1 ? "person" : "people"} active in 90 days</span> : null,
-              ].filter(Boolean);
-              return <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground" data-testid="brand-relationship-line">{parts}</div>;
-            })()}
-
             {/* Live tenancies — every property on the platform where
                 this brand resolves as a tenant via the canonical FK.
                 The reciprocal of the tenancy schedule's brand link.
                 Paired with Portfolio activity in one row; when there are
                 no live tenancies the activity block takes the full width. */}
-            <div className={liveLocations.length > 0 ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-start" : ""}>
+            <div>
             {liveLocations.length > 0 && (
               <Card>
                 <CardHeader className="p-3 pb-2">
@@ -1640,41 +1645,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               </Card>
             )}
 
-            {/* Portfolio activity — replaces the old "Pitched into", which
-                conflated existing tenancies, fuzzy name mentions and target
-                lists and never saw the letting tracker. Three honest tiers
-                + where to pitch next (Woody, 2026-08-03). */}
-            <PortfolioActivityBlock companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} />
             </div>
 
-            {/* Key contacts now live on the sidebar (populated by RocketReach). */}
-
-            {/* AI activity summary — sits above the raw email/meeting list
-                so the BGP relationship is summarised first, then the source
-                interactions follow. */}
-            <AIActivityCard
-              subjectType={(c.company_type || "").toLowerCase().includes("landlord") ? "landlord" : "brand"}
-              subjectId={companyId}
-              title={`${c.name} — Activity`}
-              compact
-              cachedOnly
-            />
-
-            {/* Interactions — the AI Activity card above is the primary view;
-                the full raw list duplicates it and includes system noise, so
-                it's tucked into an expandable "All correspondence" drawer.
-                Client-visible too (Woody, 2026-08-04: "activity still not
-                showing where we show all emails" — parity rule); the server
-                scopes what a client login's interactions query returns. */}
-            <details className="border-t pt-2 group/corr">
-              <summary className="text-[11px] uppercase tracking-wider text-muted-foreground cursor-pointer list-none flex items-center gap-1 hover:text-foreground">
-                <ChevronRight className="w-3 h-3 transition-transform group-open/corr:rotate-90" />
-                All correspondence
-              </summary>
-              <div className="mt-2">
-                <InteractionsBoard scope="company" contextId={companyId} />
-              </div>
-            </details>
+            {/* The Activity card and All correspondence drawer are gone — the BGP
+                take carries the relationship (Woody, 2026-09-23: "the activity
+                isn't working, nor all correspondence, which maybe we don't need"). */}
             </>
 
             {/* Lease-expiry radar — tenant's upcoming lease events on our schedule */}
@@ -3768,7 +3743,7 @@ export function BrandComplianceCard({
 // available units we should pitch them next.
 // `ledger` folds the old separate "Deal ledger & pipeline" counts into this
 // card's header, so each deal is counted in one place (Woody, 2026-09-23).
-export function PortfolioActivityBlock({ companyId, ledger }: { companyId: string; ledger?: { completed: number; active: number; requirements: number } }) {
+export function PortfolioActivityBlock({ companyId, ledger, bare = false }: { companyId: string; ledger?: { completed: number; active: number; requirements: number }; bare?: boolean }) {
   const { data: act } = useQuery<any>({
     queryKey: ["/api/brands", companyId, "portfolio-activity"],
     queryFn: async () => {
@@ -3824,15 +3799,11 @@ export function PortfolioActivityBlock({ companyId, ledger }: { companyId: strin
     </div>
   );
 
-  return (
-    <Card>
-      <CardHeader className="p-3 pb-2">
-        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-          <Target className="w-3.5 h-3.5" /> Portfolio activity
-          {ledgerPills.map(label => <Badge key={label} variant="outline" className="text-[10px] normal-case tracking-normal tabular-nums">{label}</Badge>)}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="p-3 pt-0 space-y-3 max-h-[380px] overflow-y-auto">
+  const title = <>
+    <Target className="w-3.5 h-3.5" /> Portfolio activity
+    {ledgerPills.map(label => <Badge key={label} variant="outline" className="text-[10px] normal-case tracking-normal tabular-nums">{label}</Badge>)}
+  </>;
+  const tiers = <>
         {tenantAt.length > 0 && (
           <Tier label="Tenant at" count={tenantAt.length}>
             {tenantAt.slice(0, 6).map((p: any) => (
@@ -3867,7 +3838,20 @@ export function PortfolioActivityBlock({ companyId, ledger }: { companyId: strin
             ))}
           </Tier>
         )}
-      </CardContent>
+  </>;
+  // bare: inside the BGP take card, no card of its own.
+  if (bare) return (
+    <div className="space-y-2" data-testid="portfolio-activity-bare">
+      <div className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">{title}</div>
+      <div className="space-y-3 max-h-[380px] overflow-y-auto">{tiers}</div>
+    </div>
+  );
+  return (
+    <Card>
+      <CardHeader className="p-3 pb-2">
+        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="p-3 pt-0 space-y-3 max-h-[380px] overflow-y-auto">{tiers}</CardContent>
     </Card>
   );
 }

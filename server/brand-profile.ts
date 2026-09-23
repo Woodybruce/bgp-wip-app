@@ -742,12 +742,14 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
           [`%@${companyDomain}`, companyId]
         );
         pendingContactSuggestions = ps.rows;
-        relationshipStats = (await pool.query(RELATIONSHIP_STATS_SQL, [`%@${companyDomain}`, companyId])).rows[0] || null;
       } catch (e: any) {
         // Older databases may not have the participants column populated —
         // not fatal; just don't surface suggestions.
         console.warn('[brand-profile] contact suggestions failed:', e?.message);
       }
+      try {
+        relationshipStats = (await pool.query(RELATIONSHIP_STATS_SQL, [`%@${companyDomain}`, companyId])).rows[0] || null;
+      } catch (e: any) { console.warn('[brand-profile] relationship stats failed:', e?.message); }
     }
 
     // Latest social-stats per platform — sub-query to skip if table missing
