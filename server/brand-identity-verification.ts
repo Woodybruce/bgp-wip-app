@@ -30,9 +30,15 @@ export function candidateBrandWebsite(company: any): { domain: string; name: str
   return { domain, name: company.name.trim() };
 }
 
+const NAMED_ENTITIES: Record<string, string> = { nbsp: " ", amp: "&", quot: '"', apos: "'", lt: "<", gt: ">", rsquo: "\u2019", lsquo: "\u2018", rdquo: "\u201d", ldquo: "\u201c",
+  ndash: "\u2013", mdash: "\u2014", hellip: "\u2026", copy: "\u00a9", reg: "\u00ae", trade: "\u2122", pound: "\u00a3", euro: "\u20ac", middot: "\u00b7", bull: "\u2022",
+  eacute: "\u00e9", egrave: "\u00e8", aacute: "\u00e1", agrave: "\u00e0", iacute: "\u00ed", oacute: "\u00f3", uacute: "\u00fa", ntilde: "\u00f1", ccedil: "\u00e7", uuml: "\u00fc", ouml: "\u00f6", auml: "\u00e4" };
+
 function visibleText(html: string) {
   return html.replace(/<!--[\s\S]*?-->/g, " ").replace(/<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ")
-    .replace(/&(?:nbsp|amp|quot|apos);/gi, entity => ({ "&nbsp;": " ", "&amp;": "&", "&quot;": '"', "&apos;": "'" }[entity.toLowerCase()] || " "))
+    .replace(/&([a-z]+);/gi, (entity, name) => NAMED_ENTITIES[name.toLowerCase()] ?? entity)
+    // Hex too: "Arc&#x27;teryx" left undecoded failed the quote check.
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => parseInt(n, 16) <= 0x10ffff ? String.fromCodePoint(parseInt(n, 16)) : " ")
     .replace(/&#(\d+);/g, (_, n) => Number(n) <= 0x10ffff ? String.fromCodePoint(Number(n)) : " ").replace(/\s+/g, " ");
 }
 
@@ -116,7 +122,10 @@ export function supportedWebsiteAssessment(company: any, pages: WebsitePage[], a
     if (!page || !quoteKey(visibleText(page.html)).includes(quoteKey(quote))) continue;
     evidence.push({ url: page.url, quote, kind: item.kind });
   }
-  if (!evidence.some(item => item.kind === "operator") || !evidence.some(item => item.kind === "business")
+  // Operator + business proof. The kind labels are the model's, not
+  // evidence: two distinct on-page quotes cover both (Barrio's three real
+  // quotes were all labelled "operator", 2026-09-23).
+  if (!evidence.some(item => item.kind === "operator") || !(evidence.some(item => item.kind === "business") || new Set(evidence.map(item => quoteKey(item.quote))).size >= 2)
     || !evidence.some(item => ` ${legalName(item.quote)} `.replace(/ the /g, " ").includes(` ${sameBrandName(candidate.name, assessment.brandName, candidate.domain)} `))) return null;
   return { confidence: assessment.confidence, reason: typeof assessment.reason === "string" ? assessment.reason.slice(0, 600) : "Official operator and business description corroborated by website text", evidence };
 }

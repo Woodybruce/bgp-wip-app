@@ -562,8 +562,18 @@ router.get("/api/brand/website-sweep/render-test", requireAuth, async (req: Requ
     if (!await checkBrandScope(req)) return res.status(403).json({ error: "Access denied" });
     const domain = String(req.query.domain || "").replace(/^https?:\/\//, "").replace(/\/.*$/, "");
     if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain)) return res.status(400).json({ error: "domain required" });
-    const mod = await import("./render-page");
     const started = Date.now();
+    // ?proxy=premium|render|ultra reads through ScraperAPI instead (which
+    // option gets past Akamai-protected retail sites).
+    const proxy = String(req.query.proxy || "");
+    if (proxy) {
+      const { scraperFetch } = await import("./utils/scraperapi");
+      const r = await scraperFetch(`https://${domain}/`, { keepHeaders: false, render: proxy === "render", ultraPremium: proxy === "ultra", timeoutMs: 70000 });
+      const html = await r.text();
+      const text = html.replace(/<(script|style|noscript)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      return res.json({ ok: r.ok, status: r.status, chars: text.length, sample: text.slice(0, 300), ms: Date.now() - started });
+    }
+    const mod = await import("./render-page");
     const page = await mod.renderPageHtml(`https://${domain}/`);
     const text = page ? page.html.replace(/<(script|style|noscript)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "";
     res.json({ ok: !!page, finalUrl: page?.url || null, chars: text.length, sample: text.slice(0, 300), ms: Date.now() - started, error: page ? null : mod.lastRenderError });

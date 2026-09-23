@@ -57,6 +57,8 @@ export interface ScraperOptions {
   premium?: boolean;
   /** Run a headless browser before returning HTML (for JS-rendered pages). Off by default. */
   render?: boolean;
+  /** ScraperAPI's ultra-premium pool, for Akamai/PerimeterX-protected sites. Off by default (costly). */
+  ultraPremium?: boolean;
   /** Geotarget UK IPs (Business plan and above). Defaults true. */
   uk?: boolean;
   /** Forward the request's headers (Cookie, Authorization, etc) to the origin. Defaults true. */
@@ -74,7 +76,8 @@ function buildScraperUrl(targetUrl: string, opts: ScraperOptions = {}): string {
     api_key: apiKey,
     url: targetUrl,
   });
-  if (opts.premium !== false) params.set("premium", "true");
+  if (opts.ultraPremium === true) params.set("ultra_premium", "true");
+  else if (opts.premium !== false) params.set("premium", "true");
   if (opts.render === true) params.set("render", "true");
   if (opts.uk !== false) params.set("country_code", "uk");
   if (opts.keepHeaders !== false) params.set("keep_headers", "true");
@@ -99,11 +102,11 @@ export async function scraperFetch(
   targetUrl: string,
   init: RequestInit & ScraperOptions = {},
 ): Promise<Response> {
-  const { premium, render, uk, keepHeaders, sessionNumber, timeoutMs, ...fetchInit } = init;
+  const { premium, render, ultraPremium, uk, keepHeaders, sessionNumber, timeoutMs, ...fetchInit } = init;
   if (scraperApiExhausted()) {
     throw new Error("ScraperAPI paused — account out of credits (circuit breaker)");
   }
-  const proxiedUrl = buildScraperUrl(targetUrl, { premium, render, uk, keepHeaders, sessionNumber });
+  const proxiedUrl = buildScraperUrl(targetUrl, { premium, render, ultraPremium, uk, keepHeaders, sessionNumber });
   const defaultTimeout = render ? 60000 : 30000;
   const res = await fetch(proxiedUrl, {
     ...fetchInit,
