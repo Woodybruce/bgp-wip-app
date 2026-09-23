@@ -20,7 +20,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import { getBrandIdentity } from "./brand-identity";
 import { readBrandFactReview } from "./brand-fact-review";
-import { candidateBrandWebsite, discoverAndVerifyBrandWebsite, hasAnySavedWebsite, readBrandOfficialEvidence, verifyBrandIdentityFromOfficialSite } from "./brand-identity-verification";
+import { candidateBrandWebsite, discoverAndVerifyBrandWebsite, hasAnySavedWebsite, isDeadWebsiteError, readBrandOfficialEvidence, verifyBrandIdentityFromOfficialSite } from "./brand-identity-verification";
 import { currentOfficialProfileEvidence, prepareOfficialProfileEvidence, retainedProfileFactsCorroborated, type OfficialProfilePage } from "./brand-profile-evidence";
 import { CLIENT_CRM_CATEGORIES } from "@shared/tenant-categories";
 import { BRAND_PREPARATION_STAGES, readPreparationStates, runPreparationStage, shouldEnqueueOnPageOpen, summarizeBrandPreparation, type BrandPreparationStage, type PreparationOutcome } from "./brand-preparation-jobs";
@@ -325,7 +325,7 @@ export async function prepareBrandNow(companyId: string): Promise<void> {
  * the batch re-checks them with the current code. Guarded by a marker row.
  */
 async function releaseStaleIdentityCooldowns(): Promise<void> {
-  const marker = "brand-identity-recheck:2026-09-23";
+  const marker = "brand-identity-recheck:2026-09-23b";
   const inserted = await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ($1,'{}'::jsonb,now()) ON CONFLICT(key) DO NOTHING`, [marker]);
   if (!inserted.rowCount) return;
   const released = await pool.query(`UPDATE system_settings SET value = value - 'nextAttemptAt', updated_at = now()
@@ -366,9 +366,18 @@ export async function prepareBrandStage(companyId: string, stage: BrandPreparati
   let result: any;
   const run = await runPreparationStage(pool, companyId, stage, identity.fingerprint, async (): Promise<PreparationOutcome> => {
     if (stage === "identity" && !company.ai_disabled) {
-      const verified = hasAnySavedWebsite(company)
-        ? await verifyBrandIdentityFromOfficialSite(pool, company)
-        : await discoverAndVerifyBrandWebsite(pool, company);
+      let verified: Awaited<ReturnType<typeof verifyBrandIdentityFromOfficialSite>>;
+      if (!hasAnySavedWebsite(company)) verified = await discoverAndVerifyBrandWebsite(pool, company);
+      else {
+        try { verified = await verifyBrandIdentityFromOfficialSite(pool, company); }
+        catch (error: any) {
+          // The saved website doesn't exist / refuses connections: the saved
+          // value is wrong. Look for the real site; replace only on proof.
+          if (!isDeadWebsiteError(error)) throw error;
+          verified = await discoverAndVerifyBrandWebsite(pool, company, { replaceDeadWebsite: true });
+          if (verified.status !== "ready") verified = { ...verified, reason: `The saved website no longer exists (${String(error?.message || "").slice(0, 80)}). ${verified.reason || ""}`.trim() };
+        }
+      }
       const current = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
       return { ...verified, source: "official website", fingerprint: getBrandIdentity(current).fingerprint };
     }

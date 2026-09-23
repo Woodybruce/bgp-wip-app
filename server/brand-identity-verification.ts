@@ -116,12 +116,37 @@ function privateAddress(address: string): boolean {
     || parts[0] === 192 && parts[1] === 168 || parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127;
 }
 
-async function readOfficialPage(url: string, domain: string, redirects = 0): Promise<{ html: string; url: string }> {
+/** The saved website forwards to a different host; carries where it went. */
+export class OfficialSiteRedirectError extends Error {
+  redirectTo: string;
+  constructor(redirectTo: string) { super("Official-site check cannot follow a different website"); this.redirectTo = redirectTo; }
+}
+
+const MULTI_PART_SUFFIX = /^(co|org|ac|gov|net|ltd|plc|me|com)\.(uk|au|nz|za|jp|in|br|mx|es)$/;
+/** The name part of a hostname: honestgreens.co.uk / www.honestgreens.com → "honestgreens". */
+export function registrableLabel(host: string | null): string | null {
+  const parts = (normalizeBrandDomain(host) || "").split(".");
+  if (parts.length < 2) return null;
+  const tail2 = parts.slice(-2).join(".");
+  return (MULTI_PART_SUFFIX.test(tail2) && parts.length >= 3 ? parts[parts.length - 3] : parts[parts.length - 2]) || null;
+}
+
+/** A dead saved website (the domain doesn't exist or refuses connections) — the saved value is wrong, not the brand unverifiable. */
+export function isDeadWebsiteError(error: any): boolean {
+  return /ENOTFOUND|ECONNREFUSED/.test(`${error?.code || ""} ${error?.message || ""}`);
+}
+
+const BROWSER_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15";
+
+async function readOfficialPage(url: string, domain: string, redirects = 0, browserUa = false): Promise<{ html: string; url: string }> {
   const parsed = new URL(url);
-  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port || normalizeBrandDomain(url) !== domain) throw new Error("Official-site check cannot follow a different website");
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port) throw new Error("Official-site check cannot follow a different website");
+  if (normalizeBrandDomain(url) !== domain) throw new OfficialSiteRedirectError(normalizeBrandDomain(url) || parsed.hostname);
   return new Promise((resolve, reject) => {
     const req = request(parsed, {
-      headers: { "User-Agent": "BGP-Dashboard/1.0 (company identity verification)", Accept: "text/html" },
+      // Some sites' bot protection turns away an unfamiliar agent (403/429);
+      // those get one retry as a normal browser below.
+      headers: { "User-Agent": browserUa ? BROWSER_UA : "BGP-Dashboard/1.0 (company identity verification)", Accept: "text/html,application/xhtml+xml,*/*;q=0.8", "Accept-Language": "en-GB,en;q=0.9" },
       lookup: (hostname, options, done) => lookup(hostname, { all: true }, (error, addresses) => {
         if (error) return done(error, "", 4);
         if (!addresses.length || addresses.some(row => privateAddress(row.address))) return done(new Error("Official-site check requires a public website"), "", 4);
@@ -132,8 +157,12 @@ async function readOfficialPage(url: string, domain: string, redirects = 0): Pro
     }, response => {
       if ([301, 302, 303, 307, 308].includes(response.statusCode || 0)) {
         response.resume();
-        if (redirects >= 2 || !response.headers.location) return reject(new Error("Too many official-site redirects"));
-        readOfficialPage(new URL(response.headers.location, parsed).toString(), domain, redirects + 1).then(resolve, reject); return;
+        if (redirects >= 3 || !response.headers.location) return reject(new Error("Too many official-site redirects"));
+        readOfficialPage(new URL(response.headers.location, parsed).toString(), domain, redirects + 1, browserUa).then(resolve, reject); return;
+      }
+      if ((response.statusCode === 403 || response.statusCode === 429) && !browserUa) {
+        response.resume();
+        readOfficialPage(url, domain, redirects, true).then(resolve, reject); return;
       }
       if (response.statusCode !== 200 || !/text\/html|application\/xhtml\+xml/i.test(String(response.headers["content-type"]))) {
         response.resume(); reject(new Error(`Official website did not return a readable page (${response.statusCode})`)); return;
@@ -236,14 +265,14 @@ export async function verifyBrandIdentityFromOfficialSite(
   db: { query: Function; connect: Function }, company: any,
   fetchPage: (url: string, domain: string) => Promise<{ html: string; url: string }> = readOfficialPage,
   assess: (company: any, pages: WebsitePage[]) => Promise<unknown> = assessOfficialWebsite,
-  opts: { discoveredDomain?: string } = {},
+  opts: { discoveredDomain?: string; replaceSaved?: boolean } = {},
 ): Promise<{ status: "ready" | "no_match" | "needs_review"; reason?: string }> {
   if (getBrandIdentity(company).status === "verified") return { status: "ready" };
   if (company?.ai_disabled) return { status: "needs_review", reason: "Automatic enrichment is disabled for this brand" };
   // A discovered domain is only ever tried on a brand with NO saved website:
   // the proof runs against the proposed domain, while the stale-state check
   // below still compares against the record exactly as it was read.
-  if (opts.discoveredDomain && hasAnySavedWebsite(company)) return { status: "needs_review", reason: "A website is already saved for this brand" };
+  if (opts.discoveredDomain && !opts.replaceSaved && hasAnySavedWebsite(company)) return { status: "needs_review", reason: "A website is already saved for this brand" };
   const subject = opts.discoveredDomain
     ? { ...company, domain: opts.discoveredDomain, domain_url: `https://${opts.discoveredDomain}`, website: `https://${opts.discoveredDomain}` }
     : company;
@@ -251,7 +280,19 @@ export async function verifyBrandIdentityFromOfficialSite(
   if (!candidate) return { status: "needs_review", reason: "The brand name or saved websites are missing or conflicting; check the official website" };
   const known = opts.discoveredDomain ? null : knownBrandLegalIdentity(company);
   const snapshot = verificationSnapshot(company);
-  const pages = await readBrandOfficialPages(candidate.domain, fetchPage, !!known);
+  let pages: WebsitePage[];
+  try {
+    pages = await readBrandOfficialPages(candidate.domain, fetchPage, !!known);
+  } catch (error: any) {
+    // brand.co.uk that forwards to brand.com (same name, different ending)
+    // is the brand moving its site, not a different website: check the
+    // destination and, if it proves out, save that instead.
+    if (error instanceof OfficialSiteRedirectError && !opts.replaceSaved
+      && registrableLabel(error.redirectTo) && registrableLabel(error.redirectTo) === registrableLabel(candidate.domain)) {
+      return verifyBrandIdentityFromOfficialSite(db, company, fetchPage, assess, { discoveredDomain: error.redirectTo, replaceSaved: true });
+    }
+    throw error;
+  }
   const proof = known ? pages.find(page => websiteSupportsBrandLegalIdentity(page.html, known)) : null;
   // Validate model quotations against precisely the same bounded text it sees.
   const evidencePages = pages.map(page => ({ url: page.url, html: visibleText(page.html).trim().slice(0, 18000) }));
@@ -264,7 +305,7 @@ export async function verifyBrandIdentityFromOfficialSite(
     if (!current || verificationSnapshot(current) !== snapshot) {
       throw new Error("The brand identity changed during website verification; the result was not applied");
     }
-    const actor = proof ? "official-website-register-match" : opts.discoveredDomain ? "official-website-discovered" : "official-website-ai-evidence";
+    const actor = proof ? "official-website-register-match" : opts.replaceSaved ? "official-website-replaced" : opts.discoveredDomain ? "official-website-discovered" : "official-website-ai-evidence";
     const prepared = prepareBrandIdentityUpdate(current, { domain: candidate.domain,
       ...(proof && known ? { aliases: [...new Set([...(current.ai_generated_fields?.brand_identity?.aliases || []), known.name])], country: "gb" } : {}) }, actor);
     prepared.fields.ai_generated_fields.brand_identity.source = proof && known
@@ -346,18 +387,22 @@ export async function discoverAndVerifyBrandWebsite(
     candidates?: (company: any) => Promise<string[]>;
     fetchPage?: (url: string, domain: string) => Promise<{ html: string; url: string }>;
     assess?: (company: any, pages: WebsitePage[]) => Promise<unknown>;
+    /** The saved website is dead (domain gone / refusing connections): look for the real one and replace it only on proof. */
+    replaceDeadWebsite?: boolean;
   } = {},
 ): Promise<{ status: "ready" | "no_match" | "needs_review"; reason?: string; domain?: string; tried: string[] }> {
   if (getBrandIdentity(company).status === "verified") return { status: "ready", tried: [] };
   if (company?.ai_disabled) return { status: "needs_review", reason: "Automatic enrichment is disabled for this brand", tried: [] };
-  if (hasAnySavedWebsite(company)) return { status: "needs_review", reason: "A website is already saved; it is checked by the normal identity step", tried: [] };
+  if (hasAnySavedWebsite(company) && !deps.replaceDeadWebsite) return { status: "needs_review", reason: "A website is already saved; it is checked by the normal identity step", tried: [] };
+  const dead = deps.replaceDeadWebsite ? candidateBrandWebsite(company)?.domain || null : null;
   const proposals = await (deps.candidates || discoverBrandWebsiteCandidates)(company);
   const tried: string[] = [];
   let reachable: string | null = null;
   for (const domain of proposals) {
+    if (domain === dead) continue;
     tried.push(domain);
     try {
-      const result = await verifyBrandIdentityFromOfficialSite(db, company, deps.fetchPage || readOfficialPage, deps.assess || assessOfficialWebsite, { discoveredDomain: domain });
+      const result = await verifyBrandIdentityFromOfficialSite(db, company, deps.fetchPage || readOfficialPage, deps.assess || assessOfficialWebsite, { discoveredDomain: domain, replaceSaved: !!deps.replaceDeadWebsite });
       if (result.status === "ready") return { status: "ready", domain, tried };
       reachable = reachable || domain;
     } catch (error: any) {
@@ -368,8 +413,8 @@ export async function discoverAndVerifyBrandWebsite(
   if (reachable) {
     await db.query(
       `UPDATE crm_companies SET ai_generated_fields = jsonb_set(COALESCE(ai_generated_fields,'{}'::jsonb), '{website_suggestion}', $2::jsonb, true)
-        WHERE id = $1 AND COALESCE(domain,'') = '' AND COALESCE(domain_url,'') = '' AND COALESCE(website,'') = ''`,
-      [company.id, JSON.stringify({ domain: reachable, checkedAt: new Date().toISOString(), tried })]);
+        WHERE id = $1 AND ($3 OR (COALESCE(domain,'') = '' AND COALESCE(domain_url,'') = '' AND COALESCE(website,'') = ''))`,
+      [company.id, JSON.stringify({ domain: reachable, checkedAt: new Date().toISOString(), tried, ...(dead ? { replacesDeadWebsite: dead } : {}) }), !!dead]);
     return { status: "needs_review", reason: `Found ${reachable}, but its pages didn't clearly prove it is this brand's own site — confirm it or enter the right one.`, domain: reachable, tried };
   }
   return { status: "no_match", reason: proposals.length ? "None of the likely websites could be read" : "No likely official website was found", tried };

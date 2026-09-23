@@ -62,3 +62,45 @@ test('discovery never overrides a saved website', async () => {
   const result = await discoverAndVerifyBrandWebsite(database(hg()), { ...hg(), website: 'https://wrong.example' }, { candidates: async () => { asked++; return []; } });
   assert.equal(result.status, 'needs_review'); assert.equal(asked, 0);
 });
+
+import { registrableLabel, isDeadWebsiteError, verifyBrandIdentityFromOfficialSite, OfficialSiteRedirectError } from '../../server/brand-identity-verification.ts';
+
+test('registrable label matches a brand across .co.uk / .com / www', () => {
+  assert.equal(registrableLabel('www.honestgreens.co.uk'), 'honestgreens');
+  assert.equal(registrableLabel('honestgreens.com'), 'honestgreens');
+  assert.equal(registrableLabel('shop.brand.com'), 'brand');
+  assert.notEqual(registrableLabel('brand.com'), registrableLabel('otherbrand.com'));
+});
+
+test('dead-website detection is limited to a missing domain or refused connection', () => {
+  assert.equal(isDeadWebsiteError({ code: 'ENOTFOUND', message: 'getaddrinfo ENOTFOUND x.com' }), true);
+  assert.equal(isDeadWebsiteError(new Error('connect ECONNREFUSED 1.2.3.4:443')), true);
+  assert.equal(isDeadWebsiteError(new Error('Official website verification timed out')), false);
+  assert.equal(isDeadWebsiteError(new Error('getaddrinfo EAI_AGAIN x.com')), false);
+});
+
+test('a saved brand.co.uk forwarding to brand.com is verified on, and saved as, brand.com', async () => {
+  const row = { ...hg(), domain: 'honestgreens.co.uk', domain_url: 'https://honestgreens.co.uk', website: null }, db = database(row);
+  const result = await verifyBrandIdentityFromOfficialSite(db, row, async (url, domain) => {
+    if (domain === 'honestgreens.co.uk') throw new OfficialSiteRedirectError('honestgreens.com');
+    return page(url);
+  }, async c => verdict(c.domain));
+  assert.equal(result.status, 'ready');
+  const meta = db.writes.find(w => w.sql.startsWith('UPDATE crm_companies')).values.map(v => { try { return JSON.parse(v); } catch { return null; } }).find(v => v?.brand_identity);
+  assert.equal(meta.brand_identity.domain, 'honestgreens.com'); assert.equal(meta.brand_identity.verifiedBy, 'official-website-replaced');
+});
+
+test('a forward to an unrelated domain is still refused', async () => {
+  const row = { ...hg(), domain: 'honestgreens.co.uk' }, db = database(row);
+  await assert.rejects(() => verifyBrandIdentityFromOfficialSite(db, row, async () => { throw new OfficialSiteRedirectError('parkingpage.net'); }, async () => null), /different website/);
+  assert.equal(db.writes.length, 0);
+});
+
+test('a dead saved website is replaced only when a discovered site proves out', async () => {
+  const row = { ...hg(), domain: 'honestgreens.old' }, db = database(row);
+  const ok = await discoverAndVerifyBrandWebsite(db, row, { replaceDeadWebsite: true, candidates: async () => ['honestgreens.old', 'honestgreens.com'], fetchPage: async url => page(url), assess: async c => verdict(c.domain) });
+  assert.equal(ok.status, 'ready'); assert.equal(ok.domain, 'honestgreens.com'); assert.deepEqual(ok.tried, ['honestgreens.com']);
+  const db2 = database(row);
+  const no = await discoverAndVerifyBrandWebsite(db2, row, { replaceDeadWebsite: true, candidates: async () => ['honestgreens.com'], fetchPage: async url => page(url), assess: async c => ({ ...verdict(c.domain), confidence: 0.5 }) });
+  assert.equal(no.status, 'needs_review'); assert.equal(db2.writes.some(w => /brand_identity/.test(JSON.stringify(w.values || []))), false);
+});
