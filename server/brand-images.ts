@@ -299,7 +299,7 @@ async function aiJudgeBrandImage(
     const replyText = msg.content.map((block: any) => block.type === "text" ? block.text : "").join("");
     const judgment = parseImageJudgment(replyText) || parseImageJudgment("{" + replyText);
     if (!judgment) {
-      lastImageReviewError = `review answer did not match the schema (stop: ${msg.stop_reason})`;
+      lastImageReviewError = `review answer did not match the schema (stop: ${msg.stop_reason}): ${replyText.replace(/\s+/g, " ").slice(0, 160)}`;
       console.warn("[brand-images] image review response did not match the required schema", {
         stopReason: msg.stop_reason,
         contentTypes: msg.content.map(block => block.type),
