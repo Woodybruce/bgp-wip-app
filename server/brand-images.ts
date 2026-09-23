@@ -169,16 +169,20 @@ async function findHomepageImages(domain: string, landlord = false, deadlineAt =
   // A homepage that is an empty shell — it bounces to /es/ or builds itself
   // in JavaScript (honestgreens.com, 2026-09-23: 0 candidates) — is followed
   // to its landing page and read the way a browser does.
-  if (!home || extractCompanyImageCandidates(home, base, { kind, limit: 24 }).length < 4) {
-    const { softRedirectTarget } = await import("./brand-identity-verification");
-    const landing = home ? softRedirectTarget(home, base, domain) : null;
-    if (landing) { const next = await fetchHtml(landing); if (next) { home = next; base = landing; } }
-    if (!home || extractCompanyImageCandidates(home, base, { kind, limit: 24 }).length < 4) {
-      const { renderPageHtml } = await import("./render-page");
-      const rendered = await renderPageHtml(base).catch(() => null);
-      const { normalizeBrandDomain } = await import("./brand-identity");
-      if (rendered && normalizeBrandDomain(rendered.url) === domain) { home = rendered.html; base = rendered.url; }
-    }
+  const shell = (html: string | null, url: string) => !html || (extractCompanyImageCandidates(html, url, { kind, limit: 24 }).length < 4
+    && discoverCompanyPhotographyPages(html, url, { kind, limit: 4 }).length === 0);
+  if (shell(home, base)) {
+    try {
+      const { softRedirectTarget } = await import("./brand-identity-verification");
+      const landing = home ? softRedirectTarget(home, base, domain) : null;
+      if (landing) { const next = await fetchHtml(landing); if (next) { home = next; base = landing; } }
+      if (shell(home, base)) {
+        const { renderPageHtml } = await import("./render-page");
+        const { normalizeBrandDomain } = await import("./brand-identity");
+        const rendered = await renderPageHtml(base).catch(() => null);
+        if (rendered && normalizeBrandDomain(rendered.url) === domain) { home = rendered.html; base = rendered.url; }
+      }
+    } catch { /* keep the fetched homepage */ }
   }
   const homeImages = home ? extractCompanyImageCandidates(home, base, { kind, limit: 24 }) : [];
   const discovered = home ? discoverCompanyPhotographyPages(home, base, { kind, limit: 4 }) : [];
