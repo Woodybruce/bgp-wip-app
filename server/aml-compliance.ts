@@ -8,6 +8,7 @@ import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
 import { pool } from "./db";
 import { saveFile } from "./file-storage";
 import { recomputeDealKycApproved } from "./deal-gates";
+import { requireMlro } from "./aml-authority";
 
 const router = Router();
 
@@ -46,6 +47,14 @@ async function kycCompanyAudit(companyId: string, action: string, performedBy: s
     console.warn("[kyc-audit] insert failed:", e?.message);
   }
 }
+
+// Whether the signed-in user holds MLRO authority (drives which AML
+// decision controls the client shows; the server enforces it regardless).
+router.get("/api/aml/me", requireAuth, async (req: Request, res: Response) => {
+  const { amlActor } = await import("./aml-authority");
+  const a = await amlActor(req);
+  res.json({ isMlro: a.isMlro, mlroAppointed: a.mlroAppointed });
+});
 
 // --- AML Settings (Nominated Officer, Firm Risk Assessment, Policy) ---
 
@@ -709,13 +718,19 @@ router.patch("/api/kyc/documents/:id", requireAuth, async (req: Request, res: Re
   }
 });
 
-router.delete("/api/kyc/documents/:id", requireAuth, async (req: Request, res: Response) => {
+// CDD records are kept 5 years (MLR 2017 Reg 40): removing a document only
+// hides it from the file — the row and the stored file are retained — and
+// only the MLRO can do it, with the reason on the audit trail.
+router.delete("/api/kyc/documents/:id", requireAuth, requireMlro, async (req: Request, res: Response) => {
   try {
     const result = await pool.query(
-      `UPDATE kyc_documents SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING id`,
+      `UPDATE kyc_documents SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING id, company_id, file_name, doc_type`,
       [req.params.id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: "Not found" });
+    const actor = await sessionUser(req);
+    const doc = result.rows[0];
+    if (doc.company_id) await kycCompanyAudit(doc.company_id, "kyc_document_hidden", actor.name || actor.id, `${doc.doc_type}: ${doc.file_name} — retained for 5 years${req.body?.reason ? ` · ${String(req.body.reason).slice(0, 300)}` : ""}`);
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -730,7 +745,9 @@ router.get("/api/kyc/company/:id", requireAuth, async (req: Request, res: Respon
       `SELECT id, name, kyc_status, kyc_checked_at, kyc_approved_by, kyc_expires_at,
               aml_checklist, aml_risk_level, aml_pep_status, aml_source_of_wealth,
               aml_source_of_wealth_notes, aml_edd_required, aml_edd_reason, aml_notes,
-              companies_house_number
+              companies_house_number, aml_subject_type, uk_entity_name,
+              companies_house_data->'profile'->>'companyName' AS registered_name,
+              aml_fee_earner_approved_by, aml_fee_earner_approved_at, aml_cdd_form
        FROM crm_companies WHERE id = $1`,
       [req.params.id]
     );
@@ -739,7 +756,15 @@ router.get("/api/kyc/company/:id", requireAuth, async (req: Request, res: Respon
       `SELECT * FROM kyc_documents WHERE company_id = $1 AND deleted_at IS NULL ORDER BY uploaded_at DESC`,
       [req.params.id]
     );
-    res.json({ company: company.rows[0], documents: docs.rows });
+    const { outstandingAmlItems, isHigherRisk } = await import("../shared/aml-checklist");
+    const { amlActor } = await import("./aml-authority");
+    const c = company.rows[0];
+    const subject = c.aml_subject_type || (c.companies_house_number ? "company" : null);
+    const actor = await amlActor(req);
+    const higherRisk = isHigherRisk(c);
+    res.json({ company: { ...c, aml_subject_type: subject }, documents: docs.rows, higherRisk,
+      outstanding: outstandingAmlItems(c.aml_checklist, subject, c.aml_edd_required, higherRisk).map(i => ({ id: i.id, label: i.label })),
+      viewer: { isMlro: actor.isMlro, mlroAppointed: actor.mlroAppointed } });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -747,9 +772,26 @@ router.get("/api/kyc/company/:id", requireAuth, async (req: Request, res: Respon
 
 router.put("/api/kyc/company/:id/checklist", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { checklist, riskLevel, pepStatus, sourceOfWealth, sourceOfWealthNotes, eddRequired, eddReason, notes } = req.body;
+    const { checklist, riskLevel, pepStatus, sourceOfWealth, sourceOfWealthNotes, eddRequired, eddReason, notes, subjectType } = req.body;
+    // The MLRO's calls stay the MLRO's: sign-off / EDD ticks, the risk
+    // rating, PEP status and whether EDD applies (MLR 2017 Reg 21).
+    const { amlActor } = await import("./aml-authority");
+    const { MLRO_ONLY_ITEMS } = await import("../shared/aml-checklist");
+    const who = await amlActor(req);
+    if (!who.isMlro) {
+      if (riskLevel !== undefined || pepStatus !== undefined || eddRequired !== undefined || eddReason !== undefined) {
+        return res.status(403).json({ error: "Only the MLRO can change the risk rating, PEP status or EDD requirement", code: "MLRO_ONLY" });
+      }
+      if (checklist !== undefined) {
+        const before = (await pool.query(`SELECT aml_checklist FROM crm_companies WHERE id=$1`, [req.params.id])).rows[0]?.aml_checklist || {};
+        const changedMlroItem = [...MLRO_ONLY_ITEMS].find(k => !!before?.[k]?.ticked !== !!checklist?.[k]?.ticked);
+        if (changedMlroItem) return res.status(403).json({ error: "Only the MLRO can sign off the file or EDD", code: "MLRO_ONLY" });
+      }
+    }
+    if (subjectType !== undefined && !["company", "individual"].includes(subjectType)) return res.status(400).json({ error: "subjectType must be company or individual" });
     const updates: string[] = [];
     const params: any[] = [];
+    if (subjectType !== undefined) { params.push(subjectType); updates.push(`aml_subject_type = $${params.length}`); }
     if (checklist !== undefined) { params.push(JSON.stringify(checklist)); updates.push(`aml_checklist = $${params.length}::jsonb`); }
     if (riskLevel !== undefined) { params.push(riskLevel); updates.push(`aml_risk_level = $${params.length}`); }
     if (pepStatus !== undefined) { params.push(pepStatus); updates.push(`aml_pep_status = $${params.length}`); }
@@ -773,6 +815,7 @@ router.put("/api/kyc/company/:id/checklist", requireAuth, async (req: Request, r
       riskLevel !== undefined && `risk=${riskLevel}`,
       pepStatus !== undefined && `pep=${pepStatus}`,
       eddRequired !== undefined && `edd=${!!eddRequired}`,
+      subjectType !== undefined && `subject=${subjectType}`,
     ].filter(Boolean).join(", ");
     if (changed) await kycCompanyAudit(String(req.params.id), "cdd_checklist_updated", actor.name || actor.id, changed);
     res.json(result.rows[0]);
@@ -781,10 +824,44 @@ router.put("/api/kyc/company/:id/checklist", requireAuth, async (req: Request, r
   }
 });
 
-router.post("/api/kyc/company/:id/approve", requireAdmin, async (req: Request, res: Response) => {
+// Two-tier sign-off, as on BGP's KYC4U forms: the fee earner / job director
+// approves every file; a higher-risk file (high risk, EDD, any PEP result)
+// also needs the Nominated Officer. A named BGP person always signs — the
+// app recommends, it never approves on its own (MLR 2017 Reg 39(7): the
+// firm stays responsible for CDD it outsources or automates).
+router.post("/api/kyc/company/:id/approve", requireAuth, async (req: Request, res: Response) => {
   try {
+    const { isClientRequestUser } = await import("./company-scope");
+    if (await isClientRequestUser(req)) return res.status(403).json({ error: "Staff only" });
+    const { amlActor } = await import("./aml-authority");
+    const who = await amlActor(req);
     const actor = await sessionUser(req);
-    const approverName: string | null = req.body?.approverName || actor.name || null;
+    // Attribution is the signed-in person — never a name from the request.
+    const approverName: string | null = actor.name || actor.id || null;
+    if (!approverName) return res.status(401).json({ error: "Not authenticated" });
+    const { outstandingAmlItems, isHigherRisk } = await import("../shared/aml-checklist");
+    const file = (await pool.query(`SELECT name, aml_checklist, aml_subject_type, aml_edd_required, aml_risk_level, aml_pep_status, companies_house_number, aml_fee_earner_approved_by, aml_cdd_form FROM crm_companies WHERE id=$1`, [req.params.id])).rows[0];
+    if (!file) return res.status(404).json({ error: "Company not found" });
+    const higherRisk = isHigherRisk(file);
+    // The Nominated Officer's own tick is the one item a fee earner can't
+    // provide — everything else must be complete before either tier signs.
+    const open = outstandingAmlItems(file.aml_checklist, file.aml_subject_type || (file.companies_house_number ? "company" : null), file.aml_edd_required, higherRisk)
+      .filter(i => who.isMlro || i.id !== "mlro_review");
+    if (open.length) return res.status(400).json({ error: `CDD file incomplete: ${open.map(i => i.label).join("; ")}`, outstanding: open.map(i => i.id) });
+    if (higherRisk && !who.isMlro) {
+      await pool.query(`UPDATE crm_companies SET aml_fee_earner_approved_by=$2, aml_fee_earner_approved_at=NOW(), kyc_status='in_review', updated_at=NOW() WHERE id=$1`, [req.params.id, approverName]);
+      await kycCompanyAudit(String(req.params.id), "fee_earner_approved", approverName, "Higher-risk file — awaiting Nominated Officer approval");
+      await pool.query(
+        `INSERT INTO aml_recheck_reminders (company_id, entity_name, recheck_type, due_date, notes)
+         SELECT $1, $2, 'nominated_officer_approval', NOW(), 'Fee earner approved a higher-risk file — Nominated Officer approval needed'
+          WHERE NOT EXISTS (SELECT 1 FROM aml_recheck_reminders WHERE company_id=$1 AND recheck_type='nominated_officer_approval' AND completed_at IS NULL)`,
+        [req.params.id, file.name]).catch(() => {});
+      return res.status(202).json({ status: "awaiting_nominated_officer", feeEarnerApprovedBy: approverName });
+    }
+    if (!file.aml_fee_earner_approved_by) {
+      await pool.query(`UPDATE crm_companies SET aml_fee_earner_approved_by=$2, aml_fee_earner_approved_at=NOW() WHERE id=$1`, [req.params.id, approverName]);
+    }
+    await pool.query(`UPDATE aml_recheck_reminders SET completed_at=NOW(), completed_by=$2 WHERE company_id=$1 AND recheck_type IN ('nominated_officer_approval','cdd_outstanding') AND completed_at IS NULL`, [req.params.id, approverName]).catch(() => {});
     // MLR 2017 Reg 28: ongoing monitoring must be "proportionate". The
     // cadence is the MLRO's configurable recheck_interval_days from AML
     // settings (default 182 days ≈ the historic 6-month policy).
@@ -804,7 +881,7 @@ router.post("/api/kyc/company/:id/approve", requireAdmin, async (req: Request, r
       [approverName, expiresAt, req.params.id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: "Company not found" });
-    await kycCompanyAudit(String(req.params.id), "kyc_approved", approverName, `Re-check due ${expiresAt.toISOString().slice(0, 10)} (${intervalDays}-day cycle)`);
+    await kycCompanyAudit(String(req.params.id), "kyc_approved", approverName, `${higherRisk ? "Nominated Officer approval (higher risk)" : who.isMlro ? "Approved by the Nominated Officer" : "Fee earner / job director approval (standard risk)"} · re-check due ${expiresAt.toISOString().slice(0, 10)} (${intervalDays}-day cycle)`);
     // Auto-schedule the re-check reminder on the configured cadence
     try {
       await pool.query(
@@ -824,7 +901,7 @@ router.post("/api/kyc/company/:id/approve", requireAdmin, async (req: Request, r
   }
 });
 
-router.post("/api/kyc/company/:id/reject", requireAdmin, async (req: Request, res: Response) => {
+router.post("/api/kyc/company/:id/reject", requireAuth, requireMlro, async (req: Request, res: Response) => {
   try {
     // Same representation as approve: the acting user's NAME, not their
     // UUID — kyc_approved_by is rendered verbatim on the board.
@@ -845,6 +922,76 @@ router.post("/api/kyc/company/:id/reject", requireAdmin, async (req: Request, re
     try { await recomputeDealKycApproved(String(req.params.id), null); } catch (e: any) { console.warn("[kyc-reject] deal kyc recompute failed:", e?.message); }
     await kycCompanyAudit(String(req.params.id), "kyc_rejected", rejectorName, reason);
     res.json(result.rows[0]);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Internal suspicion reports + PSC discrepancies (MLRO register) ───────
+//
+// POCA 2002 s.330 / MLR 2017 Reg 21: staff report suspicion to the MLRO,
+// who alone decides whether to file with the NCA. Suspicion reports are
+// visible ONLY to the MLRO — the reporter gets an acknowledgement, the
+// team sees nothing (tipping-off, POCA s.333A). PSC-register discrepancies
+// (Reg 30A) are not confidential and show on the company's CDD file.
+
+router.post("/api/aml/reports", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { isClientRequestUser } = await import("./company-scope");
+    if (await isClientRequestUser(req)) return res.status(403).json({ error: "Staff only" });
+    const kind = req.body?.kind === "psc_discrepancy" ? "psc_discrepancy" : "suspicion";
+    const concern = String(req.body?.concern || "").trim();
+    if (concern.length < 10) return res.status(400).json({ error: "Describe the concern (at least a sentence)" });
+    const actor = await sessionUser(req);
+    const row = (await pool.query(
+      `INSERT INTO aml_internal_reports (kind, company_id, deal_id, concern, reported_by, reported_by_name)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, kind, status, created_at`,
+      [kind, req.body?.companyId || null, req.body?.dealId || null, concern.slice(0, 8000), actor.id, actor.name])).rows[0];
+    if (req.body?.companyId) {
+      await kycCompanyAudit(String(req.body.companyId), kind === "suspicion" ? "internal_report_received" : "psc_discrepancy_recorded", actor.name || actor.id,
+        kind === "suspicion" ? `Internal report #${row.id} (details held by the MLRO)` : concern.slice(0, 500));
+    }
+    res.json(row);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/api/aml/reports", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { amlActor } = await import("./aml-authority");
+    const actor = await amlActor(req);
+    const { isClientRequestUser } = await import("./company-scope");
+    if (await isClientRequestUser(req)) return res.status(403).json({ error: "Staff only" });
+    const params: any[] = [];
+    const where: string[] = [];
+    if (req.query.companyId) { params.push(String(req.query.companyId)); where.push(`r.company_id = $${params.length}`); }
+    if (req.query.status) { params.push(String(req.query.status)); where.push(`r.status = $${params.length}`); }
+    if (!actor.isMlro) where.push(`r.kind = 'psc_discrepancy'`);
+    const rows = (await pool.query(
+      `SELECT r.*, c.name AS company_name, d.name AS deal_name FROM aml_internal_reports r
+         LEFT JOIN crm_companies c ON c.id = r.company_id LEFT JOIN crm_deals d ON d.id = r.deal_id
+        ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY (r.status = 'open') DESC, r.created_at DESC LIMIT 200`, params)).rows;
+    res.json({ reports: rows, isMlro: actor.isMlro });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/api/aml/reports/:id/decision", requireAuth, requireMlro, async (req: Request, res: Response) => {
+  try {
+    const status = String(req.body?.status || "");
+    const allowed = ["reported_nca", "no_report", "reported_ch", "closed"];
+    if (!allowed.includes(status)) return res.status(400).json({ error: `status must be one of ${allowed.join(", ")}` });
+    const reason = String(req.body?.reason || "").trim();
+    if (status === "no_report" && reason.length < 10) return res.status(400).json({ error: "Record why no report to the NCA is being made" });
+    const actor = await sessionUser(req);
+    const row = (await pool.query(
+      `UPDATE aml_internal_reports SET status=$2, decision_reason=$3, external_reference=$4, decided_by=$5, decided_at=NOW()
+        WHERE id=$1 RETURNING *`, [req.params.id, status, reason || null, req.body?.reference || null, actor.name || actor.id])).rows[0];
+    if (!row) return res.status(404).json({ error: "Report not found" });
+    if (row.company_id) await kycCompanyAudit(row.company_id, `internal_report_${status}`, actor.name || actor.id, `Report #${row.id}${row.kind === "psc_discrepancy" && reason ? ` · ${reason.slice(0, 300)}` : ""}`);
+    res.json(row);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

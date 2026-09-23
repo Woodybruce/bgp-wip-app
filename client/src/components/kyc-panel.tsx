@@ -17,8 +17,10 @@ import {
 import {
   Upload, FileText, Trash2, CheckCircle2, AlertCircle, Loader2,
   ShieldCheck, ShieldAlert, Clock, Download, Scan, ExternalLink,
-  Sparkles, RefreshCw,
+  Sparkles, RefreshCw, Flag,
 } from "lucide-react";
+import { AML_CHECKLIST, MLRO_ONLY_ITEMS } from "@shared/aml-checklist";
+import { KycCddForm } from "@/components/kyc-cdd-form";
 
 interface KycDocument {
   id: string;
@@ -49,24 +51,20 @@ interface CompanyAmlState {
   aml_edd_reason: string | null;
   aml_notes: string | null;
   companies_house_number: string | null;
+  aml_fee_earner_approved_by: string | null;
+  aml_fee_earner_approved_at: string | null;
+  aml_subject_type: "company" | "individual" | null;
+  uk_entity_name: string | null;
+  registered_name: string | null;
 }
 
-// MLR 2017 Reg 28 — standard CDD checklist for a counterparty
-const CHECKLIST_ITEMS = [
-  { id: "id_verified", label: "Identity verified (passport / driving licence)", group: "CDD" },
-  { id: "address_verified", label: "Address verified (utility / bank statement)", group: "CDD" },
-  { id: "ubo_identified", label: "Ultimate beneficial owner(s) identified", group: "CDD" },
-  { id: "company_cert", label: "Cert of incorporation / Companies House check", group: "CDD" },
-  { id: "sof_evidenced", label: "Source of funds evidenced", group: "CDD" },
-  { id: "sow_evidenced", label: "Source of wealth evidenced", group: "CDD" },
-  { id: "sanctions_clear", label: "Sanctions screening — no match", group: "Screening" },
-  { id: "pep_checked", label: "PEP screening completed", group: "Screening" },
-  { id: "adverse_media", label: "Adverse media check completed", group: "Screening" },
-  { id: "edd_complete", label: "Enhanced due diligence (if required) complete", group: "EDD" },
-  { id: "risk_assessed", label: "Customer risk rating assigned", group: "Risk" },
-  { id: "mlro_review", label: "MLRO has reviewed file", group: "Sign-off" },
-];
+interface AmlReport {
+  id: number; kind: "suspicion" | "psc_discrepancy"; concern: string; status: string;
+  reported_by_name: string | null; created_at: string; decision_reason: string | null;
+  external_reference: string | null; decided_by: string | null; decided_at: string | null;
+}
 
+ 
 const DOC_TYPE_LABELS: Record<string, string> = {
   passport: "Passport",
   certified_passport: "Certified passport",
@@ -154,7 +152,7 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
     onError: (e: any) => toast({ title: "Veriff error", description: e?.message, variant: "destructive" }),
   });
 
-  const { data, isLoading } = useQuery<{ company: CompanyAmlState; documents: KycDocument[] }>({
+  const { data, isLoading } = useQuery<{ company: CompanyAmlState; documents: KycDocument[]; outstanding: { id: string; label: string }[]; higherRisk: boolean; viewer: { isMlro: boolean; mlroAppointed: boolean } }>({
     queryKey: ["/api/kyc/company", companyId],
     queryFn: async () => {
       const res = await fetch(`/api/kyc/company/${companyId}`, { credentials: "include", headers: getAuthHeaders() });
@@ -167,8 +165,42 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
   const documents = data?.documents || [];
   const checklist: Record<string, { ticked: boolean; notes?: string }> = company?.aml_checklist || {};
   const isExpired = !!(company?.kyc_expires_at && new Date(company.kyc_expires_at) < new Date());
-  const allTicked = CHECKLIST_ITEMS.every(item => checklist[item.id]?.ticked);
-  const tickedCount = CHECKLIST_ITEMS.filter(item => checklist[item.id]?.ticked).length;
+  const isMlro = !!data?.viewer?.isMlro;
+  const outstanding = data?.outstanding || [];
+  const individual = company?.aml_subject_type === "individual";
+  const higherRisk = !!data?.higherRisk;
+  // Items that can't apply are shown as not required, never silently ticked.
+  const notRequired = (item: (typeof AML_CHECKLIST)[number]) =>
+    (individual && "companyOnly" in item && item.companyOnly) || (!company?.aml_edd_required && "eddOnly" in item && item.eddOnly)
+    || (!higherRisk && "highRiskOnly" in item && item.highRiskOnly);
+  const requiredItems = AML_CHECKLIST.filter(i => !notRequired(i));
+  const allTicked = outstanding.length === 0;
+  const tickedCount = requiredItems.length - outstanding.length;
+
+  const { data: reportData } = useQuery<{ reports: AmlReport[]; isMlro: boolean }>({
+    queryKey: ["/api/aml/reports", { companyId }],
+    queryFn: async () => {
+      const res = await fetch(`/api/aml/reports?companyId=${companyId}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return { reports: [], isMlro: false };
+      return res.json();
+    },
+  });
+  const reports = reportData?.reports || [];
+  const invalidateReports = () => queryClient.invalidateQueries({ queryKey: ["/api/aml/reports", { companyId }] });
+  const raiseReport = useMutation({
+    mutationFn: async (body: { kind: "suspicion" | "psc_discrepancy"; concern: string }) => (await apiRequest("POST", "/api/aml/reports", { ...body, companyId, dealId })).json(),
+    onSuccess: (_d, v) => {
+      invalidateReports();
+      queryClient.invalidateQueries({ queryKey: ["/api/kyc/company", companyId] });
+      toast({ title: v.kind === "suspicion" ? "Sent to the MLRO" : "Discrepancy recorded", description: v.kind === "suspicion" ? "Only the MLRO can see this report. Do not tell the client or anyone involved (tipping off)." : "The MLRO reports it to Companies House." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't send", description: e?.message, variant: "destructive" }),
+  });
+  const decideReport = useMutation({
+    mutationFn: async (v: { id: number; status: string; reason?: string; reference?: string }) => (await apiRequest("POST", `/api/aml/reports/${v.id}/decision`, v)).json(),
+    onSuccess: () => { invalidateReports(); toast({ title: "Decision recorded" }); },
+    onError: (e: any) => toast({ title: "Couldn't record decision", description: e?.message, variant: "destructive" }),
+  });
 
   const checklistMutation = useMutation({
     mutationFn: async (updates: any) => {
@@ -183,10 +215,12 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
       const res = await apiRequest("POST", `/api/kyc/company/${companyId}/approve`, {});
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (out: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/kyc/company", companyId] });
       if (dealId) queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
-      toast({ title: "KYC approved", description: "Re-check reminder created automatically on the firm's configured cycle." });
+      toast(out?.status === "awaiting_nominated_officer"
+        ? { title: "Fee earner approval recorded", description: "Higher-risk client — the Nominated Officer has been asked to approve." }
+        : { title: "KYC approved", description: "Re-check reminder created automatically on the firm's configured cycle." });
     },
     onError: (e: any) => toast({ title: "Approve failed", description: e?.message, variant: "destructive" }),
   });
@@ -245,6 +279,10 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
   }
 
   function toggleChecklistItem(itemId: string) {
+    if (MLRO_ONLY_ITEMS.has(itemId) && !isMlro) {
+      toast({ title: "MLRO only", description: "Only the MLRO can sign off the file or EDD." });
+      return;
+    }
     const wasTicked = !!checklist[itemId]?.ticked;
     // Mark as a manual tick so the server-side orchestrator won't overwrite
     // it on the next auto-run — manual sign-off from the MLRO wins.
@@ -285,8 +323,11 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
   if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin" /></div>;
   if (!company) return null;
 
-  const blockedReason = !allTicked
-    ? `${CHECKLIST_ITEMS.length - tickedCount} checklist item${tickedCount === CHECKLIST_ITEMS.length - 1 ? "" : "s"} outstanding`
+  // The Nominated Officer's own review tick is the one item a fee earner
+  // can't provide — they sign first, then the NO signs.
+  const signOffOutstanding = outstanding.filter(o => isMlro || o.id !== "mlro_review");
+  const signOffBlocked = signOffOutstanding.length
+    ? `Still needed: ${signOffOutstanding.map(o => o.label).slice(0, 4).join(" · ")}${signOffOutstanding.length > 4 ? ` · +${signOffOutstanding.length - 4} more` : ""}`
     : documents.length === 0
     ? "No supporting documents uploaded"
     : null;
@@ -301,7 +342,9 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
               AML / KYC — {company.name}
             </CardTitle>
             <p className="text-xs text-muted-foreground mt-1">
-              {company.companies_house_number ? `Companies House: ${company.companies_house_number}` : "No CH number on file"}
+              {company.companies_house_number
+                ? `${company.registered_name || company.uk_entity_name || "Companies House"} · CH ${company.companies_house_number}`
+                : individual ? "Individual — identity verified by ID document / Veriff" : "No Companies House entity on file"}
             </p>
           </div>
           <div className="flex flex-col items-end gap-1">
@@ -404,7 +447,14 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
             <div className="flex items-center justify-between mb-2 gap-2">
               <h4 className="text-sm font-semibold">MLR 2017 CDD Checklist</h4>
               <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">{tickedCount} / {CHECKLIST_ITEMS.length}</span>
+                <Select value={company.aml_subject_type || "company"} onValueChange={(v) => checklistMutation.mutate({ subjectType: v })}>
+                  <SelectTrigger className="h-7 w-[118px] text-xs" data-testid="select-aml-subject"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="company">Company</SelectItem>
+                    <SelectItem value="individual">Individual</SelectItem>
+                  </SelectContent>
+                </Select>
+                <span className="text-xs text-muted-foreground">{tickedCount} / {requiredItems.length}</span>
                 <Button
                   size="sm"
                   variant="outline"
@@ -419,36 +469,62 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
               </div>
             </div>
             <div className="space-y-1.5">
-              {CHECKLIST_ITEMS.map(item => {
+              {AML_CHECKLIST.map(item => {
                 const entry = checklist[item.id] as { ticked?: boolean; source?: string; notes?: string } | undefined;
                 const source = entry?.source;
                 const autoTicked = entry?.ticked && source && source !== "manual";
+                const na = notRequired(item);
+                const locked = MLRO_ONLY_ITEMS.has(item.id) && !isMlro;
                 return (
-                  <label
-                    key={item.id}
-                    className="flex items-start gap-2 text-sm cursor-pointer hover:bg-muted/40 rounded-md px-2 py-1.5"
-                    data-testid={`checklist-item-${item.id}`}
-                    title={entry?.notes || ""}
-                  >
-                    <Checkbox
-                      checked={!!entry?.ticked}
-                      onCheckedChange={() => toggleChecklistItem(item.id)}
-                      className="mt-0.5"
-                    />
-                    <span className={`flex-1 ${entry?.ticked ? "text-muted-foreground line-through" : ""}`}>
-                      {item.label}
-                    </span>
-                    {autoTicked && (
-                      <Badge variant="secondary" className="text-[10px] shrink-0" data-testid={`source-${item.id}`}>
-                        auto · {source}
-                      </Badge>
+                  <div key={item.id} className={na ? "opacity-50" : ""}>
+                    <label
+                      className={`flex items-start gap-2 text-sm rounded-md px-2 py-1.5 ${na || locked ? "cursor-default" : "cursor-pointer hover:bg-muted/40"}`}
+                      data-testid={`checklist-item-${item.id}`}
+                      title={[entry?.notes, item.reg].filter(Boolean).join(" · ")}
+                    >
+                      <Checkbox
+                        checked={!!entry?.ticked}
+                        disabled={na || locked}
+                        onCheckedChange={() => toggleChecklistItem(item.id)}
+                        className="mt-0.5"
+                      />
+                      <span className={`flex-1 ${entry?.ticked ? "text-muted-foreground line-through" : ""}`}>
+                        {item.label}
+                      </span>
+                      {na && <Badge variant="outline" className="text-[10px] shrink-0">Not required</Badge>}
+                      {!na && locked && !entry?.ticked && <Badge variant="outline" className="text-[10px] shrink-0">MLRO</Badge>}
+                      {autoTicked && (
+                        <Badge variant="secondary" className="text-[10px] shrink-0" data-testid={`source-${item.id}`}>
+                          auto · {source}
+                        </Badge>
+                      )}
+                      <Badge variant="outline" className="text-[10px] shrink-0">{item.group}</Badge>
+                    </label>
+                    {item.id === "psc_register_checked" && !na && (
+                      <div className="pl-8 pb-1 space-y-1">
+                        {reports.filter(r => r.kind === "psc_discrepancy").map(r => (
+                          <div key={r.id} className="text-[11px] text-muted-foreground flex items-center gap-2" data-testid={`psc-discrepancy-${r.id}`}>
+                            <AlertCircle className="w-3 h-3 text-amber-600 shrink-0" />
+                            <span className="flex-1 truncate" title={r.concern}>{r.concern}</span>
+                            <span className="shrink-0">{r.status === "reported_ch" ? `Reported to Companies House${r.external_reference ? ` · ${r.external_reference}` : ""}` : "Not yet reported"}</span>
+                            {isMlro && r.status === "open" && (
+                              <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px]"
+                                onClick={() => { const ref = window.prompt("Companies House discrepancy reference (from the report-a-discrepancy service)"); if (ref !== null) decideReport.mutate({ id: r.id, status: "reported_ch", reference: ref || undefined, reason: "Reported via Companies House report-a-discrepancy service" }); }}>
+                                Mark reported
+                              </Button>
+                            )}
+                          </div>
+                        ))}
+                        <ConcernButton kind="psc_discrepancy" onSubmit={(concern) => raiseReport.mutate({ kind: "psc_discrepancy", concern })} />
+                      </div>
                     )}
-                    <Badge variant="outline" className="text-[10px] shrink-0">{item.group}</Badge>
-                  </label>
+                  </div>
                 );
               })}
             </div>
           </div>
+
+          <KycCddForm companyId={companyId} />
 
           {/* Documents */}
           <div>
@@ -475,15 +551,19 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
                     <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-muted-foreground hover:text-foreground" data-testid={`doc-download-${doc.id}`}>
                       <Download className="w-4 h-4" />
                     </a>
-                    <button onClick={() => deleteDoc.mutate(doc.id)} className="shrink-0 text-muted-foreground hover:text-red-600" data-testid={`doc-delete-${doc.id}`}>
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {isMlro && (
+                      <button onClick={() => { if (window.confirm("Hide this document from the file? It stays in the 5-year record (MLR 2017 Reg 40) and the action is logged.")) deleteDoc.mutate(doc.id); }} className="shrink-0 text-muted-foreground hover:text-red-600" data-testid={`doc-delete-${doc.id}`} title="Hide from file (retained 5 years)">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
             ) : (
               <div className="text-sm text-muted-foreground italic mb-3">No documents uploaded yet.</div>
             )}
+
+            <PackUpload companyId={companyId} dealId={dealId} />
 
             {/* Upload form */}
             <div className="border border-dashed border-border rounded-lg p-3 space-y-2">
@@ -615,16 +695,61 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
             </AlertDialogContent>
           </AlertDialog>
 
-          {/* Approve / Reject actions */}
+          {/* Suspicion reports — only the MLRO sees them (POCA s.330 / s.333A) */}
+          <div className="border-t border-border pt-4 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs text-muted-foreground">Something about this counterparty doesn't feel right? Tell the MLRO — confidentially.</div>
+              <ConcernButton kind="suspicion" onSubmit={(concern) => raiseReport.mutate({ kind: "suspicion", concern })} />
+            </div>
+            {isMlro && reports.filter(r => r.kind === "suspicion").map(r => (
+              <div key={r.id} className="rounded-md border border-border p-2 text-xs space-y-1" data-testid={`suspicion-report-${r.id}`}>
+                <div className="flex items-center gap-2">
+                  <Flag className="w-3 h-3 text-red-600" />
+                  <span className="font-medium">Internal report #{r.id}</span>
+                  <span className="text-muted-foreground">{r.reported_by_name || "staff"} · {new Date(r.created_at).toLocaleDateString("en-GB")}</span>
+                  <Badge variant="outline" className="ml-auto text-[10px]">{r.status === "open" ? "Open" : r.status === "reported_nca" ? `Reported to NCA${r.external_reference ? ` · ${r.external_reference}` : ""}` : r.status === "no_report" ? "No report made" : r.status}</Badge>
+                </div>
+                <div className="text-muted-foreground whitespace-pre-wrap">{r.concern}</div>
+                {r.decision_reason && <div className="text-[11px]"><span className="font-medium">MLRO decision:</span> {r.decision_reason}</div>}
+                {r.status === "open" && (
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" className="h-6 text-[11px]"
+                      onClick={() => { const ref = window.prompt("NCA SAR reference"); if (ref) decideReport.mutate({ id: r.id, status: "reported_nca", reference: ref, reason: "SAR submitted to the NCA" }); }}>
+                      Reported to NCA
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-6 text-[11px]"
+                      onClick={() => { const reason = window.prompt("Why no report to the NCA is being made (kept on the MLRO's record)"); if (reason) decideReport.mutate({ id: r.id, status: "no_report", reason }); }}>
+                      No report — record reason
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Sign-off — two tiers, as on the KYC4U form: the fee earner / job
+              director approves; a higher-risk file also needs the Nominated Officer. */}
           {company.kyc_status !== "approved" && (
-            <div className="border-t border-border pt-4">
-              {blockedReason ? (
+            <div className="border-t border-border pt-4 space-y-2">
+              {company.aml_fee_earner_approved_by && (
+                <div className="text-xs text-muted-foreground" data-testid="kyc-fee-earner-approval">
+                  Fee earner approval: <strong className="text-foreground">{company.aml_fee_earner_approved_by}</strong>
+                  {company.aml_fee_earner_approved_at ? ` · ${new Date(company.aml_fee_earner_approved_at).toLocaleDateString("en-GB")}` : ""}
+                  {higherRisk ? " — awaiting Nominated Officer approval (higher-risk client)" : ""}
+                </div>
+              )}
+              {signOffBlocked ? (
                 <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-md text-sm" data-testid="kyc-blocked-reason">
                   <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                   <div>
-                    <div className="font-medium text-amber-900">Cannot approve yet</div>
-                    <div className="text-amber-700 text-xs">{blockedReason}</div>
+                    <div className="font-medium text-amber-900">Cannot sign off yet</div>
+                    <div className="text-amber-700 text-xs">{signOffBlocked}</div>
                   </div>
+                </div>
+              ) : higherRisk && !isMlro && company.aml_fee_earner_approved_by ? (
+                <div className="flex items-start gap-2 p-3 bg-muted/40 border border-border rounded-md text-sm" data-testid="kyc-awaiting-mlro">
+                  <Clock className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+                  <div className="text-xs text-muted-foreground">Higher-risk client — the Nominated Officer has been asked to approve.{!data?.viewer?.mlroAppointed ? " No Nominated Officer is set in AML settings yet — admins approve until one is." : ""}</div>
                 </div>
               ) : (
                 <div className="flex gap-2">
@@ -632,27 +757,28 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
                     <AlertDialogTrigger asChild>
                       <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700" data-testid="button-mlro-approve">
                         <CheckCircle2 className="w-4 h-4 mr-2" />
-                        MLRO Approve
+                        {isMlro ? (higherRisk ? "Nominated Officer approve" : "Approve") : higherRisk ? "Fee earner approve" : "Approve (fee earner)"}
                       </Button>
                     </AlertDialogTrigger>
                     <AlertDialogContent>
                       <AlertDialogHeader>
-                        <AlertDialogTitle>Approve KYC for {company.name}?</AlertDialogTitle>
+                        <AlertDialogTitle>Sign off KYC for {company.name}?</AlertDialogTitle>
                         <AlertDialogDescription>
-                          This will mark the company as KYC-approved until the firm's configured re-check
-                          date and create an automatic reminder. Only do this if you've reviewed every checklist item and supporting
-                          document. Your name and the timestamp will be recorded in the audit log.
+                          {higherRisk && !isMlro
+                            ? "This is a higher-risk client: your approval is recorded as the fee earner's, and the Nominated Officer is asked to approve before the file is complete."
+                            : "This marks the counterparty as KYC-approved until the firm's re-check date and creates a reminder."}
+                          {" "}Only sign off if you've reviewed the KYC form, every checklist item and the documents. Your name and the time are recorded in the audit log.
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>
                         <AlertDialogCancel>Cancel</AlertDialogCancel>
                         <AlertDialogAction onClick={() => approveMutation.mutate()} className="bg-emerald-600 hover:bg-emerald-700">
-                          Confirm approve
+                          Confirm sign-off
                         </AlertDialogAction>
                       </AlertDialogFooter>
                     </AlertDialogContent>
                   </AlertDialog>
-                  <RejectButton onReject={(reason) => rejectMutation.mutate(reason)} />
+                  {isMlro && <RejectButton onReject={(reason) => rejectMutation.mutate(reason)} />}
                 </div>
               )}
             </div>
@@ -670,6 +796,76 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// A whole KYC pack (e.g. a KYC4U customer folder) — many files or a .zip.
+// Each file is sorted into its document type; a KYC4U workbook imports
+// into the KYC form. Evidence ticks are for the fee earner / NO to review.
+function PackUpload({ companyId, dealId }: { companyId: string; dealId?: string }) {
+  const { toast } = useToast();
+  const ref = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const send = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setBusy(true);
+    try {
+      const form = new FormData();
+      Array.from(files).forEach(f => form.append("files", f));
+      if (dealId) form.append("dealId", dealId);
+      form.append("source", "KYC pack upload");
+      const res = await fetch(`/api/kyc/company/${companyId}/pack`, { method: "POST", body: form, credentials: "include", headers: getAuthHeaders() });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out?.error || "Upload failed");
+      const filed = (out.filed || []).filter((f: any) => !f.skipped).length;
+      toast({ title: `${filed} document${filed === 1 ? "" : "s"} filed`, description: [out.formImported && `KYC form imported from ${out.formImported}`, out.ticked?.length && `evidence for ${out.ticked.length} checklist item${out.ticked.length === 1 ? "" : "s"}`].filter(Boolean).join(" · ") || undefined });
+      queryClient.invalidateQueries({ queryKey: ["/api/kyc/company", companyId] });
+    } catch (e: any) {
+      toast({ title: "Pack upload failed", description: e?.message, variant: "destructive" });
+    } finally {
+      setBusy(false);
+      if (ref.current) ref.current.value = "";
+    }
+  };
+  return (
+    <div className="flex items-center justify-between gap-2 mb-2 rounded-md border border-dashed border-border px-3 py-2">
+      <div className="text-xs text-muted-foreground">Have a full KYC pack (e.g. from KYC4U)? Upload all the files or the .zip — each is filed by type.</div>
+      <input ref={ref} type="file" multiple className="hidden" onChange={(e) => send(e.target.files)} data-testid="input-kyc-pack" />
+      <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" disabled={busy} onClick={() => ref.current?.click()} data-testid="button-kyc-pack">
+        {busy ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Upload className="w-3 h-3 mr-1" />}Upload KYC pack
+      </Button>
+    </div>
+  );
+}
+
+function ConcernButton({ kind, onSubmit }: { kind: "suspicion" | "psc_discrepancy"; onSubmit: (concern: string) => void }) {
+  const [text, setText] = useState("");
+  const suspicion = kind === "suspicion";
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button size="sm" variant="outline" className={`h-7 text-xs shrink-0 ${suspicion ? "" : "h-6 text-[11px]"}`} data-testid={`button-raise-${kind}`}>
+          {suspicion ? <><Flag className="w-3 h-3 mr-1" />Report a concern</> : "Record a discrepancy"}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{suspicion ? "Report a concern to the MLRO" : "PSC register discrepancy"}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {suspicion
+              ? "Only the MLRO will see this. Describe what you noticed and why it concerns you. Do not tell the client or anyone involved that you have reported it — that is a criminal offence (tipping off)."
+              : "The beneficial owners the customer gave us differ from the Companies House PSC register. Describe the difference — the MLRO reports it to Companies House (MLR 2017 Reg 30A)."}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <Textarea value={text} onChange={(e) => setText(e.target.value)} placeholder={suspicion ? "What happened, when, and why it's a concern" : "e.g. Customer says Jane Smith owns 40%; the register shows only Acme Holdings Ltd"} rows={5} data-testid={`textarea-${kind}`} />
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction disabled={text.trim().length < 10} onClick={() => { onSubmit(text.trim()); setText(""); }}>
+            {suspicion ? "Send to MLRO" : "Record"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

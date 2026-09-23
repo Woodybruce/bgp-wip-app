@@ -15,6 +15,7 @@
 // status — it is never projected onto any other entity (an approved parent
 // beside an unchecked child leaves the child unchecked).
 
+import { requireMlro } from "./aml-authority";
 import { Router, type Request, type Response } from "express";
 import { requireAuth, requireAdmin } from "./auth";
 import { resolveAccountView, type AccountView, type Querier } from "./account-resolver";
@@ -43,6 +44,7 @@ export interface GroupEntity {
   representationConflicts: string[];       // reported, never resolved by code
   kyc: GroupEntityKyc | null;
   groupRollupBlocks: boolean;              // true when the entity is not approved-and-current
+  tradingAs?: string;                      // brand name when the row is the brand's own legal entity
 }
 
 export type EntityBucket = "current" | "expired" | "inReview" | "rejected" | "unchecked";
@@ -83,9 +85,29 @@ const normCh = (s: string | null | undefined) => String(s || "").trim() || null;
 // name but DIFFERENT non-empty numbers still merge (same display name) but
 // surface "CH number differs" as a conflict for a human, never a silent pick.
 export function mergeEntityMentions(mentions: EntityMention[]): GroupEntity[] {
+  // A trading-entity row carrying the SAME Companies House number as a CRM
+  // company is that company's legal entity, not a second entity (Honest
+  // Greens = HGUK RESTAURANTS LIMITED, CH 14583139, showed twice — once
+  // "no CH no."). Fold it into the company row under its legal name.
+  const companyKeyByCh = new Map<string, string>();
+  for (const m of mentions) {
+    const ch = normCh(m.companiesHouseNumber);
+    if (m.source === "company" && ch && !companyKeyByCh.has(ch)) companyKeyByCh.set(ch, normName(m.name));
+  }
+  const companyNameKeys = new Set(mentions.filter(m => m.source === "company").map(m => normName(m.name)));
+  const legalNameByCompanyKey = new Map<string, string>();
+  const keyOf = (m: EntityMention) => {
+    const ch = normCh(m.companiesHouseNumber);
+    const companyKey = ch ? companyKeyByCh.get(ch) : undefined;
+    if (m.source !== "company" && companyKey && !companyNameKeys.has(normName(m.name))) {
+      if (!legalNameByCompanyKey.has(companyKey)) legalNameByCompanyKey.set(companyKey, m.name);
+      return companyKey;
+    }
+    return normName(m.name);
+  };
   const byName = new Map<string, EntityMention[]>();
   for (const m of mentions) {
-    const key = normName(m.name);
+    const key = keyOf(m);
     if (!key) continue;
     const list = byName.get(key) || [];
     list.push(m);
@@ -93,7 +115,7 @@ export function mergeEntityMentions(mentions: EntityMention[]): GroupEntity[] {
   }
 
   const entities: GroupEntity[] = [];
-  for (const list of byName.values()) {
+  for (const [key, list] of byName.entries()) {
     const company = list.find(m => m.source === "company");
     const tradingRow = list.find(m => m.source === "crm_trading_entities");
     const jsonb = list.filter(m => m.source === "trading_entities_jsonb");
@@ -108,10 +130,12 @@ export function mergeEntityMentions(mentions: EntityMention[]): GroupEntity[] {
       conflicts.push(`Companies House number differs across representations (${chNumbers.join(" vs ")})`);
     }
 
+    const legalName = company ? legalNameByCompanyKey.get(key) : undefined;
     entities.push({
       entityKind: company ? "company" : "trading_entity",
       entityId: canonical.entityId,
-      name: canonical.name,
+      name: legalName || canonical.name,
+      ...(legalName && legalName.toLowerCase() !== canonical.name.toLowerCase() ? { tradingAs: canonical.name } : {}),
       companiesHouseNumber: normCh(canonical.companiesHouseNumber) || chNumbers[0] || null,
       relation: canonical.relation || "trading_entity",
       relationConfidence: canonical.relationConfidence || "unresolved",
@@ -468,7 +492,7 @@ router.put("/api/entities/:kind/:id/kyc", requireAdmin, async (req: Request, res
   }
 });
 
-router.post("/api/entities/:kind/:id/kyc/approve", requireAdmin, async (req: Request, res: Response) => {
+router.post("/api/entities/:kind/:id/kyc/approve", requireMlro, async (req: Request, res: Response) => {
   const kind = parseEntityKind(String(req.params.kind));
   if (!kind) return res.status(400).json({ error: "kind must be company | trading_entity" });
   try {
@@ -482,7 +506,7 @@ router.post("/api/entities/:kind/:id/kyc/approve", requireAdmin, async (req: Req
   }
 });
 
-router.post("/api/entities/:kind/:id/kyc/reject", requireAdmin, async (req: Request, res: Response) => {
+router.post("/api/entities/:kind/:id/kyc/reject", requireMlro, async (req: Request, res: Response) => {
   const kind = parseEntityKind(String(req.params.kind));
   if (!kind) return res.status(400).json({ error: "kind must be company | trading_entity" });
   try {

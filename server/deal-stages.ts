@@ -152,21 +152,29 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
       isRevert = !!lm && lm.from_stage === toStage && lm.to_stage === fromStage
         && Date.now() - new Date(lm.occurred_at).getTime() < 24 * 60 * 60 * 1000;
       if (!isRevert) {
-        const { checkCounterpartyAml, formatAmlWarning } = await import("./deal-gates");
-        const amlResult = await checkCounterpartyAml({
+        // Incomplete CDD never blocks a move (Woody, 2026-09-23): it's
+        // recorded on the deal and queued for the MLRO. Only a counterparty
+        // the MLRO rejected blocks.
+        const { checkCounterpartyAml, amlGateOutcome, recordAmlGateWarning } = await import("./deal-gates");
+        const parties = {
           landlordId:  c.landlord_id,
           tenantId:    c.tenant_id,
           vendorId:    c.vendor_id,
           purchaserId: c.purchaser_id,
-        });
-        const warning = formatAmlWarning(amlResult);
-        if (warning) {
+        };
+        const amlResult = await checkCounterpartyAml(parties);
+        const outcome = amlGateOutcome(amlResult);
+        if (outcome.block) {
           return res.status(409).json({
-            error: warning,
+            error: outcome.block,
             code: "AML_GATE_FAILED",
             notReady: amlResult.notReady,
-            hint: "MLRO override: set aml_check_completed = 'YES' on the deal to bypass.",
+            hint: "Only the MLRO can clear a rejected counterparty.",
           });
+        }
+        if (outcome.warning) {
+          await recordAmlGateWarning(String(dealId), parties, amlResult, { targetStatus: String(toStage), actorId: (req as any).session?.userId || (req as any).tokenUserId || null });
+          res.setHeader("X-AML-Warning", encodeURIComponent(outcome.warning));
         }
       }
     }

@@ -463,6 +463,10 @@ export const crmCompanies = pgTable("crm_companies", {
   amlEddRequired: boolean("aml_edd_required").default(false),
   amlEddReason: text("aml_edd_reason"),
   amlNotes: text("aml_notes"),
+  amlSubjectType: text("aml_subject_type"), // company | individual — which CDD items apply
+  amlFeeEarnerApprovedBy: text("aml_fee_earner_approved_by"), // tier 1 sign-off (fee earner / job director)
+  amlFeeEarnerApprovedAt: timestamp("aml_fee_earner_approved_at"),
+  amlCddForm: jsonb("aml_cdd_form"), // the KYC form: risk factors, authority, background, ownership, UBOs, counterparty agent/lawyers
   contacted: boolean("contacted").default(false),
   detailsSent: boolean("details_sent").default(false),
   viewing: boolean("viewing").default(false),

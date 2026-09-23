@@ -61,6 +61,37 @@ export async function checkCounterpartyAml(deal: AmlGateInput): Promise<AmlGateR
   return { hasCounterparties: true, notReady };
 }
 
+/**
+ * What the gate does with a move into SOL/EXC/COM/INV (Woody, 2026-09-23:
+ * "fix the AML issues but don't stop deals moving"). Incomplete CDD never
+ * blocks: the move goes through, the warning is recorded on the deal, and
+ * each outstanding counterparty lands on the MLRO's queue. Only a
+ * counterparty the MLRO has REJECTED blocks — as it did before.
+ */
+export function amlGateOutcome(result: AmlGateResult): { block: string | null; warning: string | null } {
+  const rejected = result.notReady.filter(c => c.reason === "rejected");
+  if (rejected.length) return { block: `AML: ${rejected.map(c => `${c.name} (${c.role})`).join(", ")} rejected by the MLRO — the deal can't progress until the MLRO clears it.`, warning: null };
+  return { block: null, warning: formatAmlWarning(result) };
+}
+
+/** Record a let-through warning: deal audit event + MLRO queue item per outstanding company. */
+export async function recordAmlGateWarning(dealId: string, deal: AmlGateInput, result: AmlGateResult, ctx: { targetStatus: string; actorId?: string | null; actorName?: string | null }): Promise<void> {
+  const warning = formatAmlWarning(result);
+  if (!warning) return;
+  await pool.query(`INSERT INTO deal_events (deal_id, event_type, payload, actor_id, actor_name) VALUES ($1, 'aml_gate_warning', $2, $3, $4)`,
+    [dealId, JSON.stringify({ targetStatus: ctx.targetStatus, warning, notReady: result.notReady }), ctx.actorId || null, ctx.actorName || null]).catch(() => {});
+  const roleIds: Record<string, string | null | undefined> = { landlord: deal.landlordId, tenant: deal.tenantId, vendor: deal.vendorId, purchaser: deal.purchaserId };
+  for (const c of result.notReady) {
+    const companyId = roleIds[c.role];
+    if (!companyId) continue;
+    await pool.query(
+      `INSERT INTO aml_recheck_reminders (deal_id, company_id, entity_name, recheck_type, due_date, notes)
+       SELECT $1, $2, $3, 'cdd_outstanding', NOW(), $4
+        WHERE NOT EXISTS (SELECT 1 FROM aml_recheck_reminders WHERE company_id=$2 AND recheck_type='cdd_outstanding' AND completed_at IS NULL)`,
+      [dealId, companyId, c.name, `Deal moved to ${ctx.targetStatus} with CDD outstanding (${c.reason}) — MLRO to complete before exchange`]).catch(() => {});
+  }
+}
+
 export function formatAmlWarning(result: AmlGateResult): string | null {
   if (!result.hasCounterparties) return "Deal has no counterparties linked — AML can't run.";
   if (result.notReady.length === 0) return null;

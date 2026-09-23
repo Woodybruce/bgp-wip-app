@@ -355,6 +355,12 @@ router.get("/api/companies-house/document/:id", requireAuth, async (req, res) =>
   }
 });
 
+// A parked lookup stamps the attempt but never overwrites an MLRO decision.
+function parkedKycFields(company: any): Record<string, unknown> {
+  const human = ["approved", "rejected"].includes(String(company?.kycStatus || "")) && !!company?.kycApprovedBy;
+  return human ? { kycCheckedAt: new Date() } : { kycStatus: "not_found", kycCheckedAt: new Date() };
+}
+
 // ─── Core KYC logic — shared between the single-company route and batch runner ──
 //
 // `forceFromWebsite` (re-resolve button): ignore any stored CH number and
@@ -717,7 +723,7 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
         // nightly batch (ordered by kyc_checked_at, NULLS FIRST) re-picked
         // the same parked brands every run and the rest of the queue
         // starved. Parked brands now rotate to the back and retry monthly.
-        await db.update(crmCompanies).set({ kycStatus: "not_found", kycCheckedAt: new Date() } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
+        await db.update(crmCompanies).set(parkedKycFields(company) as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
         diagnostics.push({
           step: "ch_search",
           outcome: "skipped_no_specific_entity",
@@ -740,7 +746,7 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
       const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(searchName)}&items_per_page=20`);
       const items = searchData.items || [];
       if (items.length === 0) {
-        await db.update(crmCompanies).set({ kycStatus: "not_found", kycCheckedAt: new Date() } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
+        await db.update(crmCompanies).set(parkedKycFields(company) as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
         diagnostics.push({ step: "ch_search", outcome: "no_results", detail: `query: "${searchName}"` });
         return {
           success: false,
@@ -759,7 +765,7 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
       // dissolved namesake.
       const exactNameHit = exactMatches.find((i: any) => i.company_status === "active") || exactMatches[0];
       if (!exactNameHit) {
-        await db.update(crmCompanies).set({ kycStatus: "not_found", kycCheckedAt: new Date() } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
+        await db.update(crmCompanies).set(parkedKycFields(company) as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
         const top = items.slice(0, 5).map((i: any) => `${i.title} (${i.company_number}, ${i.company_status})`).join(", ");
         diagnostics.push({
           step: "ch_search",
@@ -852,13 +858,16 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
 
   // Canonical KYC vocabulary — what deal-gates.ts expects:
   //   pending | in_review | approved | rejected | expired
-  // Insolvency → rejected. Active + accounts current → approved. Anything
-  // else (overdue accounts, dormant, etc.) parks at in_review for MLRO.
-  const kycStatus = profile.hasInsolvencyHistory
-    ? "rejected"
-    : profile.companyStatus === "active" && !profile.accountsOverdue
-      ? "approved"
-      : "in_review";
+  // Automation IDENTIFIES the entity; it never approves or rejects
+  // (AML review 2026-09-23 — "active on Companies House" is not CDD, and
+  // the nightly re-run was flipping MLRO rejections back to approved). The
+  // result parks at in_review for the MLRO, and a human decision — an
+  // approve/reject with a named approver — is never overwritten.
+  const humanDecision = ["approved", "rejected"].includes(String((company as any).kycStatus || "")) && !!(company as any).kycApprovedBy;
+  const kycStatus = humanDecision ? String((company as any).kycStatus) : "in_review";
+  if (profile.hasInsolvencyHistory || profile.companyStatus !== "active" || profile.accountsOverdue) {
+    diagnostics.push({ step: "ch_profile", outcome: "risk", detail: [profile.hasInsolvencyHistory && "insolvency history", profile.companyStatus !== "active" && `status ${profile.companyStatus}`, profile.accountsOverdue && "accounts overdue"].filter(Boolean).join(", ") + " — for the MLRO's review" });
+  }
 
   // Experian removed 2026-09-07 (no account) — affordability/covenant view
   // comes from the covenant engine (CH + Gazette). Null keeps the stored
@@ -891,6 +900,18 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
     // so the panel said "Not found" beside a linked CH profile.
     ...((company as any).ukEntityName ? {} : { ukEntityName: profile.companyName }),
   } as any).where(eq(crmCompanies.id, company.id));
+  // The resolved company is this brand's legal entity — record it as the
+  // default trading entity WITH its number, so the group view shows one
+  // entity ("HGUK RESTAURANTS LIMITED · CH … · trading as Honest Greens").
+  try {
+    const { pool } = await import("./db");
+    await pool.query(
+      `INSERT INTO crm_trading_entities (parent_company_id, name, companies_house_number, is_default)
+       VALUES ($1, $2, $3, NOT EXISTS (SELECT 1 FROM crm_trading_entities WHERE parent_company_id = $1 AND is_default))
+       ON CONFLICT (parent_company_id, LOWER(name)) DO UPDATE SET
+         companies_house_number = COALESCE(NULLIF(crm_trading_entities.companies_house_number, ''), EXCLUDED.companies_house_number), updated_at = NOW()`,
+      [company.id, profile.companyName, chNumber]);
+  } catch (err: any) { console.warn(`[auto-kyc] trading entity for "${company.name}": ${err?.message}`); }
 
   // Persist to kyc_investigations so this run shows up in the Clouseau
   // history tab alongside investigator-launched checks. Risk is computed off
@@ -1196,6 +1217,7 @@ export async function runBatchReKyc({ limit = 40, forceAll = false, dealTenantsO
           AND companies_house_data->'profile'->>'companyStatus' IS NOT NULL
           AND companies_house_data->'profile'->>'companyStatus' != 'active')
     )`}
+      AND COALESCE(kyc_status, '') <> 'rejected'
     ORDER BY kyc_checked_at ASC NULLS FIRST
     LIMIT ${limit}
   `);
@@ -1369,11 +1391,8 @@ router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async 
         filingsTotal = filingResult.value.total_count || 0;
       }
 
-      kycStatus = profile.hasInsolvencyHistory
-        ? "rejected"
-        : profile.companyStatus === "active" && !profile.accountsOverdue
-          ? "approved"
-          : "in_review";
+      // Identified, not approved — the MLRO reviews (same rule as brand KYC).
+      kycStatus = "in_review";
 
       const fetchStatus = {
         officers: officerResult.status === "fulfilled" ? "ok" : "failed",
@@ -1403,9 +1422,10 @@ router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async 
       });
     } else {
       kycData = { ...kycData, message: "Individual proprietor — sanctions screening only" };
-      // Individuals can't fail Companies House — out of CH scope entirely.
-      // Sanctions/PEP screening (Comply + Perplexity) runs separately.
-      kycStatus = "approved";
+      // Individuals are out of Companies House scope, which is not the same
+      // as verified: ID + sanctions/PEP screening still apply, so this stays
+      // with the MLRO.
+      kycStatus = "in_review";
 
       await db.update(crmProperties).set({
         proprietorKycStatus: kycStatus,
@@ -1415,7 +1435,7 @@ router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async 
       res.json({
         success: true,
         kycStatus,
-        message: "Individual proprietor recorded. Sanctions screening can be run separately.",
+        message: "Individual proprietor recorded — ID verification and sanctions/PEP screening still needed before the MLRO can approve.",
       });
     }
   } catch (err: any) {

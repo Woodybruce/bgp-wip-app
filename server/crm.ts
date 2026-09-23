@@ -2745,19 +2745,17 @@ Only return the JSON object. If uncertain, return {"role": null}.`
             continue;
           }
           if (targetIsGated && (oldDeal as any).amlCheckCompleted !== "YES") {
-            const amlResult = await checkCounterpartyAml({
+            const parties = {
               landlordId:  (oldDeal as any).landlordId,
               tenantId:    (oldDeal as any).tenantId,
               vendorId:    (oldDeal as any).vendorId,
               purchaserId: (oldDeal as any).purchaserId,
-            });
-            if (amlResult.notReady.length > 0 || !amlResult.hasCounterparties) {
-              const blockers = amlResult.notReady.length > 0
-                ? amlResult.notReady.map(c => `${c.name} (${c.reason})`).join(", ")
-                : "no counterparties linked";
-              failures.push({ id, reason: `AML gate failed: ${blockers}` });
-              continue;
-            }
+            };
+            const amlResult = await checkCounterpartyAml(parties);
+            const { amlGateOutcome, recordAmlGateWarning } = await import("./deal-gates");
+            const outcome = amlGateOutcome(amlResult);
+            if (outcome.block) { failures.push({ id, reason: outcome.block }); continue; }
+            if (outcome.warning) await recordAmlGateWarning(id, parties, amlResult, { targetStatus: String(value), actorId: userId || null, actorName: changedByEmail || null });
           }
           passing.push(id);
         }
@@ -3720,31 +3718,57 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         }
       }
 
-      // AML gate. SOL onwards (SOL/EXC/COM/INV) requires every linked
-      // counterparty's parent brand to have kyc_status = 'approved' and not
-      // expired. MLRO override: set aml_check_completed = 'YES' on the deal
-      // to bypass — used for legacy deals or where AML happened off-system.
+      // SARs live in the MLRO's register now, never on the deal record.
+      for (const field of ["amlSarFiled", "amlSarReference", "amlSarFiledAt"]) {
+        if (req.body[field] === undefined) continue;
+        const was = (oldDeal as any)?.[field] ?? null;
+        const now = req.body[field] ?? null;
+        if (String(!!now && now) !== String(!!was && was)) {
+          return res.status(400).json({ error: "Suspicion reports go to the MLRO via Compliance → Report a concern, not on the deal", code: "SAR_REGISTER" });
+        }
+        delete req.body[field];
+      }
+      // AML sign-off on the deal is the MLRO's alone (MLR 2017 Reg 21).
+      const amlSignOffChanged = (req.body.amlCheckCompleted !== undefined && req.body.amlCheckCompleted !== (oldDeal as any)?.amlCheckCompleted)
+        || (req.body.kycApproved !== undefined && !!req.body.kycApproved !== !!(oldDeal as any)?.kycApproved);
+      if (amlSignOffChanged) {
+        const { amlActor } = await import("./aml-authority");
+        if (!(await amlActor(req)).isMlro) {
+          return res.status(403).json({ error: "Only the MLRO can sign off a deal's AML / KYC", code: "MLRO_ONLY" });
+        }
+      }
+
+      // AML gate. SOL onwards (SOL/EXC/COM/INV): incomplete CDD no longer
+      // blocks (Woody, 2026-09-23 — "don't stop deals moving"); the move goes
+      // through, is recorded on the deal and queued for the MLRO. Only a
+      // counterparty the MLRO rejected blocks. MLRO override:
+      // aml_check_completed = 'YES'.
       if (req.body.status && oldDeal && oldDeal.status !== req.body.status) {
         const { legacyToCode } = await import("../shared/deal-status");
         const targetCode = legacyToCode(req.body.status);
         const GATED_CODES = new Set(["SOL", "EXC", "COM", "INV"]);
         const mlroOverride = (req.body.amlCheckCompleted ?? oldDeal?.amlCheckCompleted) === "YES";
         if (targetCode && GATED_CODES.has(targetCode) && !mlroOverride) {
-          const { checkCounterpartyAml, formatAmlWarning } = await import("./deal-gates");
-          const amlResult = await checkCounterpartyAml({
+          const { checkCounterpartyAml, amlGateOutcome, recordAmlGateWarning } = await import("./deal-gates");
+          const parties = {
             landlordId:  (oldDeal as any)?.landlordId,
             tenantId:    (oldDeal as any)?.tenantId,
             vendorId:    (oldDeal as any)?.vendorId,
             purchaserId: (oldDeal as any)?.purchaserId,
-          });
-          const warning = formatAmlWarning(amlResult);
-          if (warning) {
+          };
+          const amlResult = await checkCounterpartyAml(parties);
+          const outcome = amlGateOutcome(amlResult);
+          if (outcome.block) {
             return res.status(409).json({
-              error: warning,
+              error: outcome.block,
               code: "AML_GATE_FAILED",
               notReady: amlResult.notReady,
-              hint: "MLRO override: set Deal → AML check completed = YES to bypass.",
+              hint: "Only the MLRO can clear a rejected counterparty.",
             });
+          }
+          if (outcome.warning) {
+            await recordAmlGateWarning(String(req.params.id), parties, amlResult, { targetStatus: String(req.body.status), actorId: userId || null, actorName: changedByName });
+            res.setHeader("X-AML-Warning", encodeURIComponent(outcome.warning));
           }
         }
       }

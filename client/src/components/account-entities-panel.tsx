@@ -5,7 +5,7 @@
 // child can never make the summary read "current".
 //
 // Rows render worst-bucket-first (rejected → expired → unchecked → in
-// review → current). Approve/reject actions are admin-only and hit the
+// review → current). Approve/reject actions are MLRO-only and hit the
 // per-entity KYC endpoints — a child approve never touches the parent.
 // Staff-only server-side: scoped viewers get a 403 and the panel renders
 // nothing.
@@ -39,6 +39,7 @@ interface GroupEntity {
   representationConflicts: string[];
   kyc: GroupEntityKyc | null;
   groupRollupBlocks: boolean;
+  tradingAs?: string;
 }
 
 interface AccountEntitiesReport {
@@ -81,8 +82,9 @@ const RELATION_LABEL: Record<GroupEntity["relation"], string> = {
 
 export function AccountEntitiesPanel({ companyId }: { companyId: string }) {
   const queryClient = useQueryClient();
-  const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isAdmin = !!me?.isAdmin;
+  // Approve / reject are the MLRO's decisions (MLR 2017 Reg 21).
+  const { data: aml } = useQuery<{ isMlro: boolean }>({ queryKey: ["/api/aml/me"], staleTime: 5 * 60_000 });
+  const isMlro = !!aml?.isMlro;
 
   const { data } = useQuery<AccountEntitiesReport>({
     queryKey: ["/api/accounts", companyId, "entities"],
@@ -125,7 +127,7 @@ export function AccountEntitiesPanel({ companyId }: { companyId: string }) {
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground flex-wrap">
           <Building2 className="w-3.5 h-3.5" /> Group entities
           <Badge className={`text-[9px] px-1.5 border-0 ${s.current === s.total ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300" : "bg-amber-100 text-amber-700"}`} data-testid="entities-current-summary">
-            {s.current} of {s.total} current
+            {s.current} of {s.total} KYC approved
           </Badge>
           {bucketBadges.filter(([n]) => n > 0).map(([n, label, cls]) => (
             <Badge key={label} className={`text-[9px] px-1.5 border-0 ${cls}`}>{n} {label}</Badge>
@@ -136,7 +138,7 @@ export function AccountEntitiesPanel({ companyId }: { companyId: string }) {
         <div className="max-h-80 overflow-y-auto space-y-px">
           {rows.map((e, i) => {
             const bucket = bucketOf(e);
-            const actionable = isAdmin && e.entityId;
+            const actionable = isMlro && e.entityId;
             return (
               <div
                 key={`${e.entityKind}-${e.entityId ?? `jsonb-${i}`}`}
@@ -144,7 +146,8 @@ export function AccountEntitiesPanel({ companyId }: { companyId: string }) {
                 data-testid={`entity-row-${e.entityId ?? `jsonb-${i}`}`}
               >
                 <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                <span className="text-xs font-medium truncate">{e.name}</span>
+                <span className="text-xs font-medium truncate" title={e.tradingAs ? `${e.name} — trading as ${e.tradingAs}` : e.name}>{e.name}</span>
+                {e.tradingAs && <span className="text-[10px] text-muted-foreground truncate shrink-0">trading as {e.tradingAs}</span>}
                 {e.companiesHouseNumber ? (
                   <Badge variant="outline" className="text-[9px] font-mono shrink-0">CH {e.companiesHouseNumber}</Badge>
                 ) : (

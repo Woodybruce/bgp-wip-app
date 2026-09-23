@@ -129,6 +129,15 @@ export async function apiRequest(
   });
 
   await throwIfResNotOk(res);
+  // A deal moved with CDD still outstanding (the AML gate warns, it no
+  // longer blocks) — say so, wherever the move came from.
+  const amlWarning = res.headers.get("X-AML-Warning");
+  if (amlWarning) {
+    import("@/hooks/use-toast").then(({ toast }) => toast({
+      title: "Moved — AML still outstanding",
+      description: `${decodeURIComponent(amlWarning)} Logged on the deal and sent to the MLRO's queue; CDD must be complete before exchange.`,
+    })).catch(() => {});
+  }
   return res;
 }
 

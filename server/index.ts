@@ -229,6 +229,53 @@ installGoogleBudgetGuard();
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sar_filed BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sar_reference TEXT`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sar_filed_at TIMESTAMP`,
+    // MLRO-only register (MLR 2017 Reg 21 / POCA 2002 s.330): staff raise
+    // internal suspicion reports, the MLRO decides whether to report to the
+    // NCA; PSC-register discrepancies (Reg 30A) are tracked the same way.
+    `CREATE TABLE IF NOT EXISTS aml_internal_reports (
+       id SERIAL PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'suspicion',
+       company_id VARCHAR, deal_id VARCHAR, concern TEXT NOT NULL,
+       reported_by VARCHAR, reported_by_name TEXT, created_at TIMESTAMP DEFAULT now(),
+       status TEXT NOT NULL DEFAULT 'open', decision_reason TEXT, external_reference TEXT,
+       decided_by TEXT, decided_at TIMESTAMP)`,
+    `CREATE INDEX IF NOT EXISTS aml_internal_reports_company_idx ON aml_internal_reports (company_id)`,
+    // Legacy per-deal SAR flags move into the register and off the deal
+    // record, where every staff login could read them (tipping-off risk).
+    `INSERT INTO aml_internal_reports (kind, deal_id, concern, status, external_reference, decided_by, decided_at, created_at)
+     SELECT 'suspicion', d.id, 'Migrated from the deal record''s SAR flag', 'reported_nca', d.aml_sar_reference, 'migrated', COALESCE(d.aml_sar_filed_at, now()), COALESCE(d.aml_sar_filed_at, now())
+       FROM crm_deals d
+      WHERE d.aml_sar_filed = true
+        AND NOT EXISTS (SELECT 1 FROM aml_internal_reports r WHERE r.deal_id = d.id AND r.decided_by = 'migrated')`,
+    `UPDATE crm_deals SET aml_sar_filed = false, aml_sar_reference = NULL, aml_sar_filed_at = NULL WHERE aml_sar_filed = true
+       AND EXISTS (SELECT 1 FROM aml_internal_reports r WHERE r.deal_id = crm_deals.id AND r.decided_by = 'migrated')`,
+    // CDD records outlive deletes and merges (Reg 40: 5 years after the
+    // relationship ends). A deleted/merged deal or company with AML history
+    // is archived here first.
+    `CREATE TABLE IF NOT EXISTS aml_retention_archive (
+       id SERIAL PRIMARY KEY, entity_type TEXT NOT NULL, entity_id VARCHAR NOT NULL, data JSONB NOT NULL,
+       reason TEXT, archived_by TEXT, archived_at TIMESTAMP DEFAULT now(), retain_until TIMESTAMP)`,
+    `CREATE OR REPLACE FUNCTION aml_retain_on_delete() RETURNS trigger AS $$
+     BEGIN
+       BEGIN
+         IF (TG_TABLE_NAME = 'crm_companies' AND (OLD.kyc_status IS NOT NULL OR OLD.aml_checklist IS NOT NULL
+               OR COALESCE(OLD.companies_house_number, '') <> ''
+               OR EXISTS (SELECT 1 FROM kyc_documents WHERE company_id = OLD.id)
+               OR EXISTS (SELECT 1 FROM kyc_investigations WHERE crm_company_id = OLD.id)))
+            OR (TG_TABLE_NAME = 'crm_deals' AND (OLD.kyc_approved IS TRUE OR OLD.aml_check_completed IS NOT NULL
+               OR OLD.status IN ('SOL','EXC','COM','INV','Exchanged','Completed','Invoiced')
+               OR EXISTS (SELECT 1 FROM deal_events WHERE deal_id = OLD.id AND event_type IN ('kyc_orchestrator_run','aml_gate_warning')))) THEN
+           INSERT INTO aml_retention_archive (entity_type, entity_id, data, reason, archived_by, retain_until)
+           VALUES (TG_TABLE_NAME, OLD.id, to_jsonb(OLD), 'deleted or merged', current_user, now() + interval '5 years');
+         END IF;
+       EXCEPTION WHEN others THEN
+         RAISE WARNING 'aml_retain_on_delete: %', SQLERRM;
+       END;
+       RETURN OLD;
+     END $$ LANGUAGE plpgsql`,
+    `DROP TRIGGER IF EXISTS aml_retain_companies ON crm_companies`,
+    `CREATE TRIGGER aml_retain_companies BEFORE DELETE ON crm_companies FOR EACH ROW EXECUTE FUNCTION aml_retain_on_delete()`,
+    `DROP TRIGGER IF EXISTS aml_retain_deals ON crm_deals`,
+    `CREATE TRIGGER aml_retain_deals BEFORE DELETE ON crm_deals FOR EACH ROW EXECUTE FUNCTION aml_retain_on_delete()`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_compliance_notes TEXT`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_checklist JSONB`,
     `CREATE TABLE IF NOT EXISTS aml_settings (id SERIAL PRIMARY KEY, nominated_officer_id VARCHAR, nominated_officer_name TEXT, nominated_officer_email TEXT, nominated_officer_appointed_at TIMESTAMP, firm_risk_assessment JSONB, firm_risk_assessment_updated_at TIMESTAMP, firm_risk_assessment_updated_by TEXT, aml_policy_notes TEXT, recheck_interval_days INTEGER DEFAULT 365, updated_at TIMESTAMP DEFAULT now())`,
@@ -847,6 +894,10 @@ installGoogleBudgetGuard();
     `ALTER TABLE xero_invoices ADD COLUMN IF NOT EXISTS po_number TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS kyc_expires_at TIMESTAMP`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_checklist JSONB`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_subject_type TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_fee_earner_approved_by TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_fee_earner_approved_at TIMESTAMP`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_cdd_form JSONB`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_risk_level TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_pep_status TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS ai_competitors JSONB`,
@@ -1408,6 +1459,14 @@ installGoogleBudgetGuard();
        CROSS JOIN LATERAL jsonb_array_elements(COALESCE(c.trading_entities, '[]'::jsonb)) te
       WHERE te.value->>'name' IS NOT NULL AND length(trim(te.value->>'name')) > 0
      ON CONFLICT (parent_company_id, LOWER(name)) DO NOTHING`,
+    // The trading entity that IS the brand's resolved Companies House
+    // company carries that number (it showed "no CH no." beside it).
+    `UPDATE crm_trading_entities te SET companies_house_number = c.companies_house_number, updated_at = NOW()
+       FROM crm_companies c
+      WHERE te.parent_company_id = c.id AND COALESCE(te.companies_house_number, '') = ''
+        AND COALESCE(c.companies_house_number, '') <> ''
+        AND regexp_replace(replace(lower(te.name), 'limited', 'ltd'), '[^a-z0-9]', '', 'g')
+          = regexp_replace(replace(lower(COALESCE(c.companies_house_data->'profile'->>'companyName', c.uk_entity_name, '')), 'limited', 'ltd'), '[^a-z0-9]', '', 'g')`,
 
     // Per-counterparty Xero contact links. ID holds a Xero ContactID
     // GUID (the actual legal/billing entity for that role); name cached
@@ -3211,6 +3270,8 @@ import { registerMapLayerRoutes } from "./map-layers";
 import sanctionsRouter from "./sanctions-screening";
 import kycClouseauRouter, { runMonthlyReScreening } from "./kyc-clouseau";
 import amlComplianceRouter from "./aml-compliance";
+import kycPackRouter from "./kyc-pack-intake";
+import amlCddFormRouter from "./aml-cdd-form";
 import websiteContentRouter from "./website-content";
 import veriffRouter from "./veriff";
 import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestrator";
@@ -4211,6 +4272,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(sanctionsRouter);
   app.use(kycClouseauRouter);
   app.use(amlComplianceRouter);
+  app.use(kycPackRouter);
+  app.use(amlCddFormRouter);
   app.use(websiteContentRouter);
   app.use(veriffRouter);
   app.use(kycOrchestratorRouter);
@@ -5044,6 +5107,33 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
           const marker = await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ('kyc-deal-tenants:2026-09-23','{}'::jsonb,now()) ON CONFLICT(key) DO NOTHING`).catch(() => null);
           if (marker?.rowCount) runBatchReKyc({ dealTenantsOnly: true, forceAll: true, limit: 600 }).catch(err => console.error("[kyc-deal-tenants] failed:", err?.message));
         }, 180000);
+        // AML one-off (2026-09-23 review): approvals/rejections that no named
+        // person made were automation's — withdraw them to in_review for the
+        // MLRO (the gate no longer blocks on that). PEP ticks that came from
+        // the sanctions list only are removed: it isn't a PEP list. Every
+        // change is written to the KYC audit trail.
+        setTimeout(async () => {
+          const marker = await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ('aml-auto-decisions-withdrawn:2026-09-23','{}'::jsonb,now()) ON CONFLICT(key) DO NOTHING`).catch(() => null);
+          if (!marker?.rowCount) return;
+          try {
+            const withdrawn = await pool.query(`WITH w AS (
+                UPDATE crm_companies SET kyc_status = 'in_review', updated_at = NOW()
+                 WHERE kyc_status IN ('approved','rejected') AND COALESCE(kyc_approved_by,'') = ''
+                RETURNING id, kyc_status)
+              INSERT INTO kyc_audit_log (company_id, action, performed_by, notes)
+              SELECT id, 'auto_decision_withdrawn', 'system', 'Automatic approval/rejection withdrawn — CDD sign-off is the MLRO''s (AML review 23 Sept 2026)' FROM w
+              RETURNING company_id`);
+            const pep = await pool.query(`WITH p AS (
+                UPDATE crm_companies SET aml_checklist = aml_checklist - 'pep_checked',
+                       aml_pep_status = CASE WHEN aml_pep_status = 'clear' THEN NULL ELSE aml_pep_status END, updated_at = NOW()
+                 WHERE aml_checklist->'pep_checked'->>'source' = 'sanctions'
+                RETURNING id)
+              INSERT INTO kyc_audit_log (company_id, action, performed_by, notes)
+              SELECT id, 'pep_tick_withdrawn', 'system', 'PEP tick came from the sanctions list, which is not a PEP list — PEP screening still needed' FROM p
+              RETURNING company_id`);
+            console.log(`[aml] withdrew ${withdrawn.rowCount} automatic KYC decisions, ${pep.rowCount} sanctions-only PEP ticks`);
+          } catch (err: any) { console.error("[aml] auto-decision withdrawal failed:", err?.message); }
+        }, 120000);
         // Deal pages from their HOTs (terms + tenant's agent): one pass after
         // this deploy, then nightly for HOTs filed since.
         setTimeout(async () => {
