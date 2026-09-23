@@ -51,7 +51,7 @@ test('an obvious discovered website is verified and saved automatically', async 
 
 test('an unproven discovery is only suggested, never saved as the identity', async () => {
   const row = hg(), db = database(row);
-  const result = await discoverAndVerifyBrandWebsite(db, row, { candidates: async () => ['honestgreens.com'], fetchPage: async url => page(url), assess: async c => ({ ...verdict(c.domain), confidence: 0.7 }) });
+  const result = await discoverAndVerifyBrandWebsite(db, row, { candidates: async () => ['honestgreens.com'], fetchPage: async url => page(url), assess: async c => ({ ...verdict(c.domain), confidence: 0.7, conflicts: ['Page could be a franchise site'] }) });
   assert.equal(result.status, 'needs_review');
   assert.equal(db.writes.some(w => w.sql.startsWith('UPDATE crm_companies SET domain') || /brand_identity/.test(JSON.stringify(w.values || []))), false);
   assert.ok(db.writes.some(w => /website_suggestion/.test(w.sql)));
@@ -101,6 +101,22 @@ test('a dead saved website is replaced only when a discovered site proves out', 
   const ok = await discoverAndVerifyBrandWebsite(db, row, { replaceDeadWebsite: true, candidates: async () => ['honestgreens.old', 'honestgreens.com'], fetchPage: async url => page(url), assess: async c => verdict(c.domain) });
   assert.equal(ok.status, 'ready'); assert.equal(ok.domain, 'honestgreens.com'); assert.deepEqual(ok.tried, ['honestgreens.com']);
   const db2 = database(row);
-  const no = await discoverAndVerifyBrandWebsite(db2, row, { replaceDeadWebsite: true, candidates: async () => ['honestgreens.com'], fetchPage: async url => page(url), assess: async c => ({ ...verdict(c.domain), confidence: 0.5 }) });
+  const no = await discoverAndVerifyBrandWebsite(db2, row, { replaceDeadWebsite: true, candidates: async () => ['honestgreens.com'], fetchPage: async url => page(url), assess: async c => ({ ...verdict(c.domain), confidence: 0.5, conflicts: ['Page could be a franchise site'] }) });
   assert.equal(no.status, 'needs_review'); assert.equal(db2.writes.some(w => /brand_identity/.test(JSON.stringify(w.values || []))), false);
+});
+
+import { obviousNameMatch } from '../../server/brand-identity-verification.ts';
+
+test('the obvious case: brand-name domain whose pages name the brand', () => {
+  const pages = [{ url: 'https://200degrees.com/', html: 'Welcome to 200 Degrees Coffee — roasters and coffee shops since 2012' }];
+  assert.ok(obviousNameMatch({ name: '200 Degrees' }, '200degrees.com', pages, { decision: 'needs_review', relationship: 'unclear', conflicts: [] }));
+  assert.ok(obviousNameMatch({ name: 'Honest Greens' }, 'honestgreens.co.uk', [{ url: 'https://honestgreens.co.uk/', html: 'Honest Greens - Chef Driven Real Food' }], null));
+});
+
+test('the obvious rule never overrides a flagged stockist, a different name or a silent page', () => {
+  const pages = [{ url: 'https://200degrees.com/', html: '200 Degrees coffee' }];
+  assert.equal(obviousNameMatch({ name: '200 Degrees' }, '200degrees.com', pages, { relationship: 'reseller', conflicts: [] }), null);
+  assert.equal(obviousNameMatch({ name: '200 Degrees' }, '200degs.com', pages, null), null);
+  assert.equal(obviousNameMatch({ name: '200 Degrees' }, '200degrees.com', [{ url: 'https://200degrees.com/', html: 'Parked domain for sale' }], null), null);
+  assert.equal(obviousNameMatch({ name: 'Cook' }, 'cook.com', [{ url: 'https://cook.com/', html: 'Cook kitchenware' }], { conflicts: ['kitchenware, not frozen meals'] }), null);
 });

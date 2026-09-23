@@ -296,7 +296,15 @@ export async function verifyBrandIdentityFromOfficialSite(
   const proof = known ? pages.find(page => websiteSupportsBrandLegalIdentity(page.html, known)) : null;
   // Validate model quotations against precisely the same bounded text it sees.
   const evidencePages = pages.map(page => ({ url: page.url, html: visibleText(page.html).trim().slice(0, 18000) }));
-  const assessment = proof ? null : supportedWebsiteAssessment(subject, evidencePages, await assess(subject, evidencePages));
+  const rawAssessment = proof ? null : await assess(subject, evidencePages);
+  const strict = proof ? null : supportedWebsiteAssessment(subject, evidencePages, rawAssessment);
+  // The obvious case (Woody, 2026-09-23: "if it's the obvious website and
+  // brand then just add it"): the domain IS the brand's name and the site
+  // names the brand, and the model hasn't flagged it as a stockist,
+  // directory or different business. 200degrees.com for 200 Degrees failed
+  // the quote-level proof above while being plainly right.
+  const obvious = proof || strict ? null : obviousNameMatch(subject, candidate.domain, evidencePages, rawAssessment);
+  const assessment = strict || obvious;
   if (!proof && !assessment) return { status: "needs_review", reason: "The website did not clearly corroborate this business as its operator; check the website match" };
   const client = await db.connect();
   try {
@@ -305,7 +313,7 @@ export async function verifyBrandIdentityFromOfficialSite(
     if (!current || verificationSnapshot(current) !== snapshot) {
       throw new Error("The brand identity changed during website verification; the result was not applied");
     }
-    const actor = proof ? "official-website-register-match" : opts.replaceSaved ? "official-website-replaced" : opts.discoveredDomain ? "official-website-discovered" : "official-website-ai-evidence";
+    const actor = proof ? "official-website-register-match" : !strict && obvious ? "official-website-name-match" : opts.replaceSaved ? "official-website-replaced" : opts.discoveredDomain ? "official-website-discovered" : "official-website-ai-evidence";
     const prepared = prepareBrandIdentityUpdate(current, { domain: candidate.domain,
       ...(proof && known ? { aliases: [...new Set([...(current.ai_generated_fields?.brand_identity?.aliases || []), known.name])], country: "gb" } : {}) }, actor);
     prepared.fields.ai_generated_fields.brand_identity.source = proof && known
@@ -418,4 +426,31 @@ export async function discoverAndVerifyBrandWebsite(
     return { status: "needs_review", reason: `Found ${reachable}, but its pages didn't clearly prove it is this brand's own site — confirm it or enter the right one.`, domain: reachable, tried };
   }
   return { status: "no_match", reason: proposals.length ? "None of the likely websites could be read" : "No likely official website was found", tried };
+}
+
+
+const compact = (value: unknown) => String(value || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "");
+
+/**
+ * Deterministic "obvious website" test: the domain's name part equals the
+ * brand name (ignoring spaces, punctuation, "the", a trailing uk/london) and
+ * the fetched pages name the brand — unless the model saw a reseller,
+ * directory, unrelated business or an explicit conflict.
+ */
+export function obviousNameMatch(company: any, domain: string, pages: WebsitePage[], assessment: any): { confidence: number; reason: string; evidence: WebsiteEvidence[] } | null {
+  const name = typeof company?.name === "string" ? company.name : "";
+  const brand = compact(name.replace(/^the\s+/i, "").replace(/\s+(ltd|limited|plc|llp|uk|london|group)$/i, ""));
+  const label = compact(registrableLabel(domain));
+  if (brand.length < 3 || !label) return null;
+  const labelTrim = label.replace(/(uk|london|group|official|online|shop|store)$/, "");
+  if (label !== brand && labelTrim !== brand && label !== `the${brand}`) return null;
+  if (["reseller", "directory", "unrelated"].includes(assessment?.relationship) || assessment?.decision === "no_match"
+    || (Array.isArray(assessment?.conflicts) && assessment.conflicts.length > 0)) return null;
+  const nameRe = new RegExp(name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s*"), "i");
+  const page = pages.find(p => nameRe.test(p.html));
+  if (!page) return null;
+  const at = page.html.search(nameRe);
+  const quote = page.html.slice(Math.max(0, at - 40), at + 160).replace(/\s+/g, " ").trim();
+  return { confidence: typeof assessment?.confidence === "number" ? assessment.confidence : 0.9,
+    reason: `The domain ${domain} is the brand's own name and its pages name ${name.trim()}.`, evidence: [{ url: page.url, quote, kind: "operator" }] };
 }
