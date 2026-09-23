@@ -169,6 +169,7 @@ interface BrandProfile {
   turnover: Array<{ period: string | null; turnover: number | null; turnover_per_sqft: number | null; confidence: string | null; source: string | null }>;
   coverers: Array<{ id: string; name: string; email: string | null; role: string | null }>;
   pendingContactSuggestions: Array<{ email: string; touches: number; last_touch: string | null; in_crm?: boolean }>;
+  relationshipStats?: { threads: number; threads_90d: number; last_touch: string | null; people_90d: number } | null;
   interactions: Array<{ id: string; type: string; direction: string | null; subject: string | null; preview: string | null; interaction_date: string; bgp_user: string | null; microsoft_id: string | null }>;
   // Contacts get interaction_count + last_interaction_at decorated on
   // the server so the key-contacts panel can show BGP-relationship
@@ -1260,56 +1261,17 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
 
 
-            <div className="space-y-2 pt-2" data-testid="brand-factual-summary">
+
+            {/* About + the facts that belong with it (backers, socials,
+                ticker) on the left; the Brand conversation takes the other
+                half (Woody, 2026-09-23: "combine the backers element with
+                About", "the brand conversation only needs to be half"). */}
+            <div className="flex flex-col md:flex-row gap-2.5 md:gap-4 md:items-start pt-2">
+            <div className="space-y-2 md:flex-1 md:min-w-0" data-testid="brand-factual-summary">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
               <p className="text-sm leading-relaxed break-words">{c.description || "The factual brand profile is awaiting preparation."}</p>
-            </div>
-
-            {/* Single BGP AI take + Ask ChatBGP question runner — sits above
-                all zones. Client logins get both too (Woody, 2026-08-04:
-                "can't see the pills on ask chat bgp" — parity rule); the
-                chat backend enforces the client tool allowlist. */}
-            <div className="mt-2 order-2 space-y-3 empty:hidden">
-              <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} />
-
-            </div>
-
-            {/* Properties board — for landlords it sits directly under Ask ChatBGP
-                and above the BGP Relationship zone (order-4, between order-2 and
-                order-6). Rendered inside the panel flex (rather than page-level)
-                so it slots into the section order Woody asked for. */}
-            {(showPropertiesBoard || isLandlord) && (
-              <div className="mt-2 order-4">
-                <CompanyPropertiesBoard companyId={companyId} kind="landlord" />
-              </div>
-            )}
-
-
-            <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={data.images || []} canRefresh={!isClientViewer} />
-
-            {/* Landlord desktop: chat + key facts compose side-by-side in one
-                row (each half the content width); below md they stack
-                full-width (items-start only applies on md+ so the column
-                children still stretch). Tenants keep the original
-                single-column flow — the wrapper matches the parent flex
-                column's gap-2.5 spacing exactly. */}
-            {/* Conversation takes half the row beside the key facts for
-                brands too (Woody, 2026-09-23: "the brand conversation only
-                needs to be half"). */}
-            <div className="flex flex-col md:flex-row gap-2.5 md:gap-4 md:items-start">
-            <div className="rounded-lg border border-border p-3 space-y-3 md:flex-1 md:min-w-0">
-              <div className="flex flex-wrap justify-between items-center gap-2">
-                <p className="text-sm font-medium flex items-center gap-2"><MessageSquare className="w-4 h-4 text-muted-foreground" />{isLandlord ? "Landlord conversation" : "Brand conversation"}</p>
-                <Button type="button" size="sm" variant="outline" onClick={() => setConversationOpen(value => !value)} aria-expanded={conversationOpen} data-testid="button-brand-conversation">{conversationOpen ? "Close conversation" : "Open conversation"}</Button>
-              </div>
-              {conversationOpen && <>
-                <AskChatBGPInline brandName={c.name} isLandlord={isLandlord} />
-                <div className="h-80"><CompanyMiniChat companyId={companyId} companyName={c.name} fill /></div>
-              </>}
-            </div>
-
             {/* Key facts row */}
-            <div className="grid grid-cols-2 gap-2 text-sm empty:hidden md:flex-1 md:min-w-0">
+            <div className="grid grid-cols-2 gap-2 text-sm empty:hidden">
               {c.backers && (
                 <div className="col-span-2">
                   <div className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
@@ -1480,6 +1442,41 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               ) : null}
             </div>
             </div>
+            <div className="rounded-lg border border-border p-3 space-y-3 md:flex-1 md:min-w-0">
+              <div className="flex flex-wrap justify-between items-center gap-2">
+                <p className="text-sm font-medium flex items-center gap-2"><MessageSquare className="w-4 h-4 text-muted-foreground" />{isLandlord ? "Landlord conversation" : "Brand conversation"}</p>
+                <Button type="button" size="sm" variant="outline" onClick={() => setConversationOpen(value => !value)} aria-expanded={conversationOpen} data-testid="button-brand-conversation">{conversationOpen ? "Close conversation" : "Open conversation"}</Button>
+              </div>
+              {conversationOpen && <>
+                <AskChatBGPInline brandName={c.name} isLandlord={isLandlord} />
+                <div className="h-80"><CompanyMiniChat companyId={companyId} companyName={c.name} fill /></div>
+              </>}
+            </div>
+
+            </div>
+
+            {/* Single BGP AI take + Ask ChatBGP question runner — sits above
+                all zones. Client logins get both too (Woody, 2026-08-04:
+                "can't see the pills on ask chat bgp" — parity rule); the
+                chat backend enforces the client tool allowlist. */}
+            <div className="mt-2 order-2 space-y-3 empty:hidden">
+              <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} />
+
+            </div>
+
+            {/* Properties board — for landlords it sits directly under Ask ChatBGP
+                and above the BGP Relationship zone (order-4, between order-2 and
+                order-6). Rendered inside the panel flex (rather than page-level)
+                so it slots into the section order Woody asked for. */}
+            {(showPropertiesBoard || isLandlord) && (
+              <div className="mt-2 order-4">
+                <CompanyPropertiesBoard companyId={companyId} kind="landlord" />
+              </div>
+            )}
+
+
+            <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={data.images || []} canRefresh={!isClientViewer} />
+
 
             {/* PLC market data — full-width row in the middle of the landlord
                 overview, below chat + key facts. Tenants keep the card inside
@@ -1570,27 +1567,27 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             </div>
             <div className="space-y-2.5">
             <>
-            {/* AI relationship read — the calendar/interaction commentary.
-                Consolidated away in the single-strip pass, missed and asked
-                back (Woody, 2026-07-30). */}
-            <BgpTakeStrip companyId={companyId} tab="activity" entities={commentaryEntities} hideWhenEmpty />
+            {/* The relationship read is part of the one BGP take above
+                (Woody, 2026-09-23: "combine this with the BGP take — it's
+                all linked"). */}
 
             {/* One line: lead broker, last touch and email volume — from CRM
                 contacts AND the BGP inbox threads with the brand's people
                 (Honest Greens read "Last touch —" beside 49 inbox threads). */}
             {(() => {
-              const senders = data.pendingContactSuggestions || [];
-              const touches = [...data.contacts.map((ct: any) => ct.last_interaction_at), ...senders.map(sd => sd.last_touch)].filter(Boolean) as string[];
+              // Staff get the brand's whole email history (relationshipStats);
+              // clients fall back to their visible contacts' last touch.
+              const stats = data.relationshipStats;
+              const touches = [...data.contacts.map((ct: any) => ct.last_interaction_at), stats?.last_touch].filter(Boolean) as string[];
               const last = touches.sort().reverse()[0];
               const daysSince = last ? Math.floor((Date.now() - new Date(last).getTime()) / 864e5) : null;
-              const threads = senders.reduce((n, sd) => n + (Number(sd.touches) || 0), 0);
-              const active90 = data.contacts.filter((ct: any) => ct.last_interaction_at && Date.now() - new Date(ct.last_interaction_at).getTime() < 90 * 864e5).length
-                + senders.filter(sd => sd.last_touch && Date.now() - new Date(sd.last_touch).getTime() < 90 * 864e5).length;
+              const threads = stats?.threads || 0;
+              const active90 = stats ? stats.people_90d : data.contacts.filter((ct: any) => ct.last_interaction_at && Date.now() - new Date(ct.last_interaction_at).getTime() < 90 * 864e5).length;
               const parts = [
                 c.bgp_contact_crm ? <span key="lead">Lead <span className="font-medium text-foreground">{c.bgp_contact_crm}</span></span> : null,
                 <span key="touch">Last touch <span className={`font-medium ${daysSince == null ? "" : daysSince < 30 ? "text-emerald-700" : daysSince < 90 ? "text-amber-600" : "text-red-600"}`}>{daysSince == null ? "—" : daysSince === 0 ? "today" : daysSince === 1 ? "yesterday" : `${daysSince} days ago`}</span></span>,
                 threads ? <span key="threads"><span className="font-mono tabular-nums text-foreground">{threads}</span> email threads</span> : null,
-                active90 ? <span key="active"><span className="font-mono tabular-nums text-foreground">{active90}</span> active in 90 days</span> : null,
+                active90 ? <span key="active"><span className="font-mono tabular-nums text-foreground">{active90}</span> {active90 === 1 ? "person" : "people"} active in 90 days</span> : null,
               ].filter(Boolean);
               return <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground" data-testid="brand-relationship-line">{parts}</div>;
             })()}
