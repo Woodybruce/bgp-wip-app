@@ -3361,7 +3361,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
   const autoPulled = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!editingId || !editing) return;
-    if (autoPulled.current.has(editingId)) return;
+    if (autoPulled.current.has(editingId) || !isFeeEarner(person?.title)) return;
     autoPulled.current.add(editingId);
     syncFromWip.mutate({ id: editingId, silent: true });
   }, [editingId, editing?.id]);
@@ -3556,6 +3556,10 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 </div>
               </div>
 
+              {/* Fees/WIP are for fee earners only — not PAs / admin
+                  (Woody, 2026-09-23: "KPI financials not needed for Cara
+                  and Layla"). Same title rule as the annual form. */}
+              {isFeeEarner(person.title) && <>
               {/* Fees is the KPI — target vs actual. Everything else the 1:1
                   needs is the WIP book by stage, which is a summary rather
                   than a target/actual pair (Woody, 2026-09-10). Both sides
@@ -3606,6 +3610,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 All figures pull from the WIP report automatically. Fee target is <span className="font-medium">3× salary pro rata</span>
                 {wipSummary?.salary_pence ? <> ({fmtSalary(wipSummary.salary_pence)} salary → {fmtSalary(Math.round((wipSummary.salary_pence * 3) / 12))} a month)</> : null}; Invoiced is this month, the other stages are the current book.
               </p>
+              </>}
             </div>
             ) : isFeeEarner(person.title) ? (
             <div className="grid grid-cols-2 gap-2">

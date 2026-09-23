@@ -106,6 +106,15 @@ async function run(state: SweepState) {
   }
 }
 
+let activeSince: string | null = null;
+function launch(state: SweepState) {
+  const since = state.startedAt;
+  activeSince = since;
+  const running: Promise<void> = run(state).catch(error => console.error("[website-sweep] stopped:", error?.message))
+    .finally(() => { if (active === running) { active = null; activeSince = null; } });
+  active = running;
+}
+
 /** Start (or resume) the sweep. Returns the current state immediately. */
 export async function startWebsiteSweep(opts: { restart?: boolean } = {}): Promise<SweepState> {
   let state = await readState();
@@ -115,19 +124,19 @@ export async function startWebsiteSweep(opts: { restart?: boolean } = {}): Promi
     state = { status: "running", startedAt: new Date().toISOString(), processed: 0, verified: 0, unknown: 0, total };
     await writeState(state);
   }
-  if (!active) {
-    const s = state;
-    active = run(s).catch(error => console.error("[website-sweep] stopped:", error?.message)).finally(() => { active = null; });
-  }
+  // A run resumed at boot belongs to the OLD sweep — it stops itself when it
+  // sees the new startedAt, so a restart must start its own run rather than
+  // wait on it (2026-09-23: a restart after a deploy left nothing running).
+  if (!active || activeSince !== state.startedAt) launch(state);
   return state;
 }
 
 /** Resume a sweep interrupted by a restart/deploy. Called at boot. */
 export async function resumeWebsiteSweep(): Promise<void> {
   const state = await readState().catch(() => null);
-  if (state?.status === "running" && !active) {
+  if (state?.status === "running" && (!active || activeSince !== state.startedAt)) {
     console.log(`[website-sweep] resuming (${state.processed}/${state.total})`);
-    active = run(state).catch(error => console.error("[website-sweep] stopped:", error?.message)).finally(() => { active = null; });
+    launch(state);
   }
 }
 
