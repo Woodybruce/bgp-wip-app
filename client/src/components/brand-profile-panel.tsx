@@ -168,7 +168,7 @@ interface BrandProfile {
   } | null;
   turnover: Array<{ period: string | null; turnover: number | null; turnover_per_sqft: number | null; confidence: string | null; source: string | null }>;
   coverers: Array<{ id: string; name: string; email: string | null; role: string | null }>;
-  pendingContactSuggestions: Array<{ email: string; touches: number; last_touch: string | null }>;
+  pendingContactSuggestions: Array<{ email: string; touches: number; last_touch: string | null; in_crm?: boolean }>;
   interactions: Array<{ id: string; type: string; direction: string | null; subject: string | null; preview: string | null; interaction_date: string; bgp_user: string | null; microsoft_id: string | null }>;
   // Contacts get interaction_count + last_interaction_at decorated on
   // the server so the key-contacts panel can show BGP-relationship

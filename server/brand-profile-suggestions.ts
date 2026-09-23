@@ -36,7 +36,8 @@ export function expandParticipants(participants: unknown): string[] {
 export const PENDING_CONTACT_SUGGESTIONS_SQL = `
   SELECT LOWER(p) AS email,
          COUNT(*)::int AS touches,
-         MAX(interaction_date) AS last_touch
+         MAX(interaction_date) AS last_touch,
+         EXISTS (SELECT 1 FROM crm_contacts c WHERE LOWER(c.email) = LOWER(p)) AS in_crm
     FROM crm_interactions
     CROSS JOIN LATERAL jsonb_array_elements_text(participants) AS p
    WHERE participants IS NOT NULL
