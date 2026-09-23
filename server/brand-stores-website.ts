@@ -63,6 +63,7 @@ export async function storesFromOfficialWebsite(companyId: string, deps: { pages
     withAddress.map(s => ({ query: `${s.address}, ${s.city}`, countryHint: s.country })),
   ).catch(() => [] as Array<{ lat: number | null; lng: number | null; formattedAddress: string | null }>) : [];
   let added = 0;
+  const writtenIds: string[] = [];
   for (const s of stores) {
     const point = s.address ? located[withAddress.indexOf(s)] : null;
     const placeId = `web:${s.country}:${`${s.name}-${s.city}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 80)}`;
@@ -76,6 +77,13 @@ export async function storesFromOfficialWebsite(companyId: string, deps: { pages
         JSON.stringify({ officialWebsite: { url: s.url, quote: s.quote, status: s.status, fingerprint: identity.fingerprint, checkedAt: new Date().toISOString() } }),
         point?.lat ?? null, point?.lng ?? null]);
     added += written.rowCount || 0;
+    writtenIds.push(placeId);
   }
+  // The website is the source for these rows: a re-read replaces the last
+  // one, so a store the model placed in a different city last time (Elche
+  // vs Alicante) doesn't linger as a duplicate. An empty or much shorter
+  // read (a partial answer) keeps them.
+  const before = Number((await pool.query(`SELECT count(*) FROM brand_stores WHERE brand_company_id=$1 AND source_type='official_website' AND place_id <> ALL($2::text[])`, [companyId, writtenIds])).rows[0]?.count || 0);
+  if (writtenIds.length && before && writtenIds.length >= before) await pool.query(`DELETE FROM brand_stores WHERE brand_company_id=$1 AND source_type='official_website' AND place_id <> ALL($2::text[])`, [companyId, writtenIds]);
   return { added, uk: stores.filter(s => s.country === "GB").length, countries: [...new Set(stores.map(s => s.country))] };
 }
