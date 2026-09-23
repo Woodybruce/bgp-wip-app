@@ -5047,9 +5047,10 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
         // Deal pages from their HOTs (terms + tenant's agent): one pass after
         // this deploy, then nightly for HOTs filed since.
         setTimeout(async () => {
-          const marker = await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ('deal-hots-backfill:2026-09-23','{}'::jsonb,now()) ON CONFLICT(key) DO NOTHING`).catch(() => null);
+          const marker = await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ('deal-hots-backfill:2026-09-23b','{}'::jsonb,now()) ON CONFLICT(key) DO NOTHING`).catch(() => null);
           if (!marker?.rowCount) return;
-          const { backfillDealsFromHots } = await import("./deal-hots-from-records");
+          const { backfillDealsFromHots, repairMismatchedHotsFills } = await import("./deal-hots-from-records");
+          await repairMismatchedHotsFills().catch(err => console.error("[deal-hots] repair failed:", err?.message));
           const result = await backfillDealsFromHots().catch(err => ({ status: "error", error: String(err?.message || err) }));
           await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ('deal-hots-backfill',$1::jsonb,now()) ON CONFLICT(key) DO UPDATE SET value=$1::jsonb,updated_at=now()`, [JSON.stringify({ status: "done", finishedAt: new Date().toISOString(), ...result })]).catch(() => {});
         }, 240000);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkedHotsTerms, emptyDealFields, rankHotsDocs, fillDealFromHots } from '../../server/deal-hots-from-records.ts';
+import { checkedHotsTerms, emptyDealFields, rankHotsDocs, hotsForSite, siteWords, fillDealFromHots } from '../../server/deal-hots-from-records.ts';
 
 const hots = {
   id: 'kb9', fileName: 'FINAL Heads of Terms - Kiss The Hippo - 2A George Street 20.04.2026.docx', fileUrl: null, lastModified: '2026-04-20T00:00:00Z',
@@ -34,13 +34,20 @@ test('only empty deal fields are filled — typed values are never overwritten',
     { lease_length: 10, break_option: 'Tenant only break at year 5', break_party: 'Tenant', rent_free: 6, tenant_entity_name: 'Kiss The Hippo Coffee Ltd' });
 });
 
-test('the HOTs naming the property and marked FINAL is read first', () => {
-  const other = { ...hots, id: 'kb1', fileName: 'Draft HOTs - Kiss The Hippo - Richmond.docx', content: 'Richmond unit', lastModified: '2026-06-01T00:00:00Z' };
-  assert.equal(rankHotsDocs([other, hots], '2A George Street, Richmond')[0].id, 'kb9');
-  assert.equal(rankHotsDocs([other, hots], 'George Street')[0].id, 'kb9');
+test('HOTs are per site: another site of the same brand never gets them', () => {
+  const draft = { ...hots, id: 'kb2', fileName: 'Draft HOTs - Kiss The Hippo - 2A George Street.docx', lastModified: '2026-06-01T00:00:00Z' };
+  const george = siteWords('2a George St', '2a George St', 'Kiss The Hippo');
+  const wigmore = siteWords('Wigmore Street', 'Wigmore Street - Kiss the Hippo', 'Kiss The Hippo');
+  assert.deepEqual(wigmore, ['wigmore']);
+  assert.equal(rankHotsDocs(hotsForSite([draft, hots], george, 'Kiss The Hippo'))[0].id, 'kb9');
+  assert.deepEqual(hotsForSite([draft, hots], wigmore, 'Kiss The Hippo'), []);
+  assert.deepEqual(hotsForSite([hots], siteWords(null, 'Kiss The Hippo', 'Kiss The Hippo'), 'Kiss The Hippo'), []);
+  const blacklock = { ...hots, fileName: 'Blacklock HOTs.doc', content: 'Premises: Unit 4, 13 Philpot Lane, London EC3' };
+  assert.equal(hotsForSite([blacklock], siteWords('Philpot Lane', 'Blacklock City', 'Blacklock'), 'Blacklock').length, 1);
+  assert.equal(hotsForSite([{ ...blacklock, content: 'Premises: Unit 4, 13 Philpot Lane\nTenant agent office: 2 Soho Square' }], siteWords('Soho Square', 'Blacklock Soho', 'Blacklock'), 'Blacklock').length, 0);
 });
 
 test('a deal without HOTs is left alone', async () => {
-  const pool = { query: async () => ({ rows: [{ id: 'd1', tenant_id: 'b1', tenant_name: 'Kiss The Hippo', property_name: '2A George Street' }] }) };
+  const pool = { query: async () => ({ rows: [{ id: 'd1', name: '2a George St', tenant_id: 'b1', tenant_name: 'Kiss The Hippo', property_name: '2A George Street' }] }) };
   assert.deepEqual(await fillDealFromHots('d1', { pool, docs: async () => [], read: async () => { throw new Error('should not read'); } }), { status: 'no_hots' });
 });

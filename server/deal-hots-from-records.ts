@@ -65,13 +65,39 @@ export function emptyDealFields(deal: any, terms: HotsTerms): Record<string, str
   return out;
 }
 
-/** Most relevant HOTs first: names the property, FINAL/agreed, newest. */
-export function rankHotsDocs(docs: HotsDoc[], propertyName: string | null): HotsDoc[] {
-  const words = plain(propertyName || "").split(" ").filter(w => w.length >= 4 && !/^(london|street|road|unit|estate|house|centre|shopping)$/.test(w));
-  const score = (d: HotsDoc) => {
-    const hay = plain(`${d.fileName} ${d.content.slice(0, 4000)}`);
-    return (words.length && words.some(w => hay.includes(w)) ? 4 : 0) + (/\b(final|agreed|signed)\b/i.test(d.fileName) ? 2 : 0) - (/\bdraft\b/i.test(d.fileName) ? 1 : 0);
-  };
+const PLACE_STOP = /^(london|street|road|unit|units|estate|house|centre|center|shopping|lane|place|square|park|the|and|new|letting|deal|lease|shop|store|retail|restaurant|ltd|limited|group|floor|ground|first|uk)$/;
+/** The words that identify a deal's site: property and deal name, minus the brand's own name. */
+export function siteWords(propertyName: string | null, dealName: string | null, brandName: string): string[] {
+  const brand = new Set(plain(brandName).split(" "));
+  return [...new Set(plain(`${propertyName || ""} ${dealName || ""}`).split(" ")
+    .filter(w => w.length >= 4 && !PLACE_STOP.test(w) && !brand.has(w) && !/^\d+$/.test(w)))];
+}
+
+const DOC_WORDS = /^(heads|terms|hots|final|draft|agreed|signed|clean|copy|version|docx|doc|pdf|amended|revised|tracked|comments|with|from|update|updated|offer)$/;
+/** HOTs are per site: a brand with several deals must never get another
+ *  site's terms. A HOTs whose file name names a site must name THIS deal's
+ *  site; one whose file name names no site ("Blacklock HOTs.doc") must name
+ *  it in its premises clause (not anywhere — an agent's address can mention
+ *  another street). */
+export function hotsForSite(docs: HotsDoc[], words: string[], brandName = ""): HotsDoc[] {
+  if (!words.length) return [];
+  const has = (hay: string) => words.some(w => ` ${plain(hay)} `.includes(` ${w} `));
+  const brand = new Set(plain(brandName).split(" "));
+  return docs.filter(d => {
+    const nameWords = plain(d.fileName.replace(/\.[a-z0-9]+$/i, "")).split(" ")
+      .filter(w => w.length >= 4 && !/\d/.test(w) && !brand.has(w) && !DOC_WORDS.test(w) && !PLACE_STOP.test(w));
+    if (nameWords.length) return has(d.fileName);
+    const text = d.content.replace(/\r/g, "");
+    const at = text.search(/\b(premises|the property|property|demise|address)\b\s*[:\-–]/i);
+    const clause = at >= 0 ? text.slice(at, at + 300) : text.slice(0, 300);
+    const lines = clause.split(/\n/);
+    return has(lines[0].length >= 12 || lines.length === 1 ? lines[0] : `${lines[0]} ${lines[1] || ""}`);
+  });
+}
+
+/** Most relevant HOTs first: FINAL/agreed, then newest. */
+export function rankHotsDocs(docs: HotsDoc[]): HotsDoc[] {
+  const score = (d: HotsDoc) => (/\b(final|agreed|signed)\b/i.test(d.fileName) ? 2 : 0) - (/\bdraft\b/i.test(d.fileName) ? 1 : 0);
   return [...docs].sort((x, y) => score(y) - score(x) || String(y.lastModified || "").localeCompare(String(x.lastModified || "")));
 }
 
@@ -130,7 +156,7 @@ export async function fillDealFromHots(dealId: string, deps: { pool?: any; docs?
   const deal = (await pool.query(`SELECT d.*, t.name AS tenant_name, p.name AS property_name FROM crm_deals d
       LEFT JOIN crm_companies t ON t.id = d.tenant_id LEFT JOIN crm_properties p ON p.id = d.property_id WHERE d.id=$1`, [dealId])).rows[0];
   if (!deal?.tenant_name) return { status: "skipped" };
-  const docs = rankHotsDocs(await (deps.docs || hotsDocsFor)(pool, deal.tenant_name), deal.property_name || deal.name);
+  const docs = rankHotsDocs(hotsForSite(await (deps.docs || hotsDocsFor)(pool, deal.tenant_name), siteWords(deal.property_name, deal.name, deal.tenant_name), deal.tenant_name));
   if (!docs.length) return { status: "no_hots" };
   const doc = docs[0];
   const terms = checkedHotsTerms(doc, await (deps.read || readHots)(deal.tenant_name, doc));
@@ -188,4 +214,32 @@ export async function backfillDealsFromHots(limit = 400): Promise<{ processed: n
   }
   console.log(`[deal-hots] backfill: ${filled} of ${rows.length} deals filled from HOTs, ${agents.length} tenant agents named`);
   return { processed: rows.length, filled, agents };
+}
+
+/** One-off repair (2026-09-23): the first version matched HOTs by brand and
+ *  only PREFERRED the site, so a brand's other deals could get one site's
+ *  terms. Undo every fill whose HOTs doesn't name that deal's site. The
+ *  filled columns were empty before (only empty fields are ever filled). */
+export async function repairMismatchedHotsFills(): Promise<number> {
+  const { pool } = await import("./db");
+  const rows = (await pool.query(`SELECT e.id AS event_id, e.deal_id, e.payload, d.name, p.name AS property_name, t.name AS brand
+      FROM deal_events e JOIN crm_deals d ON d.id=e.deal_id LEFT JOIN crm_properties p ON p.id=d.property_id LEFT JOIN crm_companies t ON t.id=d.tenant_id
+     WHERE e.event_type='hots_from_records'`)).rows;
+  let undone = 0;
+  for (const row of rows) {
+    const fileName = String(row.payload?.fileName || "");
+    const doc = (await pool.query(`SELECT id, file_name, file_url, content, last_modified FROM knowledge_base WHERE file_name=$1 LIMIT 1`, [fileName])).rows[0];
+    const asDoc = doc ? [{ id: doc.id, fileName: doc.file_name, fileUrl: doc.file_url, content: doc.content || "", lastModified: null }] : [];
+    if (hotsForSite(asDoc, siteWords(row.property_name, row.name, row.brand || ""), row.brand || "").length) continue;
+    const filled: string[] = (Array.isArray(row.payload?.filled) ? row.payload.filled : []).filter((c: string) => /^[a-z_]+$/.test(c));
+    if (filled.length) await pool.query(`UPDATE crm_deals SET ${filled.map(c => `${c}=NULL`).join(", ")} WHERE id=$1`, [row.deal_id]);
+    await pool.query(`DELETE FROM deal_hots WHERE deal_id=$1 AND version=1 AND notes LIKE $2`, [row.deal_id, `From "${fileName.replace(/[\\%_]/g, m => `\\${m}`)}"%`]);
+    if (row.payload?.tenantAgent?.representation) {
+      await pool.query(`DELETE FROM brand_agent_representations WHERE agent_type='tenant_rep' AND notes LIKE $1`, [`Named as the tenant's agent in "${fileName.replace(/[\\%_]/g, m => `\\${m}`)}" (${String(row.name || "deal").replace(/[\\%_]/g, m => `\\${m}`)})%`]);
+    }
+    await pool.query(`DELETE FROM deal_events WHERE id=$1`, [row.event_id]);
+    undone++;
+  }
+  console.log(`[deal-hots] repair: undid ${undone} fills from another site's HOTs`);
+  return undone;
 }
