@@ -101,18 +101,28 @@ export function rankHotsDocs(docs: HotsDoc[]): HotsDoc[] {
   return [...docs].sort((x, y) => score(y) - score(x) || String(y.lastModified || "").localeCompare(String(x.lastModified || "")));
 }
 
+// A HOTs file, not a trade-press headline ("… heads to Covent Garden").
+const HOTS_FILE_SQL = `(file_name ~* '(\\mhots\\M|heads of terms|heads_of_terms)' OR file_name ~* '\\mheads\\s*(\\.[a-z]+)?$')`;
+/** The brand is named in the document as a whole phrase ("More Yoga", not just "yoga"). */
+export function namesBrand(doc: { fileName: string; content: string }, brandName: string): boolean {
+  const b = plain(brandName);
+  return b.length >= 3 && ` ${plain(`${doc.fileName} ${doc.content}`)} `.includes(` ${b} `);
+}
+
 async function hotsDocsFor(pool: any, brandName: string): Promise<HotsDoc[]> {
   const name = squash(brandName);
   if (name.length < 3) return [];
+  const like = `%${name.replace(/[\\%_]/g, m => `\\${m}`)}%`;
   const client = await pool.connect();
   try {
     await client.query("SET statement_timeout = 20000");
     return (await client.query(
       `SELECT id, file_name, file_url, content, last_modified FROM knowledge_base
         WHERE to_tsvector('english', coalesce(file_name,'') || ' ' || coalesce(summary,'') || ' ' || coalesce(content,'') || ' ' || coalesce(category,'')) @@ phraseto_tsquery('english', $1)
-          AND file_name ~* '(hots|heads of terms|heads_of_terms|\\mheads\\M)' AND length(coalesce(content,'')) > 200
-        ORDER BY last_modified DESC NULLS LAST LIMIT 10`, [name])).rows
-      .map((r: any) => ({ id: r.id, fileName: r.file_name, fileUrl: r.file_url, content: r.content || "", lastModified: r.last_modified ? new Date(r.last_modified).toISOString() : null }));
+          AND ${HOTS_FILE_SQL} AND (file_name ILIKE $2 OR content ILIKE $2) AND length(coalesce(content,'')) > 200
+        ORDER BY last_modified DESC NULLS LAST LIMIT 10`, [name, like])).rows
+      .map((r: any) => ({ id: r.id, fileName: r.file_name, fileUrl: r.file_url, content: r.content || "", lastModified: r.last_modified ? new Date(r.last_modified).toISOString() : null }))
+      .filter((d: HotsDoc) => namesBrand(d, name));
   } finally {
     await client.query("RESET statement_timeout").catch(() => {});
     client.release();
@@ -230,7 +240,7 @@ export async function repairMismatchedHotsFills(): Promise<number> {
     const fileName = String(row.payload?.fileName || "");
     const doc = (await pool.query(`SELECT id, file_name, file_url, content, last_modified FROM knowledge_base WHERE file_name=$1 LIMIT 1`, [fileName])).rows[0];
     const asDoc = doc ? [{ id: doc.id, fileName: doc.file_name, fileUrl: doc.file_url, content: doc.content || "", lastModified: null }] : [];
-    if (hotsForSite(asDoc, siteWords(row.property_name, row.name, row.brand || ""), row.brand || "").length) continue;
+    if (asDoc.length && namesBrand(asDoc[0], row.brand || "") && hotsForSite(asDoc, siteWords(row.property_name, row.name, row.brand || ""), row.brand || "").length) continue;
     const filled: string[] = (Array.isArray(row.payload?.filled) ? row.payload.filled : []).filter((c: string) => /^[a-z_]+$/.test(c));
     if (filled.length) await pool.query(`UPDATE crm_deals SET ${filled.map(c => `${c}=NULL`).join(", ")} WHERE id=$1`, [row.deal_id]);
     await pool.query(`DELETE FROM deal_hots WHERE deal_id=$1 AND version=1 AND notes LIKE $2`, [row.deal_id, `From "${fileName.replace(/[\\%_]/g, m => `\\${m}`)}"%`]);
@@ -240,6 +250,6 @@ export async function repairMismatchedHotsFills(): Promise<number> {
     await pool.query(`DELETE FROM deal_events WHERE id=$1`, [row.event_id]);
     undone++;
   }
-  console.log(`[deal-hots] repair: undid ${undone} fills from another site's HOTs`);
+  console.log(`[deal-hots] repair: undid ${undone} fills from another site's or brand's HOTs`);
   return undone;
 }

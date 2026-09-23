@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkedHotsTerms, emptyDealFields, rankHotsDocs, hotsForSite, siteWords, fillDealFromHots } from '../../server/deal-hots-from-records.ts';
+import { checkedHotsTerms, emptyDealFields, rankHotsDocs, hotsForSite, siteWords, namesBrand, fillDealFromHots } from '../../server/deal-hots-from-records.ts';
 
 const hots = {
   id: 'kb9', fileName: 'FINAL Heads of Terms - Kiss The Hippo - 2A George Street 20.04.2026.docx', fileUrl: null, lastModified: '2026-04-20T00:00:00Z',
@@ -50,4 +50,10 @@ test('HOTs are per site: another site of the same brand never gets them', () => 
 test('a deal without HOTs is left alone', async () => {
   const pool = { query: async () => ({ rows: [{ id: 'd1', name: '2a George St', tenant_id: 'b1', tenant_name: 'Kiss The Hippo', property_name: '2A George Street' }] }) };
   assert.deepEqual(await fillDealFromHots('d1', { pool, docs: async () => [], read: async () => { throw new Error('should not read'); } }), { status: 'no_hots' });
+});
+
+test('the brand must be named as a whole phrase — "More Yoga" is not any yoga mention', () => {
+  const restore = { fileName: 'Restore Cafe - Distillery Bristol - HOTS 240724.docx', content: 'Tenant: Restore Cafe Ltd. Use: cafe with yoga studio above.' };
+  assert.equal(namesBrand(restore, 'More Yoga'), false);
+  assert.equal(namesBrand({ fileName: 'HOTs - 250 City Road', content: 'Tenant: More Yoga Limited' }, 'More Yoga'), true);
 });

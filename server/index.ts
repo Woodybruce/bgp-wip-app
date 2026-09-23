@@ -5047,7 +5047,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
         // Deal pages from their HOTs (terms + tenant's agent): one pass after
         // this deploy, then nightly for HOTs filed since.
         setTimeout(async () => {
-          const marker = await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ('deal-hots-backfill:2026-09-23b','{}'::jsonb,now()) ON CONFLICT(key) DO NOTHING`).catch(() => null);
+          const marker = await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ('deal-hots-backfill:2026-09-23c','{}'::jsonb,now()) ON CONFLICT(key) DO NOTHING`).catch(() => null);
           if (!marker?.rowCount) return;
           const { backfillDealsFromHots, repairMismatchedHotsFills } = await import("./deal-hots-from-records");
           await repairMismatchedHotsFills().catch(err => console.error("[deal-hots] repair failed:", err?.message));
