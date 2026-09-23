@@ -31,6 +31,7 @@ import { resolveBrandIdSubquery } from "./tenant-brand-resolver";
 import type { ScanReviewCandidate } from "@shared/plan-scan-review";
 import { applyPlanScanReview, buildPlanScanReview, persistPlanScanReview, PlanScanReviewError, readPlanScanReview } from "./plan-scan-review";
 import { resolveEvidenceScheduleMatch } from "./evidence-plan-schedule";
+import { parseEvidenceWorkbook } from "./evidence-plan-workbook";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
@@ -974,6 +975,79 @@ router.delete("/api/evidence-plans/entries/:entryId", requireAuth, async (req: R
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+const unitEvidenceUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 1 } }).single("file");
+
+export async function importUnitEvidence(req: Request): Promise<any> {
+  const planId = String(req.params.id || ""), unitId = String(req.params.unitId || "");
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuid.test(planId) || !uuid.test(unitId)) throw new EvidencePlanError(400, "Choose a valid evidence plan and unit");
+  const action = String(req.body?.action || "preview");
+  if (!["preview", "save"].includes(action)) throw new EvidencePlanError(400, "Choose preview or save for this upload");
+  if (!req.file) throw new EvidencePlanError(400, "Choose an Excel analysis sheet (.xls or .xlsx)");
+  const file = req.file;
+  if (file.buffer.length > 20 * 1024 * 1024) throw new EvidencePlanError(413, "The Excel file is too large. Choose a file under 20 MB");
+  const extension = /\.(xlsx|xls)$/i.exec(file.originalname || "")?.[1]?.toLowerCase();
+  if (!extension) throw new EvidencePlanError(400, "Choose an Excel analysis sheet (.xls or .xlsx)");
+  const { rows: [unit] } = await pool.query(`SELECT u.id, u.unit_ref, p.property_id FROM evidence_plan_units u
+    JOIN evidence_plans p ON p.id = u.plan_id WHERE u.id = $1 AND u.plan_id = $2`, [unitId, planId]);
+  if (!unit) throw new EvidencePlanError(404, "This unit was not found in the selected evidence plan. Reload the plan and try again");
+  const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+  const scope = await resolveCompanyScope(req as any);
+  if (scope && (!unit.property_id || !await isPropertyInScope(scope, unit.property_id))) throw new EvidencePlanError(403, "You do not have access to this property's evidence plan");
+  let parsed;
+  try { parsed = parseEvidenceWorkbook(file.buffer, file.originalname); }
+  catch (error: any) { throw new EvidencePlanError(400, error.message || "The workbook could not be read. Save it as .xls or .xlsx and try again"); }
+  const candidates = parsed.candidates.map(candidate => ({ ...candidate,
+    unitMismatch: Boolean(candidate.unitRef && normaliseUnitRef(candidate.unitRef) !== normaliseUnitRef(unit.unit_ref)) }));
+  if (action === "preview") return { candidates, warnings: parsed.warnings, fileName: file.originalname, unit: { id: unit.id, unit_ref: unit.unit_ref } };
+  const indexText = String(req.body?.candidateIndex ?? "");
+  if (!/^\d+$/.test(indexText) || !candidates[Number(indexText)]) throw new EvidencePlanError(400, "Choose an analysis sheet to attach");
+  const index = Number(indexText), candidate = candidates[index];
+  if (candidate.unitMismatch && req.body?.confirmUnitMismatch !== "true") throw new EvidencePlanError(409,
+    `This sheet refers to ${candidate.unitRef}, but you selected ${unit.unit_ref}. Confirm the unit before saving`);
+  let fields;
+  try { fields = JSON.parse(String(req.body?.fields || "{}")); }
+  catch { throw new EvidencePlanError(400, "The reviewed evidence details could not be read. Review the upload again"); }
+  if (!fields || typeof fields !== "object" || Array.isArray(fields)) throw new EvidencePlanError(400, "Review the evidence details before saving");
+  const reviewed = Object.fromEntries(Object.keys(ENTRY_FIELDS).filter(key => !["unitId", "unitRef"].includes(key) && key in fields).map(key => [key, fields[key]]));
+  const patch = validateEvidenceEntryPatch({ ...reviewed, unitId, unitRef: unit.unit_ref });
+  const digest = crypto.createHash("sha256").update(file.buffer).digest("hex");
+  const sourceKey = `evidence-plans/${planId}/unit-evidence/${unitId}/${digest}-${index}`;
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    // Serialise imports for this unit so a double click cannot duplicate a sheet.
+    const current = (await db.query(`SELECT id, unit_ref FROM evidence_plan_units WHERE id = $1 AND plan_id = $2 FOR UPDATE`, [unitId, planId])).rows[0];
+    if (!current) throw new EvidencePlanError(404, "The selected unit has been removed. Reload the plan before uploading");
+    if (current.unit_ref !== unit.unit_ref) throw new EvidencePlanError(409, "The selected unit was renamed while uploading. Reload it and review the sheet again");
+    const currentPlan = (await db.query(`SELECT id, property_id FROM evidence_plans WHERE id = $1 FOR SHARE`, [planId])).rows[0];
+    if (!currentPlan || currentPlan.property_id !== unit.property_id) throw new EvidencePlanError(409, "The plan's property link changed while uploading. Reload it and review the sheet again");
+    const duplicate = (await db.query(`SELECT * FROM evidence_plan_entries WHERE plan_id = $1 AND unit_id = $2 AND source_key = $3 LIMIT 1`, [planId, unitId, sourceKey])).rows[0];
+    if (duplicate) { await db.query("COMMIT"); return { entry: duplicate, duplicate: true }; }
+    const mime = extension === "xls" ? "application/vnd.ms-excel" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    await db.query(`INSERT INTO file_storage (storage_key, data, content_type, original_name, size)
+      VALUES ($1, $2, $3, $4, $5) ON CONFLICT (storage_key) DO NOTHING`, [sourceKey, file.buffer, mime, file.originalname, file.buffer.length]);
+    const keys = Object.keys(patch), values = keys.map(key => patch[key]);
+    values.push(planId, sourceKey, (req as any).session?.userId || (req as any).tokenUserId || null);
+    const { rows: [entry] } = await db.query(`INSERT INTO evidence_plan_entries (${keys.map(key => ENTRY_FIELDS[key]).join(", ")}, plan_id, source_key, created_by)
+      VALUES (${values.map((_, index) => `$${index + 1}`).join(", ")}) RETURNING *`, values);
+    await db.query(`UPDATE evidence_plans SET updated_at = now() WHERE id = $1`, [planId]);
+    await db.query("COMMIT");
+    return { entry, duplicate: false };
+  } catch (error) { await db.query("ROLLBACK"); throw error; }
+  finally { db.release(); }
+}
+
+router.post("/api/evidence-plans/:id/units/:unitId/import-evidence", requireAuth,
+  (req: Request, res: Response, next) => unitEvidenceUpload(req, res, error => {
+    if (error) { res.status(error.code === "LIMIT_FILE_SIZE" ? 413 : 400).json({ error: error.code === "LIMIT_FILE_SIZE"
+      ? "The Excel file is too large. Choose a file under 20 MB" : "Upload one Excel analysis sheet at a time" }); return; }
+    next();
+  }), async (req: Request, res: Response) => {
+    try { res.json(await importUnitEvidence(req)); }
+    catch (error: any) { res.status(error instanceof EvidencePlanError ? error.status : 500).json({ error: error.message }); }
+  });
+
 // ── Tenancy-schedule import ──────────────────────────────────────────────
 // Reads the landlord's TS export (xlsx), keeps only real retail demises,
 // and fills each matching plan unit's five facts. Creates nothing: units
@@ -1627,16 +1701,26 @@ router.get("/api/evidence-plans/jobs/:jobId", requireAuth, async (req: Request, 
   } catch (e: any) { res.status(e instanceof PlanScanReviewError ? e.status : 500).json({ error: e.message }); }
 });
 
-// Serve a stored TAF source PDF so an entry's analysis is one click from
-// the original sheet.
+// Serve the original PDF or Excel analysis attached to an evidence entry.
 router.get("/api/evidence-plans/source", requireAuth, async (req: Request, res: Response) => {
   try {
     const key = String(req.query.key || "");
     if (!key.startsWith("evidence-plans/")) return res.status(400).json({ error: "Bad key" });
+    if (key.includes("/unit-evidence/")) {
+      const match = /^evidence-plans\/([0-9a-f-]{36})\/unit-evidence\/([0-9a-f-]{36})\/[0-9a-f]{64}-\d+$/i.exec(key);
+      if (!match) return res.status(400).json({ error: "Bad evidence source key" });
+      // Follow the evidence association even if its original outline has since been removed.
+      const { rows: [plan] } = await pool.query(`SELECT p.property_id FROM evidence_plan_entries e
+        JOIN evidence_plans p ON p.id = e.plan_id WHERE e.source_key = $1 AND p.id::text = $2 LIMIT 1`, [key, match[1]]);
+      if (!plan) return res.status(404).json({ error: "Evidence source not found" });
+      const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+      const scope = await resolveCompanyScope(req as any);
+      if (scope && (!plan.property_id || !await isPropertyInScope(scope, plan.property_id))) return res.status(403).json({ error: "You do not have access to this property's evidence source" });
+    }
     const file = await getFile(key);
     if (!file) return res.status(404).json({ error: "Not found" });
     res.setHeader("Content-Type", file.contentType);
-    res.setHeader("Content-Disposition", `inline; filename="${(file.originalName || "taf.pdf").replace(/"/g, "")}"`);
+    res.setHeader("Content-Disposition", `${/spreadsheet|ms-excel/.test(file.contentType) ? "attachment" : "inline"}; filename="${(file.originalName || "taf.pdf").replace(/["\r\n]/g, "")}"`);
     res.send(file.data);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });

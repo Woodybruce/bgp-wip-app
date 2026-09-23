@@ -7,6 +7,7 @@
 //   • per-unit facts editable in place; tenancy-schedule import fills
 //     expiry / break / review / ERV / passing for matched units only
 //   • TAF PDFs (single or tranche scans) AI-extract into evidence entries
+//   • Excel TAS uploads are reviewed and attached to the selected unit
 //   • swap the background plan any time — outlines and data stay put
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useRoute } from "wouter";
@@ -27,6 +28,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EvidencePlanReview } from "@/components/evidence-plan-review";
 import { EvidencePlanScanReview } from "@/components/evidence-plan-scan-review";
+import { EvidenceUnitUpload } from "@/components/evidence-unit-upload";
 import { TenancyImportReview, type TenancyImportReviewRow } from "@/components/tenancy-import-review";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
@@ -1145,7 +1147,8 @@ function PlanView({ planId }: { planId: string }) {
               {/* Mock-up style: the panel is the level's evidence list until
                   a unit is picked — hover or tap a marker, or pick a row. */}
               <h3 className="text-sm font-semibold mb-1">Units · {activeLevel?.name || "this level"}</h3>
-              <p className="text-sm text-muted-foreground mb-3">Select a boundary or label to enter information. Drag a label to move it within its unit.</p>
+              <p className="text-sm text-muted-foreground mb-3">Select a boundary or label to enter information or upload Excel evidence. Drag a label to move it within its unit.</p>
+              {levels.length > 1 && <p className="text-xs text-muted-foreground mb-3">Refresh units scans {activeLevel?.name || "the selected level"}. Use Review scan to check the proposed boundaries. Repeat on each level.</p>}
               <UnitList units={levelUnits} entries={entries} placement={outlineDisplay.placement} search={unitSearch} onSearch={setUnitSearch} onSelect={selectUnit} />
               <UnlinkedEvidence entries={entries} units={units} levels={levels} onSaved={invalidate} />
 
@@ -1370,7 +1373,7 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
   };
   const startEvidence = (entry?: Entry) => {
     setEditingEvidenceId(entry?.id || null); setEvidenceError("");
-    setEv(entry ? { tenant: entry.tenant || "", transactionType: entry.transaction_type || "", transactionDate: entry.transaction_date?.slice(0, 10) || "", sizeSqft: entry.size_sqft ?? "", zoneA: entry.zone_a ?? "", itza: entry.itza ?? "", headlineRent: entry.headline_rent ?? "", netEffective: entry.net_effective ?? "", notes: entry.notes || "" } : {});
+    setEv(entry ? { tenant: entry.tenant || "", transactionType: entry.transaction_type || "", transactionDate: entry.transaction_date?.slice(0, 10) || "", sizeSqft: entry.size_sqft ?? "", zoneA: entry.zone_a ?? "", itza: entry.itza ?? "", headlineRent: entry.headline_rent ?? "", netEffective: entry.net_effective ?? "", term: entry.term || "", concession: entry.concession || "", notes: entry.notes || "" } : {});
     setAddingEvidence(true);
   };
   const addEvidence = async () => {
@@ -1516,6 +1519,9 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
           </Button>
         </div>
 
+        <EvidenceUnitUpload key={unit.id} planId={planId} unitId={unit.id} unitRef={unit.unit_ref}
+          onSaved={() => { queryClient.invalidateQueries({ queryKey: ["/api/evidence-plans", planId] }); }} />
+
         {addingEvidence && (
           <div className="rounded-xl border border-border bg-card p-3 mb-2 space-y-2">
             <div className="grid grid-cols-2 gap-2">
@@ -1531,6 +1537,8 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
               {evField("ITZA", "itza", "number")}
               {evField("Headline £pa", "headlineRent", "number")}
               {evField("Net effective £pa", "netEffective", "number")}
+              {evField("Term", "term")}
+              {evField("Concessions", "concession")}
             </div>
             {evField("Notes", "notes")}
             {evidenceError && <p role="alert" className="text-sm text-destructive">{evidenceError}</p>}
@@ -1542,7 +1550,7 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
         )}
 
         {entries.length === 0 && !addingEvidence ? (
-          <p className="text-xs text-muted-foreground">No evidence yet — Add evidence, or Add TAF PDF to extract it automatically.</p>
+          <p className="text-xs text-muted-foreground">No evidence yet — upload Excel above or use Add evidence to enter details. Add TAFs at the top imports PDFs for the whole plan.</p>
         ) : (
           <div className="space-y-1.5">
             {entries.map(e => (
@@ -1562,7 +1570,7 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
                 <div className="flex items-center gap-2 mt-1">
                   <Button variant="ghost" size="sm" onClick={() => startEvidence(e)} data-testid={`button-edit-evidence-${e.id}`}>Edit evidence</Button>
                   {e.source_key && (
-                    <a href={`/api/evidence-plans/source?key=${encodeURIComponent(e.source_key)}`} target="_blank" rel="noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground hover:underline">Open source TAF</a>
+                    <a href={`/api/evidence-plans/source?key=${encodeURIComponent(e.source_key)}`} target="_blank" rel="noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground hover:underline">{e.source_key.includes("/unit-evidence/") ? "Download Excel source" : "Open source TAF"}</a>
                   )}
                   <button
                     className="text-[11px] text-muted-foreground hover:text-destructive ml-auto"
