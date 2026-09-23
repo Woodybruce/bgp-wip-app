@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { route, evaluate } = require('./source-harness.cjs');
+const { getBrandIdentity } = require('../../server/brand-identity.ts');
 const sourceCompany = { id: 'source-brand', name: 'Example Source Brand' };
 const request = { email: 'jordan@agency.test', name: 'Jordan Agent', role: 'Partner', phone: '020 0000 0000', mobile: '07000 000000', linkedin: 'https://www.linkedin.com/in/jordan-agent/?trk=fixture' };
 function harness({ existing = [], scoped = false, failInsert = false } = {}) {
@@ -9,10 +10,10 @@ function harness({ existing = [], scoped = false, failInsert = false } = {}) {
   const writes = [];
   let released = false;
   evaluate(route('server/routes.ts', 'post', '/api/brand/:companyId/promote-sender'), {
-    URL, requireAuth() {}, resolveCompanyScope: async () => scoped ? 'client' : null,
+    URL, getBrandIdentity, requireAuth() {}, resolveCompanyScope: async () => scoped ? 'client' : null,
     app: { post: (_path, ...chain) => { handler = chain.at(-1); } },
     pool: {
-      async query(sql) { calls.push(sql); assert.match(sql, /SELECT id, name FROM crm_companies/); return { rows: [sourceCompany] }; },
+      async query(sql) { calls.push(sql); assert.match(sql, /FROM crm_companies/); return { rows: [sourceCompany] }; },
       async connect() {
         return {
           async query(sql, values) {
@@ -128,4 +129,29 @@ test('promotion and RocketReach use the same transaction lock, and database erro
   assert.ok(h.calls.some(sql => sql === "SELECT pg_advisory_xact_lock(hashtext('rocketreach-contact-import'))"));
   assert.equal(h.calls.at(-1), 'ROLLBACK');
   assert.equal(h.released, true);
+});
+
+test('an individual address on the brand\'s confirmed website domain records the brand as employer', async () => {
+  const brand = { id: 'source-brand', name: 'Honest Greens', domain: 'honestgreens.com', ai_generated_fields: { brand_identity: { status: 'verified', domain: 'honestgreens.com' } } };
+  let handler; const writes = [];
+  evaluate(route('server/routes.ts', 'post', '/api/brand/:companyId/promote-sender'), {
+    URL, getBrandIdentity, requireAuth() {}, resolveCompanyScope: async () => null,
+    app: { post: (_path, ...chain) => { handler = chain.at(-1); } },
+    pool: { async query() { return { rows: [brand] }; }, async connect() { return {
+      async query(sql, values) { if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql) || sql.includes('pg_advisory_xact_lock')) return { rows: [] };
+        if (sql.includes('FROM crm_contacts')) return { rows: [] }; writes.push({ sql, values }); return { rows: [{ id: 'created' }] }; },
+      release() {} }; } },
+  });
+  assert.equal(getBrandIdentity(brand).status, 'verified');
+  let data;
+  await handler({ params: { companyId: brand.id }, body: { email: 'david.menendez@honestgreens.com', name: 'David Menendez' } }, { status() { return this; }, json(v) { data = v; } });
+  assert.equal(data.employerConfirmed, true); assert.equal(data.companyId, 'source-brand');
+  assert.deepEqual(Array.from(writes[0].values).slice(-2), ['source-brand', 'Honest Greens']);
+  // Another domain, or the same domain while the website is unconfirmed, proves nothing.
+  writes.length = 0;
+  await handler({ params: { companyId: brand.id }, body: { email: 'sam@agency.test', name: 'Sam Agent' } }, { status() { return this; }, json(v) { data = v; } });
+  assert.equal(data.employerConfirmed, false); assert.match(writes[0].sql, /\$6, NULL, NULL, \$7/);
+  brand.ai_generated_fields = {}; writes.length = 0;
+  await handler({ params: { companyId: brand.id }, body: { email: 'david.menendez@honestgreens.com', name: 'David Menendez' } }, { status() { return this; }, json(v) { data = v; } });
+  assert.equal(data.employerConfirmed, false);
 });

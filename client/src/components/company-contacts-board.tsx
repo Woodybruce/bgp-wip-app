@@ -158,14 +158,6 @@ interface PromotedContact {
   employerConfirmed: boolean;
 }
 
-function ContactPromotionFeedback({ contact }: { contact: PromotedContact }) {
-  return <div className="rounded-lg border border-border bg-muted/30 p-3 mt-3 space-y-1 text-sm" data-testid="contact-promotion-feedback">
-    <p role="status">{contact.name}: {contact.created ? "added to CRM" : "already in CRM"}. {contact.employerConfirmed ? `Recorded employer: ${contact.companyName}.` : "Employer unconfirmed."}</p>
-    <p className="text-[11px] text-muted-foreground">This addition keeps employment separate from the brand where the person was discovered.</p>
-    <Link href={`/contacts/${contact.id}`} className="inline-flex min-h-11 md:min-h-0 items-center font-medium underline" data-testid="contact-promotion-open">Open contact record</Link>
-  </div>;
-}
-
 function PendingSendersList({ suggestions, companyId }: { suggestions: any[]; companyId: string }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -182,7 +174,7 @@ function PendingSendersList({ suggestions, companyId }: { suggestions: any[]; co
     onSuccess: (out, { sender, sourceCompanyId }) => {
       setSaved(previous => ({ ...previous, [`${sourceCompanyId}:${sender.email}`]: out }));
       setLastSaved({ companyId: sourceCompanyId, contact: out });
-      toast({ title: out.created ? "Contact added to CRM" : "Contact already in CRM", description: out.employerConfirmed ? `Recorded employer: ${out.companyName}` : "Employer unconfirmed — open the contact to review." });
+      toast({ title: out.created ? "Contact added to CRM" : "Contact already in CRM", description: out.employerConfirmed ? `Employer: ${out.companyName}` : "Employer not set — open the contact to add it." });
       void queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
       void queryClient.invalidateQueries({ queryKey: ["/api/brand", sourceCompanyId, "profile"] });
     },
@@ -198,13 +190,13 @@ function PendingSendersList({ suggestions, companyId }: { suggestions: any[]; co
         {suggestions.map((s) => (
           <div key={s.email} className="flex items-center gap-1.5 text-[11px] px-1 py-1 rounded hover:bg-muted/50">
             <Mail className="w-2.5 h-2.5 text-muted-foreground shrink-0" />
-            <span className="truncate flex-1 font-mono text-[11px]">{s.email}</span>
+            <span className="truncate flex-1 text-[11px]">{s.email}</span>
             <span className="text-[11px] text-muted-foreground shrink-0">{s.touches}{s.last_touch ? ` · ${formatRelativeShort(s.last_touch)}` : ""}</span>
             {!psIsClient && (saved[`${companyId}:${s.email}`] ? <Link href={`/contacts/${saved[`${companyId}:${s.email}`].id}`} className="inline-flex min-h-11 md:min-h-0 items-center text-sm md:text-xs underline">In CRM</Link> :
             <Button variant="outline" size="sm"
               onClick={() => promote.mutate({ sender: s, sourceCompanyId: companyId })} disabled={promote.isPending}
               className="min-h-11 md:min-h-0 md:h-7 md:px-2 text-sm md:text-xs shrink-0" data-testid={`pending-sender-add-${s.email}`}
-              title="Save this person to CRM with their employer unconfirmed"
+              title="Save this person to CRM"
             >
               <Plus className="w-3 h-3 mr-1" /> Add to CRM
             </Button>
@@ -212,7 +204,6 @@ function PendingSendersList({ suggestions, companyId }: { suggestions: any[]; co
           </div>
         ))}
       </div>
-      {lastSaved?.companyId === companyId && <ContactPromotionFeedback contact={lastSaved.contact} />}
     </div>
   );
 }
@@ -356,7 +347,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
       setLastAdded({ companyId, contact });
       void queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
       void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
-      toast({ title: contact.created ? "Contact added to CRM" : "Contact already in CRM", description: contact.employerConfirmed ? `Recorded employer: ${contact.companyName}` : "Employer unconfirmed — open the contact to review." });
+      toast({ title: contact.created ? "Contact added to CRM" : "Contact already in CRM", description: contact.employerConfirmed ? `Employer: ${contact.companyName}` : "Employer not set — open the contact to add it." });
     } catch (e: any) {
       toast({ title: "Couldn't add contact", description: e?.message, variant: "destructive" });
     } finally {
@@ -493,7 +484,6 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
             })}
           </div>
         )}
-        {lastAdded?.companyId === companyId && <ContactPromotionFeedback contact={lastAdded.contact} />}
         {summary && !kcIsClient && (
           <p className="text-[11px] text-muted-foreground mt-1.5">
             {allContacts.length} in CRM{crmAiChecked > 0 ? ` (${crmAiChecked} AI-verified)` : ""}

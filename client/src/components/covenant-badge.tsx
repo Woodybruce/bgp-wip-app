@@ -96,6 +96,20 @@ export function CovenantBadgeByCompany({ companyId, className = "" }: { companyI
 
 // Inline AI commentary + data-gap list for covenant cards. Shares the badge's
 // query key so the report is fetched once per company number.
+/**
+ * A one-paragraph verdict reads as a wall of text (Woody, 2026-09-23) — show
+ * the first sentence as the headline and each further sentence as a bullet.
+ * Text that already has structure (bullets / line breaks) is left alone.
+ */
+export function verdictAsBullets(text: string): string {
+  const t = String(text || "").trim();
+  if (!t || /\n\s*[-•*]\s|\n\n/.test(t)) return t;
+  const sentences = t.split(/(?<=[.!?])\s+(?=[A-Z£"'(])/).map(x => x.trim()).filter(Boolean);
+  if (sentences.length < 3) return t;
+  const [head, ...rest] = sentences;
+  return `**${head.replace(/\*\*/g, "")}**\n${rest.map(x => `- ${x}`).join("\n")}`;
+}
+
 export function CovenantCommentary({ companyNumber, className = "" }: { companyNumber?: string | null; className?: string }) {
   const num = (companyNumber || "").trim();
   const isClientViewer = useIsClientViewer();
@@ -112,7 +126,7 @@ export function CovenantCommentary({ companyNumber, className = "" }: { companyN
   return (
     <div className={`rounded-md border border-border bg-muted/40 p-3 ${className}`} data-testid="covenant-commentary">
       {data.verdict ? (
-        <AiCommentary text={data.verdict} />
+        <AiCommentary text={verdictAsBullets(data.verdict)} />
       ) : (
         <p className="text-xs italic text-muted-foreground">Grade {data.grade} ({data.score}/100) — AI commentary unavailable.</p>
       )}

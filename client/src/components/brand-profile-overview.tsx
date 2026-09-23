@@ -47,9 +47,11 @@ export function BrandPreparationStatus({ companyId, refreshedAt }: { companyId: 
   return (
     <details className="text-[11px] text-muted-foreground" data-testid="brand-preparation-status">
       <summary className="cursor-pointer min-h-11 sm:min-h-0 flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span>{data ? label : "Saved profile"}</span>
-        {data?.contactReviewRequired && <span>· Contacts need review</span>}
-        {shortDate(refreshedAt) && <span>· {data?.factReviewRequired ? "Research updated" : "Facts refreshed"} {shortDate(refreshedAt)}</span>}
+        {/* Only what needs attention — a prepared profile says nothing, and
+            contact review lives in Key contacts (Woody, 2026-09-23). */}
+        {data && !data.ready && <span>{label}</span>}
+        {data?.ready && data.factReviewRequired && <span>{label}</span>}
+        {shortDate(refreshedAt) && <span>Updated {shortDate(refreshedAt)}</span>}
         <span className="underline underline-offset-2">Details</span>
       </summary>
       <div className="mt-2 space-y-1 rounded-md border border-border bg-background p-2 text-xs">

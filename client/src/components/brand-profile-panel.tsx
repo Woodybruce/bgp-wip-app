@@ -1293,10 +1293,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 children still stretch). Tenants keep the original
                 single-column flow — the wrapper matches the parent flex
                 column's gap-2.5 spacing exactly. */}
-            <div className={isLandlord
-              ? "flex flex-col md:flex-row gap-2.5 md:gap-4 md:items-start"
-              : "flex flex-col gap-2.5"}>
-            <div className={`rounded-lg border border-border p-3 space-y-3${isLandlord ? " md:flex-1 md:min-w-0" : ""}`}>
+            {/* Conversation takes half the row beside the key facts for
+                brands too (Woody, 2026-09-23: "the brand conversation only
+                needs to be half"). */}
+            <div className="flex flex-col md:flex-row gap-2.5 md:gap-4 md:items-start">
+            <div className="rounded-lg border border-border p-3 space-y-3 md:flex-1 md:min-w-0">
               <div className="flex flex-wrap justify-between items-center gap-2">
                 <p className="text-sm font-medium flex items-center gap-2"><MessageSquare className="w-4 h-4 text-muted-foreground" />{isLandlord ? "Landlord conversation" : "Brand conversation"}</p>
                 <Button type="button" size="sm" variant="outline" onClick={() => setConversationOpen(value => !value)} aria-expanded={conversationOpen} data-testid="button-brand-conversation">{conversationOpen ? "Close conversation" : "Open conversation"}</Button>
@@ -1308,7 +1309,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             </div>
 
             {/* Key facts row */}
-            <div className={`grid grid-cols-2 md:grid-cols-4 gap-2 text-sm empty:hidden${isLandlord ? " md:flex-1 md:min-w-0" : ""}`}>
+            <div className="grid grid-cols-2 gap-2 text-sm empty:hidden md:flex-1 md:min-w-0">
               {c.backers && (
                 <div className="col-span-2">
                   <div className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
@@ -1557,9 +1558,15 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 relationship strip and activity summary; team editing and
                 the raw correspondence drawer stay staff-only. */}
             <div className="border-t border-border/40 mt-3 pt-2 order-6">
-            <div className="flex items-center gap-1.5 mb-2">
+            {/* Coverage sits in the header row; when nobody is set by hand the
+                server falls back to the BGP agents on this brand's deals. */}
+            <div className="flex items-center gap-2 flex-wrap mb-2">
               <Handshake className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-xs font-semibold uppercase tracking-wider text-foreground">BGP Relationship</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-foreground mr-1">BGP Relationship</span>
+              {(data.coverers || []).map((cov: any) => (
+                <CovererChip key={cov.id} cov={cov} companyId={companyId} />
+              ))}
+              {!isClientViewer && <BgpTeamMenu companyId={companyId} coverers={data.coverers || []} />}
             </div>
             <div className="space-y-2.5">
             <>
@@ -1567,68 +1574,72 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 Consolidated away in the single-strip pass, missed and asked
                 back (Woody, 2026-07-30). */}
             <BgpTakeStrip companyId={companyId} tab="activity" entities={commentaryEntities} hideWhenEmpty />
-            {/* BGP coverage — who covers this brand internally, plus
-                a click-to-edit role per person so we can label
-                Charlotte = Investment lead, Harriette = Leasing. */}
-            <div className="flex items-center gap-2 flex-wrap border-t pt-2">
-              <span className="text-[10px] text-muted-foreground font-medium">Coverage:</span>
-              {(data.coverers || []).map((cov: any) => (
-                <CovererChip key={cov.id} cov={cov} companyId={companyId} />
-              ))}
-              {!isClientViewer && <BgpTeamMenu companyId={companyId} coverers={data.coverers || []} />}
-            </div>
 
-            {/* Relationship strip — lead broker, last touchpoint, active contacts */}
-            {(c.bgp_contact_crm || data.contacts.length > 0) && (() => {
-              const lastContactedAt = data.contacts
-                .map((ct: any) => ct.last_interaction_at)
-                .filter(Boolean)
-                .sort()
-                .reverse()[0] as string | undefined;
-              const recent90d = data.contacts.filter((ct: any) => {
-                if (!ct.last_interaction_at) return false;
-                const d = new Date(ct.last_interaction_at);
-                return Date.now() - d.getTime() < 90 * 864e5;
-              }).length;
-              const daysSince = lastContactedAt
-                ? Math.floor((Date.now() - new Date(lastContactedAt).getTime()) / 864e5)
-                : null;
-              return (
-                <div className="border-t pt-2">
-                  <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                    <Handshake className="w-3 h-3" /> Relationship
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                    {c.bgp_contact_crm && (
-                      <div>
-                        <div className="text-[10px] text-muted-foreground">Lead broker</div>
-                        <div className="font-medium truncate">{c.bgp_contact_crm}</div>
-                      </div>
-                    )}
-                    <div>
-                      <div className="text-[10px] text-muted-foreground">Last touch</div>
-                      <div className={`font-medium ${
-                        daysSince == null ? "text-muted-foreground"
-                        : daysSince < 30 ? "text-emerald-700"
-                        : daysSince < 90 ? "text-amber-600"
-                        : "text-red-600"
-                      }`}>
-                        {daysSince == null ? "—"
-                         : daysSince === 0 ? "today"
-                         : daysSince === 1 ? "1 day ago"
-                         : `${daysSince} days ago`}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] text-muted-foreground">Active (90d)</div>
-                      <div className={`font-medium ${recent90d > 0 ? "text-emerald-700" : "text-muted-foreground"}`}>
-                        {recent90d}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
+            {/* One line: lead broker, last touch and email volume — from CRM
+                contacts AND the BGP inbox threads with the brand's people
+                (Honest Greens read "Last touch —" beside 49 inbox threads). */}
+            {(() => {
+              const senders = data.pendingContactSuggestions || [];
+              const touches = [...data.contacts.map((ct: any) => ct.last_interaction_at), ...senders.map(sd => sd.last_touch)].filter(Boolean) as string[];
+              const last = touches.sort().reverse()[0];
+              const daysSince = last ? Math.floor((Date.now() - new Date(last).getTime()) / 864e5) : null;
+              const threads = senders.reduce((n, sd) => n + (Number(sd.touches) || 0), 0);
+              const active90 = data.contacts.filter((ct: any) => ct.last_interaction_at && Date.now() - new Date(ct.last_interaction_at).getTime() < 90 * 864e5).length
+                + senders.filter(sd => sd.last_touch && Date.now() - new Date(sd.last_touch).getTime() < 90 * 864e5).length;
+              const parts = [
+                c.bgp_contact_crm ? <span key="lead">Lead <span className="font-medium text-foreground">{c.bgp_contact_crm}</span></span> : null,
+                <span key="touch">Last touch <span className={`font-medium ${daysSince == null ? "" : daysSince < 30 ? "text-emerald-700" : daysSince < 90 ? "text-amber-600" : "text-red-600"}`}>{daysSince == null ? "—" : daysSince === 0 ? "today" : daysSince === 1 ? "yesterday" : `${daysSince} days ago`}</span></span>,
+                threads ? <span key="threads"><span className="font-mono tabular-nums text-foreground">{threads}</span> email threads</span> : null,
+                active90 ? <span key="active"><span className="font-mono tabular-nums text-foreground">{active90}</span> active in 90 days</span> : null,
+              ].filter(Boolean);
+              return <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground" data-testid="brand-relationship-line">{parts}</div>;
             })()}
+
+            {/* Live tenancies — every property on the platform where
+                this brand resolves as a tenant via the canonical FK.
+                The reciprocal of the tenancy schedule's brand link.
+                Paired with Portfolio activity in one row; when there are
+                no live tenancies the activity block takes the full width. */}
+            <div className={liveLocations.length > 0 ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-start" : ""}>
+            {liveLocations.length > 0 && (
+              <Card>
+                <CardHeader className="p-3 pb-2">
+                  <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+                    <Building2 className="w-3.5 h-3.5" /> Live tenancies
+                    <Badge variant="outline" className="text-[10px]">{liveLocations.length}</Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-3 pt-0">
+                  <div className="space-y-1 max-h-[340px] overflow-y-auto pr-1">
+                    {liveLocations.map((p: any) => (
+                      <div key={p.id} className="flex items-center justify-between gap-2 p-1.5 rounded border bg-card min-w-0">
+                        <Link href={`/properties/${p.id}`} className="flex items-center gap-1.5 min-w-0 flex-1 hover:underline">
+                          <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                          <span className="text-xs font-medium truncate">{p.name}</span>
+                        </Link>
+                        <span className="flex items-center gap-1 shrink-0">
+                          <Badge variant="outline" className="text-[9px]">
+                            {p.units} unit{Number(p.units) === 1 ? "" : "s"}
+                          </Badge>
+                          {Number(p.total_rent_pa) > 0 && (
+                            <span className="text-[10px] text-muted-foreground tabular-nums">
+                              £{Math.round(Number(p.total_rent_pa) / 1000)}k pa
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Portfolio activity — replaces the old "Pitched into", which
+                conflated existing tenancies, fuzzy name mentions and target
+                lists and never saw the letting tracker. Three honest tiers
+                + where to pitch next (Woody, 2026-08-03). */}
+            <PortfolioActivityBlock companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} />
+            </div>
 
             {/* Key contacts now live on the sidebar (populated by RocketReach). */}
 
@@ -1773,51 +1784,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             {isBrand && <BrandViewingActivity companyId={companyId} />}
             {/* Active requirements moved into the unified Expansion intelligence zone below. */}
 
-            {/* Live tenancies — every property on the platform where
-                this brand resolves as a tenant via the canonical FK.
-                The reciprocal of the tenancy schedule's brand link.
-                Paired with Portfolio activity in one row; when there are
-                no live tenancies the activity block takes the full width. */}
-            <div className={liveLocations.length > 0 ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-start" : ""}>
-            {liveLocations.length > 0 && (
-              <Card>
-                <CardHeader className="p-3 pb-2">
-                  <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-                    <Building2 className="w-3.5 h-3.5" /> Live tenancies
-                    <Badge variant="outline" className="text-[10px]">{liveLocations.length}</Badge>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-3 pt-0">
-                  <div className="space-y-1 max-h-[340px] overflow-y-auto pr-1">
-                    {liveLocations.map((p: any) => (
-                      <div key={p.id} className="flex items-center justify-between gap-2 p-1.5 rounded border bg-card min-w-0">
-                        <Link href={`/properties/${p.id}`} className="flex items-center gap-1.5 min-w-0 flex-1 hover:underline">
-                          <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                          <span className="text-xs font-medium truncate">{p.name}</span>
-                        </Link>
-                        <span className="flex items-center gap-1 shrink-0">
-                          <Badge variant="outline" className="text-[9px]">
-                            {p.units} unit{Number(p.units) === 1 ? "" : "s"}
-                          </Badge>
-                          {Number(p.total_rent_pa) > 0 && (
-                            <span className="text-[10px] text-muted-foreground tabular-nums">
-                              £{Math.round(Number(p.total_rent_pa) / 1000)}k pa
-                            </span>
-                          )}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Portfolio activity — replaces the old "Pitched into", which
-                conflated existing tenancies, fuzzy name mentions and target
-                lists and never saw the letting tracker. Three honest tiers
-                + where to pitch next (Woody, 2026-08-03). */}
-            <PortfolioActivityBlock companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} />
-            </div>
 
             {/* Suggested BGP units — parked admin-only (WIP) so it doesn't
                 clutter the brand profile for the team. */}
@@ -4602,7 +4568,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   // items-stretch + h-full children so paired boards share one depth —
   // mismatched card bottoms left slabs of dead space (Woody, 2026-08-03).
   const pairCls = (isLandlord || isBrand)
-    ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-stretch [&>*]:h-full"
+    ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-stretch [&>*]:h-full [&>*:only-child]:md:col-span-2"
     : "space-y-3";
 
   return (
@@ -5174,6 +5140,9 @@ export function BrandInstagramCard({ companyId }: { companyId: string }) {
     </div>
   );
 
+  // No posts: the handle already sits in the key facts, and feed-status
+  // notes are commentary (Woody, 2026-09-23) — no card.
+  if ((data.status !== "feed" || !data.posts?.length) && !fmt(data.followers)) return null;
   if (data.status !== "feed" || !data.posts?.length) {
     const stateMessage =
       data.status === "not_configured"

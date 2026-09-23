@@ -710,6 +710,21 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       ).catch(() => empty);
       coverers = cov.rows;
     }
+    // Nobody set by hand → the BGP agents on this brand's deals cover it
+    // (Honest Greens showed no coverage after Rupert, Charlotte and Will ran
+    // its Canary Wharf letting — Woody, 2026-09-23).
+    if (coverers.length === 0) {
+      const fromDeals = await pool.query(
+        `SELECT DISTINCT ON (u.id) u.id, COALESCE(u.name, u.username, u.email) AS name, u.email, 'From deals' AS role
+           FROM crm_deals d
+           CROSS JOIN LATERAL unnest(COALESCE(d.internal_agent, ARRAY[]::text[])) AS agent(name)
+           JOIN users u ON lower(u.name) = lower(agent.name) AND u.is_active IS DISTINCT FROM false
+          WHERE d.tenant_id = $1 OR d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1
+          ORDER BY u.id LIMIT 6`,
+        [companyId]
+      ).catch(() => empty);
+      coverers = fromDeals.rows;
+    }
 
     // Email senders we've corresponded with at this company's domain
     // who AREN'T yet CRM contacts. Surfaced under Key contacts so the

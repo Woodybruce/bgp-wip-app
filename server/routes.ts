@@ -58,6 +58,7 @@ import { fetchPlanitPlanning } from "./planit-planning";
 import { lookupVoaByPostcode, voaSqliteAvailable } from "./voa-sqlite";
 import { searchPipnetRequirements, searchPipnetProperties, importPipnetRequirements, importPipnetProperties, inspectPipnetPropertySearch } from "./pipnet";
 import { startJob, getJobStatus } from "./brand-jobs";
+import { getBrandIdentity } from "./brand-identity";
 import { executeSeedSql } from "./seed";
 import { gunzipSync } from "zlib";
 import { invalidateContextCache } from "./chatbgp";
@@ -3088,8 +3089,15 @@ export async function registerRoutes(
       const name = suppliedName || email.split("@")[0].replace(/[._-]+/g, " ")
         .split(/\s+/).filter(Boolean).map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
       if (!name) return res.status(400).json({ error: "A contact name is required." });
-      const company = (await pool.query("SELECT id, name FROM crm_companies WHERE id = $1 AND merged_into_id IS NULL", [String(req.params.companyId)])).rows[0];
+      const company = (await pool.query("SELECT * FROM crm_companies WHERE id = $1 AND merged_into_id IS NULL", [String(req.params.companyId)])).rows[0];
       if (!company) return res.status(404).json({ error: "Source company not found." });
+      // Where they were discovered is no proof of employment — but an
+      // individual address on the brand's CONFIRMED website domain is
+      // (david.menendez@honestgreens.com, Woody 2026-09-23).
+      const identity = getBrandIdentity(company);
+      const emailDomain = namedEmail ? namedEmail.split("@")[1] : "";
+      const employer = identity.status === "verified" && identity.domain && emailDomain
+        && (emailDomain === identity.domain || emailDomain.endsWith(`.${identity.domain}`)) ? company : null;
       const connection = await pool.connect();
       try {
         await connection.query("BEGIN");
@@ -3111,21 +3119,32 @@ export async function registerRoutes(
           await connection.query("ROLLBACK");
           return res.status(409).json({ error: "Email or LinkedIn conflicts with existing CRM contacts. Review those identities before adding this person." });
         }
+        if (existing && !existing.company_id && employer) {
+          await connection.query(`UPDATE crm_contacts SET company_id = $2, company_name = $3, updated_at = now() WHERE id = $1 AND company_id IS NULL`, [existing.id, employer.id, employer.name]);
+          await connection.query("COMMIT");
+          return res.json({ id: existing.id, name: existing.name, email: existing.email, created: false,
+            companyId: employer.id, companyName: employer.name, employerConfirmed: true });
+        }
         if (existing) {
           await connection.query("COMMIT");
           return res.json({ id: existing.id, name: existing.name, email: existing.email, created: false,
             companyId: existing.company_id, companyName: existing.company_name,
             employerConfirmed: !!existing.company_id && !!existing.company_name });
         }
-        const result = await connection.query(`
+        const values = [name, email || null, clean(req.body?.role) || null, clean(req.body?.phone) || null,
+          clean(req.body?.mobile) || null, linkedIn ? `https://${linkedIn}` : null];
+        const result = employer
+          ? await connection.query(`
+          INSERT INTO crm_contacts (name, email, role, phone, phone_mobile, linkedin_url, company_id, company_name, notes, enrichment_source)
+          VALUES ($1, $2, $3, $4, $5, $6, $8, $9, $7, 'promoted-from-email') RETURNING id`,
+            [...values, `Discovered from the ${company.name} profile; employer from their @${emailDomain} email.`, employer.id, employer.name])
+          : await connection.query(`
           INSERT INTO crm_contacts (name, email, role, phone, phone_mobile, linkedin_url, company_id, company_name, notes, enrichment_source)
           VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL, $7, 'promoted-from-email') RETURNING id`,
-        [name, email || null, clean(req.body?.role) || null, clean(req.body?.phone) || null,
-          clean(req.body?.mobile) || null, linkedIn ? `https://${linkedIn}` : null,
-          `Discovered from the ${company.name} profile; employer unconfirmed.`]);
+            [...values, `Discovered from the ${company.name} profile; employer unconfirmed.`]);
         await connection.query("COMMIT");
         res.json({ id: result.rows[0].id, name, email: email || null, created: true,
-          companyId: null, companyName: null, employerConfirmed: false });
+          companyId: employer?.id || null, companyName: employer?.name || null, employerConfirmed: !!employer });
       } catch (error) {
         await connection.query("ROLLBACK");
         throw error;

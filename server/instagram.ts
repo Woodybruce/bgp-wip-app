@@ -453,6 +453,11 @@ router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, 
     const failureRow = failure.rows[0] ?? null;
 
     if (!src.rows[0]) {
+      // A BGP-deal brand with a handle but no feed gets one now (in the
+      // background; the next open shows its posts). Stops after 3 failures.
+      if (configured && (failureRow?.attempts ?? 0) < 3) {
+        void import("./news-brand-linking").then(m => m.ensureBrandInstagramFeed(companyId)).catch(() => {});
+      }
       const state = instagramCardState({
         configured, handle, hasFeedSource: false, lastSyncedAt: null,
         failure: failureRow ? { attempts: failureRow.attempts, lastError: failureRow.last_error } : null,

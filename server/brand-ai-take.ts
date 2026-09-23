@@ -55,7 +55,7 @@ async function loadBrandSlice(companyId: string) {
     return { ...brandActionEvidence(rows[0], [], []), landlord: true, recorded_properties: properties.rows,
       portfolio_note: "These are linked CRM properties, not a complete or independently verified ownership portfolio.", activity };
   }
-  const [requirements, signals] = await Promise.all([
+  const [requirements, signals, deals] = await Promise.all([
     pool.query(`SELECT id, name, status, "use", size, requirement_locations, requirement_date, updated_at, sources
       FROM crm_requirements_leasing WHERE company_id = $1 AND LOWER(TRIM(COALESCE(status, ''))) = 'active'
       ORDER BY updated_at DESC NULLS LAST, id LIMIT 8`, [companyId]),
@@ -64,8 +64,23 @@ async function loadBrandSlice(companyId: string) {
         AND signal_type IN ('opening', 'closure', 'requirement')
         AND signal_date BETWEEN now() - interval '180 days' AND now()
       ORDER BY signal_date DESC, id LIMIT 12`, [companyId]),
+    // BGP's own deal history with the brand — the brief ignored it and read
+    // "strategy unconfirmed" for Honest Greens after a £60k letting (Woody,
+    // 2026-09-23: "the BGP take doesn't reflect our knowledge base").
+    pool.query(`SELECT d.id, d.name, d.status, d.deal_type, d.bgp_acting_for, d.internal_agent, d.team, d.updated_at, p.name AS property_name
+      FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
+      WHERE d.tenant_id = $1 OR d.purchaser_id = $1 OR d.vendor_id = $1
+      ORDER BY d.updated_at DESC NULLS LAST LIMIT 10`, [companyId]).catch(() => ({ rows: [] as any[] })),
   ]);
-  return brandActionEvidence(rows[0], requirements.rows, signals.rows);
+  return { ...brandActionEvidence(rows[0], requirements.rows, signals.rows), bgp_deals: deals.rows.map((d: any) => bgpDealEvidence(d)) };
+}
+
+const DEAL_STAGE: Record<string, string> = { OPP: "opportunity", AVA: "available", NEG: "negotiating", HOT: "heads of terms agreed", SOL: "with solicitors", EXC: "exchanged", COM: "completed", INV: "completed and invoiced", WIT: "withdrawn" };
+function bgpDealEvidence(d: any) {
+  return { id: d.id, property: d.property_name || d.name, type: d.deal_type || null, stage: DEAL_STAGE[String(d.status || "").toUpperCase()] || d.status || null,
+    // Fees, rents and the other side stay out: client logins read this brief.
+    bgp_acted_for: d.bgp_acting_for || null, bgp_agents: d.internal_agent || [], team: d.team || [],
+    last_updated: d.updated_at ? new Date(d.updated_at).toISOString().slice(0, 10) : null };
 }
 
 async function loadUkSlice(companyId: string) {
@@ -229,9 +244,10 @@ ${BRAND_BRIEF_EVIDENCE_RULES}
 Data — profile_context is displayed separately in the factual overview. Do not repeat it or treat a previous AI narrative, rollout label or static company size as evidence of current demand:
 ${JSON.stringify(d, null, 2)}
 
-Write a short action brief grounded in the recorded requirements and dated site events:
+Write a short action brief grounded in the recorded requirements, dated site events and BGP's own deal history (bgp_deals — deals BGP has done or is doing with this brand; name the property, stage and BGP agents):
 - State the strongest recorded property-demand evidence and its limits; if strategy is unconfirmed, say so instead of choosing a trajectory
 - Use a recorded active requirement's stated size, use and locations to suggest a suitable next check or shortlist; do not broaden its geography or assume a live mandate
+- When bgp_deals exist, lead with that relationship: a completed letting shows the brand takes space in this market and BGP knows the decision-makers — use it for the BGP angle and next step (e.g. the agent who ran it follows up on their next site)
 - Propose one concrete next step. Checking current requirements/contact is a useful action when the evidence is insufficient
 
 Never open by describing who they are — the reader just read that. Tone: punchy, specific, broker-to-broker. No fluff, no generic phrases.

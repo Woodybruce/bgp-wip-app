@@ -844,6 +844,50 @@ export async function ensureCuratedInstagramFeeds(limit = 100): Promise<{
   return { created, skipped, quotaRemaining: Math.max(0, room - created), excluded, errors };
 }
 
+// On-demand feed for one brand BGP is dealing with (Honest Greens had its
+// handle and a Canary Wharf letting but no feed — Woody, 2026-09-23). Same
+// quota, failure ledger and source row as the curated boot run; used when
+// the brand's Instagram card is opened. Returns what happened.
+const igFeedInFlight = new Set<string>();
+export async function ensureBrandInstagramFeed(companyId: string): Promise<{ status: "created" | "exists" | "skipped" | "failed"; detail?: string }> {
+  if (igFeedInFlight.has(companyId)) return { status: "skipped", detail: "already running" };
+  igFeedInFlight.add(companyId);
+  let url = "";
+  const fail = async (detail: string) => {
+    await ensureFailureTable().catch(() => {});
+    if (url) await pool.query(
+      `INSERT INTO rssapp_feed_failures (url, attempts, last_error, last_attempt) VALUES ($1, 1, $2, now())
+       ON CONFLICT (url) DO UPDATE SET attempts = rssapp_feed_failures.attempts + 1, last_error = $2, last_attempt = now()`,
+      [url, detail.slice(0, 200)]).catch(() => {});
+    console.warn(`[rssapp] Instagram feed for ${companyId} not created: ${detail}`);
+    return { status: "failed" as const, detail };
+  };
+  try {
+    const row = (await pool.query(`SELECT c.id, c.name, c.company_type, c.instagram_handle,
+        EXISTS (SELECT 1 FROM crm_deals d WHERE d.tenant_id = c.id) AS on_deal,
+        EXISTS (SELECT 1 FROM news_sources ns WHERE ns.category = 'brand:' || c.id AND ns.type = $2) AS fed
+      FROM crm_companies c WHERE c.id = $1 AND c.merged_into_id IS NULL`, [companyId, SOCIAL_TYPE.instagram])).rows[0];
+    if (!row) return { status: "skipped", detail: "not found" };
+    if (row.fed) return { status: "exists" };
+    const handle = cleanIgHandle(row.instagram_handle);
+    if (!handle || !row.on_deal || !/^tenant/i.test(row.company_type || "")) return { status: "skipped", detail: "only tenant brands on a BGP deal get an on-demand feed" };
+    url = `https://www.instagram.com/${handle}/`;
+    const health = await rssappHealth();
+    if (!health.ok) return await fail(`RSS.app not ready: ${health.error}`);
+    const quota = Number(process.env.RSSAPP_FEED_QUOTA || 100);
+    if ((health.feedCount ?? 0) >= quota) return await fail(`RSS.app plan is full (${health.feedCount} of ${quota} feeds)`);
+    const feed = await createRssAppFeed(url);
+    await db.insert(newsSources).values({ name: `${row.name} (instagram)`, url, feedUrl: feed.rss_feed_url, type: SOCIAL_TYPE.instagram,
+      category: `${BRAND_CATEGORY_PREFIX}${row.id}`, active: true });
+    await pool.query(`DELETE FROM rssapp_feed_failures WHERE url = $1`, [url]).catch(() => {});
+    return { status: "created" };
+  } catch (err: any) {
+    return await fail(String(err?.message || "feed creation failed"));
+  } finally {
+    igFeedInFlight.delete(companyId);
+  }
+}
+
 // The newsletter discovery gate rejects these as new-company names without
 // more evidence. Existing-brand news uses the identity matcher instead.
 const COMMON_WORD_BRAND_TOKENS = new Set([

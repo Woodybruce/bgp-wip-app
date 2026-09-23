@@ -179,7 +179,9 @@ test('phone-shared preparation control separates core readiness from contact rev
   } });
   const tree = app.render();
   assert.equal(tree.type, 'details');
-  assert.match(content(descendants(tree).find(node => node.type === 'summary')), /Core facts prepared.*Contacts need review.*Details/);
+  const summary = content(descendants(tree).find(node => node.type === 'summary'));
+  // A prepared profile says nothing in the summary; contact review lives in Key contacts (Woody, 2026-09-23).
+  assert.match(summary, /Details/); assert.doesNotMatch(summary, /Core facts prepared|Contacts need review/);
   assert.match(content(tree), /2.*of.*9.*automatic sections prepared/);
   assert.match(content(tree), /background preparation does not verify people/);
 });
