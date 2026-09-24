@@ -36,7 +36,7 @@ export function CompanyProfileImage({ companyId, companyName, companyType, image
     return "aspect-square sm:aspect-auto";
   };
   if (!extras.length) {
-    return <div key={imageKey} className="rounded-lg overflow-hidden border border-border bg-muted" data-testid="brand-overview-image">
+    return <div key={imageKey} className="rounded-xl overflow-hidden border border-card-border shadow-sm bg-muted" data-testid="brand-overview-image">
       <img
         src={`/api/brand/gallery-image/${encodeURIComponent(hero.id)}?full=1`}
         alt={`${companyName} cover photo`}
@@ -46,7 +46,7 @@ export function CompanyProfileImage({ companyId, companyName, companyType, image
       />
     </div>;
   }
-  return <div key={imageKey} className="grid grid-cols-2 sm:grid-cols-4 sm:grid-rows-2 gap-1 rounded-lg overflow-hidden border border-border bg-muted h-auto sm:h-80" data-testid="brand-overview-image">
+  return <div key={imageKey} className="grid grid-cols-2 sm:grid-cols-4 sm:grid-rows-2 gap-1 rounded-xl overflow-hidden border border-card-border shadow-sm bg-muted h-auto sm:h-80" data-testid="brand-overview-image">
     {[hero, ...extras].map((image, index) => (
       <img
         key={image.id}

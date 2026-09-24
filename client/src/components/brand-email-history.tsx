@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/compone
 import { Input } from "@/components/ui/input";
 import { AiCommentary, type CommentaryEntity } from "@/components/ai-commentary";
 
-type Conversation = { subject: string; messages: number; first: string; last: string; bgp: string[]; brand: string[]; others: string[]; preview: string };
+type Conversation = { subject: string; messages: number; first: string; last: string; bgp: string[]; brand: string[]; others: string[]; firms?: string[]; preview: string };
 type ThreadsResponse = { domain: string; total: number; conversations: Conversation[]; summary: { text: string; at: string } | null };
 
 const personName = (email: string) => email.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, ch => ch.toUpperCase());
@@ -69,7 +69,7 @@ export function BrandEmailHistory({ companyId, companyName, open, onOpenChange, 
                     <span><span className="font-mono tabular-nums">{conv.messages}</span> {conv.messages === 1 ? "email" : "emails"}</span>
                     {conv.bgp.length > 0 && <span>BGP <span className="text-foreground">{conv.bgp.map(personName).join(", ")}</span></span>}
                     {conv.brand.length > 0 && <span>{companyName} <span className="text-foreground">{conv.brand.map(personName).join(", ")}</span></span>}
-                    {conv.others.length > 0 && <span>Also <span className="text-foreground">{Array.from(new Set(conv.others.map(firmOf))).join(", ")}</span></span>}
+                    {conv.others.length > 0 && <span title={conv.others.join(", ")}>Also <span className="text-foreground">{(conv.firms?.length ? conv.firms : Array.from(new Set(conv.others.map(firmOf)))).join(", ")}</span></span>}
                   </div>
                   {conv.preview && <p className="text-xs text-muted-foreground line-clamp-2">“{conv.preview}”</p>}
                 </li>

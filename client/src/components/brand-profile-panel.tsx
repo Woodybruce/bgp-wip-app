@@ -401,7 +401,7 @@ type RepForm = {
 
 const EMPTY_REP_FORM: RepForm = { otherCompanyId: "", otherCompanyName: "", agent_type: "tenant_rep", region: "", contactId: undefined, contactName: undefined };
 
-export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { companyId: string; showPropertiesBoard?: boolean }) {
+export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat = false }: { companyId: string; showPropertiesBoard?: boolean; flat?: boolean }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const { setInput: setChatInput } = useChatBGPState();
@@ -1008,8 +1008,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     <div className={(isLandlord || isBrand)
       ? "flex flex-col gap-3 items-stretch w-full min-w-0"
       : "flex flex-col md:flex-row gap-3 items-start w-full min-w-0"}>
-    <Card data-testid="brand-profile-panel" className="flex-1 min-w-0 max-w-full overflow-hidden">
-      <CardHeader className="p-3 pb-2 flex flex-row items-start justify-between sticky top-0 z-20 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/85 border-b border-border/40">
+    // flat (the company page): no outer card, so these boards sit on the page
+    // exactly like Key contacts / Covenant below (Woody, 2026-09-24: "the
+    // bottom of the app is different").
+    <Card data-testid="brand-profile-panel" className={`flex-1 min-w-0 max-w-full ${flat ? "bg-transparent border-0 shadow-none rounded-none overflow-visible" : "overflow-hidden"}`}>
+      <CardHeader className={`${flat ? "px-0 py-2 bg-background/95 supports-[backdrop-filter]:bg-background/85" : "p-3 pb-2 bg-card/95 supports-[backdrop-filter]:bg-card/85"} flex flex-row items-start justify-between sticky top-0 z-20 backdrop-blur border-b border-border/40`}>
         <div className="flex flex-col gap-1 min-w-0 flex-1">
         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
           <Sparkles className="w-4 h-4 text-primary shrink-0" />
@@ -1069,7 +1072,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
         </div>
       </CardHeader>
 
-      <CardContent className="p-3 space-y-4">
+      <CardContent className={`${flat ? "px-0 py-3" : "p-3"} space-y-4`}>
         {/* Success commentary is dropped (Woody, 2026-09-23 — "we don't need the commentary"); progress and problems still show. */}
         {!isClientViewer && enrichMutation.message && !/^Profile (refreshed|checked)\./.test(enrichMutation.message) && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{enrichMutation.message}</p>}
         {!editing && (
@@ -1276,8 +1279,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 ticker) on the left; the Brand conversation takes the other
                 half (Woody, 2026-09-23: "combine the backers element with
                 About", "the brand conversation only needs to be half"). */}
-            <div className="flex flex-col md:flex-row gap-2.5 md:gap-4 md:items-start pt-2">
-            <div className="rounded-lg border border-border bg-card p-3 space-y-2 md:flex-1 md:min-w-0" data-testid="brand-factual-summary">
+            <div className="flex flex-col md:flex-row gap-2.5 md:gap-4 md:items-stretch pt-2">
+            <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-2 md:flex-1 md:min-w-0" data-testid="brand-factual-summary">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
               <p className="text-sm leading-relaxed break-words">{c.description || "The factual brand profile is awaiting preparation."}</p>
             {/* Key facts row */}
@@ -1492,11 +1495,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} />
             </div>
             </div>
-            <div className="rounded-lg border border-border bg-card p-3 space-y-3 md:flex-1 md:min-w-0">
-              {/* Always open on desktop (Woody, 2026-09-24). */}
+            <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-3 md:flex-1 md:min-w-0 flex flex-col">
+              {/* Always open on desktop, and as tall as About beside it (Woody, 2026-09-24). */}
               <p className="text-sm font-medium flex items-center gap-2"><MessageSquare className="w-4 h-4 text-muted-foreground" />{isLandlord ? "Landlord conversation" : "Brand conversation"}</p>
               <AskChatBGPInline brandName={c.name} isLandlord={isLandlord} />
-              <div className="h-80"><CompanyMiniChat companyId={companyId} companyName={c.name} fill /></div>
+              <div className="h-80 md:h-auto md:flex-1 md:min-h-[20rem]"><CompanyMiniChat companyId={companyId} companyName={c.name} fill /></div>
             </div>
 
             </div>
@@ -1604,7 +1607,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 the raw correspondence drawer stay staff-only. */}
             {/* Same card as About, Stores and the chat (Woody, 2026-09-24:
                 "some have white background others don't — need continuity"). */}
-            <div className="rounded-lg border border-border bg-card p-3 mt-2 order-6">
+            <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 mt-2 order-6">
             <div className="space-y-2.5 [&>*:first-child]:border-t-0 [&>*:first-child]:pt-0">
             <>
             {/* The relationship read is part of the one BGP take above
@@ -1823,7 +1826,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                  occupier wants. Order: header (score + scrape buttons) →
                  AI narrative → flags → internal requirements → Pipnet
                  requirements → signals feed → represented by → represents. */}
-            <div className="rounded-lg border border-border bg-card p-3 mt-2 order-9">
+            <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 mt-2 order-9">
             {/* Expansion score + brand narrative are occupier concepts — a
                 landlord board keeps the signals/agents below but not these
                 (Woody, 2026-09-08: the brand board was "infiltrating" it). */}
