@@ -24,14 +24,40 @@ export function CompanyProfileImage({ companyId, companyName, companyType, image
       {canRefresh && <BrandImageRefreshButton companyId={companyId} />}
     </div>;
   }
-  return <div key={imageKey} className="rounded-lg overflow-hidden border border-border bg-muted" data-testid="brand-overview-image">
-    <img
-      src={`/api/brand/gallery-image/${encodeURIComponent(hero.id)}?full=1`}
-      alt={`${companyName} cover photo`}
-      className="block w-full h-auto max-h-72 sm:max-h-80 object-contain"
-      decoding="async"
-      onError={() => setFailedImages(previous => imageKey && !previous.includes(imageKey) ? [...previous.filter(key => key.startsWith(`${companyId}:`)), imageKey] : previous)}
-    />
+  const markFailed = (key: string) => setFailedImages(previous => previous.includes(key) ? previous : [...previous.filter(k => k.startsWith(`${companyId}:`)), key]);
+  // The cover plus up to three more reviewed photos beside it (Woody,
+  // 2026-09-24: "still only one image").
+  const extras = candidates.filter(image => image.id !== hero.id && !failedImages.includes(`${companyId}:${image.id}`)).slice(0, 3);
+  // Desktop: 4×2 grid, cover takes the left half; the others fill the right
+  // half (one → whole half, two → a row each, three → one wide + two squares).
+  const tileCls = (index: number, extraCount: number) => {
+    if (index === 0 || extraCount === 1) return "col-span-2 sm:row-span-2 aspect-[2/1] sm:aspect-auto";
+    if (extraCount === 2 || index === 1) return "col-span-2 aspect-[2/1] sm:aspect-auto";
+    return "aspect-square sm:aspect-auto";
+  };
+  if (!extras.length) {
+    return <div key={imageKey} className="rounded-lg overflow-hidden border border-border bg-muted" data-testid="brand-overview-image">
+      <img
+        src={`/api/brand/gallery-image/${encodeURIComponent(hero.id)}?full=1`}
+        alt={`${companyName} cover photo`}
+        className="block w-full h-auto max-h-72 sm:max-h-80 object-contain"
+        decoding="async"
+        onError={() => imageKey && markFailed(imageKey)}
+      />
+    </div>;
+  }
+  return <div key={imageKey} className="grid grid-cols-2 sm:grid-cols-4 sm:grid-rows-2 gap-1 rounded-lg overflow-hidden border border-border bg-muted h-auto sm:h-80" data-testid="brand-overview-image">
+    {[hero, ...extras].map((image, index) => (
+      <img
+        key={image.id}
+        src={`/api/brand/gallery-image/${encodeURIComponent(image.id)}?full=1`}
+        alt={index === 0 ? `${companyName} cover photo` : `${companyName} photo`}
+        className={`block w-full h-full min-h-0 object-cover ${tileCls(index, extras.length)}`}
+        loading={index === 0 ? "eager" : "lazy"}
+        decoding="async"
+        onError={() => markFailed(`${companyId}:${image.id}`)}
+      />
+    ))}
   </div>;
 }
 
