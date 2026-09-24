@@ -47,11 +47,19 @@ export function pickBrandFeedPages(links: Array<{ url: string; text: string }>, 
       if (NOT_A_PAGE.test(`${link.url} ${link.text}`)) return false;
       // Match on the link's own words: the path's last segment or its text.
       const last = decodeURIComponent(path.split("/").filter(Boolean).at(-1) || "");
-      return re.test(last.replace(/[-_]/g, " ")) || re.test(link.text);
+      // Link text only counts when it reads like a menu item, not a paragraph
+      // on a promo tile ("Visit our studio to create your own perfume…").
+      return re.test(last.replace(/[-_]/g, " ")) || (link.text.split(/\s+/).length <= 4 && re.test(link.text));
     });
     // The index page (shallowest) beats single-venue / single-post pages;
     // English beats other languages on multi-language sites.
-    candidates.sort((a, b) => depth(a.url) - depth(b.url) || Number(!/\/en(\/|$)/.test(a.url)) - Number(!/\/en(\/|$)/.test(b.url)) || a.url.length - b.url.length);
+    // An index word as the whole last segment (/locations, /careers,
+    // /journal) beats a loose text match ("Find a halal Nando's").
+    const exact = (url: string) => {
+      const last = decodeURIComponent(new URL(url).pathname.split("/").filter(Boolean).at(-1) || "").replace(/[-_]/g, " ").trim();
+      return !!last && new RegExp(`^(${re.source})$`, "i").test(last);
+    };
+    candidates.sort((a, b) => Number(exact(b.url)) - Number(exact(a.url)) || depth(a.url) - depth(b.url) || Number(!/\/en(\/|$)/.test(a.url)) - Number(!/\/en(\/|$)/.test(b.url)) || a.url.length - b.url.length);
     if (candidates[0]) out[kind] = candidates[0].url;
     // No index page, but the homepage itself lists the venues
     // (/restaurants/soho, /restaurants/born …) — follow the homepage.
