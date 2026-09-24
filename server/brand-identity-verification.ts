@@ -499,7 +499,10 @@ const slug = (name: string) => name.normalize("NFKD").replace(/[̀-ͯ]/g, "").to
  * name itself as .com / .co.uk. Every proposal still has to pass the full
  * official-site proof before anything is written.
  */
+export let lastCandidateSearchNote: string | null = null;
+
 export async function discoverBrandWebsiteCandidates(company: any): Promise<string[]> {
+  lastCandidateSearchNote = null;
   const name = typeof company?.name === "string" ? company.name.trim() : "";
   if (!name) return [];
   const context = [company?.industry, company?.description, company?.ai_generated_fields?.instagram_handle || company?.instagram_handle ? `Instagram @${company?.ai_generated_fields?.instagram_handle || company?.instagram_handle}` : ""].filter(Boolean).join(" · ");
@@ -523,8 +526,13 @@ export async function discoverBrandWebsiteCandidates(company: any): Promise<stri
         tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 2 } as any],
         messages: [{ role: "user", content: prompt }],
       }, { timeout: 45_000, maxRetries: 0 });
-      take((resp.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n"));
-    } catch (error: any) { console.warn(`[brand-identity] website search failed for "${name}": ${error?.message}`); }
+      const answer = (resp.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n");
+      take(answer);
+      if (!found.length) lastCandidateSearchNote = `search gave no domains: ${answer.replace(/\s+/g, " ").slice(-160)}`;
+    } catch (error: any) {
+      lastCandidateSearchNote = `search failed: ${String(error?.message || error).slice(0, 160)}`;
+      console.warn(`[brand-identity] website search failed for "${name}": ${error?.message}`);
+    }
   }
   if (!found.length) {
     try {
@@ -562,6 +570,7 @@ export async function discoverAndVerifyBrandWebsite(
   const tried: string[] = [];
   let reachable: string | null = null;
   const failures: Record<string, string> = {};
+  if (!deps.candidates && lastCandidateSearchNote) failures["(search)"] = lastCandidateSearchNote;
   const queue = [...proposals];
   while (queue.length && tried.length < 6) {
     const domain = queue.shift()!;
