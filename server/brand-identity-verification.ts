@@ -303,7 +303,16 @@ async function readBrandOfficialPages(domain: string, fetchPage: (url: string, d
     return page;
   };
   let first: WebsitePage;
-  try { first = await checkedPage(`https://${normalized}/`); }
+  try {
+    // Some sites only answer on www. (chick-fil-a.com, cheez.com): the bare
+    // domain not resolving is not a dead site (Woody, 2026-09-24: "they are
+    // working when I checked").
+    try { first = await checkedPage(`https://${normalized}/`); }
+    catch (apexError: any) {
+      if (!isDeadWebsiteError(apexError) || normalized.startsWith("www.")) throw apexError;
+      try { first = await checkedPage(`https://www.${normalized}/`); } catch { throw apexError; }
+    }
+  }
   catch (error: any) {
     // Refused or reset by bot protection (Aldi, Caffè Nero): read it the way
     // a browser does. Dead domains and off-site redirects stay failures.
