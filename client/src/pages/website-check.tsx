@@ -74,7 +74,8 @@ function WebsiteRow({ row, group }: { row: Row; group: string }) {
     },
     onSuccess: (out: { status: string; domain?: string | null; suggestion?: string | null }) => {
       if (out.status === "verified") toast({ title: `${row.name} fixed`, description: out.domain || undefined });
-      else toast({ title: `${row.name}: not proven yet`, description: out.suggestion ? `Likely ${out.suggestion} — confirm it if it's right.` : "Nothing found — add the site with Other site if you know it." });
+      // The automatic proof can't get further on these — a person's look is the fix.
+      else toast({ title: `${row.name}: needs a person to check`, description: out.suggestion || saved ? `Open ${out.suggestion || saved} — if it's theirs, press Confirm. If not, use Other site or Dismiss.` : "Nothing found — add the site with Other site if you know it, or Dismiss." });
       done();
     },
     onError: (e: Error) => toast({ title: "Couldn't search", description: e.message, variant: "destructive" }),
