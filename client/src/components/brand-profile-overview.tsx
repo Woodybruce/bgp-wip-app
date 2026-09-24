@@ -207,7 +207,7 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
   const visible = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
   const abroadCountries = new Set(stores.filter(store => store.country && store.country !== "GB" && store.status !== "closed").map(store => store.country)).size;
   return (
-    <section className="rounded-lg border border-border bg-card p-3 space-y-3" data-testid="brand-stores-board">
+    <section className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-3" data-testid="brand-stores-board">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2"><Store className="w-4 h-4" />Stores</h3>
