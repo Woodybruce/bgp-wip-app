@@ -33,6 +33,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import { BrandEmailHistory } from "@/components/brand-email-history";
+import { BrandFeedCard } from "@/components/brand-feed-card";
 import { AiCommentary, type CommentaryEntity } from "@/components/ai-commentary";
 import {
   Sparkles, Store, TrendingUp, TrendingDown, Users, User, Handshake,
@@ -4861,7 +4862,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         );
       })()}
 
-      {!isLandlord && <BrandInstagramCard companyId={companyId} />}
+      {!isLandlord && <BrandFeedCard companyId={companyId} canSetUp={!sbIsClient} />}
       </div>
 
       {/* Menu / Best-sellers moved up — paired with Key contacts
@@ -5078,146 +5079,5 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         </CardContent>
       </Card>
     </aside>
-  );
-}
-
-// ─── Instagram card — latest posts via the brand's RSS.app feed ────────────
-// States from the server (server/instagram-card-state.ts):
-//   feed           → grid of recent posts; feed + zero posts = connected but
-//                    nothing synced yet (never an outage message)
-//   handle_only    → handle on file, no feed slot yet → "Not connected"
-//   feed_error     → feed creation failed at the provider — show the reason
-//   not_configured → the RSS.app feed service has no credentials
-//   no_handle      → card hides itself entirely
-// Every visible state links out to the live instagram.com account.
-export function BrandInstagramCard({ companyId }: { companyId: string }) {
-  const { data, isLoading } = useQuery<any>({
-    queryKey: ["/api/brand", companyId, "instagram"],
-    queryFn: async () => {
-      const r = await fetch(`/api/brand/${companyId}/instagram`, { headers: getAuthHeaders() });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
-    },
-    staleTime: 1000 * 60 * 15,
-  });
-
-  if (isLoading || !data || data.status === "no_handle" || !data.handle) return null;
-
-  const fmt = (n: number | null | undefined) => {
-    if (n == null) return null;
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-    return String(n);
-  };
-
-  const header = (
-    <CardHeader className="p-3 pb-2">
-      <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-        <Instagram className="w-3.5 h-3.5" /> Instagram
-        <a
-          href={data.externalUrl || `https://instagram.com/${data.handle}`}
-          target="_blank"
-          rel="noreferrer"
-          className="ml-auto text-[10px] text-muted-foreground hover:text-foreground normal-case font-normal"
-        >
-          @{data.handle}
-        </a>
-      </CardTitle>
-    </CardHeader>
-  );
-
-  const statsLine = fmt(data.followers) && (
-    <div className="text-[11px] text-muted-foreground">
-      <strong className="text-foreground">{fmt(data.followers)}</strong> followers
-      {fmt(data.postCount) && <> · <strong className="text-foreground">{fmt(data.postCount)}</strong> posts</>}
-    </div>
-  );
-
-  const lastSyncedLine = data.lastSyncedAt && (
-    <div className="text-[10px] text-muted-foreground">
-      Last synced {new Date(data.lastSyncedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
-    </div>
-  );
-
-  // No posts: the handle already sits in the key facts, and feed-status
-  // notes are commentary (Woody, 2026-09-23) — no card.
-  if ((data.status !== "feed" || !data.posts?.length) && !fmt(data.followers)) return null;
-  if (data.status !== "feed" || !data.posts?.length) {
-    const stateMessage =
-      data.status === "not_configured"
-        ? "Instagram feed service isn't configured."
-        : data.status === "feed_error"
-          ? `Feed error: ${data.error || "feed creation failed"}${data.attempts ? ` (${data.attempts} attempts)` : ""}`
-          : data.status === "handle_only"
-            ? "View on Instagram ↗"
-            : "Feed connected — no posts synced yet.";
-    return (
-      <Card>
-        {header}
-        <CardContent className="p-3 pt-0 space-y-1">
-          {statsLine}
-          {data.status === "handle_only" ? (
-            <a
-              href={data.externalUrl || `https://instagram.com/${data.handle}`}
-              target="_blank"
-              rel="noreferrer"
-              className="text-[11px] text-muted-foreground italic hover:text-foreground"
-            >
-              {stateMessage}
-            </a>
-          ) : (
-            <p className="text-[11px] text-muted-foreground italic">{stateMessage}</p>
-          )}
-          {lastSyncedLine}
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <Card>
-      {header}
-      <CardContent className="p-3 pt-0 space-y-2">
-        {statsLine}
-        {lastSyncedLine}
-        {/* Grid that fills the card and scrolls DOWN for the rest (Woody,
-            2026-08-19: "Instagram should scroll down and fill the board") —
-            capped height keeps it in step with the news column beside it. */}
-        <div className="grid grid-cols-3 gap-1 max-h-[600px] overflow-y-auto pb-1">
-          {data.posts.map((p: any, i: number) => (
-            <a
-              key={p.url || i}
-              href={p.url}
-              target="_blank"
-              rel="noreferrer"
-              className="aspect-square w-full rounded border border-border/60 overflow-hidden bg-muted relative group block"
-              title={p.title || ""}
-            >
-              {/* Caption sits BEHIND the image so a failed image load
-                  degrades to text instead of a blank tile. Instagram's CDN
-                  rejects hotlinks that carry a referrer — no-referrer makes
-                  the images actually render. */}
-              <div className="absolute inset-0 p-1.5 text-[9px] leading-tight text-muted-foreground overflow-hidden">
-                {(p.title || "").slice(0, 90)}
-              </div>
-              {p.imageUrl && (
-                <img
-                  // Served through our own proxy — direct CDN loads proved
-                  // flaky in-browser despite working server-side.
-                  src={`/api/ig-image?u=${encodeURIComponent(p.imageUrl)}`}
-                  alt=""
-                  className="absolute inset-0 w-full h-full object-cover"
-                  loading="lazy"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                />
-              )}
-              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-colors flex items-end p-1.5 opacity-0 group-hover:opacity-100">
-                <span className="text-white text-[9px] leading-tight line-clamp-3">{p.title}</span>
-              </div>
-            </a>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
   );
 }
