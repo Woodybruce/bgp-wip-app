@@ -237,7 +237,7 @@ export default function BrandsHub() {
         </div>
         <div className="flex items-center gap-2">
           {isClientHub && <ClientAddBrandButton />}
-          {!isClientHub && <Link href="/website-check">
+          {!isClientHub && <Link href="/brand-websites">
             <Button variant="outline" size="sm" data-testid="link-website-check">Websites to confirm <ChevronRight className="w-3 h-3 ml-1" /></Button>
           </Link>}
           <Link href="/companies?tab=tenants">

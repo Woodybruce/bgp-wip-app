@@ -383,7 +383,7 @@ function Router() {
       {/* Deep-link for a specific training module needs the legacy component */}
       <Route path="/aml-training/:id" component={AmlTraining} />
       <Route path="/brands" component={BrandsHub} />
-      <Route path="/website-check" component={WebsiteCheck} />
+      <Route path="/brand-websites" component={WebsiteCheck} />
       <Route path="/website" component={WebsitePage} />
       <Route path="/property-pathway" component={PropertyPathway} />
       <Route path="/pathway-review" component={PathwayReview} />
