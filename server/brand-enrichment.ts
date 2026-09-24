@@ -592,9 +592,22 @@ router.post("/api/brand/website-sweep/find", requireAuth, async (req: Request, r
     if (!await checkBrandScope(req)) return res.status(403).json({ error: "The website check is available in the staff view" });
     const companyId = String(req.body?.companyId || "");
     if (!companyId) return res.status(400).json({ error: "companyId required" });
+    // A search + re-check runs 30-120s — past the 45s request limit — so it
+    // runs as a job the page polls (same pattern as refresh-images).
     const { checkBrandWebsiteNow } = await import("./brand-website-sweep");
-    res.json(await checkBrandWebsiteNow(companyId));
+    const { startJob, getJobStatus } = await import("./brand-jobs");
+    const key = `website-find:${companyId}`;
+    const { alreadyRunning } = startJob(key, () => checkBrandWebsiteNow(companyId));
+    res.status(202).json({ accepted: true, alreadyRunning, jobKey: key, startedAt: getJobStatus(key)?.startedAt });
   } catch (err: any) { res.status(err.status || 500).json({ error: err.message }); }
+});
+
+router.get("/api/brand/website-sweep/find/:companyId", requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!await checkBrandScope(req)) return res.status(403).json({ error: "The website check is available in the staff view" });
+    const { getJobStatus } = await import("./brand-jobs");
+    res.json(getJobStatus(`website-find:${req.params.companyId}`) || { state: "idle" });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
 router.post("/api/brand/website-sweep/dismiss", requireAuth, async (req: Request, res: Response) => {

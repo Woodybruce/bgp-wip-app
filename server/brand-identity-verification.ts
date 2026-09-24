@@ -561,8 +561,10 @@ export async function discoverAndVerifyBrandWebsite(
   const proposals = await (deps.candidates || discoverBrandWebsiteCandidates)(company);
   const tried: string[] = [];
   let reachable: string | null = null;
-  for (const domain of proposals) {
-    if (domain === dead) continue;
+  const queue = [...proposals];
+  while (queue.length && tried.length < 6) {
+    const domain = queue.shift()!;
+    if (domain === dead || tried.includes(domain)) continue;
     tried.push(domain);
     try {
       const result = await verifyBrandIdentityFromOfficialSite(db, company, deps.fetchPage || readOfficialPage, deps.assess || assessOfficialWebsite, { discoveredDomain: domain, replaceSaved: !!deps.replaceDeadWebsite });
@@ -570,7 +572,11 @@ export async function discoverAndVerifyBrandWebsite(
       reachable = reachable || domain;
     } catch (error: any) {
       if (/changed during website verification/.test(error?.message || "")) throw error;
-      // Unreachable / not a site — try the next proposal.
+      // A proposal that forwards to another site (timeoutmarket.com →
+      // timeout.com, Time Out Group 2026-09-24) — try where it lands.
+      const landed = error instanceof OfficialSiteRedirectError ? normalizeBrandDomain(error.redirectTo) : null;
+      if (landed && !tried.includes(landed) && !queue.includes(landed)) queue.unshift(landed);
+      // Otherwise unreachable / not a site — try the next proposal.
     }
   }
   if (reachable) {
