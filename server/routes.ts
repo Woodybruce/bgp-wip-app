@@ -2814,6 +2814,8 @@ export async function registerRoutes(
   // comparables (status 'Investment Comp' / group 'Investment Comps'); ids:[...]
   // removes specific rows (the junk stubs). Dry-run unless confirm:true.
   // Manual trigger for the client team-diary → events sync (Landsec).
+  // RSS.app plan audit + prune (admin) — see server/rssapp-prune.ts.
+  (await import("./rssapp-prune")).registerRssAppPruneRoutes(app);
   // Schema drift: what shared/schema.ts expects that the live DB lacks.
   // GET is a dry run; POST adds the missing columns (nullable). The same
   // heal runs automatically at boot — see server/schema-drift.ts.
