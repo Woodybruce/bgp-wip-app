@@ -207,8 +207,11 @@ const ALL_BRAND_FEED_TYPES = BRAND_FEED_TABS.map(tab => tab.type);
 // locations page's existing sites, a jobs page's standing roles): undated
 // items from the source's first fetch. They show on the brand's tab but
 // aren't news — only later additions are.
+// A locations page's first read is the estate even when every site carries
+// a date (Pho / Level Out / Nando's stamp each venue page) — only sites
+// that appear later are openings.
 const BASELINE_SQL = `(a.fetched_at < first.at + interval '30 minutes'
-    AND abs(extract(epoch FROM (COALESCE(a.published_at, a.fetched_at) - a.fetched_at))) < 600)`;
+    AND (ns.type = '${BRAND_WEB_FEED_TYPES.locations}' OR abs(extract(epoch FROM (COALESCE(a.published_at, a.fetched_at) - a.fetched_at))) < 600))`;
 // Each source's first fetch, computed once per source (not per row).
 const FIRST_FETCH_JOIN = `LEFT JOIN (SELECT f.source_id, min(f.fetched_at) AS at FROM news_articles f
     WHERE f.source_id IN (SELECT id FROM news_sources WHERE type = ANY($TYPES)) GROUP BY f.source_id) first ON first.source_id = ns.id`;
@@ -256,7 +259,8 @@ async function callClaude(prompt: string) {
 }
 
 const tabLabel = (type: string) => BRAND_FEED_TABS.find(tab => tab.type === type)?.label || BRAND_WATCH_FILTERS.find(f => f.key !== "all" && f.types.includes(type))?.label || type;
-const clip = (text: string | null, n: number) => (text || "").replace(/\s+/g, " ").trim().slice(0, n);
+// Cut by characters, not UTF-16 units — a half emoji makes the request invalid JSON.
+const clip = (text: string | null, n: number) => Array.from((text || "").replace(/\s+/g, " ").trim()).slice(0, n).join("");
 
 export function brandFeedPrompt(brand: string, items: Array<{ title: string; summary: string | null; at: string; type: string; baseline?: boolean }>) {
   const line = (item: (typeof items)[number]) => `- [${tabLabel(item.type)}${item.baseline ? "" : ` · ${String(item.at).slice(0, 10)}`}] ${clip(item.title, 140)}${item.summary ? ` — ${clip(item.summary, 160)}` : ""}`;
