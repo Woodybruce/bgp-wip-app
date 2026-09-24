@@ -875,7 +875,9 @@ export async function ensureBrandInstagramFeed(companyId: string): Promise<{ sta
     const health = await rssappHealth();
     if (!health.ok) return await fail(`RSS.app not ready: ${health.error}`);
     const quota = Number(process.env.RSSAPP_FEED_QUOTA || 100);
-    if ((health.feedCount ?? 0) >= quota) return await fail(`RSS.app plan is full (${health.feedCount} of ${quota} feeds)`);
+    // A full plan isn't this feed's fault — don't count it towards the
+    // three-strikes cap, so the brand gets its feed once space is freed.
+    if ((health.feedCount ?? 0) >= quota) return { status: "failed", detail: `RSS.app plan is full (${health.feedCount} of ${quota} feeds)` };
     const feed = await createRssAppFeed(url);
     await db.insert(newsSources).values({ name: `${row.name} (instagram)`, url, feedUrl: feed.rss_feed_url, type: SOCIAL_TYPE.instagram,
       category: `${BRAND_CATEGORY_PREFIX}${row.id}`, active: true });
