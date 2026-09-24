@@ -32,6 +32,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
+import { BrandEmailHistory } from "@/components/brand-email-history";
 import { AiCommentary, type CommentaryEntity } from "@/components/ai-commentary";
 import {
   Sparkles, Store, TrendingUp, TrendingDown, Users, User, Handshake,
@@ -509,7 +510,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
   // Profile opens only read saved data. Provider work is scheduled in the
   // preparation queue or started explicitly with a Refresh action.
-  useEffect(() => { setEditing(false); }, [companyId]);
+  const [emailsOpen, setEmailsOpen] = useState(false);
+  useEffect(() => { setEditing(false); setEmailsOpen(false); }, [companyId]);
 
   const patchMutation = useMutation({
     mutationFn: async (body: Partial<BrandProfile["company"]>) => {
@@ -1275,7 +1277,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 half (Woody, 2026-09-23: "combine the backers element with
                 About", "the brand conversation only needs to be half"). */}
             <div className="flex flex-col md:flex-row gap-2.5 md:gap-4 md:items-start pt-2">
-            <div className="space-y-2 md:flex-1 md:min-w-0" data-testid="brand-factual-summary">
+            <div className="rounded-lg border border-border bg-card p-3 space-y-2 md:flex-1 md:min-w-0" data-testid="brand-factual-summary">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
               <p className="text-sm leading-relaxed break-words">{c.description || "The factual brand profile is awaiting preparation."}</p>
             {/* Key facts row */}
@@ -1477,16 +1479,20 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               const parts = [
                 c.bgp_contact_crm ? <span key="lead">Lead <span className="font-medium text-foreground">{c.bgp_contact_crm}</span></span> : null,
                 <span key="touch">Last touch <span className={`font-medium ${daysSince == null ? "" : daysSince < 30 ? "text-emerald-700" : daysSince < 90 ? "text-amber-600" : "text-red-600"}`}>{daysSince == null ? "—" : daysSince === 0 ? "today" : daysSince === 1 ? "yesterday" : `${daysSince} days ago`}</span></span>,
-                threads ? <span key="threads"><span className="font-mono tabular-nums text-foreground">{threads}</span> email threads</span> : null,
+                threads ? (stats
+                  ? <button key="threads" type="button" onClick={() => setEmailsOpen(true)} className="hover:text-foreground underline decoration-dotted underline-offset-2" data-testid="button-brand-emails"><span className="font-mono tabular-nums text-foreground">{threads}</span> email threads</button>
+                  : <span key="threads"><span className="font-mono tabular-nums text-foreground">{threads}</span> email threads</span>) : null,
                 active90 ? <span key="active"><span className="font-mono tabular-nums text-foreground">{active90}</span> {active90 === 1 ? "person" : "people"} active in 90 days</span> : null,
               ].filter(Boolean);
-              return <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground" data-testid="brand-relationship-line">{parts}</div>;
+              return <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground" data-testid="brand-relationship-line">{parts}
+                {stats && <BrandEmailHistory companyId={companyId} companyName={c.name} open={emailsOpen} onOpenChange={setEmailsOpen} entities={commentaryEntities} />}
+              </div>;
             })()}
 
             <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} />
             </div>
             </div>
-            <div className="rounded-lg border border-border p-3 space-y-3 md:flex-1 md:min-w-0">
+            <div className="rounded-lg border border-border bg-card p-3 space-y-3 md:flex-1 md:min-w-0">
               {/* Always open on desktop (Woody, 2026-09-24). */}
               <p className="text-sm font-medium flex items-center gap-2"><MessageSquare className="w-4 h-4 text-muted-foreground" />{isLandlord ? "Landlord conversation" : "Brand conversation"}</p>
               <AskChatBGPInline brandName={c.name} isLandlord={isLandlord} />
@@ -1596,8 +1602,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 for Bills / brands"). Clients get the AI read, coverage,
                 relationship strip and activity summary; team editing and
                 the raw correspondence drawer stay staff-only. */}
-            <div className="border-t border-border/40 mt-3 pt-2 order-6">
-            <div className="space-y-2.5">
+            {/* Same card as About, Stores and the chat (Woody, 2026-09-24:
+                "some have white background others don't — need continuity"). */}
+            <div className="rounded-lg border border-border bg-card p-3 mt-2 order-6">
+            <div className="space-y-2.5 [&>*:first-child]:border-t-0 [&>*:first-child]:pt-0">
             <>
             {/* The relationship read is part of the one BGP take above
                 (Woody, 2026-09-23: "combine this with the BGP take — it's
@@ -1608,7 +1616,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 The reciprocal of the tenancy schedule's brand link.
                 Paired with Portfolio activity in one row; when there are
                 no live tenancies the activity block takes the full width. */}
-            <div>
             {liveLocations.length > 0 && (
               <Card>
                 <CardHeader className="p-3 pb-2">
@@ -1641,8 +1648,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 </CardContent>
               </Card>
             )}
-
-            </div>
 
             {/* The Activity card and All correspondence drawer are gone — the BGP
                 take carries the relationship (Woody, 2026-09-23: "the activity
@@ -1818,7 +1823,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                  occupier wants. Order: header (score + scrape buttons) →
                  AI narrative → flags → internal requirements → Pipnet
                  requirements → signals feed → represented by → represents. */}
-            <div className="border-t border-border/40 mt-3 pt-2 order-9">
+            <div className="rounded-lg border border-border bg-card p-3 mt-2 order-9">
             {/* Expansion score + brand narrative are occupier concepts — a
                 landlord board keeps the signals/agents below but not these
                 (Woody, 2026-09-08: the brand board was "infiltrating" it). */}
@@ -2420,7 +2425,7 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
 
   return (
     <div className="border-t pt-2">
-      <div className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
+      <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1">
         <Sparkles className="w-3 h-3 text-primary" /> Similar tenants &amp; competitor set
         {generatedAt && (
           <span className="text-[10px] ml-1">· {new Date(generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
