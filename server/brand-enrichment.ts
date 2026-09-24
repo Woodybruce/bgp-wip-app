@@ -587,6 +587,17 @@ router.get("/api/brand/website-sweep", requireAuth, async (req: Request, res: Re
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
+router.post("/api/brand/website-sweep/dismiss", requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!await checkBrandScope(req)) return res.status(403).json({ error: "The website check is available in the staff view" });
+    const companyId = String(req.body?.companyId || "");
+    if (!companyId) return res.status(400).json({ error: "companyId required" });
+    const { dismissWebsiteCheck } = await import("./brand-website-sweep");
+    await dismissWebsiteCheck(companyId, (req as any).user?.email || (req as any).user?.name || null, req.body?.undo === true);
+    res.json({ ok: true });
+  } catch (err: any) { res.status(err.status || 500).json({ error: err.message }); }
+});
+
 router.get("/api/brand/enrich/status", requireAuth, async (req: Request, res: Response) => {
   try {
     if (!await checkBrandScope(req)) return res.status(403).json({ error: "Access denied" });
