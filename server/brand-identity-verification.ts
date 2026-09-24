@@ -561,6 +561,7 @@ export async function discoverAndVerifyBrandWebsite(
   const proposals = await (deps.candidates || discoverBrandWebsiteCandidates)(company);
   const tried: string[] = [];
   let reachable: string | null = null;
+  const failures: Record<string, string> = {};
   const queue = [...proposals];
   while (queue.length && tried.length < 6) {
     const domain = queue.shift()!;
@@ -576,6 +577,7 @@ export async function discoverAndVerifyBrandWebsite(
       // timeout.com, Time Out Group 2026-09-24) — try where it lands.
       const landed = error instanceof OfficialSiteRedirectError ? normalizeBrandDomain(error.redirectTo) : null;
       if (landed && !tried.includes(landed) && !queue.includes(landed)) queue.unshift(landed);
+      failures[domain] = String(error?.code || error?.message || "failed").slice(0, 140);
       // Otherwise unreachable / not a site — try the next proposal.
     }
   }
@@ -586,7 +588,7 @@ export async function discoverAndVerifyBrandWebsite(
       [company.id, JSON.stringify({ domain: reachable, checkedAt: new Date().toISOString(), tried, ...(dead ? { replacesDeadWebsite: dead } : {}) }), !!dead]);
     return { status: "needs_review", reason: `Found ${reachable}, but its pages didn't clearly prove it is this brand's own site — confirm it or enter the right one.`, domain: reachable, tried };
   }
-  return { status: "no_match", reason: proposals.length ? "None of the likely websites could be read" : "No likely official website was found", tried };
+  return { status: "no_match", reason: proposals.length ? "None of the likely websites could be read" : "No likely official website was found", tried, failures } as any;
 }
 
 

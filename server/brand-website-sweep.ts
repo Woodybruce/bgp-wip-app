@@ -49,7 +49,7 @@ export async function checkBrandWebsiteNow(companyId: string): Promise<{ status:
   await pool.query(`UPDATE crm_companies SET ai_generated_fields = ai_generated_fields #- '{website_check,status}' WHERE id=$1 AND ai_generated_fields->'website_check'->>'status' = 'dismissed'`, [companyId]).catch(() => {});
   const outcome = await checkOne(companyId);
   const check = (await pool.query("SELECT ai_generated_fields->'website_check' AS wc FROM crm_companies WHERE id=$1", [companyId])).rows[0]?.wc || {};
-  return { status: outcome, domain: check.domain || null, reason: check.reason || null, suggestion: check.suggestion || null };
+  return { status: outcome, domain: check.domain || null, reason: check.reason || null, suggestion: check.suggestion || null, tried: check.tried || null, failures: check.failures || null } as any;
 }
 
 async function checkOne(companyId: string): Promise<"verified" | "unknown"> {
@@ -83,7 +83,8 @@ async function checkOne(companyId: string): Promise<"verified" | "unknown"> {
   const verified = !!after && getBrandIdentity(after).status === "verified";
   await stamp(companyId, verified
     ? { status: "verified", domain: getBrandIdentity(after).domain }
-    : { status: "unknown", reason: result.reason || "No official website could be proven", suggestion: after?.ai_generated_fields?.website_suggestion?.domain || null, verdict: result.verdict || null });
+    : { status: "unknown", reason: result.reason || "No official website could be proven", suggestion: after?.ai_generated_fields?.website_suggestion?.domain || null, verdict: result.verdict || null,
+        tried: (result as any).tried || null, failures: (result as any).failures || null });
   return verified ? "verified" : "unknown";
 }
 
