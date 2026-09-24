@@ -359,9 +359,11 @@ export async function readBrandOfficialEvidence(domain: string, fetchPage: (url:
  * us" — as visible text, for listing a brand's stores from its own website
  * when map search has nothing (a new UK opening isn't on Google yet).
  */
-export async function readBrandLocationPages(domain: string, fetchPage: (url: string, domain: string) => Promise<WebsitePage> = readOfficialPage): Promise<Array<{ url: string; text: string }>> {
+// The brand's homepage as a visitor sees it: follows a soft redirect to the
+// real landing page and renders JavaScript-only shells.
+export async function readBrandHomepage(domain: string, fetchPage: (url: string, domain: string) => Promise<WebsitePage> = readOfficialPage): Promise<WebsitePage & { text: string }> {
   const normalized = normalizeBrandDomain(domain);
-  if (!normalized) return [];
+  if (!normalized) throw new Error("No website domain");
   let home = await fetchPage(`https://${normalized}/`, normalized);
   const landing = softRedirectTarget(home.html, home.url, normalized);
   if (landing && landing !== home.url) { try { home = await fetchPage(landing, normalized); } catch { /* keep the homepage */ } }
@@ -369,6 +371,29 @@ export async function readBrandLocationPages(domain: string, fetchPage: (url: st
     const rendered = await renderedOfficialPage(home.url, normalized);
     if (rendered) home = rendered;
   }
+  return { ...home, text: visibleText(home.html) };
+}
+
+export function pageLinks(html: string, baseUrl: string): Array<{ url: string; text: string }> {
+  const out: Array<{ url: string; text: string }> = [];
+  const seen = new Set<string>();
+  for (const match of html.matchAll(/<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    try {
+      const link = new URL(match[1].replace(/&amp;/g, "&"), baseUrl);
+      link.hash = "";
+      if (!/^https?:$/.test(link.protocol) || seen.has(link.toString())) continue;
+      seen.add(link.toString());
+      out.push({ url: link.toString(), text: visibleText(match[2]).trim().slice(0, 80) });
+    } catch { /* skip */ }
+    if (out.length >= 400) break;
+  }
+  return out;
+}
+
+export async function readBrandLocationPages(domain: string, fetchPage: (url: string, domain: string) => Promise<WebsitePage> = readOfficialPage): Promise<Array<{ url: string; text: string }>> {
+  const normalized = normalizeBrandDomain(domain);
+  if (!normalized) return [];
+  const home = await readBrandHomepage(normalized, fetchPage);
   const LOCATION_RE = /locations?|restaurants?|stores?|shops?|find[\s-]*us|our[\s-]*(sites|venues|cafes)|venues|visit[\s-]*us|locales|restaurantes|tiendas|standorte|boutiques|studios|clubs/i;
   const links: string[] = [];
   const linkText = new Map<string, string>();
