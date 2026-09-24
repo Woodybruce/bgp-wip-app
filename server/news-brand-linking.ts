@@ -810,7 +810,12 @@ export async function ensureCuratedInstagramFeeds(limit = 100): Promise<{
   const health = await rssappHealth();
   if (!health.ok) throw new Error(`RSS.app not ready: ${health.error}`);
   const quota = Number(process.env.RSSAPP_FEED_QUOTA || 100);
-  const room = Math.max(0, quota - (health.feedCount ?? 0));
+  // The bulk top-up stops short of the cap: the last slots belong to brand
+  // web feeds (openings / news / jobs / LinkedIn), market sources and
+  // on-demand deal-brand Instagram — every deploy re-ran this and swallowed
+  // any space freed for them (2026-09-24).
+  const reserve = Number(process.env.RSSAPP_WEB_RESERVE || 40);
+  const room = Math.max(0, quota - reserve - (health.feedCount ?? 0));
   const { plan, excluded } = await previewCuratedInstagramFeeds(Math.min(limit, room));
 
   let created = 0;

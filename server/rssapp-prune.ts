@@ -7,6 +7,7 @@
 // Feeds for brands on a BGP deal are never pruned.
 import type { Express } from "express";
 import { requireAuth, requireAdmin } from "./auth";
+import { startJob, getJobStatus } from "./brand-jobs";
 import { pool } from "./db";
 import { deleteRssAppFeed, listAllRssAppFeeds, type RssAppFeed } from "./rssapp";
 
@@ -66,31 +67,57 @@ export function registerRssAppPruneRoutes(app: Express) {
     try { res.json(await audit()); } catch (e: any) { res.status(500).json({ message: e?.message || "RSS.app audit failed" }); }
   });
 
+  // Runs as a background job: RSS.app allows only a few deletes a minute.
+  // makeRoom: N also frees the N quietest Instagram feeds of brands that
+  // aren't on a BGP deal (their brand page just loses the posts grid).
   app.post("/api/admin/rssapp/prune", requireAuth, requireAdmin, async (req, res) => {
     try {
       const wanted: PruneReason[] = Array.isArray(req.body?.reasons) && req.body.reasons.length
         ? req.body.reasons : ["unlinked", "switched_off", "brand_deleted", "never_posted", "quiet_180d"];
+      const makeRoom = Math.max(0, Math.min(Number(req.body?.makeRoom) || 0, 100));
       const report = await audit();
-      const targets = report.rows.filter(r => r.reason && wanted.includes(r.reason) && !r.onDeal);
-      if (req.body?.confirm !== true) return res.json({ dryRun: true, onPlan: report.onPlan, wouldDelete: targets.length, targets });
-      const deleted: string[] = [];
-      const failed: Array<{ feedId: string; error: string }> = [];
-      for (const t of targets) {
-        try {
-          await deleteRssAppFeed(t.feedId);
-          if (t.sourceId) {
-            // A deleted brand's row goes; otherwise keep the row (and its
-            // articles) but switch it off so nothing polls a dead feed.
-            if (t.reason === "brand_deleted") await pool.query(`DELETE FROM news_sources WHERE id = $1`, [t.sourceId]);
-            else await pool.query(`UPDATE news_sources SET active = false WHERE id = $1`, [t.sourceId]);
-          }
-          deleted.push(t.feedId);
-          await new Promise(r => setTimeout(r, 250));
-        } catch (e: any) { failed.push({ feedId: t.feedId, error: String(e?.message || e).slice(0, 200) }); }
+      const targets: Array<(typeof report.rows)[number] & { why: string }> = report.rows
+        .filter(r => r.reason && wanted.includes(r.reason) && !r.onDeal).map(r => ({ ...r, why: r.reason as string }));
+      if (makeRoom) {
+        const quiet = report.rows
+          .filter(r => !r.reason && !r.onDeal && r.sourceId && r.type === "rssapp_instagram")
+          .sort((a, b) => (a.lastArticle ? Date.parse(a.lastArticle) : 0) - (b.lastArticle ? Date.parse(b.lastArticle) : 0) || a.articles - b.articles)
+          .slice(0, makeRoom);
+        targets.push(...quiet.map(r => ({ ...r, why: "make_room" })));
       }
-      // Brands refused while the plan was full get their three tries back.
-      if (deleted.length) await pool.query(`DELETE FROM rssapp_feed_failures WHERE last_error LIKE 'RSS.app plan is full%'`).catch(() => {});
-      res.json({ dryRun: false, onPlanBefore: report.onPlan, deleted: deleted.length, failed });
+      if (req.body?.confirm !== true) return res.json({ dryRun: true, onPlan: report.onPlan, wouldDelete: targets.length, targets: targets.map(t => ({ name: t.sourceName || t.title, why: t.why, lastArticle: t.lastArticle })) });
+      const { alreadyRunning } = startJob("rssapp-prune", async () => {
+        const deleted: string[] = [];
+        const failed: Array<{ feedId: string; error: string }> = [];
+        for (const t of targets) {
+          for (let attempt = 1; attempt <= 4; attempt++) {
+            try {
+              await deleteRssAppFeed(t.feedId);
+              if (t.sourceId) {
+                // A deleted brand's row goes; otherwise keep the row (and its
+                // articles) but switch it off so nothing polls a dead feed.
+                if (t.reason === "brand_deleted") await pool.query(`DELETE FROM news_sources WHERE id = $1`, [t.sourceId]);
+                else await pool.query(`UPDATE news_sources SET active = false WHERE id = $1`, [t.sourceId]);
+              }
+              deleted.push(t.feedId);
+              break;
+            } catch (e: any) {
+              if (/429|rate limit/i.test(String(e?.message)) && attempt < 4) { await new Promise(r => setTimeout(r, 20_000 * attempt)); continue; }
+              failed.push({ feedId: t.feedId, error: String(e?.message || e).slice(0, 200) });
+              break;
+            }
+          }
+          await new Promise(r => setTimeout(r, 12_000));
+        }
+        // Brands refused while the plan was full get their three tries back.
+        if (deleted.length) await pool.query(`DELETE FROM rssapp_feed_failures WHERE last_error LIKE 'RSS.app plan is full%'`).catch(() => {});
+        return { onPlanBefore: report.onPlan, deleted: deleted.length, failed };
+      });
+      res.status(202).json({ accepted: true, alreadyRunning, targets: targets.length });
     } catch (e: any) { res.status(500).json({ message: e?.message || "RSS.app prune failed" }); }
+  });
+
+  app.get("/api/admin/rssapp/prune", requireAuth, requireAdmin, async (_req, res) => {
+    res.json(getJobStatus("rssapp-prune") || { state: "idle" });
   });
 }
