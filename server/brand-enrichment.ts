@@ -587,6 +587,16 @@ router.get("/api/brand/website-sweep", requireAuth, async (req: Request, res: Re
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
+router.post("/api/brand/website-sweep/find", requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!await checkBrandScope(req)) return res.status(403).json({ error: "The website check is available in the staff view" });
+    const companyId = String(req.body?.companyId || "");
+    if (!companyId) return res.status(400).json({ error: "companyId required" });
+    const { checkBrandWebsiteNow } = await import("./brand-website-sweep");
+    res.json(await checkBrandWebsiteNow(companyId));
+  } catch (err: any) { res.status(err.status || 500).json({ error: err.message }); }
+});
+
 router.post("/api/brand/website-sweep/dismiss", requireAuth, async (req: Request, res: Response) => {
   try {
     if (!await checkBrandScope(req)) return res.status(403).json({ error: "The website check is available in the staff view" });

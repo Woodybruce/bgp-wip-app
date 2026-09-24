@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Check, Globe, Search, X } from "lucide-react";
+import { Check, Globe, Loader2, Search, X } from "lucide-react";
 
 type Row = { id: string; name: string; company_type: string | null; saved_website: string | null; reason: string | null; suggestion: string | null; verdict: any };
 type SweepResponse = { sweep: { status: string; finishedAt?: string } | null; verifiedBrands: number; unknownCount: number; unknown: Row[] };
@@ -60,7 +60,16 @@ function WebsiteRow({ row, group }: { row: Row; group: string }) {
     onSuccess: () => { toast({ title: `${row.name} dismissed` }); done(); },
     onError: (e: Error) => toast({ title: "Couldn't dismiss", description: e.message, variant: "destructive" }),
   });
-  const busy = confirm.isPending || dismiss.isPending;
+  const find = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/brand/website-sweep/find", { companyId: row.id })).json(),
+    onSuccess: (out: { status: string; domain?: string | null; suggestion?: string | null }) => {
+      if (out.status === "verified") toast({ title: `${row.name} fixed`, description: out.domain || undefined });
+      else toast({ title: `${row.name}: not proven yet`, description: out.suggestion ? `Likely ${out.suggestion} — confirm it if it's right.` : "Nothing found — add the site with Other site if you know it." });
+      done();
+    },
+    onError: (e: Error) => toast({ title: "Couldn't search", description: e.message, variant: "destructive" }),
+  });
+  const busy = confirm.isPending || dismiss.isPending || find.isPending;
   // "Looks right" means the SAVED site checked out — confirming it is the main action.
   const savedFirst = group === "confirm" || !likely || likely === saved;
   return (
@@ -77,6 +86,9 @@ function WebsiteRow({ row, group }: { row: Row; group: string }) {
         {saved && savedFirst && <Button size="sm" disabled={busy} onClick={() => confirm.mutate(saved)} data-testid="website-check-confirm-saved"><Check className="w-3.5 h-3.5" />Confirm {saved}</Button>}
         {likely && likely !== saved && <Button size="sm" variant={savedFirst ? "outline" : "default"} disabled={busy} onClick={() => confirm.mutate(likely)} data-testid="website-check-confirm-likely"><Check className="w-3.5 h-3.5" />{savedFirst ? `Use ${likely}` : `Confirm ${likely}`}</Button>}
         {saved && !savedFirst && <Button size="sm" variant="outline" disabled={busy} onClick={() => confirm.mutate(saved)} data-testid="website-check-confirm-saved"><Check className="w-3.5 h-3.5" />Keep saved</Button>}
+        <Button size="sm" variant={!saved && !likely ? "default" : "outline"} disabled={busy} onClick={() => find.mutate()} title="Search the web and check the brand's site again now" data-testid="website-check-find">
+          {find.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}{find.isPending ? "Searching…" : "Find website"}
+        </Button>
         {editing ? (
           <form className="flex items-center gap-1.5" onSubmit={e => { e.preventDefault(); if (other.trim()) confirm.mutate(other.trim()); }}>
             <Input autoFocus value={other} onChange={e => setOther(e.target.value)} placeholder="brand.com" className="h-8 w-40" aria-label={`Website for ${row.name}`} />
