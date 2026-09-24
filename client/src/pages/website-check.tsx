@@ -24,7 +24,7 @@ const GROUPS: Array<[string, string, string]> = [
   ["alt", "Better site found", "The saved site didn't prove out and a likely replacement was found."],
   ["dead", "Saved address is wrong", "The saved address doesn't exist (usually an old guess like brandname.com) — the brand's real site is shown in green where one was found."],
   ["wrong", "Different business", "The saved domain belongs to someone else."],
-  ["unnamed", "Doesn't name the brand", "The page loads but never clearly names the brand — often a group or holding site."],
+  ["unnamed", "Needs a quick look", "The site loads, but the check couldn't tie it to this brand for sure — often a generic guess like brandname.com. Open it: confirm if it's theirs, otherwise use the green one or Find website."],
   ["blocked", "Blocks checks", "Bot protection stopped the automatic check. A quick look and confirm fixes these."],
   ["none", "Nothing found", "No credible website found. Add it if you know it."],
 ];
