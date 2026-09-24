@@ -152,6 +152,8 @@ installGoogleBudgetGuard();
       updated_at TIMESTAMP DEFAULT now()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_lease_events_property ON lease_events(property_id)`,
+    // Brand feed / Brand watch read each source's articles and first fetch.
+    `CREATE INDEX IF NOT EXISTS idx_news_articles_source_fetched ON news_articles(source_id, fetched_at)`,
     `CREATE INDEX IF NOT EXISTS idx_lease_events_date ON lease_events(event_date)`,
     `CREATE INDEX IF NOT EXISTS idx_lease_events_status ON lease_events(status)`,
     `CREATE TABLE IF NOT EXISTS property_intelligence_cache (
