@@ -97,6 +97,7 @@ const ExpensesRevolut = lazy(() => import("@/pages/expenses-revolut"));
 const AvailableUnitsPage = lazy(() => import("@/pages/available-units"));
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
 const BrandsHub = lazy(() => import("@/pages/brands-hub"));
+const WebsiteCheck = lazy(() => import("@/pages/website-check"));
 const TasksPage = lazy(() => import("@/pages/tasks"));
 const CadMeasure = lazy(() => import("@/pages/cad-measure"));
 const LeaseEvents = lazy(() => import("@/pages/lease-events"));
@@ -382,6 +383,7 @@ function Router() {
       {/* Deep-link for a specific training module needs the legacy component */}
       <Route path="/aml-training/:id" component={AmlTraining} />
       <Route path="/brands" component={BrandsHub} />
+      <Route path="/website-check" component={WebsiteCheck} />
       <Route path="/website" component={WebsitePage} />
       <Route path="/property-pathway" component={PropertyPathway} />
       <Route path="/pathway-review" component={PathwayReview} />

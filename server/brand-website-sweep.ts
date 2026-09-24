@@ -36,9 +36,18 @@ async function stamp(companyId: string, check: Record<string, unknown>) {
     [companyId, JSON.stringify({ ...check, at: new Date().toISOString() })]);
 }
 
+/** A person set this brand aside (closed, not a real brand): off the list, and later sweeps leave it there. */
+export async function dismissWebsiteCheck(companyId: string, by: string | null, undo = false): Promise<void> {
+  const row = (await pool.query("SELECT ai_generated_fields->'website_check' AS wc FROM crm_companies WHERE id=$1", [companyId])).rows[0];
+  if (!row) throw Object.assign(new Error("Brand not found"), { status: 404 });
+  const previous = row.wc || {};
+  await stamp(companyId, undo ? { ...previous, status: "unknown", dismissedBy: null } : { ...previous, status: "dismissed", dismissedBy: by });
+}
+
 async function checkOne(companyId: string): Promise<"verified" | "unknown"> {
   const company = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
   if (!company) return "unknown";
+  if (company.ai_generated_fields?.website_check?.status === "dismissed" && getBrandIdentity(company).status !== "verified") return "unknown";
   if (getBrandIdentity(company).status === "verified") { await stamp(companyId, { status: "verified", domain: getBrandIdentity(company).domain }); return "verified"; }
   let result: { status: string; reason?: string; domain?: string; verdict?: unknown } = { status: "needs_review" };
   try {
@@ -152,6 +161,9 @@ export async function readWebsiteSweep(): Promise<any> {
         c.ai_generated_fields->'website_check'->>'reason' AS reason, c.ai_generated_fields->'website_check'->>'suggestion' AS suggestion,
         c.ai_generated_fields->'website_check'->>'at' AS checked_at, c.ai_generated_fields->'website_check'->'verdict' AS verdict
       FROM crm_companies c WHERE ${BRAND_FILTER} AND c.ai_generated_fields->'website_check'->>'status' = 'unknown'
+        -- confirmed on the brand page since the sweep stamped it: not unknown
+        -- any more (Woody, 2026-09-24: "I've been clicking and they keep reappearing")
+        AND COALESCE(c.ai_generated_fields->'brand_identity'->>'status', '') <> 'verified'
       ORDER BY (c.company_type ILIKE 'tenant%') DESC, c.name`)).rows;
   const verifiedCount = (await pool.query(`SELECT COUNT(*)::int AS n FROM crm_companies c WHERE c.merged_into_id IS NULL AND c.ai_generated_fields->'brand_identity'->>'status' = 'verified'`)).rows[0].n;
   return { sweep: state, verifiedBrands: verifiedCount, unknownCount: unknown.length, unknown };
