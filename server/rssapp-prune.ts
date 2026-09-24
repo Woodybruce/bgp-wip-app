@@ -88,6 +88,8 @@ export function registerRssAppPruneRoutes(app: Express) {
           await new Promise(r => setTimeout(r, 250));
         } catch (e: any) { failed.push({ feedId: t.feedId, error: String(e?.message || e).slice(0, 200) }); }
       }
+      // Brands refused while the plan was full get their three tries back.
+      if (deleted.length) await pool.query(`DELETE FROM rssapp_feed_failures WHERE last_error LIKE 'RSS.app plan is full%'`).catch(() => {});
       res.json({ dryRun: false, onPlanBefore: report.onPlan, deleted: deleted.length, failed });
     } catch (e: any) { res.status(500).json({ message: e?.message || "RSS.app prune failed" }); }
   });
