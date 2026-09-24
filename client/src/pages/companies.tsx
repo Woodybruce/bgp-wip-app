@@ -1438,7 +1438,7 @@ function CompanyDetail({ id }: { id: string }) {
               scoped viewers. */}
           <AccountEntitiesPanel companyId={id} hideSingleEntity={/^tenant/i.test(company.companyType || "")} />
 
-          {isLenderCo ? <LenderPanel companyId={id} company={company} /> : <BrandProfilePanel companyId={id} showPropertiesBoard={usePropertiesBoard} />}
+          {isLenderCo ? <LenderPanel companyId={id} company={company} /> : <BrandProfilePanel companyId={id} showPropertiesBoard={usePropertiesBoard} flat />}
 
           {/* BGP Team — landlords get it in the brand-profile sidebar (next
               to the Gallery) so the right column fills and stays aligned.

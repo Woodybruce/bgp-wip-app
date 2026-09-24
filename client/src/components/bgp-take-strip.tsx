@@ -93,7 +93,7 @@ export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty, f
   if (hideWhenEmpty && !isLoading && !text && !running && !refreshing && !currentRefreshError && !intro) return null;
 
   return (
-    <div className="rounded-md border border-border bg-muted/40 p-2.5">
+    <div className="rounded-xl border border-card-border bg-card shadow-sm p-3">
       {intro && (
         <>
           <AiCommentary text={intro} entities={entities} size="sm" />

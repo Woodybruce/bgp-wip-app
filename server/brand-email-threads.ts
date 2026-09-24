@@ -33,6 +33,7 @@ export type EmailConversation = {
   bgp: string[];
   brand: string[];
   others: string[];
+  firms?: string[];
   preview: string;
 };
 
@@ -97,20 +98,34 @@ async function loadConversations(companyId: string) {
   if (!c) return null;
   if (!c.domain) return { company: c, conversations: [] as EmailConversation[] };
   const rows = (await pool.query(BRAND_EMAIL_ROWS_SQL, [`%@${c.domain}`, companyId])).rows;
-  return { company: c, conversations: groupEmailConversations(rows, c.domain) };
+  const conversations = groupEmailConversations(rows, c.domain);
+  // Name the other firms copied in from the CRM by their email domain
+  // (cwg.com → Canary Wharf Group), falling back to the domain itself.
+  const domains = Array.from(new Set(conversations.flatMap(conv => conv.others.map(o => o.split("@")[1]))));
+  const firmByDomain = new Map<string, string>();
+  if (domains.length) {
+    const hits = await pool.query(
+      `SELECT DISTINCT ON (d) d, name FROM (
+         SELECT LOWER(REGEXP_REPLACE(REGEXP_REPLACE(COALESCE(domain, domain_url, ''), '^https?://(www\.)?', '', 'i'), '/.*$', '')) AS d, name
+           FROM crm_companies WHERE merged_into_id IS NULL) x
+        WHERE d = ANY($1) ORDER BY d, length(name)`, [domains]).catch(() => ({ rows: [] as any[] }));
+    for (const row of hits.rows) firmByDomain.set(row.d, row.name);
+  }
+  for (const conv of conversations) conv.firms = Array.from(new Set(conv.others.map(o => firmByDomain.get(o.split("@")[1]) || o.split("@")[1])));
+  return { company: c, conversations };
 }
 
 const nameFromEmail = (email: string) => email.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, ch => ch.toUpperCase());
 
 export function emailSummaryPrompt(brand: string, conversations: EmailConversation[]) {
   const lines = conversations.slice(0, 25).map(conv =>
-    `- "${conv.subject}" · ${conv.messages} msg · ${conv.first.slice(0, 10)} → ${conv.last.slice(0, 10)} · BGP: ${conv.bgp.map(nameFromEmail).join(", ") || "—"} · ${brand}: ${conv.brand.map(nameFromEmail).join(", ") || "—"} · others: ${conv.others.map(o => o.split("@")[1]).filter((d, i, all) => all.indexOf(d) === i).join(", ") || "—"} · latest: ${conv.preview.slice(0, 160)}`);
+    `- "${conv.subject}" · ${conv.messages} msg · ${conv.first.slice(0, 10)} → ${conv.last.slice(0, 10)} · BGP: ${conv.bgp.map(nameFromEmail).join(", ") || "—"} · ${brand}: ${conv.brand.map(nameFromEmail).join(", ") || "—"} · other people: ${conv.others.map(o => `${nameFromEmail(o)} (${o.split("@")[1]})`).join(", ") || "—"} · other firms: ${(conv.firms || []).join(", ") || "—"} · latest line (sender not recorded): ${conv.preview.slice(0, 160)}`);
   return `You are summarising BGP's (Bruce Gillingham Pollard, a London property agency) email history with ${brand} for a colleague who needs the context fast.
 
 Email conversations, newest first:
 ${lines.join("\n")}
 
-Write 3-5 short bullets, each starting "- **Label:** " (e.g. **What it's about:**, **Who:**, **Where it stands:**, **Also involved:**). Say what the emails are about (deals, sites, topics), who at BGP talks to whom at ${brand}, which other firms are copied (by company, from their email domain), and where the latest thread left off. Name people as they appear. No headings, no preamble. Under 110 words.`;
+Write 3-5 short bullets, each starting "- **Label:** " (e.g. **What it's about:**, **Who:**, **Where it stands:**, **Also involved:**). Say what the emails are about (deals, sites, topics), who at BGP talks to whom at ${brand}, which other firms are copied (use the "other firms" names), and where the latest thread left off. Only BGP-listed people are BGP; everyone under "other people" belongs to the firm of their email domain. The sender of the latest line is not recorded — don't attribute it to anyone. Use only the dates given. Name people as they appear. No headings, no preamble. Under 110 words.`;
 }
 
 export function registerBrandEmailThreadRoutes(router: Router) {

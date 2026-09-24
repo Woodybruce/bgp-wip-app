@@ -37,5 +37,6 @@ test('summary prompt names people and copied firms from the conversations', () =
   const prompt = emailSummaryPrompt('Honest Greens', groupEmailConversations(rows, 'honestgreens.com'));
   assert.match(prompt, /"Canary Wharf - Hg \(access\)" · 2 msg/);
   assert.match(prompt, /BGP: Rupert · Honest Greens: (David Menendez, Rasmus|Rasmus, David Menendez)/);
-  assert.match(prompt, /others: etchgroup\.com/);
+  assert.match(prompt, /other people: Richard \(etchgroup\.com\)/);
+  assert.match(prompt, /sender not recorded/);
 });
