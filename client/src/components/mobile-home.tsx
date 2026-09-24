@@ -214,24 +214,6 @@ export default function MobileHome() {
     enabled: isEquity,
     staleTime: 5 * 60 * 1000,
   });
-  // Pre-Xero (Sage) receivables from the cashflow board's LEGACY line, so
-  // the tile's Debtors figure matches the Finance page's to the pound.
-  const { data: equityCf } = useQuery<any>({
-    queryKey: ["/api/cashflow"],
-    queryFn: () => apiRequest("GET", "/api/cashflow").then(r => r.json()),
-    enabled: isEquity,
-    staleTime: 5 * 60 * 1000,
-  });
-  const sageOutstanding = useMemo(() => {
-    const line = equityCf?.lines?.find((l: any) => l.key === "LEGACY");
-    if (!line) return 0;
-    const byMonth: Record<string, { a?: number; b?: number }> = {};
-    for (const c of equityCf!.cells || []) {
-      if (c.line_id !== line.id) continue;
-      (byMonth[c.month] ||= {})[c.basis === "actual" ? "a" : "b"] = Number(c.amount) || 0;
-    }
-    return Object.values(byMonth).reduce((s, m) => s + (m.a ?? m.b ?? 0), 0);
-  }, [equityCf]);
   // Personal (my billing) vs Company (equity finance) tab on the combined
   // finance tile — Company is the default (Woody, 2026-08-22), an explicit
   // switch to Personal sticks per device.
@@ -535,7 +517,7 @@ export default function MobileHome() {
                   </div>
                   <div>
                     <p className={`text-base font-bold tabular-nums leading-tight ${(equityFin.debtors?.overdue || 0) > 0 ? "text-amber-400" : ""}`}>
-                      £{Math.round((equityFin.debtors?.outstanding || 0) + sageOutstanding).toLocaleString("en-GB")}
+                      £{Math.round(equityFin.debtors?.outstanding || 0).toLocaleString("en-GB")}
                     </p>
                     <p className="text-[10px] opacity-70">Debtors</p>
                   </div>
