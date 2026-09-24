@@ -32,6 +32,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
+import { BrandEmailHistory } from "@/components/brand-email-history";
 import { AiCommentary, type CommentaryEntity } from "@/components/ai-commentary";
 import {
   Sparkles, Store, TrendingUp, TrendingDown, Users, User, Handshake,
@@ -509,7 +510,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
   // Profile opens only read saved data. Provider work is scheduled in the
   // preparation queue or started explicitly with a Refresh action.
-  useEffect(() => { setEditing(false); }, [companyId]);
+  const [emailsOpen, setEmailsOpen] = useState(false);
+  useEffect(() => { setEditing(false); setEmailsOpen(false); }, [companyId]);
 
   const patchMutation = useMutation({
     mutationFn: async (body: Partial<BrandProfile["company"]>) => {
@@ -1477,10 +1479,14 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               const parts = [
                 c.bgp_contact_crm ? <span key="lead">Lead <span className="font-medium text-foreground">{c.bgp_contact_crm}</span></span> : null,
                 <span key="touch">Last touch <span className={`font-medium ${daysSince == null ? "" : daysSince < 30 ? "text-emerald-700" : daysSince < 90 ? "text-amber-600" : "text-red-600"}`}>{daysSince == null ? "—" : daysSince === 0 ? "today" : daysSince === 1 ? "yesterday" : `${daysSince} days ago`}</span></span>,
-                threads ? <span key="threads"><span className="font-mono tabular-nums text-foreground">{threads}</span> email threads</span> : null,
+                threads ? (stats
+                  ? <button key="threads" type="button" onClick={() => setEmailsOpen(true)} className="hover:text-foreground underline decoration-dotted underline-offset-2" data-testid="button-brand-emails"><span className="font-mono tabular-nums text-foreground">{threads}</span> email threads</button>
+                  : <span key="threads"><span className="font-mono tabular-nums text-foreground">{threads}</span> email threads</span>) : null,
                 active90 ? <span key="active"><span className="font-mono tabular-nums text-foreground">{active90}</span> {active90 === 1 ? "person" : "people"} active in 90 days</span> : null,
               ].filter(Boolean);
-              return <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground" data-testid="brand-relationship-line">{parts}</div>;
+              return <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground" data-testid="brand-relationship-line">{parts}
+                {stats && <BrandEmailHistory companyId={companyId} companyName={c.name} open={emailsOpen} onOpenChange={setEmailsOpen} entities={commentaryEntities} />}
+              </div>;
             })()}
 
             <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} />
