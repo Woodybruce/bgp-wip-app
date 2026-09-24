@@ -224,8 +224,12 @@ export function withDisplayTitles<T extends { title: string; summary: string | n
     if ((counts.get(keyOf(item)) || 0) < 2) return item;
     const sentence = (item.summary || "").replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s/)[0]?.slice(0, 110);
     const slug = decodeURIComponent(new URL(item.url).pathname.split("/").filter(Boolean).at(-1) || "").replace(/[-_]+/g, " ").replace(/\ben\b$/i, "").trim();
-    const title = sentence && sentence.length > 12 ? sentence : slug ? slug.replace(/\b\w/g, ch => ch.toUpperCase()) : item.title;
-    return { ...item, title };
+    if (sentence && sentence.length > 12) {
+      // The first sentence becomes the title — don't repeat it underneath.
+      const rest = (item.summary || "").replace(/\s+/g, " ").trim().slice(sentence.length).trim();
+      return { ...item, title: sentence, summary: rest || null };
+    }
+    return { ...item, title: slug ? slug.replace(/\b\w/g, ch => ch.toUpperCase()) : item.title };
   });
 }
 
@@ -293,15 +297,17 @@ async function readCache(key: string) {
 
 async function brandWatchItems(filterKey: string, days = 60) {
   const filter = BRAND_WATCH_FILTERS.find(f => f.key === filterKey) || BRAND_WATCH_FILTERS[0];
-  // A brand page's baseline (what was listed when we started following) is
-  // not news — Brand watch shows only what the brand added since.
+  // A page's baseline (what was listed when we started following — a
+  // brand's sites, a landlord site's menu links) is not news: Brand watch
+  // shows dated items and what was added since, never the page itself.
   const rows = (await pool.query(
     `SELECT a.id, a.title, a.summary, a.url, a.image_url, COALESCE(a.published_at, a.fetched_at) AS at, ns.type, ns.name AS source,
             ns.id AS source_key, c.id AS brand_id, c.name AS brand
        FROM news_articles a JOIN news_sources ns ON ns.id = a.source_id ${FIRST_FETCH_JOIN.replace("$TYPES", "$1")}
        LEFT JOIN crm_companies c ON ns.category LIKE 'brand:%' AND c.id = substring(ns.category from 7)
       WHERE ns.type = ANY($1) AND COALESCE(a.published_at, a.fetched_at) > now() - ($2 || ' days')::interval
-        AND NOT (ns.category LIKE 'brand:%' AND ${BASELINE_SQL})
+        AND NOT ${BASELINE_SQL}
+        AND rtrim(a.url, '/') <> rtrim(ns.url, '/')
       ORDER BY COALESCE(a.published_at, a.fetched_at) DESC NULLS LAST
       LIMIT 200`, [filter.types, String(days)])).rows;
   return withDisplayTitles(rows);

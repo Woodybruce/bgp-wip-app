@@ -33,4 +33,5 @@ test('repeated page titles are replaced by each item\'s own first sentence', () 
   ];
   const out = withDisplayTitles(items).map(i => i.title);
   assert.deepEqual([...out], ['Join our Head office team today!', 'Supply Chain', 'Jobs and careers with Greggs']);
+  assert.equal(withDisplayTitles(items)[0].summary, 'We have jobs in IT.');
 });
