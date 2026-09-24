@@ -542,7 +542,11 @@ export async function discoverBrandWebsiteCandidates(company: any): Promise<stri
   }
   const s = slug(name);
   if (s.length >= 4) found.push(`${s}.com`, `${s}.co.uk`);
-  return [...new Set(found)].filter(d => !NOT_OFFICIAL.test(d) && !/(^|\.)(localhost|local|internal|invalid|test|onion)$/.test(d)).slice(0, 4);
+  // A listings/social domain is never another brand's official site — unless
+  // it IS this brand's name (Time Out Group → timeout.com, 2026-09-24: its
+  // real site was filtered out as a restaurant-listings domain).
+  const ownName = (d: string) => { const label = (registrableLabel(d) || "").replace(/[^a-z0-9]/g, ""); return label.length >= 4 && (s === label || s.startsWith(label)); };
+  return [...new Set(found)].filter(d => (!NOT_OFFICIAL.test(d) || ownName(d)) && !/(^|\.)(localhost|local|internal|invalid|test|onion)$/.test(d)).slice(0, 4);
 }
 
 /**
