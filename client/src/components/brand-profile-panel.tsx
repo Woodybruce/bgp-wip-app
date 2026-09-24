@@ -509,8 +509,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
   // Profile opens only read saved data. Provider work is scheduled in the
   // preparation queue or started explicitly with a Refresh action.
-  const [conversationOpen, setConversationOpen] = useState(false);
-  useEffect(() => { setConversationOpen(false); setEditing(false); }, [companyId]);
+  useEffect(() => { setEditing(false); }, [companyId]);
 
   const patchMutation = useMutation({
     mutationFn: async (body: Partial<BrandProfile["company"]>) => {
@@ -1450,29 +1449,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 </div>
               ) : null}
             </div>
-            </div>
-            <div className="rounded-lg border border-border p-3 space-y-3 md:flex-1 md:min-w-0">
-              <div className="flex flex-wrap justify-between items-center gap-2">
-                <p className="text-sm font-medium flex items-center gap-2"><MessageSquare className="w-4 h-4 text-muted-foreground" />{isLandlord ? "Landlord conversation" : "Brand conversation"}</p>
-                <Button type="button" size="sm" variant="outline" onClick={() => setConversationOpen(value => !value)} aria-expanded={conversationOpen} data-testid="button-brand-conversation">{conversationOpen ? "Close conversation" : "Open conversation"}</Button>
-              </div>
-              {conversationOpen && <>
-                <AskChatBGPInline brandName={c.name} isLandlord={isLandlord} />
-                <div className="h-80"><CompanyMiniChat companyId={companyId} companyName={c.name} fill /></div>
-              </>}
-            </div>
-
-            </div>
-
-            {/* Single BGP AI take + Ask ChatBGP question runner — sits above
-                all zones. Client logins get both too (Woody, 2026-08-04:
-                "can't see the pills on ask chat bgp" — parity rule); the
-                chat backend enforces the client tool allowlist. */}
-            <div className="mt-2 order-2 space-y-3 empty:hidden">
-              {/* One card: the BGP take, who covers the brand, last touch and
-                  the deals (Woody, 2026-09-23: "pull this together and
-                  integrate into the BGP take"). */}
-              <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} footer={<>
+            {/* BGP team, last touch and portfolio activity sit with About
+                (Woody, 2026-09-24: "include this circled info in the about"). */}
+            <div className="space-y-2 pt-2 border-t border-border" data-testid="brand-relationship-summary">
             {/* Coverage sits in the header row; when nobody is set by hand the
                 server falls back to the BGP agents on this brand's deals. */}
             <div className="flex items-center gap-2 flex-wrap">
@@ -1505,7 +1484,25 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             })()}
 
             <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} />
-            </>} />
+            </div>
+            </div>
+            <div className="rounded-lg border border-border p-3 space-y-3 md:flex-1 md:min-w-0">
+              {/* Always open on desktop (Woody, 2026-09-24). */}
+              <p className="text-sm font-medium flex items-center gap-2"><MessageSquare className="w-4 h-4 text-muted-foreground" />{isLandlord ? "Landlord conversation" : "Brand conversation"}</p>
+              <AskChatBGPInline brandName={c.name} isLandlord={isLandlord} />
+              <div className="h-80"><CompanyMiniChat companyId={companyId} companyName={c.name} fill /></div>
+            </div>
+
+            </div>
+
+            {/* Single BGP AI take + Ask ChatBGP question runner — sits above
+                all zones. Client logins get both too (Woody, 2026-08-04:
+                "can't see the pills on ask chat bgp" — parity rule); the
+                chat backend enforces the client tool allowlist. */}
+            <div className="mt-2 order-2 space-y-3 empty:hidden">
+              {/* The BGP take; the team, last touch and deals it draws on sit
+                  under About. */}
+              <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} />
 
             </div>
 
