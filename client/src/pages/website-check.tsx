@@ -22,7 +22,7 @@ const GROUPS: Array<[string, string, string]> = [
   ["confirm", "Looks right", "The saved site is almost certainly theirs; the automatic proof failed on a technicality."],
   ["found", "Likely site found", "No website saved — we found a probable one."],
   ["alt", "Better site found", "The saved site didn't prove out and a likely replacement was found."],
-  ["dead", "Saved site is dead", "The domain no longer exists. Enter the current site, or dismiss if the brand has closed."],
+  ["dead", "Saved address is wrong", "The saved address doesn't exist (usually an old guess like brandname.com) — the brand's real site is shown in green where one was found."],
   ["wrong", "Different business", "The saved domain belongs to someone else."],
   ["unnamed", "Doesn't name the brand", "The page loads but never clearly names the brand — often a group or holding site."],
   ["blocked", "Blocks checks", "Bot protection stopped the automatic check. A quick look and confirm fixes these."],
