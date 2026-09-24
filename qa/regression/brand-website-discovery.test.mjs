@@ -197,3 +197,17 @@ test('the CRM name and the site name may differ by generic words, not by a disti
       { url: 'https://boostjuicebars.co.uk/', quote: 'fresh smoothies and juices across over 20 stores in the UK', kind: 'business' }] });
   assert.ok(ok, 'a cosmetically different cited URL still finds the quote on the fetched page');
 });
+
+test('a proposed domain that forwards to another site gets the destination tried', async () => {
+  process.env.DATABASE_URL ||= 'postgres://t:t@127.0.0.1:1/t';
+  const { discoverAndVerifyBrandWebsite, OfficialSiteRedirectError } = await import('../../server/brand-identity-verification.ts');
+  const seen = [];
+  const row = { ...hg(), id: 'to', name: 'Time Out Group' };
+  const result = await discoverAndVerifyBrandWebsite(database(row), row, {
+    candidates: async () => ['timeoutgroup.com', 'timeoutmarket.com'],
+    fetchPage: async (url, domain) => { seen.push(domain); if (domain === 'timeoutgroup.com') throw Object.assign(new Error('dead'), { code: 'ENOTFOUND' }); if (domain === 'timeoutmarket.com') throw new OfficialSiteRedirectError('www.timeout.com'); return { url, html: '<p>Time Out Group</p>' }; },
+    assess: async () => ({ decision: 'needs_review' }),
+  });
+  assert.ok(result.tried.includes('timeout.com'), JSON.stringify(result.tried));
+  assert.ok(seen.includes('timeout.com'));
+});

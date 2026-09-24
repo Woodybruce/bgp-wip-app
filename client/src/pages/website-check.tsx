@@ -61,7 +61,17 @@ function WebsiteRow({ row, group }: { row: Row; group: string }) {
     onError: (e: Error) => toast({ title: "Couldn't dismiss", description: e.message, variant: "destructive" }),
   });
   const find = useMutation({
-    mutationFn: async () => (await apiRequest("POST", "/api/brand/website-sweep/find", { companyId: row.id })).json(),
+    // Starts the search as a background job and polls it (up to 3 minutes).
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/brand/website-sweep/find", { companyId: row.id });
+      for (let i = 0; i < 60; i++) {
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        const job = await (await apiRequest("GET", `/api/brand/website-sweep/find/${row.id}`)).json();
+        if (job.state === "done") return job.result;
+        if (job.state === "error") throw new Error(job.error || "The search failed");
+      }
+      throw new Error("Still searching — check back in a minute");
+    },
     onSuccess: (out: { status: string; domain?: string | null; suggestion?: string | null }) => {
       if (out.status === "verified") toast({ title: `${row.name} fixed`, description: out.domain || undefined });
       else toast({ title: `${row.name}: not proven yet`, description: out.suggestion ? `Likely ${out.suggestion} — confirm it if it's right.` : "Nothing found — add the site with Other site if you know it." });
