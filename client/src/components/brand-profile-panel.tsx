@@ -1008,9 +1008,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     <div className={(isLandlord || isBrand)
       ? "flex flex-col gap-3 items-stretch w-full min-w-0"
       : "flex flex-col md:flex-row gap-3 items-start w-full min-w-0"}>
-    // flat (the company page): no outer card, so these boards sit on the page
-    // exactly like Key contacts / Covenant below (Woody, 2026-09-24: "the
-    // bottom of the app is different").
+    {/* flat (the company page): no outer card, so these boards sit on the page
+        exactly like Key contacts / Covenant below (Woody, 2026-09-24: "the
+        bottom of the app is different"). */}
     <Card data-testid="brand-profile-panel" className={`flex-1 min-w-0 max-w-full ${flat ? "bg-transparent border-0 shadow-none rounded-none overflow-visible" : "overflow-hidden"}`}>
       <CardHeader className={`${flat ? "px-0 py-2 bg-background/95 supports-[backdrop-filter]:bg-background/85" : "p-3 pb-2 bg-card/95 supports-[backdrop-filter]:bg-card/85"} flex flex-row items-start justify-between sticky top-0 z-20 backdrop-blur border-b border-border/40`}>
         <div className="flex flex-col gap-1 min-w-0 flex-1">
