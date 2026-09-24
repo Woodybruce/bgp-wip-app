@@ -3746,6 +3746,8 @@ export function BrandComplianceCard({
 // `ledger` folds the old separate "Deal ledger & pipeline" counts into this
 // card's header, so each deal is counted in one place (Woody, 2026-09-23).
 export function PortfolioActivityBlock({ companyId, ledger, bare = false }: { companyId: string; ledger?: { completed: number; active: number; requirements: number }; bare?: boolean }) {
+  const [showAllTenancies, setShowAllTenancies] = useState(false);
+  useEffect(() => setShowAllTenancies(false), [companyId]);
   const { data: act } = useQuery<any>({
     queryKey: ["/api/brands", companyId, "portfolio-activity"],
     queryFn: async () => {
@@ -3776,7 +3778,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false }: { co
   ].filter(Boolean) as string[];
   if (!tenantAt.length && !targeted.length && !pitched.length && !suggestions.length && !ledgerPills.length) return null;
 
-  const Row = ({ propertyId, propertyName, unitName, right, title, subline }: any) => (
+  const Row = ({ propertyId, propertyName, unitName, dealId, right, title, subline }: any) => (
     <div className="p-1.5 rounded border bg-card min-w-0" title={title || ""}>
       <div className="flex items-center justify-between gap-2 min-w-0">
         <Link href={`/properties/${propertyId}`} className="flex items-center gap-1.5 min-w-0 flex-1 hover:underline">
@@ -3786,6 +3788,12 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false }: { co
         </Link>
         <span className="flex items-center gap-1 shrink-0 max-w-[55%] justify-end">{right}</span>
       </div>
+      {dealId && <div className="flex justify-end">
+        <Link href={`/deals/${dealId}`} className="inline-flex min-h-11 items-center gap-1 px-2 text-xs font-medium underline underline-offset-2 hover:text-primary"
+          aria-label={`Open deal for ${propertyName}${unitName ? `, ${unitName}` : ""}`} data-testid={`portfolio-open-deal-${dealId}`}>
+          Open deal <ExternalLinkIcon className="h-3 w-3" aria-hidden="true" />
+        </Link>
+      </div>}
       {/* Hover titles don't exist on touch — the reason gets its own line. */}
       {subline && <div className="text-[10px] text-muted-foreground mt-0.5 pl-5 line-clamp-2">{subline}</div>}
     </div>
@@ -3808,10 +3816,13 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false }: { co
   const tiers = <>
         {tenantAt.length > 0 && (
           <Tier label="Tenant at" count={tenantAt.length}>
-            {tenantAt.slice(0, 6).map((p: any) => (
-              <Row key={`t-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name}
+            {(showAllTenancies ? tenantAt : tenantAt.slice(0, 6)).map((p: any) => (
+              <Row key={`t-${p.via}-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name} dealId={p.via === "deal" ? p.id : undefined}
                 right={<Badge variant="outline" className="text-[9px] shrink-0 text-emerald-700 border-emerald-200">{p.via === "deal" ? (p.deal_type || "deal") : "tenant"}</Badge>} />
             ))}
+            {tenantAt.length > 6 && <Button variant="ghost" size="sm" className="min-h-11" onClick={() => setShowAllTenancies(value => !value)} aria-expanded={showAllTenancies} data-testid="portfolio-show-all-tenancies">
+              {showAllTenancies ? "Show fewer" : `Show all ${tenantAt.length} entries`}
+            </Button>}
           </Tier>
         )}
         {targeted.length > 0 && (
