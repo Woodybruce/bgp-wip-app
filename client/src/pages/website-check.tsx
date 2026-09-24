@@ -43,7 +43,7 @@ export function websiteCheckGroup(row: Pick<Row, "saved_website" | "reason" | "v
 
 const host = (value: string | null) => (value || "").replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").toLowerCase();
 
-function WebsiteRow({ row }: { row: Row }) {
+function WebsiteRow({ row, group }: { row: Row; group: string }) {
   const { toast } = useToast();
   const [other, setOther] = useState("");
   const [editing, setEditing] = useState(false);
@@ -61,6 +61,8 @@ function WebsiteRow({ row }: { row: Row }) {
     onError: (e: Error) => toast({ title: "Couldn't dismiss", description: e.message, variant: "destructive" }),
   });
   const busy = confirm.isPending || dismiss.isPending;
+  // "Looks right" means the SAVED site checked out — confirming it is the main action.
+  const savedFirst = group === "confirm" || !likely || likely === saved;
   return (
     <li className="px-3 py-2.5 border-t border-border first:border-t-0 flex flex-col md:flex-row md:items-center gap-2" data-testid={`website-check-row-${row.id}`}>
       <div className="min-w-0 flex-1">
@@ -72,8 +74,9 @@ function WebsiteRow({ row }: { row: Row }) {
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-        {likely && likely !== saved && <Button size="sm" disabled={busy} onClick={() => confirm.mutate(likely)} data-testid="website-check-confirm-likely"><Check className="w-3.5 h-3.5" />Confirm {likely}</Button>}
-        {saved && <Button size="sm" variant={likely && likely !== saved ? "outline" : "default"} disabled={busy} onClick={() => confirm.mutate(saved)} data-testid="website-check-confirm-saved"><Check className="w-3.5 h-3.5" />{likely && likely !== saved ? "Keep saved" : `Confirm ${saved}`}</Button>}
+        {saved && savedFirst && <Button size="sm" disabled={busy} onClick={() => confirm.mutate(saved)} data-testid="website-check-confirm-saved"><Check className="w-3.5 h-3.5" />Confirm {saved}</Button>}
+        {likely && likely !== saved && <Button size="sm" variant={savedFirst ? "outline" : "default"} disabled={busy} onClick={() => confirm.mutate(likely)} data-testid="website-check-confirm-likely"><Check className="w-3.5 h-3.5" />{savedFirst ? `Use ${likely}` : `Confirm ${likely}`}</Button>}
+        {saved && !savedFirst && <Button size="sm" variant="outline" disabled={busy} onClick={() => confirm.mutate(saved)} data-testid="website-check-confirm-saved"><Check className="w-3.5 h-3.5" />Keep saved</Button>}
         {editing ? (
           <form className="flex items-center gap-1.5" onSubmit={e => { e.preventDefault(); if (other.trim()) confirm.mutate(other.trim()); }}>
             <Input autoFocus value={other} onChange={e => setOther(e.target.value)} placeholder="brand.com" className="h-8 w-40" aria-label={`Website for ${row.name}`} />
@@ -124,7 +127,7 @@ export default function WebsiteCheckPage() {
                   <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{label} <span className="font-mono tabular-nums">{group.length}</span></h2>
                   <p className="text-xs text-muted-foreground mt-0.5">{help}</p>
                 </div>
-                <ul className="rounded-xl border border-border bg-card">{group.map(row => <WebsiteRow key={row.id} row={row} />)}</ul>
+                <ul className="rounded-xl border border-border bg-card">{group.map(row => <WebsiteRow key={row.id} row={row} group={key} />)}</ul>
               </section>
             );
           })}
