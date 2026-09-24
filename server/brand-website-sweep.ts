@@ -44,6 +44,14 @@ export async function dismissWebsiteCheck(companyId: string, by: string | null, 
   await stamp(companyId, undo ? { ...previous, status: "unknown", dismissedBy: null } : { ...previous, status: "dismissed", dismissedBy: by });
 }
 
+/** One brand, now — the Find website button on /brand-websites. */
+export async function checkBrandWebsiteNow(companyId: string): Promise<{ status: "verified" | "unknown"; domain?: string | null; reason?: string | null; suggestion?: string | null }> {
+  await pool.query(`UPDATE crm_companies SET ai_generated_fields = ai_generated_fields #- '{website_check,status}' WHERE id=$1 AND ai_generated_fields->'website_check'->>'status' = 'dismissed'`, [companyId]).catch(() => {});
+  const outcome = await checkOne(companyId);
+  const check = (await pool.query("SELECT ai_generated_fields->'website_check' AS wc FROM crm_companies WHERE id=$1", [companyId])).rows[0]?.wc || {};
+  return { status: outcome, domain: check.domain || null, reason: check.reason || null, suggestion: check.suggestion || null };
+}
+
 async function checkOne(companyId: string): Promise<"verified" | "unknown"> {
   const company = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
   if (!company) return "unknown";

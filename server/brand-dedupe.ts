@@ -52,6 +52,52 @@ const COMPANY_REFS: Array<{ table: string; column: string }> = [
   { table: "brand_signals",            column: "brand_company_id" },
 ];
 
+/**
+ * Re-point every company reference from one row to another inside the
+ * caller's transaction. Two things used to abort a whole merge (Woody's
+ * duplicate clean-up, 2026-09-24): a listed column missing from the live
+ * table ("column company_id does not exist"), and a unique clash when both
+ * records hold the same row (a trading entity of the same name). Missing
+ * columns are skipped; clashing rows stay on the merged-away record, which
+ * is hidden, instead of failing the merge.
+ */
+export async function repointCompanyRefs(client: { query: Function }, fromId: string, toId: string): Promise<Record<string, number>> {
+  const present = new Set((await client.query(
+    `SELECT table_name || '.' || column_name AS ref FROM information_schema.columns
+      WHERE table_schema = current_schema() AND (table_name || '.' || column_name) = ANY($1::text[])`,
+    [COMPANY_REFS.map(ref => `${ref.table}.${ref.column}`)])).rows.map((row: any) => row.ref));
+  const updates: Record<string, number> = {};
+  for (const ref of COMPANY_REFS) {
+    const key = `${ref.table}.${ref.column}`;
+    if (!present.has(key)) continue;
+    const self = ref.table === "crm_companies" ? " AND id <> $2" : "";
+    await client.query("SAVEPOINT repoint");
+    try {
+      const r = await client.query(`UPDATE ${ref.table} SET ${ref.column} = $1 WHERE ${ref.column} = $2${self}`, [toId, fromId]);
+      await client.query("RELEASE SAVEPOINT repoint");
+      if (r.rowCount) updates[key] = r.rowCount;
+    } catch (error: any) {
+      await client.query("ROLLBACK TO SAVEPOINT repoint");
+      if (error?.code !== "23505") throw error;
+      // Unique clash: move the rows one by one, leaving the clashing ones.
+      const rows = (await client.query(`SELECT ctid::text AS t FROM ${ref.table} WHERE ${ref.column} = $1${self.replace("$2", "$1")}`, [fromId])).rows;
+      let moved = 0;
+      for (const row of rows) {
+        await client.query("SAVEPOINT repoint_row");
+        try {
+          moved += (await client.query(`UPDATE ${ref.table} SET ${ref.column} = $1 WHERE ctid = $2::tid`, [toId, row.t])).rowCount || 0;
+          await client.query("RELEASE SAVEPOINT repoint_row");
+        } catch (rowError: any) {
+          await client.query("ROLLBACK TO SAVEPOINT repoint_row");
+          if (rowError?.code !== "23505") throw rowError;
+        }
+      }
+      if (moved) updates[key] = moved;
+    }
+  }
+  return updates;
+}
+
 // Legal-form suffixes stripped for name normalisation
 const NORMALISE_SUFFIXES = [
   "ltd", "limited", "plc", "llp", "lp", "inc", "incorporated",
@@ -309,15 +355,7 @@ router.post("/api/brand/dedupe/merge", requireAuth, async (req: Request, res: Re
     );
 
     // Rewrite every FK reference
-    const referenceUpdates: Record<string, number> = {};
-    for (const ref of COMPANY_REFS) {
-      // Self-ref on crm_companies is the merge target itself — skip those rows
-      const sql = ref.table === "crm_companies"
-        ? `UPDATE ${ref.table} SET ${ref.column} = $1 WHERE ${ref.column} = $2 AND id <> $2`
-        : `UPDATE ${ref.table} SET ${ref.column} = $1 WHERE ${ref.column} = $2`;
-      const r = await client.query(sql, [primaryId, secondaryId]);
-      if (r.rowCount) referenceUpdates[`${ref.table}.${ref.column}`] = r.rowCount;
-    }
+    const referenceUpdates = await repointCompanyRefs(client, secondaryId, primaryId);
 
     // Soft-delete the secondary — it stays in the table so old URLs and
     // imports don't orphan, but it's hidden from queries that filter out
@@ -381,14 +419,7 @@ router.post("/api/brand/dedupe/undo/:mergeId", requireAuth, async (req: Request,
     // snapshot had that FK pointing somewhere, we won't know. So we flip
     // everything from primary back to secondary; this can over-flip.
     // Warn the user in the UI that undo may affect unrelated rows.
-    const referenceUpdates: Record<string, number> = {};
-    for (const ref of COMPANY_REFS) {
-      const sql = ref.table === "crm_companies"
-        ? `UPDATE ${ref.table} SET ${ref.column} = $1 WHERE ${ref.column} = $2 AND id <> $2`
-        : `UPDATE ${ref.table} SET ${ref.column} = $1 WHERE ${ref.column} = $2`;
-      const r = await client.query(sql, [m.secondary_id, m.primary_id]);
-      if (r.rowCount) referenceUpdates[`${ref.table}.${ref.column}`] = r.rowCount;
-    }
+    const referenceUpdates = await repointCompanyRefs(client, m.primary_id, m.secondary_id);
 
     // Un-soft-delete the secondary
     await client.query(
