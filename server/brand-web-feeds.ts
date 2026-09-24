@@ -166,7 +166,6 @@ export async function ensureBrandWebFeeds(companyId: string, kinds: BrandWebFeed
 export const MARKET_SOURCES: Array<{ name: string; url: string; feedUrl?: string; type: string; category: string }> = [
   { name: "Eater London", url: "https://london.eater.com", feedUrl: "https://london.eater.com/rss/index.xml", type: MARKET_FEED_TYPES.openings, category: "Hospitality" },
   { name: "Hot Dinners — latest openings", url: "https://www.hot-dinners.com/Gastroblog/Latest-news", type: MARKET_FEED_TYPES.openings, category: "Hospitality" },
-  { name: "Time Out London — news", url: "https://www.timeout.com/london/news", type: MARKET_FEED_TYPES.openings, category: "Hospitality" },
   { name: "Landsec — news", url: "https://www.landsec.com/media/news", type: MARKET_FEED_TYPES.landlords, category: "Property" },
   { name: "British Land — news", url: "https://www.britishland.com/news/", type: MARKET_FEED_TYPES.landlords, category: "Property" },
   { name: "Shaftesbury Capital — news", url: "https://www.shaftesburycapital.com/en/media/news.html", type: MARKET_FEED_TYPES.landlords, category: "Property" },
