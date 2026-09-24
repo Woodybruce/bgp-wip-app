@@ -259,6 +259,18 @@ function ensureTables(): Promise<void> {
       );
       console.log(`[cashflow] LEGACY restored to Wendy's 219,670 ex VAT (rows: ${restored.rowCount ?? 0}) — flag set`);
     }
+    // Woody, 2026-09-24: "now it's all in Xero so doesn't need top up" —
+    // the pre-Xero Sage receivables are in Xero's aged debtors now, so the
+    // LEGACY line would double-count. Retire it once (its cells are kept
+    // for the record); the Debtors figures and forecasts read Xero only.
+    const RETIRE_FLAG = "migration:cashflow_legacy_retired_v1";
+    const retireFlag = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [RETIRE_FLAG]);
+    if (retireFlag.rows.length === 0) {
+      const retired = await pool.query(`UPDATE cashflow_lines SET is_active = false WHERE key = 'LEGACY' AND is_active`);
+      await pool.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+        [RETIRE_FLAG, JSON.stringify({ at: new Date().toISOString(), retiredRows: retired.rowCount ?? 0 })]);
+      console.log(`[cashflow] LEGACY Sage receivables line retired — aged debtors now all in Xero`);
+    }
   })().catch((e) => { ensured = null; throw e; });
   return ensured;
 }

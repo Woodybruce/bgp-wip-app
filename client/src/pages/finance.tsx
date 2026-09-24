@@ -329,24 +329,6 @@ export default function FinancePage() {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Pre-Xero (Sage-era) receivables — the editable LEGACY line on the
-  // cashflow board below. Woody, 2026-08-28: the Debtors card must show
-  // Xero + Sage together; he types the confirmed Sage figure on the board.
-  const { data: cfData } = useQuery<{ lines: Array<{ id: string; key: string }>; cells: Array<{ line_id: string; month: string; basis: string; amount: number }> }>({
-    queryKey: ["/api/cashflow"],
-    queryFn: async () => (await cashflowFetch("GET", "/api/cashflow")).json(),
-    staleTime: 5 * 60 * 1000,
-  });
-  const sageOutstanding = useMemo(() => {
-    const line = cfData?.lines?.find(l => l.key === "LEGACY");
-    if (!line) return 0;
-    const byMonth: Record<string, { a?: number; b?: number }> = {};
-    for (const c of cfData!.cells || []) {
-      if (c.line_id !== line.id) continue;
-      (byMonth[c.month] ||= {})[c.basis === "actual" ? "a" : "b"] = Number(c.amount) || 0;
-    }
-    return Object.values(byMonth).reduce((s, m) => s + (m.a ?? m.b ?? 0), 0);
-  }, [cfData]);
 
   // The Xero OAuth callback lands back here with ?xero=connected or
   // ?xero_error=… — surface the outcome and, on success, force a live
@@ -515,9 +497,9 @@ export default function FinancePage() {
         </ExpandableStat>
         <ExpandableStat
           label="Debtors outstanding"
-          value={money((d?.outstanding ?? 0) + sageOutstanding)}
+          value={money(d?.outstanding ?? 0)}
           negative={(d?.overdue ?? 0) > 0}
-          sub={`${money(d?.overdue ?? 0)} overdue · pre-Xero (Sage) ${money(sageOutstanding)}`}
+          sub={`${money(d?.overdue ?? 0)} overdue`}
         >
           {d ? (
             <div className="space-y-3">
@@ -547,9 +529,6 @@ export default function FinancePage() {
                   </div>
                 </div>
               )}
-              <p className="text-[11px] text-muted-foreground">
-                Plus {money(sageOutstanding)} pre-Xero (Sage) receivables from Wendy's cashflow — edit on the Legacy line of the cashflow board below.
-              </p>
             </div>
           ) : <p className="text-xs text-muted-foreground">No open invoices.</p>}
         </ExpandableStat>
