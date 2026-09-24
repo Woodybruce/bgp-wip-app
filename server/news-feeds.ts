@@ -133,7 +133,13 @@ async function seedNewsSources() {
   if (added > 0) console.log(`Seeded ${added} new news sources (${existing.length + added} total)`);
 }
 
-async function fetchRssFeeds(): Promise<{ fetched: number; errors: number }> {
+// Fetch just these sources now (a feed set up from the brand page shows its
+// items straight away instead of waiting for the next pass).
+export function fetchNewsSourcesNow(ids: string[]) {
+  return fetchRssFeeds(ids);
+}
+
+async function fetchRssFeeds(onlyIds?: string[]): Promise<{ fetched: number; errors: number }> {
   const Parser = (await import("rss-parser")).default;
   const parser = new Parser({
     timeout: 10000,
@@ -159,7 +165,7 @@ async function fetchRssFeeds(): Promise<{ fetched: number; errors: number }> {
   // ones) could starve for days. This order makes interrupted passes
   // resume where they left off.
   const sources = await db.select().from(newsSources)
-    .where(eq(newsSources.active, true))
+    .where(onlyIds?.length ? and(eq(newsSources.active, true), inArray(newsSources.id, onlyIds)) : eq(newsSources.active, true))
     .orderBy(sql`${newsSources.lastFetchedAt} ASC NULLS FIRST`);
   let fetched = 0;
   let errors = 0;

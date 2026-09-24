@@ -4,6 +4,7 @@ import { db, pool } from "./db";
 import { crmCompanies, newsSources, newsArticles, brandSignals } from "@shared/schema";
 import { eq, and, sql, desc, isNotNull, ilike } from "drizzle-orm";
 import { googleNewsRssUrl, createRssAppFeed, rssappHealth } from "./rssapp";
+import { BRAND_WEB_FEED_TYPES } from "../shared/brand-feed-types";
 import { isFeedEligibleCompany } from "./instagram-card-state";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { isBrandNewsRelevant } from "./brand-news-relevance";
@@ -996,7 +997,7 @@ export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Pro
       const brand = brandById.get(brandId);
       if (!brand) continue;
       const brandName = brand.name;
-      const isConfiguredSocial = Object.values(SOCIAL_TYPE).includes(src.type);
+      const isConfiguredSocial = Object.values(SOCIAL_TYPE).includes(src.type) || (Object.values(BRAND_WEB_FEED_TYPES) as string[]).includes(src.type);
       if (!isConfiguredSocial && !isBrandNewsRelevant(brand, a)) continue;
       await upsertBrandSignal(brandId, brandName, {
         id: a.id,

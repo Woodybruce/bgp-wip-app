@@ -2816,6 +2816,7 @@ export async function registerRoutes(
   // Manual trigger for the client team-diary → events sync (Landsec).
   // RSS.app plan audit + prune (admin) — see server/rssapp-prune.ts.
   (await import("./rssapp-prune")).registerRssAppPruneRoutes(app);
+  (await import("./brand-web-feeds")).registerBrandWebFeedRoutes(app);
   // Schema drift: what shared/schema.ts expects that the live DB lacks.
   // GET is a dry run; POST adds the missing columns (nullable). The same
   // heal runs automatically at boot — see server/schema-drift.ts.
