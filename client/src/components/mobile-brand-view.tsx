@@ -1,4 +1,5 @@
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
+import { BrandFeedCard } from "@/components/brand-feed-card";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
 import { CompanyProfileImage } from "@/components/company-profile-image";
 import { useState, useEffect, useRef } from "react";
@@ -21,7 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Building2, TrendingUp, ClipboardList, Instagram, Store, Swords, ExternalLink, Globe, Newspaper } from "lucide-react";
 import {
-  CompanyMiniChat, MenuIntelCard, PortfolioActivityBlock, BrandComplianceCard, BrandInstagramCard,
+  CompanyMiniChat, MenuIntelCard, PortfolioActivityBlock, BrandComplianceCard,
   AskChatBGPInline, PipnetRequirementsRow, StockSnapshotCard, ApolloDetailChips,
 } from "@/components/brand-profile-panel";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
@@ -559,7 +560,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           No social feed yet — no Instagram handle on file for {c.name}.
         </div>
       )}
-      <BrandInstagramCard companyId={companyId} />
+      <BrandFeedCard companyId={companyId} />
       {c.instagram_handle && (
         <a
           href={`https://instagram.com/${c.instagram_handle}`}

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NewsSourcesTab } from "@/components/news-sources-tab";
 import { InsightsFeed } from "@/components/insights-feed";
+import { BrandWatchFeed } from "@/components/brand-watch-feed";
 import {
   Select,
   SelectContent,
@@ -222,13 +223,14 @@ function FeedTab() {
   const userTeam = currentUser?.team || "Investment";
   const isSavedTab = activeTeam === "Saved";
   const isInsightsTab = activeTeam === "Insights";
+  const isBrandWatchTab = activeTeam === "Brand watch";
   // Client logins: articles are never relevance-scored against client teams
   // (e.g. "Landsec"), so "For You" would filter the feed to nothing — give
   // them the whole curated trade feed instead, and skip the BGP team tabs.
   const isClientNews = currentUser?.role === "Client" || !!(currentUser as any)?.companyScopeId;
   const visibleTeams = isClientNews
     ? ["For You", "Insights", "Saved"]
-    : ["For You", "Insights", ...TEAMS.filter(t => t !== "For You")];
+    : ["For You", "Insights", "Brand watch", ...TEAMS.filter(t => t !== "For You")];
   const effectiveTeam = activeTeam === "For You" ? (isClientNews ? "All" : userTeam) : activeTeam;
 
   const { data: articles, isLoading } = useQuery<NewsArticle[]>({
@@ -546,6 +548,8 @@ function FeedTab() {
 
       {isInsightsTab ? (
         <InsightsFeed isStaff={!isClientNews} />
+      ) : isBrandWatchTab ? (
+        <BrandWatchFeed />
       ) : isSavedTab ? (
         isSavedLoading ? (
           <div className="space-y-3">
