@@ -204,13 +204,38 @@ export async function seedMarketFeeds(opts: { dryRun?: boolean } = {}) {
 
 const ALL_BRAND_FEED_TYPES = BRAND_FEED_TABS.map(tab => tab.type);
 
+// "Baseline" = what was already on a page the first time we read it (a
+// locations page's existing sites, a jobs page's standing roles): undated
+// items from the source's first fetch. They show on the brand's tab but
+// aren't news — only later additions are.
+const BASELINE_SQL = `(a.fetched_at < first.at + interval '30 minutes'
+    AND abs(extract(epoch FROM (COALESCE(a.published_at, a.fetched_at) - a.fetched_at))) < 600)`;
+const FIRST_FETCH_JOIN = `LEFT JOIN LATERAL (SELECT min(f.fetched_at) AS at FROM news_articles f WHERE f.source_id = ns.id) first ON true`;
+
+// Page feeds often give every item the page's own title ("Greggs Careers"
+// ×6) — show the item's first sentence instead.
+export function withDisplayTitles<T extends { title: string; summary: string | null; url: string; source_key?: string; type: string }>(items: T[]): T[] {
+  const counts = new Map<string, number>();
+  const keyOf = (item: T) => `${item.source_key || item.type}|${item.title.trim().toLowerCase()}`;
+  for (const item of items) counts.set(keyOf(item), (counts.get(keyOf(item)) || 0) + 1);
+  return items.map(item => {
+    if ((counts.get(keyOf(item)) || 0) < 2) return item;
+    const sentence = (item.summary || "").replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s/)[0]?.slice(0, 110);
+    const slug = decodeURIComponent(new URL(item.url).pathname.split("/").filter(Boolean).at(-1) || "").replace(/[-_]+/g, " ").replace(/\ben\b$/i, "").trim();
+    const title = sentence && sentence.length > 12 ? sentence : slug ? slug.replace(/\b\w/g, ch => ch.toUpperCase()) : item.title;
+    return { ...item, title };
+  });
+}
+
 async function brandFeedItems(companyId: string) {
-  return (await pool.query(
-    `SELECT a.id, a.title, a.summary, a.url, a.image_url, COALESCE(a.published_at, a.fetched_at) AS at, ns.type, ns.url AS source_url
-       FROM news_articles a JOIN news_sources ns ON ns.id = a.source_id
+  const rows = (await pool.query(
+    `SELECT a.id, a.title, a.summary, a.url, a.image_url, COALESCE(a.published_at, a.fetched_at) AS at, ns.type, ns.url AS source_url,
+            ns.id AS source_key, ${BASELINE_SQL} AS baseline, first.at AS followed_at
+       FROM news_articles a JOIN news_sources ns ON ns.id = a.source_id ${FIRST_FETCH_JOIN}
       WHERE ns.category = $1 AND ns.type = ANY($2)
       ORDER BY COALESCE(a.published_at, a.fetched_at) DESC NULLS LAST
       LIMIT 240`, [`brand:${companyId}`, ALL_BRAND_FEED_TYPES])).rows;
+  return withDisplayTitles(rows);
 }
 
 async function callClaude(prompt: string) {
@@ -228,12 +253,12 @@ async function callClaude(prompt: string) {
 const tabLabel = (type: string) => BRAND_FEED_TABS.find(tab => tab.type === type)?.label || BRAND_WATCH_FILTERS.find(f => f.key !== "all" && f.types.includes(type))?.label || type;
 const clip = (text: string | null, n: number) => (text || "").replace(/\s+/g, " ").trim().slice(0, n);
 
-export function brandFeedPrompt(brand: string, items: Array<{ title: string; summary: string | null; at: string; type: string }>) {
-  const lines = items.slice(0, 45).map(item => `- [${tabLabel(item.type)} · ${String(item.at).slice(0, 10)}] ${clip(item.title, 140)}${item.summary ? ` — ${clip(item.summary, 160)}` : ""}`);
+export function brandFeedPrompt(brand: string, items: Array<{ title: string; summary: string | null; at: string; type: string; baseline?: boolean }>) {
+  const lines = items.slice(0, 45).map(item => `- [${tabLabel(item.type)} · ${item.baseline ? "already listed when BGP started following" : String(item.at).slice(0, 10)}] ${clip(item.title, 140)}${item.summary ? ` — ${clip(item.summary, 160)}` : ""}`);
   return `You are briefing a London retail/leisure property agent (BGP) on what ${brand} has been saying on its own channels. Items, newest first:
 ${lines.join("\n")}
 
-Write 2-4 bullets, each starting "- **Label:** " (e.g. **Openings:**, **Hiring:**, **Campaigns:**, **Worth a call:**). Lead with anything property-relevant: new or coming-soon sites (name the place), closures, hiring for new locations or property/expansion roles, new formats. Then one line on brand activity if useful. Only state what the items say; give dates as given. No headings, no preamble. Under 90 words.`;
+Write 2-4 bullets, each starting "- **Label:** " (e.g. **Openings:**, **Hiring:**, **Campaigns:**, **Estate:**). Lead with anything property-relevant: new or coming-soon sites (name the place), closures, hiring for new locations or property/expansion roles, new formats. Items marked "already listed" are the brand's current estate or standing roles, not news — summarise them in one short **Estate:** line (where it trades) and never call them new. Then one line on brand activity if useful. State only what the items say — no guesses about intentions or what something "suggests". Give dates as given. No headings, no preamble. Under 90 words.`;
 }
 
 export function brandWatchPrompt(items: Array<{ title: string; summary: string | null; at: string; type: string; brand: string | null; source: string }>) {
@@ -259,14 +284,18 @@ async function readCache(key: string) {
 
 async function brandWatchItems(filterKey: string, days = 60) {
   const filter = BRAND_WATCH_FILTERS.find(f => f.key === filterKey) || BRAND_WATCH_FILTERS[0];
-  return (await pool.query(
+  // A brand page's baseline (what was listed when we started following) is
+  // not news — Brand watch shows only what the brand added since.
+  const rows = (await pool.query(
     `SELECT a.id, a.title, a.summary, a.url, a.image_url, COALESCE(a.published_at, a.fetched_at) AS at, ns.type, ns.name AS source,
-            c.id AS brand_id, c.name AS brand
-       FROM news_articles a JOIN news_sources ns ON ns.id = a.source_id
+            ns.id AS source_key, c.id AS brand_id, c.name AS brand
+       FROM news_articles a JOIN news_sources ns ON ns.id = a.source_id ${FIRST_FETCH_JOIN}
        LEFT JOIN crm_companies c ON ns.category LIKE 'brand:%' AND c.id = substring(ns.category from 7)
       WHERE ns.type = ANY($1) AND COALESCE(a.published_at, a.fetched_at) > now() - ($2 || ' days')::interval
+        AND NOT (ns.category LIKE 'brand:%' AND ${BASELINE_SQL})
       ORDER BY COALESCE(a.published_at, a.fetched_at) DESC NULLS LAST
       LIMIT 200`, [filter.types, String(days)])).rows;
+  return withDisplayTitles(rows);
 }
 
 async function staffOnly(req: any, res: any) {

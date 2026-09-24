@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Pill, PillCount } from "@/components/ui/pill";
 import { AiCommentary } from "@/components/ai-commentary";
 
-type FeedItem = { id: string; title: string; summary: string | null; url: string; image_url: string | null; at: string; type: string };
+type FeedItem = { id: string; title: string; summary: string | null; url: string; image_url: string | null; at: string; type: string; baseline?: boolean; followed_at?: string | null };
 type FeedTab = { type: string; label: string; sourceUrl: string | null; items: FeedItem[] };
 type FeedResponse = { tabs: FeedTab[]; read: { text: string; at: string } | null; stale: boolean; latest: string | null };
 
@@ -52,19 +52,28 @@ function InstagramGrid({ companyId }: { companyId: string }) {
 
 function ItemList({ items }: { items: FeedItem[] }) {
   if (!items.length) return <p className="text-xs text-muted-foreground">Nothing new on this page yet — new items appear as the brand posts them.</p>;
+  const followed = items.find(item => item.baseline)?.followed_at;
   return (
+    <div className="space-y-1.5">
+    {/* The first read of a page is what was already there (existing sites,
+        standing roles); anything added since is marked New. */}
+    {followed && <p className="text-[11px] text-muted-foreground">Listed on the brand's page when BGP started following on {day(followed)} — anything added since is marked <span className="font-medium text-foreground">New</span>.</p>}
     <ul className="divide-y divide-border max-h-[520px] overflow-y-auto">
       {items.map(item => (
         <li key={item.id} className="py-2 flex gap-2.5 min-w-0">
           {realImage(item.image_url) && <img src={item.image_url!} alt="" className="w-12 h-12 rounded object-cover shrink-0 bg-muted" loading="lazy" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
           <div className="min-w-0 flex-1">
             <a href={item.url} target="_blank" rel="noreferrer" className="text-sm font-medium hover:underline break-words">{item.title}</a>
-            <div className="text-[11px] text-muted-foreground tabular-nums">{day(item.at)}</div>
+            <div className="text-[11px] text-muted-foreground tabular-nums flex items-center gap-1.5">
+              {followed && !item.baseline && <span className="rounded-full bg-foreground text-background px-1.5 py-px text-[10px] font-semibold">New</span>}
+              {!item.baseline && day(item.at)}
+            </div>
             {item.summary && <p className="text-xs text-muted-foreground line-clamp-2">{item.summary}</p>}
           </div>
         </li>
       ))}
     </ul>
+    </div>
   );
 }
 

@@ -23,3 +23,14 @@ test('a homepage that lists the venues is followed itself; a jobs subdomain coun
   assert.equal(out.careers, 'https://jobs.honestgreens.com/');
   assert.equal(out.website, undefined);
 });
+
+test('repeated page titles are replaced by each item\'s own first sentence', () => {
+  const { withDisplayTitles } = evaluate(decl('withDisplayTitles').replace(/^export /gm, '') + '\nexports.withDisplayTitles=withDisplayTitles;', { URL });
+  const items = [
+    { title: 'Greggs Careers', summary: 'Join our Head office team today! We have jobs in IT.', url: 'https://careers.greggs.co.uk/roles/head-office', type: 'rssapp_careers', source_key: 'g' },
+    { title: 'Greggs Careers', summary: '', url: 'https://careers.greggs.co.uk/roles/supply-chain', type: 'rssapp_careers', source_key: 'g' },
+    { title: 'Jobs and careers with Greggs', summary: null, url: 'https://careerssearch.greggs.co.uk/jobs/search', type: 'rssapp_careers', source_key: 'g' },
+  ];
+  const out = withDisplayTitles(items).map(i => i.title);
+  assert.deepEqual([...out], ['Join our Head office team today!', 'Supply Chain', 'Jobs and careers with Greggs']);
+});
