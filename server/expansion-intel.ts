@@ -33,42 +33,76 @@ const MODEL_FALLBACK = "claude-haiku-4-5-20251001";
 
 const FACT_KINDS = ["opening", "closure", "funding", "requirement", "hiring", "exec_change", "sector_move", "news"];
 
+// Expansion deep dive (Woody, 2026-09-25: "is the expansion intelligence
+// picking up everything it can from the app?"). BGP ground truth, with the
+// audit's fixes: PIPnet requirements counted as PIPnet (not as BGP), stale
+// requirements dropped, HoTs / solicitors / exchanged deals weighted above
+// early pipeline, offers / viewings by their own dates (cancelled and
+// deleted rows out), interest in BGP units, email-domain threads, tenant-rep
+// representation only, "coming soon" sites from the brand's own website.
 export async function gatherBgpEvidence(companyId: string): Promise<BgpEvidence> {
-  const [reqs, deals, offers, viewings, interactions, reps] = await Promise.all([
-    pool.query(`SELECT count(*)::int AS n FROM crm_requirements_leasing WHERE company_id = $1 AND status = 'Active'`, [companyId]),
-    pool.query(
-      `SELECT count(*)::int AS n FROM crm_deals
-        WHERE tenant_id = $1
-          AND COALESCE(status,'') NOT IN ('WIT','COM','INV','Withdrawn','Completed','Invoiced','Lost','Dead')`,
-      [companyId]
-    ),
-    pool.query(`SELECT count(*)::int AS n FROM unit_offers WHERE company_id = $1 AND created_at >= now() - interval '90 days'`, [companyId]),
-    pool.query(`SELECT count(*)::int AS n FROM unit_viewings WHERE company_id = $1 AND created_at >= now() - interval '90 days'`, [companyId]),
-    pool.query(
-      `SELECT count(*)::int AS n FROM crm_interactions i
+  const co = (await pool.query(`SELECT domain, domain_url FROM crm_companies WHERE id = $1`, [companyId]).catch(() => ({ rows: [] as any[] }))).rows[0];
+  const domain = String(co?.domain || co?.domain_url || "").replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").toLowerCase();
+  const q = (sql: string, params: any[]) => pool.query(sql, params).then(r => r.rows[0] || {}).catch(() => ({} as any));
+  const [reqs, deals, offers, viewings, interest, interactions, domainThreads, reps, sites] = await Promise.all([
+    q(`SELECT count(*) FILTER (WHERE NOT (COALESCE(sources, '{}') <@ ARRAY['PIPnet']::text[]) OR sources IS NULL)::int AS bgp,
+              count(*) FILTER (WHERE 'PIPnet' = ANY(COALESCE(sources, '{}')))::int AS pipnet
+         FROM crm_requirements_leasing
+        WHERE company_id = $1 AND status = 'Active'
+          AND COALESCE(updated_at, created_at) >= now() - interval '12 months'`, [companyId]),
+    q(`SELECT count(*) FILTER (WHERE upper(COALESCE(status,'')) IN ('HOT','SOL','EXC'))::int AS committed,
+              count(*) FILTER (WHERE upper(COALESCE(status,'')) NOT IN ('HOT','SOL','EXC','WIT','COM','INV','ARCH')
+                                 AND COALESCE(status,'') NOT IN ('Withdrawn','Completed','Invoiced','Lost','Dead','Let'))::int AS live,
+              count(*) FILTER (WHERE (upper(COALESCE(status,'')) IN ('COM','INV') OR status IN ('Completed','Invoiced','Let'))
+                                 AND COALESCE(completed_at, invoiced_at, exchanged_at, instructed_at) >= now() - interval '24 months')::int AS completed
+         FROM crm_deals WHERE tenant_id = $1`, [companyId]),
+    q(`SELECT count(*)::int AS n FROM unit_offers
+        WHERE company_id = $1 AND COALESCE(status, '') !~* '(withdrawn|rejected|declined)'
+          AND COALESCE(CASE WHEN offer_date ~ '^\\d{4}-\\d{2}-\\d{2}' THEN offer_date::date END, created_at::date) >= (now() - interval '90 days')::date`, [companyId]),
+    q(`SELECT count(*)::int AS n FROM unit_viewings
+        WHERE company_id = $1 AND deleted_at IS NULL AND COALESCE(status, '') <> 'cancelled'
+          AND COALESCE(CASE WHEN viewing_date ~ '^\\d{4}-\\d{2}-\\d{2}' THEN viewing_date::date END, created_at::date)
+              BETWEEN (now() - interval '90 days')::date AND now()::date`, [companyId]),
+    q(`SELECT count(*)::int AS n FROM unit_interest
+        WHERE company_id = $1
+          AND COALESCE(CASE WHEN interest_date ~ '^\\d{4}-\\d{2}-\\d{2}' THEN interest_date::date END, created_at::date) >= (now() - interval '90 days')::date`, [companyId]),
+    q(`SELECT count(*)::int AS n FROM crm_interactions i
         LEFT JOIN crm_contacts c ON c.id = i.contact_id
         WHERE (i.company_id = $1 OR c.company_id = $1)
-          AND i.interaction_date >= now() - interval '90 days'`,
-      [companyId]
-    ),
-    pool.query(`SELECT count(*)::int AS n FROM brand_agent_representations WHERE brand_company_id = $1 AND end_date IS NULL`, [companyId]),
+          AND i.interaction_date >= now() - interval '90 days' AND i.interaction_date <= now()`, [companyId]),
+    domain ? q(`SELECT count(DISTINCT i.id)::int AS n FROM crm_interactions i
+        CROSS JOIN LATERAL jsonb_array_elements_text(CASE WHEN jsonb_typeof(i.participants) = 'array' THEN i.participants ELSE '[]'::jsonb END) p
+        WHERE p ILIKE $1 AND i.interaction_date >= now() - interval '90 days' AND i.interaction_date <= now()`, [`%@${domain}`]) : Promise.resolve({} as any),
+    q(`SELECT count(*)::int AS n FROM brand_agent_representations
+        WHERE brand_company_id = $1 AND end_date IS NULL AND COALESCE(agent_type, 'tenant_rep') = 'tenant_rep'`, [companyId]),
+    q(`SELECT count(*) FILTER (WHERE upper(COALESCE(country, '')) IN ('GB','UK'))::int AS uk, count(*)::int AS total
+         FROM brand_stores
+        WHERE brand_company_id = $1 AND source_type = 'official_website'
+          AND notes LIKE '%"status":"coming_soon"%'`, [companyId]),
   ]);
   return {
-    activeRequirements: reqs.rows[0]?.n || 0,
-    pipnetRequirements: 0, // filled by the caller from the pipnet cache when warm
-    liveDeals: deals.rows[0]?.n || 0,
-    offers90d: offers.rows[0]?.n || 0,
-    viewings90d: viewings.rows[0]?.n || 0,
-    interactions90d: interactions.rows[0]?.n || 0,
-    representedBy: reps.rows[0]?.n || 0,
+    activeRequirements: reqs.bgp || 0,
+    pipnetRequirements: reqs.pipnet || 0,
+    liveDeals: deals.live || 0,
+    committedDeals: deals.committed || 0,
+    completedDeals24m: deals.completed || 0,
+    offers90d: offers.n || 0,
+    viewings90d: viewings.n || 0,
+    interest90d: interest.n || 0,
+    interactions90d: Math.max(interactions.n || 0, domainThreads.n || 0),
+    representedBy: reps.n || 0,
+    comingSoonUk: sites.uk || 0,
+    comingSoonElsewhere: Math.max(0, (sites.total || 0) - (sites.uk || 0)),
   };
 }
 
 async function covenantGradeFor(companyId: string): Promise<{ grade: string | null } | null> {
+  // covenant_reports stores the CH number upper-cased and zero-padded to 8;
+  // the CRM often holds it unpadded or lower-case.
   const r = await pool.query(
     `SELECT cr.grade FROM covenant_reports cr
-      JOIN crm_companies co ON co.companies_house_number = cr.company_number
-     WHERE co.id = $1
+      JOIN crm_companies co ON upper(lpad(regexp_replace(COALESCE(co.companies_house_number, ''), '\\s', '', 'g'), 8, '0')) = cr.company_number
+     WHERE co.id = $1 AND COALESCE(co.companies_house_number, '') <> ''
      ORDER BY cr.computed_at DESC LIMIT 1`,
     [companyId]
   ).catch(() => ({ rows: [] as any[] }));

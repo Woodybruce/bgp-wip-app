@@ -5072,6 +5072,14 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
         try {
           const { ensureNewsSearchIndexes } = await import("./brand-profile");
           await ensureNewsSearchIndexes();
+          const FLAG = "migration:web_feed_baseline_signals_v1";
+          const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [FLAG]).catch(() => ({ rows: [1] }));
+          if (!done.rows.length) {
+            const { removeBaselineWebFeedSignals } = await import("./news-brand-linking");
+            const removed = await removeBaselineWebFeedSignals();
+            await pool.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING`, [FLAG, JSON.stringify({ removed, at: new Date().toISOString() })]);
+            console.log(`[brand-web-feeds] removed ${removed} signal(s) made from pages' first read`);
+          }
         } catch (e: any) { console.error("[news-search] index build failed:", e?.message); }
       }, 30000);
       setTimeout(async () => {

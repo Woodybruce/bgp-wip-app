@@ -965,6 +965,23 @@ async function upsertBrandSignal(brandId: string, brandName: string, article: {
   }
 }
 
+// One-off: signals created from brand web feeds' first read (before the
+// baseline rule above) — existing sites counted as openings. Removes only
+// AI-linked rows whose source is one of those baseline article URLs.
+export async function removeBaselineWebFeedSignals(): Promise<number> {
+  const r = await pool.query(
+    `WITH web AS (SELECT id, type FROM news_sources WHERE type = ANY($1)),
+          first AS (SELECT source_id, min(fetched_at) AS at FROM news_articles WHERE source_id IN (SELECT id FROM web) GROUP BY source_id),
+          baseline AS (
+            SELECT a.url FROM news_articles a JOIN web ON web.id = a.source_id JOIN first f ON f.source_id = a.source_id
+             WHERE a.fetched_at < f.at + interval '30 minutes'
+               AND (web.type = $2 OR abs(extract(epoch FROM (COALESCE(a.published_at, a.fetched_at) - a.fetched_at))) < 600))
+     DELETE FROM brand_signals bs USING baseline b
+      WHERE bs.source = b.url AND bs.ai_generated IS TRUE`,
+    [Object.values(BRAND_WEB_FEED_TYPES), BRAND_WEB_FEED_TYPES.locations]);
+  return r.rowCount || 0;
+}
+
 export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Promise<{ linked: number; articles: number }> {
   const limit = opts?.limit || 200;
 
@@ -991,8 +1008,26 @@ export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Pro
   const sourceById = new Map(sources.map((s) => [s.id, s]));
   const brandNameById = new Map(brandIndex.map((b) => [b.id, b.name]));
 
+  // A brand page's first read is what was already there — its current
+  // estate, standing roles, old posts — not news. Only later additions
+  // become signals (a new locations feed otherwise turned every existing
+  // site into an "opening").
+  const webSourceIds = sources.filter((s) => (Object.values(BRAND_WEB_FEED_TYPES) as string[]).includes(s.type)).map((s) => s.id);
+  const baselineIds = new Set<string>();
+  if (webSourceIds.length) {
+    const rows = await pool.query(
+      `SELECT a.id FROM news_articles a
+         JOIN news_sources ns ON ns.id = a.source_id
+         JOIN (SELECT source_id, min(fetched_at) AS at FROM news_articles WHERE source_id = ANY($1) GROUP BY source_id) f ON f.source_id = a.source_id
+        WHERE a.source_id = ANY($1) AND a.fetched_at < f.at + interval '30 minutes'
+          AND (ns.type = $2 OR abs(extract(epoch FROM (COALESCE(a.published_at, a.fetched_at) - a.fetched_at))) < 600)`,
+      [webSourceIds, BRAND_WEB_FEED_TYPES.locations]).catch(() => ({ rows: [] as any[] }));
+    for (const r of rows.rows) baselineIds.add(String(r.id));
+  }
+
   let linked = 0;
   for (const a of articles) {
+    if (baselineIds.has(a.id)) continue;
     const src = a.sourceId ? sourceById.get(a.sourceId) : null;
 
     // A Google News category is a search hint, not company identity evidence.
