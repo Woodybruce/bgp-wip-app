@@ -837,7 +837,11 @@ function AppContent() {
   const { data: user, isLoading, isError, refetch } = useQuery<User | null>({
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
-    retry: false,
+    // A single failed check (e.g. the few seconds a new deploy takes to come
+    // up) showed "Could not check your session" — retry for ~15s first.
+    // A 401 isn't an error here (it resolves to null → login page).
+    retry: 4,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
     enabled: !isAddin && !isPublicKycUpload,
   });
   const verifiedIdentity = useSyncExternalStore(subscribeSessionVerification, getSessionVerificationSnapshot, getSessionVerificationSnapshot);
