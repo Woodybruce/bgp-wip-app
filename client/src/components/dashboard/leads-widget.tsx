@@ -54,9 +54,16 @@ export function MyLeadsWidget() {
   });
 
   const generateMutation = useMutation({
+    // Runs in the background on the server (about a minute) — poll it.
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/leads/generate");
-      return res.json();
+      await apiRequest("POST", "/api/leads/generate");
+      for (let i = 0; i < 60; i++) {
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        const job = await (await apiRequest("GET", "/api/leads/generate/status")).json();
+        if (job.state === "done") return job.result || [];
+        if (job.state === "error") throw new Error(job.error || "Failed to generate leads");
+      }
+      throw new Error("Still generating — check back in a minute");
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/leads"] });

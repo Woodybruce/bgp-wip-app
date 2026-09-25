@@ -452,7 +452,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       toast({ title: "Contacts couldn't be refreshed", description: error instanceof Error ? error.message.replace(/^\d{3}:\s*/, "") : "Please try again.", variant: "destructive" });
     } finally {
       setContactsFinding(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     }
   }
 
@@ -464,7 +464,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       // silent — orchestrator may partially fail (Veriff, etc.); covenant data still gets saved
     } finally {
       setKycRunning(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     }
   }
 
@@ -529,7 +529,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     },
     onSuccess: () => {
       toast({ title: "Brand profile saved" });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
       setEditing(false);
     },
@@ -599,7 +599,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       // without taking a screenshot of an ephemeral toast.
       // eslint-disable-next-line no-console
       console.log("[re-resolve KYC]", out);
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
     },
     onError: (e: any) => toast({ title: "Re-resolve failed", description: e.message, variant: "destructive" }),
@@ -634,7 +634,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       }
       // eslint-disable-next-line no-console
       console.log("[manual-resolve KYC]", out);
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
     },
     onError: (e: any) => toast({ title: "Manual resolve failed", description: e.message, variant: "destructive" }),
@@ -694,7 +694,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       if (Array.isArray(out?.diagnostics)) {
         console.log("[research-stores] diagnostics:", out.diagnostics);
       }
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any, vars) => {
       setStoresDiagnostic(e.message || "Store search failed");
@@ -733,7 +733,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     },
     onSuccess: () => {
       toast({ title: "Representation added" });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       setAddRep(null);
       setRepForm(EMPTY_REP_FORM);
       setRepSearch("");
@@ -760,7 +760,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     },
     onSuccess: () => {
       toast({ title: "Representation ended" });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -780,7 +780,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         ? `${out.added} new article${out.added === 1 ? "" : "s"}, ${out.signalsLinked} signal${out.signalsLinked === 1 ? "" : "s"} linked`
         : "No new articles found";
       toast({ title: "Intel refreshed", description: msg });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Intel refresh failed", description: e.message, variant: "destructive" }),
   });
@@ -804,7 +804,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         title: "Perplexity refreshed",
         description: `${out.signalsAdded} new signal${out.signalsAdded === 1 ? "" : "s"}${out.analysisUpdated ? ", analysis updated" : ""}`,
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Perplexity refresh failed", description: e.message, variant: "destructive" }),
   });
@@ -828,7 +828,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         title: "Website scraped",
         description: `${out.pagesChecked} page${out.pagesChecked === 1 ? "" : "s"} checked, ${out.signalsAdded} new signal${out.signalsAdded === 1 ? "" : "s"}`,
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Scrape failed", description: e.message, variant: "destructive" }),
   });
@@ -857,7 +857,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       toast({ title: "Signal logged" });
       setNewSignal({ headline: "", signal_type: "opening", sentiment: "positive", source: "", signal_date: "" });
       setAddSignalOpen(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Failed to log signal", description: e.message, variant: "destructive" }),
   });
@@ -873,7 +873,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     },
     onSuccess: () => {
       toast({ title: "Signal removed" });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -2063,7 +2063,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                       onChange={e => setNewSignal(v => ({ ...v, signal_type: e.target.value }))}
                       className="h-7 text-xs rounded-md border border-input bg-background px-2"
                     >
-                      {["opening","closure","funding","exec_change","sector_move","rumour","news"].map(t => (
+                      {["opening","hiring","requirement","closure","funding","exec_change","sector_move","rumour","news"].map(t => (
                         <option key={t} value={t}>{t.replace(/_/g," ")}</option>
                       ))}
                     </select>
@@ -2107,6 +2107,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   {(signalsShowAll ? dedupedSignals : dedupedSignals.slice(0, 6)).map((s: any) => {
                     const typeCls: Record<string, string> = {
                       opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
+                      hiring:      "bg-teal-50 text-teal-700 border-teal-200",
+                      requirement: "bg-orange-50 text-orange-700 border-orange-200",
                       closure:     "bg-red-50 text-red-700 border-red-200",
                       funding:     "bg-violet-50 text-violet-700 border-violet-200",
                       exec_change: "bg-blue-50 text-blue-700 border-blue-200",
@@ -2422,7 +2424,7 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
     },
     onSuccess: (out) => {
       toast({ title: `Researched ${out.competitors?.length ?? 0} competitors` });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Competitor research error", description: e.message, variant: "destructive" }),
   });
@@ -2564,7 +2566,7 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
                     <CreateCompetitorInCrmButton
                       name={comp.name}
                       onCreated={() => {
-                        queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+                        queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
                         queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
                       }}
                     />
@@ -2781,7 +2783,7 @@ export function MenuIntelCard({
     },
     onSuccess: (out) => {
       toast({ title: `${heading} refreshed`, description: `${out.items?.length ?? 0} items` });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Refresh failed", description: e.message, variant: "destructive" }),
   });
@@ -2933,7 +2935,7 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
     onSuccess: (json) => {
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "rocketreach-company"] });
       // Also refresh the brand profile so auto-filled industry/company_type appears
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       if (!json.payload) {
         toast({ title: "No brand intel found", description: companyName });
       } else if (json.auto_filled && Object.keys(json.auto_filled).length > 0) {
@@ -3351,7 +3353,7 @@ function BgpTeamMenu({ companyId, coverers }: { companyId: string; coverers: Arr
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
     },
     onError: (e: any) => toast({ title: "Couldn't save BGP team", description: e?.message, variant: "destructive" }),
@@ -3397,7 +3399,7 @@ function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role
     },
     onSuccess: () => {
       setEditing(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Couldn't save role", description: e?.message, variant: "destructive" }),
   });
@@ -3492,7 +3494,7 @@ export function BrandComplianceCard({
         title: found ? `Confirmed: ${found}` : "Not found yet",
         description: found ? "" : "Nothing on the website or in the deal records named the UK entity — enter it below.",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
     },
     onError: (e: any) => toast({ title: "Scrape failed", description: e.message, variant: "destructive" }),
@@ -3506,7 +3508,7 @@ export function BrandComplianceCard({
     onSuccess: () => {
       toast({ title: "UK trading entity saved" });
       setEditing(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
@@ -3527,7 +3529,7 @@ export function BrandComplianceCard({
       } else {
         toast({ title: "Couldn't fetch", description: out?.reason || "no filing found", variant: "destructive" });
       }
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Fetch failed", description: e.message, variant: "destructive" }),
   });
@@ -4489,7 +4491,7 @@ function TenantRepsBlock({ companyId, reps }: { companyId: string; reps: any[] }
   const isClient = !viewer || viewer.role === "Client" || !!viewer.companyScopeId;
   const end = useMutation({
     mutationFn: async (repId: string) => apiRequest("PATCH", `/api/brand/representations/${repId}`, { end_date: new Date().toISOString().slice(0, 10) }),
-    onSuccess: () => { toast({ title: "Representation ended" }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); },
+    onSuccess: () => { toast({ title: "Representation ended" }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] }); },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
   if (!reps.length && isClient) return null;
@@ -4548,7 +4550,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
     },
     onSuccess: () => {
       toast({ title: "Image removed" });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "media"] });
       setLightboxImg(null);
     },
@@ -4574,7 +4576,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
     onSuccess: (_d, vars) => {
       toast({ title: vars.isHero ? "Cover photo unpinned" : "Cover photo selected" });
       setLightboxImg((current: any) => current?.id === vars.imageId ? { ...current, tags: vars.isHero ? vars.currentTags.filter(tag => tag !== "brand-hero") : Array.from(new Set([...vars.currentTags, "brand-hero"])) } : current);
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "media"] });
     },
     onError: (e: any) => toast({ title: "Couldn't update", description: e?.message, variant: "destructive" }),

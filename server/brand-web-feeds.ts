@@ -240,7 +240,7 @@ async function brandFeedItems(companyId: string) {
     `SELECT a.id, a.title, a.summary, a.url, a.image_url, COALESCE(a.published_at, a.fetched_at) AS at, ns.type, ns.url AS source_url,
             ns.id AS source_key, ${BASELINE_SQL} AS baseline, first.at AS followed_at
        FROM news_articles a JOIN news_sources ns ON ns.id = a.source_id ${FIRST_FETCH_JOIN.replace("$TYPES", "$2")}
-      WHERE ns.category = $1 AND ns.type = ANY($2)
+      WHERE ns.category = $1 AND ns.type = ANY($2) AND ns.active IS NOT FALSE
       ORDER BY COALESCE(a.published_at, a.fetched_at) DESC NULLS LAST
       LIMIT 240`, [`brand:${companyId}`, ALL_BRAND_FEED_TYPES])).rows;
   return withDisplayTitles(rows);
@@ -308,7 +308,7 @@ async function brandWatchItems(filterKey: string, days = 60) {
             ns.id AS source_key, c.id AS brand_id, c.name AS brand
        FROM news_articles a JOIN news_sources ns ON ns.id = a.source_id ${FIRST_FETCH_JOIN.replace("$TYPES", "$1")}
        LEFT JOIN crm_companies c ON ns.category LIKE 'brand:%' AND c.id = substring(ns.category from 7)
-      WHERE ns.type = ANY($1) AND COALESCE(a.published_at, a.fetched_at) > now() - ($2 || ' days')::interval
+      WHERE ns.type = ANY($1) AND ns.active IS NOT FALSE AND COALESCE(a.published_at, a.fetched_at) > now() - ($2 || ' days')::interval
         AND NOT ${BASELINE_SQL}
         AND rtrim(a.url, '/') <> rtrim(ns.url, '/')
       ORDER BY COALESCE(a.published_at, a.fetched_at) DESC NULLS LAST

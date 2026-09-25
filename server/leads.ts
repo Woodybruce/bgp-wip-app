@@ -1,5 +1,5 @@
 import { Express, Request, Response } from "express";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { eq, ne, desc, sql, and, inArray } from "drizzle-orm";
 import {
   aiLeadProfiles,
@@ -17,6 +17,7 @@ import {
   type AiLead,
 } from "@shared/schema";
 import { requireAuth } from "./auth";
+import { startJob, getJobStatus } from "./brand-jobs";
 import Anthropic from "@anthropic-ai/sdk";
 
 function getAnthropic(): Anthropic | null {
@@ -45,11 +46,28 @@ async function gatherUserContext(userId: string) {
     .orderBy(desc(crmDeals.createdAt))
     .limit(15);
 
-  const recentNews = await db
-    .select({ id: newsArticles.id, title: newsArticles.title, summary: newsArticles.aiSummary, tags: newsArticles.aiTags })
-    .from(newsArticles)
-    .orderBy(desc(newsArticles.publishedAt))
-    .limit(20);
+  // Trade news worth acting on: the last fortnight's AI-scored articles,
+  // most relevant first — not simply the 20 newest rows (which were brand
+  // Instagram posts and page scraps).
+  const recentNews = (await pool.query(
+    `SELECT a.title, COALESCE(a.ai_summary, left(a.summary, 240)) AS summary, a.ai_tags AS tags, a.source_name AS source
+       FROM news_articles a LEFT JOIN news_sources ns ON ns.id = a.source_id
+      WHERE a.published_at > now() - interval '14 days'
+        AND COALESCE(ns.type, '') NOT IN ('rssapp_instagram', 'rssapp_web_locations', 'rssapp_web_news', 'rssapp_careers', 'rssapp_linkedin', 'google_news')
+        AND a.ai_relevance_scores IS NOT NULL
+      ORDER BY (SELECT max(v::numeric) FROM jsonb_each_text(a.ai_relevance_scores) AS s(k, v) WHERE v ~ '^[0-9.]+$') DESC NULLS LAST, a.published_at DESC
+      LIMIT 20`)).rows;
+
+  // What brands are doing: openings, hiring, stated requirements, funding —
+  // from news, brand websites, jobs pages, LinkedIn and Instagram.
+  const brandSignals = (await pool.query(
+    `SELECT c.name AS brand, s.signal_type AS type, s.headline, COALESCE(s.signal_date, s.created_at)::date AS date
+       FROM brand_signals s JOIN crm_companies c ON c.id = s.brand_company_id
+      WHERE s.signal_type IN ('opening', 'hiring', 'requirement', 'funding', 'closure')
+        AND s.ai_relevant IS DISTINCT FROM FALSE AND c.merged_into_id IS NULL
+        AND COALESCE(s.signal_date, s.created_at) > now() - interval '21 days'
+      ORDER BY COALESCE(s.signal_date, s.created_at) DESC
+      LIMIT 40`).catch(() => ({ rows: [] as any[] }))).rows;
 
   const properties = await db
     .select({ id: crmProperties.id, name: crmProperties.name, status: crmProperties.status, assetClass: crmProperties.assetClass, address: crmProperties.address })
@@ -60,7 +78,8 @@ async function gatherUserContext(userId: string) {
   const leasingReqs = await db
     .select({ id: crmRequirementsLeasing.id, name: crmRequirementsLeasing.name, status: crmRequirementsLeasing.status, use: crmRequirementsLeasing.use, size: crmRequirementsLeasing.size, locations: crmRequirementsLeasing.requirementLocations })
     .from(crmRequirementsLeasing)
-    .orderBy(desc(crmRequirementsLeasing.createdAt))
+    .where(eq(crmRequirementsLeasing.status, "Active"))
+    .orderBy(desc(crmRequirementsLeasing.updatedAt))
     .limit(20);
 
   const investReqs = await db
@@ -99,6 +118,7 @@ async function gatherUserContext(userId: string) {
     userTeam,
     recentDeals,
     recentNews,
+    brandSignals,
     properties,
     leasingReqs,
     investReqs,
@@ -111,6 +131,25 @@ async function gatherUserContext(userId: string) {
       .filter(l => convertedLeadIds.some(d => d.leadId === l.id))
       .map(l => l.title),
   };
+}
+
+// The leads array, or as many complete lead objects as came back when the
+// answer was cut off.
+export function parseLeadsArray(text: string): any[] {
+  const start = text.indexOf("[");
+  if (start < 0) return [];
+  const body = text.slice(start);
+  try { const all = JSON.parse(body.slice(0, body.lastIndexOf("]") + 1)); if (Array.isArray(all)) return all; } catch { /* salvage below */ }
+  const out: any[] = [];
+  let depth = 0, from = -1, inString = false, escaped = false;
+  for (let i = 1; i < body.length; i++) {
+    const ch = body[i];
+    if (inString) { if (escaped) escaped = false; else if (ch === "\\") escaped = true; else if (ch === '"') inString = false; continue; }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === "{") { if (depth === 0) from = i; depth++; }
+    else if (ch === "}") { depth--; if (depth === 0 && from >= 0) { try { out.push(JSON.parse(body.slice(from, i + 1))); } catch { /* skip */ } from = -1; } }
+  }
+  return out;
 }
 
 async function generateLeads(userId: string, profile: AiLeadProfile): Promise<any[]> {
@@ -166,44 +205,43 @@ Return ONLY the JSON array, no other text.`;
   const userPrompt = `Here is the current CRM and market data to analyse for leads:
 
 RECENT DEALS (${context.userName}'s):
-${JSON.stringify(context.recentDeals.slice(0, 10), null, 1)}
+${JSON.stringify(context.recentDeals.slice(0, 10))}
 
 ACTIVE PROPERTIES:
-${JSON.stringify(context.properties.slice(0, 20), null, 1)}
+${JSON.stringify(context.properties.slice(0, 20))}
 
 ACTIVE LEASING REQUIREMENTS:
-${JSON.stringify(context.leasingReqs.slice(0, 15), null, 1)}
+${JSON.stringify(context.leasingReqs.slice(0, 15))}
 
 ACTIVE INVESTMENT REQUIREMENTS:
-${JSON.stringify(context.investReqs.slice(0, 15), null, 1)}
+${JSON.stringify(context.investReqs.slice(0, 15))}
 
-RECENT NEWS ARTICLES:
-${JSON.stringify(context.recentNews.slice(0, 15), null, 1)}
+WHAT BRANDS ARE DOING (last 21 days — openings, hiring, stated requirements, funding, closures):
+${JSON.stringify(context.brandSignals)}
 
-COMPANIES IN CRM:
-${JSON.stringify(context.companies.slice(0, 20), null, 1)}
+RELEVANT TRADE NEWS (last 14 days, most relevant first):
+${JSON.stringify(context.recentNews.slice(0, 15))}
 
 Generate leads now.`;
 
   try {
+    // 2,000 tokens cut six detailed leads off mid-array, the parse failed
+    // and "Generate" silently returned nothing (Woody, 2026-09-25: "the
+    // leads function just doesn't work").
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 2000,
+      max_tokens: 5000,
       messages: [
         { role: "user", content: userPrompt },
       ],
       system: systemPrompt,
-    });
+    }, { timeout: 120_000 });
 
     const text = response.content[0]?.type === "text" ? response.content[0].text : "";
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return [];
-
-    const leads = JSON.parse(jsonMatch[0]);
-    return Array.isArray(leads) ? leads : [];
+    return parseLeadsArray(text);
   } catch (e: any) {
     console.error("[leads] AI generation failed:", e?.message);
-    return [];
+    throw new Error(`Lead generation failed: ${e?.message || "no answer"}`);
   }
 }
 
@@ -375,40 +413,52 @@ export function setupLeadsRoutes(app: Express) {
         return res.status(400).json({ error: "Please set up your lead profile first" });
       }
 
-      const rawLeads = await generateLeads(userId, profile);
-      const insertedLeads: AiLead[] = [];
+      // Reading the data and writing 3-6 leads takes longer than the 45s
+      // request limit — run it in the background; the widget polls
+      // GET /api/leads/generate/status.
+      const { alreadyRunning } = startJob(`leads:${userId}`, async () => {
+        const rawLeads = await generateLeads(userId, profile);
+        const insertedLeads: AiLead[] = [];
 
-      for (const lead of rawLeads) {
-        try {
-          const [inserted] = await db
-            .insert(aiLeads)
-            .values({
-              userId,
-              title: lead.title || "Untitled Lead",
-              summary: lead.summary || "",
-              sourceType: lead.sourceType || "market",
-              sourceContext: lead.sourceContext || null,
-              area: lead.area || null,
-              assetClass: lead.assetClass || null,
-              opportunityType: lead.opportunityType || null,
-              confidence: Math.min(100, Math.max(0, lead.confidence || 50)),
-              status: "new",
-              suggestedAction: lead.suggestedAction || null,
-              aiReasoning: lead.aiReasoning || null,
-            })
-            .returning();
+        for (const lead of rawLeads) {
+          try {
+            const [inserted] = await db
+              .insert(aiLeads)
+              .values({
+                userId,
+                title: lead.title || "Untitled Lead",
+                summary: lead.summary || "",
+                sourceType: lead.sourceType || "market",
+                sourceContext: lead.sourceContext || null,
+                area: lead.area || null,
+                assetClass: lead.assetClass || null,
+                opportunityType: lead.opportunityType || null,
+                confidence: Math.min(100, Math.max(0, lead.confidence || 50)),
+                status: "new",
+                suggestedAction: lead.suggestedAction || null,
+                aiReasoning: lead.aiReasoning || null,
+              })
+              .returning();
 
-          insertedLeads.push(inserted);
-        } catch (e: any) {
-          console.error("[leads] Failed to insert lead:", e?.message);
+            insertedLeads.push(inserted);
+          } catch (e: any) {
+            console.error("[leads] Failed to insert lead:", e?.message);
+          }
         }
-      }
 
-      console.log(`[leads] Generated ${insertedLeads.length} leads for user ${userId}`);
-      res.json(insertedLeads);
+        console.log(`[leads] Generated ${insertedLeads.length} leads for user ${userId}`);
+        return insertedLeads;
+      });
+      res.status(202).json({ accepted: true, alreadyRunning });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
+  });
+
+  app.get("/api/leads/generate/status", requireAuth, async (req: Request, res: Response) => {
+    const userId = req.session.userId || req.tokenUserId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    res.json(getJobStatus(`leads:${userId}`) || { state: "idle" });
   });
 
   app.post("/api/leads/:id/action", requireAuth, async (req: Request, res: Response) => {

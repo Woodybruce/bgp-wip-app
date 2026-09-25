@@ -1863,9 +1863,13 @@ export function setupNewsFeedRoutes(app: Express) {
       // every google_news-typed source (both the per-brand 'brand:<id>' feeds
       // that power Brand Intelligence and the topical query feeds). The feed is
       // now driven by direct RSS + RSS.app sources only.
+      // Brand web feeds (a brand's own locations / news / jobs / LinkedIn
+      // pages) belong on that brand's Brand feed and News → Brand watch, not
+      // the general feed — they filled the Dashboard with page scraps
+      // ("Supermarket help", "[email protected]", 2026-09-25).
       let articles = await db.select()
         .from(newsArticles)
-        .where(and(newsArticleTitleFilter(), sql`(${newsArticles.sourceId} IS NULL OR ${newsArticles.sourceId} NOT IN (SELECT id FROM news_sources WHERE type = 'google_news'))`))
+        .where(and(newsArticleTitleFilter(), sql`(${newsArticles.sourceId} IS NULL OR ${newsArticles.sourceId} NOT IN (SELECT id FROM news_sources WHERE type = 'google_news' OR type IN ('rssapp_web_locations', 'rssapp_web_news', 'rssapp_careers', 'rssapp_linkedin')))`))
         .orderBy(desc(newsArticles.publishedAt))
         .limit(pool);
 
