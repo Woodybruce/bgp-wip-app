@@ -12,6 +12,7 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { isKeyContactRole } from "../shared/contact-tiers";
 
 const router = Router();
 
@@ -54,12 +55,10 @@ export function scopeForCompanyType(companyType: string | null | undefined): Dis
 // RocketReach can surface fuzzy matches (e.g. "head of marketing" leaks
 // through). Drop anything whose title doesn't look C-suite or property.
 // LANDLORD scope skips this filter entirely.
+// Same rule as the brand's Key contacts board (shared/contact-tiers.ts):
+// property people and C-suite / founders — never regional or area MDs.
 function isRelevantTitle(title: string | null | undefined): boolean {
-  if (!title) return false;
-  const t = title.toLowerCase();
-  const cSuite = /\b(founder|ceo|chief executive|coo|chief operating|cfo|chief financial|cmo|chief marketing|managing director|md)\b/.test(t);
-  const property = /(property|real estate|acquisition|expansion|portfolio|site|estates)/.test(t);
-  return cSuite || property;
+  return isKeyContactRole(title);
 }
 
 interface RocketReachPerson {

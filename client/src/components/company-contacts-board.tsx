@@ -518,14 +518,20 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
             {scanning ? " · rescanning…" : ""}
           </p>
         )}
-        {hiddenCount > 0 && (
+        {/* Brands show key people only — property and C-suite / founders.
+            Everyone else (regional MDs, store staff, PAs) is noise here
+            (Woody, 2026-09-25: "we don't want any regional managers"); they
+            stay in the CRM. Landlords and account boards keep Show all. */}
+        {hiddenCount > 0 && (applyTierFilter && !tierEmpty ? (
+          <p className="text-[11px] text-muted-foreground mt-1.5" data-testid="key-contacts-hidden-note">{hiddenCount} other {hiddenCount === 1 ? "person" : "people"} in the CRM not shown — not property or C-suite.</p>
+        ) : (
           <button
             onClick={() => setShowAll(v => !v)}
             className={`${pillMetrics} ${pillInactive} mt-1.5`}
           >
             {showAll ? "Show property-tier only" : `Show all ${allContacts.length + discovered.length} contacts`}
           </button>
-        )}
+        ))}
         {extraSections.filter(s => s.rows.length > 0).map(s => {
           const isOpen = openSections[s.key] ?? false;
           return (
