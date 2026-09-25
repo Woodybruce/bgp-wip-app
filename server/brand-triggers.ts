@@ -38,9 +38,10 @@ const CLAUDE_FONT = `ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI
 
 // On the Expansion score the brand page shows (v2, four 0-25 parts) — the
 // old 70/50 were on the retired additive scale (2026-09-25: one score
-// everywhere). Crossings only compare v2 snapshots with v2 snapshots.
-const HOT_THRESHOLD = 60;
-const COOLING_THRESHOLD = 40;
+// everywhere). Set from the first full v2 scan: 17 of 1,892 brands at 30+,
+// 99 at 20+, top score 56. Crossings only compare v2 with v2 snapshots.
+const HOT_THRESHOLD = 30;
+const COOLING_THRESHOLD = 20;
 const SCORE_VERSION = 2;
 
 interface TriggerEvent {

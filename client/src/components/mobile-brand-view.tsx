@@ -336,8 +336,8 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
               <TrendingUp className="w-3.5 h-3.5" /> Expansion
               {hunter?.expansionScore != null && (
                 <Badge variant="outline" className={`text-[10px] font-mono tabular-nums ${
-                  hunter.expansionScore >= 60 ? "bg-orange-50 text-orange-700 border-orange-200" :
-                  hunter.expansionScore >= 40 ? "bg-amber-50 text-amber-700 border-amber-200" :
+                  hunter.expansionScore >= 30 ? "bg-orange-50 text-orange-700 border-orange-200" :
+                  hunter.expansionScore >= 20 ? "bg-amber-50 text-amber-700 border-amber-200" :
                   "bg-zinc-50 text-zinc-600 border-zinc-200"}`}>
                   {hunter.expansionScore}/100
                 </Badge>
