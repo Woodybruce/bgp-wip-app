@@ -104,6 +104,7 @@ test('generic and dedicated feed ingestion both screen identity, without changin
     db, crmCompanies, newsArticles, newsSources, isBrandNewsRelevant,
     and: () => true, ilike: () => true, isNotNull: () => true, desc: () => true, sql: () => true,
     BRAND_CATEGORY_PREFIX: 'brand:', SOCIAL_TYPE: { instagram: 'rssapp_instagram', x: 'rssapp_x', linkedin: 'rssapp_linkedin' },
+    BRAND_WEB_FEED_TYPES: { locations: 'rssapp_web_locations', website: 'rssapp_web_news', careers: 'rssapp_careers', linkedin: 'rssapp_linkedin' },
     upsertBrandSignal: async (id, name, row) => linked.push([id, row.title]),
   });
   const result = await compiled.linkRecentArticlesToBrands();

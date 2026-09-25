@@ -149,6 +149,58 @@ ensureBrandStoresTable().catch(err =>
 );
 
 // ─── Full brand profile (one request, all sections) ─────────────────────
+const likeEscape = (value: string) => value.replace(/[\\%_]/g, ch => `\\${ch}`);
+
+// Name / alias / domain patterns for a brand's news, as ILIKE parameters.
+export function brandNewsPatterns(co: any): { text: string[]; urls: string[] } {
+  const identity = co?.ai_generated_fields?.brand_identity;
+  const aliases = identity?.status === "verified" && Array.isArray(identity.aliases) ? identity.aliases : [];
+  const names = [co?.name, ...aliases].map((n: any) => String(n || "").trim()).filter(n => n.length >= 3).slice(0, 7);
+  const text = new Set<string>();
+  for (const name of names) {
+    // An apostrophe matches any single character (Nando's / Nando’s) and
+    // the apostrophe-free spelling (Nandos) is searched too.
+    text.add(`%${likeEscape(name).replace(/['’`]/g, "_")}%`);
+    if (/['’`]/.test(name)) text.add(`%${likeEscape(name.replace(/['’`]/g, ""))}%`);
+  }
+  const urls = new Set<string>();
+  for (const d of [co?.domain, co?.domain_url, co?.website]) {
+    const host = String(d || "").trim().replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").toLowerCase();
+    if (host.length >= 4) urls.add(`%${likeEscape(host)}%`);
+  }
+  return { text: [...text], urls: [...urls] };
+}
+
+export function brandNewsQuery(companyId: string, co: any) {
+  const { text, urls } = brandNewsPatterns(co);
+  const params: any[] = [companyId];
+  const add = (value: string) => { params.push(value); return `$${params.length}`; };
+  const conditions = [`n.source_id IN (SELECT ns.id FROM news_sources ns WHERE ns.category = 'brand:' || $1 AND ns.type = 'google_news')`];
+  for (const pattern of text) { const ref = add(pattern); conditions.push(`n.title ILIKE ${ref}`, `n.summary ILIKE ${ref}`); }
+  for (const pattern of urls) conditions.push(`n.url ILIKE ${add(pattern)}`);
+  const sql = `SELECT id, title, summary, ai_summary, url, image_url, source_name, published_at, category
+     FROM (
+       SELECT DISTINCT ON (n.url) n.id, n.title, n.summary, n.ai_summary, n.url, n.image_url, n.source_name, n.published_at, n.category
+         FROM news_articles n
+        WHERE ${conditions.join("\n           OR ")}
+        ORDER BY n.url, n.published_at DESC NULLS LAST
+     ) deduped
+    ORDER BY published_at DESC NULLS LAST
+    LIMIT 100`;
+  return { sql, params };
+}
+
+// Trigram indexes so brand-news name matching doesn't scan every article.
+// Built CONCURRENTLY in the background after boot (the table is large).
+export async function ensureNewsSearchIndexes() {
+  await pool.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+  for (const col of ["title", "summary", "url"]) {
+    const t0 = Date.now();
+    await pool.query(`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_news_articles_${col}_trgm ON news_articles USING gin (${col} gin_trgm_ops)`);
+    console.log(`[news-search] ${col} trigram index ready (${Math.round((Date.now() - t0) / 1000)}s)`);
+  }
+}
+
 // Exactly one saved contact at the brand with no email, whose letters-only
 // name equals the address's local part → that contact's address.
 export async function attachSenderEmailsByName(companyId: string, senders: Array<{ email: string }>, contactRows: any[]) {
@@ -320,33 +372,17 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // Fetch candidates, then apply the same identity check as ingestion below.
     // Over-fetch so rejected historical name collisions do not consume the
     // entire visible result limit. Keep the general industry feed unchanged.
-    const newsQ = pool.query(
-      `SELECT id, title, summary, ai_summary, url, image_url, source_name, published_at, category
-         FROM (
-           SELECT DISTINCT ON (n.url) n.id, n.title, n.summary, n.ai_summary, n.url, n.image_url, n.source_name, n.published_at, n.category
-             FROM news_articles n,
-                  (SELECT name, domain_url, domain, website, ai_generated_fields FROM crm_companies WHERE id = $1) AS co
-            WHERE n.source_id IN (SELECT ns.id FROM news_sources ns WHERE ns.category = 'brand:' || $1 AND ns.type = 'google_news')
-               OR replace(n.title, '''', '') ILIKE '%' || replace(co.name, '''', '') || '%'
-               OR replace(coalesce(n.summary, ''), '''', '') ILIKE '%' || replace(co.name, '''', '') || '%'
-               OR EXISTS (
-                 SELECT 1 FROM jsonb_array_elements_text(
-                   CASE WHEN co.ai_generated_fields->'brand_identity'->>'status' = 'verified'
-                          AND jsonb_typeof(co.ai_generated_fields->'brand_identity'->'aliases') = 'array'
-                     THEN co.ai_generated_fields->'brand_identity'->'aliases' ELSE '[]'::jsonb END
-                 ) AS alias(name)
-                 WHERE length(trim(alias.name)) > 0
-                   AND (n.title ILIKE '%' || alias.name || '%' OR coalesce(n.summary, '') ILIKE '%' || alias.name || '%')
-               )
-               OR (co.domain IS NOT NULL AND n.url ILIKE '%' || co.domain || '%')
-               OR (co.domain_url IS NOT NULL AND n.url ILIKE '%' || co.domain_url || '%')
-               OR (co.website IS NOT NULL AND n.url ILIKE '%' || co.website || '%')
-            ORDER BY n.url, n.published_at DESC NULLS LAST
-         ) deduped
-        ORDER BY published_at DESC NULLS LAST
-        LIMIT 100`,
-      [companyId]
-    );
+    // Brand news: the brand's Google News feed plus any article whose title,
+    // summary or link names it. Patterns are built here and passed as
+    // parameters so the trigram indexes (ensureNewsSearchIndexes) apply —
+    // the old in-SQL name join scanned all ~270k articles on every open
+    // (~20s of a 25s brand page, 2026-09-25).
+    const newsQ = (async () => {
+      const co = (await pool.query(`SELECT name, domain_url, domain, website, ai_generated_fields FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+      if (!co) return { rows: [] };
+      const { sql, params } = brandNewsQuery(String(companyId), co);
+      return pool.query(sql, params);
+    })();
 
     // Active requirements / pipeline
     // crm_requirements_leasing stores size/use/locations as text[] arrays

@@ -5065,6 +5065,15 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
       // brands that already have a feed are skipped and the account-level
       // quota check stops at the cap, so a quiet boot creates nothing. Runs
       // after the handle heal above so poisoned rows can't win paid slots.
+      // Trigram indexes for brand-news name matching (brand pages were
+      // spending ~20s scanning news_articles). Idempotent; CONCURRENTLY so
+      // the table stays writable while they build.
+      setTimeout(async () => {
+        try {
+          const { ensureNewsSearchIndexes } = await import("./brand-profile");
+          await ensureNewsSearchIndexes();
+        } catch (e: any) { console.error("[news-search] index build failed:", e?.message); }
+      }, 30000);
       setTimeout(async () => {
         const KEY = "rssapp_curated_ig_feeds_last_run";
         try {
