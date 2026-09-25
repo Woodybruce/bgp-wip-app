@@ -21,8 +21,9 @@
 //   POST /api/brand-triggers/run               — run now
 // ─────────────────────────────────────────────────────────────────────────
 import { Router, type Request, type Response } from "express";
-import { requireAuth } from "./auth";
+import { requireAuth, requireAdmin } from "./auth";
 import { pool } from "./db";
+import { startJob, getJobStatus } from "./brand-jobs";
 import { sendSharedMailboxEmail } from "./shared-mailbox";
 
 const router = Router();
@@ -416,6 +417,19 @@ function groupEventsByRecipient(events: TriggerEvent[]): Map<string, TriggerEven
 
 // ─── Endpoints ───────────────────────────────────────────────────────────
 
+// Admin: re-record every brand's v2 Expansion score (no alerts) and check it.
+router.post("/api/admin/expansion/rescore", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  const { alreadyRunning } = startExpansionRescore();
+  res.status(202).json({ accepted: true, alreadyRunning });
+});
+
+router.get("/api/admin/expansion/rescore", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  const job = getJobStatus("expansion-rescore") || { state: "idle" };
+  const saved = await pool.query(`SELECT count(DISTINCT brand_company_id)::int AS brands, max(checked_at) AS last FROM brand_score_history WHERE score_version = 2`).catch(() => ({ rows: [{}] as any[] }));
+  const indexes = await pool.query(`SELECT c.relname AS name, i.indisvalid AS valid FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid WHERE c.relname LIKE 'idx_news_articles_%_trgm'`).catch((e: any) => ({ rows: [{ error: e.message }] }));
+  res.json({ job, v2Brands: saved.rows[0]?.brands ?? 0, lastScoredAt: saved.rows[0]?.last ?? null, newsIndexes: indexes.rows });
+});
+
 router.get("/api/brand-triggers/preview", requireAuth, async (req: Request, res: Response) => {
   try {
     const events = await scanBrandTriggers({ dryRun: true });
@@ -448,6 +462,17 @@ router.post("/api/brand-triggers/run", requireAuth, async (req: Request, res: Re
     res.status(500).json({ error: err.message });
   }
 });
+
+// Record a v2 score for every brand (no alerts) as a background job.
+export function startExpansionRescore() {
+  return startJob("expansion-rescore", async () => {
+    const t0 = Date.now();
+    await scanBrandTriggers({ recordOnly: true });
+    const seconds = Math.round((Date.now() - t0) / 1000);
+    console.log(`[expansion] v2 scores recorded for all brands (${seconds}s)`);
+    return { seconds };
+  });
+}
 
 export async function runDailyBrandTriggers(): Promise<{ events: number; sent: number }> {
   try {
