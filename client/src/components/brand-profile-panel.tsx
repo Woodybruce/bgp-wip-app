@@ -402,7 +402,7 @@ type RepForm = {
 
 const EMPTY_REP_FORM: RepForm = { otherCompanyId: "", otherCompanyName: "", agent_type: "tenant_rep", region: "", contactId: undefined, contactName: undefined };
 
-export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat = false }: { companyId: string; showPropertiesBoard?: boolean; flat?: boolean }) {
+export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat = false, topSlot }: { companyId: string; showPropertiesBoard?: boolean; flat?: boolean; topSlot?: React.ReactNode }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const { setInput: setChatInput } = useChatBGPState();
@@ -1005,14 +1005,15 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     setEditing(true);
   };
 
-  return (
-    <div className={(isLandlord || isBrand)
-      ? "flex flex-col gap-3 items-stretch w-full min-w-0"
-      : "flex flex-col md:flex-row gap-3 items-start w-full min-w-0"}>
-    {/* flat (the company page): no outer card, so these boards sit on the page
-        exactly like Key contacts / Covenant below (Woody, 2026-09-24: "the
-        bottom of the app is different"). */}
-    <Card data-testid="brand-profile-panel" className={`flex-1 min-w-0 max-w-full ${flat ? "bg-transparent border-0 shadow-none rounded-none overflow-visible" : "overflow-hidden"}`}>
+  // One chat instance: top row on md+ screens, under About below that.
+  const [wide, setWide] = useState(() => typeof window === "undefined" || window.matchMedia("(min-width: 768px)").matches);
+  useEffect(() => {
+    const mql = window.matchMedia("(min-width: 768px)");
+    const update = () => setWide(mql.matches);
+    mql.addEventListener("change", update);
+    return () => mql.removeEventListener("change", update);
+  }, []);
+  const header = (
       <CardHeader className={`${flat ? "px-0 py-2 bg-background/95 supports-[backdrop-filter]:bg-background/85" : "p-3 pb-2 bg-card/95 supports-[backdrop-filter]:bg-card/85"} flex flex-row items-start justify-between sticky top-0 z-20 backdrop-blur border-b border-border/40`}>
         <div className="flex flex-col gap-1 min-w-0 flex-1">
         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
@@ -1072,6 +1073,119 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
           )}
         </div>
       </CardHeader>
+  );
+  const topInfo = (
+    <>
+            <BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} suggestedDomain={c.ai_generated_fields?.website_suggestion?.domain} />
+            {/* ── Details card ─────────────────────────────── */}
+            {(() => {
+              const a: any = c.head_office_address;
+              // head_office_address can be a string (legacy), an
+              // {address, ...} wrapper, or a structured {street, city,
+              // country, postcode} (Apollo). Stringify safely — the
+              // .address fallback used to leak an object into JSX.
+              const stringifyAddrFallback = (x: any): string | null => {
+                if (!x) return null;
+                if (typeof x === "string") return x;
+                if (typeof x === "object") {
+                  return x.formatted
+                    || x.line1
+                    || [x.street, x.city, x.postcode, x.country].filter(Boolean).join(", ")
+                    || null;
+                }
+                return null;
+              };
+              const hqFull = a
+                ? ([a.street, a.city, a.country].filter(Boolean).join(", ") || stringifyAddrFallback(a.address) || stringifyAddrFallback(a) || null)
+                : null;
+              const hqShort = a
+                ? ([a.city, a.country].filter(Boolean).join(", ") || stringifyAddrFallback(a.address) || stringifyAddrFallback(a) || null)
+                : null;
+              const hasDetails = !!(c.industry || hqShort || (c.employee_count && c.employee_count > 0) || c.annual_revenue || c.founded_year || c.stock_ticker);
+              if (!hasDetails) return null;
+              const empStr = c.employee_count && c.employee_count > 0
+                ? c.employee_count >= 10000 ? `~${Math.round(c.employee_count / 1000)}k employees`
+                  : c.employee_count >= 1000 ? `~${(c.employee_count / 1000).toFixed(1)}k employees`
+                  : `${c.employee_count} employees`
+                : null;
+              const fmtRevenue = (v: number) => v >= 1_000_000_000 ? `$${(v / 1_000_000_000).toFixed(1)}B` : `$${(v / 1_000_000).toFixed(0)}M`;
+              return (
+                <div className="rounded-md border border-border/40 bg-muted/20 p-2 mb-2 order-0 flex flex-wrap gap-x-3 gap-y-0.5 items-center">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+                    <Building2 className="w-3 h-3" /> Details
+                  </span>
+                  {c.industry && <span className="text-xs text-foreground">{c.industry}</span>}
+                  {hqShort && (
+                    <span className="text-xs text-muted-foreground flex items-center gap-0.5" title={hqFull || hqShort}>
+                      <MapPin className="w-2.5 h-2.5 shrink-0" />Global HQ: {hqShort}
+                    </span>
+                  )}
+                  {empStr && <span className="text-xs text-muted-foreground">{empStr}</span>}
+                  {c.annual_revenue && c.annual_revenue > 0 && (
+                    <span className="text-xs text-muted-foreground">Global revenue {fmtRevenue(c.annual_revenue)}</span>
+                  )}
+                  {c.founded_year && <span className="text-xs text-muted-foreground">Est. {c.founded_year}</span>}
+                  {!isLandlord && <ApolloDetailChips companyId={c.id} />}
+                  {c.stock_ticker && (
+                    <a
+                      href={`https://finance.yahoo.com/quote/${encodeURIComponent(normalizeTicker(c.stock_ticker) ?? c.stock_ticker)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/60 bg-muted/40 hover:bg-muted text-[11px] font-medium text-foreground"
+                    >
+                      <Coins className="w-2.5 h-2.5 text-amber-600" /> {displayTicker(c.stock_ticker)}
+                    </a>
+                  )}
+                </div>
+              );
+            })()}
+            <div className="flex items-center gap-2 flex-wrap" data-testid="brand-overview-actions">
+              {c.linkedin_url && <Button variant="outline" size="sm" asChild><a href={c.linkedin_url} target="_blank" rel="noreferrer" data-testid="link-linkedin"><Linkedin />LinkedIn</a></Button>}
+              {c.phone && <Button variant="outline" size="sm" asChild><a href={`tel:${c.phone}`} data-testid="link-phone"><Phone />Call</a></Button>}
+              {data.contacts.find(contact => contact.email) && <Button variant="outline" size="sm" asChild><a href={`mailto:${data.contacts.find(contact => contact.email)?.email}`}><Mail />Email</a></Button>}
+              {!isClientViewer && <>
+                <Button variant="outline" size="sm" onClick={runContactDiscovery} disabled={contactsFinding} data-testid="button-refresh-contacts"><RefreshCw className={contactsFinding ? "animate-spin" : ""} />{contactsFinding ? "Finding…" : "Refresh contacts"}</Button>
+                <Button variant="outline" size="sm" onClick={() => setAddContactOpen(true)} data-testid="button-add-contact-brand"><Plus />Add contact</Button>
+                <ContactFormDialog open={addContactOpen} onOpenChange={setAddContactOpen} defaultCompanyId={c.id} />
+              </>}
+              {currentUser?.role !== "Client" && <>
+                <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)}><Plus />Add to deal</Button>
+                {!isLandlord && <Button variant="outline" size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}><Building2 />Pitch property</Button>}
+              </>}
+            </div>
+    </>
+  );
+  const conversationBoard = (
+            <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-3 md:flex-1 md:min-w-0 flex flex-col h-full">
+              {/* Always open on desktop, and as tall as About beside it (Woody, 2026-09-24). */}
+              <p className="text-sm font-medium flex items-center gap-2"><MessageSquare className="w-4 h-4 text-muted-foreground" />{isLandlord ? "Landlord conversation" : "Brand conversation"}</p>
+              <AskChatBGPInline brandName={c.name} isLandlord={isLandlord} />
+              <div className="h-80 md:h-auto md:flex-1 md:min-h-[16rem]"><CompanyMiniChat companyId={companyId} companyName={c.name} fill /></div>
+            </div>
+  );
+
+  return (
+    <div className={(isLandlord || isBrand)
+      ? "flex flex-col gap-3 items-stretch w-full min-w-0"
+      : "flex flex-col md:flex-row gap-3 items-start w-full min-w-0"}>
+    {/* flat (the company page): no outer card, so these boards sit on the page
+        exactly like Key contacts / Covenant below (Woody, 2026-09-24: "the
+        bottom of the app is different"). */}
+    <Card data-testid="brand-profile-panel" className={`flex-1 min-w-0 max-w-full ${flat ? "bg-transparent border-0 shadow-none rounded-none overflow-visible" : "overflow-hidden"}`}>
+      {/* Company page: the Brand conversation sits beside Group entities,
+          the profile header and the website / details / actions, at a fixed
+          height — About then runs full width underneath (Woody, 2026-09-25:
+          Nando's long About made the chat "massive"). */}
+      {flat ? (
+        <div className="md:grid md:grid-cols-2 md:gap-4 md:items-stretch">
+          <div className="min-w-0 space-y-3">
+            {topSlot}
+            {header}
+            {!editing && <div className={panelSec("profile")}>{topInfo}</div>}
+          </div>
+          {wide && <div className="flex flex-col min-w-0 h-[34rem]">{conversationBoard}</div>}
+        </div>
+      ) : header}
 
       <CardContent className={`${flat ? "px-0 py-3" : "p-3"} space-y-4`}>
         {/* Success commentary is dropped (Woody, 2026-09-23 — "we don't need the commentary"); progress and problems still show. */}
@@ -1195,83 +1309,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         ) : (
           <div className="w-full flex flex-col gap-2.5">
             <div className={panelSec("profile")}>
-            <BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} suggestedDomain={c.ai_generated_fields?.website_suggestion?.domain} />
-            {/* ── Details card ─────────────────────────────── */}
-            {(() => {
-              const a: any = c.head_office_address;
-              // head_office_address can be a string (legacy), an
-              // {address, ...} wrapper, or a structured {street, city,
-              // country, postcode} (Apollo). Stringify safely — the
-              // .address fallback used to leak an object into JSX.
-              const stringifyAddrFallback = (x: any): string | null => {
-                if (!x) return null;
-                if (typeof x === "string") return x;
-                if (typeof x === "object") {
-                  return x.formatted
-                    || x.line1
-                    || [x.street, x.city, x.postcode, x.country].filter(Boolean).join(", ")
-                    || null;
-                }
-                return null;
-              };
-              const hqFull = a
-                ? ([a.street, a.city, a.country].filter(Boolean).join(", ") || stringifyAddrFallback(a.address) || stringifyAddrFallback(a) || null)
-                : null;
-              const hqShort = a
-                ? ([a.city, a.country].filter(Boolean).join(", ") || stringifyAddrFallback(a.address) || stringifyAddrFallback(a) || null)
-                : null;
-              const hasDetails = !!(c.industry || hqShort || (c.employee_count && c.employee_count > 0) || c.annual_revenue || c.founded_year || c.stock_ticker);
-              if (!hasDetails) return null;
-              const empStr = c.employee_count && c.employee_count > 0
-                ? c.employee_count >= 10000 ? `~${Math.round(c.employee_count / 1000)}k employees`
-                  : c.employee_count >= 1000 ? `~${(c.employee_count / 1000).toFixed(1)}k employees`
-                  : `${c.employee_count} employees`
-                : null;
-              const fmtRevenue = (v: number) => v >= 1_000_000_000 ? `$${(v / 1_000_000_000).toFixed(1)}B` : `$${(v / 1_000_000).toFixed(0)}M`;
-              return (
-                <div className="rounded-md border border-border/40 bg-muted/20 p-2 mb-2 order-0 flex flex-wrap gap-x-3 gap-y-0.5 items-center">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1">
-                    <Building2 className="w-3 h-3" /> Details
-                  </span>
-                  {c.industry && <span className="text-xs text-foreground">{c.industry}</span>}
-                  {hqShort && (
-                    <span className="text-xs text-muted-foreground flex items-center gap-0.5" title={hqFull || hqShort}>
-                      <MapPin className="w-2.5 h-2.5 shrink-0" />Global HQ: {hqShort}
-                    </span>
-                  )}
-                  {empStr && <span className="text-xs text-muted-foreground">{empStr}</span>}
-                  {c.annual_revenue && c.annual_revenue > 0 && (
-                    <span className="text-xs text-muted-foreground">Global revenue {fmtRevenue(c.annual_revenue)}</span>
-                  )}
-                  {c.founded_year && <span className="text-xs text-muted-foreground">Est. {c.founded_year}</span>}
-                  {!isLandlord && <ApolloDetailChips companyId={c.id} />}
-                  {c.stock_ticker && (
-                    <a
-                      href={`https://finance.yahoo.com/quote/${encodeURIComponent(normalizeTicker(c.stock_ticker) ?? c.stock_ticker)}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/60 bg-muted/40 hover:bg-muted text-[11px] font-medium text-foreground"
-                    >
-                      <Coins className="w-2.5 h-2.5 text-amber-600" /> {displayTicker(c.stock_ticker)}
-                    </a>
-                  )}
-                </div>
-              );
-            })()}
-            <div className="flex items-center gap-2 flex-wrap" data-testid="brand-overview-actions">
-              {c.linkedin_url && <Button variant="outline" size="sm" asChild><a href={c.linkedin_url} target="_blank" rel="noreferrer" data-testid="link-linkedin"><Linkedin />LinkedIn</a></Button>}
-              {c.phone && <Button variant="outline" size="sm" asChild><a href={`tel:${c.phone}`} data-testid="link-phone"><Phone />Call</a></Button>}
-              {data.contacts.find(contact => contact.email) && <Button variant="outline" size="sm" asChild><a href={`mailto:${data.contacts.find(contact => contact.email)?.email}`}><Mail />Email</a></Button>}
-              {!isClientViewer && <>
-                <Button variant="outline" size="sm" onClick={runContactDiscovery} disabled={contactsFinding} data-testid="button-refresh-contacts"><RefreshCw className={contactsFinding ? "animate-spin" : ""} />{contactsFinding ? "Finding…" : "Refresh contacts"}</Button>
-                <Button variant="outline" size="sm" onClick={() => setAddContactOpen(true)} data-testid="button-add-contact-brand"><Plus />Add contact</Button>
-                <ContactFormDialog open={addContactOpen} onOpenChange={setAddContactOpen} defaultCompanyId={c.id} />
-              </>}
-              {currentUser?.role !== "Client" && <>
-                <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)}><Plus />Add to deal</Button>
-                {!isLandlord && <Button variant="outline" size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}><Building2 />Pitch property</Button>}
-              </>}
-            </div>
+            {!flat && topInfo}
 
 
 
@@ -1496,12 +1534,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} />
             </div>
             </div>
-            <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-3 md:flex-1 md:min-w-0 flex flex-col">
-              {/* Always open on desktop, and as tall as About beside it (Woody, 2026-09-24). */}
-              <p className="text-sm font-medium flex items-center gap-2"><MessageSquare className="w-4 h-4 text-muted-foreground" />{isLandlord ? "Landlord conversation" : "Brand conversation"}</p>
-              <AskChatBGPInline brandName={c.name} isLandlord={isLandlord} />
-              <div className="h-80 md:h-auto md:flex-1 md:min-h-[20rem]"><CompanyMiniChat companyId={companyId} companyName={c.name} fill /></div>
-            </div>
+            {/* On the company page the chat sits in the top row beside the
+                header; elsewhere (and on narrow screens) it stays here. */}
+            {(!flat || !wide) && conversationBoard}
 
             </div>
 
