@@ -513,6 +513,14 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // preparation queue or started explicitly with a Refresh action.
   const [emailsOpen, setEmailsOpen] = useState(false);
   useEffect(() => { setEditing(false); setEmailsOpen(false); }, [companyId]);
+  // Hooks stay above the loading return. One chat instance: top row on md+ screens, under About below that.
+  const [wide, setWide] = useState(() => typeof window === "undefined" || window.matchMedia("(min-width: 768px)").matches);
+  useEffect(() => {
+    const mql = window.matchMedia("(min-width: 768px)");
+    const update = () => setWide(mql.matches);
+    mql.addEventListener("change", update);
+    return () => mql.removeEventListener("change", update);
+  }, []);
 
   const patchMutation = useMutation({
     mutationFn: async (body: Partial<BrandProfile["company"]>) => {
@@ -1005,14 +1013,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     setEditing(true);
   };
 
-  // One chat instance: top row on md+ screens, under About below that.
-  const [wide, setWide] = useState(() => typeof window === "undefined" || window.matchMedia("(min-width: 768px)").matches);
-  useEffect(() => {
-    const mql = window.matchMedia("(min-width: 768px)");
-    const update = () => setWide(mql.matches);
-    mql.addEventListener("change", update);
-    return () => mql.removeEventListener("change", update);
-  }, []);
   const header = (
       <CardHeader className={`${flat ? "px-0 py-2 bg-background/95 supports-[backdrop-filter]:bg-background/85" : "p-3 pb-2 bg-card/95 supports-[backdrop-filter]:bg-card/85"} flex flex-row items-start justify-between sticky top-0 z-20 backdrop-blur border-b border-border/40`}>
         <div className="flex flex-col gap-1 min-w-0 flex-1">

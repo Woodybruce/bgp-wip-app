@@ -167,6 +167,8 @@ export async function attachSenderEmailsByName(companyId: string, senders: Array
 }
 
 router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, res: Response) => {
+  const profileStart = Date.now();
+  const marks: Record<string, number> = {};
   try {
     const { companyId } = req.params;
 
@@ -687,7 +689,11 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     );
 
     const empty = { rows: [] };
-    const safe = (p: Promise<any>) => p.catch((e: any) => { console.error("[brand-profile] query failed:", e?.message); return empty; });
+    // Per-query timings go out in X-Profile-Timings (slow profile diagnosis).
+    let queryIndex = 0;
+    const queryTimes: Array<[number, number]> = [];
+    const safeStart = Date.now();
+    const safe = (p: Promise<any>) => { const i = queryIndex++; return p.then(r => { queryTimes.push([i, Date.now() - safeStart]); return r; }, (e: any) => { queryTimes.push([i, Date.now() - safeStart]); console.error("[brand-profile] query failed:", e?.message); return empty; }); };
     const [
       company, signals, repsForBrand, brandsForAgent,
       kyc, images, deals, parentGroup, siblings, news,
@@ -706,6 +712,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       safe(liveLocationsQ), safe(dismissedDiscoveriesQ), safe(dealTotalsQ),
     ]);
 
+    marks.queries = Date.now() - profileStart;
     if (!company.rows[0]) return res.status(404).json({ error: "Company not found" });
 
     const c = company.rows[0];
@@ -772,9 +779,11 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         // not fatal; just don't surface suggestions.
         console.warn('[brand-profile] contact suggestions failed:', e?.message);
       }
+      marks.suggestions = Date.now() - profileStart;
       try {
         relationshipStats = (await pool.query(RELATIONSHIP_STATS_SQL, [`%@${companyDomain}`, companyId])).rows[0] || null;
       } catch (e: any) { console.warn('[brand-profile] relationship stats failed:', e?.message); }
+      marks.relationship = Date.now() - profileStart;
     }
 
     // Latest social-stats per platform — sub-query to skip if table missing
@@ -942,6 +951,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       console.warn(`[brand-profile] landlord flag failed for ${companyId}:`, e?.message);
     }
 
+    marks.total = Date.now() - profileStart;
+    res.setHeader("X-Profile-Timings", JSON.stringify({ ...marks, slowest: [...queryTimes].sort((a, b) => b[1] - a[1]).slice(0, 5) }));
     res.json({
       company: c,
       identity,
