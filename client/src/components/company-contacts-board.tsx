@@ -4,6 +4,7 @@
 // we roll it across the app". CRM contacts + the discovery cascade merged
 // and deduped, provenance/AI badges on the right, optional extra grouped
 // sections for surfaces that add related people (deal brands, agents).
+import { contactTier, isKeyContactRole, nameKey } from "@shared/contact-tiers";
 import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -250,12 +251,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   // is C-suite + store-dev — but historical Apollo data has store managers,
   // baristas, anyone. We filter to property-relevant titles so the panel is
   // useful for "who do I pitch this unit to". User can click 'Show all'.
-  const isPropertyTier = (role: string | null | undefined): boolean => {
-    if (!role) return false;
-    const r = role.toLowerCase();
-    return /(property|real estate|acquisition|expansion|portfolio|estates|store dev|store development|store opening|locations|sites)/.test(r)
-      || /(founder|ceo|coo|cfo|cmo|managing director|chief executive|chief operating|chief financial|chief marketing|md\b)/.test(r);
-  };
+  const isPropertyTier = (role: string | null | undefined): boolean => isKeyContactRole(role);
 
   // Discovery cascade (BGP email archaeology + RocketReach premium lookups +
   // Apollo + AI judge) runs AUTOMATICALLY on open for staff — no button
@@ -278,9 +274,22 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   // confidence, source) decorates that row instead of being thrown away —
   // otherwise the AI-check/known badges never showed for brands whose
   // contacts were already imported (Woody, 2026-08-03).
-  const allContacts = contacts || [];
   const normEmail = (e: any) => String(e || "").toLowerCase().trim();
   const normName = (n: any) => String(n || "").toLowerCase().replace(/\s+/g, " ").trim();
+  // The same person saved twice ("Mark  Standish" / "Mark Standish") shows
+  // once — the row with an email / BGP history wins.
+  const allContacts = (() => {
+    const byName = new Map<string, any>();
+    const out: any[] = [];
+    for (const c of contacts || []) {
+      const key = nameKey(c.name);
+      const prev = key ? byName.get(key) : null;
+      if (!prev) { if (key) byName.set(key, c); out.push(c); continue; }
+      const score = (x: any) => (x.email ? 2 : 0) + (x.last_interaction_at ? 1 : 0);
+      if (score(c) > score(prev)) { out[out.indexOf(prev)] = c; byName.set(key, c); }
+    }
+    return out;
+  })();
   const crmEmailSet = new Set(allContacts.map((c: any) => normEmail(c.email)).filter(Boolean));
   const crmNameSet = new Set(allContacts.map((c: any) => normName(c.name)).filter(Boolean));
   const discoveryByKey = new Map<string, any>();
@@ -327,7 +336,21 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   const applyTierFilter = filterPropertyTier && !isLandlord;
   const tierEmpty = accountFiltered.every((c: any) => !isPropertyTier(c.role)) && discovered.every((k: any) => !isPropertyTier(k.title));
   const effectiveShowAll = showAll || (tierEmpty && accountFiltered.length + discovered.length <= 5);
-  const crmVisible = effectiveShowAll || !applyTierFilter ? accountFiltered : accountFiltered.filter((c: any) => isPropertyTier(c.role));
+  // Property people first, then C-suite / founders; within each, whoever
+  // BGP actually emails (thread count, then most recent touch) leads.
+  const tierRank = (role: any) => ({ property: 0, leadership: 1 } as Record<string, number>)[contactTier(role) || ""] ?? 2;
+  const activity = (c: any) => {
+    const d = discoveryFor(c);
+    const last = [c.last_interaction_at, d?.bgp?.lastEmailed].filter(Boolean).sort().reverse()[0];
+    return { threads: Number(d?.bgp?.threadCount || 0), last: last ? Date.parse(last) : 0 };
+  };
+  const ranked = [...accountFiltered].sort((a: any, b: any) => {
+    const ta = tierRank(a.role), tb = tierRank(b.role);
+    if (ta !== tb) return ta - tb;
+    const aa = activity(a), ab = activity(b);
+    return (ab.threads - aa.threads) || (ab.last - aa.last) || String(a.name || "").localeCompare(String(b.name || ""));
+  });
+  const crmVisible = effectiveShowAll || !applyTierFilter ? ranked : ranked.filter((c: any) => isPropertyTier(c.role));
   const discoveredVisible = effectiveShowAll || !applyTierFilter ? discovered : discovered.filter((k: any) => isPropertyTier(k.title));
   const hiddenCount = (accountFiltered.length - crmVisible.length) + (discovered.length - discoveredVisible.length);
   const summary = cascade?.summary;

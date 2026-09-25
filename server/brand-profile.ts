@@ -15,6 +15,7 @@ import { isOfficialBrandWebsite, publishableBrandImage, publishableBrandStore, p
 import { PENDING_CONTACT_SUGGESTIONS_SQL, RELATIONSHIP_STATS_SQL } from "./brand-profile-suggestions";
 import { dealTotalsSql, isActiveDealStatus, isCompletedDealStatus } from "./brand-profile-deals";
 import { inferCountryFromAddress } from "../shared/geo-country";
+import { nameKey } from "../shared/contact-tiers";
 import { registerBrandEmailThreadRoutes } from "./brand-email-threads";
 
 const router = Router();
@@ -148,6 +149,23 @@ ensureBrandStoresTable().catch(err =>
 );
 
 // ─── Full brand profile (one request, all sections) ─────────────────────
+// Exactly one saved contact at the brand with no email, whose letters-only
+// name equals the address's local part → that contact's address.
+export async function attachSenderEmailsByName(companyId: string, senders: Array<{ email: string }>, contactRows: any[]) {
+  const linked = new Set<string>();
+  const noEmail = contactRows.filter((ct: any) => !ct.email);
+  if (!senders.length || !noEmail.length) return linked;
+  for (const sender of senders) {
+    const local = nameKey(String(sender.email).split("@")[0]);
+    if (local.length < 6) continue;
+    const hits = noEmail.filter((ct: any) => nameKey(ct.name) === local);
+    if (hits.length !== 1) continue;
+    const upd = await pool.query(`UPDATE crm_contacts SET email = $1 WHERE id = $2 AND company_id = $3 AND (email IS NULL OR email = '')`, [sender.email, hits[0].id, companyId]).catch(() => null);
+    if (upd?.rowCount) { hits[0].email = sender.email; linked.add(sender.email); }
+  }
+  return linked;
+}
+
 router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, res: Response) => {
   try {
     const { companyId } = req.params;
@@ -744,6 +762,11 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
           [`%@${companyDomain}`, companyId]
         );
         pendingContactSuggestions = ps.rows;
+        // An inbox address whose name matches a saved contact that has no
+        // email (cassie.oflanagan@ ↔ "Cassie O'Flanagan", 55 threads) IS that
+        // contact — attach the address so their BGP history counts.
+        const linked = await attachSenderEmailsByName(String(companyId), pendingContactSuggestions.filter(sug => !sug.in_crm), contacts.rows);
+        for (const sug of pendingContactSuggestions) if (linked.has(sug.email)) sug.in_crm = true;
       } catch (e: any) {
         // Older databases may not have the participants column populated —
         // not fatal; just don't surface suggestions.
