@@ -40,7 +40,19 @@ const FACT_KINDS = ["opening", "closure", "funding", "requirement", "hiring", "e
 // early pipeline, offers / viewings by their own dates (cancelled and
 // deleted rows out), interest in BGP units, email-domain threads, tenant-rep
 // representation only, "coming soon" sites from the brand's own website.
-export async function gatherBgpEvidence(companyId: string): Promise<BgpEvidence> {
+// Email threads in the last 90 days per correspondent domain — one pass for
+// a whole scan instead of a full correspondence-log scan per brand.
+export async function domainThreadCounts90d(): Promise<Map<string, number>> {
+  const r = await pool.query(
+    `SELECT lower(split_part(p, '@', 2)) AS domain, count(DISTINCT i.id)::int AS n
+       FROM crm_interactions i
+       CROSS JOIN LATERAL jsonb_array_elements_text(CASE WHEN jsonb_typeof(i.participants) = 'array' THEN i.participants ELSE '[]'::jsonb END) p
+      WHERE i.interaction_date >= now() - interval '90 days' AND i.interaction_date <= now() AND p LIKE '%@%'
+      GROUP BY 1`).catch(() => ({ rows: [] as any[] }));
+  return new Map(r.rows.map((row: any) => [String(row.domain), Number(row.n)]));
+}
+
+export async function gatherBgpEvidence(companyId: string, opts: { domainThreads?: Map<string, number> } = {}): Promise<BgpEvidence> {
   const co = (await pool.query(`SELECT domain, domain_url FROM crm_companies WHERE id = $1`, [companyId]).catch(() => ({ rows: [] as any[] }))).rows[0];
   const domain = String(co?.domain || co?.domain_url || "").replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").toLowerCase();
   const q = (sql: string, params: any[]) => pool.query(sql, params).then(r => r.rows[0] || {}).catch(() => ({} as any));
@@ -70,7 +82,7 @@ export async function gatherBgpEvidence(companyId: string): Promise<BgpEvidence>
         LEFT JOIN crm_contacts c ON c.id = i.contact_id
         WHERE (i.company_id = $1 OR c.company_id = $1)
           AND i.interaction_date >= now() - interval '90 days' AND i.interaction_date <= now()`, [companyId]),
-    domain ? q(`SELECT count(DISTINCT i.id)::int AS n FROM crm_interactions i
+    opts.domainThreads ? Promise.resolve({ n: domain ? opts.domainThreads.get(domain) || 0 : 0 }) : domain ? q(`SELECT count(DISTINCT i.id)::int AS n FROM crm_interactions i
         CROSS JOIN LATERAL jsonb_array_elements_text(CASE WHEN jsonb_typeof(i.participants) = 'array' THEN i.participants ELSE '[]'::jsonb END) p
         WHERE p ILIKE $1 AND i.interaction_date >= now() - interval '90 days' AND i.interaction_date <= now()`, [`%@${domain}`]) : Promise.resolve({} as any),
     q(`SELECT count(*)::int AS n FROM brand_agent_representations
@@ -125,7 +137,7 @@ async function loadFacts(companyId: string, company: any): Promise<ExpansionFact
   return r.rows.filter(row => row.source !== "apollo" || apolloTrusted);
 }
 
-export async function scoreBrandExpansion(companyId: string) {
+export async function scoreBrandExpansion(companyId: string, opts: { skipStock?: boolean; domainThreads?: Map<string, number> } = {}) {
   const brandQ = await pool.query(
     `SELECT id, name, industry, rollout_status, store_count, backers, instagram_handle,
             tiktok_handle, dept_store_presence, franchise_activity, hunter_flag,
@@ -138,11 +150,11 @@ export async function scoreBrandExpansion(companyId: string) {
   if (!brand) return null;
   const [facts, bgp, covenant] = await Promise.all([
     loadFacts(companyId, brand),
-    gatherBgpEvidence(companyId),
+    gatherBgpEvidence(companyId, { domainThreads: opts.domainThreads }),
     covenantGradeFor(companyId),
   ]);
   let stock: any = null;
-  if (brand.stock_ticker) {
+  if (brand.stock_ticker && !opts.skipStock) {
     try {
       const { getStockSnapshots } = await import("./stock-price");
       const map = await getStockSnapshots([String(brand.stock_ticker).trim().toUpperCase()]);

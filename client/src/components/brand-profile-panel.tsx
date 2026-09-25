@@ -1028,8 +1028,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
           {!isLandlord && hunter && hunter.expansionScore >= 40 && (
             <Badge
               className={
-                hunter.expansionScore >= 75 ? "bg-orange-50 text-orange-700 border-transparent text-[10px]" :
-                hunter.expansionScore >= 55 ? "bg-amber-50 text-amber-700 border-transparent text-[10px]" :
+                hunter.expansionScore >= 60 ? "bg-orange-50 text-orange-700 border-transparent text-[10px]" :
+                hunter.expansionScore >= 40 ? "bg-amber-50 text-amber-700 border-transparent text-[10px]" :
                 "bg-zinc-50 text-zinc-700 border-transparent text-[10px]"
               }
               title={hunter.expansionFlags.join(" · ")}
@@ -1879,9 +1879,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                     <Badge
                       variant="outline"
                       className={`text-[10px] ${
-                        hunter.expansionScore >= 75 ? "bg-orange-50 text-orange-700 border-orange-200" :
-                        hunter.expansionScore >= 55 ? "bg-amber-50 text-amber-700 border-amber-200" :
-                        hunter.expansionScore >= 40 ? "bg-zinc-50 text-zinc-700 border-zinc-200" :
+                        hunter.expansionScore >= 60 ? "bg-orange-50 text-orange-700 border-orange-200" :
+                        hunter.expansionScore >= 40 ? "bg-amber-50 text-amber-700 border-amber-200" :
+                        hunter.expansionScore >= 20 ? "bg-zinc-50 text-zinc-700 border-zinc-200" :
                         "bg-zinc-50 text-zinc-500 border-zinc-200"
                       }`}
                       title={hunter.expansionFlags?.join(" · ") || ""}

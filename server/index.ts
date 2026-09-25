@@ -5072,6 +5072,19 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
         try {
           const { ensureNewsSearchIndexes } = await import("./brand-profile");
           await ensureNewsSearchIndexes();
+          // One score everywhere: record a v2 Expansion score for every brand
+          // so the Hunter board and alerts use it straight away. Record-only —
+          // no alert emails from the switch of scale.
+          const V2_FLAG = "migration:expansion_score_v2_backfill_v1";
+          const v2Done = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [V2_FLAG]).catch(() => ({ rows: [1] }));
+          if (!v2Done.rows.length) {
+            await pool.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING`, [V2_FLAG, JSON.stringify({ startedAt: new Date().toISOString() })]);
+            const { scanBrandTriggers } = await import("./brand-triggers");
+            const t0 = Date.now();
+            void scanBrandTriggers({ recordOnly: true })
+              .then(() => console.log(`[expansion] v2 scores recorded for all brands (${Math.round((Date.now() - t0) / 1000)}s)`))
+              .catch((e: any) => console.error("[expansion] v2 backfill failed:", e?.message));
+          }
           const FLAG = "migration:web_feed_baseline_signals_v1";
           const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [FLAG]).catch(() => ({ rows: [1] }));
           if (!done.rows.length) {

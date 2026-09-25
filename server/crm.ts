@@ -8771,6 +8771,25 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         };
       });
 
+      // One score everywhere (2026-09-25): the brand page's Expansion score,
+      // as saved by the daily scan (brand_score_history, version 2). The
+      // additive score above only stands in until the first v2 scan lands.
+      const v2Rows = await pool.query(
+        `SELECT DISTINCT ON (brand_company_id) brand_company_id, hunter_score, flags, sub_scores, checked_at
+           FROM brand_score_history
+          WHERE score_version = 2 AND brand_company_id = ANY($1)
+          ORDER BY brand_company_id, checked_at DESC`, [ids]).catch(() => ({ rows: [] as any[] }));
+      if (v2Rows.rows.length) {
+        const v2 = new Map(v2Rows.rows.map((r: any) => [String(r.brand_company_id), r]));
+        for (const b of scored as any[]) {
+          const row: any = v2.get(String(b.id));
+          b.expansionScore = row ? Number(row.hunter_score) : 0;
+          b.expansionFlags = row ? (row.flags || []) : [];
+          b.subScores = row?.sub_scores || null;
+          b.scoredAt = row?.checked_at || null;
+        }
+      }
+
       // Sort by score desc
       scored.sort((a: any, b: any) => b.expansionScore - a.expansionScore);
 

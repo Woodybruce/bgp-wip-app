@@ -24,7 +24,6 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { sendSharedMailboxEmail } from "./shared-mailbox";
-import { computeHunterScore } from "./hunter-score";
 
 const router = Router();
 const BGP_GREEN = "#6E0C25"; // v19 Bordeaux (constant name is legacy)
@@ -36,8 +35,12 @@ const CLAUDE_MUTED = "#87867F";
 const CLAUDE_BORDER = "#E0DEDA";
 const CLAUDE_FONT = `ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
 
-const HOT_THRESHOLD = 70;
-const COOLING_THRESHOLD = 50;
+// On the Expansion score the brand page shows (v2, four 0-25 parts) — the
+// old 70/50 were on the retired additive scale (2026-09-25: one score
+// everywhere). Crossings only compare v2 snapshots with v2 snapshots.
+const HOT_THRESHOLD = 60;
+const COOLING_THRESHOLD = 40;
+const SCORE_VERSION = 2;
 
 interface TriggerEvent {
   brandId: string;
@@ -82,6 +85,8 @@ async function ensureScoreHistoryTable(): Promise<void> {
       ON brand_score_history(brand_company_id, checked_at DESC);
     ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS covenant_score INTEGER;
     ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS covenant_red_flags INTEGER;
+    ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS score_version INTEGER DEFAULT 1;
+    ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS sub_scores JSONB;
     ALTER TABLE brand_signals ADD COLUMN IF NOT EXISTS ai_relevant BOOLEAN;
   `);
 }
@@ -119,17 +124,19 @@ async function firstRelevantSignal<T extends { id: string; headline: string | nu
 
 async function getLastSnapshot(brandId: string): Promise<{
   hunterScore: number | null;
+  scoreVersion: number | null;
   covenantScore: number | null;
   covenantRedFlags: number | null;
 }> {
   const { rows } = await pool.query(
-    `SELECT hunter_score, covenant_score, covenant_red_flags FROM brand_score_history
+    `SELECT hunter_score, score_version, covenant_score, covenant_red_flags FROM brand_score_history
       WHERE brand_company_id = $1 ORDER BY checked_at DESC LIMIT 1`,
     [brandId]
   );
   const row = rows[0];
   return {
     hunterScore: row?.hunter_score ?? null,
+    scoreVersion: row?.score_version ?? null,
     covenantScore: row?.covenant_score ?? null,
     covenantRedFlags: row?.covenant_red_flags ?? null,
   };
@@ -141,11 +148,12 @@ async function recordScore(
   flags: string[],
   covenantScore: number | null,
   covenantRedFlags: number | null,
+  subScores: Record<string, number> | null = null,
 ): Promise<void> {
   await pool.query(
-    `INSERT INTO brand_score_history (brand_company_id, hunter_score, flags, covenant_score, covenant_red_flags)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [brandId, score, flags, covenantScore, covenantRedFlags]
+    `INSERT INTO brand_score_history (brand_company_id, hunter_score, flags, covenant_score, covenant_red_flags, score_version, sub_scores)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [brandId, score, flags, covenantScore, covenantRedFlags, SCORE_VERSION, subScores ? JSON.stringify(subScores) : null]
   );
 }
 
@@ -167,9 +175,11 @@ async function getCovenantSnapshot(brandId: string): Promise<{ score: number | n
 
 // ─── Scan logic ──────────────────────────────────────────────────────────
 
-export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promise<TriggerEvent[]> {
+export async function scanBrandTriggers(opts: { dryRun?: boolean; recordOnly?: boolean } = {}): Promise<TriggerEvent[]> {
   const dryRun = opts.dryRun === true;
   await ensureScoreHistoryTable();
+  const { scoreBrandExpansion, domainThreadCounts90d } = await import("./expansion-intel");
+  const domainThreads = await domainThreadCounts90d();
 
   const brands = await pool.query(
     `SELECT id, name, rollout_status, store_count, backers, instagram_handle,
@@ -195,17 +205,23 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promis
       [brand.id]
     );
 
-    const { expansionScore: score, expansionFlags: flags } = computeHunterScore({
-      brand,
-      signals: sigs.rows,
-      stock: null, // skip stock fetching here — keeps the scan fast
-    });
+    // The same Expansion score the brand page shows (stock skipped — keeps
+    // the scan fast).
+    const v2 = await scoreBrandExpansion(brand.id, { skipStock: true, domainThreads }).catch(() => null);
+    if (!v2) continue;
+    const score = v2.score;
+    const flags = v2.expansionFlags;
 
     const prev = await getLastSnapshot(brand.id);
     const covenant = await getCovenantSnapshot(brand.id);
 
-    // 1. Score crossings
-    if (prev.hunterScore != null) {
+    if (opts.recordOnly) {
+      if (!dryRun) await recordScore(brand.id, score, flags, covenant.score, covenant.redFlags, v2.subScores);
+      continue;
+    }
+
+    // 1. Score crossings — only against a snapshot on the same scale.
+    if (prev.hunterScore != null && prev.scoreVersion === SCORE_VERSION) {
       if (prev.hunterScore < HOT_THRESHOLD && score >= HOT_THRESHOLD) {
         events.push({
           brandId: brand.id, brandName: brand.name, type: "hunter_hot",
@@ -223,7 +239,7 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promis
       }
     }
 
-    if (!dryRun) await recordScore(brand.id, score, flags, covenant.score, covenant.redFlags);
+    if (!dryRun) await recordScore(brand.id, score, flags, covenant.score, covenant.redFlags, v2.subScores);
 
     // 2. Covenant deterioration — three triggers, ordered by signal strength,
     //    all fed by the house covenant engine (CH + Gazette + accounts):
