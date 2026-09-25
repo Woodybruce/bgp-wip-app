@@ -194,6 +194,11 @@ export function brandNewsQuery(companyId: string, co: any) {
 // Built CONCURRENTLY in the background after boot (the table is large).
 export async function ensureNewsSearchIndexes() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+  // A deploy mid-build leaves an INVALID index that IF NOT EXISTS would
+  // then skip forever — drop those and build again.
+  const invalid = await pool.query(`SELECT c.relname FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+    WHERE c.relname LIKE 'idx_news_articles_%_trgm' AND NOT i.indisvalid`);
+  for (const row of invalid.rows) await pool.query(`DROP INDEX CONCURRENTLY IF EXISTS "${row.relname}"`);
   for (const col of ["title", "summary", "url"]) {
     const t0 = Date.now();
     await pool.query(`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_news_articles_${col}_trgm ON news_articles USING gin (${col} gin_trgm_ops)`);
@@ -799,6 +804,9 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     let pendingContactSuggestions: Array<{ email: string; touches: number; last_touch: string | null; in_crm?: boolean }> = [];
     let relationshipStats: { threads: number; threads_90d: number; last_touch: string | null; people_90d: number } | null = null;
     if (companyDomain && !bpScope) {
+      // Both scan the correspondence log — run them together.
+      const statsQ = pool.query(RELATIONSHIP_STATS_SQL, [`%@${companyDomain}`, companyId]);
+      statsQ.catch(() => null);
       try {
         const ps = await pool.query(
           PENDING_CONTACT_SUGGESTIONS_SQL,
@@ -817,7 +825,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       }
       marks.suggestions = Date.now() - profileStart;
       try {
-        relationshipStats = (await pool.query(RELATIONSHIP_STATS_SQL, [`%@${companyDomain}`, companyId])).rows[0] || null;
+        relationshipStats = (await statsQ).rows[0] || null;
       } catch (e: any) { console.warn('[brand-profile] relationship stats failed:', e?.message); }
       marks.relationship = Date.now() - profileStart;
     }
