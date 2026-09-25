@@ -17,9 +17,11 @@ import { dealTotalsSql, isActiveDealStatus, isCompletedDealStatus } from "./bran
 import { inferCountryFromAddress } from "../shared/geo-country";
 import { nameKey } from "../shared/contact-tiers";
 import { registerBrandEmailThreadRoutes } from "./brand-email-threads";
+import { registerBrandContactsCheckRoutes } from "./brand-contacts-check";
 
 const router = Router();
 registerBrandEmailThreadRoutes(router);
+registerBrandContactsCheckRoutes(router);
 
 // ai_relevant is written by aiJudgeSignalRelevance (news-brand-linking) but
 // read here — make sure the column exists before the first profile request.

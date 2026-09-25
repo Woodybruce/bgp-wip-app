@@ -27,7 +27,34 @@ function formatRelativeShort(iso: string): string {
   return `${Math.floor(days / 365)}y`;
 }
 
-export function KeyContactRow({ contact, companyId, discovery }: { contact: any; companyId: string; discovery?: any }) {
+const AI_FLAG_LABELS: Record<string, string> = {
+  not_a_person: "Not a person?", duplicate: "Duplicate?", title_mismatch: "Title?", should_be_key: "Key?", should_be_hidden: "Not key?", stale: "Left?",
+};
+
+type ContactsCheck = { summary: string[]; lead: string | null; flags: Array<{ contactId: string; issue: string; note: string }>; missing: Array<{ email: string; note: string }> };
+
+// The AI sense check of this board — who leads on property, what looks
+// wrong, who BGP emails but hasn't saved. Re-runs when the contacts or the
+// email history change.
+function useContactsCheck(companyId: string, enabled: boolean) {
+  const key = ["/api/brand", companyId, "contacts-check"];
+  const { data } = useQuery<{ check: ContactsCheck | null; stale: boolean; contacts: number }>({
+    queryKey: key,
+    queryFn: async () => (await apiRequest("GET", `/api/brand/${companyId}/contacts-check`)).json(),
+    enabled,
+    staleTime: 10 * 60_000,
+  });
+  const run = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/brand/${companyId}/contacts-check`)).json(),
+    onSuccess: (out: { check: ContactsCheck | null }) => queryClient.setQueryData(key, (prev: any) => ({ ...(prev || {}), check: out.check, stale: false })),
+  });
+  useEffect(() => {
+    if (enabled && data && !data.check && data.contacts > 0 && !run.isPending && !run.isSuccess && !run.isError) run.mutate();
+  }, [enabled, data]);
+  return { check: data?.check || null, running: run.isPending, failed: run.isError };
+}
+
+export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead }: { contact: any; companyId: string; discovery?: any; aiFlag?: { issue: string; note: string } | null; isLead?: boolean }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [editingRole, setEditingRole] = useState(false);
@@ -60,6 +87,8 @@ export function KeyContactRow({ contact, companyId, discovery }: { contact: any;
       <div className="min-w-0 flex-1">
         <div className="font-medium truncate flex items-center gap-1 text-sm">
           <Link href={`/contacts/${contact.id}`} className="hover:underline">{contact.name}</Link>
+          {isLead && <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 bg-foreground text-background border-transparent" title="The AI check's read of BGP's main property contact here">Lead</Badge>}
+          {aiFlag && <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 text-amber-700 border-amber-300" title={aiFlag.note} data-testid="key-contact-ai-flag">{AI_FLAG_LABELS[aiFlag.issue] || "Check"}</Badge>}
           {discovery?.bgp?.threadCount ? (
             <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 bg-primary/10 text-primary border-primary/30" title="BGP has real email history with this person">
               known · {discovery.bgp.threadCount} threads
@@ -234,6 +263,8 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   const { data: kcViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const kcIsClient = !kcViewer || kcViewer.role === "Client" || !!kcViewer.companyScopeId;
   const [showAll, setShowAll] = useState(false);
+  const aiCheck = useContactsCheck(companyId, !kcIsClient && discovery && !isLandlord);
+  const aiFlagFor = (id: string) => aiCheck.check?.flags.find(f => f.contactId === String(id)) || null;
   const [addedContacts, setAddedContacts] = useState<Record<string, PromotedContact>>({});
   const [lastAdded, setLastAdded] = useState<{ companyId: string; contact: PromotedContact } | null>(null);
   const [addingEmail, setAddingEmail] = useState<string | null>(null);
@@ -413,6 +444,19 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
       </CardHeader>
       <CardContent className="p-3 pt-0">
         {topSlot}
+        {(aiCheck.check || aiCheck.running) && (
+          <div className="rounded-md border border-border bg-muted/30 p-2 mb-2 space-y-1" data-testid="key-contacts-ai-check">
+            <p className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">{aiCheck.running && <Loader2 className="w-3 h-3 animate-spin" />}AI check</p>
+            {aiCheck.check ? (
+              <>
+                <ul className="text-xs space-y-0.5 list-disc pl-4">{aiCheck.check.summary.map((line, i) => <li key={i}>{line}</li>)}</ul>
+                {aiCheck.check.missing.length > 0 && (
+                  <p className="text-[11px] text-muted-foreground">Not saved: {aiCheck.check.missing.map(m => `${m.email} (${m.note})`).join(" · ")}</p>
+                )}
+              </>
+            ) : <p className="text-xs text-muted-foreground">Checking the list against BGP's emails…</p>}
+          </div>
+        )}
         {accountMode && (employerOptions.length > 0 || propertyOptions.length > 0) && (
           <div className="flex flex-wrap items-center gap-1.5 mb-2">
             {employerOptions.length > 0 && (
@@ -468,7 +512,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
         ) : (
           <div className="max-h-[340px] overflow-y-auto pr-1 space-y-1.5">
             {crmVisible.map((dm: any) => (
-              <KeyContactRow key={dm.id} contact={dm} companyId={companyId} discovery={discoveryFor(dm)} />
+              <KeyContactRow key={dm.id} contact={dm} companyId={companyId} discovery={discoveryFor(dm)} aiFlag={aiFlagFor(dm.id)} isLead={aiCheck.check?.lead === String(dm.id)} />
             ))}
             {discoveredVisible.map((k: any) => {
               const rowKey = normEmail(k.email) || normName(k.name);
