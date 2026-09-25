@@ -237,6 +237,10 @@ async function fetchRssFeeds(onlyIds?: string[]): Promise<{ fetched: number; err
           processed: false,
         });
         fetched++;
+        // Keep a copy before Instagram's signed link expires.
+        if (source.type === "rssapp_instagram" && imgUrl && /cdninstagram\.com|fbcdn\.net/i.test(imgUrl)) {
+          await import("./instagram").then(m => m.cacheInstagramImage(imgUrl!)).catch(() => null);
+        }
       }
 
       await db.update(newsSources)
@@ -315,6 +319,26 @@ export async function backfillInstagramImages(limitSources = 40): Promise<{ sour
   }
   console.log(`[ig-image backfill] filled ${filled} image(s) across ${rows.length} imageless source(s)`);
   return { sources: rows.length, filled };
+}
+
+// Instagram image links expire after a few days: re-read the feed for fresh
+// signed URLs, store them, and cache the newest images (see instagram.ts).
+export async function refreshInstagramSourceImages(sourceId: string): Promise<{ updated: number; cached: number }> {
+  const Parser = (await import("rss-parser")).default;
+  const parser = new Parser({ timeout: 10000, customFields: { item: [["media:content", "media:content"], ["media:thumbnail", "media:thumbnail"], ["media:group", "media:group"]] } });
+  const [src] = await db.select().from(newsSources).where(eq(newsSources.id, sourceId)).limit(1);
+  if (!src?.feedUrl) return { updated: 0, cached: 0 };
+  const { cacheInstagramImage } = await import("./instagram");
+  const feed = await parser.parseURL(src.feedUrl);
+  let updated = 0, cached = 0;
+  for (const item of feed.items || []) {
+    const img = item.link ? extractImageUrl(item) : null;
+    if (!img) continue;
+    const upd: any = await db.execute(sql`UPDATE news_articles SET image_url = ${img} WHERE source_id = ${sourceId} AND url = ${item.link}`);
+    updated += Number(upd?.rowCount || 0);
+    if (await cacheInstagramImage(img).catch(() => null)) cached++;
+  }
+  return { updated, cached };
 }
 
 // ── Real article images for Google News items ──────────────────────────────

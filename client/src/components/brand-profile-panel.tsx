@@ -1635,6 +1635,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
 
             </div>
 
+            {/* Tenancies / competitor set beside Expansion intelligence on wide
+                screens (Woody, 2026-09-25: "could they be side by side? lots of
+                free space"). */}
+            <div className="lg:grid lg:grid-cols-2 lg:gap-4 lg:items-start">
             <div className={panelSec("relationship")}>
             {/* ── Zone 4: BGP Relationship — now client-visible too (Woody,
                 2026-08-04: "BGP relationship still not on Landsec viewing
@@ -2314,6 +2318,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             </div>
 
 
+            </div>
             </div>
 
             {/* News & Media + Documents & Gallery now live on the sidebar */}
