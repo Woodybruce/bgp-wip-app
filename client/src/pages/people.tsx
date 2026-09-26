@@ -433,10 +433,17 @@ function AgentsTab({
         if (existing) { existing.roles.push(role); }
         else { map[contactId].push({ id: d.id, name: d.name, roles: [role], status: d.status, dealType: d.dealType }); }
       };
-      if (d.vendorAgentId) addFor(d.vendorAgentId, "Vendor Agent");
-      if (d.acquisitionAgentId) addFor(d.acquisitionAgentId, "Acquisition Agent");
-      if (d.purchaserAgentId) addFor(d.purchaserAgentId, "Purchaser Agent");
-      if (d.leasingAgentId) addFor(d.leasingAgentId, "Leasing Agent");
+      // Keyed by the agent PERSON (*_agent_contact_id); the *_agent_id
+      // columns are firms, kept as a fallback for rows that stored a person.
+      const person = (contactId?: string | null, legacy?: string | null) => contactId || legacy;
+      const vendor = person((d as any).vendorAgentContactId, d.vendorAgentId);
+      const acquisition = person((d as any).acquisitionAgentContactId, d.acquisitionAgentId);
+      const purchaser = person((d as any).purchaserAgentContactId, d.purchaserAgentId);
+      const leasing = person((d as any).leasingAgentContactId, d.leasingAgentId);
+      if (vendor) addFor(vendor, "Vendor Agent");
+      if (acquisition) addFor(acquisition, "Acquisition Agent");
+      if (purchaser) addFor(purchaser, "Purchaser Agent");
+      if (leasing) addFor(leasing, "Leasing Agent");
     }
     return map;
   }, [allDeals]);

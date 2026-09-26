@@ -327,7 +327,11 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
 
   const linkedContacts = useMemo(() => {
     if (!deal) return [];
-    const ids = [deal.clientContactId, deal.vendorAgentId, deal.acquisitionAgentId, deal.purchaserAgentId, deal.leasingAgentId].filter(Boolean);
+    // Agent PEOPLE live in *_agent_contact_id (the *_agent_id columns are
+    // firms); the firm columns stay as a fallback for older rows.
+    const d: any = deal;
+    const ids = [deal.clientContactId, d.vendorAgentContactId, d.acquisitionAgentContactId, d.purchaserAgentContactId, d.leasingAgentContactId,
+      deal.vendorAgentId, deal.acquisitionAgentId, deal.purchaserAgentId, deal.leasingAgentId].filter(Boolean);
     return contacts.filter((c) => ids.includes(c.id));
   }, [deal, contacts]);
 

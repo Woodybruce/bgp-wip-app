@@ -1189,8 +1189,8 @@ router.get("/api/kyc/my-deals", requireAuth, async (req: Request, res: Response)
        LEFT JOIN crm_properties p ON d.property_id = p.id
        WHERE d.status NOT IN ('WIT', 'COM', 'INV')
          AND (
-           d.vendor_agent_id = $1 OR d.acquisition_agent_id = $1 OR
-           d.purchaser_agent_id = $1 OR d.leasing_agent_id = $1 OR
+           -- (The *_agent_id columns are third-party agent firms, never BGP
+           -- staff, so they aren't part of "my deals".)
            -- Prefer the IDs column (rename-proof) but keep the legacy
            -- names array as a fallback for rows whose IDs haven't been
            -- backfilled or filled by dual-write yet.

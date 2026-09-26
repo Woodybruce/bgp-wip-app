@@ -153,6 +153,10 @@ export function registerAIIntelligenceRoutes(app: Express) {
 
       const linkedDeals = await db.select().from(crmDeals).where(
         sql`${crmDeals.clientContactId} = ${contactId}
+          OR ${crmDeals.vendorAgentContactId} = ${contactId}
+          OR ${crmDeals.acquisitionAgentContactId} = ${contactId}
+          OR ${crmDeals.purchaserAgentContactId} = ${contactId}
+          OR ${crmDeals.leasingAgentContactId} = ${contactId}
           OR ${crmDeals.vendorAgentId} = ${contactId}
           OR ${crmDeals.acquisitionAgentId} = ${contactId}
           OR ${crmDeals.purchaserAgentId} = ${contactId}

@@ -6014,8 +6014,15 @@ Return a JSON object with these fields (use null for any field you cannot find):
         const linked = await db.select().from(crmDeals).where(inArray(crmDeals.id, dealIds));
         for (const d of linked) { results.push({ ...d, linkSource: "linked" }); seenIds.add(d.id); }
       }
+      // The *_agent_id columns hold the agent FIRM; the person is in
+      // *_agent_contact_id. Older rows that stored a person in the firm
+      // column still match (ids never collide across the two tables).
       const agentDeals = await db.select().from(crmDeals).where(
         or(
+          eq(crmDeals.vendorAgentContactId, contactId),
+          eq(crmDeals.acquisitionAgentContactId, contactId),
+          eq(crmDeals.purchaserAgentContactId, contactId),
+          eq(crmDeals.leasingAgentContactId, contactId),
           eq(crmDeals.vendorAgentId, contactId),
           eq(crmDeals.acquisitionAgentId, contactId),
           eq(crmDeals.purchaserAgentId, contactId),
@@ -6026,10 +6033,10 @@ Return a JSON object with these fields (use null for any field you cannot find):
       for (const d of agentDeals) {
         if (!seenIds.has(d.id)) {
           const roles: string[] = [];
-          if (d.vendorAgentId === contactId) roles.push("Vendor Agent");
-          if (d.acquisitionAgentId === contactId) roles.push("Acquisition Agent");
-          if (d.purchaserAgentId === contactId) roles.push("Purchaser Agent");
-          if (d.leasingAgentId === contactId) roles.push("Leasing Agent");
+          if (d.vendorAgentContactId === contactId || d.vendorAgentId === contactId) roles.push("Vendor Agent");
+          if (d.acquisitionAgentContactId === contactId || d.acquisitionAgentId === contactId) roles.push("Acquisition Agent");
+          if (d.purchaserAgentContactId === contactId || d.purchaserAgentId === contactId) roles.push("Purchaser Agent");
+          if (d.leasingAgentContactId === contactId || d.leasingAgentId === contactId) roles.push("Leasing Agent");
           if (d.clientContactId === contactId) roles.push("Client Contact");
           results.push({ ...d, linkSource: "agent", agentRoles: roles });
           seenIds.add(d.id);
