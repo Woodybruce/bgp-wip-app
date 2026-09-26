@@ -3735,9 +3735,9 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
   // twice; deal-backed rows stay (they carry the Open deal link).
   const hidden = new Set(hideTenancyPropertyIds || []);
   const tenantAt: any[] = (act.tenantAt || []).filter((p: any) => !(p.via !== "deal" && hidden.has(p.property_id)));
-  // Inside About each list shows 3 (6 in its own card) until Show all —
+  // Inside About each list shows 2 (6 in its own card) until Show all —
   // Sainsbury's six suggested pitches made the profile card ~1,400px.
-  const cap = showAllTenancies ? Infinity : bare ? 3 : 6;
+  const cap = showAllTenancies ? Infinity : bare ? 2 : 6;
   const targeted: any[] = act.targeted || [];
   const pitched: any[] = act.pitched || [];
   const suggestions: any[] = sugg?.suggestions || [];
@@ -3756,14 +3756,14 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
           <span className="text-xs font-medium truncate">{propertyName}</span>
           {unitName && <span className="text-[10px] text-muted-foreground truncate">{unitName}</span>}
         </Link>
-        <span className="flex items-center gap-1 shrink-0 max-w-[55%] justify-end">{right}</span>
+        <span className="flex items-center gap-1 shrink-0 max-w-[55%] justify-end">{right}
+          {/* Same line as the property on desktop; the 44px tap target is phone-only. */}
+          {dealId && <Link href={`/deals/${dealId}`} className="inline-flex min-h-11 md:min-h-0 items-center gap-1 pl-1.5 text-xs font-medium underline underline-offset-2 hover:text-primary"
+            aria-label={`Open deal for ${propertyName}${unitName ? `, ${unitName}` : ""}`} data-testid={`portfolio-open-deal-${dealId}`}>
+            Open deal <ExternalLinkIcon className="h-3 w-3" aria-hidden="true" />
+          </Link>}
+        </span>
       </div>
-      {dealId && <div className="flex justify-end">
-        <Link href={`/deals/${dealId}`} className="inline-flex min-h-11 items-center gap-1 px-2 text-xs font-medium underline underline-offset-2 hover:text-primary"
-          aria-label={`Open deal for ${propertyName}${unitName ? `, ${unitName}` : ""}`} data-testid={`portfolio-open-deal-${dealId}`}>
-          Open deal <ExternalLinkIcon className="h-3 w-3" aria-hidden="true" />
-        </Link>
-      </div>}
       {/* Hover titles don't exist on touch — the reason gets its own line. */}
       {subline && <div className="text-[10px] text-muted-foreground mt-0.5 pl-5 line-clamp-2">{subline}</div>}
     </div>
@@ -3820,7 +3820,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
           </Tier>
         )}
   </>;
-  const baseCap = bare ? 3 : 6;
+  const baseCap = bare ? 2 : 6;
   const hiddenRows = [tenantAt, targeted, pitched, suggestions].reduce((n, list) => n + Math.max(0, list.length - baseCap), 0);
   const more = hiddenRows > 0 && (
     <Button variant="ghost" size="sm" className="min-h-11" onClick={() => setShowAllTenancies(value => !value)} aria-expanded={showAllTenancies} data-testid="portfolio-show-all-tenancies">
