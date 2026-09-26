@@ -596,30 +596,53 @@ function formatInteractionDate(dateStr: string) {
 }
 
 // Provenance + AI verification for a contact (staff only). Shows where the
-// record came from, and runs the multi-source check (RocketReach + O365
-// footprint + web news → Claude verdict) on demand. Verdicts land in the
+// record came from and the multi-source check (RocketReach + O365 footprint
+// + web news → Claude verdict). The check runs by itself on open when there
+// is no saved verdict, it is over 90 days old, or the contact's employer has
+// changed since (Woody, 2026-09-26: "verify with AI should be automatic on
+// opening"); otherwise the saved verdict shows. Verdicts land in the
 // data-health review queue; nothing is auto-applied.
+const VERIFY_STALE_MS = 90 * 24 * 60 * 60 * 1000;
 function ContactSourcePanel({ contact }: { contact: any }) {
   const { toast } = useToast();
   const [result, setResult] = useState<any>(null);
+  const { data: saved, isFetched: savedFetched } = useQuery<any>({
+    queryKey: ["/api/crm/contacts", contact.id, "verification"],
+    queryFn: async () => {
+      const r = await fetch(`/api/crm/contacts/${contact.id}/verification`, { credentials: "include", headers: getAuthHeaders() });
+      return r.ok ? r.json() : null;
+    },
+    staleTime: 5 * 60_000,
+  });
   const verify = useMutation({
     mutationFn: async () => {
       const r = await apiRequest("POST", `/api/crm/contacts/${contact.id}/verify`);
       return r.json();
     },
-    onSuccess: (v: any) => {
+    onSuccess: (v: any, auto?: boolean) => {
       setResult(v);
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts", contact.id, "verification"] });
       if (v.status === "mismatch") {
         toast({ title: "Possible mismatch", description: v.reasoning, variant: "destructive" });
-      } else {
+      } else if (!auto) {
         toast({ title: v.status === "confirmed" ? "Employer confirmed" : "Inconclusive", description: v.reasoning });
       }
     },
-    onError: (e: any) => toast({ title: "Verification failed", description: e?.message, variant: "destructive" }),
+    onError: (e: any, auto?: boolean) => { if (!auto) toast({ title: "Verification failed", description: e?.message, variant: "destructive" }); },
   });
+  const autoRan = useRef<string | null>(null);
+  useEffect(() => {
+    if (!savedFetched || autoRan.current === contact.id) return;
+    const age = saved?.created_at ? Date.now() - new Date(saved.created_at).getTime() : Infinity;
+    const employerChanged = !!saved && (saved.company_id_at_verification || null) !== (contact.companyId || null);
+    autoRan.current = contact.id;
+    if (!saved || age > VERIFY_STALE_MS || employerChanged) verify.mutate(true as any);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedFetched, saved, contact.id, contact.companyId]);
   const src = contact.enrichmentSource || "manual entry";
   const when = contact.lastEnrichedAt ? new Date(contact.lastEnrichedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
-  const status = result?.status;
+  const shown = result || saved;
+  const status = shown?.status;
   return (
     <div className="pt-2 border-t flex items-center justify-between gap-2 flex-wrap" data-testid="contact-source-panel">
       <div className="min-w-0">
@@ -635,11 +658,12 @@ function ContactSourcePanel({ contact }: { contact: any }) {
             }`}>{status === "confirmed" ? "Verified ✓" : status === "mismatch" ? "Mismatch — in review queue" : "Inconclusive"}</Badge>
           )}
         </p>
-        {result?.reasoning && <p className="text-[11px] text-muted-foreground mt-0.5">{result.reasoning}</p>}
+        {verify.isPending && !shown && <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />Checking the employer against RocketReach, email and news…</p>}
+        {shown?.reasoning && <p className="text-[11px] text-muted-foreground mt-0.5">{shown.reasoning}{shown.created_at ? ` · checked ${new Date(shown.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}</p>}
       </div>
       <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => verify.mutate()} disabled={verify.isPending} data-testid="button-verify-contact">
         {verify.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Sparkles className="w-3 h-3 mr-1" />}
-        {verify.isPending ? "Checking sources…" : "Verify with AI"}
+        {verify.isPending ? "Checking sources…" : shown ? "Re-check" : "Verify with AI"}
       </Button>
     </div>
   );
@@ -655,6 +679,21 @@ function ContactDetail({ id }: { id: string }) {
   const { data: contact, isLoading } = useQuery<CrmContact>({
     queryKey: ["/api/crm/contacts", id],
   });
+
+  // No phone on file → read the person's latest email signature once on open
+  // (fills blanks only).
+  const signatureLookup = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/crm/contacts/${id}/signature`)).json(),
+    onSuccess: (r: any) => { if (r?.updated) queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts", id] }); },
+  });
+  const signatureTried = useRef<string | null>(null);
+  useEffect(() => {
+    if (!contact || cdIsClient || !cdViewer || signatureTried.current === id) return;
+    if (contact.phone || contact.phoneMobile || !contact.email) return;
+    signatureTried.current = id;
+    signatureLookup.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contact, cdIsClient, cdViewer, id]);
 
   const { data: companies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
@@ -871,12 +910,28 @@ function ContactDetail({ id }: { id: string }) {
                     </a>
                   </div>
                 )}
+                {contact.phoneMobile && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">Mobile</p>
+                    <a href={`tel:${contact.phoneMobile}`} className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1" data-testid="link-contact-mobile">
+                      <Phone className="w-3 h-3" />{contact.phoneMobile}
+                    </a>
+                  </div>
+                )}
                 {contact.phone && (
                   <div>
                     <p className="text-xs text-muted-foreground">Phone</p>
                     <a href={`tel:${contact.phone}`} className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1" data-testid="link-contact-phone">
                       <Phone className="w-3 h-3" />{contact.phone}
                     </a>
+                  </div>
+                )}
+                {!cdIsClient && !contact.phone && !contact.phoneMobile && contact.email && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">Mobile</p>
+                    <p className="text-sm text-muted-foreground flex items-center gap-1" data-testid="text-contact-phone-status">
+                      {signatureLookup.isPending ? <><Loader2 className="w-3 h-3 animate-spin" />Reading their email signature…</> : "Not in their email signature — try Enrich"}
+                    </p>
                   </div>
                 )}
                 {company && (

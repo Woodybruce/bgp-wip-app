@@ -437,6 +437,41 @@ export function setupContactVerifyRoutes(app: Express): void {
     }
   });
 
+  // Phone / mobile from the person's latest email signature — the contact
+  // page calls this on open when both are blank (Woody, 2026-09-26: "there
+  // is no mobile here?"). One mailbox read + a Haiku extract; fills blanks
+  // only (applySignatureToCrmContact), cached 30 days per address.
+  app.post("/api/crm/contacts/:id/signature", requireAuth, async (req, res) => {
+    try {
+      if (!(await staffOnly(req, res))) return;
+      const c = (await pool.query(`SELECT id, email FROM crm_contacts WHERE id = $1`, [String(req.params.id)])).rows[0];
+      const email = String(c?.email || "").trim().toLowerCase();
+      if (!email || !email.includes("@")) return res.json({ updated: false });
+      const { enrichSignaturesForDomain } = await import("./email-signature-enrich");
+      await enrichSignaturesForDomain(email.split("@")[1], [email]);
+      // A signature cached earlier (before this contact existed) still fills.
+      const { applySignatureToCrmContact } = await import("./signature-contact-sync");
+      const sync = await applySignatureToCrmContact(email).catch(() => ({ updated: 0, fields: [] as string[] }));
+      const after = (await pool.query(`SELECT phone, phone_mobile FROM crm_contacts WHERE id = $1`, [c.id])).rows[0];
+      res.json({ updated: sync.updated > 0, fields: sync.fields, phone: after?.phone || null, phoneMobile: after?.phone_mobile || null });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Latest saved verdict — the contact page shows it on open and only runs
+  // a fresh check when there is none, it is old, or the employer changed.
+  app.get("/api/crm/contacts/:id/verification", requireAuth, async (req, res) => {
+    try {
+      if (!(await staffOnly(req, res))) return;
+      await ensureTable();
+      const r = await pool.query(
+        `SELECT id, status, confidence, suggested_company_name, reasoning, resolution, created_at,
+                evidence->>'companyIdAtVerification' AS company_id_at_verification
+           FROM contact_verifications WHERE contact_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1`,
+        [String(req.params.id)]);
+      res.json(r.rows[0] || null);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   app.get("/api/crm/data-health", requireAuth, async (req, res) => {
     try {
       if (!(await staffOnly(req, res))) return;

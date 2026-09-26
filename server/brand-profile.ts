@@ -199,13 +199,18 @@ export async function ensureNewsSearchIndexes() {
   // A deploy mid-build leaves an INVALID index that IF NOT EXISTS would
   // then skip forever — drop those and build again.
   const invalid = await pool.query(`SELECT c.relname FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
-    WHERE c.relname LIKE 'idx_news_articles_%_trgm' AND NOT i.indisvalid`);
+    WHERE (c.relname LIKE 'idx_news_articles_%_trgm' OR c.relname = 'idx_crm_interactions_participants') AND NOT i.indisvalid`);
   for (const row of invalid.rows) await pool.query(`DROP INDEX CONCURRENTLY IF EXISTS "${row.relname}"`);
   for (const col of ["title", "summary", "url"]) {
     const t0 = Date.now();
     await pool.query(`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_news_articles_${col}_trgm ON news_articles USING gin (${col} gin_trgm_ops)`);
     console.log(`[news-search] ${col} trigram index ready (${Math.round((Date.now() - t0) / 1000)}s)`);
   }
+  // A contact's email history is looked up by their address in the
+  // participants list (the sync files each email under one contact only).
+  const t0 = Date.now();
+  await pool.query(`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_crm_interactions_participants ON crm_interactions USING gin (participants)`);
+  console.log(`[news-search] interactions participants index ready (${Math.round((Date.now() - t0) / 1000)}s)`);
 }
 
 // Exactly one saved contact at the brand with no email, whose letters-only

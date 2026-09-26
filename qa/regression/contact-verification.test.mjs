@@ -44,7 +44,7 @@ function routes({client=false,resolver=async()=>({ok:true,linkedCompany:'Agency'
 
 test('every contact-verification endpoint remains authenticated and staff-only',async()=>{
   const fixture=routes({client:true});
-  assert.equal(fixture.handlers.size,5);
+  assert.equal(fixture.handlers.size,7);
   for(const [key,stack] of fixture.handlers){
     assert.equal(stack[0],fixture.authentication);
     const response=await fixture.invoke(key,{body:{companyId:'agency'},session:{userId:'client'}});

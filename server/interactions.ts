@@ -29,9 +29,16 @@ async function computeTopBgpContacts(opts: {
   scope: "contact" | "company";
   id: string;
   since90d: Date;
+  email?: string | null;
 }): Promise<Array<{ email: string; name: string; count90d: number; countAll: number }>> {
   try {
     const column = opts.scope === "contact" ? "contact_id" : "company_id";
+    const params: any[] = [opts.id, opts.since90d];
+    let where = `i.${column} = $1`;
+    if (opts.scope === "contact" && opts.email) {
+      params.push(opts.email);
+      where = `(i.contact_id = $1 OR i.participants ? $3)`;
+    }
     const { rows } = await pool.query<{ bgp_user: string; count_90d: string; count_all: string; user_name: string | null }>(
       `SELECT
          i.bgp_user,
@@ -40,13 +47,13 @@ async function computeTopBgpContacts(opts: {
          u.name AS user_name
        FROM crm_interactions i
        LEFT JOIN users u ON lower(u.email) = lower(i.bgp_user) OR lower(u.username) = lower(i.bgp_user)
-       WHERE i.${column} = $1
+       WHERE ${where}
          AND i.bgp_user IS NOT NULL
          AND i.bgp_user <> ''
        GROUP BY i.bgp_user, u.name
        ORDER BY count_90d DESC, count_all DESC
        LIMIT 4`,
-      [opts.id, opts.since90d]
+      params
     );
     return rows.map(r => ({
       email: r.bgp_user,
@@ -1048,7 +1055,19 @@ export function registerInteractionRoutes(app: Express) {
       const limit = Number(req.query.limit) || 50;
       const type = req.query.type as string | undefined;
 
-      const conditions = [eq(crmInteractions.contactId, contactId)];
+      // The sync files each email under the FIRST contact it matched, once —
+      // a person saved later (e.g. promoted from email) never got their
+      // history. Match on their address in the participants too, the same
+      // evidence the brand board counts threads from (Woody, 2026-09-26:
+      // David Menendez showed "known · 46 threads" on Honest Greens and 0
+      // emails on his own page).
+      const [who] = await db.select({ email: crmContacts.email }).from(crmContacts).where(eq(crmContacts.id, contactId)).limit(1);
+      const contactEmail = (who?.email || "").trim().toLowerCase() || null;
+      const isMine = contactEmail
+        ? sql`(${crmInteractions.contactId} = ${contactId} OR ${crmInteractions.participants} ? ${contactEmail})`
+        : eq(crmInteractions.contactId, contactId);
+
+      const conditions = [isMine];
       if (type) conditions.push(eq(crmInteractions.type, type));
 
       const interactions = await db
@@ -1069,7 +1088,7 @@ export function registerInteractionRoutes(app: Express) {
         .from(crmInteractions)
         .where(
           and(
-            eq(crmInteractions.contactId, contactId),
+            isMine,
             eq(crmInteractions.type, "meeting"),
             gte(crmInteractions.interactionDate, now)
           )
@@ -1082,7 +1101,7 @@ export function registerInteractionRoutes(app: Express) {
         .from(crmInteractions)
         .where(
           and(
-            eq(crmInteractions.contactId, contactId),
+            isMine,
             lte(crmInteractions.interactionDate, now)
           )
         )
@@ -1092,7 +1111,7 @@ export function registerInteractionRoutes(app: Express) {
       // Top BGP contacts — who's been most active with this person.
       // 90-day count visible, all-time on hover (returned together).
       const ninetyDaysAgo = new Date(now.getTime() - 90 * 86400000);
-      const topBgpContacts = await computeTopBgpContacts({ scope: "contact", id: contactId, since90d: ninetyDaysAgo });
+      const topBgpContacts = await computeTopBgpContacts({ scope: "contact", id: contactId, since90d: ninetyDaysAgo, email: contactEmail });
 
       res.json({
         interactions,
