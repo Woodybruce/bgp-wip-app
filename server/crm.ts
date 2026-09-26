@@ -1,3 +1,4 @@
+import { parseReqSize, USE_HINTS } from "@shared/requirement-fit";
 import type { Express, Request } from "express";
 import multer from "multer";
 import * as fs from "fs";
@@ -4825,22 +4826,6 @@ Return a JSON object with these fields (use null for any field you cannot find):
   // use-hints from the unit name / use class and location hits from the
   // requirement's location chips rank the results. Scoped callers (Landsec)
   // match against their own portfolio only; staff match every instructed unit.
-  const parseReqSize = (size: string[] | string | null): { min: number; max: number } | null => {
-    const raw = (Array.isArray(size) ? size.join(" ") : size || "").replace(/,/g, "");
-    const range = raw.match(/(\d+)\s*-\s*(\d+)/);
-    if (range) return { min: +range[1] * 0.8, max: +range[2] * 1.2 };
-    const open = raw.match(/(\d+)\s*-/);
-    if (open) return { min: +open[1] * 0.8, max: +open[1] * 5 };
-    const single = raw.match(/(\d{3,})/);
-    if (single) return { min: +single[1] * 0.6, max: +single[1] * 1.6 };
-    return null;
-  };
-  const USE_HINTS: Array<[RegExp, RegExp]> = [
-    [/restaurant|a1 food|f&b|caf/i, /f&b|rest|kiosk|caf|food|dining/i],
-    [/gym|wellness|fitness/i, /gym|fitness|studio|wellness|health/i],
-    [/leisure/i, /leisure|cinema|bowl|golf|padel/i],
-    [/retail/i, /retail|shop|store/i],
-  ];
   // ── Brand portfolio activity — the honest pitch view ──────────────────
   // Replaces the old "Pitched into" (which conflated existing tenancies,
   // fuzzy name mentions and target lists, and never saw the letting

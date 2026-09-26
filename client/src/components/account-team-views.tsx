@@ -158,12 +158,12 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
 
         {data && tab === "tenantRep" && (
           <div className="grid gap-4 md:grid-cols-2" data-testid="team-view-tenant-rep">
-            <Section title="Space on their schemes that fits a client" count={spaceWithFits.length} link="/tenant-rep" linkLabel={`Tenant rep board · ${tr.activeSearches} live searches`}
-              empty={tr.space.length ? `${tr.space.length} vacant or marketing units, none matching a live search's size and location.` : "No vacant or marketing units on their schemes."}>
+            <Section title="Space on their schemes that fits a brand's requirement" count={spaceWithFits.length} link="/requirements?type=leasing" linkLabel={`Requirements · ${tr.liveRequirements} live`}
+              empty={tr.space.length ? `${tr.space.length} vacant or marketing units — none fits a live requirement's size with a matching use or location.` : "No vacant or marketing units on their schemes."}>
               {spaceWithFits.length > 0 && <div className="space-y-1">{spaceWithFits.slice(0, 10).map((u: any) => (
                 <Row key={`${u.kind}-${u.id}`} href={u.kind === "marketing" ? `/available?propertyId=${u.propertyId}&unitId=${u.id}` : `/leasing-schedule/${u.propertyId}`}
                   title={`${u.propertyName}${u.unitName ? ` · ${u.unitName}` : ""}`}
-                  sub={<>Fits: {u.fits.map((s: any) => s.name).join(", ")}</>}
+                  sub={<>Fits: {u.fits.map((s: any, i: number) => <span key={s.requirementId}>{i > 0 && ", "}{s.bgpClient ? <strong className="text-foreground" title="BGP acts for this brand">{s.name} ★</strong> : s.name}</span>)}{u.fitCount > u.fits.length ? ` +${u.fitCount - u.fits.length}` : ""}</>}
                   right={<>{u.sqft ? <span className="text-[10px] tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null}<Badge variant="outline" className="text-[9px]">{u.status}</Badge></>} />
               ))}</div>}
             </Section>
@@ -174,6 +174,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                     title={`${u.propertyName}${u.unitName ? ` · ${u.unitName}` : ""}`} right={<>{u.sqft ? <span className="text-[10px] tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null}<Badge variant="outline" className="text-[9px]">{u.status}</Badge></>} />
                 ))}</div>}
               </Section>
+              <p className="text-[11px] text-muted-foreground">★ BGP acts for the brand (a live tenant rep deal or search) — <Link href="/tenant-rep" className="text-primary hover:underline">Tenant rep board</Link></p>
               <Section title="BGP acting for tenants here" count={tr.deals.length} link="/deals/list?team=Tenant%20Rep" linkLabel="Tenant rep deals" empty="No live tenant rep deals on their schemes.">
                 {tr.deals.length > 0 && <div className="space-y-1">{tr.deals.slice(0, 6).map((d: any) => (
                   <Row key={d.id} href={`/deals/${d.id}`} title={d.tenant_name || d.name} sub={[d.property_name, d.deal_type].filter(Boolean).join(" · ")} right={<Badge variant="outline" className="text-[9px]">{d.status}</Badge>} />
