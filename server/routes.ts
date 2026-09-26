@@ -7794,6 +7794,38 @@ These terms are indicative only and do not constitute a binding agreement.`;
     }
   });
 
+  // The backing deal's parties, from a tracker row (Woody, 2026-09-26 —
+  // sales cut across landlords, buyers and agents, so the deal must carry
+  // them): the client sits on the side BGP acts for (vendor on a Sale,
+  // purchaser on a Purchase), a Sales-board buyer becomes the purchaser, and
+  // the vendor agent is recorded as firm + person. Every tracker deal is
+  // an Investment team deal (comp auto-promotion keys off that).
+  const trackerDealParties = async (row: any): Promise<Record<string, any>> => {
+    const sale = (row.boardType || "Purchases") === "Sales";
+    const parties: Record<string, any> = {};
+    if (sale) {
+      if (row.clientId) { parties.vendorId = row.clientId; parties.landlordId = row.clientId; }
+      else if (row.vendorId) parties.vendorId = row.vendorId;
+      if (row.buyerId) parties.purchaserId = row.buyerId;
+    } else {
+      if (row.clientId) parties.purchaserId = row.clientId;
+      if (row.vendorId) parties.vendorId = row.vendorId;
+    }
+    if (row.vendorAgentId) {
+      parties.vendorAgentContactId = row.vendorAgentId;
+      const agentFirm = await pool.query(`SELECT company_id FROM crm_contacts WHERE id = $1`, [row.vendorAgentId]).catch(() => ({ rows: [] as any[] }));
+      if (agentFirm.rows[0]?.company_id) parties.vendorAgentId = agentFirm.rows[0].company_id;
+    }
+    return parties;
+  };
+  // A Sales-board asset marks its property as a Sales Instruction, unless
+  // the property already carries a status someone set.
+  const markSalesInstruction = async (row: any) => {
+    if ((row.boardType || "Purchases") !== "Sales" || !row.propertyId) return;
+    await pool.query(`UPDATE crm_properties SET status = 'Sales Instruction' WHERE id = $1 AND (status IS NULL OR status = '')`, [row.propertyId])
+      .catch((e: any) => console.warn("[investment-tracker] sales instruction sync failed:", e?.message));
+  };
+
   app.post("/api/investment-tracker", requireAuth, async (req, res) => {
     try {
       const body = { ...req.body };
@@ -7826,9 +7858,11 @@ These terms are indicative only and do not constitute a binding agreement.`;
             propertyId: row.propertyId,
             status: "REP",
             dealType,
+            team: ["Investment"],
             internalAgent: await resolveAgentNames(row.agentUserIds),
             fee: row.fee ?? undefined,
-          });
+            ...(await trackerDealParties(row)),
+          } as any);
           await db.update(investmentTracker).set({ dealId: deal.id }).where(eq(investmentTracker.id, row.id));
           (row as any).dealId = deal.id;
           (row as any).dealRef = deal.dealRef;
@@ -7836,6 +7870,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
           console.warn("[investment-tracker POST] auto-create deal failed:", e.message);
         }
       }
+      await markSalesInstruction(row);
 
       res.json(row);
     } catch (e: any) {
@@ -7852,7 +7887,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
         "address", "notes", "dealId", "agentUserIds", "fee", "feeType", "marketingDate", "bidDeadline", "completionDate",
         // Link FKs — without these the inline Client/Vendor/Agent pickers
         // silently dropped every selection (PATCH ignored unknown keys).
-        "clientId", "clientContactId", "vendorId", "vendorAgentId",
+        "clientId", "clientContactId", "vendorId", "vendorAgentId", "buyerId",
       ]);
       const updates: Record<string, any> = { updatedAt: new Date() };
       for (const [key, value] of Object.entries(req.body)) {
@@ -7878,6 +7913,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
       });
 
       if (!row) return res.status(404).json({ message: "Not found" });
+      if ("boardType" in updates || "propertyId" in updates) await markSalesInstruction(row);
 
       // Mirror status/fee/agent/parties onto the backing crm_deal so the
       // Deals board + WIP stay in step with inline investment-tracker edits.
@@ -7902,6 +7938,14 @@ These terms are indicative only and do not constitute a binding agreement.`;
             if (effectiveBoard === "Sales") dealPatch.vendorId = clientId;
             else dealPatch.purchaserId = clientId;
           }
+        }
+        // Buyer, vendor or vendor agent changed → re-derive the parties and
+        // make sure it's an Investment team deal.
+        if (["boardType", "clientId", "vendorId", "vendorAgentId", "buyerId"].some(k => k in updates)) {
+          Object.assign(dealPatch, await trackerDealParties(row));
+          const current = await pool.query(`SELECT team FROM crm_deals WHERE id = $1`, [row.dealId]).catch(() => ({ rows: [] as any[] }));
+          const team: string[] = current.rows[0]?.team || [];
+          if (!team.includes("Investment")) dealPatch.team = [...team, "Investment"];
         }
         if (Object.keys(dealPatch).length > 0) {
           try {

@@ -286,6 +286,29 @@ function PropertySection({ name, active, simple, children }: { name: string; act
   return <div className={name === active ? "space-y-3" : simple ? "hidden" : "hidden lg:block lg:space-y-3"}>{children}</div>;
 }
 
+// A Sales Instruction and the Investment tracker's Sales board are one piece
+// of work (Woody, 2026-09-26): show whether this property is on the board,
+// and add it in one click when it isn't. Staff only.
+function SalesBoardLink({ property }: { property: any }) {
+  const { toast } = useToast();
+  const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isStaff = !!me && me.role !== "Client" && !me.companyScopeId;
+  const { data: tracker = [] } = useQuery<any[]>({ queryKey: ["/api/investment-tracker"], enabled: isStaff });
+  const onBoard = (Array.isArray(tracker) ? tracker : []).some((t: any) => t.propertyId === property.id && t.boardType === "Sales");
+  const add = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/investment-tracker", {
+      propertyId: property.id, assetName: property.name, boardType: "Sales", status: "REP",
+      clientId: property.landlordId || null,
+    })).json(),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] }); toast({ title: "Added to the Sales board" }); },
+    onError: (e: any) => toast({ title: "Couldn't add to the Sales board", description: e?.message, variant: "destructive" }),
+  });
+  if (!isStaff) return null;
+  return onBoard
+    ? <Link href="/investment-tracker" className="text-[11px] text-emerald-700 hover:underline" data-testid="link-sales-board">On the Sales board</Link>
+    : <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={() => add.mutate()} disabled={add.isPending} data-testid="button-add-sales-board">{add.isPending ? "Adding…" : "Add to Sales board"}</Button>;
+}
+
 export function PropertyDetail({ id }: { id: string }) {
   const [, navigate] = useLocation();
   // Clients can edit scoped business fields; internal tools and ownership
@@ -584,6 +607,7 @@ export function PropertyDetail({ id }: { id: string }) {
                       {property.status}
                     </Badge>
                   )}
+                  {property.status === "Sales Instruction" && <SalesBoardLink property={property} />}
                   {property.groupName && (
                     <Badge variant="outline" className="text-[10px]" data-testid="badge-property-group">{property.groupName}</Badge>
                   )}

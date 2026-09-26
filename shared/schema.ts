@@ -2104,6 +2104,7 @@ export const investmentTracker = pgTable("investment_tracker", {
   vendorAgent: text("vendor_agent"),
   vendorAgentId: varchar("vendor_agent_id"),
   buyer: text("buyer"),
+  buyerId: varchar("buyer_id"),                 // → crm_companies (the buyer on a Sales-board asset)
   address: text("address"),
   notes: text("notes"),
   dealId: varchar("deal_id"),
@@ -2155,6 +2156,8 @@ export const investmentOffers = pgTable("investment_offers", {
   trackerId: varchar("tracker_id").notNull(),
   company: text("company"),
   contact: text("contact"),
+  companyId: varchar("company_id"),             // → crm_companies (the bidder)
+  contactId: varchar("contact_id"),             // → crm_contacts
   offerDate: timestamp("offer_date"),
   offerPrice: real("offer_price"),
   niy: real("niy"),
