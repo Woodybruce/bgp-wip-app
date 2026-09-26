@@ -7653,7 +7653,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
         it.wault_break AS "waultBreak", it.wault_expiry AS "waultExpiry",
         it.current_rent AS "currentRent", it.erv_pa AS "ervPa", it.occupancy, it.capex_required AS "capexRequired",
         it.board_type AS "boardType", it.status, it.client, it.client_contact AS "clientContact",
-        it.vendor, it.vendor_agent AS "vendorAgent", it.buyer, it.address, it.notes,
+        it.vendor, it.vendor_agent AS "vendorAgent", it.buyer, it.buyer_id AS "buyerId", it.address, it.notes,
         it.deal_id AS "dealId", d.deal_ref AS "dealRef", it.agent_user_ids AS "agentUserIds",
         it.client_id AS "clientId", it.client_contact_id AS "clientContactId",
         it.vendor_id AS "vendorId", it.vendor_agent_id AS "vendorAgentId",
