@@ -150,8 +150,11 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
   // asset with Landsec as vendor is Landsec disposing), or BGP's client on
   // the Sales board; buying when they're the client on the Purchases board.
   const entitySet = new Set(entityIds);
-  const side = (t: any) => entitySet.has(t.vendor_id) ? "selling"
-    : entitySet.has(t.client_id) ? (t.board_type === "Sales" ? "selling" : "buying")
+  const nameKey = (v: any) => String(v || "").toLowerCase().replace(/\b(plc|ltd|limited|group|properties|property)\b/g, "").replace(/[^a-z0-9]/g, "");
+  const entityNames = new Set([view.root.name, ...view.entities.map(e => e.name)].map(nameKey).filter(Boolean));
+  const isUs = (id: any, name: any) => entitySet.has(id) || (!id && !!name && entityNames.has(nameKey(name)));
+  const side = (t: any) => isUs(t.vendor_id, t.vendor) ? "selling"
+    : isUs(t.client_id, t.client) ? (t.board_type === "Sales" ? "selling" : "buying")
     : t.board_type === "Sales" ? "selling" : "buying";
 
   return {
