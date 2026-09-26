@@ -80,8 +80,12 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
   if (data === null) return null;
   const inv = data?.investment, tr = data?.tenantRep, la = data?.leaseAdvisory;
   const f = inv?.flags || {};
-  const sales = (inv?.tracker || []).filter((t: any) => t.board_type === "Sales");
-  const purchases = (inv?.tracker || []).filter((t: any) => t.board_type !== "Sales");
+  const CLOSED = /^(WIT|Withdrawn|COM|Completed|INV|Invoiced|Lost)$/i;
+  const byLive = (a: any, b: any) => Number(CLOSED.test(a.status || "")) - Number(CLOSED.test(b.status || ""));
+  const sales = (inv?.tracker || []).filter((t: any) => t.side === "selling").sort(byLive);
+  const purchases = (inv?.tracker || []).filter((t: any) => t.side !== "selling").sort(byLive);
+  const statusLabel = (st: string) => CLOSED.test(st || "") ? ({ WIT: "Withdrawn", COM: "Completed", INV: "Invoiced" } as Record<string, string>)[st] || st : st;
+  const list = (v: any) => Array.isArray(v) ? v.join(", ") : String(v || "").replace(/^\{|\}$/g, "").replace(/"/g, "").split(",").join(", ");
   const spaceWithFits = (tr?.space || []).filter((u: any) => u.fits.length > 0);
   const events: any[] = la?.events || [];
   const shownEvents = showAllEvents ? events : events.slice(0, 10);
@@ -96,7 +100,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
         <div className="flex flex-wrap gap-1.5">
           <Pill active={tab === "investment"} onClick={() => setTab("investment")} data-testid="team-tab-investment">Investment</Pill>
           <Pill active={tab === "tenantRep"} onClick={() => setTab("tenantRep")} data-testid="team-tab-tenant-rep">Tenant rep</Pill>
-          <Pill active={tab === "leaseAdvisory"} onClick={() => setTab("leaseAdvisory")} data-testid="team-tab-lease-advisory">Lease advisory{events.length ? ` · ${events.length}` : ""}</Pill>
+          <Pill active={tab === "leaseAdvisory"} onClick={() => setTab("leaseAdvisory")} data-testid="team-tab-lease-advisory">Lease advisory{events.length ? ` · ${la.eventsTotal > events.length ? `${events.length}+` : events.length}` : ""}</Pill>
         </div>
       </CardHeader>
       <CardContent className="p-3 pt-0">
@@ -114,15 +118,15 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                   {f.investment_hunter_flag && <Badge variant="outline" title={f.investment_hunter_notes || ""}>Investment hunter pick</Badge>}
                 </div>
               )}
-              <Section title="Selling — BGP sales board" count={sales.length} link="/investment-tracker" linkLabel="Investment tracker" empty="Nothing of theirs on the Sales board.">
+              <Section title="Selling — on BGP's investment boards" count={sales.length} link="/investment-tracker" linkLabel="Investment tracker" empty="Nothing they're selling on BGP's investment boards.">
                 {sales.length > 0 && <div className="space-y-1">{sales.slice(0, 6).map((t: any) => (
-                  <Row key={t.id} href={t.deal_id ? `/deals/${t.deal_id}` : "/investment-tracker"} title={t.asset_name} sub={[t.status, t.bid_deadline && `bids ${t.bid_deadline}`].filter(Boolean).join(" · ")}
+                  <Row key={t.id} href={t.deal_id ? `/deals/${t.deal_id}` : "/investment-tracker"} title={<span className={CLOSED.test(t.status || "") ? "text-muted-foreground" : ""}>{t.asset_name}</span>} sub={[statusLabel(t.status), t.board_type === "Purchases" && t.client && `BGP buying for ${t.client}`, t.bid_deadline && `bids ${t.bid_deadline}`].filter(Boolean).join(" · ")}
                     right={<>{money(t.guide_price) && <span className="text-[10px] tabular-nums">{money(t.guide_price)}</span>}{t.niy ? <span className="text-[10px] text-muted-foreground tabular-nums">{Number(t.niy).toFixed(2)}% NIY</span> : null}</>} />
                 ))}</div>}
               </Section>
               <Section title="Might sell — flagged in the portfolio" count={inv.salesCandidates.length} empty="No properties marked for sale or investment work.">
                 {inv.salesCandidates.length > 0 && <div className="space-y-1">{inv.salesCandidates.slice(0, 6).map((p: any) => (
-                  <Row key={p.id} href={`/properties/${p.id}`} title={p.name} sub={[p.status, p.asset_class].filter(Boolean).join(" · ")} />
+                  <Row key={p.id} href={`/properties/${p.id}`} title={p.name} sub={[p.status, list(p.asset_class)].filter(Boolean).join(" · ")} />
                 ))}</div>}
               </Section>
               {inv.debtEvents.length > 0 && (
@@ -142,9 +146,9 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                   <p className="text-[11px] text-muted-foreground">Mandate: {[f.mandate_asset_class, (f.mandate_lot_size_min || f.mandate_lot_size_max) && `${money(f.mandate_lot_size_min) || "—"}–${money(f.mandate_lot_size_max) || "—"} lots`, (f.mandate_geographies || []).join?.(", ")].filter(Boolean).join(" · ")}</p>
                 )}
               </Section>
-              <Section title="Buying — BGP purchases board" count={purchases.length} link="/investment-tracker" linkLabel="Investment tracker" empty="Not on the Purchases board.">
+              <Section title="Buying — on BGP's investment boards" count={purchases.length} link="/investment-tracker" linkLabel="Investment tracker" empty="Nothing they're buying on BGP's investment boards.">
                 {purchases.length > 0 && <div className="space-y-1">{purchases.slice(0, 5).map((t: any) => (
-                  <Row key={t.id} href={t.deal_id ? `/deals/${t.deal_id}` : "/investment-tracker"} title={t.asset_name} sub={[t.status, t.vendor && `vendor ${t.vendor}`].filter(Boolean).join(" · ")} right={money(t.guide_price) && <span className="text-[10px] tabular-nums">{money(t.guide_price)}</span>} />
+                  <Row key={t.id} href={t.deal_id ? `/deals/${t.deal_id}` : "/investment-tracker"} title={<span className={CLOSED.test(t.status || "") ? "text-muted-foreground" : ""}>{t.asset_name}</span>} sub={[statusLabel(t.status), t.vendor && `vendor ${t.vendor}`].filter(Boolean).join(" · ")} right={money(t.guide_price) && <span className="text-[10px] tabular-nums">{money(t.guide_price)}</span>} />
                 ))}</div>}
               </Section>
               <Section title="Investment comps" count={inv.comps.length} link="/investment-comps" linkLabel="Comps" empty="No recorded trades as buyer or seller.">
@@ -186,7 +190,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
 
         {data && tab === "leaseAdvisory" && (
           <div className="grid gap-4 md:grid-cols-2" data-testid="team-view-lease-advisory">
-            <Section title={`Lease events — next ${18} months`} count={events.length} link="/lease-events" linkLabel="Lease events tracker" empty="No expiries, breaks or reviews on file for their schemes.">
+            <Section title={`Lease events — next ${18} months`} count={la?.eventsTotal ?? events.length} link="/lease-events" linkLabel="Lease events tracker" empty="No expiries, breaks or reviews on file for their schemes.">
               {events.length > 0 && <div className="space-y-1">
                 {shownEvents.map((e: any, i: number) => (
                   <Row key={`${e.propertyId}-${e.unit}-${e.type}-${e.date}-${i}`} href={e.matterId ? `/pla/matters/${e.matterId}` : undefined}

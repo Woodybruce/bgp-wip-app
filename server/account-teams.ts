@@ -34,7 +34,7 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
       mandate_asset_class, mandate_lot_size_min, mandate_lot_size_max, mandate_geographies, capital_source, aum
     FROM crm_companies WHERE id = $1`, [companyId]);
   const tracker = await rows(q, `SELECT id, asset_name, board_type, status, guide_price, niy, property_id, deal_id,
-      client, vendor, buyer, bid_deadline, completion_date, updated_at
+      client, client_id, vendor, vendor_id, buyer, bid_deadline, completion_date, updated_at
     FROM investment_tracker
     WHERE client_id = ANY($1::text[]) OR vendor_id = ANY($1::text[]) OR property_id = ANY($2::text[])
     ORDER BY updated_at DESC NULLS LAST LIMIT 40`, [entityIds, propertyIds]);
@@ -143,14 +143,23 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
     add(u.property_id, u.unit, u.tenant, "Break Option", u.lease_break, "leasing_schedule");
     add(u.property_id, u.unit, u.tenant, "Rent Review", u.rent_review, "leasing_schedule");
   }
-  const leaseEvents = [...events.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(0, 150);
+  const allLeaseEvents = [...events.values()].sort((a, b) => a.date.localeCompare(b.date));
+  const leaseEvents = allLeaseEvents.slice(0, 150);
+  // The landlord's side of each investment-board asset: they're selling when
+  // they're the vendor (whichever BGP board it sits on — a Purchases-board
+  // asset with Landsec as vendor is Landsec disposing), or BGP's client on
+  // the Sales board; buying when they're the client on the Purchases board.
+  const entitySet = new Set(entityIds);
+  const side = (t: any) => entitySet.has(t.vendor_id) ? "selling"
+    : entitySet.has(t.client_id) ? (t.board_type === "Sales" ? "selling" : "buying")
+    : t.board_type === "Sales" ? "selling" : "buying";
 
   return {
     landlordName: view.root.name,
     portfolioCount: propertyIds.length,
     investment: {
       flags: flags || null,
-      tracker: tracker.map((t: any) => ({ ...t, property_name: propertyName.get(t.property_id) || null })),
+      tracker: tracker.map((t: any) => ({ ...t, side: side(t), property_name: propertyName.get(t.property_id) || null })),
       salesCandidates,
       debtEvents: debtEvents.map((e: any) => ({ ...e, property_name: e.property_id ? propertyName.get(e.property_id) || null : null })),
       comps,
@@ -165,6 +174,7 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
     leaseAdvisory: {
       matters: matters.map((m: any) => ({ ...m, property_name: propertyName.get(m.property_id) || null })),
       events: leaseEvents,
+      eventsTotal: allLeaseEvents.length,
     },
   };
 }
