@@ -2,7 +2,7 @@ import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
 import { CompanyProfileImage, CompanyImageCoverChoice } from "@/components/company-profile-image";
 import { selectCompanyHeroImage, isCompanyImageLogo } from "@shared/brand-image-selection";
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandImageRefreshButton } from "@/components/brand-profile-overview";
 import { type ContactImportResult } from "@/components/contact-import-results";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -39,12 +39,12 @@ import {
   Sparkles, Store, TrendingUp, TrendingDown, Users, User, Handshake,
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
   Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper,
-  MapPin, Activity, Target, Briefcase, PoundSterling, Search, Flame,
+  MapPin, Activity, Target, Briefcase, Search, Flame,
   Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail, ShieldCheck, ChevronRight, Loader2,
 } from "lucide-react";
 import { NewsTagFilterChips } from "@/components/news-tags-manager";
 import { brandComplianceStatus } from "@shared/brand-compliance-status";
-import { displayTicker, normalizeTicker } from "@shared/stock-ticker";
+import { displayTicker } from "@shared/stock-ticker";
 import { isLandlordCompany } from "@/lib/company-kind";
 import { AccountDealsBoard } from "@/components/account-deals-board";
 import { LandlordAccountGallery } from "@/components/account-media-gallery";
@@ -401,6 +401,52 @@ type RepForm = {
 };
 
 const EMPTY_REP_FORM: RepForm = { otherCompanyId: "", otherCompanyName: "", agent_type: "tenant_rep", region: "", contactId: undefined, contactName: undefined };
+
+// Two-column masonry for the lower brand boards: every card spans as many
+// 4px rows as it is tall and dense auto-placement drops it into the first
+// free slot, so the columns pack with no holes whatever a brand has. Cards
+// are found through display: contents wrappers (the section and sidebar
+// wrappers) and re-measured whenever they resize or appear. Below lg the
+// container is a plain stack.
+const MASONRY_ROW = 4;
+const MASONRY_GAP = 12;
+function MasonryGrid({ className, children }: { className?: string; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const grid = ref.current;
+    if (!grid) return;
+    const items = new Set<HTMLElement>();
+    const collect = (el: Element, out: HTMLElement[]) => {
+      for (const child of Array.from(el.children) as HTMLElement[]) {
+        if (getComputedStyle(child).display === "contents") collect(child, out);
+        else out.push(child);
+      }
+    };
+    const size = (el: HTMLElement) => {
+      if (getComputedStyle(grid).display !== "grid") { el.style.gridRowEnd = ""; return; }
+      const cs = getComputedStyle(el);
+      const h = el.getBoundingClientRect().height + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
+      el.style.gridRowEnd = h > 0 ? `span ${Math.ceil((h + MASONRY_GAP) / MASONRY_ROW)}` : "";
+    };
+    const ro = new ResizeObserver(entries => { for (const entry of entries) size(entry.target as HTMLElement); });
+    let frame = 0;
+    const sync = () => {
+      frame = 0;
+      const now: HTMLElement[] = [];
+      collect(grid, now);
+      const current = new Set(now);
+      for (const el of Array.from(items)) if (!current.has(el)) { ro.unobserve(el); items.delete(el); el.style.gridRowEnd = ""; }
+      for (const el of now) { if (!items.has(el)) { items.add(el); ro.observe(el); } size(el); }
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(sync); };
+    sync();
+    const mo = new MutationObserver(schedule);
+    mo.observe(grid, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+    window.addEventListener("resize", schedule);
+    return () => { ro.disconnect(); mo.disconnect(); window.removeEventListener("resize", schedule); if (frame) cancelAnimationFrame(frame); };
+  }, []);
+  return <div ref={ref} className={className} data-testid="brand-masonry">{children}</div>;
+}
 
 // Long About copy is clamped so the profile column (and the chat pinned to
 // its height) stays a sensible size; "Read more" opens the rest.
@@ -1022,7 +1068,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   };
 
   const header = (
-      <CardHeader className={`${flat ? "px-0 py-2 bg-background/95 supports-[backdrop-filter]:bg-background/85" : "p-3 pb-2 bg-card/95 supports-[backdrop-filter]:bg-card/85"} flex flex-row items-start justify-between sticky top-0 z-20 backdrop-blur border-b border-border/40`}>
+      <CardHeader className={`${flat ? "px-0 py-2 bg-card/95 supports-[backdrop-filter]:bg-card/85" : "p-3 pb-2 bg-card/95 supports-[backdrop-filter]:bg-card/85"} flex flex-row items-start justify-between sticky top-0 z-20 backdrop-blur border-b border-border/40`}>
         <div className="flex flex-col gap-1 min-w-0 flex-1">
         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
           <Sparkles className="w-4 h-4 text-primary shrink-0" />
@@ -1033,30 +1079,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             return "Brand Profile";
           })()}
           {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-transparent text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
-          {!isLandlord && hunter && hunter.expansionScore >= 40 && (
-            <Badge
-              className={
-                hunter.expansionScore >= 30 ? "bg-orange-50 text-orange-700 border-transparent text-[10px]" :
-                hunter.expansionScore >= 20 ? "bg-amber-50 text-amber-700 border-transparent text-[10px]" :
-                "bg-zinc-50 text-zinc-700 border-transparent text-[10px]"
-              }
-              title={hunter.expansionFlags.join(" · ")}
-            >
-              Hunter {hunter.expansionScore}/100
-            </Badge>
-          )}
           {c.agent_type && <Badge variant="secondary" className="text-[10px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
-          {(() => {
-            const lastContactedAt = data.contacts.map((ct: any) => ct.last_interaction_at).filter(Boolean).sort().reverse()[0] as string | undefined;
-            const lastContactor = lastContactedAt ? data.contacts.find((ct: any) => ct.last_interaction_at === lastContactedAt) : null;
-            if (!lastContactedAt) return null;
-            const days = Math.floor((Date.now() - new Date(lastContactedAt).getTime()) / 864e5);
-            return (
-              <span className="text-xs font-normal text-muted-foreground flex items-center gap-0.5">
-                · <Clock className="w-2.5 h-2.5" /> {days}d{lastContactor?.name ? ` · ${lastContactor.name.split(" ")[0]}` : ""}
-              </span>
-            );
-          })()}
           {!isLandlord && c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
         </CardTitle>
         <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
@@ -1109,7 +1132,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               const hqShort = a
                 ? ([a.city, a.country].filter(Boolean).join(", ") || stringifyAddrFallback(a.address) || stringifyAddrFallback(a) || null)
                 : null;
-              const hasDetails = !!(c.industry || hqShort || (c.employee_count && c.employee_count > 0) || c.annual_revenue || c.founded_year || c.stock_ticker);
+              const hasDetails = !!(c.industry || hqShort || (c.employee_count && c.employee_count > 0) || c.annual_revenue || c.founded_year);
               if (!hasDetails) return null;
               const empStr = c.employee_count && c.employee_count > 0
                 ? c.employee_count >= 10000 ? `~${Math.round(c.employee_count / 1000)}k employees`
@@ -1134,16 +1157,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   )}
                   {c.founded_year && <span className="text-xs text-muted-foreground">Est. {c.founded_year}</span>}
                   {!isLandlord && <ApolloDetailChips companyId={c.id} />}
-                  {c.stock_ticker && (
-                    <a
-                      href={`https://finance.yahoo.com/quote/${encodeURIComponent(normalizeTicker(c.stock_ticker) ?? c.stock_ticker)}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/60 bg-muted/40 hover:bg-muted text-[11px] font-medium text-foreground"
-                    >
-                      <Coins className="w-2.5 h-2.5 text-amber-600" /> {displayTicker(c.stock_ticker)}
-                    </a>
-                  )}
                 </div>
               );
             })()}
@@ -1171,8 +1184,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               <CompanyMiniChat companyId={companyId} companyName={c.name} fill title={isLandlord ? "Landlord conversation" : "Brand conversation"} starters={askTopics(c.name, isLandlord)} />
             </div>
   );
-  const aboutCard = (
-            <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-2 md:flex-1 md:min-w-0" data-testid="brand-factual-summary">
+  // About's content on its own, so the company page can put it inside the
+  // one profile card (header, website, details, actions, About) — elsewhere
+  // it keeps its own card.
+  const aboutBody = (
+            <div className="space-y-2" data-testid="brand-factual-summary">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
               <p className={`text-sm leading-relaxed break-words ${!aboutOpen && (c.description || "").length > ABOUT_CLAMP_CHARS ? "line-clamp-5" : ""}`}>{c.description || "The factual brand profile is awaiting preparation."}</p>
               {(c.description || "").length > ABOUT_CLAMP_CHARS && (
@@ -1312,25 +1328,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   <div className="text-sm">{c.franchise_activity}</div>
                 </div>
               )}
-              {c.annual_revenue && c.annual_revenue > 0 && (
-                <div>
-                  <div className="text-xs text-muted-foreground flex items-center gap-1">
-                    <PoundSterling className="w-3 h-3" /> Revenue
-                  </div>
-                  <div className="font-semibold">
-                    {c.annual_revenue >= 1_000_000_000
-                      ? `$${(c.annual_revenue / 1_000_000_000).toFixed(1)}B`
-                      : `$${(c.annual_revenue / 1_000_000).toFixed(0)}M`}
-                  </div>
-                </div>
-              )}
-              {c.hunter_flag && (
-                <div className="col-span-2">
-                  <Badge className="bg-orange-100 text-orange-700 border-orange-200 text-[10px] flex items-center gap-1 w-fit">
-                    <Flame className="w-2.5 h-2.5" /> Hunter Pick
-                  </Badge>
-                </div>
-              )}
               {c.stock_ticker ? (
                 // Landlords: the card renders full-width below the
                 // chat + key-facts row (see below) — not squeezed into a
@@ -1387,10 +1384,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               </div>;
             })()}
 
-            <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} />
+            <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} hideTenancyPropertyIds={liveLocations.map((p: any) => p.id)} />
             </div>
             </div>
   );
+  const aboutCard = <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 md:flex-1 md:min-w-0">{aboutBody}</div>;
 
   return (
     <div className={(isLandlord || isBrand)
@@ -1405,13 +1403,17 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
           height and never sets it, so the two end on the same line — no empty
           chat box on thin profiles (Honest Greens) and no giant one on long
           ones (Nando's, whose About is clamped) (Woody, 2026-09-26). */}
+      {/* The profile header, website, details, actions and About are ONE card
+          (Woody, 2026-09-26: "combine the about and profile into one card"). */}
       {flat ? (
         <div className="md:grid md:grid-cols-2 md:gap-4">
           <div className="min-w-0 space-y-3">
             {topSlot}
-            {header}
-            {!editing && <div className={panelSec("profile")}>{topInfo}</div>}
-            {!editing && wide && aboutCard}
+            <div className="rounded-xl border border-card-border bg-card shadow-sm px-3 pb-3" data-testid="brand-profile-card">
+              {header}
+              {!editing && <div className={`${panelSec("profile")} pt-2.5`}>{topInfo}</div>}
+              {!editing && <div className={`${panelSec("profile")} mt-3 pt-3 border-t border-border`}>{aboutBody}</div>}
+            </div>
           </div>
           {wide && <div className="relative min-w-0 min-h-[26rem]"><div className="absolute inset-0 flex flex-col">{conversationBoard}</div></div>}
         </div>
@@ -1548,12 +1550,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 ticker) on the left; the Brand conversation takes the other
                 half (Woody, 2026-09-23: "combine the backers element with
                 About", "the brand conversation only needs to be half"). */}
-            {!(flat && wide) && (
+            {!flat && (
             <div className="flex flex-col md:flex-row gap-2.5 md:gap-4 md:items-stretch pt-2">
             {aboutCard}
             {conversationBoard}
             </div>
             )}
+            {flat && !wide && <div className="pt-2">{conversationBoard}</div>}
 
             {/* Single BGP AI take + Ask ChatBGP question runner — sits above
                 all zones. Client logins get both too (Woody, 2026-08-04:
@@ -1591,7 +1594,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 real investment requirements for the landlord's entity set.
                 Both render nothing when there is nothing to show. */}
             {isLandlord && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
+              <MasonryGrid className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-x-4 lg:items-start lg:auto-rows-[4px] lg:grid-flow-row-dense">
                 <AccountNextActionsCard companyId={companyId} />
                 <InvestmentRequirementsCard companyId={companyId} />
                 {/* Standard client folder tree (Delivery 5) — the dry-run
@@ -1601,7 +1604,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 {/* Canonical group entities + per-entity KYC (Delivery 5) —
                     staff-only, renders nothing for scoped viewers. */}
                 <AccountEntitiesPanel companyId={companyId} />
-              </div>
+              </MasonryGrid>
             )}
 
             {/* Parent group */}
@@ -1652,14 +1655,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
 
             {/* Tenancies / competitor set beside Expansion intelligence on wide
                 screens (Woody, 2026-09-25: "could they be side by side? lots of
-                free space"). Two independent stacks, not rows of pairs: the
-                sidebar boards join the bottom of each side, so a short card is
-                followed straight away by the next one instead of leaving a
-                hole beside a tall neighbour (Woody, 2026-09-26: "sort the
-                white space"). */}
-            <div className="lg:grid lg:grid-cols-2 lg:gap-4 lg:items-start">
-            <div className="min-w-0 space-y-3">
-            <div className={panelSec("relationship")}>
+                free space"). A masonry grid, not rows of pairs or fixed
+                stacks: the sidebar boards join it and each card drops into the
+                first free slot, so the section packs whatever a brand has
+                (Woody, 2026-09-26: "so it all fits well regardless of the
+                brand and their info"). */}
+            <MasonryGrid className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-x-4 lg:items-start lg:auto-rows-[4px] lg:grid-flow-row-dense">
+            <div className={`${panelSec("relationship")} lg:contents lg:space-y-0`}>
             {/* ── Zone 4: BGP Relationship — now client-visible too (Woody,
                 2026-08-04: "BGP relationship still not on Landsec viewing
                 for Bills / brands"). Clients get the AI read, coverage,
@@ -1667,7 +1669,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 the raw correspondence drawer stay staff-only. */}
             {/* Same card as About, Stores and the chat (Woody, 2026-09-24:
                 "some have white background others don't — need continuity"). */}
-            <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 mt-2 order-6">
+            <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 mt-2 lg:mt-0 order-6 lg:order-none">
             <div className="space-y-2.5 [&>*:first-child]:border-t-0 [&>*:first-child]:pt-0">
             <>
             {/* The relationship read is part of the one BGP take above
@@ -1878,18 +1880,15 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             </div>
 
             </div>
-            {splitSidebar && <div className={panelSec("more")}><BrandProfileSidebar data={data} companyId={companyId} column="left" /></div>}
-            </div>
 
-            <div className="min-w-0 space-y-3">
-            <div className={panelSec("intel")}>
+            <div className={`${panelSec("intel")} lg:contents lg:space-y-0`}>
             {/* ── Expansion intelligence — single zone that merges what used
                  to be Brand Expansion + Hunter Intel + Active requirements.
                  Same job: gather everything we know about what space the
                  occupier wants. Order: header (score + scrape buttons) →
                  AI narrative → flags → internal requirements → Pipnet
                  requirements → signals feed → represented by → represents. */}
-            <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 mt-2 order-9">
+            <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 mt-2 lg:mt-0 order-9 lg:order-none">
             {/* Expansion score + brand narrative are occupier concepts — a
                 landlord board keeps the signals/agents below but not these
                 (Woody, 2026-09-08: the brand board was "infiltrating" it). */}
@@ -2344,9 +2343,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
 
 
             </div>
-            {splitSidebar && <div className={panelSec("more")}><BrandProfileSidebar data={data} companyId={companyId} column="right" /></div>}
-            </div>
-            </div>
+            {splitSidebar && <div className={`${panelSec("more")} lg:contents`}><BrandProfileSidebar data={data} companyId={companyId} column="grid" /></div>}
+            </MasonryGrid>
 
             {/* News & Media + Documents & Gallery now live on the sidebar */}
           </div>
@@ -3678,7 +3676,7 @@ export function BrandComplianceCard({
 // available units we should pitch them next.
 // `ledger` folds the old separate "Deal ledger & pipeline" counts into this
 // card's header, so each deal is counted in one place (Woody, 2026-09-23).
-export function PortfolioActivityBlock({ companyId, ledger, bare = false }: { companyId: string; ledger?: { completed: number; active: number; requirements: number }; bare?: boolean }) {
+export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTenancyPropertyIds }: { companyId: string; ledger?: { completed: number; active: number; requirements: number }; bare?: boolean; hideTenancyPropertyIds?: string[] }) {
   const [showAllTenancies, setShowAllTenancies] = useState(false);
   useEffect(() => setShowAllTenancies(false), [companyId]);
   const { data: act } = useQuery<any>({
@@ -3700,7 +3698,10 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false }: { co
     staleTime: 2 * 60 * 1000,
   });
   if (!act) return null;
-  const tenantAt: any[] = act.tenantAt || [];
+  // Tenancy-schedule rows already shown in Live tenancies aren't listed
+  // twice; deal-backed rows stay (they carry the Open deal link).
+  const hidden = new Set(hideTenancyPropertyIds || []);
+  const tenantAt: any[] = (act.tenantAt || []).filter((p: any) => !(p.via !== "deal" && hidden.has(p.property_id)));
   const targeted: any[] = act.targeted || [];
   const pitched: any[] = act.pitched || [];
   const suggestions: any[] = sugg?.suggestions || [];
@@ -4449,7 +4450,7 @@ function TenantRepsBlock({ companyId, reps }: { companyId: string; reps: any[] }
   );
 }
 
-function BrandProfileSidebar({ data, companyId, column }: { data: BrandProfile; companyId: string; column?: "left" | "right" | "bottom" }) {
+function BrandProfileSidebar({ data, companyId, column }: { data: BrandProfile; companyId: string; column?: "grid" | "bottom" }) {
   const { toast } = useToast();
   const c = data.company;
   const cov = data.covenant;
@@ -4548,15 +4549,16 @@ function BrandProfileSidebar({ data, companyId, column }: { data: BrandProfile; 
   // 2026-07-30). The narrow sticky sidebar keeps the single column.
   // items-stretch + h-full children so paired boards share one depth —
   // mismatched card bottoms left slabs of dead space (Woody, 2026-08-03).
-  // column (the brand / landlord page): only this side's boards, stacked —
-  // the two stacks run independently, so no pair ever stretches or gaps.
-  const show = (k: "left" | "right" | "bottom") => !column || column === k;
+  // column (the brand / landlord page): "grid" renders the boards straight
+  // into the panel's masonry grid (the aside and pair wrappers become
+  // display: contents); "bottom" renders the full-width Gallery below it.
+  const show = (k: "left" | "right" | "bottom") => !column || (column === "grid" ? k !== "bottom" : k === "bottom");
   const pairCls = column ? "contents" : (isLandlord || isBrand)
     ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-stretch [&>*]:h-full [&>*:only-child]:md:col-span-2"
     : "space-y-3";
 
   return (
-    <aside className={column ? "w-full min-w-0 flex flex-col gap-3" : (isLandlord || isBrand)
+    <aside className={column === "grid" ? "w-full min-w-0 flex flex-col gap-3 lg:contents" : column ? "w-full min-w-0 flex flex-col gap-3" : (isLandlord || isBrand)
       ? "w-full shrink-0 space-y-3 self-start"
       : "w-full md:w-[420px] lg:w-[480px] shrink-0 space-y-3 md:sticky md:top-3 self-start"}>
       {/* Two balanced columns: the tall Compliance board + Key contacts on
