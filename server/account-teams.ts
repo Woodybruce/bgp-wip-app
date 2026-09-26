@@ -12,6 +12,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { resolveAccountView, type Querier } from "./account-resolver";
 import { requirementFitsUnit } from "@shared/requirement-fit";
+import { DEAL_AGENT_ROLES, roleFromAgentType } from "@shared/agent-roles";
 
 const LEASE_WINDOW_MONTHS = 18;
 const OPEN_DEAL = `COALESCE(d.status, '') NOT IN ('COM','INV','WIT','Completed','Invoiced','Withdrawn','Lost','Dead')`;
@@ -157,8 +158,49 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
     : isUs(t.client_id, t.client) ? (t.board_type === "Sales" ? "selling" : "buying")
     : t.board_type === "Sales" ? "selling" : "buying";
 
+  // ── Agents across their estate: who represents them, who is instructed
+  // instead of BGP on their properties, and the agents on deals at their
+  // schemes (by role) — one row per firm, linking to the agent page.
+  const agentMap = new Map<string, any>();
+  const agentRow = (id: string, name: string) => {
+    if (!agentMap.has(id)) agentMap.set(id, { firmId: id, name, roles: {} as Record<string, number>, represents: [] as string[], competing: [] as string[], deals: 0, openDeals: 0 });
+    return agentMap.get(id);
+  };
+  const reps = await rows(q, `SELECT r.agent_company_id, a.name AS agent_name, r.agent_type, r.region
+    FROM brand_agent_representations r JOIN crm_companies a ON a.id = r.agent_company_id
+    WHERE r.brand_company_id = ANY($1::text[]) AND (r.end_date IS NULL OR r.end_date >= NOW())`, [entityIds]);
+  for (const r of reps) {
+    const row = agentRow(r.agent_company_id, r.agent_name);
+    const role = roleFromAgentType(r.agent_type) || "letting";
+    row.roles[role] = (row.roles[role] || 0) + 1;
+    row.represents.push([r.agent_type === "landlord_rep" ? "Letting" : r.agent_type === "investment" ? "Investment" : r.agent_type, r.region].filter(Boolean).join(" · "));
+  }
+  const competitorRows = await rows(q, `SELECT p.id, p.name, p.competitor_agent_id, a.name AS agent_name
+    FROM crm_properties p JOIN crm_companies a ON a.id = p.competitor_agent_id
+    WHERE p.id = ANY($1::text[])`, [propertyIds]);
+  for (const r of competitorRows) {
+    const row = agentRow(r.competitor_agent_id, r.agent_name);
+    row.roles.letting = (row.roles.letting || 0) + 1;
+    row.competing.push(r.name);
+  }
+  for (const r of DEAL_AGENT_ROLES) {
+    const found = await rows(q, `SELECT d.${r.column} AS firm_id, a.name AS agent_name, COUNT(*)::int AS n,
+        COUNT(*) FILTER (WHERE COALESCE(d.status, '') NOT IN ('COM','INV','WIT','Completed','Invoiced','Withdrawn','Lost','Dead'))::int AS open
+      FROM crm_deals d JOIN crm_companies a ON a.id = d.${r.column}
+      WHERE d.property_id = ANY($1::text[]) AND d.${r.column} IS NOT NULL
+      GROUP BY d.${r.column}, a.name`, [propertyIds]);
+    for (const f of found) {
+      const row = agentRow(f.firm_id, f.agent_name);
+      row.roles[r.role] = (row.roles[r.role] || 0) + f.n;
+      row.deals += f.n; row.openDeals += f.open;
+    }
+  }
+  const agents = [...agentMap.values()].sort((a, b) =>
+    Number(b.represents.length > 0) - Number(a.represents.length > 0) || (b.openDeals - a.openDeals) || (b.competing.length + b.deals) - (a.competing.length + a.deals));
+
   return {
     landlordName: view.root.name,
+    agents,
     portfolioCount: propertyIds.length,
     investment: {
       flags: flags || null,

@@ -48,6 +48,7 @@ import { displayTicker } from "@shared/stock-ticker";
 import { isLandlordCompany } from "@/lib/company-kind";
 import { AccountDealsBoard } from "@/components/account-deals-board";
 import { AccountTeamViewsCard } from "@/components/account-team-views";
+import { AgentRelationshipCard } from "@/components/agent-relationship-card";
 import { LandlordAccountGallery } from "@/components/account-media-gallery";
 import { AccountNextActionsCard, AccountTeamCard, InvestmentRequirementsCard, AccountFolderTreeCard, useAccountWorkspace } from "@/components/account-workspace-cards";
 import { AccountEntitiesPanel } from "@/components/account-entities-panel";
@@ -1076,6 +1077,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // bottom of the two column stacks instead of rendering as paired rows.
   const splitSidebar = isLandlord || isBrand;
   const isAgent = !!c.agent_type;
+  // Agent firms get their own page layout (like landlords).
+  const isAgentFirm = !isLandlord && (/^agent/i.test(c.company_type || "") || isAgent);
   // Everything the AI commentary might name, so mentions become links.
   const commentaryEntities: CommentaryEntity[] = [
     ...data.contacts.filter((ct: any) => ct.name).map((ct: any) => ({ name: ct.name, href: `/contacts/${ct.id}`, kind: "contact" as const })),
@@ -1218,7 +1221,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             // brand's shared thread, not a second answer panel stacked on top
             // of it (Woody, 2026-09-26).
             <div className="h-96 md:h-auto md:min-h-[24rem] md:flex-1 md:min-w-0" data-testid="brand-conversation">
-              <CompanyMiniChat companyId={companyId} companyName={c.name} fill title={isLandlord ? "Landlord conversation" : "Brand conversation"} starters={askTopics(c.name, isLandlord)} />
+              <CompanyMiniChat companyId={companyId} companyName={c.name} fill title={isLandlord ? "Landlord conversation" : isAgentFirm ? "Agent conversation" : "Brand conversation"} starters={askTopics(c.name, isLandlord, isAgentFirm)} />
             </div>
   );
   // About's content on its own, so the company page can put it inside the
@@ -1430,6 +1433,161 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             </div>
             </div>
   );
+  // Who an agent represents (+ the add-representation picker, which the
+  // brand page's Tenant rep "Add agent" also opens). Shared by the brand
+  // and agent layouts.
+  const representsBlock = (<>
+            {/* Represents (brands this agent reps) */}
+            {(data.representing.length > 0 || isAgent) && (
+              <div>
+                <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1"><Users className="w-3 h-3" /> Currently representing ({data.representing.length})</span>
+                  {!isClientViewer && (
+                  <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px]" onClick={() => { setAddRep("brand"); setRepForm({ ...EMPTY_REP_FORM, agent_type: c.agent_type || "tenant_rep" }); }} data-testid="button-add-brand">
+                    <Plus className="w-3 h-3 mr-0.5" /> Add brand
+                  </Button>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {data.representing.slice(0, 12).map((r: any) => (
+                    <span key={r.id} className="inline-flex items-center gap-1 group">
+                      <Link href={`/companies/${r.brand_company_id}`}>
+                        <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer">
+                          {r.brand_name}
+                          {r.region && <span className="ml-1 text-muted-foreground">· {r.region.replace(/_/g, " ")}</span>}
+                        </Badge>
+                      </Link>
+                      {!isClientViewer && (
+                      <button
+                        type="button"
+                        onClick={() => { if (confirm(`End representation of ${r.brand_name}?`)) endRepMutation.mutate(r.id); }}
+                        className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+                        aria-label="End representation"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                      )}
+                    </span>
+                  ))}
+                  {data.representing.length === 0 && <span className="text-xs text-muted-foreground italic">No brands currently represented.</span>}
+                  {data.representing.length > 12 && <span className="text-[10px] text-muted-foreground">+{data.representing.length - 12} more</span>}
+                </div>
+              </div>
+            )}
+
+            {/* Add-representation inline picker */}
+            {addRep && (
+              <div className="border border-border rounded-lg p-3 space-y-3 bg-muted/40" data-testid="add-representation-form">
+                <div className="text-sm font-semibold flex items-center justify-between">
+                  <span>{addRep === "agent" ? "Add an agent representing this brand" : "Add a brand this agent represents"}</span>
+                  <Button size="sm" variant="ghost" aria-label="Close representation form" onClick={() => { setAddRep(null); setRepForm(EMPTY_REP_FORM); setRepSearch(""); }}>
+                    <X className="w-3 h-3" />
+                  </Button>
+                </div>
+                <div className="relative">
+                  <Input
+                    placeholder={addRep === "agent" ? "Search agent by person name (e.g. Harry Elliott)..." : "Search brand company..."}
+                    value={
+                      repForm.contactName
+                        ? `${repForm.contactName}${repForm.otherCompanyName ? ` — ${repForm.otherCompanyName}` : ""}`
+                        : (repForm.otherCompanyName || repSearch)
+                    }
+                    onChange={(e) => { setRepSearch(e.target.value); setRepForm({ ...repForm, otherCompanyId: "", otherCompanyName: "", contactId: undefined, contactName: undefined }); }}
+                    className="text-sm"
+                  />
+                  {repSearch && !repForm.otherCompanyId && !repForm.contactId && (
+                    <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-y-auto">
+                      {/* Agent flow: search CONTACTS (people) by name and show
+                          the agency company alongside. Picks both at once. */}
+                      {addRep === "agent" && agentContactResults.length > 0 && (
+                        <>
+                          {agentContactResults.map(ct => (
+                            <button
+                              type="button"
+                              key={ct.id}
+                              onClick={() => { setRepForm({
+                                ...repForm,
+                                contactId: ct.id,
+                                contactName: ct.name,
+                                otherCompanyId: "",
+                                otherCompanyName: ct.companyName || "",
+                              }); setRepSearch(""); }}
+                              className="w-full text-left px-2 py-2 hover:bg-accent text-sm flex items-start gap-2"
+                            >
+                              <User className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
+                              <div className="min-w-0 flex-1">
+                                <div className="font-medium truncate">{ct.name}</div>
+                                <div className="text-[11px] text-muted-foreground truncate">
+                                  {[ct.role, ct.companyName || "Firm unconfirmed"].filter(Boolean).join(" · ")}
+                                </div>
+                              </div>
+                            </button>
+                          ))}
+                          <div className="border-t my-0.5" />
+                        </>
+                      )}
+                      {/* Fall-through: company picker. Used for the brand-search
+                          case, AND as a fallback when the agent search returns
+                          nothing (so user can still pick by company name). */}
+                      {/* Firm picks must be agent companies; selecting a person
+                          does not change their recorded employer. */}
+                      {allCompaniesForPicker
+                        .filter(co => co.id !== companyId && co.name.toLowerCase().includes(repSearch.toLowerCase()))
+                        .filter(co => addRep !== "agent" || /^agent(?:\s|-|$)/i.test(co.companyType || co.company_type || ""))
+                        .slice(0, 10)
+                        .map(co => (
+                          <button
+                            type="button"
+                            key={co.id}
+                            onClick={() => { setRepForm({ ...repForm, otherCompanyId: co.id, otherCompanyName: co.name, contactId: undefined, contactName: undefined }); setRepSearch(""); }}
+                            className="w-full text-left px-2 py-2 hover:bg-accent text-sm flex items-center gap-2"
+                          >
+                            {addRep === "agent" && <Handshake className="w-3 h-3 text-muted-foreground" />}
+                            {addRep === "brand" && <Sparkles className="w-3 h-3 text-primary" />}
+                            <span className="truncate">{co.name}</span>
+                            {co.agent_type && <Pill className="ml-auto">{co.agent_type.replace(/_/g, " ")}</Pill>}
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                </div>
+                {addRep === "agent" && <p className="text-[11px] text-muted-foreground">A named agent can be added with their firm unconfirmed. Adding a representation keeps their recorded employer unchanged.</p>}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <Select value={repForm.agent_type} onValueChange={(v) => setRepForm({ ...repForm, agent_type: v })}>
+                    <SelectTrigger aria-label="Representation type" className="text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="tenant_rep">Tenant rep</SelectItem>
+                      <SelectItem value="landlord_rep">Landlord rep</SelectItem>
+                      <SelectItem value="investment">Investment</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    placeholder="Region (optional)"
+                    value={repForm.region}
+                    onChange={(e) => setRepForm({ ...repForm, region: e.target.value })}
+                    aria-label="Representation region"
+                    className="text-sm"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  {/* Named people do not require a confirmed employer. */}
+                  <Button
+                    size="sm"
+                    disabled={(!repForm.otherCompanyId && !(addRep === "agent" && repForm.contactId)) || addRepMutation.isPending}
+                    onClick={() => {
+                      const vars = addRep === "agent"
+                        ? { brandCompanyId: companyId, agentCompanyId: repForm.otherCompanyId || undefined, agentType: repForm.agent_type, region: repForm.region || undefined, primaryContactId: repForm.contactId || undefined }
+                        : { brandCompanyId: repForm.otherCompanyId, agentCompanyId: companyId, agentType: repForm.agent_type, region: repForm.region || undefined };
+                      addRepMutation.mutate(vars);
+                    }}
+                  >
+                    <Check className="w-3 h-3 mr-1" /> Add representation
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => { setAddRep(null); setRepForm(EMPTY_REP_FORM); setRepSearch(""); }}>Cancel</Button>
+                </div>
+              </div>
+            )}
+  </>);
   const signalsFeed = (
             <div>
               <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-1">
@@ -1676,16 +1834,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     {openMeeting && <MeetingViewerDialog eventId={openMeeting.eventId} mailboxEmail={openMeeting.mailboxEmail} onClose={() => setOpenMeeting(null)} />}
   </>;
 
-  // Landlord page — its own layout, split from the brand page (Woody,
-  // 2026-09-26: "they should be completely split"; portfolio first, the
-  // data check open to everyone). Account summary beside the conversation,
-  // then Portfolio (properties + data check), Deals & instructions, and the
-  // account boards balanced in two columns; Gallery last. Group entities
-  // sit with Compliance & KYC instead of heading the page.
-  if (isLandlord && flat) {
-    const masonryCls = "space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-x-4 lg:items-start lg:auto-rows-[4px] lg:grid-flow-row-dense";
-    return (
-      <div className="flex flex-col gap-3 w-full min-w-0" data-testid="landlord-profile">
+  // Profile card beside the conversation — the top row of the landlord and
+  // agent layouts.
+  const profileTopRow = (
         <div className="md:grid md:grid-cols-2 md:gap-4">
           <div className="min-w-0">
             <div className="rounded-xl border border-card-border bg-card shadow-sm px-3 pb-3" data-testid="brand-profile-card">
@@ -1703,6 +1854,19 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
           </div>
           {conversationSlot || <div className="pt-3">{conversationBoard}</div>}
         </div>
+  );
+
+  // Landlord page — its own layout, split from the brand page (Woody,
+  // 2026-09-26: "they should be completely split"; portfolio first, the
+  // data check open to everyone). Account summary beside the conversation,
+  // then Portfolio (properties + data check), Deals & instructions, and the
+  // account boards balanced in two columns; Gallery last. Group entities
+  // sit with Compliance & KYC instead of heading the page.
+  if (isLandlord && flat) {
+    const masonryCls = "space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-x-4 lg:items-start lg:auto-rows-[4px] lg:grid-flow-row-dense";
+    return (
+      <div className="flex flex-col gap-3 w-full min-w-0" data-testid="landlord-profile">
+        {profileTopRow}
         {refreshStatus}
         <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} />
         <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
@@ -1727,6 +1891,29 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             <BrandProfileSidebar data={data} companyId={companyId} only={["files"]} />
             <AccountFolderTreeCard companyId={companyId} />
           </div>
+        </MasonryGrid>
+        <BrandProfileSidebar data={data} companyId={companyId} only={["gallery"]} />
+        {viewerDialogs}
+      </div>
+    );
+  }
+
+  // Agent page — its own layout (Woody, 2026-09-26: "there are different
+  // types of agents ... their different roles / relationships with the
+  // business"). Profile beside the conversation, then their relationship
+  // with BGP (roles from the evidence, with each strand listed), then who
+  // they represent, their people and news.
+  if (isAgentFirm && flat) {
+    const masonryCls = "space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-x-4 lg:items-start lg:auto-rows-[4px] lg:grid-flow-row-dense";
+    return (
+      <div className="flex flex-col gap-3 w-full min-w-0" data-testid="agent-profile">
+        {profileTopRow}
+        {refreshStatus}
+        {!isClientViewer && <AgentRelationshipCard companyId={companyId} />}
+        <MasonryGrid className={masonryCls}>
+          {(data.representing.length > 0 || !isClientViewer) && <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-2" data-testid="agent-represents">{representsBlock}</div>}
+          <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
+          <BrandProfileSidebar data={data} companyId={companyId} only={["news"]} />
         </MasonryGrid>
         <BrandProfileSidebar data={data} companyId={companyId} only={["gallery"]} />
         {viewerDialogs}
@@ -2302,156 +2489,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             {/* Represented by now leads Key contacts (Woody, 2026-09-23: "tenant
                 rep can go at the top of key contacts"); its Add agent button
                 opens the picker below via the brand-add-agent event. */}
-            {/* Represents (brands this agent reps) */}
-            {(data.representing.length > 0 || isAgent) && (
-              <div>
-                <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
-                  <span className="flex items-center gap-1"><Users className="w-3 h-3" /> Currently representing ({data.representing.length})</span>
-                  {!isClientViewer && (
-                  <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px]" onClick={() => { setAddRep("brand"); setRepForm({ ...EMPTY_REP_FORM, agent_type: c.agent_type || "tenant_rep" }); }} data-testid="button-add-brand">
-                    <Plus className="w-3 h-3 mr-0.5" /> Add brand
-                  </Button>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {data.representing.slice(0, 12).map((r: any) => (
-                    <span key={r.id} className="inline-flex items-center gap-1 group">
-                      <Link href={`/companies/${r.brand_company_id}`}>
-                        <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer">
-                          {r.brand_name}
-                          {r.region && <span className="ml-1 text-muted-foreground">· {r.region.replace(/_/g, " ")}</span>}
-                        </Badge>
-                      </Link>
-                      {!isClientViewer && (
-                      <button
-                        type="button"
-                        onClick={() => { if (confirm(`End representation of ${r.brand_name}?`)) endRepMutation.mutate(r.id); }}
-                        className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
-                        aria-label="End representation"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                      )}
-                    </span>
-                  ))}
-                  {data.representing.length === 0 && <span className="text-xs text-muted-foreground italic">No brands currently represented.</span>}
-                  {data.representing.length > 12 && <span className="text-[10px] text-muted-foreground">+{data.representing.length - 12} more</span>}
-                </div>
-              </div>
-            )}
-
-            {/* Add-representation inline picker */}
-            {addRep && (
-              <div className="border border-border rounded-lg p-3 space-y-3 bg-muted/40" data-testid="add-representation-form">
-                <div className="text-sm font-semibold flex items-center justify-between">
-                  <span>{addRep === "agent" ? "Add an agent representing this brand" : "Add a brand this agent represents"}</span>
-                  <Button size="sm" variant="ghost" aria-label="Close representation form" onClick={() => { setAddRep(null); setRepForm(EMPTY_REP_FORM); setRepSearch(""); }}>
-                    <X className="w-3 h-3" />
-                  </Button>
-                </div>
-                <div className="relative">
-                  <Input
-                    placeholder={addRep === "agent" ? "Search agent by person name (e.g. Harry Elliott)..." : "Search brand company..."}
-                    value={
-                      repForm.contactName
-                        ? `${repForm.contactName}${repForm.otherCompanyName ? ` — ${repForm.otherCompanyName}` : ""}`
-                        : (repForm.otherCompanyName || repSearch)
-                    }
-                    onChange={(e) => { setRepSearch(e.target.value); setRepForm({ ...repForm, otherCompanyId: "", otherCompanyName: "", contactId: undefined, contactName: undefined }); }}
-                    className="text-sm"
-                  />
-                  {repSearch && !repForm.otherCompanyId && !repForm.contactId && (
-                    <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-y-auto">
-                      {/* Agent flow: search CONTACTS (people) by name and show
-                          the agency company alongside. Picks both at once. */}
-                      {addRep === "agent" && agentContactResults.length > 0 && (
-                        <>
-                          {agentContactResults.map(ct => (
-                            <button
-                              type="button"
-                              key={ct.id}
-                              onClick={() => { setRepForm({
-                                ...repForm,
-                                contactId: ct.id,
-                                contactName: ct.name,
-                                otherCompanyId: "",
-                                otherCompanyName: ct.companyName || "",
-                              }); setRepSearch(""); }}
-                              className="w-full text-left px-2 py-2 hover:bg-accent text-sm flex items-start gap-2"
-                            >
-                              <User className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
-                              <div className="min-w-0 flex-1">
-                                <div className="font-medium truncate">{ct.name}</div>
-                                <div className="text-[11px] text-muted-foreground truncate">
-                                  {[ct.role, ct.companyName || "Firm unconfirmed"].filter(Boolean).join(" · ")}
-                                </div>
-                              </div>
-                            </button>
-                          ))}
-                          <div className="border-t my-0.5" />
-                        </>
-                      )}
-                      {/* Fall-through: company picker. Used for the brand-search
-                          case, AND as a fallback when the agent search returns
-                          nothing (so user can still pick by company name). */}
-                      {/* Firm picks must be agent companies; selecting a person
-                          does not change their recorded employer. */}
-                      {allCompaniesForPicker
-                        .filter(co => co.id !== companyId && co.name.toLowerCase().includes(repSearch.toLowerCase()))
-                        .filter(co => addRep !== "agent" || /^agent(?:\s|-|$)/i.test(co.companyType || co.company_type || ""))
-                        .slice(0, 10)
-                        .map(co => (
-                          <button
-                            type="button"
-                            key={co.id}
-                            onClick={() => { setRepForm({ ...repForm, otherCompanyId: co.id, otherCompanyName: co.name, contactId: undefined, contactName: undefined }); setRepSearch(""); }}
-                            className="w-full text-left px-2 py-2 hover:bg-accent text-sm flex items-center gap-2"
-                          >
-                            {addRep === "agent" && <Handshake className="w-3 h-3 text-muted-foreground" />}
-                            {addRep === "brand" && <Sparkles className="w-3 h-3 text-primary" />}
-                            <span className="truncate">{co.name}</span>
-                            {co.agent_type && <Pill className="ml-auto">{co.agent_type.replace(/_/g, " ")}</Pill>}
-                          </button>
-                        ))}
-                    </div>
-                  )}
-                </div>
-                {addRep === "agent" && <p className="text-[11px] text-muted-foreground">A named agent can be added with their firm unconfirmed. Adding a representation keeps their recorded employer unchanged.</p>}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <Select value={repForm.agent_type} onValueChange={(v) => setRepForm({ ...repForm, agent_type: v })}>
-                    <SelectTrigger aria-label="Representation type" className="text-sm"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="tenant_rep">Tenant rep</SelectItem>
-                      <SelectItem value="landlord_rep">Landlord rep</SelectItem>
-                      <SelectItem value="investment">Investment</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    placeholder="Region (optional)"
-                    value={repForm.region}
-                    onChange={(e) => setRepForm({ ...repForm, region: e.target.value })}
-                    aria-label="Representation region"
-                    className="text-sm"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  {/* Named people do not require a confirmed employer. */}
-                  <Button
-                    size="sm"
-                    disabled={(!repForm.otherCompanyId && !(addRep === "agent" && repForm.contactId)) || addRepMutation.isPending}
-                    onClick={() => {
-                      const vars = addRep === "agent"
-                        ? { brandCompanyId: companyId, agentCompanyId: repForm.otherCompanyId || undefined, agentType: repForm.agent_type, region: repForm.region || undefined, primaryContactId: repForm.contactId || undefined }
-                        : { brandCompanyId: repForm.otherCompanyId, agentCompanyId: companyId, agentType: repForm.agent_type, region: repForm.region || undefined };
-                      addRepMutation.mutate(vars);
-                    }}
-                  >
-                    <Check className="w-3 h-3 mr-1" /> Add representation
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => { setAddRep(null); setRepForm(EMPTY_REP_FORM); setRepSearch(""); }}>Cancel</Button>
-                </div>
-              </div>
-            )}
+            {representsBlock}
 
               </div>
             </div>
@@ -2722,7 +2760,15 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
 // Ask ChatBGP starters — one click posts the question into the brand's
 // shared conversation, where ChatBGP answers for the whole team.
 export type AskTopic = { label: string; question: string };
-export function askTopics(brandName: string, isLandlord = false): AskTopic[] {
+export function askTopics(brandName: string, isLandlord = false, isAgentFirm = false): AskTopic[] {
+  if (isAgentFirm) return [
+    { label: "Overview", question: `Tell me everything BGP needs to know about ${brandName} as an agent — who they act for and our relationship with them` },
+    { label: "Acts for", question: `Which brands, landlords and investors does ${brandName} act for, and in which roles?` },
+    { label: "Deals", question: `What deals has BGP done with or against ${brandName}, and what's live now?` },
+    { label: "Requirements", question: `What requirements has ${brandName} sent BGP, which are live, and what BGP space could fit them?` },
+    { label: "People", question: `Who at ${brandName} should BGP be talking to, about what, and who knows them best at BGP?` },
+    { label: "Email", question: `Draft a short catch-up email from BGP to our main contact at ${brandName}` },
+  ];
   return isLandlord ? [
     { label: "Overview", question: `Tell me everything BGP needs to know about ${brandName} as a landlord before a first call` },
     { label: "Portfolio", question: `What does ${brandName} own, where is BGP already active on their estate, and where aren't we?` },

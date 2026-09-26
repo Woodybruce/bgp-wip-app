@@ -13,8 +13,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Pill } from "@/components/ui/pill";
 import { ArrowUpRight, CalendarClock, Loader2, Plus, Users } from "lucide-react";
+import { AGENT_ROLES } from "@shared/agent-roles";
 
-type Tab = "investment" | "tenantRep" | "leaseAdvisory";
+type Tab = "investment" | "tenantRep" | "leaseAdvisory" | "agents";
 
 const fmtDate = (d: any) => d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—";
 const fmtMonth = (d: any) => d ? new Date(d).toLocaleDateString("en-GB", { month: "short", year: "numeric" }) : "—";
@@ -100,6 +101,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
         <div className="flex flex-wrap gap-1.5">
           <Pill active={tab === "investment"} onClick={() => setTab("investment")} data-testid="team-tab-investment">Investment</Pill>
           <Pill active={tab === "tenantRep"} onClick={() => setTab("tenantRep")} data-testid="team-tab-tenant-rep">Tenant rep</Pill>
+          <Pill active={tab === "agents"} onClick={() => setTab("agents")} data-testid="team-tab-agents">Agents{data?.agents?.length ? ` · ${data.agents.length}` : ""}</Pill>
           <Pill active={tab === "leaseAdvisory"} onClick={() => setTab("leaseAdvisory")} data-testid="team-tab-lease-advisory">Lease advisory{events.length ? ` · ${la.eventsTotal > events.length ? `${events.length}+` : events.length}` : ""}</Pill>
         </div>
       </CardHeader>
@@ -185,6 +187,22 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                 ))}</div>}
               </Section>
             </div>
+          </div>
+        )}
+
+        {data && tab === "agents" && (
+          <div data-testid="team-view-agents">
+            <Section title="Agents across their estate" count={data.agents.length} link="/contacts" linkLabel="CRM · Agents tab" empty="No agents recorded against their properties, deals or account.">
+              {data.agents.length > 0 && <div className="grid gap-1 md:grid-cols-2">{data.agents.slice(0, 20).map((a: any) => (
+                <Row key={a.firmId} href={`/companies/${a.firmId}`} title={a.name}
+                  sub={[
+                    a.represents.length ? `Acts for them: ${a.represents.join(", ")}` : null,
+                    a.competing.length ? `Instructed on ${a.competing.slice(0, 2).join(", ")}${a.competing.length > 2 ? ` +${a.competing.length - 2}` : ""}` : null,
+                    a.deals ? `${a.deals} deal${a.deals === 1 ? "" : "s"} here${a.openDeals ? `, ${a.openDeals} live` : ""}` : null,
+                  ].filter(Boolean).join(" · ")}
+                  right={<>{Object.keys(a.roles).slice(0, 2).map(r => <Badge key={r} variant="outline" className="text-[9px]">{AGENT_ROLES.find(x => x.role === r)?.short || r}</Badge>)}</>} />
+              ))}</div>}
+            </Section>
           </div>
         )}
 

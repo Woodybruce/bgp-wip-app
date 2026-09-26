@@ -196,7 +196,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       <BgpTakeStrip companyId={companyId} tab="brand" />
       <div className="rounded-lg border border-border bg-card p-3 space-y-3">
         <Button variant="outline" size="sm" onClick={() => setConversationOpen(value => !value)} aria-expanded={conversationOpen} data-testid="button-brand-conversation">{conversationOpen ? "Close conversation" : "Open conversation"}</Button>
-        {conversationOpen && <div className="h-96"><CompanyMiniChat companyId={companyId} companyName={c.name} fill starters={askTopics(c.name, isLandlord)} /></div>}
+        {conversationOpen && <div className="h-96"><CompanyMiniChat companyId={companyId} companyName={c.name} fill starters={askTopics(c.name, isLandlord, !isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type))} /></div>}
       </div>
       </div>
 
