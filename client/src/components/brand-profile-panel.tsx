@@ -402,14 +402,30 @@ type RepForm = {
 
 const EMPTY_REP_FORM: RepForm = { otherCompanyId: "", otherCompanyName: "", agent_type: "tenant_rep", region: "", contactId: undefined, contactName: undefined };
 
-// Two-column masonry for the lower brand boards: every card spans as many
-// 4px rows as it is tall and dense auto-placement drops it into the first
-// free slot, so the columns pack with no holes whatever a brand has. Cards
-// are found through display: contents wrappers (the section and sidebar
-// wrappers) and re-measured whenever they resize or appear. Below lg the
-// container is a plain stack.
+// Two-column layout for the lower brand boards that fits whatever a brand
+// has. Cards are found through display: contents wrappers (the section and
+// sidebar wrappers), measured, and split between the columns so the two end
+// as level as possible — the first two cards head the two columns and every
+// card keeps its reading order within its column. Each card spans as many
+// 4px grid rows as it is tall, so a column is a tight stack with a 12px gap.
+// Re-balanced whenever a card resizes or appears; below lg it's a plain
+// stack (Woody, 2026-09-26: "fits well regardless of the brand").
 const MASONRY_ROW = 4;
 const MASONRY_GAP = 12;
+export function balanceColumns(heights: number[]): number[] {
+  const n = heights.length;
+  if (n <= 2) return heights.map((_, i) => i);
+  let best = -1, bestDiff = Infinity;
+  const rest = n - 2;
+  const combos = 1 << Math.min(rest, 16);
+  for (let mask = 0; mask < combos; mask++) {
+    let a = heights[0], b = heights[1];
+    for (let i = 0; i < rest; i++) { if (mask & (1 << i)) b += heights[i + 2]; else a += heights[i + 2]; }
+    const diff = Math.abs(a - b);
+    if (diff < bestDiff - 0.5) { bestDiff = diff; best = mask; }
+  }
+  return heights.map((_, i) => i === 0 ? 0 : i === 1 ? 1 : (best & (1 << (i - 2))) ? 1 : 0);
+}
 function MasonryGrid({ className, children }: { className?: string; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -422,23 +438,33 @@ function MasonryGrid({ className, children }: { className?: string; children: Re
         else out.push(child);
       }
     };
-    const size = (el: HTMLElement) => {
-      if (getComputedStyle(grid).display !== "grid") { el.style.gridRowEnd = ""; return; }
-      const cs = getComputedStyle(el);
-      const h = el.getBoundingClientRect().height + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
-      el.style.gridRowEnd = h > 0 ? `span ${Math.ceil((h + MASONRY_GAP) / MASONRY_ROW)}` : "";
-    };
-    const ro = new ResizeObserver(entries => { for (const entry of entries) size(entry.target as HTMLElement); });
+    const clear = (el: HTMLElement) => { el.style.gridRowEnd = ""; el.style.gridColumn = ""; };
     let frame = 0;
-    const sync = () => {
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(sync); };
+    const ro = new ResizeObserver(schedule);
+    function sync() {
       frame = 0;
       const now: HTMLElement[] = [];
-      collect(grid, now);
+      collect(grid!, now);
       const current = new Set(now);
-      for (const el of Array.from(items)) if (!current.has(el)) { ro.unobserve(el); items.delete(el); el.style.gridRowEnd = ""; }
-      for (const el of now) { if (!items.has(el)) { items.add(el); ro.observe(el); } size(el); }
-    };
-    const schedule = () => { if (!frame) frame = requestAnimationFrame(sync); };
+      for (const el of Array.from(items)) if (!current.has(el)) { ro.unobserve(el); items.delete(el); clear(el); }
+      for (const el of now) if (!items.has(el)) { items.add(el); ro.observe(el); }
+      const twoCol = getComputedStyle(grid!).display === "grid";
+      if (!twoCol) { now.forEach(clear); return; }
+      const shown = now.filter(el => el.getBoundingClientRect().height > 0);
+      now.filter(el => !shown.includes(el)).forEach(clear);
+      const spans = shown.map(el => {
+        const cs = getComputedStyle(el);
+        const h = el.getBoundingClientRect().height + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
+        return Math.ceil((h + MASONRY_GAP) / MASONRY_ROW);
+      });
+      const cols = balanceColumns(spans);
+      shown.forEach((el, i) => {
+        const col = String(cols[i] + 1), end = `span ${spans[i]}`;
+        if (el.style.gridColumn !== col) el.style.gridColumn = col;
+        if (el.style.gridRowEnd !== end) el.style.gridRowEnd = end;
+      });
+    }
     sync();
     const mo = new MutationObserver(schedule);
     mo.observe(grid, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
@@ -1399,10 +1425,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         bottom of the app is different"). */}
     <Card data-testid="brand-profile-panel" className={`flex-1 min-w-0 max-w-full ${flat ? "bg-transparent border-0 shadow-none rounded-none overflow-visible" : "overflow-hidden"}`}>
       {/* Company page: one profile column (entities, header, details and
-          About) beside the conversation. The chat is pinned to that column's
-          height and never sets it, so the two end on the same line — no empty
-          chat box on thin profiles (Honest Greens) and no giant one on long
-          ones (Nando's, whose About is clamped) (Woody, 2026-09-26). */}
+          About) beside the conversation. The chat follows that column's
+          height and never sets it — up to 44rem; on a longer profile
+          (Nando's, with group entities) it stops there and stays in view
+          as you scroll instead of becoming a giant empty box (Woody,
+          2026-09-26). */}
       {/* The profile header, website, details, actions and About are ONE card
           (Woody, 2026-09-26: "combine the about and profile into one card"). */}
       {flat ? (
@@ -1415,7 +1442,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               {!editing && <div className={`${panelSec("profile")} mt-3 pt-3 border-t border-border`}>{aboutBody}</div>}
             </div>
           </div>
-          {wide && <div className="relative min-w-0 min-h-[26rem]"><div className="absolute inset-0 flex flex-col">{conversationBoard}</div></div>}
+          {wide && <div className="relative min-w-0 min-h-[26rem]"><div className="absolute inset-0"><div className="sticky top-3 h-full max-h-[44rem] flex flex-col" data-testid="brand-conversation-slot">{conversationBoard}</div></div></div>}
         </div>
       ) : header}
 
