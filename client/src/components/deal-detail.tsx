@@ -423,6 +423,19 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     setFeeEditing(false);
   };
 
+  const handleActingForSave = async (side: "landlord" | "tenant") => {
+    if (((deal as any)?.bgpActingFor || "landlord") === side) return;
+    try {
+      await apiRequest("PUT", `/api/crm/deals/${id}`, { bgpActingFor: side });
+      invalidateDealCaches(id);
+    } catch (e: any) {
+      toast({
+        title: "Couldn't change who BGP acts for",
+        description: /unique|duplicate/i.test(e?.message || "") ? "This unit already has a live deal where BGP acts for the landlord." : e?.message,
+        variant: "destructive",
+      });
+    }
+  };
   const handlePartySave = async (field: "tenantId" | "landlordId" | "vendorId" | "purchaserId", value: string | null) => {
     await apiRequest("PUT", `/api/crm/deals/${id}`, { [field]: value });
     invalidateDealCaches(id);
@@ -902,6 +915,22 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               </>);
             }
             return (<>
+            {/* Which side BGP acts for on a leasing deal — drives instruction
+                vs related activity on the landlord and brand pages (Woody,
+                2026-09-26). Investment deals take their side from the
+                vendor / purchaser. */}
+            {!partiesInvestment && (
+            <div className="flex flex-col gap-1" data-testid="deal-bgp-acting-for">
+              <p className="text-[10px] text-muted-foreground leading-tight">BGP acting for</p>
+              <div className="flex gap-1">
+                {(["landlord", "tenant"] as const).map(side => (
+                  <Pill key={side} active={((deal as any).bgpActingFor || "landlord") === side} onClick={() => handleActingForSave(side)} data-testid={`deal-acting-for-${side}`}>
+                    {side === "landlord" ? "Landlord" : "Tenant"}
+                  </Pill>
+                ))}
+              </div>
+            </div>
+            )}
             {(!partiesInvestment || deal.landlordId) && (
             <div className="flex flex-col gap-1">
               <p className="text-[10px] text-muted-foreground leading-tight">Landlord</p>
