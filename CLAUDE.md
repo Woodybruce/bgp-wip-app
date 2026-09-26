@@ -169,6 +169,18 @@ in Railway → Tokens if the repo's audience ever widens):
   from `claude/terminal-coding-interface-JOGQK` (the working branch) —
   then every push updates bgp.uk.com automatically like the dashboard.
 
+## Checking pages on prod (BGP_QA_TOKEN)
+
+Web sessions test UI changes against the live app with a test login Woody
+creates on `/qa-access` (admin only; one year or 24 hours; "Revoke all test
+access" there cancels every one). The one-year token lives in the Claude
+environment settings as `BGP_QA_TOKEN` — never in the repo or the chat. Use
+it as `Authorization: Bearer $BGP_QA_TOKEN` for API calls, or set
+`localStorage.bgp_auth_token` in a Playwright page (Chromium at
+`/opt/pw-browsers/chromium`) to screenshot and measure pages across a
+spread of brands after a UI change. It acts as Woody: stick to reading
+pages and don't trigger paid refreshes or send anything.
+
 ## Key files
 
 | Area | Path |

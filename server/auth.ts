@@ -342,7 +342,11 @@ export function setupAuth(app: Express) {
   app.post("/api/admin/qa-access", requireAdmin, async (req: Request, res: Response) => {
     const userId = req.session.userId || req.tokenUserId;
     const token = `qa_${crypto.randomBytes(32).toString("hex")}`;
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    // 24 hours to paste into a chat; a year to keep in the Claude
+    // environment's settings so every session can test (Woody, 2026-09-26:
+    // "can you just have it forever so I don't need to do all the time").
+    const days = Number(req.body?.days) === 365 ? 365 : 1;
+    const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
     await pool.query("INSERT INTO auth_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)", [token, userId, expiresAt]);
     res.json({ token, expiresAt });
   });
