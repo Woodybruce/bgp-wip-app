@@ -8,6 +8,7 @@ test('key contacts are property people and C-suite / founders — not regional M
     'UK Chief Executive': 'leadership', 'CEO': 'leadership', 'Co-Founder': 'leadership', 'Managing Director': 'leadership', 'Chairman': 'leadership',
     'Regional Managing Director': null, 'Regional Managing Director - Central London': null, 'Area Managing Director': null,
     'Personal Assistant to COO': null, 'Restaurant Manager': null, 'Head of Marketing': null, 'Business Development Manager': null,
+    'Talent Acquisition Specialist': null, 'Customer Acquisition Manager': null, 'Head of Expansion': 'property', 'Chief People Officer': 'leadership',
   };
   for (const [role, tier] of Object.entries(cases)) assert.equal(contactTier(role), tier, role);
 });

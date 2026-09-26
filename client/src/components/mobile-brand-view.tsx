@@ -23,7 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Building2, TrendingUp, ClipboardList, Instagram, Store, Swords, ExternalLink, Globe, Newspaper } from "lucide-react";
 import {
   CompanyMiniChat, MenuIntelCard, PortfolioActivityBlock, BrandComplianceCard,
-  AskChatBGPInline, PipnetRequirementsRow, StockSnapshotCard, ApolloDetailChips,
+  askTopics, PipnetRequirementsRow, StockSnapshotCard, ApolloDetailChips,
 } from "@/components/brand-profile-panel";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import { CompanyContactsBoard } from "@/components/company-contacts-board";
@@ -196,7 +196,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       <BgpTakeStrip companyId={companyId} tab="brand" />
       <div className="rounded-lg border border-border bg-card p-3 space-y-3">
         <Button variant="outline" size="sm" onClick={() => setConversationOpen(value => !value)} aria-expanded={conversationOpen} data-testid="button-brand-conversation">{conversationOpen ? "Close conversation" : "Open conversation"}</Button>
-        {conversationOpen && <><AskChatBGPInline brandName={c.name} isLandlord={isLandlord} /><div className="h-80"><CompanyMiniChat companyId={companyId} companyName={c.name} fill /></div></>}
+        {conversationOpen && <div className="h-96"><CompanyMiniChat companyId={companyId} companyName={c.name} fill starters={askTopics(c.name, isLandlord)} /></div>}
       </div>
       </div>
 

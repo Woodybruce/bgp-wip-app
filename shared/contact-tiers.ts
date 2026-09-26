@@ -6,6 +6,9 @@ export type ContactTier = "property" | "leadership";
 
 const PROPERTY = /\b(property|properties|real estate|acquisitions?|expansion|estates?|new sites?|site (acquisition|selection|finding|research)|store (development|openings?|expansion)|restaurant (development|openings?)|leasing|new openings?|locations? (director|manager|lead))\b/i;
 const LEADERSHIP = /\b(founder|co-?founder|owner|chair(man|woman|person)?|ceo|coo|cfo|cpo|cdo|chief [a-z ]*officer|chief executive|president|managing director|group md|md|managing partner)\b/i;
+// "Acquisition" that isn't sites: recruiters and marketers (Honest Greens'
+// Talent Acquisition Specialist read as a property contact, 2026-09-26).
+const NOT_PROPERTY = /\b((talent|customer|user|client|candidate|member|guest|paid|media|digital|people) acquisitions?|acquisition marketing|recruit(er|ment|ing)?|talent)\b/i;
 // A regional / area MD runs restaurants, not the estate; assistants and
 // PAs are never the decision-maker.
 const NOT_LEADERSHIP = /\b(regional|region|area|district|divisional|zone|territory|assistant|personal assistant|executive assistant|pa|p\.a\.|ea|secretary|office manager|coordinator|co-ordinator)\b/i;
@@ -14,7 +17,7 @@ const NEVER = /\b(personal assistant|executive assistant|pa to|ea to|assistant t
 export function contactTier(role: string | null | undefined): ContactTier | null {
   const r = String(role || "").trim();
   if (!r || NEVER.test(r)) return null;
-  if (PROPERTY.test(r)) return "property";
+  if (PROPERTY.test(r) && !NOT_PROPERTY.test(r)) return "property";
   if (LEADERSHIP.test(r) && !NOT_LEADERSHIP.test(r)) return "leadership";
   return null;
 }

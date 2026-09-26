@@ -402,6 +402,10 @@ type RepForm = {
 
 const EMPTY_REP_FORM: RepForm = { otherCompanyId: "", otherCompanyName: "", agent_type: "tenant_rep", region: "", contactId: undefined, contactName: undefined };
 
+// Long About copy is clamped so the profile column (and the chat pinned to
+// its height) stays a sensible size; "Read more" opens the rest.
+const ABOUT_CLAMP_CHARS = 420;
+
 export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat = false, topSlot }: { companyId: string; showPropertiesBoard?: boolean; flat?: boolean; topSlot?: React.ReactNode }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
@@ -512,8 +516,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // Profile opens only read saved data. Provider work is scheduled in the
   // preparation queue or started explicitly with a Refresh action.
   const [emailsOpen, setEmailsOpen] = useState(false);
-  useEffect(() => { setEditing(false); setEmailsOpen(false); }, [companyId]);
-  // Hooks stay above the loading return. One chat instance: top row on md+ screens, under About below that.
+  const [aboutOpen, setAboutOpen] = useState(false);
+  useEffect(() => { setEditing(false); setEmailsOpen(false); setAboutOpen(false); }, [companyId]);
+  // Hooks stay above the loading return. One chat instance: beside the profile column on md+ screens, under About below that.
   const [wide, setWide] = useState(() => typeof window === "undefined" || window.matchMedia("(min-width: 768px)").matches);
   useEffect(() => {
     const mql = window.matchMedia("(min-width: 768px)");
@@ -984,6 +989,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   const siblingBrands = data.siblings || [];
   const parentGroup = data.parentGroup || null;
   const isBrand = /^tenant/i.test(c.company_type || "");
+  // Full-width brand / landlord layout: the sidebar boards split onto the
+  // bottom of the two column stacks instead of rendering as paired rows.
+  const splitSidebar = isLandlord || isBrand;
   const isAgent = !!c.agent_type;
   // Everything the AI commentary might name, so mentions become links.
   const commentaryEntities: CommentaryEntity[] = [
@@ -1156,172 +1164,20 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     </>
   );
   const conversationBoard = (
-            <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-3 md:flex-1 md:min-w-0 flex flex-col h-full">
-              {/* Always open on desktop, and as tall as About beside it (Woody, 2026-09-24). */}
-              <p className="text-sm font-medium flex items-center gap-2"><MessageSquare className="w-4 h-4 text-muted-foreground" />{isLandlord ? "Landlord conversation" : "Brand conversation"}</p>
-              <AskChatBGPInline brandName={c.name} isLandlord={isLandlord} />
-              <div className="h-80 md:h-auto md:flex-1 md:min-h-[16rem]"><CompanyMiniChat companyId={companyId} companyName={c.name} fill /></div>
+            // One conversation: the Ask ChatBGP topics are starters inside the
+            // brand's shared thread, not a second answer panel stacked on top
+            // of it (Woody, 2026-09-26).
+            <div className="h-96 md:h-auto md:min-h-[24rem] md:flex-1 md:min-w-0" data-testid="brand-conversation">
+              <CompanyMiniChat companyId={companyId} companyName={c.name} fill title={isLandlord ? "Landlord conversation" : "Brand conversation"} starters={askTopics(c.name, isLandlord)} />
             </div>
   );
-
-  return (
-    <div className={(isLandlord || isBrand)
-      ? "flex flex-col gap-3 items-stretch w-full min-w-0"
-      : "flex flex-col md:flex-row gap-3 items-start w-full min-w-0"}>
-    {/* flat (the company page): no outer card, so these boards sit on the page
-        exactly like Key contacts / Covenant below (Woody, 2026-09-24: "the
-        bottom of the app is different"). */}
-    <Card data-testid="brand-profile-panel" className={`flex-1 min-w-0 max-w-full ${flat ? "bg-transparent border-0 shadow-none rounded-none overflow-visible" : "overflow-hidden"}`}>
-      {/* Company page: the Brand conversation sits beside Group entities,
-          the profile header and the website / details / actions, at a fixed
-          height — About then runs full width underneath (Woody, 2026-09-25:
-          Nando's long About made the chat "massive"). */}
-      {flat ? (
-        <div className="md:grid md:grid-cols-2 md:gap-4 md:items-stretch">
-          <div className="min-w-0 space-y-3">
-            {topSlot}
-            {header}
-            {!editing && <div className={panelSec("profile")}>{topInfo}</div>}
-          </div>
-          {wide && <div className="flex flex-col min-w-0 h-[34rem]">{conversationBoard}</div>}
-        </div>
-      ) : header}
-
-      <CardContent className={`${flat ? "px-0 py-3" : "p-3"} space-y-4`}>
-        {/* Success commentary is dropped (Woody, 2026-09-23 — "we don't need the commentary"); progress and problems still show. */}
-        {!isClientViewer && enrichMutation.message && !/^Profile (refreshed|checked)\./.test(enrichMutation.message) && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{enrichMutation.message}</p>}
-        {!editing && (
-          <div className="flex flex-wrap gap-1.5 md:hidden pt-2" data-testid="brand-panel-sections">
-            <Pill active={panelSection === "profile"} onClick={() => setPanelSection("profile")} data-testid="brand-section-profile">{isLandlord ? "Overview" : "Profile"}</Pill>
-            <Pill active={panelSection === "stores"} onClick={() => setPanelSection("stores")} data-testid="brand-section-stores">{isLandlord ? "Portfolio" : "Stores"}</Pill>
-            <Pill active={panelSection === "relationship"} onClick={() => setPanelSection("relationship")} data-testid="brand-section-relationship">{isLandlord ? "Deals & activity" : "Relationship"}</Pill>
-            <Pill active={panelSection === "intel"} onClick={() => setPanelSection("intel")} data-testid="brand-section-intel">Intel</Pill>
-            <Pill active={panelSection === "more"} onClick={() => setPanelSection("more")} data-testid="brand-section-more">{isLandlord ? "People" : "Contacts & media"}</Pill>
-          </div>
-        )}
-        {editing ? (
-          <div className="space-y-3">
-            <div>
-              <Label className="text-xs">Agent type (leave blank if this isn't an agent)</Label>
-              <Select value={(form.agent_type as string) || "none"} onValueChange={(v) => setForm({ ...form, agent_type: v === "none" ? "" : v })}>
-                <SelectTrigger><SelectValue placeholder="Not an agent" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Not an agent</SelectItem>
-                  <SelectItem value="tenant_rep">Tenant rep</SelectItem>
-                  <SelectItem value="landlord_rep">Landlord rep</SelectItem>
-                  <SelectItem value="investment">Investment</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="text-xs">Concept pitch</Label>
-              <Textarea
-                value={(form.concept_pitch as string) || ""}
-                onChange={(e) => setForm({ ...form, concept_pitch: e.target.value })}
-                rows={3}
-                placeholder="e.g. Premium artisan bakery with all-day café, targeting prime high streets"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label className="text-xs">Store count</Label>
-                <Input
-                  type="number"
-                  value={form.store_count ?? ""}
-                  onChange={(e) => setForm({ ...form, store_count: e.target.value === "" ? null : Number(e.target.value) as any })}
-                />
-              </div>
-              <div>
-                <Label className="text-xs">Rollout status</Label>
-                <Select value={(form.rollout_status as string) || "none"} onValueChange={(v) => setForm({ ...form, rollout_status: v === "none" ? "" : v })}>
-                  <SelectTrigger><SelectValue placeholder="Unknown" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Unknown</SelectItem>
-                    {ROLLOUT_OPTIONS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div>
-              <Label className="text-xs">Backers / investors</Label>
-              <Input value={(form.backers as string) || ""} onChange={(e) => setForm({ ...form, backers: e.target.value })} placeholder="e.g. Sequoia, Index Ventures" />
-            </div>
-            <div className={`grid gap-2 ${isLandlord ? "grid-cols-1" : "grid-cols-2"}`}>
-              {!isLandlord && (
-                <div>
-                  <Label className="text-xs">Instagram handle</Label>
-                  <Input value={(form.instagram_handle as string) || ""} onChange={(e) => setForm({ ...form, instagram_handle: e.target.value })} placeholder="@brandname" />
-                </div>
-              )}
-              <div>
-                <Label className="text-xs">TikTok handle</Label>
-                <Input value={(form.tiktok_handle as string) || ""} onChange={(e) => setForm({ ...form, tiktok_handle: e.target.value })} placeholder="@brandname" />
-              </div>
-            </div>
-            <div>
-              <Label className="text-xs">Dept store presence</Label>
-              <Input value={(form.dept_store_presence as string) || ""} onChange={(e) => setForm({ ...form, dept_store_presence: e.target.value })} placeholder="e.g. Selfridges (popup 2024), Harvey Nichols concession" />
-            </div>
-            <div>
-              <Label className="text-xs">Franchise activity abroad</Label>
-              <Input value={(form.franchise_activity as string) || ""} onChange={(e) => setForm({ ...form, franchise_activity: e.target.value })} placeholder="e.g. UAE master franchise 2023, France 2024" />
-            </div>
-            <div>
-              <Label className="text-xs">UK contracting entity</Label>
-              <Input
-                value={(form.uk_entity_name as string) || ""}
-                onChange={(e) => setForm({ ...form, uk_entity_name: e.target.value })}
-                placeholder="e.g. AFH Stores UK Limited, Next Retail Ltd"
-              />
-              <p className="text-[10px] text-muted-foreground mt-0.5">
-                The legal entity that signs UK leases — often differs from the brand name.
-                Used to search Companies House correctly.
-              </p>
-            </div>
-            <div>
-              <Label className="text-xs">Stock ticker (if listed)</Label>
-              <Input
-                value={(form.stock_ticker as string) || ""}
-                onChange={(e) => setForm({ ...form, stock_ticker: e.target.value.toUpperCase() })}
-                placeholder="e.g. JD.L, NXT.L, NKE, LULU"
-              />
-              <p className="text-[10px] text-muted-foreground mt-0.5">
-                Yahoo Finance ticker — LSE suffix with .L (JD.L, MKS.L), US no suffix (NKE, LULU), Paris .PA (MC.PA).
-              </p>
-            </div>
-            <div className="flex items-center gap-2 pt-1">
-              <input
-                type="checkbox"
-                id="hunter_flag"
-                checked={!!(form.hunter_flag)}
-                onChange={(e) => setForm({ ...form, hunter_flag: e.target.checked })}
-                className="rounded"
-              />
-              <Label htmlFor="hunter_flag" className="text-xs cursor-pointer">Flag as Hunter Pick (manual watchlist)</Label>
-            </div>
-            <div className="flex items-center gap-2 pt-2">
-              <Button size="sm" onClick={() => patchMutation.mutate(form)} disabled={patchMutation.isPending}>
-                <Check className="w-3.5 h-3.5 mr-1" /> Save
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
-            </div>
-          </div>
-        ) : (
-          <div className="w-full flex flex-col gap-2.5">
-            <div className={panelSec("profile")}>
-            {!flat && topInfo}
-
-
-
-
-            {/* About + the facts that belong with it (backers, socials,
-                ticker) on the left; the Brand conversation takes the other
-                half (Woody, 2026-09-23: "combine the backers element with
-                About", "the brand conversation only needs to be half"). */}
-            <div className="flex flex-col md:flex-row gap-2.5 md:gap-4 md:items-stretch pt-2">
+  const aboutCard = (
             <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-2 md:flex-1 md:min-w-0" data-testid="brand-factual-summary">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
-              <p className="text-sm leading-relaxed break-words">{c.description || "The factual brand profile is awaiting preparation."}</p>
+              <p className={`text-sm leading-relaxed break-words ${!aboutOpen && (c.description || "").length > ABOUT_CLAMP_CHARS ? "line-clamp-5" : ""}`}>{c.description || "The factual brand profile is awaiting preparation."}</p>
+              {(c.description || "").length > ABOUT_CLAMP_CHARS && (
+                <button type="button" onClick={() => setAboutOpen(open => !open)} className="text-xs text-primary hover:underline" data-testid="button-about-more">{aboutOpen ? "Show less" : "Read more"}</button>
+              )}
             {/* Key facts row */}
             <div className="grid grid-cols-2 gap-2 text-sm empty:hidden">
               {c.backers && (
@@ -1534,11 +1390,170 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} />
             </div>
             </div>
-            {/* On the company page the chat sits in the top row beside the
-                header; elsewhere (and on narrow screens) it stays here. */}
-            {(!flat || !wide) && conversationBoard}
+  );
 
+  return (
+    <div className={(isLandlord || isBrand)
+      ? "flex flex-col gap-3 items-stretch w-full min-w-0"
+      : "flex flex-col md:flex-row gap-3 items-start w-full min-w-0"}>
+    {/* flat (the company page): no outer card, so these boards sit on the page
+        exactly like Key contacts / Covenant below (Woody, 2026-09-24: "the
+        bottom of the app is different"). */}
+    <Card data-testid="brand-profile-panel" className={`flex-1 min-w-0 max-w-full ${flat ? "bg-transparent border-0 shadow-none rounded-none overflow-visible" : "overflow-hidden"}`}>
+      {/* Company page: one profile column (entities, header, details and
+          About) beside the conversation. The chat is pinned to that column's
+          height and never sets it, so the two end on the same line — no empty
+          chat box on thin profiles (Honest Greens) and no giant one on long
+          ones (Nando's, whose About is clamped) (Woody, 2026-09-26). */}
+      {flat ? (
+        <div className="md:grid md:grid-cols-2 md:gap-4">
+          <div className="min-w-0 space-y-3">
+            {topSlot}
+            {header}
+            {!editing && <div className={panelSec("profile")}>{topInfo}</div>}
+            {!editing && wide && aboutCard}
+          </div>
+          {wide && <div className="relative min-w-0 min-h-[26rem]"><div className="absolute inset-0 flex flex-col">{conversationBoard}</div></div>}
+        </div>
+      ) : header}
+
+      <CardContent className={`${flat ? "px-0 py-3" : "p-3"} space-y-4`}>
+        {/* Success commentary is dropped (Woody, 2026-09-23 — "we don't need the commentary"); progress and problems still show. */}
+        {!isClientViewer && enrichMutation.message && !/^Profile (refreshed|checked)\./.test(enrichMutation.message) && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{enrichMutation.message}</p>}
+        {!editing && (
+          <div className="flex flex-wrap gap-1.5 md:hidden pt-2" data-testid="brand-panel-sections">
+            <Pill active={panelSection === "profile"} onClick={() => setPanelSection("profile")} data-testid="brand-section-profile">{isLandlord ? "Overview" : "Profile"}</Pill>
+            <Pill active={panelSection === "stores"} onClick={() => setPanelSection("stores")} data-testid="brand-section-stores">{isLandlord ? "Portfolio" : "Stores"}</Pill>
+            <Pill active={panelSection === "relationship"} onClick={() => setPanelSection("relationship")} data-testid="brand-section-relationship">{isLandlord ? "Deals & activity" : "Relationship"}</Pill>
+            <Pill active={panelSection === "intel"} onClick={() => setPanelSection("intel")} data-testid="brand-section-intel">Intel</Pill>
+            <Pill active={panelSection === "more"} onClick={() => setPanelSection("more")} data-testid="brand-section-more">{isLandlord ? "People" : "Contacts & media"}</Pill>
+          </div>
+        )}
+        {editing ? (
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Agent type (leave blank if this isn't an agent)</Label>
+              <Select value={(form.agent_type as string) || "none"} onValueChange={(v) => setForm({ ...form, agent_type: v === "none" ? "" : v })}>
+                <SelectTrigger><SelectValue placeholder="Not an agent" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Not an agent</SelectItem>
+                  <SelectItem value="tenant_rep">Tenant rep</SelectItem>
+                  <SelectItem value="landlord_rep">Landlord rep</SelectItem>
+                  <SelectItem value="investment">Investment</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
+            <div>
+              <Label className="text-xs">Concept pitch</Label>
+              <Textarea
+                value={(form.concept_pitch as string) || ""}
+                onChange={(e) => setForm({ ...form, concept_pitch: e.target.value })}
+                rows={3}
+                placeholder="e.g. Premium artisan bakery with all-day café, targeting prime high streets"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs">Store count</Label>
+                <Input
+                  type="number"
+                  value={form.store_count ?? ""}
+                  onChange={(e) => setForm({ ...form, store_count: e.target.value === "" ? null : Number(e.target.value) as any })}
+                />
+              </div>
+              <div>
+                <Label className="text-xs">Rollout status</Label>
+                <Select value={(form.rollout_status as string) || "none"} onValueChange={(v) => setForm({ ...form, rollout_status: v === "none" ? "" : v })}>
+                  <SelectTrigger><SelectValue placeholder="Unknown" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Unknown</SelectItem>
+                    {ROLLOUT_OPTIONS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">Backers / investors</Label>
+              <Input value={(form.backers as string) || ""} onChange={(e) => setForm({ ...form, backers: e.target.value })} placeholder="e.g. Sequoia, Index Ventures" />
+            </div>
+            <div className={`grid gap-2 ${isLandlord ? "grid-cols-1" : "grid-cols-2"}`}>
+              {!isLandlord && (
+                <div>
+                  <Label className="text-xs">Instagram handle</Label>
+                  <Input value={(form.instagram_handle as string) || ""} onChange={(e) => setForm({ ...form, instagram_handle: e.target.value })} placeholder="@brandname" />
+                </div>
+              )}
+              <div>
+                <Label className="text-xs">TikTok handle</Label>
+                <Input value={(form.tiktok_handle as string) || ""} onChange={(e) => setForm({ ...form, tiktok_handle: e.target.value })} placeholder="@brandname" />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">Dept store presence</Label>
+              <Input value={(form.dept_store_presence as string) || ""} onChange={(e) => setForm({ ...form, dept_store_presence: e.target.value })} placeholder="e.g. Selfridges (popup 2024), Harvey Nichols concession" />
+            </div>
+            <div>
+              <Label className="text-xs">Franchise activity abroad</Label>
+              <Input value={(form.franchise_activity as string) || ""} onChange={(e) => setForm({ ...form, franchise_activity: e.target.value })} placeholder="e.g. UAE master franchise 2023, France 2024" />
+            </div>
+            <div>
+              <Label className="text-xs">UK contracting entity</Label>
+              <Input
+                value={(form.uk_entity_name as string) || ""}
+                onChange={(e) => setForm({ ...form, uk_entity_name: e.target.value })}
+                placeholder="e.g. AFH Stores UK Limited, Next Retail Ltd"
+              />
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                The legal entity that signs UK leases — often differs from the brand name.
+                Used to search Companies House correctly.
+              </p>
+            </div>
+            <div>
+              <Label className="text-xs">Stock ticker (if listed)</Label>
+              <Input
+                value={(form.stock_ticker as string) || ""}
+                onChange={(e) => setForm({ ...form, stock_ticker: e.target.value.toUpperCase() })}
+                placeholder="e.g. JD.L, NXT.L, NKE, LULU"
+              />
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                Yahoo Finance ticker — LSE suffix with .L (JD.L, MKS.L), US no suffix (NKE, LULU), Paris .PA (MC.PA).
+              </p>
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                type="checkbox"
+                id="hunter_flag"
+                checked={!!(form.hunter_flag)}
+                onChange={(e) => setForm({ ...form, hunter_flag: e.target.checked })}
+                className="rounded"
+              />
+              <Label htmlFor="hunter_flag" className="text-xs cursor-pointer">Flag as Hunter Pick (manual watchlist)</Label>
+            </div>
+            <div className="flex items-center gap-2 pt-2">
+              <Button size="sm" onClick={() => patchMutation.mutate(form)} disabled={patchMutation.isPending}>
+                <Check className="w-3.5 h-3.5 mr-1" /> Save
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
+            </div>
+          </div>
+        ) : (
+          <div className="w-full flex flex-col gap-2.5">
+            <div className={panelSec("profile")}>
+            {!flat && topInfo}
+
+
+
+
+            {/* About + the facts that belong with it (backers, socials,
+                ticker) on the left; the Brand conversation takes the other
+                half (Woody, 2026-09-23: "combine the backers element with
+                About", "the brand conversation only needs to be half"). */}
+            {!(flat && wide) && (
+            <div className="flex flex-col md:flex-row gap-2.5 md:gap-4 md:items-stretch pt-2">
+            {aboutCard}
+            {conversationBoard}
+            </div>
+            )}
 
             {/* Single BGP AI take + Ask ChatBGP question runner — sits above
                 all zones. Client logins get both too (Woody, 2026-08-04:
@@ -1637,8 +1652,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
 
             {/* Tenancies / competitor set beside Expansion intelligence on wide
                 screens (Woody, 2026-09-25: "could they be side by side? lots of
-                free space"). */}
+                free space"). Two independent stacks, not rows of pairs: the
+                sidebar boards join the bottom of each side, so a short card is
+                followed straight away by the next one instead of leaving a
+                hole beside a tall neighbour (Woody, 2026-09-26: "sort the
+                white space"). */}
             <div className="lg:grid lg:grid-cols-2 lg:gap-4 lg:items-start">
+            <div className="min-w-0 space-y-3">
             <div className={panelSec("relationship")}>
             {/* ── Zone 4: BGP Relationship — now client-visible too (Woody,
                 2026-08-04: "BGP relationship still not on Landsec viewing
@@ -1858,7 +1878,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             </div>
 
             </div>
+            {splitSidebar && <div className={panelSec("more")}><BrandProfileSidebar data={data} companyId={companyId} column="left" /></div>}
+            </div>
 
+            <div className="min-w-0 space-y-3">
             <div className={panelSec("intel")}>
             {/* ── Expansion intelligence — single zone that merges what used
                  to be Brand Expansion + Hunter Intel + Active requirements.
@@ -2321,6 +2344,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
 
 
             </div>
+            {splitSidebar && <div className={panelSec("more")}><BrandProfileSidebar data={data} companyId={companyId} column="right" /></div>}
+            </div>
             </div>
 
             {/* News & Media + Documents & Gallery now live on the sidebar */}
@@ -2330,7 +2355,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
 
     </Card>
     <div className={panelSec("more")}>
-    <BrandProfileSidebar data={data} companyId={companyId} />
+    <BrandProfileSidebar data={data} companyId={companyId} column={splitSidebar ? "bottom" : undefined} />
     </div>
     {openEmail && (
       <EmailViewerDialog
@@ -2581,12 +2606,11 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
   );
 }
 
-// Inline ChatBGP question runner — click a pill, the answer streams in
-// right underneath. Click X to collapse, or "Open in chat" to continue
-// the conversation in the main panel. Avoids context-switch to the full
-// chat for one-shot questions.
-export function AskChatBGPInline({ brandName, isLandlord = false }: { brandName: string; isLandlord?: boolean }) {
-  const topics: { label: string; question: string }[] = isLandlord ? [
+// Ask ChatBGP starters — one click posts the question into the brand's
+// shared conversation, where ChatBGP answers for the whole team.
+export type AskTopic = { label: string; question: string };
+export function askTopics(brandName: string, isLandlord = false): AskTopic[] {
+  return isLandlord ? [
     { label: "Overview", question: `Tell me everything BGP needs to know about ${brandName} as a landlord before a first call` },
     { label: "Portfolio", question: `What does ${brandName} own, where is BGP already active on their estate, and where aren't we?` },
     { label: "Opportunities", question: `Which of ${brandName}'s assets have vacancies, lease events or repositioning going on that BGP could act on?` },
@@ -2604,143 +2628,6 @@ export function AskChatBGPInline({ brandName, isLandlord = false }: { brandName:
     { label: "Pitch", question: `Should BGP be pitching ${brandName} new space — if so, where and why?` },
     { label: "Email", question: `Draft a brief introductory pitch email from BGP to ${brandName}` },
   ];
-  const [active, setActive] = useState<string | null>(null);
-  const [answer, setAnswer] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-
-  const ask = async (label: string, question: string) => {
-    if (active === label) {
-      // Re-clicking the active pill collapses it.
-      abortRef.current?.abort();
-      setActive(null);
-      setAnswer("");
-      setError(null);
-      setLoading(false);
-      return;
-    }
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setActive(label);
-    setAnswer("");
-    setError(null);
-    setLoading(true);
-    try {
-      const token = localStorage.getItem("bgp_auth_token");
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-      const res = await fetch("/api/chatbgp/chat", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ messages: [{ role: "user", content: question }] }),
-        credentials: "include",
-        signal: controller.signal,
-      });
-      if (!res.ok || !res.body) throw new Error("Couldn't get an answer — try again.");
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      let lastReply = "";
-      let streamed = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() || "";
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const p = JSON.parse(line.slice(6));
-            if (p.delta) { streamed += p.delta; setAnswer(streamed); }
-            if (p.reply) lastReply = p.reply;
-          } catch {}
-        }
-      }
-      if (lastReply) setAnswer(lastReply);
-      else if (!streamed) setError("No response from ChatBGP");
-    } catch (err: any) {
-      if (err?.name !== "AbortError") setError(err?.message || "Request failed");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const openInFullChat = (question: string) => {
-    window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt", { detail: { prompt: question } }));
-  };
-
-  const activeTopic = topics.find(t => t.label === active);
-
-  return (
-    <div>
-      <div className="text-xs font-semibold uppercase tracking-wider text-foreground mb-1.5 flex items-center gap-1">
-        <Sparkles className="w-3 h-3 text-primary" /> Ask ChatBGP
-      </div>
-      <div className="flex gap-1.5 flex-wrap">
-        {topics.map(t => {
-          const isActive = active === t.label;
-          return (
-            <button
-              key={t.label}
-              onClick={() => ask(t.label, t.question)}
-              title={t.question}
-              className={`inline-flex items-center gap-1 rounded-full leading-none text-[11px] font-semibold uppercase tracking-wide px-2.5 py-[5px] transition-colors border ${
-                isActive
-                  ? "bg-foreground text-background border-transparent"
-                  : "bg-transparent text-muted-foreground border-border hover:text-foreground"
-              }`}
-            >
-              <Sparkles className="w-3 h-3 shrink-0" />{t.label}
-            </button>
-          );
-        })}
-      </div>
-      {active && activeTopic && (
-        <div className="mt-2 p-3 rounded-md border bg-muted/40 border-border text-xs space-y-2">
-          <div className="flex items-start gap-2">
-            <Sparkles className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0">
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{activeTopic.label}</div>
-              <div className="text-muted-foreground italic leading-snug">{activeTopic.question}</div>
-            </div>
-            <button
-              onClick={() => { abortRef.current?.abort(); setActive(null); setAnswer(""); setError(null); }}
-              className="text-muted-foreground hover:text-foreground"
-              title="Close"
-            >
-              ✕
-            </button>
-          </div>
-          <div className="border-t border-border pt-2">
-            {loading && !answer && (
-              <p className="text-muted-foreground italic flex items-center gap-1">
-                <Loader2 className="w-3 h-3 animate-spin" />Asking ChatBGP…
-              </p>
-            )}
-            {error && <p className="text-destructive flex items-center gap-1"><AlertCircle className="w-3 h-3" />{error}</p>}
-            {answer && (
-              <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90 max-h-[420px] overflow-y-auto pr-1">
-                {answer}
-              </div>
-            )}
-          </div>
-          {(answer || error) && (
-            <div className="flex justify-end">
-              <button
-                onClick={() => openInFullChat(activeTopic.question)}
-                className="text-[10px] text-primary hover:underline"
-              >
-                Open in full chat →
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
 }
 
 // Menu / best-sellers panel — Perplexity-sourced summary of what the
@@ -3920,7 +3807,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false }: { co
 // conversation doesn't mean losing the page. Reuses the group-chat machinery:
 // one thread per company (linked_id), ChatBGP as a member, so plain message
 // POSTs get a real Fable answer server-side and we just poll the thread.
-export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: string; companyName: string; fill?: boolean }) {
+export function CompanyMiniChat({ companyId, companyName, fill, title, starters }: { companyId: string; companyName: string; fill?: boolean; title?: string; starters?: AskTopic[] }) {
   const [threadId, setThreadId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -3949,10 +3836,21 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
   });
   const messages: any[] = thread?.messages || [];
 
+  // A starter question waits on ChatBGP's reply in the shared thread — show
+  // it's coming until a new assistant message lands (or two minutes pass).
+  const assistantCount = messages.filter((m: any) => m.role === "assistant").length;
+  const [awaitingAi, setAwaitingAi] = useState<{ since: number; baseline: number } | null>(null);
+  useEffect(() => {
+    if (!awaitingAi) return;
+    if (assistantCount > awaitingAi.baseline) { setAwaitingAi(null); return; }
+    const t = setTimeout(() => setAwaitingAi(null), Math.max(0, awaitingAi.since + 120_000 - Date.now()));
+    return () => clearTimeout(t);
+  }, [awaitingAi, assistantCount]);
+
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length]);
+  }, [messages.length, !!awaitingAi]);
 
   // ── Team-chat parity (Woody, 2026-08-03): @ tags, add members, Tracker ──
   const { toast: mcToast } = useToast();
@@ -4114,6 +4012,24 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
     finally { setSending(false); }
   };
 
+  // Starters post into the brand's shared thread, so the answer stays on the
+  // brand for the whole team instead of a one-off panel above the chat.
+  const askStarter = async (question: string) => {
+    if (sending) return;
+    setTab("chat");
+    setAwaitingAi({ since: Date.now(), baseline: assistantCount });
+    await sendContent(`@ChatBGP ${question}`);
+  };
+  const starterPills = (className: string) => starters && starters.length > 0 ? (
+    <div className={className} data-testid="minichat-starters">
+      {starters.map(s => (
+        <Pill key={s.label} onClick={() => askStarter(s.question)} disabled={sending || !!awaitingAi} title={s.question} className="disabled:opacity-50" data-testid={`minichat-starter-${s.label.toLowerCase()}`}>
+          <Sparkles className="w-3 h-3 shrink-0" />{s.label}
+        </Pill>
+      ))}
+    </div>
+  ) : null;
+
   // Token-aware renderer — tags arrive as @[Name](tag:type/id) and render
   // as the same clickable chips the main chat shows.
   const renderContent = (s: string) => {
@@ -4135,13 +4051,14 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
     <Card className={fill ? "h-full flex flex-col overflow-hidden" : undefined}>
       <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2 shrink-0">
         <CardTitle className="text-xs flex items-center gap-1 uppercase tracking-wider text-muted-foreground">
-          <button
+          {title && <span className="mr-1.5 flex items-center gap-2 text-sm font-medium normal-case tracking-normal text-foreground"><MessageSquare className="w-4 h-4 text-muted-foreground" />{title}</span>}
+          {(!title || trackerComments.length > 0) && <button
             type="button"
             onClick={() => setTab("chat")}
             className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded ${tab === "chat" ? "bg-muted text-foreground" : "hover:text-foreground"}`}
           >
             <MessageSquare className="w-3.5 h-3.5" /> Chat
-          </button>
+          </button>}
           {trackerComments.length > 0 && (
             <button
               type="button"
@@ -4206,10 +4123,16 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
           </div>
         ) : (
         <div ref={scrollRef} className={`${fill ? "flex-1" : "max-h-[280px]"} overflow-y-auto space-y-2 pr-1`} data-testid="minichat-messages">
-          {messages.length === 0 ? (
-            <p className="text-xs text-muted-foreground py-4 text-center">
-              Ask anything about {companyName} — @ tags properties and deals, and teammates you @ join the conversation.
-            </p>
+          {messages.length === 0 && !awaitingAi ? (
+            <div className={`py-4 text-center space-y-3 ${fill ? "h-full flex flex-col justify-center" : ""}`}>
+              {starters && starters.length > 0 && <>
+                <p className="text-xs font-semibold uppercase tracking-wider text-foreground flex items-center justify-center gap-1"><Sparkles className="w-3 h-3 text-primary" /> Ask ChatBGP</p>
+                {starterPills("flex flex-wrap justify-center gap-1.5 max-w-md mx-auto")}
+              </>}
+              <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+                {starters && starters.length > 0 ? "Answers stay here for the team. " : ""}Ask anything about {companyName} — @ tags properties and deals, and teammates you @ join the conversation.
+              </p>
+            </div>
           ) : (
             messages.map((m: any) => {
               const isOwn = m.role === "user" && mcMe?.id && m.userId === mcMe.id;
@@ -4288,10 +4211,16 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
             );
             })
           )}
+          {awaitingAi && (
+            <p className="text-xs text-muted-foreground italic flex items-center gap-1.5 px-1" data-testid="minichat-awaiting-ai">
+              <Loader2 className="w-3 h-3 animate-spin" /> ChatBGP is answering…
+            </p>
+          )}
         </div>
         )}
         {tab === "chat" && (
         <div className="relative shrink-0">
+          {(messages.length > 0 || awaitingAi) && starterPills("flex gap-1.5 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden")}
           {mentionQuery !== null && mentionResults.length > 0 && (
             <div className="absolute bottom-full left-0 right-12 mb-1 rounded-md border bg-popover shadow-md z-20 max-h-[200px] overflow-y-auto">
               {mentionResults.map((r: any) => (
@@ -4520,7 +4449,7 @@ function TenantRepsBlock({ companyId, reps }: { companyId: string; reps: any[] }
   );
 }
 
-function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyId: string }) {
+function BrandProfileSidebar({ data, companyId, column }: { data: BrandProfile; companyId: string; column?: "left" | "right" | "bottom" }) {
   const { toast } = useToast();
   const c = data.company;
   const cov = data.covenant;
@@ -4619,12 +4548,15 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   // 2026-07-30). The narrow sticky sidebar keeps the single column.
   // items-stretch + h-full children so paired boards share one depth —
   // mismatched card bottoms left slabs of dead space (Woody, 2026-08-03).
-  const pairCls = (isLandlord || isBrand)
+  // column (the brand / landlord page): only this side's boards, stacked —
+  // the two stacks run independently, so no pair ever stretches or gaps.
+  const show = (k: "left" | "right" | "bottom") => !column || column === k;
+  const pairCls = column ? "contents" : (isLandlord || isBrand)
     ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-stretch [&>*]:h-full [&>*:only-child]:md:col-span-2"
     : "space-y-3";
 
   return (
-    <aside className={(isLandlord || isBrand)
+    <aside className={column ? "w-full min-w-0 flex flex-col gap-3" : (isLandlord || isBrand)
       ? "w-full shrink-0 space-y-3 self-start"
       : "w-full md:w-[420px] lg:w-[480px] shrink-0 space-y-3 md:sticky md:top-3 self-start"}>
       {/* Two balanced columns: the tall Compliance board + Key contacts on
@@ -4636,9 +4568,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           Best sellers. The chat moved up into the banner's second pane at
           the very top of the profile. */}
       <div className={pairCls}>
-      <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} isLandlord={isLandlord}
-        topSlot={isBrand ? <TenantRepsBlock companyId={companyId} reps={data.representedBy || []} /> : null} />
-      {!isLandlord && (
+      {show("left") && <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} isLandlord={isLandlord}
+        topSlot={isBrand ? <TenantRepsBlock companyId={companyId} reps={data.representedBy || []} /> : null} />}
+      {show("right") && !isLandlord && (
         <MenuIntelCard
           companyId={companyId}
           companyName={c.name}
@@ -4651,16 +4583,16 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       </div>
 
       <div className={pairCls}>
-      <div className="flex flex-col gap-3">
+      {show("left") && <div className="flex flex-col gap-3">
       {/* Compliance / AML board — gates every downstream check on knowing
           the brand's actual UK trading entity. Scraper auto-fires on
           first load (from the parent useEffect); the user can overwrite
           via the input below. Until uk_entity_name is set, all downstream
           checks (CH details, PSC, accounts, Red Flag, AML PEP) stay parked. */}
       <BrandComplianceCard companyId={companyId} company={c} />
-      </div>
+      </div>}
 
-      <div className="flex flex-col gap-3">
+      {show("right") && <div className="flex flex-col gap-3">
       {/* Covenant — live house engine (Companies House + The Gazette + filed
           accounts). Always rendered so the board is visibly part of the
           standard layout; before a CH match lands it explains what unlocks
@@ -4707,7 +4639,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           sharepointFolderUrl={c.sharepoint_folder_url}
         />
       )}
-      </div>
+      </div>}
       </div>
 
       {/* BGP relationship card removed — it duplicated the Key contacts card
@@ -4718,9 +4650,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           add news back in alongside instagram"). When there's no news yet
           the News card doesn't render, so Instagram takes the full row —
           half-width beside an empty slot read as broken (Woody, 2026-08-18). */}
-      <div className={data.news && data.news.length > 0 ? pairCls : "space-y-3"}>
+      <div className={column ? "contents" : data.news && data.news.length > 0 ? pairCls : "space-y-3"}>
       {/* News & Media */}
-      {data.news && data.news.length > 0 && (() => {
+      {show("left") && data.news && data.news.length > 0 && (() => {
         const newsSourceColor = (name: string | null): string => {
           if (!name) return "bg-zinc-100 text-zinc-600 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700";
           const n = name.toLowerCase();
@@ -4915,8 +4847,10 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         );
       })()}
 
-      {!isLandlord && <BrandFeedCard companyId={companyId} canSetUp={!sbIsClient} />}
+      {show("right") && !isLandlord && <BrandFeedCard companyId={companyId} canSetUp={!sbIsClient} />}
       </div>
+
+      {show("bottom") && <>
 
       {/* Menu / Best-sellers moved up — paired with Key contacts
           (Woody, 2026-08-03). */}
@@ -5131,6 +5065,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           </Dialog>
         </CardContent>
       </Card>
+      </>}
     </aside>
   );
 }
