@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Pill } from "@/components/ui/pill";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
@@ -308,11 +309,16 @@ function PropertyManageActions({ companyId, property }: { companyId: string; pro
 export function CompanyPropertiesBoard({
   companyId,
   kind,
+  tabbed = false,
 }: {
   companyId: string;
   kind: "landlord" | "lender";
+  // Landlord page: one Portfolio card with Properties / Data check tabs
+  // instead of the reconciliation table stacked above the properties.
+  tabbed?: boolean;
 }) {
   const { toast } = useToast();
+  const [portfolioTab, setPortfolioTab] = useState<"properties" | "data">("properties");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<"all" | "crm" | "discovered" | "expiring">("all");
   const autoSyncRan = useRef(false);
@@ -653,6 +659,15 @@ export function CompanyPropertiesBoard({
   const showDiscovered = filter === "all" || filter === "discovered";
 
   if (boardProperties.length === 0 && discovered.length === 0 && reconRows.length === 0) return null;
+  const hasProperties = boardProperties.length > 0 || discovered.length > 0;
+  const toResolve = reconRows.filter(r => r.status !== "matched").length;
+  const tab = !tabbed ? null : !hasProperties ? "data" : reconRows.length === 0 ? "properties" : portfolioTab;
+  const tabRow = tabbed && hasProperties && reconRows.length > 0 ? (
+    <div className="flex flex-wrap items-center gap-1.5" data-testid="portfolio-tabs">
+      <Pill active={tab === "properties"} onClick={() => setPortfolioTab("properties")} data-testid="portfolio-tab-properties">Properties {boardProperties.length + discovered.length}</Pill>
+      <Pill active={tab === "data"} onClick={() => setPortfolioTab("data")} data-testid="portfolio-tab-data">Data check{toResolve ? ` · ${toResolve} to resolve` : " ✓"}</Pill>
+    </div>
+  ) : null;
 
   const reconStatusClass: Record<ReconciliationRow["status"], string> = {
     matched: "border-emerald-300 text-emerald-600",
@@ -663,9 +678,10 @@ export function CompanyPropertiesBoard({
 
   return (
     <>
-    {reconRows.length > 0 && reconciliation && (
+    {reconRows.length > 0 && reconciliation && (!tabbed || tab === "data") && (
       <Card>
         <CardContent className="p-3 space-y-2" data-testid="account-reconciliation-card">
+          {tabRow}
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <h3 className="font-semibold text-xs flex items-center gap-1.5">
               <Scale className="w-3.5 h-3.5 text-muted-foreground" />
@@ -730,9 +746,10 @@ export function CompanyPropertiesBoard({
         </CardContent>
       </Card>
     )}
-    {(boardProperties.length > 0 || discovered.length > 0) && (
+    {(boardProperties.length > 0 || discovered.length > 0) && (!tabbed || tab === "properties") && (
     <Card>
       <CardContent className="p-3 space-y-3" data-testid="company-properties-board">
+        {tabRow}
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <h3 className="font-semibold text-xs flex items-center gap-1.5">
             <Building2 className="w-3.5 h-3.5 text-muted-foreground" />

@@ -1425,55 +1425,137 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               </div>;
             })()}
 
-            <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} hideTenancyPropertyIds={liveLocations.map((p: any) => p.id)} />
+            <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} hideTenancyPropertyIds={liveLocations.map((p: any) => p.id)} pillsOnly={isLandlord} />
             </div>
             </div>
   );
-  const aboutCard = <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 md:flex-1 md:min-w-0">{aboutBody}</div>;
-
-  return (
-    <div className={(isLandlord || isBrand)
-      ? "flex flex-col gap-3 items-stretch w-full min-w-0"
-      : "flex flex-col md:flex-row gap-3 items-start w-full min-w-0"}>
-    {/* flat (the company page): no outer card, so these boards sit on the page
-        exactly like Key contacts / Covenant below (Woody, 2026-09-24: "the
-        bottom of the app is different"). */}
-    <Card data-testid="brand-profile-panel" className={`flex-1 min-w-0 max-w-full ${flat ? "bg-transparent border-0 shadow-none rounded-none overflow-visible" : "overflow-hidden"}`}>
-      {/* Company page: one profile column (entities, header, details and
-          About) beside the conversation. The chat follows that column's
-          height and never sets it — up to the screen's height; on a longer
-          profile (Nando's, with group entities) it stops there and stays in
-          view as you scroll instead of becoming a giant empty box (Woody,
-          2026-09-26). */}
-      {/* The profile header, website, details, actions and About are ONE card
-          (Woody, 2026-09-26: "combine the about and profile into one card"). */}
-      {flat ? (
-        <div className="md:grid md:grid-cols-2 md:gap-4">
-          <div className="min-w-0 space-y-3">
-            {topSlot}
-            <div className="rounded-xl border border-card-border bg-card shadow-sm px-3 pb-3" data-testid="brand-profile-card">
-              {header}
-              {!editing && <div className={`${panelSec("profile")} pt-2.5`}>{topInfo}</div>}
-              {!editing && <div className={`${panelSec("profile")} mt-3 pt-3 border-t border-border`}>{aboutBody}</div>}
+  const signalsFeed = (
+            <div>
+              <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-1">
+                <span className="flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Signals ({data.signals.length})</span>
+                {!isClientViewer && (
+                <button
+                  onClick={() => setAddSignalOpen(v => !v)}
+                  className="text-[10px] text-primary hover:underline flex items-center gap-0.5"
+                >
+                  <Plus className="w-2.5 h-2.5" /> Log intel
+                </button>
+                )}
+              </div>
+              {addSignalOpen && (
+                <div className="mb-2 p-2 rounded-md border border-dashed border-border bg-muted/30 space-y-1.5">
+                  <Input
+                    placeholder="Headline (e.g. H&M opening Oxford Street flagship)"
+                    value={newSignal.headline}
+                    onChange={e => setNewSignal(v => ({ ...v, headline: e.target.value }))}
+                    className="h-7 text-xs"
+                  />
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <select
+                      value={newSignal.signal_type}
+                      onChange={e => setNewSignal(v => ({ ...v, signal_type: e.target.value }))}
+                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
+                    >
+                      {["opening","hiring","requirement","closure","funding","exec_change","sector_move","rumour","news"].map(t => (
+                        <option key={t} value={t}>{t.replace(/_/g," ")}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={newSignal.sentiment}
+                      onChange={e => setNewSignal(v => ({ ...v, sentiment: e.target.value }))}
+                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
+                    >
+                      <option value="positive">Positive</option>
+                      <option value="neutral">Neutral</option>
+                      <option value="negative">Negative</option>
+                    </select>
+                    <input
+                      type="date"
+                      value={newSignal.signal_date}
+                      onChange={e => setNewSignal(v => ({ ...v, signal_date: e.target.value }))}
+                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
+                    />
+                  </div>
+                  <Input
+                    placeholder="Source URL (optional)"
+                    value={newSignal.source}
+                    onChange={e => setNewSignal(v => ({ ...v, source: e.target.value }))}
+                    className="h-7 text-xs"
+                  />
+                  <div className="flex gap-1.5">
+                    <Button
+                      size="sm"
+                      className="h-6 text-[10px] px-2"
+                      onClick={() => addSignalMutation.mutate()}
+                      disabled={!newSignal.headline || addSignalMutation.isPending}
+                    >
+                      {addSignalMutation.isPending ? "Saving…" : "Save signal"}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={() => setAddSignalOpen(false)}>Cancel</Button>
+                  </div>
+                </div>
+              )}
+              {data.signals.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1">
+                  {(signalsShowAll ? dedupedSignals : dedupedSignals.slice(0, 6)).map((s: any) => {
+                    const typeCls: Record<string, string> = {
+                      opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
+                      hiring:      "bg-teal-50 text-teal-700 border-teal-200",
+                      requirement: "bg-orange-50 text-orange-700 border-orange-200",
+                      closure:     "bg-red-50 text-red-700 border-red-200",
+                      funding:     "bg-violet-50 text-violet-700 border-violet-200",
+                      exec_change: "bg-blue-50 text-blue-700 border-blue-200",
+                      sector_move: "bg-amber-50 text-amber-700 border-amber-200",
+                      rumour:      "bg-zinc-50 text-zinc-600 border-zinc-200 italic",
+                      news:        "bg-zinc-50 text-zinc-700 border-zinc-200",
+                    };
+                    const sentCls: Record<string, string> = {
+                      positive: "border-l-emerald-400",
+                      negative: "border-l-red-400",
+                      neutral:  "border-l-muted",
+                    };
+                    return (
+                      <div key={s.id} className={`text-xs flex items-start gap-2 border-l-2 pl-2 group ${sentCls[s.sentiment] || "border-l-muted"}`}>
+                        <Badge variant="outline" className={`text-[10px] shrink-0 ${typeCls[s.signal_type] || ""}`}>
+                          {s.signal_type.replace(/_/g, " ")}
+                          {s.magnitude === "large" && " ●●"}
+                          {s.magnitude === "medium" && " ●"}
+                        </Badge>
+                        <div className="flex-1 min-w-0">
+                          {s.source && s.source.startsWith("http") ? (
+                            <a href={s.source} target="_blank" rel="noopener noreferrer" className="font-medium truncate block hover:underline">
+                              {s.headline}
+                            </a>
+                          ) : (
+                            <p className="font-medium truncate">{s.headline}</p>
+                          )}
+                          {s.signal_date && <span className="text-[10px] text-muted-foreground">{new Date(s.signal_date).toLocaleDateString("en-GB")}</span>}
+                        </div>
+                        {!isClientViewer && (
+                        <button
+                          onClick={() => deleteSignalMutation.mutate(s.id)}
+                          className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0 mt-0.5"
+                          title="Remove signal"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {dedupedSignals.length > 6 && (
+                <button
+                  onClick={() => setSignalsShowAll(v => !v)}
+                  className="mt-1.5 text-[10px] text-primary hover:underline"
+                >
+                  {signalsShowAll ? "Show less" : `Show ${dedupedSignals.length - 6} more signal${dedupedSignals.length - 6 === 1 ? "" : "s"}`}
+                </button>
+              )}
             </div>
-          </div>
-          {wide && <div className="relative min-w-0 min-h-[26rem]"><div className="absolute inset-0"><div className="sticky top-3 h-full max-h-[max(26rem,calc(100vh-6rem))] flex flex-col" data-testid="brand-conversation-slot">{conversationBoard}</div></div></div>}
-        </div>
-      ) : header}
-
-      <CardContent className={`${flat ? "px-0 py-3" : "p-3"} space-y-4`}>
-        {/* Success commentary is dropped (Woody, 2026-09-23 — "we don't need the commentary"); progress and problems still show. */}
-        {!isClientViewer && enrichMutation.message && !/^Profile (refreshed|checked)\./.test(enrichMutation.message) && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{enrichMutation.message}</p>}
-        {!editing && (
-          <div className="flex flex-wrap gap-1.5 md:hidden pt-2" data-testid="brand-panel-sections">
-            <Pill active={panelSection === "profile"} onClick={() => setPanelSection("profile")} data-testid="brand-section-profile">{isLandlord ? "Overview" : "Profile"}</Pill>
-            <Pill active={panelSection === "stores"} onClick={() => setPanelSection("stores")} data-testid="brand-section-stores">{isLandlord ? "Portfolio" : "Stores"}</Pill>
-            <Pill active={panelSection === "relationship"} onClick={() => setPanelSection("relationship")} data-testid="brand-section-relationship">{isLandlord ? "Deals & activity" : "Relationship"}</Pill>
-            <Pill active={panelSection === "intel"} onClick={() => setPanelSection("intel")} data-testid="brand-section-intel">Intel</Pill>
-            <Pill active={panelSection === "more"} onClick={() => setPanelSection("more")} data-testid="brand-section-more">{isLandlord ? "People" : "Contacts & media"}</Pill>
-          </div>
-        )}
-        {editing ? (
+  );
+  const editForm = (
           <div className="space-y-3">
             <div>
               <Label className="text-xs">Agent type (leave blank if this isn't an agent)</Label>
@@ -1580,7 +1662,119 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               <Button size="sm" variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
             </div>
           </div>
-        ) : (
+  );
+  const aboutCard = <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 md:flex-1 md:min-w-0">{aboutBody}</div>;
+  const conversationSlot = wide
+    ? <div className="relative min-w-0 min-h-[26rem]"><div className="absolute inset-0"><div className="sticky top-3 h-full max-h-[max(26rem,calc(100vh-6rem))] flex flex-col" data-testid="brand-conversation-slot">{conversationBoard}</div></div></div>
+    : null;
+  const refreshStatus = !isClientViewer && enrichMutation.message && !/^Profile (refreshed|checked)\./.test(enrichMutation.message)
+    ? <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{enrichMutation.message}</p>
+    : null;
+  const viewerDialogs = <>
+    {openEmail && <EmailViewerDialog msgId={openEmail.msgId} mailboxEmail={openEmail.mailboxEmail} onClose={() => setOpenEmail(null)} />}
+    {openMeeting && <MeetingViewerDialog eventId={openMeeting.eventId} mailboxEmail={openMeeting.mailboxEmail} onClose={() => setOpenMeeting(null)} />}
+  </>;
+
+  // Landlord page — its own layout, split from the brand page (Woody,
+  // 2026-09-26: "they should be completely split"; portfolio first, the
+  // data check open to everyone). Account summary beside the conversation,
+  // then Portfolio (properties + data check), Deals & instructions, and the
+  // account boards balanced in two columns; Gallery last. Group entities
+  // sit with Compliance & KYC instead of heading the page.
+  if (isLandlord && flat) {
+    const masonryCls = "space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-x-4 lg:items-start lg:auto-rows-[4px] lg:grid-flow-row-dense";
+    return (
+      <div className="flex flex-col gap-3 w-full min-w-0" data-testid="landlord-profile">
+        <div className="md:grid md:grid-cols-2 md:gap-4">
+          <div className="min-w-0">
+            <div className="rounded-xl border border-card-border bg-card shadow-sm px-3 pb-3" data-testid="brand-profile-card">
+              {header}
+              {editing ? <div className="pt-3">{editForm}</div> : <>
+                <div className="space-y-2.5 pt-2.5">{topInfo}</div>
+                <div className="mt-3 pt-3 border-t border-border">{aboutBody}</div>
+                {data.parentGroup && (
+                  <p className="mt-2 text-xs flex items-center gap-1 text-muted-foreground">
+                    <Building2 className="w-3 h-3" /> Part of <Link href={`/companies/${data.parentGroup.id}`} className="text-primary hover:underline">{data.parentGroup.name}</Link>
+                  </p>
+                )}
+              </>}
+            </div>
+          </div>
+          {conversationSlot || <div className="pt-3">{conversationBoard}</div>}
+        </div>
+        {refreshStatus}
+        <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} />
+        <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
+        <AccountDealsBoard companyId={companyId} />
+        <MasonryGrid className={masonryCls}>
+          <AccountNextActionsCard companyId={companyId} />
+          <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
+          <InvestmentRequirementsCard companyId={companyId} />
+          <BrandProfileSidebar data={data} companyId={companyId} only={["team"]} />
+          <div className="flex flex-col gap-3">
+            <BrandProfileSidebar data={data} companyId={companyId} only={["compliance"]} />
+            <AccountEntitiesPanel companyId={companyId} />
+          </div>
+          <div className="flex flex-col gap-3">
+            {c.stock_ticker && <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />}
+            <BrandProfileSidebar data={data} companyId={companyId} only={["covenant"]} />
+          </div>
+          <BrandProfileSidebar data={data} companyId={companyId} only={["news"]} />
+          {data.signals.length > 0 && <div className="rounded-xl border border-card-border bg-card shadow-sm p-3" data-testid="landlord-signals">{signalsFeed}</div>}
+          <div className="flex flex-col gap-3">
+            <BrandProfileSidebar data={data} companyId={companyId} only={["files"]} />
+            <AccountFolderTreeCard companyId={companyId} />
+          </div>
+        </MasonryGrid>
+        <BrandProfileSidebar data={data} companyId={companyId} only={["gallery"]} />
+        {viewerDialogs}
+      </div>
+    );
+  }
+
+  return (
+    <div className={(isLandlord || isBrand)
+      ? "flex flex-col gap-3 items-stretch w-full min-w-0"
+      : "flex flex-col md:flex-row gap-3 items-start w-full min-w-0"}>
+    {/* flat (the company page): no outer card, so these boards sit on the page
+        exactly like Key contacts / Covenant below (Woody, 2026-09-24: "the
+        bottom of the app is different"). */}
+    <Card data-testid="brand-profile-panel" className={`flex-1 min-w-0 max-w-full ${flat ? "bg-transparent border-0 shadow-none rounded-none overflow-visible" : "overflow-hidden"}`}>
+      {/* Company page: one profile column (entities, header, details and
+          About) beside the conversation. The chat follows that column's
+          height and never sets it — up to the screen's height; on a longer
+          profile (Nando's, with group entities) it stops there and stays in
+          view as you scroll instead of becoming a giant empty box (Woody,
+          2026-09-26). */}
+      {/* The profile header, website, details, actions and About are ONE card
+          (Woody, 2026-09-26: "combine the about and profile into one card"). */}
+      {flat ? (
+        <div className="md:grid md:grid-cols-2 md:gap-4">
+          <div className="min-w-0 space-y-3">
+            {topSlot}
+            <div className="rounded-xl border border-card-border bg-card shadow-sm px-3 pb-3" data-testid="brand-profile-card">
+              {header}
+              {!editing && <div className={`${panelSec("profile")} pt-2.5`}>{topInfo}</div>}
+              {!editing && <div className={`${panelSec("profile")} mt-3 pt-3 border-t border-border`}>{aboutBody}</div>}
+            </div>
+          </div>
+          {wide && <div className="relative min-w-0 min-h-[26rem]"><div className="absolute inset-0"><div className="sticky top-3 h-full max-h-[max(26rem,calc(100vh-6rem))] flex flex-col" data-testid="brand-conversation-slot">{conversationBoard}</div></div></div>}
+        </div>
+      ) : header}
+
+      <CardContent className={`${flat ? "px-0 py-3" : "p-3"} space-y-4`}>
+        {/* Success commentary is dropped (Woody, 2026-09-23 — "we don't need the commentary"); progress and problems still show. */}
+        {!isClientViewer && enrichMutation.message && !/^Profile (refreshed|checked)\./.test(enrichMutation.message) && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{enrichMutation.message}</p>}
+        {!editing && (
+          <div className="flex flex-wrap gap-1.5 md:hidden pt-2" data-testid="brand-panel-sections">
+            <Pill active={panelSection === "profile"} onClick={() => setPanelSection("profile")} data-testid="brand-section-profile">{isLandlord ? "Overview" : "Profile"}</Pill>
+            <Pill active={panelSection === "stores"} onClick={() => setPanelSection("stores")} data-testid="brand-section-stores">{isLandlord ? "Portfolio" : "Stores"}</Pill>
+            <Pill active={panelSection === "relationship"} onClick={() => setPanelSection("relationship")} data-testid="brand-section-relationship">{isLandlord ? "Deals & activity" : "Relationship"}</Pill>
+            <Pill active={panelSection === "intel"} onClick={() => setPanelSection("intel")} data-testid="brand-section-intel">Intel</Pill>
+            <Pill active={panelSection === "more"} onClick={() => setPanelSection("more")} data-testid="brand-section-more">{isLandlord ? "People" : "Contacts & media"}</Pill>
+          </div>
+        )}
+        {editing ? editForm : (
           <div className="w-full flex flex-col gap-2.5">
             <div className={panelSec("profile")}>
             {!flat && topInfo}
@@ -2101,130 +2295,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             {!isLandlord && <PipnetRequirementsRow companyId={companyId} brandName={c.name} isClient={isClientViewer} />}
 
             {/* Signals feed — same shape as the old Hunter Intel zone */}
-            <div>
-              <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-1">
-                <span className="flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Signals ({data.signals.length})</span>
-                {!isClientViewer && (
-                <button
-                  onClick={() => setAddSignalOpen(v => !v)}
-                  className="text-[10px] text-primary hover:underline flex items-center gap-0.5"
-                >
-                  <Plus className="w-2.5 h-2.5" /> Log intel
-                </button>
-                )}
-              </div>
-              {addSignalOpen && (
-                <div className="mb-2 p-2 rounded-md border border-dashed border-border bg-muted/30 space-y-1.5">
-                  <Input
-                    placeholder="Headline (e.g. H&M opening Oxford Street flagship)"
-                    value={newSignal.headline}
-                    onChange={e => setNewSignal(v => ({ ...v, headline: e.target.value }))}
-                    className="h-7 text-xs"
-                  />
-                  <div className="grid grid-cols-3 gap-1.5">
-                    <select
-                      value={newSignal.signal_type}
-                      onChange={e => setNewSignal(v => ({ ...v, signal_type: e.target.value }))}
-                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
-                    >
-                      {["opening","hiring","requirement","closure","funding","exec_change","sector_move","rumour","news"].map(t => (
-                        <option key={t} value={t}>{t.replace(/_/g," ")}</option>
-                      ))}
-                    </select>
-                    <select
-                      value={newSignal.sentiment}
-                      onChange={e => setNewSignal(v => ({ ...v, sentiment: e.target.value }))}
-                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
-                    >
-                      <option value="positive">Positive</option>
-                      <option value="neutral">Neutral</option>
-                      <option value="negative">Negative</option>
-                    </select>
-                    <input
-                      type="date"
-                      value={newSignal.signal_date}
-                      onChange={e => setNewSignal(v => ({ ...v, signal_date: e.target.value }))}
-                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
-                    />
-                  </div>
-                  <Input
-                    placeholder="Source URL (optional)"
-                    value={newSignal.source}
-                    onChange={e => setNewSignal(v => ({ ...v, source: e.target.value }))}
-                    className="h-7 text-xs"
-                  />
-                  <div className="flex gap-1.5">
-                    <Button
-                      size="sm"
-                      className="h-6 text-[10px] px-2"
-                      onClick={() => addSignalMutation.mutate()}
-                      disabled={!newSignal.headline || addSignalMutation.isPending}
-                    >
-                      {addSignalMutation.isPending ? "Saving…" : "Save signal"}
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={() => setAddSignalOpen(false)}>Cancel</Button>
-                  </div>
-                </div>
-              )}
-              {data.signals.length > 0 && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1">
-                  {(signalsShowAll ? dedupedSignals : dedupedSignals.slice(0, 6)).map((s: any) => {
-                    const typeCls: Record<string, string> = {
-                      opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
-                      hiring:      "bg-teal-50 text-teal-700 border-teal-200",
-                      requirement: "bg-orange-50 text-orange-700 border-orange-200",
-                      closure:     "bg-red-50 text-red-700 border-red-200",
-                      funding:     "bg-violet-50 text-violet-700 border-violet-200",
-                      exec_change: "bg-blue-50 text-blue-700 border-blue-200",
-                      sector_move: "bg-amber-50 text-amber-700 border-amber-200",
-                      rumour:      "bg-zinc-50 text-zinc-600 border-zinc-200 italic",
-                      news:        "bg-zinc-50 text-zinc-700 border-zinc-200",
-                    };
-                    const sentCls: Record<string, string> = {
-                      positive: "border-l-emerald-400",
-                      negative: "border-l-red-400",
-                      neutral:  "border-l-muted",
-                    };
-                    return (
-                      <div key={s.id} className={`text-xs flex items-start gap-2 border-l-2 pl-2 group ${sentCls[s.sentiment] || "border-l-muted"}`}>
-                        <Badge variant="outline" className={`text-[10px] shrink-0 ${typeCls[s.signal_type] || ""}`}>
-                          {s.signal_type.replace(/_/g, " ")}
-                          {s.magnitude === "large" && " ●●"}
-                          {s.magnitude === "medium" && " ●"}
-                        </Badge>
-                        <div className="flex-1 min-w-0">
-                          {s.source && s.source.startsWith("http") ? (
-                            <a href={s.source} target="_blank" rel="noopener noreferrer" className="font-medium truncate block hover:underline">
-                              {s.headline}
-                            </a>
-                          ) : (
-                            <p className="font-medium truncate">{s.headline}</p>
-                          )}
-                          {s.signal_date && <span className="text-[10px] text-muted-foreground">{new Date(s.signal_date).toLocaleDateString("en-GB")}</span>}
-                        </div>
-                        {!isClientViewer && (
-                        <button
-                          onClick={() => deleteSignalMutation.mutate(s.id)}
-                          className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0 mt-0.5"
-                          title="Remove signal"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              {dedupedSignals.length > 6 && (
-                <button
-                  onClick={() => setSignalsShowAll(v => !v)}
-                  className="mt-1.5 text-[10px] text-primary hover:underline"
-                >
-                  {signalsShowAll ? "Show less" : `Show ${dedupedSignals.length - 6} more signal${dedupedSignals.length - 6 === 1 ? "" : "s"}`}
-                </button>
-              )}
-            </div>
+            {signalsFeed}
 
             {/* Represented by now leads Key contacts (Woody, 2026-09-23: "tenant
                 rep can go at the top of key contacts"); its Add agent button
@@ -3718,7 +3789,7 @@ export function BrandComplianceCard({
 // available units we should pitch them next.
 // `ledger` folds the old separate "Deal ledger & pipeline" counts into this
 // card's header, so each deal is counted in one place (Woody, 2026-09-23).
-export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTenancyPropertyIds }: { companyId: string; ledger?: { completed: number; active: number; requirements: number }; bare?: boolean; hideTenancyPropertyIds?: string[] }) {
+export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTenancyPropertyIds, pillsOnly = false }: { companyId: string; ledger?: { completed: number; active: number; requirements: number }; bare?: boolean; hideTenancyPropertyIds?: string[]; pillsOnly?: boolean }) {
   const [showAllTenancies, setShowAllTenancies] = useState(false);
   useEffect(() => setShowAllTenancies(false), [companyId]);
   const { data: act } = useQuery<any>({
@@ -3756,6 +3827,14 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
     ledger?.requirements ? `${ledger.requirements} requirement${ledger.requirements === 1 ? "" : "s"}` : null,
   ].filter(Boolean) as string[];
   if (!tenantAt.length && !targeted.length && !pitched.length && !suggestions.length && !ledgerPills.length) return null;
+  // Landlord page: just the deal counts — the tenant-shaped lists (tenant
+  // at, pitched, suggested) don't apply and the deals table carries them.
+  if (pillsOnly) return ledgerPills.length ? (
+    <div className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground" data-testid="portfolio-activity-pills">
+      <Briefcase className="w-3.5 h-3.5" /> BGP deals
+      {ledgerPills.map(label => <Badge key={label} variant="outline" className="text-[10px] normal-case tracking-normal tabular-nums">{label}</Badge>)}
+    </div>
+  ) : null;
 
   const Row = ({ propertyId, propertyName, unitName, dealId, right, title, subline }: any) => (
     <div className="p-1.5 rounded border bg-card min-w-0" title={title || ""}>
@@ -4500,7 +4579,9 @@ function TenantRepsBlock({ companyId, reps }: { companyId: string; reps: any[] }
   );
 }
 
-function BrandProfileSidebar({ data, companyId, column }: { data: BrandProfile; companyId: string; column?: "grid" | "bottom" }) {
+type SidebarPart = "contacts" | "menu" | "compliance" | "covenant" | "files" | "news" | "feed" | "team" | "gallery";
+const SIDEBAR_BOTTOM: SidebarPart[] = ["team", "gallery"];
+function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandProfile; companyId: string; column?: "grid" | "bottom"; only?: SidebarPart[] }) {
   const { toast } = useToast();
   const c = data.company;
   const cov = data.covenant;
@@ -4602,13 +4683,14 @@ function BrandProfileSidebar({ data, companyId, column }: { data: BrandProfile; 
   // column (the brand / landlord page): "grid" renders the boards straight
   // into the panel's masonry grid (the aside and pair wrappers become
   // display: contents); "bottom" renders the full-width Gallery below it.
-  const show = (k: "left" | "right" | "bottom") => !column || (column === "grid" ? k !== "bottom" : k === "bottom");
-  const pairCls = column ? "contents" : (isLandlord || isBrand)
+  // only (the landlord page): just these boards, placed by the caller.
+  const show = (k: SidebarPart) => only ? only.includes(k) : !column || (column === "grid" ? !SIDEBAR_BOTTOM.includes(k) : SIDEBAR_BOTTOM.includes(k));
+  const pairCls = column || only ? "contents" : (isLandlord || isBrand)
     ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-stretch [&>*]:h-full [&>*:only-child]:md:col-span-2"
     : "space-y-3";
 
   return (
-    <aside className={column === "grid" ? "w-full min-w-0 flex flex-col gap-3 lg:contents" : column ? "w-full min-w-0 flex flex-col gap-3" : (isLandlord || isBrand)
+    <aside className={column === "grid" || only ? "w-full min-w-0 flex flex-col gap-3 lg:contents" : column ? "w-full min-w-0 flex flex-col gap-3" : (isLandlord || isBrand)
       ? "w-full shrink-0 space-y-3 self-start"
       : "w-full md:w-[420px] lg:w-[480px] shrink-0 space-y-3 md:sticky md:top-3 self-start"}>
       {/* Two balanced columns: the tall Compliance board + Key contacts on
@@ -4620,9 +4702,9 @@ function BrandProfileSidebar({ data, companyId, column }: { data: BrandProfile; 
           Best sellers. The chat moved up into the banner's second pane at
           the very top of the profile. */}
       <div className={pairCls}>
-      {show("left") && <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} isLandlord={isLandlord}
+      {show("contacts") && <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} isLandlord={isLandlord}
         topSlot={isBrand ? <TenantRepsBlock companyId={companyId} reps={data.representedBy || []} /> : null} />}
-      {show("right") && !isLandlord && (
+      {show("menu") && !isLandlord && (
         <MenuIntelCard
           companyId={companyId}
           companyName={c.name}
@@ -4635,7 +4717,7 @@ function BrandProfileSidebar({ data, companyId, column }: { data: BrandProfile; 
       </div>
 
       <div className={pairCls}>
-      {show("left") && <div className="flex flex-col gap-3">
+      {show("compliance") && <div className="flex flex-col gap-3">
       {/* Compliance / AML board — gates every downstream check on knowing
           the brand's actual UK trading entity. Scraper auto-fires on
           first load (from the parent useEffect); the user can overwrite
@@ -4644,13 +4726,13 @@ function BrandProfileSidebar({ data, companyId, column }: { data: BrandProfile; 
       <BrandComplianceCard companyId={companyId} company={c} />
       </div>}
 
-      {show("right") && <div className="flex flex-col gap-3">
+      {(show("covenant") || show("files")) && <div className="flex flex-col gap-3">
       {/* Covenant — live house engine (Companies House + The Gazette + filed
           accounts). Always rendered so the board is visibly part of the
           standard layout; before a CH match lands it explains what unlocks
           it instead of silently disappearing (Woody, 2026-08-03). flex-1 so
           it fills the column to the Compliance board's depth. */}
-      <Card className="flex-1">
+      {show("covenant") && <Card className="flex-1">
         <CardHeader className="p-3 pb-2">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
             Covenant
@@ -4677,13 +4759,13 @@ function BrandProfileSidebar({ data, companyId, column }: { data: BrandProfile; 
             </p>
           )}
         </CardContent>
-      </Card>
+      </Card>}
 
       {/* Files tree — landlord-only (brands don't get SharePoint folder
           trees). The chat used to fall back into this slot for brands,
           which duplicated the copy already in the top pair (Woody,
           2026-08-03). */}
-      {isLandlord && (
+      {show("files") && isLandlord && (
         <LandlordSidebarBlock
           companyId={companyId}
           companyName={c.name}
@@ -4702,9 +4784,9 @@ function BrandProfileSidebar({ data, companyId, column }: { data: BrandProfile; 
           add news back in alongside instagram"). When there's no news yet
           the News card doesn't render, so Instagram takes the full row —
           half-width beside an empty slot read as broken (Woody, 2026-08-18). */}
-      <div className={column ? "contents" : data.news && data.news.length > 0 ? pairCls : "space-y-3"}>
+      <div className={column || only ? "contents" : data.news && data.news.length > 0 ? pairCls : "space-y-3"}>
       {/* News & Media */}
-      {show("left") && data.news && data.news.length > 0 && (() => {
+      {show("news") && data.news && data.news.length > 0 && (() => {
         const newsSourceColor = (name: string | null): string => {
           if (!name) return "bg-zinc-100 text-zinc-600 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700";
           const n = name.toLowerCase();
@@ -4899,17 +4981,17 @@ function BrandProfileSidebar({ data, companyId, column }: { data: BrandProfile; 
         );
       })()}
 
-      {show("right") && !isLandlord && <BrandFeedCard companyId={companyId} canSetUp={!sbIsClient} />}
+      {show("feed") && !isLandlord && <BrandFeedCard companyId={companyId} canSetUp={!sbIsClient} />}
       </div>
 
-      {show("bottom") && <>
+      {(show("team") || show("gallery")) && <>
 
       {/* Menu / Best-sellers moved up — paired with Key contacts
           (Woody, 2026-08-03). */}
 
       {/* BGP Team — lives in the sidebar next to the Gallery (landlords
           only) so the right column fills and the page stays aligned. */}
-      {isLandlord && (
+      {show("team") && isLandlord && (
         <Card>
           <CardContent className="p-3 pt-3 space-y-2">
             <h3 className="font-semibold text-xs flex items-center gap-1.5">
@@ -4930,7 +5012,7 @@ function BrandProfileSidebar({ data, companyId, column }: { data: BrandProfile; 
 
       {/* Documents & Gallery (brand) / Gallery (landlord, photos only —
           docs live in the SharePoint Folders panel above). */}
-      <Card>
+      {show("gallery") && <Card>
         <CardHeader className="p-3 pb-2">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
             <FileText className="w-3.5 h-3.5" /> {isLandlord ? "Gallery" : "Documents & Gallery"}
@@ -5116,7 +5198,7 @@ function BrandProfileSidebar({ data, companyId, column }: { data: BrandProfile; 
             </DialogContent>
           </Dialog>
         </CardContent>
-      </Card>
+      </Card>}
       </>}
     </aside>
   );
