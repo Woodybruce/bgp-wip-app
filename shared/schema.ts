@@ -3525,6 +3525,10 @@ export const plaMatters = pgTable("pla_matters", {
   clientContactId: varchar("client_contact_id"),        // → crm_contacts
   clientCompanyId: varchar("client_company_id"),        // → crm_companies
   actingFor: text("acting_for"),                        // landlord | tenant
+  // The surveyor on the other side (Woody, 2026-09-26: record them so their
+  // track record and the evidence they cite build up over time).
+  otherSideCompanyId: varchar("other_side_company_id"),  // → crm_companies (their firm)
+  otherSideContactId: varchar("other_side_contact_id"),  // → crm_contacts (the surveyor)
   leadUserId: varchar("lead_user_id").notNull(),        // → users
   teamUserIds: text("team_user_ids").array(),
   // Lease snapshot at matter creation

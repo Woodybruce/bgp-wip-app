@@ -228,6 +228,8 @@ export function registerPlaMattersRoutes(app: Express): void {
         clientContactId: body.clientContactId || null,
         clientCompanyId: body.clientCompanyId || null,
         actingFor: body.actingFor || null,
+        otherSideCompanyId: body.otherSideCompanyId || null,
+        otherSideContactId: body.otherSideContactId || null,
         leadUserId: body.leadUserId || userId,
         teamUserIds: Array.isArray(body.teamUserIds) ? body.teamUserIds : null,
         currentRent: typeof body.currentRent === "number" ? body.currentRent : null,
@@ -338,6 +340,8 @@ export function registerPlaMattersRoutes(app: Express): void {
       setIfPresent("clientContactId");
       setIfPresent("clientCompanyId");
       setIfPresent("actingFor");
+      setIfPresent("otherSideCompanyId", (v) => v || null);
+      setIfPresent("otherSideContactId", (v) => v || null);
       setIfPresent("leadUserId");
       setIfPresent("teamUserIds");
       setIfPresent("currentRent");
