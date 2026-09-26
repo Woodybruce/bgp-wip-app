@@ -98,6 +98,7 @@ const AvailableUnitsPage = lazy(() => import("@/pages/available-units"));
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
 const BrandsHub = lazy(() => import("@/pages/brands-hub"));
 const WebsiteCheck = lazy(() => import("@/pages/website-check"));
+const QaAccess = lazy(() => import("@/pages/qa-access"));
 const TasksPage = lazy(() => import("@/pages/tasks"));
 const CadMeasure = lazy(() => import("@/pages/cad-measure"));
 const LeaseEvents = lazy(() => import("@/pages/lease-events"));
@@ -384,6 +385,7 @@ function Router() {
       <Route path="/aml-training/:id" component={AmlTraining} />
       <Route path="/brands" component={BrandsHub} />
       <Route path="/brand-websites" component={WebsiteCheck} />
+      <Route path="/qa-access" component={QaAccess} />
       <Route path="/website" component={WebsitePage} />
       <Route path="/property-pathway" component={PropertyPathway} />
       <Route path="/pathway-review" component={PathwayReview} />

@@ -331,6 +331,26 @@ export function setupAuth(app: Express) {
     });
   });
 
+  // QA access (Woody, 2026-09-26: "any way I can do from my phone?") — an
+  // admin mints a 24-hour token for their own login on /qa-access to hand to
+  // a Claude session for screenshot sweeps across brands. The "qa_" prefix
+  // lets Revoke remove only these, leaving normal logins alone.
+  app.get("/api/admin/qa-access", requireAdmin, async (_req: Request, res: Response) => {
+    const r = await pool.query(`SELECT count(*)::int AS n, max(expires_at) AS until FROM auth_tokens WHERE token LIKE 'qa\\_%' AND expires_at > NOW()`);
+    res.json({ active: r.rows[0]?.n || 0, until: r.rows[0]?.until || null });
+  });
+  app.post("/api/admin/qa-access", requireAdmin, async (req: Request, res: Response) => {
+    const userId = req.session.userId || req.tokenUserId;
+    const token = `qa_${crypto.randomBytes(32).toString("hex")}`;
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await pool.query("INSERT INTO auth_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)", [token, userId, expiresAt]);
+    res.json({ token, expiresAt });
+  });
+  app.delete("/api/admin/qa-access", requireAdmin, async (_req: Request, res: Response) => {
+    const r = await pool.query(`DELETE FROM auth_tokens WHERE token LIKE 'qa\\_%'`);
+    res.json({ revoked: r.rowCount || 0 });
+  });
+
   // Mint a fresh bearer token off a still-valid session, so a stale token
   // in localStorage self-heals (WebSocket "Invalid token" loops, 401ing
   // token-authed mobile downloads) instead of requiring a fresh sign-in.
