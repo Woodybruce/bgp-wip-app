@@ -1211,7 +1211,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               </>}
               {currentUser?.role !== "Client" && <>
                 <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)}><Plus />Add to deal</Button>
-                {!isLandlord && <Button variant="outline" size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}><Building2 />Pitch property</Button>}
+                {!isLandlord && !isAgentFirm && <Button variant="outline" size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}><Building2 />Pitch property</Button>}
               </>}
             </div>
     </>
@@ -4751,6 +4751,7 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
           the very top of the profile. */}
       <div className={pairCls}>
       {show("contacts") && <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} isLandlord={isLandlord}
+        filterPropertyTier={!(!isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type))}
         topSlot={isBrand ? <TenantRepsBlock companyId={companyId} reps={data.representedBy || []} /> : null} />}
       {show("menu") && !isLandlord && (
         <MenuIntelCard

@@ -263,7 +263,9 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   const { data: kcViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const kcIsClient = !kcViewer || kcViewer.role === "Client" || !!kcViewer.companyScopeId;
   const [showAll, setShowAll] = useState(false);
-  const aiCheck = useContactsCheck(companyId, !kcIsClient && discovery && !isLandlord);
+  // The AI check reads a brand's board (property people vs C-suite); agent
+  // firms show everyone (filterPropertyTier off) and skip it.
+  const aiCheck = useContactsCheck(companyId, !kcIsClient && discovery && !isLandlord && filterPropertyTier);
   const aiFlagFor = (id: string) => aiCheck.check?.flags.find(f => f.contactId === String(id)) || null;
   const [addedContacts, setAddedContacts] = useState<Record<string, PromotedContact>>({});
   const [lastAdded, setLastAdded] = useState<{ companyId: string; contact: PromotedContact } | null>(null);

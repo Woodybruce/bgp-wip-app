@@ -10,9 +10,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Pill } from "@/components/ui/pill";
 import { Handshake, Loader2 } from "lucide-react";
-import { AGENT_ROLES, roleFromAgentType, agentRoleLabel, type AgentRole } from "@shared/agent-roles";
+import { AGENT_ROLES, type AgentRole } from "@shared/agent-roles";
 
-type Tab = "acts" | "deals" | "requirements" | "instructions" | "sales" | "leaseAdvisory" | "viewings";
+type Tab = "deals" | "requirements" | "instructions" | "sales" | "leaseAdvisory" | "viewings";
 
 const fmtDate = (d: any) => d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
 const money = (v: any) => { const n = Number(v); if (!n) return null; return n >= 1_000_000 ? `£${(n / 1_000_000).toFixed(1)}m` : `£${Math.round(n / 1000)}k`; };
@@ -52,7 +52,6 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
     staleTime: 5 * 60_000,
   });
   const counts: Record<Tab, number> = {
-    acts: data?.representing?.length || 0,
     deals: data?.deals?.length || 0,
     requirements: (data?.leasingRequirements?.length || 0) + (data?.investmentRequirements?.length || 0),
     instructions: data?.competing?.length || 0,
@@ -60,7 +59,9 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
     leaseAdvisory: data?.otherSide?.length || 0,
     viewings: data?.viewings?.length || 0,
   };
-  const TABS: Array<[Tab, string]> = [["acts", "Acts for"], ["deals", "Deals"], ["requirements", "Requirements"], ["instructions", "Instructions"], ["sales", "Sales"], ["leaseAdvisory", "Lease advisory"], ["viewings", "Viewings"]];
+  // Who they act for is listed (with add / end) in the representation card
+  // below, so it isn't repeated here.
+  const TABS: Array<[Tab, string]> = [["deals", "Deals"], ["requirements", "Requirements"], ["instructions", "Instructions"], ["sales", "Sales"], ["leaseAdvisory", "Lease advisory"], ["viewings", "Viewings"]];
   const shown = TABS.filter(([t]) => counts[t] > 0);
   const [tab, setTab] = useState<Tab | null>(null);
   useEffect(() => { setTab(null); }, [companyId]);
@@ -92,12 +93,6 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
       </CardHeader>
       <CardContent className="p-3 pt-0">
         {isLoading && <p className="text-sm text-muted-foreground italic flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />Gathering their dealings with BGP…</p>}
-        {data && active === "acts" && (
-          <div className="space-y-1">{data.representing.map((r: any) => {
-            const role = roleFromAgentType(r.agent_type);
-            return <Row key={r.id} href={`/companies/${r.brand_company_id}`} title={r.client_name} sub={[role ? agentRoleLabel(role) : r.agent_type, r.region, r.contact_name].filter(Boolean).join(" · ")} right={r.start_date && <span className="text-[10px] text-muted-foreground">since {fmtDate(r.start_date)}</span>} />;
-          })}</div>
-        )}
         {data && active === "deals" && (
           <div className="space-y-1">{[...data.deals].sort((a: any, b: any) => Number(b.open) - Number(a.open)).map((d: any) => (
             <Row key={`${d.role}-${d.id}`} href={`/deals/${d.id}`} title={d.name}
