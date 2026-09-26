@@ -121,7 +121,7 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const set = (patch: Partial<Filters>) => { setFilters(f => ({ ...f, ...patch })); setPage(1); };
 
-  const params = new URLSearchParams({ page: String(page), pageSize: "25" });
+  const params = new URLSearchParams({ page: String(page), pageSize: "10" });
   for (const [k, v] of Object.entries(filters)) if (v && v !== "all") params.set(k, v);
 
   const { data, isLoading, isError } = useQuery<AccountDealsResponse>({

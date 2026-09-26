@@ -451,13 +451,22 @@ function MasonryGrid({ className, children }: { className?: string; children: Re
       for (const el of now) if (!items.has(el)) { items.add(el); ro.observe(el); }
       const twoCol = getComputedStyle(grid!).display === "grid";
       if (!twoCol) { now.forEach(clear); return; }
-      const shown = now.filter(el => el.getBoundingClientRect().height > 0);
-      now.filter(el => !shown.includes(el)).forEach(clear);
-      const spans = shown.map(el => {
+      const visible = now.filter(el => el.getBoundingClientRect().height > 0);
+      now.filter(el => !visible.includes(el)).forEach(clear);
+      // data-masonry-full cards (a landlord's wide deals table) span both
+      // columns; the rest are balanced underneath.
+      const spanOf = (el: HTMLElement) => {
         const cs = getComputedStyle(el);
         const h = el.getBoundingClientRect().height + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
         return Math.ceil((h + MASONRY_GAP) / MASONRY_ROW);
-      });
+      };
+      for (const el of visible.filter(el => el.dataset.masonryFull !== undefined)) {
+        const end = `span ${spanOf(el)}`;
+        if (el.style.gridColumn !== "1 / -1") el.style.gridColumn = "1 / -1";
+        if (el.style.gridRowEnd !== end) el.style.gridRowEnd = end;
+      }
+      const shown = visible.filter(el => el.dataset.masonryFull === undefined);
+      const spans = shown.map(spanOf);
       const cols = balanceColumns(spans);
       shown.forEach((el, i) => {
         const col = String(cols[i] + 1), end = `span ${spans[i]}`;
@@ -1702,7 +1711,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 the raw correspondence drawer stay staff-only. */}
             {/* Same card as About, Stores and the chat (Woody, 2026-09-24:
                 "some have white background others don't — need continuity"). */}
-            <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 mt-2 lg:mt-0 order-6 lg:order-none">
+            <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 mt-2 lg:mt-0 order-6 lg:order-none" data-masonry-full={isLandlord ? "" : undefined}>
             <div className="space-y-2.5 [&>*:first-child]:border-t-0 [&>*:first-child]:pt-0">
             <>
             {/* The relationship read is part of the one BGP take above
