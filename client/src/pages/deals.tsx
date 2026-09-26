@@ -835,7 +835,7 @@ function DealUnitPicker({
 // editors wired with inline-create so an unknown counterparty / agent
 // can be added without leaving the deals board.
 type PartyRole = {
-  key: "clientContactId" | "vendorId" | "purchaserId" | "vendorAgentId" | "acquisitionAgentId" | "purchaserAgentId" | "leasingAgentId";
+  key: "clientContactId" | "vendorId" | "purchaserId" | "vendorAgentId" | "acquisitionAgentId" | "purchaserAgentId" | "leasingAgentId" | "jointAgentId";
   label: string;
   type: "contact" | "company-vendor" | "company-purchaser" | "agent";
 };
@@ -848,6 +848,7 @@ const PARTY_ROLES: PartyRole[] = [
   { key: "acquisitionAgentId",  label: "Acquisition Agent", type: "agent" },
   { key: "purchaserAgentId",    label: "Purchaser Agent",   type: "agent" },
   { key: "leasingAgentId",      label: "Leasing Agent",     type: "agent" },
+  { key: "jointAgentId",        label: "Joint Agent",       type: "agent" },
 ];
 
 function PartiesCell({

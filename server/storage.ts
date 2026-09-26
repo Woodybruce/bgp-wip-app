@@ -822,6 +822,7 @@ export class DatabaseStorage implements IStorage {
       await tx.update(crmDeals).set({ acquisitionAgentId: null }).where(eq(crmDeals.acquisitionAgentId, id));
       await tx.update(crmDeals).set({ purchaserAgentId: null }).where(eq(crmDeals.purchaserAgentId, id));
       await tx.update(crmDeals).set({ leasingAgentId: null }).where(eq(crmDeals.leasingAgentId, id));
+      await tx.update(crmDeals).set({ jointAgentId: null }).where(eq(crmDeals.jointAgentId, id));
       await tx.update(crmProperties).set({ landlordId: null }).where(eq(crmProperties.landlordId, id));
       await tx.update(crmProperties).set({ freeholderId: null }).where(eq(crmProperties.freeholderId, id));
       await tx.update(crmProperties).set({ longLeaseholderId: null }).where(eq(crmProperties.longLeaseholderId, id));
@@ -951,6 +952,11 @@ export class DatabaseStorage implements IStorage {
       await tx.update(crmDeals).set({ acquisitionAgentId: null }).where(eq(crmDeals.acquisitionAgentId, id));
       await tx.update(crmDeals).set({ purchaserAgentId: null }).where(eq(crmDeals.purchaserAgentId, id));
       await tx.update(crmDeals).set({ leasingAgentId: null }).where(eq(crmDeals.leasingAgentId, id));
+      await tx.update(crmDeals).set({ vendorAgentContactId: null }).where(eq(crmDeals.vendorAgentContactId, id));
+      await tx.update(crmDeals).set({ acquisitionAgentContactId: null }).where(eq(crmDeals.acquisitionAgentContactId, id));
+      await tx.update(crmDeals).set({ purchaserAgentContactId: null }).where(eq(crmDeals.purchaserAgentContactId, id));
+      await tx.update(crmDeals).set({ leasingAgentContactId: null }).where(eq(crmDeals.leasingAgentContactId, id));
+      await tx.update(crmDeals).set({ jointAgentContactId: null }).where(eq(crmDeals.jointAgentContactId, id));
       await tx.update(crmRequirementsLeasing).set({ principalContactId: null }).where(eq(crmRequirementsLeasing.principalContactId, id));
       await tx.update(crmRequirementsLeasing).set({ agentContactId: null }).where(eq(crmRequirementsLeasing.agentContactId, id));
       await tx.delete(crmContactProperties).where(eq(crmContactProperties.contactId, id));

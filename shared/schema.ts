@@ -913,6 +913,10 @@ export const crmDeals = pgTable("crm_deals", {
   purchaserAgentContactId: varchar("purchaser_agent_contact_id"),
   leasingAgentId: varchar("leasing_agent_id"),
   leasingAgentContactId: varchar("leasing_agent_contact_id"),
+  // An agent firm sharing the instruction with BGP (no fee split recorded —
+  // Woody, 2026-09-26). Firm + person like the other agent roles.
+  jointAgentId: varchar("joint_agent_id"),
+  jointAgentContactId: varchar("joint_agent_contact_id"),
   // ── Deal date journey: instructed → target → exchanged → completed → invoiced ──
   // instructedAt = when BGP was formally put on the deal (set once, editable).
   // targetDate is the working forecast (editable).

@@ -3284,6 +3284,7 @@ import accountReconciliationRouter from "./account-reconciliation";
 import accountDealsRouter from "./account-deals";
 import accountWorkspaceRouter from "./account-workspace";
 import accountTeamsRouter from "./account-teams";
+import agentRelationshipRouter from "./agent-relationship";
 import accountMediaRouter from "./account-media";
 import signatureContactSyncRouter from "./signature-contact-sync";
 import accountFolderInventoryRouter from "./account-folder-inventory";
@@ -4287,6 +4288,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(accountDealsRouter);
   app.use(accountWorkspaceRouter);
   app.use(accountTeamsRouter);
+  app.use(agentRelationshipRouter);
   app.use(accountMediaRouter);
   app.use(signatureContactSyncRouter);
   app.use(accountFolderInventoryRouter);
