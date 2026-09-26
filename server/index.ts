@@ -3283,6 +3283,7 @@ import brandProfileRouter from "./brand-profile";
 import accountReconciliationRouter from "./account-reconciliation";
 import accountDealsRouter from "./account-deals";
 import accountWorkspaceRouter from "./account-workspace";
+import accountTeamsRouter from "./account-teams";
 import accountMediaRouter from "./account-media";
 import signatureContactSyncRouter from "./signature-contact-sync";
 import accountFolderInventoryRouter from "./account-folder-inventory";
@@ -4285,6 +4286,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(accountReconciliationRouter);
   app.use(accountDealsRouter);
   app.use(accountWorkspaceRouter);
+  app.use(accountTeamsRouter);
   app.use(accountMediaRouter);
   app.use(signatureContactSyncRouter);
   app.use(accountFolderInventoryRouter);

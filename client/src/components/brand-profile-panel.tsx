@@ -47,6 +47,7 @@ import { brandComplianceStatus } from "@shared/brand-compliance-status";
 import { displayTicker } from "@shared/stock-ticker";
 import { isLandlordCompany } from "@/lib/company-kind";
 import { AccountDealsBoard } from "@/components/account-deals-board";
+import { AccountTeamViewsCard } from "@/components/account-team-views";
 import { LandlordAccountGallery } from "@/components/account-media-gallery";
 import { AccountNextActionsCard, AccountTeamCard, InvestmentRequirementsCard, AccountFolderTreeCard, useAccountWorkspace } from "@/components/account-workspace-cards";
 import { AccountEntitiesPanel } from "@/components/account-entities-panel";
@@ -1706,6 +1707,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} />
         <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
         <AccountDealsBoard companyId={companyId} />
+        {!isClientViewer && <AccountTeamViewsCard companyId={companyId} />}
         <MasonryGrid className={masonryCls}>
           <AccountNextActionsCard companyId={companyId} />
           <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />

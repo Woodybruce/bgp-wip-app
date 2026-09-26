@@ -1,0 +1,194 @@
+// Team views of a landlord account (Woody, 2026-09-26: the landlord page
+// "works great for leasing instructions — what about the investment team
+// tracking buildings they own they might sell and their investment
+// requirements? ... the tenant rep team tracking properties and landlords
+// they want to put a tenant into? ... lease advisory — what they are working
+// on but also landlords and their lease events"). One read per landlord for
+// the three non-leasing teams, scoped to the resolver's portfolio
+// (landlord_id ∪ freeholder / long leaseholder ∪ company links, across the
+// entity tree) rather than landlord_id alone. Staff only — it carries BGP's
+// pipeline for other clients (tenant-rep brands, investment interest).
+import { Router, type Request, type Response } from "express";
+import { requireAuth } from "./auth";
+import { resolveAccountView, type Querier } from "./account-resolver";
+
+const LEASE_WINDOW_MONTHS = 18;
+const OPEN_DEAL = `COALESCE(d.status, '') NOT IN ('COM','INV','WIT','Completed','Invoiced','Withdrawn','Lost','Dead')`;
+
+async function rows(q: Querier, sql: string, params: any[]): Promise<any[]> {
+  try { return (await q.query(sql, params)).rows; }
+  catch (e: any) { console.warn("[account-teams]", e?.message); return []; }
+}
+
+// A tenant-rep search fits a unit when the unit's size sits inside the
+// search's range (±20%) and, when the search names locations, one of them
+// appears in the property's name, address or postcode.
+export function searchFitsUnit(search: { size_min?: number | null; size_max?: number | null; target_locations?: string[] | null },
+  unit: { sqft?: number | null; property_text: string }): boolean {
+  const sqft = Number(unit.sqft) || 0;
+  const min = Number(search.size_min) || 0;
+  const max = Number(search.size_max) || 0;
+  if (sqft && (min || max)) {
+    if (min && sqft < min * 0.8) return false;
+    if (max && sqft > max * 1.2) return false;
+  }
+  const locs = (search.target_locations || []).map(l => String(l || "").trim().toLowerCase()).filter(l => l.length >= 3);
+  if (!locs.length) return !!(sqft && (min || max));
+  const text = unit.property_text.toLowerCase();
+  return locs.some(l => text.includes(l) || (l === "london" && /\b(e|ec|n|nw|se|sw|w|wc)\d/i.test(text)));
+}
+
+export async function getAccountTeams(companyId: string, deps: { pool?: Querier } = {}) {
+  const q = deps.pool ?? (await import("./db")).pool;
+  const view = await resolveAccountView(companyId, {}, { pool: q });
+  const entityIds = view.entities.filter(e => e.relation !== "trading_entity").map(e => e.companyId);
+  const propertyIds = view.properties.map(p => p.propertyId);
+  const propertyName = new Map(view.properties.map(p => [p.propertyId, p.name]));
+
+  // ── Investment ──
+  const [flags] = await rows(q, `SELECT disposing_now, disposing_now_notes, acquiring_now, acquiring_now_notes,
+      distress_flag, distress_notes, investment_hunter_flag, investment_hunter_notes,
+      mandate_asset_class, mandate_lot_size_min, mandate_lot_size_max, mandate_geographies, capital_source, aum
+    FROM crm_companies WHERE id = $1`, [companyId]);
+  const tracker = await rows(q, `SELECT id, asset_name, board_type, status, guide_price, niy, property_id, deal_id,
+      client, vendor, buyer, bid_deadline, completion_date, updated_at
+    FROM investment_tracker
+    WHERE client_id = ANY($1::text[]) OR vendor_id = ANY($1::text[]) OR property_id = ANY($2::text[])
+    ORDER BY updated_at DESC NULLS LAST LIMIT 40`, [entityIds, propertyIds]);
+  const salesCandidates = await rows(q, `SELECT p.id, p.name, p.status, p.bgp_engagement, p.asset_class
+    FROM crm_properties p
+    WHERE p.id = ANY($1::text[])
+      AND (p.status ILIKE '%sale%' OR 'Investment' = ANY(COALESCE(p.bgp_engagement, ARRAY[]::text[])))
+    ORDER BY p.name LIMIT 40`, [propertyIds]);
+  const debtEvents = await rows(q, `SELECT id, property_id, event_type, event_date, lender, amount, notes
+    FROM landlord_debt_events WHERE landlord_id = ANY($1::text[])
+    ORDER BY event_date DESC NULLS LAST LIMIT 20`, [entityIds]);
+  const comps = await rows(q, `SELECT id, property_name, city, price, cap_rate, transaction_date,
+      CASE WHEN seller_company_id = ANY($1::text[]) THEN 'sold' ELSE 'bought' END AS side
+    FROM investment_comps
+    WHERE buyer_company_id = ANY($1::text[]) OR seller_company_id = ANY($1::text[])
+    ORDER BY transaction_date DESC NULLS LAST LIMIT 12`, [entityIds]);
+  const requirements = await rows(q, `SELECT id, name, status, use_types, size_range, requirement_locations, updated_at
+    FROM crm_requirements_investment WHERE company_id = ANY($1::text[])
+    ORDER BY updated_at DESC NULLS LAST LIMIT 20`, [entityIds]);
+
+  // ── Tenant rep ──
+  const units = await rows(q, `SELECT au.id, au.property_id, au.unit_name, au.sqft, au.asking_rent, au.marketing_status,
+      p.name AS property_name, COALESCE(p.address::text, '') || ' ' || COALESCE(p.postcode, '') || ' ' || p.name AS property_text
+    FROM available_units au JOIN crm_properties p ON p.id = au.property_id
+    WHERE au.property_id = ANY($1::text[]) AND au.marketing_status IN ('OPP','AVA','NEG')
+    ORDER BY p.name, au.unit_name LIMIT 80`, [propertyIds]);
+  const scheduleVacancies = await rows(q, `SELECT lu.id, lu.property_id, lu.unit_name, lu.sqft, lu.status,
+      p.name AS property_name, COALESCE(p.address::text, '') || ' ' || COALESCE(p.postcode, '') || ' ' || p.name AS property_text
+    FROM leasing_schedule_units lu JOIN crm_properties p ON p.id = lu.property_id
+    WHERE lu.property_id = ANY($1::text[]) AND lu.status IN ('Vacant','Opportunity')
+      AND NOT EXISTS (SELECT 1 FROM available_units au WHERE au.leasing_schedule_unit_id = lu.id)
+    ORDER BY p.name, lu.unit_name LIMIT 60`, [propertyIds]);
+  const searches = await rows(q, `SELECT s.id, s.company_id, COALESCE(c.name, s.client_name) AS client_name, s.status,
+      s.target_use, s.size_min, s.size_max, s.target_locations
+    FROM tenant_rep_searches s LEFT JOIN crm_companies c ON c.id = s.company_id
+    WHERE COALESCE(s.status, '') NOT IN ('Complete','Completed','Archived','Lost','On Hold')`, []);
+  const space = [
+    ...units.map((u: any) => ({ id: u.id, kind: "marketing" as const, propertyId: u.property_id, propertyName: u.property_name, unitName: u.unit_name, sqft: u.sqft, askingRent: u.asking_rent, status: u.marketing_status, text: u.property_text })),
+    ...scheduleVacancies.map((u: any) => ({ id: u.id, kind: "schedule" as const, propertyId: u.property_id, propertyName: u.property_name, unitName: u.unit_name, sqft: u.sqft, askingRent: null, status: u.status, text: u.property_text })),
+  ].map(({ text, ...u }) => ({
+    ...u,
+    fits: searches.filter((s: any) => searchFitsUnit(s, { sqft: u.sqft, property_text: text }))
+      .slice(0, 6).map((s: any) => ({ searchId: s.id, companyId: s.company_id, name: s.client_name, status: s.status })),
+  }));
+  const tenantRepDeals = await rows(q, `SELECT d.id, d.name, d.status, d.deal_type, d.property_id, t.name AS tenant_name, d.tenant_id
+    FROM crm_deals d LEFT JOIN crm_companies t ON t.id = d.tenant_id
+    WHERE d.property_id = ANY($1::text[]) AND d.bgp_acting_for = 'tenant' AND ${OPEN_DEAL}
+    ORDER BY d.updated_at DESC NULLS LAST LIMIT 30`, [propertyIds]);
+
+  // ── Lease advisory ──
+  const matters = await rows(q, `SELECT m.id, m.matter_type, m.status, m.acting_for, m.property_id, m.expiry_date, m.break_date,
+      m.current_rent_review_date, u.name AS lead_name
+    FROM pla_matters m LEFT JOIN users u ON u.id = m.lead_user_id
+    WHERE (m.property_id = ANY($1::text[]) OR m.client_company_id = ANY($2::text[]))
+      AND COALESCE(m.status, '') NOT IN ('COM','WIT','INV')
+    ORDER BY m.opened_at DESC NULLS LAST LIMIT 30`, [propertyIds, entityIds]);
+  const tracked = await rows(q, `SELECT id, property_id, unit_ref, tenant, event_type, event_date, status, matter_id, deal_id
+    FROM lease_events
+    WHERE property_id = ANY($1::text[]) AND event_date >= NOW() - INTERVAL '1 month'
+      AND event_date <= NOW() + INTERVAL '${LEASE_WINDOW_MONTHS} months'`, [propertyIds]);
+  const tenancy = await rows(q, `SELECT id, property_id, COALESCE(unit_number, premises) AS unit, COALESCE(trading_name, tenant_name) AS tenant,
+      lease_expiry, break_date, next_review_date
+    FROM tenancy_schedule_units
+    WHERE property_id = ANY($1::text[]) AND (
+      lease_expiry BETWEEN NOW() - INTERVAL '1 month' AND NOW() + INTERVAL '${LEASE_WINDOW_MONTHS} months'
+      OR break_date BETWEEN NOW() - INTERVAL '1 month' AND NOW() + INTERVAL '${LEASE_WINDOW_MONTHS} months'
+      OR next_review_date BETWEEN NOW() - INTERVAL '1 month' AND NOW() + INTERVAL '${LEASE_WINDOW_MONTHS} months')`, [propertyIds]);
+  const leasing = await rows(q, `SELECT id, property_id, unit_name AS unit, tenant_name AS tenant, lease_expiry, lease_break, rent_review
+    FROM leasing_schedule_units
+    WHERE property_id = ANY($1::text[]) AND (
+      lease_expiry BETWEEN NOW() - INTERVAL '1 month' AND NOW() + INTERVAL '${LEASE_WINDOW_MONTHS} months'
+      OR lease_break BETWEEN NOW() - INTERVAL '1 month' AND NOW() + INTERVAL '${LEASE_WINDOW_MONTHS} months'
+      OR rent_review BETWEEN NOW() - INTERVAL '1 month' AND NOW() + INTERVAL '${LEASE_WINDOW_MONTHS} months')`, [propertyIds]);
+
+  const inWindow = (d: any) => {
+    if (!d) return false;
+    const t = new Date(d).getTime();
+    return !isNaN(t) && t >= Date.now() - 31 * 864e5 && t <= Date.now() + LEASE_WINDOW_MONTHS * 30.5 * 864e5;
+  };
+  const events = new Map<string, any>();
+  const key = (propertyId: string, unit: string | null, type: string, date: any) =>
+    `${propertyId}|${String(unit || "").toLowerCase().replace(/\s+/g, "")}|${type}|${new Date(date).toISOString().slice(0, 7)}`;
+  const add = (propertyId: string, unit: string | null, tenant: string | null, type: string, date: any, source: string) => {
+    if (!inWindow(date)) return;
+    const k = key(propertyId, unit, type, date);
+    if (!events.has(k)) events.set(k, { propertyId, propertyName: propertyName.get(propertyId) || null, unit, tenant, type, date: new Date(date).toISOString(), source, trackedId: null, trackedStatus: null, matterId: null });
+  };
+  for (const t of tracked) {
+    const k = key(t.property_id, t.unit_ref, t.event_type, t.event_date);
+    events.set(k, { propertyId: t.property_id, propertyName: propertyName.get(t.property_id) || null, unit: t.unit_ref, tenant: t.tenant, type: t.event_type, date: new Date(t.event_date).toISOString(), source: "lease_events", trackedId: t.id, trackedStatus: t.status, matterId: t.matter_id });
+  }
+  for (const u of tenancy) {
+    add(u.property_id, u.unit, u.tenant, "Lease Expiry", u.lease_expiry, "tenancy_schedule");
+    add(u.property_id, u.unit, u.tenant, "Break Option", u.break_date, "tenancy_schedule");
+    add(u.property_id, u.unit, u.tenant, "Rent Review", u.next_review_date, "tenancy_schedule");
+  }
+  for (const u of leasing) {
+    add(u.property_id, u.unit, u.tenant, "Lease Expiry", u.lease_expiry, "leasing_schedule");
+    add(u.property_id, u.unit, u.tenant, "Break Option", u.lease_break, "leasing_schedule");
+    add(u.property_id, u.unit, u.tenant, "Rent Review", u.rent_review, "leasing_schedule");
+  }
+  const leaseEvents = [...events.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(0, 150);
+
+  return {
+    landlordName: view.root.name,
+    portfolioCount: propertyIds.length,
+    investment: {
+      flags: flags || null,
+      tracker: tracker.map((t: any) => ({ ...t, property_name: propertyName.get(t.property_id) || null })),
+      salesCandidates,
+      debtEvents: debtEvents.map((e: any) => ({ ...e, property_name: e.property_id ? propertyName.get(e.property_id) || null : null })),
+      comps,
+      requirements,
+    },
+    tenantRep: {
+      space,
+      activeSearches: searches.length,
+      deals: tenantRepDeals.map((d: any) => ({ ...d, property_name: propertyName.get(d.property_id) || null })),
+    },
+    leaseAdvisory: {
+      matters: matters.map((m: any) => ({ ...m, property_name: propertyName.get(m.property_id) || null })),
+      events: leaseEvents,
+    },
+  };
+}
+
+const router = Router();
+
+router.get("/api/accounts/:id/teams", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { resolveCompanyScope } = await import("./company-scope");
+    if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Available in the staff view." });
+    res.json(await getAccountTeams(String(req.params.id)));
+  } catch (e: any) {
+    if (e?.message === "company not found") return res.status(404).json({ error: "Company not found" });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+export default router;
