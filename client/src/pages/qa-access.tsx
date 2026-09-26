@@ -33,9 +33,12 @@ export default function QaAccess() {
     },
   });
 
+  // The one-year token copies as the whole environment line, so it can't
+  // land under the wrong name (a Railway token did, 2026-09-26).
+  const line = token ? (token.days === 365 ? `BGP_QA_TOKEN=${token.value}` : token.value) : "";
   const copy = async () => {
     if (!token) return;
-    try { await navigator.clipboard.writeText(token.value); setCopied(true); } catch { setCopied(false); }
+    try { await navigator.clipboard.writeText(line); setCopied(true); } catch { setCopied(false); }
   };
 
   if (error) {
@@ -72,13 +75,13 @@ export default function QaAccess() {
         </div>
         {token && (
           <div className="space-y-2">
-            <textarea readOnly value={token.value} rows={3} onFocus={e => e.currentTarget.select()} className="w-full rounded-md border bg-background p-2 font-mono text-xs break-all" data-testid="text-qa-token" />
+            <textarea readOnly value={line} rows={3} onFocus={e => e.currentTarget.select()} className="w-full rounded-md border bg-background p-2 font-mono text-xs break-all" data-testid="text-qa-token" />
             <Button variant="outline" size="sm" onClick={copy} data-testid="button-qa-copy">
               {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}{copied ? "Copied" : "Copy"}
             </Button>
             <p className="text-xs text-muted-foreground">
               {token.days === 365
-                ? <>Save it in Claude: the environment menu in the session's title bar → Edit → environment variables → <span className="font-mono">BGP_QA_TOKEN</span> = this value. New sessions pick it up. </>
+                ? <>Save it in Claude: the environment menu in the session's title bar → Edit → environment variables → paste this whole line as a new line, then save. New sessions pick it up. </>
                 : "Valid for 24 hours. "}
               Shown once. Anyone with it can use the app as you until it expires or is revoked.
             </p>
