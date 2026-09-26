@@ -589,7 +589,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // preparation queue or started explicitly with a Refresh action.
   const [emailsOpen, setEmailsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  useEffect(() => { setEditing(false); setEmailsOpen(false); setAboutOpen(false); }, [companyId]);
+  const [backersOpen, setBackersOpen] = useState(false);
+  useEffect(() => { setEditing(false); setEmailsOpen(false); setAboutOpen(false); setBackersOpen(false); }, [companyId]);
   // Hooks stay above the loading return. One chat instance: beside the profile column on md+ screens, under About below that.
   const [wide, setWide] = useState(() => typeof window === "undefined" || window.matchMedia("(min-width: 768px)").matches);
   useEffect(() => {
@@ -1265,7 +1266,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                     if (Array.isArray(aiFields.backers_detail) && aiFields.backers_detail.length > 0) {
                       return (
                         <div className="space-y-1">
-                          {(aiFields.backers_detail as Array<{ name: string; type?: string; description?: string }>).map((b, i) => {
+                          {(aiFields.backers_detail as Array<{ name: string; type?: string; description?: string }>).slice(0, backersOpen ? undefined : 3).map((b, i) => {
                             const id = linkFor(b.name);
                             return (
                               <div key={i} className="flex items-start gap-1.5 text-sm">
@@ -1294,6 +1295,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                               </div>
                             );
                           })}
+                          {aiFields.backers_detail.length > 3 && (
+                            <button type="button" onClick={() => setBackersOpen(open => !open)} className="text-xs text-primary hover:underline" data-testid="button-backers-more">
+                              {backersOpen ? "Show fewer" : `+${aiFields.backers_detail.length - 3} more`}
+                            </button>
+                          )}
                         </div>
                       );
                     }
@@ -1426,9 +1432,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     <Card data-testid="brand-profile-panel" className={`flex-1 min-w-0 max-w-full ${flat ? "bg-transparent border-0 shadow-none rounded-none overflow-visible" : "overflow-hidden"}`}>
       {/* Company page: one profile column (entities, header, details and
           About) beside the conversation. The chat follows that column's
-          height and never sets it — up to 44rem; on a longer profile
-          (Nando's, with group entities) it stops there and stays in view
-          as you scroll instead of becoming a giant empty box (Woody,
+          height and never sets it — up to the screen's height; on a longer
+          profile (Nando's, with group entities) it stops there and stays in
+          view as you scroll instead of becoming a giant empty box (Woody,
           2026-09-26). */}
       {/* The profile header, website, details, actions and About are ONE card
           (Woody, 2026-09-26: "combine the about and profile into one card"). */}
@@ -1442,7 +1448,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               {!editing && <div className={`${panelSec("profile")} mt-3 pt-3 border-t border-border`}>{aboutBody}</div>}
             </div>
           </div>
-          {wide && <div className="relative min-w-0 min-h-[26rem]"><div className="absolute inset-0"><div className="sticky top-3 h-full max-h-[44rem] flex flex-col" data-testid="brand-conversation-slot">{conversationBoard}</div></div></div>}
+          {wide && <div className="relative min-w-0 min-h-[26rem]"><div className="absolute inset-0"><div className="sticky top-3 h-full max-h-[max(26rem,calc(100vh-6rem))] flex flex-col" data-testid="brand-conversation-slot">{conversationBoard}</div></div></div>}
         </div>
       ) : header}
 
@@ -3729,6 +3735,9 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
   // twice; deal-backed rows stay (they carry the Open deal link).
   const hidden = new Set(hideTenancyPropertyIds || []);
   const tenantAt: any[] = (act.tenantAt || []).filter((p: any) => !(p.via !== "deal" && hidden.has(p.property_id)));
+  // Inside About each list shows 3 (6 in its own card) until Show all —
+  // Sainsbury's six suggested pitches made the profile card ~1,400px.
+  const cap = showAllTenancies ? Infinity : bare ? 3 : 6;
   const targeted: any[] = act.targeted || [];
   const pitched: any[] = act.pitched || [];
   const suggestions: any[] = sugg?.suggestions || [];
@@ -3777,18 +3786,16 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
   const tiers = <>
         {tenantAt.length > 0 && (
           <Tier label="Tenant at" count={tenantAt.length}>
-            {(showAllTenancies ? tenantAt : tenantAt.slice(0, 6)).map((p: any) => (
+            {tenantAt.slice(0, cap).map((p: any) => (
               <Row key={`t-${p.via}-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name} dealId={p.via === "deal" ? p.id : undefined}
                 right={<Badge variant="outline" className="text-[9px] shrink-0 text-emerald-700 border-emerald-200">{p.via === "deal" ? (p.deal_type || "deal") : "tenant"}</Badge>} />
             ))}
-            {tenantAt.length > 6 && <Button variant="ghost" size="sm" className="min-h-11" onClick={() => setShowAllTenancies(value => !value)} aria-expanded={showAllTenancies} data-testid="portfolio-show-all-tenancies">
-              {showAllTenancies ? "Show fewer" : `Show all ${tenantAt.length} entries`}
-            </Button>}
+
           </Tier>
         )}
         {targeted.length > 0 && (
           <Tier label="Targeted" count={targeted.length}>
-            {targeted.slice(0, 6).map((p: any) => (
+            {targeted.slice(0, cap).map((p: any) => (
               <Row key={`g-${p.via}-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name}
                 right={<Badge variant="outline" className="text-[9px] shrink-0">{p.status || (p.via === "letting_tracker" ? "brief" : "schedule")}</Badge>} />
             ))}
@@ -3796,7 +3803,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
         )}
         {pitched.length > 0 && (
           <Tier label="Pitched — with evidence" count={pitched.length}>
-            {pitched.slice(0, 6).map((p: any, i: number) => (
+            {pitched.slice(0, cap).map((p: any, i: number) => (
               <Row key={`p-${i}`} propertyId={p.propertyId} propertyName={p.propertyName} unitName={p.unitName}
                 title={p.evidence}
                 right={<span className="text-[10px] text-amber-700 truncate">{p.evidence}</span>} />
@@ -3805,7 +3812,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
         )}
         {suggestions.length > 0 && (
           <Tier label="Suggested pitches" count={suggestions.length} tone="text-emerald-700/80">
-            {suggestions.slice(0, 6).map((u: any) => (
+            {suggestions.slice(0, cap).map((u: any) => (
               <Row key={`s-${u.id}`} propertyId={u.property_id} propertyName={u.property_name} unitName={u.unit_name}
                 title={u.reason} subline={u.reason}
                 right={u.sqft ? <span className="text-[10px] text-muted-foreground tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null} />
@@ -3813,11 +3820,18 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
           </Tier>
         )}
   </>;
+  const baseCap = bare ? 3 : 6;
+  const hiddenRows = [tenantAt, targeted, pitched, suggestions].reduce((n, list) => n + Math.max(0, list.length - baseCap), 0);
+  const more = hiddenRows > 0 && (
+    <Button variant="ghost" size="sm" className="min-h-11" onClick={() => setShowAllTenancies(value => !value)} aria-expanded={showAllTenancies} data-testid="portfolio-show-all-tenancies">
+      {showAllTenancies ? "Show fewer" : `Show all (${hiddenRows} more)`}
+    </Button>
+  );
   // bare: inside the BGP take card, no card of its own.
   if (bare) return (
     <div className="space-y-2" data-testid="portfolio-activity-bare">
       <div className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">{title}</div>
-      <div className="space-y-3 max-h-[380px] overflow-y-auto">{tiers}</div>
+      <div className="space-y-3">{tiers}{more}</div>
     </div>
   );
   return (
@@ -3825,7 +3839,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">{title}</CardTitle>
       </CardHeader>
-      <CardContent className="p-3 pt-0 space-y-3 max-h-[380px] overflow-y-auto">{tiers}</CardContent>
+      <CardContent className="p-3 pt-0 space-y-3 max-h-[380px] overflow-y-auto">{tiers}{more}</CardContent>
     </Card>
   );
 }

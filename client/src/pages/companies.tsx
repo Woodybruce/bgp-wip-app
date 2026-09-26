@@ -1432,7 +1432,10 @@ function CompanyDetail({ id }: { id: string }) {
               kept in this file for re-use when Red Flag / Experian wiring
               is finalised. */}
 
-          <SubCompaniesPanel parentId={id} parentName={company.name} />
+          {/* Staff see these entities in Group entities (with KYC), so the
+              plain list would repeat them; client logins don't get Group
+              entities and keep this one (Woody, 2026-09-26). */}
+          {isClientViewer && <SubCompaniesPanel parentId={id} parentName={company.name} />}
           {/* Canonical group entity list (Delivery 5): deduplicated legal
               entities with per-entity KYC — staff-only, renders nothing for
               scoped viewers. */}

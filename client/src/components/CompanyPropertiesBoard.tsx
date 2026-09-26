@@ -404,6 +404,12 @@ export function CompanyPropertiesBoard({
     staleTime: 5 * 60_000,
   });
   const reconRows = reconciliation?.rows ?? [];
+  // Rows needing attention first, then the first few matched ones — the full
+  // list (100+ for Landsec) ran ~4,000px and pushed the page down (Woody,
+  // 2026-09-26: "fits well regardless").
+  const [reconAll, setReconAll] = useState(false);
+  const reconSorted = useMemo(() => [...reconRows].sort((a, b) => Number(a.status === "matched") - Number(b.status === "matched")), [reconRows]);
+  const reconShown = reconAll ? reconSorted : reconSorted.slice(0, Math.max(8, reconSorted.filter(r => r.status !== "matched").length));
 
   useEffect(() => {
     if (kind !== "landlord") return;
@@ -689,7 +695,7 @@ export function CompanyPropertiesBoard({
                 </tr>
               </thead>
               <tbody>
-                {reconRows.map(r => (
+                {reconShown.map(r => (
                   <tr key={`${r.category ?? "extra"}-${r.destination_name}`} className="border-b last:border-0" data-testid={`recon-row-${r.destination_name}`}>
                     <td className="py-1 pr-2 font-medium">
                       {r.destination_name}
@@ -716,6 +722,11 @@ export function CompanyPropertiesBoard({
               </tbody>
             </table>
           </div>
+          {reconSorted.length > reconShown.length || reconAll ? (
+            <button type="button" onClick={() => setReconAll(v => !v)} className="text-xs text-primary hover:underline" data-testid="button-recon-all">
+              {reconAll ? "Show fewer" : `Show all ${reconSorted.length} destinations (${reconSorted.length - reconShown.length} more matched)`}
+            </button>
+          ) : null}
         </CardContent>
       </Card>
     )}
