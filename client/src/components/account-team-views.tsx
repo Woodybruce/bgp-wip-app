@@ -199,6 +199,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                     a.represents.length ? `Acts for them: ${a.represents.join(", ")}` : null,
                     a.competing.length ? `Instructed on ${a.competing.slice(0, 2).join(", ")}${a.competing.length > 2 ? ` +${a.competing.length - 2}` : ""}` : null,
                     a.deals ? `${a.deals} deal${a.deals === 1 ? "" : "s"} here${a.openDeals ? `, ${a.openDeals} live` : ""}` : null,
+                    a.viewings ? `brought ${a.viewings} viewing${a.viewings === 1 ? "" : "s"}` : null,
                   ].filter(Boolean).join(" · ")}
                   right={<>{Object.keys(a.roles).slice(0, 2).map(r => <Badge key={r} variant="outline" className="text-[9px]">{AGENT_ROLES.find(x => x.role === r)?.short || r}</Badge>)}</>} />
               ))}</div>}

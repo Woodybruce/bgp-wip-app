@@ -195,6 +195,19 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
       row.deals += f.n; row.openDeals += f.open;
     }
   }
+  // Tenant-rep agents who brought brands to view their units.
+  const viewingAgents = await rows(q, `SELECT ac.company_id AS firm_id, a.name AS agent_name, COUNT(*)::int AS n
+    FROM unit_viewings v
+    JOIN available_units au ON au.id = v.unit_id
+    JOIN crm_contacts ac ON ac.id = v.agent_contact_id
+    JOIN crm_companies a ON a.id = ac.company_id
+    WHERE au.property_id = ANY($1::text[])
+    GROUP BY ac.company_id, a.name`, [propertyIds]);
+  for (const f of viewingAgents) {
+    const row = agentRow(f.firm_id, f.agent_name);
+    row.roles.tenant_rep = (row.roles.tenant_rep || 0) + f.n;
+    row.viewings = (row.viewings || 0) + f.n;
+  }
   const agents = [...agentMap.values()].sort((a, b) =>
     Number(b.represents.length > 0) - Number(a.represents.length > 0) || (b.openDeals - a.openDeals) || (b.competing.length + b.deals) - (a.competing.length + a.deals));
 
