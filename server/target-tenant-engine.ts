@@ -271,19 +271,35 @@ Plan the targets for these units TOGETHER. Think it through before answering:
 
 Ratings: "green" = strong fit AND strong intent evidence (fitting requirement, BGP client, live deal, new conversation, or actively opening in centres like this); "amber" = good fit, evidence is presence elsewhere rather than intent; "red" = speculative stretch worth a call.
 
-Return JSON only, no markdown:
-{"strategy":"2-4 sentences: the mix plan for these units","units":[{"unit_id":"<the UNIT id>","targets":[{"brand_name":"exactly as in its candidate list","evidenced":true,"quality_rating":"green|amber|red","rationale":"2-3 sentences for the leasing team: why this brand, why this unit, citing the evidence"}]}]}
-Exactly five targets per unit.`;
+Record the plan with the save_target_plan tool: a 2-4 sentence strategy for these units, and exactly five targets per unit (brand_name exactly as in its candidate list; rationale 2-3 sentences for the leasing team — why this brand, why this unit, citing the evidence).`;
 
   const { callClaude } = await import("./chatbgp");
+  // The plan comes back as a tool call, so the API guarantees valid JSON —
+  // free-text JSON broke on stray quotes in rationales.
+  const tool = { type: "function", function: { name: "save_target_plan", description: "Save the target tenant plan for these units.", parameters: {
+    type: "object", required: ["strategy", "units"], properties: {
+      strategy: { type: "string" },
+      units: { type: "array", items: { type: "object", required: ["unit_id", "targets"], properties: {
+        unit_id: { type: "string" },
+        targets: { type: "array", items: { type: "object", required: ["brand_name", "evidenced", "quality_rating", "rationale"], properties: {
+          brand_name: { type: "string" }, evidenced: { type: "boolean" },
+          quality_rating: { type: "string", enum: ["green", "amber", "red"] }, rationale: { type: "string" },
+        } } },
+      } } },
+    } } } };
   const completion = await callClaude({
     model: "claude-fable-5", thinking: true, effort: "high", max_completion_tokens: 16000, feature: "target-tenants",
-    messages: [{ role: "system", content: system }, { role: "user", content: prompt }],
+    messages: [{ role: "system", content: system }, { role: "user", content: prompt }], tools: [tool],
   });
-  const text: string = completion.choices?.[0]?.message?.content || "";
-  const start = text.indexOf("{"), end = text.lastIndexOf("}");
-  if (start < 0 || end <= start) throw new Error("The target plan came back without JSON");
-  const parsed = JSON.parse(text.slice(start, end + 1));
+  const call = (completion.choices?.[0]?.message?.tool_calls || []).find((c: any) => c.function?.name === "save_target_plan");
+  let parsed: any;
+  if (call) parsed = JSON.parse(call.function.arguments);
+  else {
+    const text: string = completion.choices?.[0]?.message?.content || "";
+    const start = text.indexOf("{"), end = text.lastIndexOf("}");
+    if (start < 0 || end <= start) throw new Error("The target plan came back empty");
+    parsed = JSON.parse(text.slice(start, end + 1));
+  }
   const byUnit = new Map<string, PlannedTarget[]>();
   for (const u of parsed.units || []) {
     const unit = units.find(x => x.id === String(u.unit_id));
