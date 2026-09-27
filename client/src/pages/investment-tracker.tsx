@@ -1199,17 +1199,26 @@ export default function InvestmentTrackerPage() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: any }) => apiRequest("PATCH", `/api/investment-tracker/${id}`, data),
-    onSuccess: (_res, vars) => {
+    onSuccess: async (res: any, vars) => {
       queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
       // Status / fee / parties / agent edits server-side mirror to the
       // backing deal and the 4-way mirror — refresh the sibling boards'
       // caches so the Deals / Letting / Leasing tabs pick up the change
       // without a manual reload.
       invalidateDealCaches();
+      const body = await res?.json?.().catch(() => null);
       const movedTo = vars?.data?.boardType as BoardType | undefined;
       if (movedTo && BOARD_TYPES.includes(movedTo) && movedTo !== boardType) {
         setBoardType(movedTo);
         toast({ title: `Moved to ${movedTo}`, description: "The backing deal is now a " + (movedTo === "Sales" ? "Sale" : "Purchase") + "." });
+      } else if (body?.ownerChanged) {
+        toast({ title: "Completed", description: `${(body.boardType === "Sales" ? body.buyer : body.client) || "The buyer"} is now the owner on the property record. A comp has been added to Investment Comps.` });
+      } else if (body?.amlStarted) {
+        toast({ title: "Updated — AML started", description: "Checks are running on the deal's counterparties. Progress shows on the deal's Compliance panel." });
+      } else if (body?.amlWarning) {
+        toast({ title: "Updated — AML outstanding", description: body.amlWarning });
+      } else if (vars?.data?.status && body?.amlNote === "no counterparty linked yet") {
+        toast({ title: "Updated", description: "AML will start once the buyer / vendor is linked." });
       } else {
         toast({ title: "Updated" });
       }

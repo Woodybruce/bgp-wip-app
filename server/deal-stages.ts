@@ -270,7 +270,10 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
           [dealId]
         );
         const row = d.rows[0];
-        if (row && row.property_id && (row.rent_pa || row.pricing)) {
+        // Investment sales / purchases become an investment comp (on the
+        // status move), never a leasing comp.
+        const { boardForDealType } = await import("./investment-deal-sync");
+        if (row && row.property_id && (row.rent_pa || row.pricing) && !boardForDealType(row.deal_type)) {
           await pool.query(
             `INSERT INTO crm_comps (
                name, property_id, deal_id, deal_type, landlord, tenant,

@@ -91,8 +91,8 @@ async function maybeCopyDealToComps(deal: any): Promise<void> {
     // One comp per investment deal, linked to buyer / seller / property
     // (server/investment-comp-sync.ts) — this path used to add a second,
     // unlinked comp with the fee as the price.
-    const { promoteDealToInvestmentComp } = await import("./investment-comp-sync");
-    await promoteDealToInvestmentComp(deal.id);
+    const { completeInvestmentDeal } = await import("./investment-deal-sync");
+    await completeInvestmentDeal(deal.id);
   } else {
     const existing = await pool.query(`SELECT 1 FROM crm_comps WHERE deal_id = $1 LIMIT 1`, [deal.id]);
     if ((existing.rowCount ?? 0) > 0) return;
@@ -3935,21 +3935,26 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           console.warn(`[deals] status mirror failed for ${deal.id}:`, e?.message);
           mirrorWarning = `Status saved, but syncing it to the Letting Tracker / Leasing Schedule failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
         }
-        // Mirror to investment_tracker if a row is linked back to this deal.
-        // Investment Tracker shares the canonical 10-code enum with Deals, so
-        // this is a straight status copy — no bucket translation needed.
+        // HOTs / Solicitors starts the AML sweep on the counterparties.
         try {
-          const newCode = legacyToCode(deal.status);
-          if (newCode) {
-            await pool.query(
-              `UPDATE investment_tracker SET status = $1, updated_at = NOW()
-                WHERE deal_id = $2 AND COALESCE(status, '') <> $1`,
-              [newCode, deal.id],
-            );
-          }
+          const { startAmlOnStatus } = await import("./investment-deal-sync");
+          await startAmlOnStatus(deal.id, oldDeal?.status, deal.status, { id: userId || null, name: changedByName });
         } catch (e: any) {
-          console.warn(`[deals] investment-tracker status mirror failed for ${deal.id}:`, e?.message);
+          console.warn(`[deals] AML start failed for ${deal.id}:`, e?.message);
         }
+      }
+
+      // The deal and its Sales / Purchases board row are one record — every
+      // edit here (status, price, yield, parties, agents, dates) lands on the
+      // investment tracker too.
+      try {
+        const { syncTrackerFromDeal } = await import("./investment-deal-sync");
+        // Only fields that actually changed — a full-form save carries every
+        // field, and an older deal's blank price mustn't wipe the board's.
+        const norm = (v: any) => v instanceof Date ? v.toISOString() : Array.isArray(v) ? JSON.stringify(v) : String(v ?? "");
+        await syncTrackerFromDeal(deal.id, Object.keys(req.body).filter(k => norm((deal as any)[k]) !== norm((oldDeal as any)?.[k])));
+      } catch (e: any) {
+        console.warn(`[deals] investment-tracker sync failed for ${deal.id}:`, e?.message);
       }
 
       // Rent half-loop close: deal.rentPa now also writes back to the
@@ -4068,8 +4073,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (statusChanged && nowComplete) {
         if (isInvestmentTeam) {
           try {
-            const { promoteDealToInvestmentComp } = await import("./investment-comp-sync");
-            await promoteDealToInvestmentComp(deal.id);
+            const { completeInvestmentDeal } = await import("./investment-deal-sync");
+            await completeInvestmentDeal(deal.id, { actorId: userId || null, actorName: changedByName });
           } catch (compErr: any) {
             console.error("Investment Comps auto-promotion error:", compErr.message);
           }

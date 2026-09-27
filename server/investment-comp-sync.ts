@@ -136,4 +136,86 @@ export async function runInvestmentLinkBackfills(deps: { pool?: Querier } = {}) 
     await mark(COMPS, { deals: rows.length, comps: n, at: new Date().toISOString() });
     console.log(`[investment-links] built comps for ${n} of ${rows.length} exchanged / completed investment deals`);
   }
+
+  await moveInvestmentCompsOutOfLeasing({ pool: q });
+}
+
+// Investment trades belong on Investment Comps, never in the lease advisory
+// comps (Woody, 2026-09-27). A "comp" logged with an investment transaction
+// ("Investment Sale", "Sale", "Purchase"…) is routed there instead.
+export function isInvestmentTransaction(transactionType: string | null | undefined, dealType?: string | null): boolean {
+  const t = `${transactionType || ""}|${dealType || ""}`.toLowerCase();
+  if (/lease|letting|let\b|rent|tenant/.test(t)) return false;
+  return /invest|\bsale\b|\bpurchase\b|disposal|\bacquisition\b|\bsold\b/.test(t);
+}
+
+const money = (v: any) => { const n = Number(String(v ?? "").replace(/[£,\s]/g, "")); return isFinite(n) && n > 0 ? n : null; };
+
+// Leasing-comp fields → an investment comp row.
+export function investmentCompFromLeasing(a: Record<string, any>): Record<string, any> {
+  const addr = a.address && typeof a.address === "object" ? a.address : null;
+  const yieldPct = money(a.yieldPercent);
+  const rent = money(a.passingRentPa ?? a.passingRent ?? a.headlineRent);
+  const notes = [
+    a.tenant && `Tenant: ${a.tenant}`,
+    rent && `Passing rent £${rent.toLocaleString("en-GB")} pa`,
+    a.comments,
+  ].filter(Boolean).join(". ");
+  return {
+    status: "Sale",
+    transactionType: compTypeFor(a.useClass || a.compType || a.name) || null,
+    propertyName: a.name || addr?.formatted || "Investment comp",
+    address: (addr ? addr.line1 || addr.formatted || addr.street : a.address) || null,
+    city: a.areaLocation || addr?.city || null,
+    postalCode: a.postcode || addr?.postcode || null,
+    price: money(a.pricing),
+    capRate: yieldPct != null ? (yieldPct > 1 ? yieldPct / 100 : yieldPct) : null,
+    areaSqft: money(a.areaSqft),
+    seller: a.landlord || null,
+    sellerCompanyId: a.landlordCompanyId || null,
+    transactionDate: a.completionDate || null,
+    comments: notes || null,
+    propertyId: a.propertyId || null,
+    source: a.sourceEvidence || "ChatBGP",
+  };
+}
+
+// One-off: move investment trades already sitting in crm_comps across
+// (duplicates of the same address fold into one), then remove them from the
+// leasing comps. Flagged once per database.
+export async function moveInvestmentCompsOutOfLeasing(deps: { pool?: Querier } = {}) {
+  const q = deps.pool ?? (await import("./db")).pool;
+  const KEY = "migration:leasing_comps_investment_move_v1";
+  if ((await q.query(`SELECT 1 FROM system_settings WHERE key = $1`, [KEY])).rows.length) return;
+  const { rows } = await q.query(`SELECT id, name, address, postcode, area_location, tenant, landlord, landlord_company_id, use_class, comp_type,
+      pricing, yield_percent, area_sqft, headline_rent, passing_rent, passing_rent_pa, completion_date, comments, property_id,
+      source_evidence, transaction_type, deal_type, deal_id,
+      EXISTS (SELECT 1 FROM comp_files f WHERE f.comp_id = c.id) OR EXISTS (SELECT 1 FROM pla_matter_comps m WHERE m.comp_id = c.id) AS linked
+    FROM crm_comps c`);
+  // Rows with files or used on a lease advisory matter stay where they are.
+  const picked = rows.filter((r: any) => !r.deal_id && !r.linked && isInvestmentTransaction(r.transaction_type, r.deal_type));
+  const seen = new Map<string, string>();
+  let moved = 0;
+  for (const r of picked) {
+    const key = String(r.name || "").toLowerCase().replace(/\b[a-z]{1,2}\d[a-z\d]?\s*\d[a-z]{2}\b/g, "").replace(/[^a-z0-9]/g, "");
+    if (!seen.has(key)) {
+      const v = investmentCompFromLeasing({
+        name: r.name, address: r.address, postcode: r.postcode, areaLocation: r.area_location, tenant: r.tenant, landlord: r.landlord,
+        landlordCompanyId: r.landlord_company_id, useClass: r.use_class, compType: r.comp_type, pricing: r.pricing, yieldPercent: r.yield_percent,
+        areaSqft: r.area_sqft, headlineRent: r.headline_rent, passingRent: r.passing_rent, passingRentPa: r.passing_rent_pa,
+        completionDate: r.completion_date, comments: r.comments, propertyId: r.property_id, sourceEvidence: r.source_evidence,
+      });
+      const { rows: [ins] } = await q.query(`INSERT INTO investment_comps (id, status, transaction_type, property_name, address, city, postal_code, price, cap_rate,
+          area_sqft, seller, seller_company_id, transaction_date, comments, property_id, source)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id`,
+        [v.status, v.transactionType, v.propertyName, v.address, v.city, v.postalCode, v.price, v.capRate, v.areaSqft, v.seller, v.sellerCompanyId,
+          v.transactionDate, v.comments, v.propertyId, v.source]);
+      seen.set(key, ins.id);
+    }
+    await q.query(`DELETE FROM crm_comps WHERE id = $1`, [r.id]);
+    moved++;
+  }
+  await q.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING`,
+    [KEY, JSON.stringify({ moved, created: seen.size, ids: picked.map((r: any) => r.id), at: new Date().toISOString() })]);
+  console.log(`[investment-comps] moved ${moved} investment trades out of the leasing comps into ${seen.size} investment comps`);
 }

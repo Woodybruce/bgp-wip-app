@@ -139,7 +139,53 @@ export async function getBuyersForAsset(trackerId: string, deps: { pool?: Querie
   };
 }
 
+// Investment comps for a property page (Woody, 2026-09-27: investment comps
+// sit with the property, apart from the lease advisory comps). Trades on
+// this building, then comparable trades — same use first (class, then the
+// detail of the use), then the same London / national side, newest first.
+export async function getPropertyInvestmentComps(propertyId: string, deps: { pool?: Querier } = {}) {
+  const q = deps.pool ?? (await import("./db")).pool;
+  const [p] = await rows(q, `SELECT id, name, address::text AS address, postcode, asset_class FROM crm_properties WHERE id = $1`, [propertyId]);
+  if (!p) throw new Error("property not found");
+  const cols = `id, property_name, address, city, postal_code, transaction_type, subtype, status, price, cap_rate, area_sqft, price_psf,
+    buyer, buyer_company_id, seller, seller_company_id, transaction_date, property_id, rca_deal_id, source`;
+  const here = await rows(q, `SELECT ${cols} FROM investment_comps
+    WHERE property_id = $1 OR (property_id IS NULL AND lower(property_name) = lower($2))
+    ORDER BY transaction_date DESC NULLS LAST LIMIT 20`, [propertyId, p.name || ""]);
+  const assetClass = Array.isArray(p.asset_class) ? p.asset_class.join(" ") : String(p.asset_class || "");
+  const profile = assetProfile({ assetType: assetClass, name: p.name, address: `${p.address || ""} ${p.postcode || ""}` });
+  let similar: any[] = [];
+  if (profile.classes.length) {
+    const candidates = await rows(q, `SELECT ${cols} FROM investment_comps
+      WHERE (property_id IS NULL OR property_id <> $1)
+        AND (transaction_date IS NULL OR transaction_date !~ '^\\d{4}-\\d{2}-\\d{2}' OR TO_DATE(substr(transaction_date, 1, 10), 'YYYY-MM-DD') >= NOW() - INTERVAL '5 years')`, [propertyId]);
+    const hereIds = new Set(here.map((c: any) => c.id));
+    similar = candidates.filter((c: any) => !hereIds.has(c.id)).map((c: any) => {
+      const text = `${c.transaction_type || ""} ${c.subtype || ""} ${c.property_name || ""}`;
+      if (!assetClassesIn(text).some(x => profile.classes.includes(x))) return null;
+      const uses = useDetailsIn(`${text} ${c.subtype === "Centers" ? "shopping centre" : ""}`).filter(u => profile.uses.includes(u));
+      const sameSide = assetIsLondon(`${c.city || ""} ${c.address || ""} ${c.postal_code || ""}`) === profile.london;
+      const reasons = [profile.classes[0], ...uses, sameSide ? (profile.london ? "London" : "outside London") : null].filter(Boolean);
+      return { ...c, score: 4 + uses.length * 2 + (sameSide ? 1 : 0), reasons };
+    }).filter(Boolean)
+      .sort((a: any, b: any) => b.score - a.score || String(b.transaction_date || "").localeCompare(String(a.transaction_date || "")))
+      .slice(0, 12);
+  }
+  return { property: { id: p.id, name: p.name, classes: profile.classes, uses: profile.uses, london: profile.london }, here, similar };
+}
+
 const router = Router();
+
+router.get("/api/properties/:id/investment-comps", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { resolveCompanyScope } = await import("./company-scope");
+    if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Available in the staff view." });
+    res.json(await getPropertyInvestmentComps(String(req.params.id)));
+  } catch (e: any) {
+    if (e?.message === "property not found") return res.status(404).json({ error: "Property not found" });
+    res.status(500).json({ error: e.message });
+  }
+});
 
 router.get("/api/investment-tracker/:id/buyers", requireAuth, async (req: Request, res: Response) => {
   try {

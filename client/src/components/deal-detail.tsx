@@ -318,6 +318,10 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   // keep its own name — two unit-less deals at the same property would
   // otherwise be indistinguishable everywhere the title shows.
   const isInvestmentDeal = deal?.dealType === "Sale" || deal?.dealType === "Purchase";
+  // The deal and its Sales / Purchases board row are one record — edits here
+  // flow to the board (server/investment-deal-sync.ts); link across.
+  const { data: ddTracker = [] } = useQuery<any[]>({ queryKey: ["/api/investment-tracker"], enabled: isInvestmentDeal && !isClientDeal });
+  const trackerRow = (Array.isArray(ddTracker) ? ddTracker : []).find((t: any) => t.dealId === id);
   const dealDisplayName = (isInvestmentDeal
     ? (linkedProperty?.name || deal?.name)
     : (deal?.name || linkedProperty?.name)) || "Untitled Deal";
@@ -761,6 +765,11 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                     <span className="inline-flex items-center gap-1 text-xs" title="Target date" data-testid="deal-target-date">
                       <CalendarIcon className="w-3.5 h-3.5" /> Target: {formatDate(deal.targetDate)}
                     </span>
+                  )}
+                  {trackerRow && (
+                    <Link href="/deals/investment" className="text-xs hover:underline hover:text-foreground" data-testid="link-investment-board">
+                      On the {trackerRow.boardType === "Sales" ? "Sales" : "Purchases"} board →
+                    </Link>
                   )}
                   {headingIsUnit && (
                     <Link href={`/deals/letting${linkedProperty ? `?propertyId=${linkedProperty.id}` : ""}`} className="text-xs hover:underline hover:text-foreground" data-testid="link-back-to-tracker">

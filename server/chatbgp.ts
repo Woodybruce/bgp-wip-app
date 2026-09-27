@@ -3770,7 +3770,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "create_comp",
-      description: "Record a leasing transaction as a comp (comparable). Use for rent reviews, open market lettings, lease renewals, assignments. The core reference for lease consultancy evidence. Populate as many fields as possible — especially Zone A rate, transaction type, use class, area, and passing rent for rent reviews.",
+      description: "Record a leasing transaction as a comp (comparable). Use for rent reviews, open market lettings, lease renewals, assignments. The core reference for lease consultancy evidence. Populate as many fields as possible — especially Zone A rate, transaction type, use class, area, and passing rent for rent reviews. Investment sales / purchases are NOT leasing comps — use create_investment_comp for those.",
       parameters: {
         type: "object",
         properties: {
@@ -6598,6 +6598,7 @@ export async function executeCrmToolRaw(
       if (v !== undefined && v !== null) cleanUpdates[k] = v;
     }
     await db.update(crmDeals).set(cleanUpdates).where(eq(crmDeals.id, id));
+    try { const { syncTrackerFromDeal } = await import("./investment-deal-sync"); await syncTrackerFromDeal(id, Object.keys(cleanUpdates)); } catch (e: any) { console.warn("[chatbgp] tracker sync failed:", e?.message); }
     return { data: { success: true, action: "updated", entity: "deal", id, fields: Object.keys(cleanUpdates) }, action: { type: "crm_updated", entityType: "deal", id } };
   }
 
@@ -7106,6 +7107,13 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "create_comp") {
+    // Investment trades go to Investment Comps, not the lease advisory comps.
+    const { isInvestmentTransaction, investmentCompFromLeasing } = await import("./investment-comp-sync");
+    if (isInvestmentTransaction(fnArgs.transactionType, fnArgs.dealType)) {
+      const { investmentComps } = await import("@shared/schema");
+      const created = await db.insert(investmentComps).values(investmentCompFromLeasing(fnArgs) as any).returning();
+      return { data: { success: true, action: "created", entity: "investment comp", id: created[0].id, name: created[0].propertyName, note: "Investment trade — filed on Investment Comps, not the leasing comps" }, action: { type: "crm_created", entityType: "investment_comp", id: created[0].id } };
+    }
     const { crmComps } = await import("@shared/schema");
     const created = await db.insert(crmComps).values({
       name: fnArgs.name, tenant: fnArgs.tenant || null, landlord: fnArgs.landlord || null,
@@ -12392,6 +12400,7 @@ export async function handleCrmToolCall(
       if (v !== undefined && v !== null) cleanUpdates[k] = v;
     }
     await db.update(crmDeals).set(cleanUpdates).where(eq(crmDeals.id, id));
+    try { const { syncTrackerFromDeal } = await import("./investment-deal-sync"); await syncTrackerFromDeal(id, Object.keys(cleanUpdates)); } catch (e: any) { console.warn("[chatbgp] tracker sync failed:", e?.message); }
     const reply = await summaryHelper({ success: true, action: "updated", entity: "deal", id, fields: Object.keys(cleanUpdates) });
     return { handled: true, response: { reply: reply || `Deal updated.`, action: { type: "crm_updated", entityType: "deal", id } } };
   }
@@ -12777,6 +12786,13 @@ export async function handleCrmToolCall(
   }
 
   if (fnName === "create_comp") {
+    // Investment trades go to Investment Comps, not the lease advisory comps.
+    const { isInvestmentTransaction, investmentCompFromLeasing } = await import("./investment-comp-sync");
+    if (isInvestmentTransaction(fnArgs.transactionType, fnArgs.dealType)) {
+      const { investmentComps } = await import("@shared/schema");
+      const created = await db.insert(investmentComps).values(investmentCompFromLeasing(fnArgs) as any).returning();
+      return { handled: true, response: { reply: `Investment comp "${created[0].propertyName}" recorded on Investment Comps.`, action: { type: "crm_created", entityType: "investment_comp", id: created[0].id } } };
+    }
     const { crmComps } = await import("@shared/schema");
     const created = await db.insert(crmComps).values({
       name: fnArgs.name, tenant: fnArgs.tenant || null, landlord: fnArgs.landlord || null,

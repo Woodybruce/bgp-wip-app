@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import type { InvestmentComp, CrmProperty, CrmCompany } from "@shared/schema";
 import jsPDF from "jspdf";
+import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
 
 const STATUS_COLORS: Record<string, string> = {
   "Sale": "bg-green-600 text-white",
@@ -478,6 +479,7 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
   const [activeRegion, setActiveRegion] = useState("All Regions");
   const [createOpen, setCreateOpen] = useState(false);
   const [pdfExporting, setPdfExporting] = useState(false);
+  const [templateOpen, setTemplateOpen] = useState(false);
 
   const hasActiveFilters = filterStatus || filterType || filterSubtype || filterCity || filterMarket || filterProperty || filterBuyer || filterSeller || activeRegion !== "All Regions";
 
@@ -1095,6 +1097,10 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
               PDF
             </Button>
 
+            <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={() => setTemplateOpen(true)} data-testid="button-pdf-template">
+              PDF template
+            </Button>
+
             <Popover>
               <PopoverTrigger asChild>
                 <Button variant="outline" size="sm" className="gap-1.5 h-8" data-testid="button-columns">
@@ -1464,6 +1470,13 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
               {createMutation.isPending ? "Creating..." : "Create"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={templateOpen} onOpenChange={setTemplateOpen}>
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Investment comp PDF template</DialogTitle></DialogHeader>
+          <CompPdfTemplateEditor scope="investment" />
         </DialogContent>
       </Dialog>
     </div>

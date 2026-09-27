@@ -387,6 +387,7 @@ export function PropertyDetail({ id }: { id: string }) {
     contacts: true,
     deals: true,
     availableUnits: true,
+    investmentComps: true,
     landRegistry: false,
     images: false,
     compliance: true,
@@ -1210,6 +1211,20 @@ export function PropertyDetail({ id }: { id: string }) {
               </ReferenceSection>
               </PropertySection>
 
+              {!isClientViewer && (
+              <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
+              <ReferenceSection
+                title="Investment comps"
+                icon={TrendingUp}
+                open={sidebarSections.investmentComps}
+                onToggle={() => toggleSection("investmentComps")}
+                testId="toggle-investment-comps-section"
+              >
+                <PropertyInvestmentCompsPanel propertyId={property.id} />
+              </ReferenceSection>
+              </PropertySection>
+              )}
+
               {/* Land Registry retired from the property page entirely
                   (Woody, 2026-08-03) — title data lives in Property
                   Intelligence when needed. */}
@@ -1233,6 +1248,49 @@ export function PropertyDetail({ id }: { id: string }) {
         </div>
 
       </div>
+    </div>
+  );
+}
+
+// ── Investment comps for the property sidebar ───────────────────────────────
+// Investment trades live with the property, apart from the lease advisory
+// comps (Woody, 2026-09-27): trades on this building, then comparable trades
+// of the same use. Staff only.
+function PropertyInvestmentCompsPanel({ propertyId }: { propertyId: string }) {
+  const { data, isLoading } = useQuery<{ property: any; here: any[]; similar: any[] }>({ queryKey: ["/api/properties", propertyId, "investment-comps"] });
+  const money = (v: any) => { const n = Number(v); return n ? (n >= 1e6 ? `£${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}m` : `£${Math.round(n / 1e3)}k`) : null; };
+  const pct = (v: any) => { const n = Number(v); return n ? `${(n < 1 ? n * 100 : n).toFixed(2)}%` : null; };
+  const when = (d: any) => { if (!d) return null; const t = new Date(d); return isNaN(+t) ? String(d) : t.toLocaleDateString("en-GB", { month: "short", year: "numeric" }); };
+  const party = (name: string | null, id: string | null) => !name ? null : id
+    ? <Link href={`/companies/${id}`} className="hover:underline">{name}</Link> : <span>{name}</span>;
+  const row = (c: any, extra?: string) => (
+    <div key={c.id} className="py-1.5 border-b last:border-0 text-xs" data-testid={`property-investment-comp-${c.id}`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium truncate">{c.property_name || "Trade"}</span>
+        <span className="tabular-nums shrink-0">{[money(c.price), pct(c.cap_rate)].filter(Boolean).join(" · ")}</span>
+      </div>
+      <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-1">
+        <span>{[c.status === "Sale - Pending" ? "Exchanged" : "Sold", when(c.transaction_date), c.city].filter(Boolean).join(" · ")}</span>
+        {(c.seller || c.buyer) && <span>· {party(c.seller, c.seller_company_id) || "?"} → {party(c.buyer, c.buyer_company_id) || "?"}</span>}
+      </div>
+      {extra && <div className="text-[10px] text-muted-foreground">{extra}</div>}
+    </div>
+  );
+  if (isLoading) return <div className="text-xs text-muted-foreground py-2">Loading…</div>;
+  const here = data?.here || [], similar = data?.similar || [];
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">This building</div>
+        {here.length ? here.map(c => row(c)) : <div className="text-xs text-muted-foreground">No recorded trades.</div>}
+      </div>
+      {similar.length > 0 && (
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Comparable trades</div>
+          {similar.map(c => row(c, (c.reasons || []).join(" · ")))}
+        </div>
+      )}
+      <Link href="/investment-comps" className="text-[11px] text-primary hover:underline">All investment comps →</Link>
     </div>
   );
 }

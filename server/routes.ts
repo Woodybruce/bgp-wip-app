@@ -7897,6 +7897,30 @@ These terms are indicative only and do not constitute a binding agreement.`;
         if (allowedFields.has(key)) updates[key] = value;
       }
 
+      const [before] = await db.select({ status: investmentTracker.status, dealId: investmentTracker.dealId }).from(investmentTracker).where(eq(investmentTracker.id, req.params.id as string));
+      const statusMoved = "status" in updates && !!before && legacyToCode(before.status) !== legacyToCode(updates.status as string);
+      // Tracker status moves aren't gated (Woody, 2026-09-27) — incomplete
+      // CDD is recorded on the deal and queued for the MLRO, the same as the
+      // deals board. Only a counterparty the MLRO rejected stops a move to
+      // Solicitors or beyond.
+      let amlWarning: string | null = null;
+      const actorId = (req as any).session?.userId || (req as any).tokenUserId || null;
+      if (statusMoved && before?.dealId && ["SOL", "EXC", "COM", "INV"].includes(legacyToCode(updates.status as string) || "")) {
+        const dealRow = await pool.query(`SELECT landlord_id, tenant_id, vendor_id, purchaser_id, aml_check_completed FROM crm_deals WHERE id = $1`, [before.dealId]);
+        const dr = dealRow.rows[0];
+        if (dr && dr.aml_check_completed !== "YES") {
+          const { checkCounterpartyAml, amlGateOutcome, recordAmlGateWarning } = await import("./deal-gates");
+          const parties = { landlordId: dr.landlord_id, tenantId: dr.tenant_id, vendorId: dr.vendor_id, purchaserId: dr.purchaser_id };
+          const amlResult = await checkCounterpartyAml(parties);
+          const outcome = amlGateOutcome(amlResult);
+          if (outcome.block) return res.status(409).json({ message: outcome.block, code: "AML_GATE_FAILED", notReady: amlResult.notReady });
+          if (outcome.warning) {
+            amlWarning = outcome.warning;
+            await recordAmlGateWarning(String(before.dealId), parties, amlResult, { targetStatus: String(updates.status), actorId });
+          }
+        }
+      }
+
       const row = await db.transaction(async (tx) => {
         const [updated] = await tx.update(investmentTracker).set(updates).where(eq(investmentTracker.id, req.params.id as string)).returning();
         if (!updated) return null;
@@ -7963,7 +7987,16 @@ These terms are indicative only and do not constitute a binding agreement.`;
         // Buyer, vendor or vendor agent changed → re-derive the parties and
         // make sure it's an Investment team deal.
         if (["boardType", "clientId", "vendorId", "vendorAgentId", "buyerId"].some(k => k in updates)) {
-          Object.assign(dealPatch, await trackerDealParties(row));
+          // Only the parties this edit touched — re-deriving the rest would
+          // wipe a vendor agent or buyer set on the deal page.
+          const parties = await trackerDealParties(row);
+          const touches: Record<string, string[]> = {
+            vendorAgentId: ["vendorAgentId"], vendorAgentContactId: ["vendorAgentId"],
+            purchaserId: ["buyerId", "clientId"], vendorId: ["clientId", "vendorId"], landlordId: ["clientId"],
+          };
+          for (const [key, value] of Object.entries(parties)) {
+            if ("boardType" in updates || (touches[key] || []).some(t => t in updates)) dealPatch[key] = value;
+          }
           const current = await pool.query(`SELECT team FROM crm_deals WHERE id = $1`, [row.dealId]).catch(() => ({ rows: [] as any[] }));
           const team: string[] = current.rows[0]?.team || [];
           if (!team.includes("Investment")) dealPatch.team = [...team, "Investment"];
@@ -7979,10 +8012,22 @@ These terms are indicative only and do not constitute a binding agreement.`;
         // promotion never fires here since we call storage directly).
         if ("status" in updates && ["EXC", "COM", "INV"].includes(legacyToCode(updates.status as string) || "")) {
           try {
-            const { promoteDealToInvestmentComp } = await import("./investment-comp-sync");
-            await promoteDealToInvestmentComp(row.dealId);
+            const { completeInvestmentDeal } = await import("./investment-deal-sync");
+            const done = await completeInvestmentDeal(row.dealId, { actorId });
+            (row as any).ownerChanged = done.transferred;
           } catch (e: any) {
             console.warn(`[investment-tracker PATCH] comp promotion failed for ${row.dealId}:`, e?.message);
+          }
+        }
+        // HOTs / Solicitors starts the AML sweep on the counterparties.
+        if (statusMoved) {
+          try {
+            const { startAmlOnStatus } = await import("./investment-deal-sync");
+            const aml = await startAmlOnStatus(row.dealId, before?.status, updates.status as string, { id: actorId });
+            (row as any).amlStarted = aml.started;
+            (row as any).amlNote = aml.started ? null : aml.reason;
+          } catch (e: any) {
+            console.warn(`[investment-tracker PATCH] AML start failed for ${row.dealId}:`, e?.message);
           }
         }
         // We bypass /api/crm/deals/:id (calling storage directly), so the
@@ -7999,7 +8044,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
         }
       }
 
-      res.json(row);
+      res.json({ ...row, amlWarning });
     } catch (e: any) {
       res.status(400).json({ message: e.message });
     }
