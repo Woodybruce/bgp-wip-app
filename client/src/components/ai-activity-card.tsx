@@ -178,7 +178,15 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, cachedO
     }
   };
 
-  const lastTouchPill = data?.latestActivityDate ? <LastTouchBadge iso={data.latestActivityDate} /> : null;
+  const touch = pickTouchDates(data?.emailHits, data?.meetingHits);
+  // No dated hits (very old caches) → fall back to the stored date.
+  const lastIso = touch.last ?? (touch.next ? null : data?.latestActivityDate ?? null);
+  const lastTouchPill = lastIso || touch.next ? (
+    <>
+      {lastIso && <LastTouchBadge iso={lastIso} />}
+      {touch.next && <LastTouchBadge iso={touch.next} />}
+    </>
+  ) : null;
   const hasContent = !!data?.markdown?.trim();
 
   if (forbidden) return null;
@@ -271,6 +279,28 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, cachedO
   );
 }
 
+/**
+ * Last touch = the latest PAST cited date; next touch = the SOONEST upcoming
+ * one. Older caches stored the latest date overall, so a contact whose
+ * write-up said "7 Oct, next upcoming session" badged "Next in 23d" off the
+ * last session in the series (Woody, 2026-09-27).
+ */
+export function pickTouchDates(emailHits: EmailRef[] = [], meetingHits: MeetingRef[] = []): { last: string | null; next: string | null } {
+  const now = Date.now();
+  let last: number | null = null;
+  let next: number | null = null;
+  for (const d of [...emailHits.map((e) => e.date), ...meetingHits.map((m) => m.start)]) {
+    const t = d ? Date.parse(d) : NaN;
+    if (isNaN(t)) continue;
+    if (t <= now) { if (last === null || t > last) last = t; }
+    else if (next === null || t < next) next = t;
+  }
+  return {
+    last: last !== null ? new Date(last).toISOString() : null,
+    next: next !== null ? new Date(next).toISOString() : null,
+  };
+}
+
 function LastTouchBadge({ iso }: { iso: string }) {
   const t = Date.parse(iso);
   if (isNaN(t)) return null;
@@ -278,9 +308,9 @@ function LastTouchBadge({ iso }: { iso: string }) {
   // Older cached write-ups took the latest date across cited items, so an
   // upcoming meeting showed as "Last touch -23d ago". A future date is the
   // next touch, not the last (Woody, 2026-09-27).
-  if (days < 0) {
-    const ahead = -days;
-    const when = ahead === 1 ? "tomorrow" : ahead < 30 ? `in ${ahead}d` : new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  if (t > Date.now()) {
+    const ahead = Math.max(0, -days);
+    const when = ahead === 0 ? "today" : ahead === 1 ? "tomorrow" : ahead < 30 ? `in ${ahead}d` : new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
     return <Badge variant="outline" className="text-[10px] font-medium">Next {when}</Badge>;
   }
   const cls = days <= 7 ? "bg-emerald-50 text-emerald-700 border-emerald-200"
@@ -406,7 +436,9 @@ function ActivityMarkdown({
           </button>
         );
       } else if (m[5]) {
-        out.push(<strong key={`b-${keyCounter++}`}>{m[6]}</strong>);
+        // Parse inside bold too — "**[E1]** 16 Sep …" printed a raw "[E1]"
+        // instead of a chip on South Molton (Woody, 2026-09-27).
+        out.push(<strong key={`b-${keyCounter++}`}>{parseInline(m[6])}</strong>);
       } else if (m[7]) {
         out.push(<code key={`c-${keyCounter++}`} className="text-[10px] bg-muted px-1 py-px rounded">{m[8]}</code>);
       }

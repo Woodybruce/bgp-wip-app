@@ -86,7 +86,7 @@ import {
 } from "@/pages/deals";
 import { PropertyFoldersPanel } from "@/pages/properties";
 import { areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
-import { AIActivityCard } from "@/components/ai-activity-card";
+import { AIActivityCard, pickTouchDates } from "@/components/ai-activity-card";
 import { DealAmlStatusCard, useDealAmlStatus } from "@/components/deal-aml-status";
 
 // Collapsible card pattern reused across the deal page for heavy panels.
@@ -219,6 +219,18 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   // counterparties, the KYC panel drops its own party rows — the page was
   // listing each counterparty twice (Woody, 2026-09-27).
   const { data: amlStatus } = useDealAmlStatus(id, !isClientDeal);
+  // Older activity caches stamped the deal's last_interaction with the
+  // latest cited date, upcoming meetings included — "Last Interaction 30 Dec"
+  // on South Molton. When the stored date is in the future, re-derive from
+  // the cached hits (read-only: cachedOnly never starts a curation)
+  // (Woody, 2026-09-27).
+  const storedLastTouch = deal?.lastInteraction ? Date.parse(deal.lastInteraction) : NaN;
+  const { data: ddActivity } = useQuery<{ emailHits?: any[]; meetingHits?: any[] }>({
+    queryKey: [`/api/activity/deal/${encodeURIComponent(id)}?cachedOnly=1`],
+    enabled: !isClientDeal && !isNaN(storedLastTouch) && storedLastTouch > Date.now(),
+    refetchInterval: false,
+    retry: false,
+  });
 
   const { data: properties = [] } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
@@ -560,6 +572,19 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const linkedPurchaserName = deal.purchaserId ? companies.find(c => c.id === deal.purchaserId)?.name : null;
   const linkedBillingName = (deal as any).xeroContactName || null;
 
+  // Last = latest past date; a future stored date only ever shows as Next.
+  let lastTouchValue: string | null = null;
+  let nextTouchValue: string | null = null;
+  if (deal.lastInteraction) {
+    if (isNaN(storedLastTouch)) lastTouchValue = deal.lastInteraction;
+    else if (storedLastTouch <= Date.now()) lastTouchValue = formatDate(deal.lastInteraction);
+    else {
+      const touch = pickTouchDates(ddActivity?.emailHits, ddActivity?.meetingHits);
+      if (touch.last) lastTouchValue = formatDate(touch.last);
+      if (touch.next || !touch.last) nextTouchValue = formatDate(touch.next || deal.lastInteraction);
+    }
+  }
+
   // Deal Type + Status deliberately omitted here — they're already in the
   // header (the orange "Deal · {type}" eyebrow + the status badge), so
   // repeating them in this card was pure duplication.
@@ -571,7 +596,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     { label: "Exchanged", value: deal.exchangedAt ? formatDate(deal.exchangedAt) : null },
     { label: "Completed", value: deal.completedAt ? formatDate(deal.completedAt) : null },
     { label: "Invoiced", value: deal.invoicedAt ? formatDate(deal.invoicedAt) : null },
-    { label: "Last Interaction", value: deal.lastInteraction ? (isNaN(Date.parse(deal.lastInteraction)) ? deal.lastInteraction : formatDate(deal.lastInteraction)) : null },
+    { label: "Last Interaction", value: lastTouchValue },
+    { label: "Next Interaction", value: nextTouchValue },
   ];
 
   // Files / linked records / comments / history. Rendered in the right

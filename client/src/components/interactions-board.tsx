@@ -114,6 +114,9 @@ function cleanPreview(p: string | null | undefined): string {
     .replace(/Join (the|this) meeting( now)?|Join on your computer[^.]*|Click here to join the meeting/gi, " ")
     .replace(/Meeting ID:\s*[\d ]+/gi, " ")
     .replace(/Passcode:\s*\S+/gi, " ")
+    // Room-booking asides ("@Catering – refs x 16 please") are for
+    // facilities, not the reader.
+    .replace(/@\s*(?:catering|reception|facilities|front desk)\b[^.\n]*?(?:\b(?:please|pls|thanks|thank you)\b[.!]?|$)/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -220,7 +223,26 @@ export function InteractionsBoard({ scope, contextId }: Props) {
         seriesHead.set(sk, r);
       }
     }
-    return all.filter((r) => !absorbed.has(r));
+    // Past occurrences of the same series collapse too — Aaron Addo's board
+    // listed the fortnightly agents meeting four times (4d, 2w, 1mo, 1mo
+    // ago). Keep the most recent and note the earlier dates
+    // (Woody, 2026-09-27).
+    const pastHead = new Map<string, InteractionRow & { bgpUsers: string[]; earlierDates?: string[] }>();
+    const pastNewestFirst = all
+      .filter((r) => r.type === "meeting" && new Date(r.interactionDate).getTime() <= now && (r.subject || "").trim())
+      .sort((a, b) => new Date(b.interactionDate).getTime() - new Date(a.interactionDate).getTime());
+    for (const r of pastNewestFirst) {
+      const sk = (r.subject || "").trim().toLowerCase();
+      const head = pastHead.get(sk);
+      if (head) {
+        (head.earlierDates ||= []).push(r.interactionDate);
+        for (const u of r.bgpUsers) if (!head.bgpUsers.includes(u)) head.bgpUsers.push(u);
+        absorbed.add(r);
+      } else {
+        pastHead.set(sk, r);
+      }
+    }
+    return all.filter((r) => !absorbed.has(r)) as Array<InteractionRow & { bgpUsers: string[]; laterDates?: string[]; earlierDates?: string[] }>;
   }, [data]);
   const emailCount = interactions.filter(i => i.type === "email" || i.type === "call" || i.type === "note").length;
   const meetingCount = interactions.filter(i => i.type === "meeting").length;
@@ -361,7 +383,21 @@ export function InteractionsBoard({ scope, contextId }: Props) {
                           · then {row.laterDates.slice(0, 2).map((d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" })).join(", ")}{row.laterDates.length > 2 ? ` +${row.laterDates.length - 2}` : ""}
                         </span>
                       )}
-                      {row.direction && <span className="opacity-70">· {row.direction}</span>}
+                      {row.earlierDates && row.earlierDates.length > 0 && (
+                        <span className="shrink-0 opacity-70" title={row.earlierDates.map((d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })).join(", ")}>
+                          · also {row.earlierDates.slice(0, 2).map((d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" })).join(", ")}{row.earlierDates.length > 2 ? ` +${row.earlierDates.length - 2}` : ""}
+                        </span>
+                      )}
+                      {/* Meeting direction is stamped at sync time, so last
+                          week's session still said "upcoming" — derive it
+                          from the date instead (Woody, 2026-09-27). */}
+                      {(() => {
+                        const future = new Date(row.interactionDate).getTime() > Date.now();
+                        const dir = isMeeting || /^(upcoming|past)$/i.test(row.direction || "")
+                          ? (future ? "upcoming" : null)
+                          : row.direction;
+                        return dir ? <span className="opacity-70">· {dir}</span> : null;
+                      })()}
                       {canOpen && <ExternalLink className="w-2.5 h-2.5 ml-auto opacity-0 group-hover:opacity-60" />}
                     </div>
                     {/* Line 2: subject */}

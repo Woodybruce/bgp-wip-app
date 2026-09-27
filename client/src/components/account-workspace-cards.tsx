@@ -141,7 +141,22 @@ function actionLink(a: WorkspaceNextAction): string {
 export function AccountNextActionsCard({ companyId }: { companyId: string }) {
   const { data } = useAccountWorkspace(companyId);
   if (!data || data.nextActions.length === 0) return null;
-  const actions = data.nextActions.slice(0, 8);
+  // Landsec listed "Confirm viewing details — brand not set · SU43/SU44 One
+  // New Change" five times. Group identical tasks into one row with a count
+  // and the earliest due date; past-due ones read as overdue
+  // (Woody, 2026-09-27).
+  const dueMs = (a: WorkspaceNextAction) => (a.dueDate ? Date.parse(a.dueDate) : NaN);
+  const groups = new Map<string, { a: WorkspaceNextAction; count: number }>();
+  for (const a of data.nextActions) {
+    const key = `${a.title.trim().toLowerCase()}|${(a.linkLabel || "").trim().toLowerCase()}`;
+    const g = groups.get(key);
+    if (!g) { groups.set(key, { a, count: 1 }); continue; }
+    g.count++;
+    const t = dueMs(a);
+    if (!isNaN(t) && (isNaN(dueMs(g.a)) || t < dueMs(g.a))) g.a = a;
+  }
+  const actions = Array.from(groups.values()).slice(0, 8);
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
   return (
     <Card data-testid={`account-next-actions-${companyId}`}>
       <CardHeader className="p-3 pb-2">
@@ -151,12 +166,22 @@ export function AccountNextActionsCard({ companyId }: { companyId: string }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-1.5">
-        {actions.map(a => (
+        {actions.map(({ a, count }) => {
+          const overdue = !isNaN(dueMs(a)) && dueMs(a) < todayStart.getTime();
+          const due = a.dueDate ? new Date(a.dueDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : null;
+          return (
           <div key={a.taskId} className="flex items-center justify-between gap-2" data-testid={`account-next-action-${a.taskId}`}>
             <div className="min-w-0">
-              <span className="block text-xs truncate">{a.title}</span>
+              <span className="flex items-center gap-1 text-xs min-w-0">
+                <span className="truncate">{a.title}</span>
+                {count > 1 && <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">×{count}</span>}
+              </span>
               <span className="block text-[10px] text-muted-foreground truncate">
-                {[a.ownerName, a.dueDate ? `due ${new Date(a.dueDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : null].filter(Boolean).join(" · ")}
+                {a.ownerName}
+                {a.ownerName && due && " · "}
+                {due && (overdue
+                  ? <span className="text-destructive font-medium">overdue · due {due}</span>
+                  : `due ${due}`)}
               </span>
             </div>
             {a.linkLabel && (
@@ -165,7 +190,8 @@ export function AccountNextActionsCard({ companyId }: { companyId: string }) {
               </Link>
             )}
           </div>
-        ))}
+          );
+        })}
         <Link href="/tasks" className="block text-[11px] text-primary hover:underline pt-0.5">View all tasks</Link>
       </CardContent>
     </Card>

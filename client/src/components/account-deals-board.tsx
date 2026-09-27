@@ -103,6 +103,27 @@ function DealBadges({ d }: { d: AccountDealRow }) {
   );
 }
 
+// Rows read "South Molton - unit 3 / Unit 3 / South Molton - unit 3" and
+// "Newsons Yard / Newsons Yard Kiosk / Newsons Yard" — the unit and deal
+// name often just restate the property. Show only what adds something
+// (Woody, 2026-09-27).
+const squash = (s: string | null | undefined) => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+function rowLabels(d: AccountDealRow): { unit: string | null; dealRepeats: boolean } {
+  const prop = squash(d.propertyName);
+  let unit: string | null = d.unitName?.trim() || null;
+  if (unit && prop) {
+    if (prop.includes(squash(unit))) unit = null;
+    else if (squash(unit).startsWith(prop)) {
+      // "Newsons Yard Kiosk" under "Newsons Yard" → "Kiosk"
+      const rest = unit.slice((d.propertyName || "").trim().length).replace(/^[\s,–-]+/, "");
+      unit = squash(rest) ? rest : null;
+    }
+  }
+  const name = squash(d.name);
+  const dealRepeats = !!name && (name === prop || name === squash(d.unitName) || name === squash(`${d.propertyName} ${d.unitName}`));
+  return { unit, dealRepeats };
+}
+
 function NextActionCell({ d }: { d: AccountDealRow }) {
   if (!d.nextAction) return <span className="text-muted-foreground">—</span>;
   const na = d.nextAction;
@@ -234,14 +255,19 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.deals.map(d => (
+                  {data.deals.map(d => {
+                    const labels = rowLabels(d);
+                    // A repeating deal name gives way to the unit (or a plain
+                    // "Open deal") so the deal stays one click away.
+                    const dealLink = labels.dealRepeats && d.propertyId ? (labels.unit || "Open deal") : d.name;
+                    return (
                     <tr key={d.dealId} className="border-b border-border/20 last:border-0 hover:bg-muted/40" data-testid={`account-deal-row-${d.dealId}`}>
                       <td className="py-1.5 pr-2 max-w-[12rem]">
                         {d.propertyId ? (
                           <Link href={`/properties/${d.propertyId}`} className="font-medium hover:underline block truncate">{d.propertyName || "—"}</Link>
                         ) : <span className="text-muted-foreground">—</span>}
-                        {d.unitName && <span className="block text-[10px] text-muted-foreground truncate">{d.unitName}</span>}
-                        <Link href={`/deals?id=${d.dealId}`} className="block text-[10px] text-primary hover:underline truncate">{d.name}</Link>
+                        {labels.unit && dealLink !== labels.unit && <span className="block text-[10px] text-muted-foreground truncate">{labels.unit}</span>}
+                        <Link href={`/deals?id=${d.dealId}`} className="block text-[10px] text-primary hover:underline truncate">{dealLink}</Link>
                       </td>
                       <td className="py-1.5 pr-2 max-w-[10rem] truncate">{d.counterparty || "—"}</td>
                       <td className="py-1.5 pr-2"><DealBadges d={d} /></td>
@@ -255,14 +281,21 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                         </td>
                       )}
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
 
             {/* Phone: stacked cards, no wide table */}
             <div className="md:hidden space-y-1.5">
-              {data.deals.map(d => (
+              {data.deals.map(d => {
+                const labels = rowLabels(d);
+                // The card title is the deal name — only list the property /
+                // unit when they say something the title doesn't.
+                const title = squash(d.name);
+                const place = [d.propertyName, labels.unit].filter((s) => s && !title.includes(squash(s))).join(" · ");
+                return (
                 <div key={d.dealId} className="rounded border border-border/60 p-2 space-y-1" data-testid={`account-deal-card-${d.dealId}`}>
                   <div className="flex items-center justify-between gap-2">
                     <Link href={`/deals?id=${d.dealId}`} className="text-xs font-medium hover:underline truncate">{d.name}</Link>
@@ -270,9 +303,9 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                   </div>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <DealBadges d={d} />
-                    {d.propertyId && (
+                    {d.propertyId && place && (
                       <Link href={`/properties/${d.propertyId}`} className="text-[10px] text-muted-foreground hover:underline">
-                        {d.propertyName}{d.unitName ? ` · ${d.unitName}` : ""}
+                        {place}
                       </Link>
                     )}
                   </div>
@@ -291,7 +324,8 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Pagination — totals come from the server over the filtered
