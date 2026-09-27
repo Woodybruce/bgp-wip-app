@@ -51,7 +51,6 @@ import { BrandComplianceCard } from "@/components/brand-profile-panel";
 import {
   PropertyAssetBriefPanel,
   PropertyCoveringStrip,
-  PipelinePerformanceBoard,
   WeeklyFocusCard,
   RiskRegisterCard,
   BgpCommentaryCard,
@@ -362,6 +361,8 @@ export function PropertyDetail({ id }: { id: string }) {
     enabled: !isClientViewer,
   });
   const linkedEvidencePlan = evidencePlans.find(p => p.property_id === id);
+  const { data: investmentData } = useQuery<{ assets: any[]; ownership: any[] }>({ queryKey: ["/api/properties", id, "investment"], enabled: !!pdViewer && !isClientViewer });
+  const hasInvestment = !!(investmentData?.assets?.length || investmentData?.ownership?.length);
   const { data: allCompanies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies", { includeBillingEntities: true }],
     queryFn: async () => {
@@ -400,7 +401,7 @@ export function PropertyDetail({ id }: { id: string }) {
     images: false,
     compliance: true,
     activity: true,
-    linkage: true,
+    linkage: false,
   });
   const toggleSection = (key: string) => setSidebarSections(prev => ({ ...prev, [key]: !prev[key] }));
 
@@ -617,7 +618,7 @@ export function PropertyDetail({ id }: { id: string }) {
                     </Badge>
                   )}
                   <SalesBoardLink property={property} />
-                  {property.groupName && (
+                  {property.groupName && !/^properties$/i.test(property.groupName) && (
                     <Badge variant="outline" className="text-[10px]" data-testid="badge-property-group">{property.groupName}</Badge>
                   )}
                 </div>
@@ -675,9 +676,10 @@ export function PropertyDetail({ id }: { id: string }) {
             </div>
 
             <p className="text-sm text-muted-foreground">{formatAddress(property.address) || "Address not recorded"}</p>
-            <div className="rounded-lg border bg-card p-3 flex flex-wrap items-center gap-3" data-testid="property-view-controls">
-              <label className="flex items-center gap-2 text-sm min-w-0">Property layout
-                <select aria-label="Property layout" value={property.propertyView || "auto"} disabled={updateMutation.isPending || !pdViewer} className="rounded border bg-background px-2 py-1.5 text-sm min-w-0 w-full sm:w-auto" onChange={event => {
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="property-view-controls"
+              title={property.propertyView ? "Saved for this property. Layout changes keep the same records and editing permissions." : suggestedView ? "Suggested from the recorded property use and tenancy information. Choose a layout to keep it fixed." : "No reliable layout suggestion yet — choose one."}>
+              <label className="flex items-center gap-2 min-w-0">Layout
+                <select aria-label="Property layout" value={property.propertyView || "auto"} disabled={updateMutation.isPending || !pdViewer} className="rounded border bg-background px-2 py-1 text-xs text-foreground min-w-0 w-full sm:w-auto" onChange={event => {
                   const value = event.target.value;
                   updateMutation.mutate({ propertyView: value === "auto" ? null : value as PropertyView }, { onSuccess: () => { setShowFullPage(false); setPhoneSection("overview"); } });
                 }}>
@@ -685,8 +687,8 @@ export function PropertyDetail({ id }: { id: string }) {
                   {Object.entries(PROPERTY_VIEW_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                 </select>
               </label>
-              {(propertyView === "building" || propertyView === "multi_let") && <Button variant="outline" size="sm" className="ml-auto" onClick={() => { setShowFullPage(previous => !previous); setPhoneSection("overview"); }} data-testid="property-toggle-full-page">{showFullPage ? "Return to simple view" : "Show full page"}</Button>}
-              <p className="w-full text-[11px] text-muted-foreground">{property.propertyView ? "Saved for this property. Layout changes keep the same records and editing permissions." : suggestedView ? "Suggested from the recorded property use and available tenancy information. This layout does not establish a unit count. Choose a layout to keep it fixed." : "No reliable layout suggestion yet. Choose one above; an empty schedule does not establish the number of units."}</p>
+              {(propertyView === "building" || propertyView === "multi_let") && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setShowFullPage(previous => !previous); setPhoneSection("overview"); }} data-testid="property-toggle-full-page">{showFullPage ? "Return to simple view" : "Show full page"}</Button>}
+              {!isClientViewer && <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5" onClick={() => setStreetViewExpanded(value => !value)} data-testid="button-expand-street-view"><ImageIcon className="w-3.5 h-3.5" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</Button>}
             </div>
 
             <div className={`flex flex-wrap gap-1.5 ${simpleLayout ? "" : "lg:hidden"}`} data-testid="property-phone-sections">
@@ -947,39 +949,10 @@ export function PropertyDetail({ id }: { id: string }) {
             </ErrorBoundary>
             </PropertySection>
 
-            <PropertySection name={simpleLayout ? "deals" : "boards"} active={phoneSection} simple={simpleLayout}>
-            {/* Pipeline + Performance combined — single 'how's the
-                building doing' tile that sits above Plans, giving
-                the asset lead a snapshot before they scroll into
-                the schedules. */}
-            <ErrorBoundary compact name="Pipeline & performance">
-              <PipelinePerformanceBoard propertyId={property.id} />
-            </ErrorBoundary>
-
-            {/* Compliance & KYC now lives in the right sidebar as a
-                dropdown section (see below) — closer to where the asset
-                lead toggles other reference cards (Files, BGP Contacts,
-                Available Units etc.). */}
-
-            {/* Asset Brief — structured client-facing dashboard.
-                Replaces the old free-text Notes blob with a live
-                working board (header / focus / pipeline / deals /
-                activity / risks / performance). Notes still exists
-                as a free-form 'Asset Lead commentary' bucket inside
-                the brief but isn't rendered here as its own card.
-                The PropertyAssetBriefPanel shell was the original
-                container; after the break-out it renders nothing
-                visible, so it's no longer mounted.
-            <ErrorBoundary compact name="Property asset brief">
-              <PropertyAssetBriefPanel propertyId={property.id} />
-            </ErrorBoundary>
-            */}
-
-            {/* BGP Commentary — purple AI card. Pulls commentary
-                + last-generated timestamp from the asset-brief
-                payload and renders the same purple treatment used
-                on the brand profile's brand_analysis. */}
-            </PropertySection>
+            {/* Pipeline & performance retired from the property page
+                (Woody, 2026-09-27: "not linked and a double up") — deal
+                stages are on Deals, vacancy / WAULT / rent on the tenancy
+                schedule, lease risks on the Risk register. */}
 
             <PropertySection name={simpleLayout ? "activity" : "overview"} active={phoneSection} simple={simpleLayout}>
             <BgpCommentaryWrapper propertyId={property.id} />
@@ -1006,12 +979,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   <BrandPipelineImagesLink propertyId={property.id} propertyName={property.name} />
                 </div>
               </div>
-            ) : (
-              <Button variant="outline" size="sm" className="w-full justify-start gap-2 text-xs" onClick={() => setStreetViewExpanded(true)} data-testid="button-expand-street-view">
-                <ImageIcon className="w-3.5 h-3.5" />
-                Show Street View
-              </Button>
-            )}
+            ) : null}
 
             </PropertySection>
 
@@ -1026,7 +994,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 for in-scope properties (board parity, Woody 2026-08-03). */}
             <ErrorBoundary compact name="Property plans">
               <CollapsibleCard open={mainSections.plans} onToggle={() => toggleMain("plans")} icon={MapIcon} title="Plans" testId="toggle-plans">
-                <PropertyPlansPanel propertyId={property.id} />
+                <PropertyPlansPanel propertyId={property.id} bare />
               </CollapsibleCard>
             </ErrorBoundary>
             </PropertySection>
@@ -1136,7 +1104,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   pdViewer ? <ClientPropertyFoldersPanel propertyName={property.name} propertyId={property.id} /> : null
                 ) : (
                   <>
-                    <PropertyFoldersPanel propertyName={property.name} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} />
+                    <PropertyFoldersPanel propertyName={property.name} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} bare />
                     <PropertySharepointLink propertyId={property.id} sharepointFolderUrl={property.sharepointFolderUrl} onUpdate={inlineUpdate} />
                   </>
                 )}
@@ -1145,13 +1113,17 @@ export function PropertyDetail({ id }: { id: string }) {
 
               <PropertySection name={"files"} active={phoneSection} simple={simpleLayout}>
               <ReferenceSection
-                title="Linked Contacts"
+                title="Contacts"
                 icon={UserCheck}
                 open={sidebarSections.contacts}
                 onToggle={() => toggleSection("contacts")}
                 testId="toggle-contacts-section"
               >
-                <LinkedContactsPanel propertyId={property.id} />
+                <div className="mb-2 pb-2 border-b">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">BGP team</div>
+                  <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} readOnly={isClientViewer} />
+                </div>
+                <LinkedContactsPanel propertyId={property.id} bare />
               </ReferenceSection>
               </PropertySection>
 
@@ -1187,17 +1159,7 @@ export function PropertyDetail({ id }: { id: string }) {
               </ReferenceSection>
               </PropertySection>
 
-              <PropertySection name={"files"} active={phoneSection} simple={simpleLayout}>
-              <ReferenceSection
-                title="BGP Contacts"
-                icon={UserCheck}
-                open={sidebarSections.team}
-                onToggle={() => toggleSection("team")}
-                testId="toggle-team-section"
-              >
-                <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} readOnly={isClientViewer} />
-              </ReferenceSection>
-              </PropertySection>
+              {/* BGP Contacts folded into Contacts (its BGP team row) — it listed the same people. */}
 
               {/* Client Board retired (Woody, 2026-08-05) — Linked Contacts'
                   Internal team group now carries the client-side people. */}
@@ -1210,20 +1172,24 @@ export function PropertyDetail({ id }: { id: string }) {
                 onToggle={() => toggleSection("deals")}
                 testId="toggle-deals-section"
               >
-                <LinkedDealsPanel propertyId={property.id} />
+                <LinkedDealsPanel propertyId={property.id} bare />
                 <TaggedConversationsPanel entityType="property" entityId={property.id} />
               </ReferenceSection>
               </PropertySection>
 
               <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
               <ReferenceSection
-                title="Available Units"
+                title="Available units"
                 icon={Store}
                 open={sidebarSections.availableUnits}
                 onToggle={() => toggleSection("availableUnits")}
                 testId="toggle-available-units-section"
               >
                 <AvailableUnitsPanel propertyId={property.id} />
+                {!isClientViewer && <div className="mt-3 pt-2 border-t">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Brands that fit the vacant space</div>
+                  <PropertySpaceFitsPanel propertyId={property.id} />
+                </div>}
               </ReferenceSection>
               </PropertySection>
 
@@ -1241,21 +1207,9 @@ export function PropertyDetail({ id }: { id: string }) {
               </PropertySection>
               )}
 
-              {!isClientViewer && (
-              <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
-              <ReferenceSection
-                title="Brands that fit"
-                icon={Store}
-                open={sidebarSections.spaceFits}
-                onToggle={() => toggleSection("spaceFits")}
-                testId="toggle-space-fits-section"
-              >
-                <PropertySpaceFitsPanel propertyId={property.id} />
-              </ReferenceSection>
-              </PropertySection>
-              )}
+              {/* Brands that fit now sits inside Available Units. */}
 
-              {!isClientViewer && (
+              {!isClientViewer && hasInvestment && (
               <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
               <ReferenceSection
                 title="Investment"
@@ -1287,15 +1241,16 @@ export function PropertyDetail({ id }: { id: string }) {
                   (Woody, 2026-08-03) — title data lives in Property
                   Intelligence when needed. */}
 
-              {!isClientViewer && (
+              {!isClientViewer && pdViewer?.isAdmin && (
               <PropertySection name={"activity"} active={phoneSection} simple={simpleLayout}>
               <ReferenceSection
-                title="Data linkage"
+                title="Data housekeeping (admin)"
                 icon={Activity}
                 open={sidebarSections.linkage}
                 onToggle={() => toggleSection("linkage")}
                 testId="toggle-linkage-section"
               >
+                <p className="text-[11px] text-muted-foreground mb-2">How well this property's records are joined up — tenants matched to CRM brands, deals and tasks attached to the property. The nightly sweep fixes most of it automatically; these buttons fix the rest now.</p>
                 <ErrorBoundary compact name="Property linkage audit">
                   <PropertyLinkageCard propertyId={property.id} />
                 </ErrorBoundary>

@@ -127,6 +127,19 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
          LEFT JOIN crm_deals d ON d.id = i.deal_id`;
     let recentQ;
     if (propertyId) {
+      // Owner-contact touches only count here when they're about THIS
+      // building, unless the owner has just the one property: Landsec's
+      // "Westgate x Hospitality" meetings were filling Trinity Leeds'
+      // feed (Woody, 2026-09-27). The building's name, aliases and its
+      // distinctive first word ("Trinity", "Bluewater") are the keys.
+      const keyQ = await pool.query(`SELECT name, aliases, landlord_id,
+          (SELECT COUNT(*)::int FROM crm_properties o WHERE o.landlord_id = p.landlord_id) AS owner_properties
+        FROM crm_properties p WHERE p.id = $1`, [propertyId]);
+      const kp = keyQ.rows[0] || {};
+      const STOP = /^(the|unit|units|land|at|of|and|centre|center|shopping|house|street|road|building|london|park|place)$/i;
+      const keys = [kp.name, ...(Array.isArray(kp.aliases) ? kp.aliases : [])].filter(Boolean).map(String);
+      for (const k of [...keys]) { const w = k.split(/[\s,]+/).find(x => x.length >= 5 && !STOP.test(x) && !/\d/.test(x)); if (w) keys.push(w); }
+      const ownerMany = (kp.owner_properties || 0) > 1;
       recentQ = pool.query(
         `${recentSelect}
          LEFT JOIN property_units pu ON pu.id = d.unit_id
@@ -148,11 +161,13 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
                    WHERE pa.property_id = $1 AND u2.email IS NOT NULL
                 )
               )
+              AND (NOT $2::boolean OR EXISTS (SELECT 1 FROM unnest($3::text[]) k
+                WHERE coalesce(i.subject, '') ILIKE '%' || k || '%' OR coalesce(i.ai_summary, '') ILIKE '%' || k || '%'))
             )
           )
         ORDER BY i.interaction_date DESC
-        LIMIT 30`,
-        [propertyId]
+        LIMIT 60`,
+        [propertyId, ownerMany, keys]
       );
     } else if (companyId) {
       // Company feed = the company's own touches PLUS everything happening
@@ -230,7 +245,12 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
           property_id: e.property_id, property_name: e.property_name, deal_id: e.deal_id,
         })),
       recent: [
-        ...recent.rows.map((a: any) => ({
+        // One meeting / email logged against several contacts arrives as a
+        // row per contact — keep one per subject and day.
+        ...recent.rows.filter((a: any, i: number, all: any[]) => {
+          const key = (r: any) => `${r.type}|${String(r.subject || "").replace(/^((re|fw|fwd):\s*)+/i, "").trim().toLowerCase()}|${new Date(r.interaction_date).toISOString().slice(0, 10)}`;
+          return !a.subject || all.findIndex((b: any) => key(b) === key(a)) === i;
+        }).map((a: any) => ({
           id: a.id,
           kind: a.type,
           date: a.interaction_date,

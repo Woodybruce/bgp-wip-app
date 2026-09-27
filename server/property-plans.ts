@@ -163,33 +163,43 @@ export async function autoScanPlans(req: Request, plans: any[]): Promise<number>
 // Link every unlinked outline on a plan whose label (or saved tenant) matches
 // exactly one tenancy row not already on a plan of this property. Same matcher
 // as the scan and the lease advisory plans; anything unsure stays unlinked.
-router.post("/api/plans/:planId/auto-link", requireAuth, async (req: Request, res: Response) => {
-  let db: import("pg").PoolClient | undefined;
+// Link every unlinked outline on a plan whose label matches exactly one
+// tenancy row not already on a plan of this property. Same matcher as the
+// scan and the lease advisory plans; anything unsure stays unlinked. Runs by
+// itself after a scan review is saved; the button re-runs it.
+export async function autoLinkPlanOutlines(planId: string) {
+  const { suggestPropertyPlanLink } = await import("./property-plan-scan");
+  const plan0 = (await pool.query("SELECT property_id FROM property_plans WHERE id = $1", [planId])).rows[0];
+  if (!plan0) return { checked: 0, linked: 0, links: [] as any[] };
+  const options = await queryPickableUnits(pool, plan0.property_id);
+  const db = await pool.connect();
   try {
-    const authorisedPlan = await planForRequest(req, res);
-    if (!authorisedPlan) return;
-    const { suggestPropertyPlanLink } = await import("./property-plan-scan");
-    const options = await queryPickableUnits(pool, authorisedPlan.property_id);
-    db = await pool.connect();
     await db.query("BEGIN");
-    const plan = await planForRequest(req, res, db, true, authorisedPlan.property_id);
-    if (!plan) { await db.query("ROLLBACK"); return; }
+    const plan = (await db.query("SELECT * FROM property_plans WHERE id = $1 FOR UPDATE", [planId])).rows[0];
     const used = new Set((await db.query(`SELECT u.tenancy_unit_id FROM property_plan_units u JOIN property_plans p ON p.id = u.plan_id
       WHERE p.property_id = $1 AND u.tenancy_unit_id IS NOT NULL`, [plan.property_id])).rows.map((r: any) => r.tenancy_unit_id));
     const unlinked = (await db.query(`SELECT id, label FROM property_plan_units WHERE plan_id = $1 AND tenancy_unit_id IS NULL AND unit_id IS NULL AND label IS NOT NULL FOR UPDATE`, [plan.id])).rows;
-    const linked: Array<{ id: string; label: string; unit_name: string }> = [];
+    const links: Array<{ id: string; label: string; unit_name: string }> = [];
     for (const unit of unlinked) {
       const match = suggestPropertyPlanLink(unit.label, null, options.filter((o: any) => !used.has(o.tenancy_unit_id)));
       if (!match?.tenancy_unit_id) continue;
       const link = await validatePlanUnitLink(db, plan.property_id, { tenancy_unit_id: match.tenancy_unit_id, unit_id: match.unit_id });
       await db.query(`UPDATE property_plan_units SET tenancy_unit_id = $2, unit_id = $3, updated_at = NOW() WHERE id = $1`, [unit.id, link.tenancy_unit_id, link.unit_id]);
       used.add(link.tenancy_unit_id);
-      linked.push({ id: unit.id, label: unit.label, unit_name: match.unit_name });
+      links.push({ id: unit.id, label: unit.label, unit_name: match.unit_name });
     }
     await db.query("COMMIT");
-    res.json({ checked: unlinked.length, linked: linked.length, links: linked });
-  } catch (err) { if (db) await db.query("ROLLBACK").catch(() => {}); errorResponse(res, err, "Could not link the outlines."); }
-  finally { db?.release(); }
+    return { checked: unlinked.length, linked: links.length, links };
+  } catch (error) { await db.query("ROLLBACK").catch(() => {}); throw error; }
+  finally { db.release(); }
+}
+
+router.post("/api/plans/:planId/auto-link", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const authorisedPlan = await planForRequest(req, res);
+    if (!authorisedPlan) return;
+    res.json(await autoLinkPlanOutlines(authorisedPlan.id));
+  } catch (err) { errorResponse(res, err, "Could not link the outlines."); }
 });
 
 router.get("/api/plans/:planId/original-pdf", requireAuth, async (req: Request, res: Response) => {

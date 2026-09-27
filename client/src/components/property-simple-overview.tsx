@@ -38,9 +38,13 @@ export function NextLeaseEvents({ propertyId, propertyName, landlordName, rows, 
   return <div className="space-y-2">
     {nextEvents.slice(0, limit).map(event => {
       const unitRef = event.unit.unit_number || event.unit.premises || "Unit";
+      // "Unit 2.18 211 Trinity Leeds - Unit 2.18" → "Unit 2.18 211": the
+      // scheme's name (and whatever follows it) is noise on its own page.
+      const nameAt = propertyName ? unitRef.toLowerCase().indexOf(propertyName.toLowerCase().split(/[,(]/)[0].trim()) : -1;
+      const shortRef = (nameAt > 2 ? unitRef.slice(0, nameAt) : unitRef).replace(/[\s,·-]+$/, "").slice(0, 40) || unitRef;
       const done = trackedKeys.get(trackKey(unitRef, TRACK_TYPE[event.kind] || event.kind, event.date));
       return <div key={`${event.unit.id}-${event.kind}`} className="flex items-center justify-between gap-3 text-sm">
-        <Link href={tenancyHref(event.unit)} className="hover:underline min-w-0">{unitRef} · {event.kind}</Link>
+        <Link href={tenancyHref(event.unit)} className="hover:underline min-w-0 truncate" title={unitRef}>{shortRef} · {event.kind}</Link>
         <span className="flex items-center gap-2 shrink-0">
           <span className="font-mono tabular-nums whitespace-nowrap">{formatCalendarDate(event.date)}</span>
           {done ? <Link href="/lease-events" className="text-[10px] text-emerald-700 hover:underline">{done.status || "Tracked"}</Link>

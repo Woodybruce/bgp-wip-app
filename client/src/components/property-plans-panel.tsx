@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { formatCalendarDate } from "@shared/calendar-date";
@@ -37,7 +38,7 @@ type EditorMode = "select" | "trace" | "draw";
 // outlines alone, or the clean drawing.
 type PlanView = "labels" | "outlines" | "clean";
 
-export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
+export function PropertyPlansPanel({ propertyId, bare = false }: { propertyId: string; bare?: boolean }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -140,21 +141,24 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
   const listedUnits = units.filter(unit => !searchKey || [unit.label, unit.unit_name, unit.tenant_name].some(value => value?.toLowerCase().includes(searchKey)))
     .sort((a, b) => String(a.label || a.unit_name || "").localeCompare(String(b.label || b.unit_name || ""), undefined, { numeric: true }));
   function changeMode(next: EditorMode) { setMode(previous => previous === next ? "select" : next); setPendingPoints([]); }
-  return <Card data-testid="property-plans-panel" className={fullScreen ? "fixed inset-0 z-50 rounded-none overflow-y-auto" : undefined}>
-    <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 p-4 pb-2 space-y-0">
-      <CardTitle className="text-sm flex items-center gap-2"><MapIcon className="w-4 h-4" /> Plans <Badge variant="secondary" className="text-xs">{plans.length}</Badge></CardTitle>
+  return <Card data-testid="property-plans-panel" className={fullScreen ? "fixed inset-0 z-50 rounded-none overflow-y-auto" : bare ? "border-0 shadow-none bg-transparent rounded-none" : undefined}>
+    <CardHeader className={`flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 ${bare && !fullScreen ? "p-0 pb-2" : "p-4 pb-2"}`}>
+      <CardTitle className="text-sm flex items-center gap-2">{(!bare || fullScreen) && <><MapIcon className="w-4 h-4" /> Plans</>}<Badge variant="secondary" className="text-xs">{plans.length} {bare && !fullScreen ? `floor${plans.length === 1 ? "" : "s"}` : ""}</Badge></CardTitle>
       <div className="flex flex-wrap items-center gap-1.5">
         {canEdit && <UploadPlanButton propertyId={propertyId} onUploaded={plan => setActivePlanId(plan.id)} />}
         {activePlan && canEdit && <>
           <PropertyPlanScanReview key={activePlan.id} plan={activePlan} canStart={canScan} />
-          <Button size="sm" variant={mode === "trace" ? "default" : "outline"} className="h-8 text-xs" onClick={() => changeMode("trace")} disabled={trace.isPending} data-testid="button-trace-property-unit"><ScanLine className="w-3.5 h-3.5 mr-1" />{trace.isPending ? "Tracing…" : mode === "trace" ? "Cancel trace" : "Trace unit"}</Button>
-          <Button size="sm" variant={mode === "draw" ? "default" : "outline"} className="h-8 text-xs" onClick={() => changeMode("draw")} disabled={trace.isPending} data-testid="button-toggle-draw-mode"><Pencil className="w-3.5 h-3.5 mr-1" />{mode === "draw" ? "Cancel drawing" : "Draw unit"}</Button>
-          <DeletePlanButton plan={activePlan} onDeleted={() => setActivePlanId(null)} />
+          {/* Scanning runs on upload and matching runs after each review, so
+              the hand tools live behind one Edit menu (Woody, 2026-09-27:
+              "do we need all that — as much automated as possible"). */}
+          {mode !== "select"
+            ? <Button size="sm" variant="default" className="h-8 text-xs" onClick={() => changeMode(mode)} disabled={trace.isPending} data-testid="button-cancel-plan-edit">{trace.isPending ? "Tracing…" : mode === "trace" ? "Cancel trace" : "Cancel drawing"}</Button>
+            : <PlanEditMenu plan={activePlan} onTrace={() => changeMode("trace")} onDraw={() => changeMode("draw")} onDeleted={() => setActivePlanId(null)} />}
         </>}
         {activePlan && <Button size="sm" variant="outline" className="h-8 px-2" onClick={() => setFullScreen(value => !value)} aria-label={fullScreen ? "Exit full screen" : "Full screen"} title={fullScreen ? "Exit full screen (Esc)" : "Full screen"} data-testid="button-plan-fullscreen">{fullScreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}</Button>}
       </div>
     </CardHeader>
-    <CardContent className="p-4 pt-0 space-y-3">
+    <CardContent className={`${bare && !fullScreen ? "p-0" : "p-4 pt-0"} space-y-3`}>
       {plansQ.isError && <p role="alert" className="text-sm text-destructive">{plansQ.error.message} <button className="underline" onClick={() => plansQ.refetch()}>Retry</button></p>}
       {plansQ.isPending ? <p className="text-sm text-muted-foreground">Loading plans…</p> : !plansQ.isError && plans.length === 0 ? <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">Upload a plan image or PDF to trace units and link them to the tenancy schedule.</div> : activePlan && <>
         <div className="flex items-center gap-1 flex-wrap">
@@ -428,6 +432,25 @@ function OriginalPdfLink({ plan }: { plan: Plan }) {
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (error: any) { toast({ title: "Could not open the PDF", description: error.message, variant: "destructive" }); }
   }}><FileText className="w-3 h-3" />Original PDF</button>;
+}
+
+function PlanEditMenu({ plan, onTrace, onDraw, onDeleted }: { plan: Plan; onTrace: () => void; onDraw: () => void; onDeleted: () => void }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const remove = useMutation({
+    mutationFn: () => apiRequest("DELETE", `/api/plans/${plan.id}`),
+    onSuccess: () => { onDeleted(); queryClient.invalidateQueries({ queryKey: ["/api/properties", plan.property_id, "plans"] }); toast({ title: "Plan deleted" }); },
+    onError: error => toast({ title: "Delete failed", description: error.message, variant: "destructive" }),
+  });
+  return <DropdownMenu>
+    <DropdownMenuTrigger asChild><Button size="sm" variant="outline" className="h-8 text-xs" data-testid="button-plan-edit-menu"><Pencil className="w-3.5 h-3.5 mr-1" />Edit</Button></DropdownMenuTrigger>
+    <DropdownMenuContent align="end">
+      <DropdownMenuItem onSelect={onTrace} data-testid="button-trace-property-unit"><ScanLine className="w-3.5 h-3.5 mr-2" />Trace a unit (click inside it)</DropdownMenuItem>
+      <DropdownMenuItem onSelect={onDraw} data-testid="button-toggle-draw-mode"><Pencil className="w-3.5 h-3.5 mr-2" />Draw a unit by its corners</DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem className="text-destructive" disabled={remove.isPending} onSelect={() => { if (confirm(`Delete the ${plan.floor} plan and its outlines? The linked tenancy records will be kept.`)) remove.mutate(); }}><Trash2 className="w-3.5 h-3.5 mr-2" />Delete the {plan.floor} plan</DropdownMenuItem>
+    </DropdownMenuContent>
+  </DropdownMenu>;
 }
 
 function DeletePlanButton({ plan, onDeleted }: { plan: Plan; onDeleted: () => void }) {

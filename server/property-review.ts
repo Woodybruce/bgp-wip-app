@@ -54,9 +54,13 @@ export async function liveReviewItems(propertyId: string) {
   const { rows: outlines } = await pool.query(`SELECT p.id AS plan_id, p.floor, COUNT(*)::int AS unlinked
     FROM property_plan_units u JOIN property_plans p ON p.id = u.plan_id
     WHERE p.property_id = $1 AND u.tenancy_unit_id IS NULL AND u.unit_id IS NULL GROUP BY p.id, p.floor`, [propertyId]);
+  const ready = scans.filter((s: any) => s.status === "ready");
+  const proposed = ready.reduce((n: number, s: any) => n + (s.proposed || 0), 0), matched = ready.reduce((n: number, s: any) => n + (s.linked || 0), 0);
   return [
-    ...scans.filter((s: any) => s.status === "ready").map((s: any) => ({ id: `scan:${s.plan_id}`, kind: "plan_scan", live: true, planId: s.plan_id,
-      title: `Review the unit scan · ${s.floor}`, detail: `${s.proposed} proposed outline${s.proposed === 1 ? "" : "s"}${s.linked ? `, ${s.linked} already matched to a tenancy row` : ""}. Tick the ones that follow the shop boundaries, then add them.` })),
+    // One item for all floors' scans — each floor is reviewed on the plan.
+    ...(ready.length ? [{ id: `scans:${propertyId}`, kind: "plan_scan", live: true, planId: ready[0].plan_id,
+      title: ready.length === 1 ? `Review the unit scan · ${ready[0].floor}` : `Review the unit scans · ${ready.length} floors (${ready.map((s: any) => s.floor).join(", ")})`,
+      detail: `${proposed} proposed outline${proposed === 1 ? "" : "s"}${matched ? `, ${matched} already matched to a tenancy row` : ""}. On each floor open Review scan, tick the ones that follow the shop boundaries and add them — the rest are matched to the schedule automatically.` }] : []),
     ...outlines.filter((o: any) => o.unlinked > 0).map((o: any) => ({ id: `outlines:${o.plan_id}`, kind: "plan_links", live: true, planId: o.plan_id,
       title: `Link plan outlines · ${o.floor}`, detail: `${o.unlinked} outline${o.unlinked === 1 ? " isn't" : "s aren't"} linked to a tenancy row. "Match unlinked outlines to the schedule" links the certain ones; the rest need choosing.` })),
   ];

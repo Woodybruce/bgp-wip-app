@@ -53,7 +53,12 @@ router.post("/api/plans/:planId/scan", requireAuth, async (req: Request, res: Re
 
 router.post("/api/plans/:planId/scans/:jobId/apply", requireAuth, async (req: Request, res: Response) => {
   try {
-    res.json(await applyPropertyPlanScan(pool, String(req.params.planId), String(req.params.jobId), req.body, access(req)));
+    const result = await applyPropertyPlanScan(pool, String(req.params.planId), String(req.params.jobId), req.body, access(req));
+    // Saved outlines the reviewer left unlinked are matched to the schedule
+    // straight away (the certain ones) — no separate button press needed.
+    const { autoLinkPlanOutlines } = await import("./property-plans");
+    const linked = await autoLinkPlanOutlines(String(req.params.planId)).catch(() => ({ linked: 0 }));
+    res.json({ ...result, autoLinked: linked.linked });
   } catch (error) { fail(res, error); }
 });
 

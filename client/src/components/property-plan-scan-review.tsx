@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PropertyPlanPreview } from "./property-plan-preview";
@@ -11,6 +12,7 @@ import type { PropertyPlanScanJob as ScanJob } from "@shared/property-plan-scan"
 
 export function PropertyPlanScanReview({ plan, canStart = false }: { plan: PropertyPlan; canStart?: boolean }) {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [accepted, setAccepted] = useState<Record<string, boolean>>({});
@@ -52,7 +54,8 @@ export function PropertyPlanScanReview({ plan, canStart = false }: { plan: Prope
       if (!assignments.length) throw new Error("Review and tick at least one outline to save.");
       return (await apiRequest("POST", `/api/plans/${plan.id}/scans/${job.id}/apply`, { assignments })).json();
     },
-    onSuccess: () => {
+    onSuccess: (result: any) => {
+      if (result?.autoLinked) toast({ title: `Saved — ${result.autoLinked} more outline${result.autoLinked === 1 ? "" : "s"} matched to the tenancy schedule automatically` });
       queryClient.invalidateQueries({ queryKey: ["/api/plans", plan.id, "units"] });
       queryClient.invalidateQueries({ queryKey: ["/api/plans", "property-links", plan.property_id] });
       queryClient.invalidateQueries({ queryKey: jobKey });

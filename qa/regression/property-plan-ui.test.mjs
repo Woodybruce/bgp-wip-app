@@ -149,8 +149,11 @@ test('clients retain manual trace, draw and upload; paid scanning stays with sta
     const app = fixture('PropertyPlansPanel', { props: { propertyId }, data: { '/api/auth/me': user, plans: { plans: [plan] }, units: { units: [] } } });
     const tree = app.render();
     assert.ok(app.leaf(tree, 'UploadPlanButton'));
-    assert.ok(descendants(tree).find(node => node.props['data-testid'] === 'button-trace-property-unit'));
-    assert.ok(descendants(tree).find(node => node.props['data-testid'] === 'button-toggle-draw-mode'));
+    // Trace and draw live in the plan's Edit menu (automation first — scan on upload, match after review).
+    const menu = app.leaf(tree, 'PlanEditMenu');
+    assert.ok(menu, 'the Edit menu is offered');
+    assert.equal(typeof menu.props.onTrace, 'function');
+    assert.equal(typeof menu.props.onDraw, 'function');
     assert.equal(app.leaf(tree, 'PropertyPlanScanReview').props.canStart, user.role === 'Admin');
   }
 });

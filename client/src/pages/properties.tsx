@@ -1710,7 +1710,7 @@ interface PropertyFolderItem {
   lastModified: string;
 }
 
-export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFolderUrl, entityType, entityId, entityName }: { propertyName: string; folderTeams?: string[] | null; sharepointFolderUrl?: string | null; entityType?: "property" | "company" | "landlord" | "deal" | "contact"; entityId?: string; entityName?: string }) {
+export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFolderUrl, entityType, entityId, entityName, bare = false }: { propertyName: string; folderTeams?: string[] | null; sharepointFolderUrl?: string | null; entityType?: "property" | "company" | "landlord" | "deal" | "contact"; entityId?: string; entityName?: string; bare?: boolean }) {
   const [, navigate] = useLocation();
   const [shareFor, setShareFor] = useState<{ id: string; name: string } | null>(null);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
@@ -1912,13 +1912,13 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
       onDragLeave={(e) => { e.preventDefault(); dragCounter.current--; if (dragCounter.current === 0) setIsDragging(false); }}
       onDragOver={(e) => e.preventDefault()}
       onDrop={onDrop}
-      className={isDragging ? "ring-2 ring-primary border-primary" : undefined}
+      className={[isDragging ? "ring-2 ring-primary border-primary" : "", bare ? "border-0 shadow-none bg-transparent rounded-none" : ""].filter(Boolean).join(" ") || undefined}
     >
-      <CardContent className="p-4">
+      <CardContent className={bare ? "p-0" : "p-4"}>
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <div className="flex items-center gap-2 flex-wrap">
-            <FolderOpen className="w-4 h-4" />
-            <h3 className="text-sm font-semibold">Documents</h3>
+            {!bare && <FolderOpen className="w-4 h-4" />}
+            {!bare && <h3 className="text-sm font-semibold">Documents</h3>}
             {teamsToCheck.map((t, idx) => (
               <button
                 key={t}
@@ -2429,10 +2429,12 @@ export function ClientPropertyFoldersPanel({ propertyName, propertyId }: { prope
   );
 }
 
-export function LinkedDealsPanel({ propertyId }: { propertyId: string }) {
+export function LinkedDealsPanel({ propertyId, bare = false }: { propertyId: string; bare?: boolean }) {
   // Thin wrapper around the canonical DealsSummary — the Deals twin of the
   // tracker card. The old bespoke list showed raw status text with no stage
-  // counts and no route into the filtered Deals board.
+  // counts and no route into the filtered Deals board. `bare` drops the card
+  // and title when the host already titles it (the property page's Deals).
+  if (bare) return <DealsSummary variant="card" propertyId={propertyId} />;
   return (
     <Card data-testid="linked-deals-panel">
       <CardContent className="p-4">
@@ -2678,7 +2680,7 @@ export function ClientBoardPanel({ propertyId, landlordId, allCompanies }: { pro
   );
 }
 
-export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
+export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: string; bare?: boolean }) {
   // Four evidence-based groups (Woody, 2026-08-05 rework): the internal
   // team (BGP agents + the client's leasing directors), everyone on deals
   // or tracker activity, tenants in occupation shown BRAND-FIRST, and
@@ -2776,12 +2778,12 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
   );
 
   return (
-    <Card data-testid="linked-contacts-panel">
-      <CardContent className="p-4">
+    <Card data-testid="linked-contacts-panel" className={bare ? "border-0 shadow-none bg-transparent rounded-none" : undefined}>
+      <CardContent className={bare ? "p-0" : "p-4"}>
         <div className="flex items-center gap-2 mb-2">
-          <Users className="w-4 h-4" />
-          <h3 className="text-sm font-semibold">Linked Contacts</h3>
-          {total > 0 && <Badge variant="secondary" className="text-[10px]">{total}</Badge>}
+          {!bare && <Users className="w-4 h-4" />}
+          {!bare && <h3 className="text-sm font-semibold">Linked Contacts</h3>}
+          {total > 0 && <Badge variant="secondary" className="text-[10px]">{total}{bare ? " linked" : ""}</Badge>}
           <div className="flex-1" />
           <button
             onClick={() => { setAddOpen(v => !v); setAddSearch(""); }}

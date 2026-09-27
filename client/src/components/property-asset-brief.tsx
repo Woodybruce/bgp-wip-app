@@ -249,8 +249,10 @@ export function PipelinePerformanceBoard({ propertyId }: { propertyId: string })
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-3">
-        {!!data.data_warnings?.length && <div className="rounded border border-border bg-muted/40 p-2 text-xs text-muted-foreground" role="status">
-          {data.data_warnings.map(warning => <p key={warning.section}>{warning.message}</p>)}
+        {/* The schedule warning already shows on the Risk register and in the
+            Vacancy tile — only the other sections' warnings belong here. */}
+        {!!data.data_warnings?.filter(w => w.section !== "schedule").length && <div className="rounded border border-border bg-muted/40 p-2 text-xs text-muted-foreground" role="status">
+          {data.data_warnings.filter(w => w.section !== "schedule").map(warning => <p key={warning.section}>{warning.message}</p>)}
           {Object.values(data.data_quality || {}).includes("error") && <Button variant="outline" size="sm" onClick={() => refetch()}>Retry unavailable data</Button>}
         </div>}
         {/* Pipeline funnel — tap a stage with members to expand them */}
