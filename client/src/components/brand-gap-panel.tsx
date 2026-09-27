@@ -217,11 +217,13 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
   // Only brands with real evidence. The research sometimes flags a brand as
   // expanding while its own note says the evidence is missing or stale —
   // those read as working notes, not intel (Woody, 2026-09-27).
-  const NO_EVIDENCE = /cannot be confirmed|can'?t be confirmed|no evidence|wasn'?t returned|not returned|outside the (?:roughly )?\d+-month window|does not identify|doesn'?t identify|no (?:specific|direct|cited) evidence|not a direct match/i;
+  const NO_EVIDENCE = /cannot be confirmed|can'?t be confirmed|no evidence|wasn'?t returned|not returned|outside the (?:roughly )?\d+-month window|does not identify|doesn'?t identify|no (?:specific|direct|cited) evidence|not a direct match|available results? (?:gives?|shows?|provides?) no/i;
   // Caveat sentences ("No Bluewater-specific plan was found.") are the
   // researcher's working, not intel — drop them from otherwise good notes.
-  const CAVEAT = /^(?:no\b[^.]*\b(?:was|were|has been|have been) (?:found|identified|confirmed|announced)|[^.]*\b(?:not|yet to be) (?:been )?(?:found|confirmed)\b)/i;
-  const tidy = (note?: string | null) => (note || "").split(/(?<=[.!?])\s+/).filter(x => !CAVEAT.test(x.trim())).join(" ");
+  const CAVEAT = /^(?:no\b[^.]*\b(?:was|were|has been|have been) (?:found|identified|confirmed|announced)|[^.]*\b(?:not|yet to be) (?:been )?(?:found|confirmed)\b|no [\w'’ -]+-specific\b|[^.]*\bnot (?:one of )?the specified\b|[^.]*\bnot specifically\b)/i;
+  // Also drop the researcher's "[5]" citation markers.
+  const tidy = (note?: string | null) => (note || "").replace(/\s*\[\d+\]/g, "").split(/(?<=[.!?])\s+/).filter(x => !CAVEAT.test(x.trim())).join(" ")
+    .replace(/,?\s*though not one of the specified centres/gi, "").replace(/\s*[—–-]\s*this is London-wide, not specifically [^.]+\./gi, ".");
   const expanding = (data?.brands || []).filter(b => b.expanding && !NO_EVIDENCE.test(b.note || "")).map(b => ({ ...b, note: tidy(b.note) }));
   const [notesOpen, setNotesOpen] = useState(false);
   return (
@@ -245,7 +247,7 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
         <p className="text-xs text-muted-foreground italic">No expansion evidence gathered yet — the sweep runs automatically and refreshes weekly.</p>
       ) : (
         <div className="space-y-1.5">
-          {data.market_notes && !/do(?:es)? not establish|no (?:cited |specific )?evidence|could not (?:be )?(?:confirm|establish|find)|not (?:been )?(?:found|confirmed)/i.test(data.market_notes) && <p className={`text-xs leading-relaxed ${notesOpen ? "" : "line-clamp-2"} cursor-pointer`} onClick={() => setNotesOpen(v => !v)} title={notesOpen ? undefined : "Click to read the full note"}>{data.market_notes}</p>}
+          {data.market_notes && !/available results? (?:gives?|shows?) no|do(?:es)? not establish|no (?:cited |specific )?evidence|could not (?:be )?(?:confirm|establish|find)|not (?:been )?(?:found|confirmed)/i.test(data.market_notes) && <p className={`text-xs leading-relaxed ${notesOpen ? "" : "line-clamp-2"} cursor-pointer`} onClick={() => setNotesOpen(v => !v)} title={notesOpen ? undefined : "Click to read the full note"}>{data.market_notes}</p>}
           {expanding.length === 0 ? (
             <p className="text-xs text-muted-foreground italic">No cited expansion evidence on the current candidates.</p>
           ) : (

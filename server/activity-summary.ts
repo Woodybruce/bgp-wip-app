@@ -237,7 +237,11 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
         id: `deal-${m.id}`,
         kind: "deal",
         date: m.at,
-        summary: `${m.name} — ${DEAL_STATUS_LABELS[legacyToCode(m.status)!]}${m.property_name ? ` at ${m.property_name}` : ""}`,
+        // On the property's own feed its name is noise ("Nando's – Bluewater
+        // Shopping Centre — Solicitors at Bluewater Shopping Centre").
+        summary: propertyId
+          ? `${String(m.name || "").replace(m.property_name ? new RegExp(`\\s*[-–—:]\\s*${String(m.property_name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") : /$^/, "") || m.name} — ${DEAL_STATUS_LABELS[legacyToCode(m.status)!]}`
+          : `${m.name} — ${DEAL_STATUS_LABELS[legacyToCode(m.status)!]}${m.property_name ? ` at ${m.property_name}` : ""}`,
         contact_id: null,
         deal_id: m.id,
         deal_name: m.name,

@@ -175,7 +175,8 @@ export function BrandPortfolioMap({
   if (geocodedCount === 0 && !alwaysRender) return null;
 
   return (
-    <div className="rounded-md overflow-hidden border" style={{ height }}>
+    // isolate: Leaflet's panes (z-index 400+) drew over the phone bottom nav.
+    <div className="rounded-md overflow-hidden border relative isolate" style={{ height }}>
       <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
     </div>
   );

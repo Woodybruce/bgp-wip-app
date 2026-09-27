@@ -113,7 +113,7 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead }:
               className="ml-auto text-[9px] px-1 py-0 shrink-0 tabular-nums text-muted-foreground"
               title={lastTouch ? `${touches} touch${touches === 1 ? "" : "es"} · last ${new Date(lastTouch).toLocaleDateString("en-GB")}` : `${touches} touches`}
             >
-              {touches}{lastTouchLabel ? ` · ${lastTouchLabel}` : ""}
+              {touches.toLocaleString("en-GB")}{lastTouchLabel ? ` · ${lastTouchLabel}` : ""}
             </Badge>
           )}
         </div>

@@ -194,12 +194,26 @@ export async function runInvestmentLinkBackfills(deps: { pool?: Querier } = {}) 
       return tidyScrapedEntityName(name);
     };
     const changes: Array<{ table: string; id: string; from: string; to: string | null }> = [];
-    const rows = (await q.query(`SELECT te.id, te.name, c.name AS company_name FROM crm_trading_entities te JOIN crm_companies c ON c.id = te.parent_company_id WHERE te.name IS NOT NULL AND te.name <> ''`).catch(() => ({ rows: [] as any[] }))).rows;
+    const rows = (await q.query(`SELECT te.id, te.parent_company_id, te.name, te.companies_house_number, te.kyc_status, c.name AS company_name FROM crm_trading_entities te JOIN crm_companies c ON c.id = te.parent_company_id WHERE te.name IS NOT NULL AND te.name <> ''`).catch(() => ({ rows: [] as any[] }))).rows;
     for (const row of rows) {
       const to = fix(row.name, row.company_name || "");
       if (!to || to === row.name) continue;   // never blank a formal entity row
-      await q.query(`UPDATE crm_trading_entities SET name = $2 WHERE id = $1`, [row.id, to]);
-      changes.push({ table: "crm_trading_entities", id: row.id, from: row.name, to });
+      try {
+        // The clean name often exists already (auto-KYC added the registered
+        // entity) — the junk twin then goes, if it holds nothing of its own.
+        const twin = (await q.query(`SELECT id FROM crm_trading_entities WHERE parent_company_id = $1 AND LOWER(name) = LOWER($2) AND id <> $3`, [row.parent_company_id, to, row.id])).rows[0];
+        if (twin) {
+          if (row.companies_house_number || row.kyc_status) continue;
+          const used = (await q.query(`SELECT 1 FROM crm_entity_kyc WHERE entity_id = $1
+            UNION ALL SELECT 1 FROM crm_properties WHERE billing_entity_id = $1 LIMIT 1`, [row.id]).catch(() => ({ rows: [1] }))).rows.length > 0;
+          if (used) continue;
+          await q.query(`DELETE FROM crm_trading_entities WHERE id = $1`, [row.id]);
+          changes.push({ table: "crm_trading_entities", id: row.id, from: row.name, to: `(duplicate of ${twin.id})` });
+        } else {
+          await q.query(`UPDATE crm_trading_entities SET name = $2 WHERE id = $1`, [row.id, to]);
+          changes.push({ table: "crm_trading_entities", id: row.id, from: row.name, to });
+        }
+      } catch (e: any) { console.warn(`[entity-names] ${row.id}: ${e?.message}`); }
     }
     const companies = (await q.query(`SELECT id, name, trading_entities FROM crm_companies WHERE jsonb_typeof(trading_entities) = 'array' AND jsonb_array_length(trading_entities) > 0`).catch(() => ({ rows: [] as any[] }))).rows;
     for (const row of companies) {
@@ -212,7 +226,7 @@ export async function runInvestmentLinkBackfills(deps: { pool?: Querier } = {}) 
         changes.push({ table: "crm_companies.trading_entities", id: row.id, from: entry.name, to });
         return { ...entry, name: to };
       });
-      if (changed) await q.query(`UPDATE crm_companies SET trading_entities = $2::jsonb WHERE id = $1`, [row.id, JSON.stringify(next)]);
+      if (changed) await q.query(`UPDATE crm_companies SET trading_entities = $2::jsonb WHERE id = $1`, [row.id, JSON.stringify(next)]).catch((e: any) => console.warn(`[entity-names] ${row.id}: ${e?.message}`));
     }
     await mark(ENTITY_ROWS, { changed: changes.length, changes, at: new Date().toISOString() });
     console.log(`[entity-names] ${changes.length} group entity names tidied`);

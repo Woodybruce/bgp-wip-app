@@ -108,6 +108,15 @@ function DealBadges({ d }: { d: AccountDealRow }) {
 // name often just restate the property. Show only what adds something
 // (Woody, 2026-09-27).
 const squash = (s: string | null | undefined) => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+// "Nando's – Bluewater Shopping Centre" under Bluewater → "Nando's".
+function dealShort(d: AccountDealRow): string {
+  const name = (d.name || "").trim(), prop = (d.propertyName || "").trim();
+  if (!name || !prop) return name;
+  const words = prop.split(/[\s,]+/).filter(w => w.length > 2).slice(0, 2).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (!words.length) return name;
+  const re = new RegExp(`\\s*[-–—:]\\s*${words.join("\\s+")}.*$|^${words.join("\\s+")}[^-–—:]*[-–—:]\\s*`, "i");
+  return name.replace(re, "").trim() || name;
+}
 function rowLabels(d: AccountDealRow): { unit: string | null; dealRepeats: boolean } {
   const prop = squash(d.propertyName);
   let unit: string | null = d.unitName?.trim() || null;
@@ -259,7 +268,7 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                     const labels = rowLabels(d);
                     // A repeating deal name gives way to the unit (or a plain
                     // "Open deal") so the deal stays one click away.
-                    const dealLink = labels.dealRepeats && d.propertyId ? (labels.unit || "Open deal") : d.name;
+                    const dealLink = labels.dealRepeats && d.propertyId ? (labels.unit || "Open deal") : (d.propertyId ? dealShort(d) : d.name);
                     return (
                     <tr key={d.dealId} className="border-b border-border/20 last:border-0 hover:bg-muted/40" data-testid={`account-deal-row-${d.dealId}`}>
                       <td className="py-1.5 pr-2 max-w-[12rem]">

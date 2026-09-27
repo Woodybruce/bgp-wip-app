@@ -281,7 +281,8 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
     <div className="space-y-2" data-testid="activity-summary">
       {variant === "both" && (
         <div className="flex items-center gap-1.5 flex-wrap">
-          <button
+          {/* "0 upcoming" was the only chip that showed at zero. */}
+          {allUpcoming.length > 0 && <button
             onClick={() => setSection(s => s === "upcoming" ? "all" : "upcoming")}
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 ${section === "upcoming" ? "border-primary bg-primary/5 font-semibold" : "bg-card"}`}
             data-testid="activity-chip-upcoming"
@@ -289,7 +290,7 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
             <CalendarDays className="w-3 h-3 text-muted-foreground" />
             <span className="font-semibold tabular-nums">{allUpcoming.length}</span>
             <span className="text-muted-foreground">upcoming</span>
-          </button>
+          </button>}
           <button
             onClick={() => setSection(s => s === "recent" ? "all" : "recent")}
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 ${section === "recent" ? "border-primary bg-primary/5 font-semibold" : "bg-card"}`}

@@ -64,7 +64,7 @@ async function googleNews(centre: UkCentre): Promise<Array<{ title: string; url:
 }
 
 async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpening[]> {
-  const key = `centre-openings:v6:${centre.name}`;
+  const key = `centre-openings:v7:${centre.name}`;
   const cached = (await pool.query("SELECT value, updated_at FROM system_settings WHERE key = $1", [key])).rows[0];
   if (cached && Date.now() - new Date(cached.updated_at).getTime() < DAY_MS && Array.isArray(cached.value?.items)) return cached.value.items;
 
@@ -141,8 +141,16 @@ async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpe
     // The outlet sits on the source line — drop its " - Kent Online" /
     // " | LBBOnline" tail from the headline.
     .map(item => {
-      const m = /\s+[-–|]\s+([^-–|]{2,40})$/.exec(item.title);
-      return m ? { ...item, title: item.title.slice(0, m.index).trim(), source: item.source || m[1].trim() } : item;
+      let title = item.title.replace(/^News\s*[|:–-]?\s+/i, ""), source = item.source;
+      // Strip every outlet tail (" - Little Black Book - Kent Online").
+      for (let m = /\s+[-–|]\s+([^-–|]{2,40})$/.exec(title); m; m = /\s+[-–|]\s+([^-–|]{2,40})$/.exec(title)) {
+        source = source || m[1].trim();
+        title = title.slice(0, m.index).trim();
+      }
+      // A feed named after the brand ("Mulberry") or the centre's own "what's
+      // new" page isn't a source worth printing beside the brand link.
+      if (source && (item.brand && source.toLowerCase() === item.brand.name.toLowerCase() || /what['’]s new|^news$/i.test(source))) source = null;
+      return { ...item, title, source };
     });
   await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2::jsonb, NOW())
     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [key, JSON.stringify({ items: deduped })]).catch(() => {});

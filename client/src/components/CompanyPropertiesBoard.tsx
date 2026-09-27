@@ -693,7 +693,7 @@ export function CompanyPropertiesBoard({
                 ? "All official destinations accounted for"
                 : "Official destinations outstanding"}
               {" · "}
-              {new Date(reconciliation.generatedAt).toLocaleDateString()}
+              {new Date(reconciliation.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
             </span>
           </div>
           <div className="overflow-x-auto">

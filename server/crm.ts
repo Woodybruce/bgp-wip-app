@@ -4952,7 +4952,12 @@ Return a JSON object with these fields (use null for any field you cannot find):
         if (range && u.sqft != null) {
           const sq = Number(u.sqft);
           if (sq >= range.min && sq <= range.max) {
-            suggestions.push({ ...u, reason: `Fits their live ${Array.isArray(liveReq.size) ? liveReq.size.join(", ") : liveReq.size} requirement (${sq.toLocaleString("en-GB")} sq ft)`, strength: 2 });
+            // The row already shows the unit's size; say the requirement
+            // plainly ("1,500–3,500 sq ft", not "1500-3500 ft2").
+            const reqSize = (Array.isArray(liveReq.size) ? liveReq.size.join(", ") : String(liveReq.size || ""))
+              .replace(/(\d+)\s*-\s*(\d+)\s*(?:ft2|sq\.? ?ft|sqft)/gi, (_m: string, a: string, b: string) => `${Number(a).toLocaleString("en-GB")}–${Number(b).toLocaleString("en-GB")} sq ft`)
+              .replace(/(\d+)\s*-\s*(?:ft2|sq\.? ?ft|sqft)/gi, (_m: string, a: string) => `${Number(a).toLocaleString("en-GB")}+ sq ft`);
+            suggestions.push({ ...u, reason: `Fits their live ${reqSize} requirement`, strength: 2 });
             continue;
           }
         }
@@ -4964,7 +4969,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
           const format = (brandType || "").replace(/^Tenant - /, "").trim();
           const sameWord = use && format && use.toLowerCase().split(/[\s/,&]+/).some(w => w.length > 2 && format.toLowerCase().includes(w));
           const reason = sameWord ? `${use} unit — same use as their stores` : `${use || "Unit"} use fits their ${format || "format"}`;
-          suggestions.push({ ...u, reason: `${reason}${u.sqft ? ` · ${Number(u.sqft).toLocaleString("en-GB")} sq ft` : ""}`, strength: 1 });
+          suggestions.push({ ...u, reason, strength: 1 });
         }
       }
       suggestions.sort((a, b) => b.strength - a.strength);

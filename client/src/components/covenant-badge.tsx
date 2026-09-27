@@ -122,7 +122,6 @@ export function CovenantCommentary({ companyNumber, className = "" }: { companyN
   });
   if (!num || !data?.grade) return null;
 
-  const missing: string[] = data.missing || [];
   return (
     <div className={`rounded-md border border-border bg-muted/40 p-3 ${className}`} data-testid="covenant-commentary">
       {data.verdict ? (
@@ -130,13 +129,9 @@ export function CovenantCommentary({ companyNumber, className = "" }: { companyN
       ) : (
         <p className="text-xs italic text-muted-foreground">Grade {data.grade} ({data.score}/100) — AI commentary unavailable.</p>
       )}
-      {/* The verdict often closes with its own "To complete the picture…"
-          line — don't say it twice (Woody, 2026-09-27). */}
-      {missing.length > 0 && !/to complete the picture/i.test(data.verdict || "") && (
-        <div className="mt-1.5 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground/70">Still missing:</span> {missing.join(" · ")}
-        </div>
-      )}
+      {/* The data gaps behind a grade aren't shown to readers — "Still
+          missing: Filed accounts not read yet" read as back-of-house
+          (Woody, 2026-09-27). */}
     </div>
   );
 }

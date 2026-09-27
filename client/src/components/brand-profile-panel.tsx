@@ -1260,9 +1260,12 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                     // backer / brand mention that resolves to a tracked company
                     // becomes a link to its profile. Case-insensitive, word-boundary.
                     const linkMap = new Map<string, string>();
+                    // Ordinary words that are also CRM company names ("Group",
+                    // "Source", "Boost") mustn't turn prose into links.
+                    const COMMON = /^(?:group|source|crisis|boost|space|change|home|retail|property|capital|estates?|holdings?|partners|london|city|central|park|house|market|the|one|new|global|brand|food|coffee|fashion|leisure|hotel|bank|trust)$/i;
                     for (const co of allCompaniesForPicker) {
                       if (co.id === companyId) continue;       // don't self-link
-                      if (co.name && co.name.length >= 3) linkMap.set(co.name.toLowerCase(), co.id);
+                      if (co.name && co.name.length >= 3 && !COMMON.test(co.name.trim())) linkMap.set(co.name.toLowerCase(), co.id);
                     }
                     if (parentGroup) linkMap.set(parentGroup.name.toLowerCase(), parentGroup.id);
                     for (const s of siblingBrands) linkMap.set(s.name.toLowerCase(), s.id);
@@ -3888,13 +3891,26 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
   // Inside About each list shows 2 (6 in its own card) until Show all —
   // Sainsbury's six suggested pitches made the profile card ~1,400px.
   const cap = showAllTenancies ? Infinity : bare ? 2 : 6;
-  const pitched: any[] = act.pitched || [];
+  // One row per pitched unit, its evidence joined ("Viewing 15 Apr 2026 ·
+  // Offer (Pending) 3 Jul 2026"), dates in words not ISO.
+  const isoDay = (t: string) => String(t || "").replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, (_m, y, mo, d) => new Date(`${y}-${mo}-${d}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }));
+  const pitchedByUnit = new Map<string, any>();
+  for (const p of (act.pitched || [])) {
+    const k = `${p.propertyId}|${String(p.unitName || "").toLowerCase().replace(/\s+/g, "")}`;
+    const prev = pitchedByUnit.get(k);
+    if (prev) prev.evidence = [prev.evidence, isoDay(p.evidence)].filter(Boolean).join(" · ");
+    else pitchedByUnit.set(k, { ...p, evidence: isoDay(p.evidence) });
+  }
+  const pitched: any[] = [...pitchedByUnit.values()];
   // One row per unit: a unit already pitched (with its evidence) or where
   // the brand is the tenant doesn't repeat under Targeted — Liverpool ONE
   // U 8/9 sat in both lists (Woody, 2026-09-27).
   const unitKey = (propertyId: any, unit: any) => `${propertyId}|${String(unit || "").toLowerCase().replace(/\s+/g, "")}`;
   const shownUnits = new Set([...pitched.map((p: any) => unitKey(p.propertyId, p.unitName)), ...tenantAt.map((p: any) => unitKey(p.property_id, p.unit_name))]);
-  const targeted: any[] = (act.targeted || []).filter((p: any) => !shownUnits.has(unitKey(p.property_id, p.unit_name)));
+  // …and each unit once within its own list (Clarks Village 37D was listed
+  // twice, once per source).
+  const onceBy = (key: (p: any) => string) => (rows: any[]) => { const seen = new Set<string>(); return rows.filter(r => { const k = key(r); if (seen.has(k)) return false; seen.add(k); return true; }); };
+  const targeted: any[] = onceBy(p => unitKey(p.property_id, p.unit_name))((act.targeted || []).filter((p: any) => !shownUnits.has(unitKey(p.property_id, p.unit_name))));
   const suggestions: any[] = sugg?.suggestions || [];
   const ledgerPills = [
     ledger?.completed ? `${ledger.completed} completed` : null,
@@ -3960,7 +3976,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
           <Tier label="Targeted" count={targeted.length}>
             {targeted.slice(0, cap).map((p: any) => (
               <Row key={`g-${p.via}-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name}
-                right={<Badge variant="outline" className="text-[9px] shrink-0">{p.status || (p.via === "letting_tracker" ? "brief" : "schedule")}</Badge>} />
+                right={<Badge variant="outline" className="text-[9px] shrink-0">{({ AVA: "Available", NEG: "Negotiating", HOT: "HOTs", SOL: "Solicitors", OPP: "Opportunity", REP: "Marketing" } as Record<string, string>)[p.status] || p.status || (p.via === "letting_tracker" ? "brief" : "schedule")}</Badge>} />
             ))}
           </Tier>
         )}

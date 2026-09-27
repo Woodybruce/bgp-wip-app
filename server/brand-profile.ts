@@ -746,14 +746,19 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
             AND use_class IS NOT NULL
           LIMIT 3
        )
-       SELECT DISTINCT c.id, c.name, c.store_count, c.rollout_status
-         FROM crm_companies c
-         JOIN crm_comps cm ON (cm.tenant ILIKE c.name OR cm.contact_company ILIKE c.name)
-        WHERE c.company_type ILIKE 'tenant%'
-          AND c.id <> $1
-          AND c.merged_into_id IS NULL
-          AND cm.use_class IN (SELECT use_class FROM me)
-        LIMIT 8`,
+       -- Same sub-category first, then the bigger chains: the unordered
+       -- list gave every restaurant the same eight names (Woody, 2026-09-27).
+       SELECT id, name, store_count, rollout_status FROM (
+         SELECT DISTINCT c.id, c.name, c.store_count, c.rollout_status, c.company_type
+           FROM crm_companies c
+           JOIN crm_comps cm ON (cm.tenant ILIKE c.name OR cm.contact_company ILIKE c.name)
+          WHERE c.company_type ILIKE 'tenant%'
+            AND c.id <> $1
+            AND c.merged_into_id IS NULL
+            AND cm.use_class IN (SELECT use_class FROM me)
+       ) x
+       ORDER BY (x.company_type = (SELECT company_type FROM crm_companies WHERE id = $1)) DESC, x.store_count DESC NULLS LAST, x.name
+       LIMIT 8`,
       [companyId]
     );
 

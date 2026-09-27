@@ -284,8 +284,8 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       </div>
 
       <div className={sec("compliance")}>
-      {/* Covenant */}
-      <Card>
+      {/* Covenant — tenants only; an agent firm's lease covenant means nothing. */}
+      {!isAgentFirm && <Card>
         <CardHeader className="p-3 pb-2">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
             Covenant
@@ -303,7 +303,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
             </p>
           )}
         </CardContent>
-      </Card>
+      </Card>}
 
       {/* Compliance & KYC — same board as desktop (staff actions hide for clients inside) */}
       <BrandComplianceCard companyId={companyId} company={c} />
@@ -340,7 +340,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       {/^tenant(?:\s|-|$)/i.test(c.company_type || "") && <BrandViewingActivity companyId={companyId} />}
       {/* Expansion — score, live requirements, Pipnet asks (phone twin of
           desktop's Expansion intelligence zone). */}
-      {!isLandlord && (
+      {!isLandlord && !isAgentFirm && (
         <Card>
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
@@ -475,7 +475,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
 
 
       {/* Menu / best sellers (brands only) */}
-      {!isLandlord && (
+      {!isLandlord && !isAgentFirm && (
         <MenuIntelCard
           companyId={companyId}
           companyName={c.name}
