@@ -220,7 +220,7 @@ export function unitCandidates(ev: CentreEvidence, unit: TargetUnit, exclude: Se
 
 export type PlannedTarget = { brand_name: string; evidenced: boolean; quality_rating: "green" | "amber" | "red"; rationale: string; companyId: string | null; evidence: string[] };
 
-// The deep pass: one Fable call (extended thinking) plans up to eight units
+// The deep pass: one Fable call (extended thinking) plans up to six units
 // together so the targets form a mix, not five brands copied everywhere.
 export async function planTargets(ev: CentreEvidence, units: Array<TargetUnit & { candidates: UnitCandidate[]; existing: string[] }>): Promise<{ strategy: string; byUnit: Map<string, PlannedTarget[]> }> {
   const unitBlock = units.map(u => [
@@ -251,7 +251,7 @@ Exactly five targets per unit.`;
 
   const { callClaude } = await import("./chatbgp");
   const completion = await callClaude({
-    model: "claude-fable-5", thinking: true, effort: "high", max_completion_tokens: 32000, feature: "target-tenants",
+    model: "claude-fable-5", thinking: true, effort: "high", max_completion_tokens: 16000, feature: "target-tenants",
     messages: [{ role: "system", content: system }, { role: "user", content: prompt }],
   });
   const text: string = completion.choices?.[0]?.message?.content || "";
@@ -297,7 +297,7 @@ export async function matchBrandCompany(pool: any, name: string): Promise<{ id: 
 }
 
 // Plan and save targets for a set of leasing-schedule units (the Generate
-// buttons). Units go to the model in batches of up to eight, two at a time.
+// buttons). Units go to the model in batches of up to six, two at a time.
 // save:false plans without writing (?preview=1 on the unit route).
 export async function generateTargetsForUnits(pool: any, req: Request, propertyId: string, units: TargetUnit[], opts: { save?: boolean } = {}) {
   const ev = await centreEvidence(pool, req, propertyId);
@@ -307,7 +307,7 @@ export async function generateTargetsForUnits(pool: any, req: Request, propertyI
     return { ...u, existing, candidates: unitCandidates(ev, u, new Set(existing.map((e: string) => brandKey(e)))) };
   });
   const batches: typeof prepared[] = [];
-  for (let i = 0; i < prepared.length; i += 8) batches.push(prepared.slice(i, i + 8));
+  for (let i = 0; i < prepared.length; i += 6) batches.push(prepared.slice(i, i + 6));
   const strategies: string[] = [];
   const inserted = new Map<string, any[]>();
   const failed: Array<{ unit_id: string; error: string }> = [];
