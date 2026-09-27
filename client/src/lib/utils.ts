@@ -11,7 +11,7 @@ export function cn(...inputs: ClassValue[]) {
 // "1 properties" / "1 results" grammar guard (docs/DESIGN.md §15) —
 // counts read naturally everywhere.
 export function countLabel(n: number, singular: string, plural?: string): string {
-  return `${n} ${n === 1 ? singular : plural || `${singular}s`}`;
+  return `${n.toLocaleString("en-GB")} ${n === 1 ? singular : plural || `${singular}s`}`;
 }
 
 export const EQUITY_EMAILS = [

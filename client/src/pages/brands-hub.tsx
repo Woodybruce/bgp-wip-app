@@ -6,7 +6,6 @@ import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pill } from "@/components/ui/pill";
-import { countLabel } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -93,6 +92,14 @@ function formatTurnover(val: number): string {
   if (Math.round(val / 1_000) >= 1_000) return `£${(val / 1_000_000).toFixed(1)}m`;
   if (Math.round(val) >= 1_000) return `£${(val / 1_000).toFixed(0)}k`;
   return `£${val.toFixed(0)}`;
+}
+
+// "27 Sep 2026" — en-GB toLocaleDateString gives "27/09/2026" or "Sept"
+// (Woody, 2026-09-27).
+function newsDate(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return `${d.getDate()} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getMonth()]} ${d.getFullYear()}`;
 }
 
 function formatSize(sizes: string[] | null): string {
@@ -737,24 +744,42 @@ function BrandExplorer() {
   const { data: brandNewsRaw = [] } = useQuery<any[]>({
     queryKey: ["/api/news-feed/articles", "brand-explorer"],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/news-feed/articles?limit=40");
+      // 100 not 40 — the headline-names-a-brand filter below drops most.
+      const res = await apiRequest("GET", "/api/news-feed/articles?limit=100");
       const all = await res.json();
       return (all as any[])
         .filter((a: any) => a.category === "Retail" || a.category === "Hospitality")
-        .slice(0, 40);
+        .slice(0, 100);
     },
     staleTime: 300_000,
   });
-  // UX #139 — the Retail wire is mostly fashion copy; for client logins keep
-  // Hospitality stories plus anything mentioning a brand they can actually
-  // see, so the panel relates to the grid above it.
+  // UX #139 — the Retail wire is mostly fashion copy. Only stories whose
+  // headline names a brand in the grid — staff saw fashion week and the VMAs
+  // (Woody, 2026-09-27). Whole-word match; 4–5 letter names
+  // ("Next", "Boots") must match case so the common word doesn't.
   const brandNews = useMemo(() => {
-    if (!isClientExplorer) return brandNewsRaw.slice(0, 12);
-    const names = companies.map((c: any) => String(c.name || "").toLowerCase()).filter((n: string) => n.length >= 4);
+    const long = new Set<string>();
+    const short = new Set<string>();
+    for (const c of companies as any[]) {
+      const n = String(c.name || "").trim();
+      if (n.length >= 6) long.add(n.toLowerCase());
+      else if (n.length >= 4) short.add(n);
+    }
+    const isWordChar = (ch: string | undefined) => !!ch && /[\p{L}\p{N}]/u.test(ch);
+    const hasWord = (text: string, n: string) => {
+      for (let i = text.indexOf(n); i >= 0; i = text.indexOf(n, i + 1)) {
+        if (!isWordChar(text[i - 1]) && !isWordChar(text[i + n.length])) return true;
+      }
+      return false;
+    };
     return brandNewsRaw.filter((a: any) => {
-      if (a.category === "Hospitality") return true;
-      const text = `${a.title || ""} ${a.summary || ""}`.toLowerCase();
-      return names.some((n: string) => text.includes(n));
+      // Clients keep every Hospitality story (UX #139's original rule).
+      if (isClientExplorer && a.category === "Hospitality") return true;
+      const t = String(a.title || "");
+      const tl = t.toLowerCase();
+      for (const n of long) if (hasWord(tl, n)) return true;
+      for (const n of short) if (hasWord(t, n)) return true;
+      return false;
     }).slice(0, 12);
   }, [brandNewsRaw, isClientExplorer, companies]);
 
@@ -1072,7 +1097,7 @@ function BrandExplorer() {
             )}
           </>
         )}
-        <p className="text-sm text-muted-foreground ml-auto">{countLabel(filtered.length, "result")}</p>
+        <p className="text-sm text-muted-foreground ml-auto">{/* Grouped thousands like "1,871 left" below (Woody, 2026-09-27). */}{`${filtered.length.toLocaleString("en-GB")} ${filtered.length === 1 ? "result" : "results"}`}</p>
       </div>
 
       {/* Brand cards */}
@@ -1175,7 +1200,7 @@ function BrandExplorer() {
                     {article.sourceName && <span className="text-[10px] text-muted-foreground truncate">{article.sourceName}</span>}
                     {article.publishedAt && (
                       <span className="text-[10px] text-muted-foreground shrink-0">
-                        · {new Date(article.publishedAt).toLocaleDateString("en-GB")}
+                        · {newsDate(article.publishedAt)}
                       </span>
                     )}
                     <ExternalLink className="w-2.5 h-2.5 text-muted-foreground ml-auto shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />

@@ -49,6 +49,7 @@ function PageLoader() {
 
 function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm" | "md" | "lg" }) {
   const [failCount, setFailCount] = useState(0);
+  const [loaded, setLoaded] = useState(false);
 
   const sizeClass = size === "sm" ? "w-8 h-8" : size === "lg" ? "w-14 h-14" : "w-10 h-10";
   const textSize = size === "sm" ? "text-xs" : size === "lg" ? "text-lg" : "text-sm";
@@ -64,26 +65,34 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
   const local = localBrandLogoUrl(company.name, domain ?? guessed ?? null);
   if (local) logoSources.push(local);
 
-  if (failCount >= logoSources.length) {
-    // Letters/digits only — "F(" for FPE (UK), "A&" for Alvarez & Marsal
-    // (Woody, 2026-09-27).
-    const initials = (company.name || "").split(/\s+/).map(w => w.replace(/[^\p{L}\p{N}]/gu, "")[0] || "").join("").toUpperCase().slice(0, 2) || "?";
-    return (
-      <div className={`${sizeClass} rounded-lg bg-muted flex items-center justify-center ${textSize} font-semibold text-muted-foreground border shrink-0`}>
-        {initials}
-      </div>
-    );
-  }
+  // Letters only — "F(" for FPE (UK), "A&" for Alvarez & Marsal, and digits
+  // gave "F2" / "3R" / "4"; tokens with no letters are skipped, falling back
+  // to the name's first letter (Woody, 2026-09-27).
+  const letterTokens = (company.name || "").split(/\s+/).map(w => w.replace(/[^\p{L}]/gu, "")).filter(Boolean);
+  const initials = (letterTokens.map(w => w[0]).join("").slice(0, 2) || (company.name || "").replace(/[^\p{L}]/gu, "")[0] || "?").toUpperCase();
+  const initialsTile = (
+    <div className={`${sizeClass} rounded-lg bg-muted flex items-center justify-center ${textSize} font-semibold text-muted-foreground border shrink-0`}>
+      {initials}
+    </div>
+  );
 
+  if (failCount >= logoSources.length) return initialsTile;
+
+  // Initials sit under the logo until it loads (and stay if it errors) — a
+  // lazy logo was a blank white square with nothing in it.
   return (
-    <img
-      src={logoSources[failCount]}
-      alt={company.name}
-      loading="lazy"
-      decoding="async"
-      className={`${sizeClass} rounded-lg object-contain bg-white border shrink-0`}
-      onError={() => setFailCount(c => c + 1)}
-    />
+    <div className={`${sizeClass} relative shrink-0`}>
+      {!loaded && <div className="absolute inset-0">{initialsTile}</div>}
+      <img
+        src={logoSources[failCount]}
+        alt={company.name}
+        loading="lazy"
+        decoding="async"
+        className={`${sizeClass} relative rounded-lg object-contain border shrink-0 ${loaded ? "bg-white" : "opacity-0"}`}
+        onLoad={() => setLoaded(true)}
+        onError={() => { setLoaded(false); setFailCount(c => c + 1); }}
+      />
+    </div>
   );
 }
 
@@ -582,7 +591,7 @@ function AgentsTab({
           (Woody, 2026-09-27). */}
       <div className="flex flex-wrap items-center gap-1.5">
         <Pill active={!specialtyFilter} onClick={() => { setSpecialtyFilter(null); setLocationFilter(null); setSearch(""); }} data-testid="stat-agent-firms">
-          Agent Firms <span className="font-mono tabular-nums">{agentCompanies.length}</span>
+          Agent Firms <span className="font-mono tabular-nums">{agentCompanies.length.toLocaleString("en-GB")}</span>
         </Pill>
         {([
           ["Leasing", "stat-leasing", agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "leasing").length],
@@ -591,11 +600,13 @@ function AgentsTab({
           ["Lease Advisory", "stat-lease-advisory", agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "lease advisory").length],
         ] as const).filter(([label, , n]) => n > 0 || specialtyFilter === label).map(([label, testId, n]) => (
           <Pill key={label} active={specialtyFilter === label} onClick={() => setSpecialtyFilter(specialtyFilter === label ? null : label)} data-testid={testId}>
-            {label} <span className="font-mono tabular-nums">{n}</span>
+            {/* These count people, the reset chip counts firms — say so
+                (Woody, 2026-09-27). */}
+            {label} <span className="font-mono tabular-nums">{n.toLocaleString("en-GB")}</span> {n === 1 ? "agent" : "agents"}
           </Pill>
         ))}
         <span className="text-xs text-muted-foreground ml-1" data-testid="stat-individual-agents">
-          <span className="font-mono tabular-nums">{agentContacts.length}</span> individual agents
+          <span className="font-mono tabular-nums">{agentContacts.length.toLocaleString("en-GB")}</span> individual agents
         </span>
       </div>
 
