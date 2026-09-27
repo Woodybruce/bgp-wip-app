@@ -758,9 +758,11 @@ export function CompanyPropertiesBoard({
               {boardProperties.length} in CRM{discovered.length > 0 ? ` · ${discovered.length} discovered` : ""}
             </span>
           </h3>
-          <span className="text-[10px] text-muted-foreground">
-            CRM {boardProperties.length}{kind === "landlord" ? ` · Website ${scrapedCount}` : ""} · {kind === "landlord" ? "Land Registry" : "LR charges"} {lrCount}
-          </span>
+          {/* Source tally beside the title repeated the CRM count — only
+              the extra sources are worth a mention (Woody, 2026-09-27). */}
+          {(scrapedCount > 0 || lrCount > 0) && <span className="text-[10px] text-muted-foreground tabular-nums">
+            {[kind === "landlord" && scrapedCount > 0 ? `${scrapedCount} from their website` : null, lrCount > 0 ? `${lrCount} from ${kind === "landlord" ? "Land Registry" : "LR charges"}` : null].filter(Boolean).join(" · ")}
+          </span>}
         </div>
 
         {mapStores.length > 0 && (

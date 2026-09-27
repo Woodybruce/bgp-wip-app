@@ -446,18 +446,17 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
       </CardHeader>
       <CardContent className="p-3 pt-0">
         {topSlot}
-        {(aiCheck.check || aiCheck.running) && (
-          <div className="rounded-md border border-border bg-muted/30 p-2 mb-2 space-y-1" data-testid="key-contacts-ai-check">
-            <p className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">{aiCheck.running && <Loader2 className="w-3 h-3 animate-spin" />}AI check</p>
-            {aiCheck.check ? (
-              <>
-                <ul className="text-xs space-y-0.5 list-disc pl-4">{aiCheck.check.summary.map((line, i) => <li key={i}>{line}</li>)}</ul>
-                {aiCheck.check.missing.length > 0 && (
-                  <p className="text-[11px] text-muted-foreground">Not saved: {aiCheck.check.missing.map(m => `${m.email} (${m.note})`).join(" · ")}</p>
-                )}
-              </>
-            ) : <p className="text-xs text-muted-foreground">Checking the list against BGP's emails…</p>}
-          </div>
+        {/* The AI's notes on the list are working notes ("Adrian's email
+            domain is unusual…") — folded behind one line, open on click
+            (Woody, 2026-09-27). Nothing shows while it runs. */}
+        {aiCheck.check && (aiCheck.check.summary.length > 0 || aiCheck.check.missing.length > 0) && (
+          <details className="rounded-md border border-border bg-muted/30 px-2 py-1 mb-2" data-testid="key-contacts-ai-check">
+            <summary className="text-[11px] font-medium text-muted-foreground cursor-pointer">AI check · {aiCheck.check.summary.length + aiCheck.check.missing.length} note{aiCheck.check.summary.length + aiCheck.check.missing.length === 1 ? "" : "s"}</summary>
+            <ul className="text-xs space-y-0.5 list-disc pl-4 mt-1">{aiCheck.check.summary.map((line, i) => <li key={i}>{line}</li>)}</ul>
+            {aiCheck.check.missing.length > 0 && (
+              <p className="text-[11px] text-muted-foreground mt-1">Not saved: {aiCheck.check.missing.map(m => `${m.email} (${m.note})`).join(" · ")}</p>
+            )}
+          </details>
         )}
         {accountMode && (employerOptions.length > 0 || propertyOptions.length > 0) && (
           <div className="flex flex-wrap items-center gap-1.5 mb-2">

@@ -87,7 +87,7 @@ import {
 import { PropertyFoldersPanel } from "@/pages/properties";
 import { areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { AIActivityCard } from "@/components/ai-activity-card";
-import { DealAmlStatusCard } from "@/components/deal-aml-status";
+import { DealAmlStatusCard, useDealAmlStatus } from "@/components/deal-aml-status";
 
 // Collapsible card pattern reused across the deal page for heavy panels.
 function CollapsibleCard({
@@ -215,6 +215,10 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   // the panels otherwise mount for a beat and fire their (403) queries
   // before the role is known. Staff just see the panels pop in a tick later.
   const isClientDeal = !ddUser || ddUser.role === "Client" || !!ddUser.companyScopeId;
+  // Same query the AML card runs (shared cache). When it lists both
+  // counterparties, the KYC panel drops its own party rows — the page was
+  // listing each counterparty twice (Woody, 2026-09-27).
+  const { data: amlStatus } = useDealAmlStatus(id, !isClientDeal);
 
   const { data: properties = [] } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
@@ -695,7 +699,12 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
             // heading = property name. Leasing deals are about a specific unit
             // — heading = unit name, property as subtitle.
             const isInvestment = deal.dealType === "Sale" || deal.dealType === "Purchase";
-            const headingIsUnit = !isInvestment && !!linkedUnit;
+            // A unit linked from a different property (e.g. heading "55 Regent
+            // Street" over a 10 Piccadilly deal) contradicted the breadcrumb and
+            // linked property — only headline a unit that sits on the deal's
+            // property; otherwise flag the mislink (Woody, 2026-09-27).
+            const unitOffProperty = !!linkedUnit && !!deal.propertyId && linkedUnit.propertyId !== deal.propertyId;
+            const headingIsUnit = !isInvestment && !!linkedUnit && !unitOffProperty;
             const headingText = headingIsUnit
               ? linkedUnit!.unitName
               : dealDisplayName;
@@ -771,6 +780,17 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                       On the {trackerRow.boardType === "Sales" ? "Sales" : "Purchases"} board →
                     </Link>
                   )}
+                  {unitOffProperty && !isClientDeal && (
+                    <button
+                      type="button"
+                      onClick={openUnitEdit}
+                      className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                      title="The linked unit belongs to another property — click to pick the right unit"
+                      data-testid="chip-unit-off-property"
+                    >
+                      Unit {linkedUnit!.unitName} is on another property
+                    </button>
+                  )}
                   {headingIsUnit && (
                     <Link href={`/deals/letting${linkedProperty ? `?propertyId=${linkedProperty.id}` : ""}`} className="text-xs hover:underline hover:text-foreground" data-testid="link-back-to-tracker">
                       ← Back to Letting Tracker
@@ -787,11 +807,11 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                       <Link href={`/properties/${linkedProperty.id}#tenancy-unit-${(deal as any).tenancyUnitId}`}>
                         <a
                           className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                          title="Linked to the tenancy schedule (canonical spine)"
+                          title="Linked to its unit on the property's tenancy schedule"
                           data-testid="chip-on-tenancy-spine"
                         >
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                          On tenancy spine
+                          On tenancy schedule
                         </a>
                       </Link>
                     ) : !isClientDeal ? (
@@ -804,7 +824,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                         data-testid="chip-off-tenancy-spine"
                       >
                         <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                        Off tenancy spine
+                        Not on tenancy schedule
                       </span>
                     ) : null
                   )}
@@ -837,7 +857,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-1.5 md:hidden" data-testid="deal-phone-sections">
+      {/* One scrolling row — wrapping left "Files" alone on a second line (Woody, 2026-09-27). */}
+      <div className="flex gap-1.5 overflow-x-auto -mx-4 px-4 pb-0.5 md:hidden [&>*]:shrink-0" data-testid="deal-phone-sections">
         <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="deal-section-overview">Overview</Pill>
         <Pill active={phoneSection === "brand"} onClick={() => { setPhoneSection("brand"); setMainSections(prev => ({ ...prev, brands: true })); }} data-testid="deal-section-brand">Brand</Pill>
         {!isClientDeal && (
@@ -1162,11 +1183,11 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       <div className={sec("compliance")}>
       <CollapsibleCard open={mainSections.kyc} onToggle={() => toggleMain("kyc")} icon={ShieldCheck} title="KYC" testId="toggle-deal-kyc">
         <div className="space-y-3">
-          <DealKYCPanel deal={deal} companies={companies} />
+          <DealKYCPanel deal={deal} companies={companies} hidePartyList={(amlStatus?.counterparties.length ?? 0) >= 2} />
           {/* AML AI augments — MLR scope, AI triage, SoF analyser, MLRO PDF.
               Sits below the existing per-counterparty KYC pack so MLRO has the
               full toolset on one screen. Renders even with <2 counterparties. */}
-          <DealAmlStatusCard dealId={id} />
+          <DealAmlStatusCard dealId={id} dealStatus={deal.status} />
         </div>
       </CollapsibleCard>
       </div>

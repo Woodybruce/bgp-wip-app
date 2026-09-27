@@ -123,7 +123,9 @@ export function DealsSummary({ propertyId, propertyIds, variant }: {
       ) : live.length === 0 ? (
         <div className="text-center py-3">
           <Handshake className="w-6 h-6 mx-auto mb-1 text-muted-foreground/30" />
-          <p className="text-xs text-muted-foreground">Nothing live on the Deals board.</p>
+          {/* Sales / purchases run on the Investment board and are left out
+              here — "nothing live" read as wrong on a property that's for sale. */}
+          <p className="text-xs text-muted-foreground">No live leasing deals. Sales and purchases show under Investment.</p>
           <Link href={boardHref(propertyId)} className="text-[11px] text-primary hover:underline">Open the board →</Link>
         </div>
       ) : (

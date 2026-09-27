@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { extractDomain, guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
+import { formatSizeList } from "@/lib/format-size";
 import {
   Store, TrendingUp, Flame, Star, Search, ChevronRight,
   MapPin, Maximize2, Zap, BarChart3, RefreshCw, Building2,
@@ -96,7 +97,22 @@ function formatTurnover(val: number): string {
 
 function formatSize(sizes: string[] | null): string {
   if (!sizes?.length) return "—";
-  return sizes.join(", ");
+  return formatSizeList(sizes);
+}
+
+// Category line under a brand name. Bare "Tenant" (no sub-category) strips
+// to "" and is hidden — it read as a duplicate of the green "Tenant"
+// relationship pill (Woody, 2026-09-27).
+function brandCategory(companyType: string | null | undefined): string {
+  return (companyType || "").replace(/^Tenant\s*(?:[-–]\s*)?/i, "").trim();
+}
+
+// A social profile saved as the brand's domain (x.com/benandjerrys) pulled
+// the network's own logo onto the brand — Ben & Jerry's showed the X mark
+// (Woody, 2026-09-27). Never treat these hosts as a logo domain.
+const SOCIAL_LOGO_HOSTS = /(^|\.)(x|twitter|instagram|facebook|fb|linkedin|tiktok|youtube|threads|pinterest|linktr|linktree)\.(com|ee|me)$/i;
+function isSocialDomain(d: string | null): boolean {
+  return !!d && SOCIAL_LOGO_HOSTS.test(d);
 }
 
 function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string | null; size?: number }) {
@@ -104,12 +120,13 @@ function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string 
 
   const d = extractDomain(domain ?? null);
   const guessed = guessDomain(name);
+  const social = isSocialDomain(d);
 
   // Only source: /api/brand-logo/...  — the server redirects to logo.dev
   // (or Google favicons) when there's no local image. Clearbit was killed by
   // HubSpot March 2025 and the domain literally doesn't resolve any more.
   const sources: string[] = [];
-  const local = localBrandLogoUrl(name, domain ?? guessed ?? null);
+  const local = social ? null : localBrandLogoUrl(name, domain ?? guessed ?? null);
   if (local) sources.push(local);
 
   if (failCount < sources.length) {
@@ -265,7 +282,7 @@ export default function BrandsHub() {
           they exist; stop the dead-end for someone hunting turnover data. */}
       {isMobile && (
         <p className="text-[11px] text-muted-foreground -mt-3" data-testid="mobile-boards-hint">
-          Turnover Board and the other boards are available on desktop.
+          Turnover rankings and Brand Hunter open on a computer.
         </p>
       )}
 
@@ -274,7 +291,10 @@ export default function BrandsHub() {
       {/* ── Stats bar ──────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: "Total Brands", value: totalBrands },
+          // Server counts brands with a category ("Tenant - X"); Brand
+          // Explorer's All Brands also holds uncategorised ones, so the two
+          // tiles are named for what they count (Woody, 2026-09-27).
+          { label: "Categorised Brands", value: totalBrands },
           { label: "Brands with Live Requirements", value: activeReqs },
           { label: "With Turnover Data", value: brandsWithTurnover },
           { label: "Categories", value: BRAND_CATEGORIES.length },
@@ -364,7 +384,7 @@ export default function BrandsHub() {
                         <BrandLogo name={b.name} domain={b.domain} size={22} />
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-medium truncate">{b.name}</p>
-                          <p className="text-[9px] text-muted-foreground truncate">{(b.company_type || "").replace("Tenant - ", "")}</p>
+                          {brandCategory(b.company_type) && <p className="text-[9px] text-muted-foreground truncate">{brandCategory(b.company_type)}</p>}
                         </div>
                         <div className="text-right shrink-0">
                           <div className="flex items-center gap-1 justify-end">
@@ -423,7 +443,10 @@ export default function BrandsHub() {
           <div className="flex items-center gap-2">
             <Maximize2 className="w-4 h-4 text-blue-500" />
             <CardTitle className="text-sm font-semibold">Active Requirements Radar</CardTitle>
-            <Badge variant="secondary" className="text-[10px]">{data?.activeRequirements?.length || 0} brands searching</Badge>
+            {/* The list is the latest 30 requirements (server LIMIT 30), not a
+                brand count — say so, so it can't contradict the "Brands with
+                Live Requirements" tile (Woody, 2026-09-27). */}
+            <Badge variant="secondary" className="text-[10px]">Latest {data?.activeRequirements?.length || 0} of {activeReqs} brands</Badge>
           </div>
         </CardHeader>
         <CardContent className="px-5 pb-4">
@@ -437,7 +460,7 @@ export default function BrandsHub() {
                     <BrandLogo name={r.company_name} domain={r.domain} size={28} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">{r.company_name}</p>
-                      <p className="text-[10px] text-muted-foreground truncate">{(r.company_type || "").replace("Tenant - ", "")}</p>
+                      {brandCategory(r.company_type) && <p className="text-[10px] text-muted-foreground truncate">{brandCategory(r.company_type)}</p>}
                       <div className="flex flex-wrap gap-1 mt-1">
                         {/* max-w-full + truncate — free-text sizes ("Prezzo:
                             2,500-3,500 sq ft; Jamie's Italian: …") must clip
@@ -655,6 +678,11 @@ function BrandExplorer() {
   });
   const [relFilter, setRelFilter] = useState<string>("all");
   const [propFilter, setPropFilter] = useState<string>("all");
+  // Phone renders 30 cards then "Show more" — the full ~1,900-card grid made
+  // the page ~117k px tall (Woody, 2026-09-27). Resets when filters change.
+  const PHONE_PAGE = 30;
+  const [phoneShown, setPhoneShown] = useState(PHONE_PAGE);
+  useEffect(() => { setPhoneShown(PHONE_PAGE); }, [activeCat, activeSub, search, relFilter, propFilter]);
 
   const { data: allCompanies = [] } = useQuery<any[]>({
     queryKey: ["/api/crm/companies"],
@@ -1040,7 +1068,7 @@ function BrandExplorer() {
 
       {/* Brand cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8 gap-2">
-        {filtered.map((c: any) => {
+        {(isMobileExplorer ? filtered.slice(0, phoneShown) : filtered).map((c: any) => {
           const parent = c.parentCompanyId ? companyById.get(c.parentCompanyId) : null;
           const cf = isClientExplorer ? undefined : explorerFlags[c.id];
           const targetCount = (cf?.targetedAt || []).length;
@@ -1049,7 +1077,7 @@ function BrandExplorer() {
               <Link href={`/companies/${c.id}`} className="absolute inset-0 rounded-lg" aria-label={c.name} />
               <BrandLogo name={c.name} domain={c.domain} size={36} />
               <p className="text-xs font-medium leading-tight truncate w-full group-hover:text-primary transition-colors">{c.name}</p>
-              <p className="text-[10px] text-muted-foreground truncate w-full">{(c.companyType || "").replace("Tenant - ", "")}</p>
+              {brandCategory(c.companyType) && <p className="text-[10px] text-muted-foreground truncate w-full">{brandCategory(c.companyType)}</p>}
               {cf && (cf.isTenant || targetCount > 0 || cf.liveRequirement) && (
                 <div className="flex items-center justify-center gap-1 flex-wrap">
                   {cf.isTenant && (
@@ -1090,6 +1118,11 @@ function BrandExplorer() {
           </div>
         )}
       </div>
+      {isMobileExplorer && filtered.length > phoneShown && (
+        <Button variant="outline" className="w-full" onClick={() => setPhoneShown(n => n + PHONE_PAGE)} data-testid="brand-cards-show-more">
+          Show more ({(filtered.length - phoneShown).toLocaleString("en-GB")} left)
+        </Button>
+      )}
 
       {/* Brand news feed */}
       {isClientExplorer && brandNews.length === 0 && (
@@ -1444,7 +1477,8 @@ function AutoTurnoverStatus() {
       {!status.running && status.enabled && (
         <span className="flex items-center gap-1.5 text-[10px] text-emerald-600">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-          Auto-on · {status.intervalHours}h cycle
+          {/* Plain English, not scheduler jargon (Woody, 2026-09-27). */}
+          Researching automatically every {status.intervalHours} hours
           {lastRunAgo !== null && ` · ${lastRunAgo < 60 ? `${lastRunAgo}m ago` : `${Math.floor(lastRunAgo / 60)}h ago`}`}
           {status.lastResult?.processed ? ` · ${status.lastResult.processed} done` : ""}
         </span>
@@ -1452,7 +1486,7 @@ function AutoTurnoverStatus() {
       {!status.enabled && (
         <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
           <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-          Auto-off
+          Automatic research paused
         </span>
       )}
       <Button
@@ -1543,7 +1577,7 @@ function TurnoverResearchPanel({ onResearch, researchingId }: { onResearch: (id:
       )}
       {!search.trim() && (
         <p className="text-xs text-muted-foreground">
-          Type a brand name above. Claude will check Companies House accounts + public sources to estimate annual turnover and store it in your Turnover Board.
+          Type a brand name above to find its annual turnover from Companies House accounts and public sources. The figure is added to the Turnover Board.
         </p>
       )}
     </div>

@@ -159,8 +159,9 @@ function getFiscalYear(m: string | null | undefined): number | null {
 function getMonthSortKey(m: string): number {
   const parsed = parseMonth(m);
   if (!parsed) return 99;
-  const fyMonth = parsed.monthNum >= 4 ? parsed.monthNum - 4 : parsed.monthNum + 8;
-  return parsed.calendarYear * 12 + fyMonth;
+  // Chronological: Jan–Mar belong to the FY that started the previous April,
+  // so a calendarYear*12 + fyMonth key put Jan-27 after Apr-27 (Woody, 2026-09-27).
+  return parsed.calendarYear * 12 + (parsed.monthNum - 1);
 }
 
 
@@ -1209,11 +1210,16 @@ export default function WipReport() {
   }, [entries, entryMatches]);
 
   const feeBoards = useMemo(() => {
+    // Header total per board counts each fee once — summing the Team rows
+    // double-counted shared deals (£4.0M vs £3.5M) (Woody, 2026-09-27).
+    const totals: Record<string, number> = {};
     const build = (skip: "client" | "project" | "team" | "agent", keyOf: (e: WipDealEntry) => string[]) => {
       const agg = new Map<string, number>();
+      totals[skip] = 0;
       for (const e of entries) {
         if (!entryMatches(e, skip)) continue;
         const fee = (e.amtWip || 0) + (e.amtInvoice || 0);
+        totals[skip] += fee;
         const keys = keyOf(e);
         // Teams get the full fee each (matching the Team filter card);
         // agents split evenly (matching filterFees).
@@ -1231,6 +1237,7 @@ export default function WipReport() {
       project: build("project", (e) => orUnassigned(e.project ? [e.project] : [])),
       team: build("team", (e) => orUnassigned(e.team ? (e.team as string).split(",").map(t => t.trim()).filter(Boolean) : [])),
       agent: build("agent", (e) => orUnassigned(e.agent ? (e.agent as string).split(",").map(a => normalizeAgent(a.trim()).toUpperCase()).filter(Boolean) : [])),
+      totals,
     };
   }, [entries, entryMatches]);
 
@@ -1465,7 +1472,9 @@ export default function WipReport() {
               <span className="text-white font-bold text-lg tracking-tight">Landsec</span>
             </div>
           ) : (
-            <img src={bgpLogo} alt="BGP" className="hidden md:block h-12 w-auto invert" data-testid="wip-bgp-logo" />
+            // The sidebar already carries the BGP logo — a second one beside
+            // the h1 read as clutter, so it only shows on the printout (Woody, 2026-09-27).
+            <img src={bgpLogo} alt="BGP" className="hidden print:block h-12 w-auto invert" data-testid="wip-bgp-logo" />
           )}
           <div>
             <h1
@@ -1479,8 +1488,9 @@ export default function WipReport() {
             <p className="text-sm text-muted-foreground">
               <span className="md:hidden">{teamLabel && `${teamLabel} · `}<span className="font-mono tabular-nums">{sortedDetailEntries.length}</span> deal{sortedDetailEntries.length !== 1 ? "s" : ""}</span>
               <span className="hidden md:inline">
-                <span className="font-mono tabular-nums">{filteredEntries.length}</span> transaction{filteredEntries.length !== 1 ? "s" : ""} · Total net fees: <span className="font-mono tabular-nums">{formatFullCurrency(totalNetFees)}</span>
-                <span className="ml-2 opacity-60">· Live data from CRM deals</span>
+                {/* Deals, not fee-split entries — the old "945 transactions" never
+                    matched Deal Detail's one-row-per-deal count (Woody, 2026-09-27). */}
+                <span className="font-mono tabular-nums">{mergedDetailEntries.length}</span> deal{mergedDetailEntries.length !== 1 ? "s" : ""} · Total net fees: <span className="font-mono tabular-nums">{formatFullCurrency(totalNetFees)}</span>
               </span>
             </p>
           </div>
@@ -1537,7 +1547,7 @@ export default function WipReport() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button size="sm" asChild className="min-h-11 md:min-h-0" data-testid="wip-new-deal-button">
+          <Button size="sm" asChild className="min-h-11 md:min-h-0 shrink-0 whitespace-nowrap" data-testid="wip-new-deal-button">
             <Link href="/deals/list?new=1">
               <Plus className="h-4 w-4 mr-1" />
               Add deal
@@ -1548,7 +1558,7 @@ export default function WipReport() {
 
       {/* Tab switcher — app pill standard (ui/pill.tsx) */}
       <div className="flex items-center gap-1.5 mb-4 flex-shrink-0 no-print flex-wrap" data-testid="wip-tabs">
-        <Pill active={activeTab === "report"} onClick={() => setActiveTab("report")} data-testid="wip-tab-report">WIP Report</Pill>
+        <Pill active={activeTab === "report"} onClick={() => setActiveTab("report")} data-testid="wip-tab-report">Overview</Pill>
         <Pill active={activeTab === "agent-summary"} onClick={() => setActiveTab("agent-summary")} data-testid="wip-tab-agent-summary">Agent Summary</Pill>
         {canSeeAll && (
           <Pill active={activeTab === "fee-check"} onClick={() => setActiveTab("fee-check")} data-testid="wip-tab-fee-check">Fee Check</Pill>
@@ -1786,12 +1796,13 @@ export default function WipReport() {
               const expanded = expandedBoards.has(board.key);
               const shown = expanded ? board.rows.slice(0, 40) : board.rows.slice(0, 6);
               const maxB = Math.max(...board.rows.map(r => r.total), 1);
-              const boardTotal = board.rows.reduce((s, r) => s + r.total, 0);
+              const boardTotal = feeBoards.totals[board.key] ?? 0;
+              const shared = board.key === "team" && board.rows.reduce((s, r) => s + r.total, 0) > boardTotal + 0.5;
               return (
                 <div key={board.key} className="bg-card border border-border rounded-lg overflow-hidden" data-testid={`wip-phone-board-${board.key}`}>
                   <div className="bg-muted/50 border-b px-3 py-2 flex items-center justify-between">
                     <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Net fees by {board.title}</span>
-                    <span className="text-[11px] font-mono text-muted-foreground">{formatCurrency(boardTotal)}</span>
+                    <span className="text-[11px] font-mono text-muted-foreground" title={shared ? "Deals shared between teams count in full in each team row" : undefined}>{formatCurrency(boardTotal)}{shared && <span className="font-sans"> · shared deals in each team</span>}</span>
                   </div>
                   <div className="p-2">
                     {shown.map(r => {
@@ -1915,12 +1926,13 @@ export default function WipReport() {
                 const expanded = expandedBoards.has(`desk-${board.key}`);
                 const shown = expanded ? board.rows.slice(0, 60) : board.rows.slice(0, 8);
                 const maxB = Math.max(...board.rows.map(r => r.total), 1);
-                const boardTotal = board.rows.reduce((s, r) => s + r.total, 0);
+                const boardTotal = feeBoards.totals[board.key] ?? 0;
+                const shared = board.key === "team" && board.rows.reduce((s, r) => s + r.total, 0) > boardTotal + 0.5;
                 return (
                   <div key={board.key} className="bg-card border border-border rounded-lg overflow-hidden flex flex-col" data-testid={`wip-desk-board-${board.key}`}>
                     <div className="bg-muted/50 border-b px-3 py-2 flex items-center justify-between">
                       <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Net fees by {board.title}</span>
-                      <span className="text-[11px] font-mono text-muted-foreground">{formatCurrency(boardTotal)}</span>
+                      <span className="text-[11px] font-mono text-muted-foreground" title={shared ? "Deals shared between teams count in full in each team row" : undefined}>{formatCurrency(boardTotal)}{shared && <span className="font-sans"> · shared deals in each team</span>}</span>
                     </div>
                     <div className={`p-2 ${expanded ? "max-h-72 overflow-y-auto" : ""}`}>
                       {shown.map(r => {
@@ -1968,7 +1980,7 @@ export default function WipReport() {
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                   Deal Detail
                 </span>
-                <span className="text-xs text-muted-foreground ml-2">({sortedDetailEntries.length} rows)</span>
+                <span className="text-xs text-muted-foreground ml-2">({sortedDetailEntries.length} deal{sortedDetailEntries.length !== 1 ? "s" : ""})</span>
               </div>
               <div className="flex items-center gap-2">
                 <Button

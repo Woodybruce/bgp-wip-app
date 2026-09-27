@@ -81,11 +81,15 @@ export function PropertySimpleOverview({ propertyId, propertyName, landlordName,
     </CardHeader>
     <CardContent className="p-4 pt-0 space-y-4">
       {!units.length ? <div className="space-y-2"><p className="text-sm text-muted-foreground">No current tenancy rows recorded. Add the schedule to show tenants, rents and lease events.</p><Button size="sm" onClick={onOpenTenancy}>Add tenancy information</Button></div> : <>
+        {/* Multi-let puts the compact schedule (with its own passing-rent
+            tile) on the same screen — the figure showed twice. */}
+        {showUnits && <>
         <div className="flex items-end justify-between border-b pb-3 gap-3">
           <div><p className="text-[11px] text-muted-foreground">Recorded passing rent / year</p><p className="text-2xl font-mono tabular-nums">{knownRent === null ? "Not recorded" : money(knownRent)}</p></div>
           <span className="text-sm text-muted-foreground"><span className="font-mono tabular-nums">{units.length}</span> tenancy {units.length === 1 ? "row" : "rows"}</span>
         </div>
         {rentRows > 0 && rentRows < units.length && <p className="text-[11px] text-muted-foreground -mt-2" title={`Rent is recorded for ${rentRows} of ${units.length} rows, so this is not a complete income total.`}>Partial · {rentRows} of {units.length} rows</p>}
+        </>}
         {showUnits && <div className="space-y-2">
           {units.slice(0, 6).map(unit => <Link key={unit.id} href={tenancyHref(unit)} className="block rounded-lg border p-3 hover:bg-muted/50">
             <div className="flex justify-between gap-3 text-sm"><span className="font-semibold">{unit.unit_number || unit.premises || "Unnamed unit"}</span><span className="text-muted-foreground">{unit.is_vacant ? "Vacant" : unit.status || "Status not recorded"}</span></div>
@@ -94,7 +98,7 @@ export function PropertySimpleOverview({ propertyId, propertyName, landlordName,
           </Link>)}
           {units.length > 6 && <Button variant="outline" size="sm" onClick={onOpenTenancy}>Show all {units.length} tenancy rows</Button>}
         </div>}
-        <div className="border-t pt-3 space-y-2">
+        <div className={`${showUnits ? "border-t pt-3 " : ""}space-y-2`}>
           <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Next lease events</h2>
           {canTrack ? <NextLeaseEvents propertyId={propertyId} propertyName={propertyName} landlordName={landlordName} rows={rows} limit={showUnits ? 3 : 5} onOpenTenancy={onOpenTenancy} /> : <>
           {nextEvents.slice(0, showUnits ? 3 : 5).map(event => <Link key={`${event.unit.id}-${event.kind}`} href={tenancyHref(event.unit)} className="flex justify-between gap-3 text-sm hover:underline"><span>{event.unit.unit_number || event.unit.premises || "Unit"} · {event.kind}</span><span className="font-mono tabular-nums whitespace-nowrap">{formatCalendarDate(event.date)}</span></Link>)}

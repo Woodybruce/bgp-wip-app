@@ -55,6 +55,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
   const [signalsShowAll, setSignalsShowAll] = useState(false);
   const [newsShowAllM, setNewsShowAllM] = useState(false);
   const [conversationOpen, setConversationOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   useEffect(() => setConversationOpen(false), [companyId]);
   const sec = (k: typeof section) => (section === k ? "space-y-3" : "hidden");
   const { toast } = useToast();
@@ -153,6 +154,9 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
     (comp: any) => !similarNames.has(String(comp.name).toLowerCase().trim())
   );
 
+  // Agent firms get the brand shell but none of the brand-only parts (stores,
+  // social, covenant chip) — Savills showed "43 reported stores".
+  const isAgentFirm = !isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type);
   return (
     <div className="p-4 space-y-3 pb-6">
       {/* Hero + identity */}
@@ -160,8 +164,8 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       <div className="flex flex-wrap items-center gap-2">
         {c.company_type && <Pill className="max-w-full"><span className="truncate">{String(c.company_type).replace(/\s*-\s*/g, " · ")}</span></Pill>}
         {c.industry && <Pill className="max-w-full"><span className="truncate">{c.industry}</span></Pill>}
-        {!isLandlord && c.store_count != null && <Pill><span className="font-mono tabular-nums">{c.store_count}</span> reported stores</Pill>}
-        {(c as any).companies_house_number && <CovenantBadge companyNumber={(c as any).companies_house_number} />}
+        {!isLandlord && !isAgentFirm && c.store_count != null && <Pill><span className="font-mono tabular-nums">{c.store_count}</span> reported stores</Pill>}
+        {!isAgentFirm && (c as any).companies_house_number && <CovenantBadge companyNumber={(c as any).companies_house_number} />}
         {(c.domain_url || c.domain) && (
           <Button variant="outline" size="sm" asChild>
           <a
@@ -181,19 +185,20 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
         <Pill active={section === "chat"} onClick={() => setSection("chat")} data-testid="company-section-chat">Overview</Pill>
         <Pill active={section === "contacts"} onClick={() => setSection("contacts")} data-testid="company-section-contacts">Contacts</Pill>
         <Pill active={section === "intel"} onClick={() => setSection("intel")} data-testid="company-section-intel">Intel</Pill>
-        {!isLandlord && <Pill active={section === "stores"} onClick={() => setSection("stores")} data-testid="company-section-stores">Stores</Pill>}
-        {!isLandlord && <Pill active={section === "social"} onClick={() => setSection("social")} data-testid="company-section-social">Social</Pill>}
+        {!isLandlord && !isAgentFirm && <Pill active={section === "stores"} onClick={() => setSection("stores")} data-testid="company-section-stores">Stores</Pill>}
+        {!isLandlord && !isAgentFirm && <Pill active={section === "social"} onClick={() => setSection("social")} data-testid="company-section-social">Social</Pill>}
         <Pill active={section === "compliance"} onClick={() => setSection("compliance")} data-testid="company-section-compliance">Compliance</Pill>
       </div>
 
       <div className={sec("chat")}>
       <BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} suggestedDomain={c.ai_generated_fields?.website_suggestion?.domain} />
       {!isClientViewer && <BrandImageRefreshButton companyId={companyId} />}
-      <div className="rounded-lg border border-border bg-card p-3 space-y-2">
+      {c.description && <div className="rounded-lg border border-border bg-card p-3 space-y-2">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
-        <p className="text-sm leading-relaxed">{c.description || "The factual brand profile is awaiting preparation."}</p>
-      </div>
-      <BgpTakeStrip companyId={companyId} tab="brand" />
+        <p className={`text-sm leading-relaxed ${aboutOpen ? "" : "line-clamp-5"}`}>{c.description}</p>
+        {c.description.length > 320 && <button type="button" onClick={() => setAboutOpen(v => !v)} className="text-xs text-primary hover:underline">{aboutOpen ? "Show less" : "Read more"}</button>}
+      </div>}
+      {!isLandlord && <BgpTakeStrip companyId={companyId} tab="brand" hideWhenEmpty />}
       <div className="rounded-lg border border-border bg-card p-3 space-y-3">
         <Button variant="outline" size="sm" onClick={() => setConversationOpen(value => !value)} aria-expanded={conversationOpen} data-testid="button-brand-conversation">{conversationOpen ? "Close conversation" : "Open conversation"}</Button>
         {conversationOpen && <div className="h-96"><CompanyMiniChat companyId={companyId} companyName={c.name} fill starters={askTopics(c.name, isLandlord, !isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type))} /></div>}

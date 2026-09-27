@@ -817,7 +817,7 @@ async function autoCreateContacts(minFrequency = 3, daysBack = 90): Promise<{
         email: suggestion.email,
         companyId,
         companyName,
-        notes: `[Auto-created from email] Emailed ${suggestion.frequency} times by ${suggestion.bgpUsers.join(", ")}. Sample subjects: ${suggestion.sampleSubjects.slice(0, 2).join("; ")}`,
+        notes: `Added from email — the team has emailed them ${suggestion.frequency} times (${suggestion.bgpUsers.join(", ")}). Sample subjects: ${suggestion.sampleSubjects.slice(0, 2).join("; ")}`,
       });
       created.push({ name: suggestion.name, email: suggestion.email, company: companyName });
     } catch (e: any) {

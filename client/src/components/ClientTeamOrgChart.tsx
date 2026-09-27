@@ -175,7 +175,10 @@ function MemberCard({ member, onClick, onDragStart, isLead, onDragOver, onDrop, 
   );
 }
 
-export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: string }) {
+// `quietWhenEmpty`: under a resolved team read-out (AccountTeamCard) an empty
+// pinned chart said "0 team members · No BGP team assigned yet" right below
+// six named people — just offer Add to team (Woody, 2026-09-27).
+export function ClientTeamOrgChart({ clientCompanyId, quietWhenEmpty = false }: { clientCompanyId: string; quietWhenEmpty?: boolean }) {
   const queryClient = useQueryClient();
   const { toast } = useTryToast();
   const [selected, setSelected] = useState<TeamMember | null>(null);
@@ -377,7 +380,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
   return (
     <div className="space-y-3" data-testid="client-team-orgchart">
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="flex items-center gap-2">
+        {quietWhenEmpty && members.length === 0 ? <span /> : <div className="flex items-center gap-2">
           <Badge variant="secondary" className="text-xs">{visibleMemberCount} team member{visibleMemberCount === 1 ? "" : "s"}</Badge>
           {lead ? (
             <span className="text-[11px] text-muted-foreground flex items-center gap-1">
@@ -388,7 +391,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
           ) : (
             <span className="text-[11px] text-muted-foreground italic">{readOnly ? "" : "No lead pinned"}</span>
           )}
-        </div>
+        </div>}
         {!readOnly && (
           <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowAddCol(true)} data-testid="btn-add-column">
@@ -424,7 +427,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
         </div>
       )}
 
-      {members.length === 0 ? (
+      {members.length === 0 ? (quietWhenEmpty ? null :
         <div className="border rounded-lg py-12 flex flex-col items-center justify-center text-muted-foreground text-sm">
           <Building2 className="w-8 h-8 opacity-30 mb-2" />
           <div>No BGP team assigned yet</div>

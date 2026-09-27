@@ -173,6 +173,8 @@ export function buildActivityQuestion(subject: ActivitySubject, clientScope?: { 
     ``,
     `Be concise — under 400 words for the prose.`,
     ``,
+    `Write ONLY the findings. Never narrate your process: don't mention mailboxes, tools, fan-outs, searches you ran, errors or retries, which inboxes you checked, how many results came back, or what you dropped as noise/newsletters. Start straight with the first ## section.`,
+    ``,
     `If after filtering NONE of the items are relevant, just write:`,
     `> No emails or meetings in the BGP system are relevant to this ${subject.type}.`,
     ``,
@@ -375,6 +377,7 @@ Output **clean markdown commentary** for the analyst. Rules:
 5. **Note gaps** in passing if obvious (e.g. "no introduction email is in the inbox").
 6. **End with 1-2 suggested actions** in a "## Next steps" section.
 7. **Be concise — under 350 words total.**
+8. **Findings only — never narrate your process.** Don't say what you filtered out, what was noise, or how you checked; start with the first ## section.
 
 If after filtering NONE of the emails are about this subject, just output:
 > No emails in the BGP inboxes are about this subject.

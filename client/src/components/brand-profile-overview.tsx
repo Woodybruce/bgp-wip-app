@@ -160,13 +160,15 @@ export function BrandIdentityControl({ companyId, domain, identity, savedAliases
         <span data-testid={suggestion && !verified ? "brand-website-suggestion" : undefined}>
           {verified ? <>Website <span className="text-foreground">{domainHost(domain)}</span></>
             : suggestion ? <>Likely website <span className="text-foreground">{suggestion}</span></>
+            // A saved but unconfirmed domain is still the website — "not
+            // found yet" beside a working Website button read as nonsense.
+            : domainHost(domain) ? <>Website <span className="text-foreground">{domainHost(domain)}</span></>
             : "Website not found yet"}
         </span>
         {canConfirm && <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => setOpen(value => !value)} aria-expanded={open}>
-          {open ? "Cancel" : verified ? "Change" : suggestion ? "Confirm" : "Add website"}
+          {open ? "Cancel" : verified ? "Change" : suggestion || domainHost(domain) ? "Confirm" : "Add website"}
         </button>}
       </div>
-      {previousFactsNeedReview && <p className="text-xs text-muted-foreground">Previously recorded facts have been kept and still need review.</p>}
       {previousFactsNeedReview && canConfirm && <BrandRetainedFactsReview key={companyId} companyId={companyId} identityVerified={verified} />}
       {open && <form className="space-y-2 border-t border-border pt-3" onSubmit={event => { event.preventDefault(); confirm.mutate(); }}>
         <Label htmlFor={`official-brand-website-${companyId}`} className="text-[11px] uppercase tracking-wider text-muted-foreground">Brand’s official website</Label>
@@ -215,7 +217,9 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
               total / UK locations / an explanation — Woody, 2026-09-23). */}
           <p className="text-sm mt-1" data-testid="brand-stores-summary">
             {[
-              `${locations.length} in the UK`,
+              // "0 in the UK" for a 150-store chain read as fact — it only
+              // means the stores haven't been mapped yet.
+              locations.length ? `${locations.length} in the UK` : reportedTotal ? null : "UK stores not mapped yet",
               abroadCountries ? `${abroadCountries} other countr${abroadCountries === 1 ? "y" : "ies"}` : null,
               reportedTotal != null && reportedTotal !== locations.length ? `${reportedTotal.toLocaleString()} reported in total` : null,
             ].filter(Boolean).join(" · ")}

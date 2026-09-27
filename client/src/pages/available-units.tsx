@@ -1491,6 +1491,11 @@ export default function AvailableUnitsPage() {
     }
     return result;
   }, [focusedTrackerUnitId, toolbarFiltered, statusFilter, viewAll, sortBy, sortDir, propertyMap, dealMap, crmCompanies, effByUnit]);
+  // Phone list renders 30 cards then "Show more" — every unit at once made
+  // the page ~83k px tall (Woody, 2026-09-27). Resets when the list changes.
+  const PHONE_PAGE = 30;
+  const [phoneShown, setPhoneShown] = useState(PHONE_PAGE);
+  useEffect(() => { setPhoneShown(PHONE_PAGE); }, [filtered.length, statusFilter, viewAll]);
   const historicCount = useMemo(
     () => toolbarFiltered.filter(u => HISTORIC_PILL_STATUSES.includes((effByUnit[u.id] || "AVA") as DealStatusCode)).length,
     [toolbarFiltered, effByUnit],
@@ -1595,7 +1600,10 @@ export default function AvailableUnitsPage() {
 
   return (
     <div className="p-4 md:p-6 space-y-4" data-testid="available-units-page">
-      <div className="sticky top-0 z-10 bg-background -mx-4 md:-mx-6 px-4 md:px-6 -mt-4 md:-mt-6 pt-4 md:pt-6 pb-3 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
+      {/* z-30 — above the table's sticky Actions & Activity column (head
+          z-20, cells z-10), which painted over this header on scroll and hid
+          Focus tracker / Add unit (Woody, 2026-09-27). */}
+      <div className="sticky top-0 z-30 bg-background -mx-4 md:-mx-6 px-4 md:px-6 -mt-4 md:-mt-6 pt-4 md:pt-6 pb-3 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Letting Tracker</h1>
           <p className="text-sm text-muted-foreground">
@@ -2063,7 +2071,7 @@ export default function AvailableUnitsPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 pb-2">
-            {filtered.map((u, idx) => {
+            {filtered.slice(0, phoneShown).map((u, idx) => {
               const prop = propertyMap[u.propertyId];
               const deal = u.dealId ? dealMap[u.dealId] : null;
               const code = effByUnit[u.id] || "AVA";
@@ -2153,6 +2161,11 @@ export default function AvailableUnitsPage() {
                 </Fragment>
               );
             })}
+            {filtered.length > phoneShown && (
+              <Button variant="outline" className="w-full" onClick={() => setPhoneShown(n => n + PHONE_PAGE)} data-testid="mobile-units-show-more">
+                Show more ({(filtered.length - phoneShown).toLocaleString("en-GB")} left)
+              </Button>
+            )}
           </div>
         )
       )}

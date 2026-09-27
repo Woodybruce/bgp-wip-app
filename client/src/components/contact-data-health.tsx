@@ -145,14 +145,14 @@ export function ContactDataHealth() {
       byBrand.set(link.id, brand);
     }
     const links = [...byBrand.values()];
-    if (!links.length) return <p className="text-[11px] text-muted-foreground">No current agent-to-brand link recorded.</p>;
+    if (!links.length) return <p className="text-[11px] text-muted-foreground">No brands linked yet.</p>;
     return <div className="text-sm" data-testid="dh-brand-links">
       <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Represents</p>
       {(compact ? links.slice(0, 2) : links).map(brand => <div key={brand.id} className="flex flex-wrap items-center gap-x-2">
         <Link href={`/companies/${brand.id}`} className="inline-flex min-h-11 items-center font-medium hover:underline break-words" onClick={() => close(false)}>{brand.name}</Link>
         <span className="text-[11px] text-muted-foreground">{brand.sources.join(" · ")}</span>
       </div>)}
-      {compact && links.length > 2 && <p className="text-[11px] text-muted-foreground">More brand links in employer review.</p>}
+      {compact && links.length > 2 && <p className="text-[11px] text-muted-foreground">More brands on the review screen.</p>}
     </div>;
   }
   function row(finding: Finding) {
@@ -229,21 +229,19 @@ export function ContactDataHealth() {
     </>}
     </div>;
   const title = review ? "Review employer" : "Employer reviews";
-  const description = review ? review.contact_name : "One current finding per person. Search people, employers or brands.";
+  const description = review ? review.contact_name : "We may have the wrong company for these people. Check each one and save the right employer.";
   const contents = review ? editor : list;
 
-  if (!open && queue.isLoading) return <Skeleton className="h-24 w-full rounded-lg" aria-label="Loading employer reviews" />;
+  if (!open && queue.isLoading) return <Skeleton className="h-11 w-full rounded-lg" aria-label="Loading employer reviews" />;
   if (!open && queue.isError) return <Card><CardContent className="p-4 flex items-center justify-between gap-3"><p className="text-sm" role="alert">Employer reviews could not load.</p><Button variant="outline" onClick={() => void queue.refetch()}>Retry</Button></CardContent></Card>;
   if (!pending.length && !open) return null;
+  // One line on the page, the queue opens in the dialog/sheet — the preview
+  // cards filled the first phone screen above the CRM title (Woody, 2026-09-27).
   return <>
     <Card data-testid="data-health-queue">
-      <CardContent className="p-4 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold flex items-center gap-2"><AlertCircle className="w-4 h-4 shrink-0 text-primary" />Employer reviews <span className="font-mono tabular-nums" data-testid="dh-count">{pending.length}</span></h2>
-          <Button ref={queueButton} variant="outline" size="sm" className="min-h-11" onClick={() => show(null)} data-testid="dh-show-all">Show all <span className="font-mono tabular-nums">{pending.length}</span></Button>
-        </div>
-        <p className="text-[11px] text-muted-foreground">Check where these people work. Brand representation is recorded separately.</p>
-        <div className="grid gap-3 md:grid-cols-3">{pending.slice(0, isMobile ? 1 : 3).map(row)}</div>
+      <CardContent className="px-3 py-1.5 flex items-center justify-between gap-2">
+        <p className="text-sm flex items-center gap-2 min-w-0"><AlertCircle className="w-4 h-4 shrink-0 text-primary" /><span><span className="font-mono tabular-nums" data-testid="dh-count">{pending.length}</span> employer {pending.length === 1 ? "check" : "checks"} to review</span></p>
+        <Button ref={queueButton} variant="outline" size="sm" className="min-h-11 shrink-0" onClick={() => show(null)} data-testid="dh-show-all">Review</Button>
       </CardContent>
     </Card>
     {isMobile ? <Sheet open={open} onOpenChange={close}><SheetContent side="bottom" className="flex flex-col max-h-[90dvh] rounded-t-2xl p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]" onCloseAutoFocus={focusBack}>

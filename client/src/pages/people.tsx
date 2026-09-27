@@ -86,6 +86,13 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
   );
 }
 
+// Some stored descriptions are the enrichment model's failure message, not a
+// description — don't print them on the list (Woody, 2026-09-27).
+function shownDescription(d: string | null | undefined): string | null {
+  if (!d || /^\s*(unable to identify|i could not|i couldn['’]t|no information)/i.test(d)) return null;
+  return d;
+}
+
 function StatCard({ label, value, active }: { label: string; value: number | string; active?: boolean }) {
   return (
     <div className={`bg-card border rounded-lg px-4 py-3 transition-shadow ${active ? "ring-2 ring-primary" : ""}`}>
@@ -195,8 +202,11 @@ function LandlordsTab({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-1.5">
+        {/* The landlord and contact totals are in the page subtitle — the
+            "All" pill, a lone Total Contacts tile and "N results" repeated
+            them (Woody, 2026-09-27). */}
         <Pill active={landlordFilter === "all"} onClick={() => setLandlordFilter("all")} data-testid="stat-total-landlords">
-          Total Landlords <span className="font-mono tabular-nums">{landlords.length}</span>
+          All
         </Pill>
         <Pill active={landlordFilter === "clients"} onClick={() => setLandlordFilter(landlordFilter === "clients" ? "all" : "clients")} data-testid="stat-bgp-clients">
           BGP Clients <span className="font-mono tabular-nums">{clientLandlords.length}</span>
@@ -204,14 +214,6 @@ function LandlordsTab({
         <Pill active={landlordFilter === "non-clients"} onClick={() => setLandlordFilter(landlordFilter === "non-clients" ? "all" : "non-clients")} data-testid="stat-non-clients">
           Non-Clients <span className="font-mono tabular-nums">{nonClientLandlords.length}</span>
         </Pill>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {/* Same definition as the page-header count: contacts at landlord OR
-            agent companies (brand/tenant contacts live in Brands Hub). The
-            two previously counted different sets and showed different totals
-            on the same screen. */}
-        <StatCard label="Total Contacts" value={contacts.filter(c => c.companyId && (landlords.some(l => l.id === c.companyId) || companies.some(co => co.id === c.companyId && (co.companyType || "").toLowerCase().trim() === "agent"))).length}  />
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">
@@ -230,7 +232,7 @@ function LandlordsTab({
             </button>
           )}
         </div>
-        <p className="text-sm text-muted-foreground">{countLabel(filtered.length, "result")}</p>
+        {search.trim() && <p className="text-sm text-muted-foreground">{countLabel(filtered.length, "result")}</p>}
       </div>
 
       <BrandSearchHint search={search} companies={companies} resultCount={filtered.length} />
@@ -265,7 +267,7 @@ function LandlordsTab({
                               <span className="font-medium text-sm truncate">{company.name}</span>
                               {isClient && <Crown className="w-3 h-3 text-amber-500 shrink-0" />}
                             </div>
-                            {company.description && <p className="text-xs text-muted-foreground truncate max-w-[250px]">{company.description}</p>}
+                            {shownDescription(company.description) && <p className="text-xs text-muted-foreground truncate max-w-[250px]">{company.description}</p>}
                           </div>
                         </div>
                       </TableCell>
@@ -323,7 +325,7 @@ function LandlordsTab({
                       <p className="text-xs text-muted-foreground mt-0.5 truncate">
                         {company.companyType || "Landlord"}
                       </p>
-                      {company.description && (
+                      {shownDescription(company.description) && (
                         <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{company.description}</p>
                       )}
                     </div>
@@ -672,7 +674,7 @@ function AgentsTab({
                         </span>
                       ) : null;
                     })()}
-                    {company.description && (
+                    {shownDescription(company.description) && (
                       <span className="text-xs text-muted-foreground truncate flex-1">{company.description}</span>
                     )}
                   </div>
@@ -1037,7 +1039,7 @@ function LendersTab({
                         <CompanyLogo company={company} size="sm" />
                         <div className="min-w-0">
                           <span className="font-medium text-sm truncate block">{company.name}</span>
-                          {company.description && (
+                          {shownDescription(company.description) && (
                             <span className="text-xs text-muted-foreground truncate block max-w-[200px]">{company.description}</span>
                           )}
                         </div>
@@ -1750,9 +1752,10 @@ function PeopleHub() {
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-[1600px] mx-auto">
-      <ContactDataHealth />
-      <div className="flex items-center justify-between gap-4">
-        <div>
+      {/* Wraps on phones — the subtitle squeezed into a one-word column and
+          pushed the view toggle off-screen (Woody, 2026-09-27). */}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
             CRM
           </h1>
@@ -1760,7 +1763,7 @@ function PeopleHub() {
             {`${countLabel(landlordCompanies.length, "landlord")} · ${countLabel(agentCompaniesCount, "agent")} · ${countLabel(hubContactCount, "contact")}`}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Header shortcut to the meetings tab — the pill alone was too
               easy to miss (Carly, 2026-09-21: "it needs to be way clearer"). */}
           {!isLandsec && (
@@ -1775,6 +1778,9 @@ function PeopleHub() {
         </div>
       </div>
       <ContactFormDialog open={hubAddContactOpen} onOpenChange={setHubAddContactOpen} />
+      {/* Below the title, collapsed to one line — it used to sit above the
+          page title and fill the first phone screen (Woody, 2026-09-27). */}
+      <ContactDataHealth />
 
       <div className="flex flex-wrap gap-1.5">
         {tabs.map((t) => (

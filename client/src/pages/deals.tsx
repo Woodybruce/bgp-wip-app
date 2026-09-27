@@ -3344,6 +3344,7 @@ export function FeeAllocationCard({ dealId, dealType, dealFee, headlineRent, use
     if (a.allocationType === "percentage") return s + (totalFee * (a.percentage || 0) / 100);
     return s + (a.fixedAmount || 0);
   }, 0) || 0;
+  const unallocated = totalFee - totalAllocated;
 
   const bgpAgents = users.map(u => u.name);
 
@@ -3422,24 +3423,27 @@ export function FeeAllocationCard({ dealId, dealType, dealFee, headlineRent, use
           </div>
         ) : allocations && allocations.length > 0 ? (
           <div className="space-y-1">
-            {allocations.filter((a) => !(a as any).isBgpHouse).map((alloc, idx) => {
+            {/* BGP House rows show too (muted) — hiding them made "£103,125
+                allocated" sit over a lone 85% £87,656 split (Woody, 2026-09-27). */}
+            {allocations.map((alloc, idx) => {
+              const isHouse = (alloc as any).isBgpHouse === true || /\(BGP House\)/i.test(alloc.agentName || "");
               const amount = alloc.allocationType === "percentage"
                 ? totalFee * (alloc.percentage || 0) / 100
                 : alloc.fixedAmount || 0;
               // agentName is blank on rows saved with only the canonical
               // agentUserId — resolve the name from the BGP user list so the
               // split always shows who it's for (and never crashes on a null
-              // name). BGP House (firm overhead) rows are hidden here.
-              const agentLabel = alloc.agentName || users?.find((u: any) => u.id === (alloc as any).agentUserId)?.name || "Unknown";
+              // name).
+              const agentLabel = alloc.agentName || users?.find((u: any) => u.id === (alloc as any).agentUserId)?.name || (isHouse ? "BGP House" : "Unknown");
               return (
-                <div key={alloc.id} className="flex items-center justify-between py-1.5 px-2 rounded-md bg-muted/30" data-testid={`fee-alloc-display-${idx}`}>
+                <div key={alloc.id} className={`flex items-center justify-between py-1.5 px-2 rounded-md bg-muted/30 ${isHouse ? "text-muted-foreground" : ""}`} data-testid={`fee-alloc-display-${idx}`}>
                   <div className="flex items-center gap-2">
                     <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
                       <span className="text-[9px] font-semibold">
                         {agentLabel.split(" ").map((n: string) => n[0]).join("").slice(0, 2)}
                       </span>
                     </div>
-                    <span className="text-xs font-medium">{agentLabel}</span>
+                    <span className="text-xs font-medium">{agentLabel}{isHouse && !/BGP House/i.test(agentLabel) ? " (BGP House)" : ""}</span>
                   </div>
                   <div className="flex items-center gap-2 text-xs">
                     {alloc.allocationType === "percentage" && (
@@ -3450,6 +3454,11 @@ export function FeeAllocationCard({ dealId, dealType, dealFee, headlineRent, use
                 </div>
               );
             })}
+            {totalFee > 0 && Math.abs(unallocated) >= 1 && (
+              <p className="text-[11px] text-amber-700 px-2 pt-0.5" data-testid="fee-alloc-unallocated">
+                {unallocated > 0 ? `${formatCurrency(unallocated)} not yet allocated` : `Splits exceed the fee by ${formatCurrency(-unallocated)}`}
+              </p>
+            )}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-3">No split yet — Add Split shares the fee between BGP agents</p>
@@ -4180,6 +4189,21 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
     DELETED: "bg-red-700",
     ERROR: "bg-red-500",
   };
+  // Say where the invoice is in Xero — a bare "DRAFT" chip under an
+  // "Invoiced" deal status read as a contradiction (Woody, 2026-09-27).
+  const XERO_STATUS_LABELS: Record<string, string> = {
+    DRAFT: "Draft in Xero",
+    SUBMITTED: "Awaiting approval",
+    AUTHORISED: "Approved",
+    PAID: "Paid",
+    VOIDED: "Voided",
+    DELETED: "Deleted",
+    ERROR: "Error",
+  };
+  // Contact search and invoice sync run on the firm-wide Xero session, so
+  // "Connect Xero" (a per-login token, only needed to send a NEW invoice)
+  // no longer headlines a card that already has invoices.
+  const showConnect = !xeroStatus?.connected && invoices.length === 0;
 
   if (!xeroStatus?.configured) {
     return (
@@ -4207,12 +4231,12 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
             )}
           </div>
           <div className="flex items-center gap-1">
-            {!xeroStatus?.connected ? (
+            {showConnect ? (
               <Button variant="outline" size="sm" onClick={() => connectMutation.mutate()} disabled={connectMutation.isPending} data-testid="button-connect-xero">
                 {connectMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />}
                 Connect Xero
               </Button>
-            ) : (
+            ) : xeroStatus?.connected ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -4222,7 +4246,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
                 <Send className="w-3.5 h-3.5 mr-1" />
                 Send to Xero
               </Button>
-            )}
+            ) : null}
           </div>
         </div>
 
@@ -4305,7 +4329,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
               <div key={inv.id} className="flex items-center justify-between p-2 rounded-md border text-sm">
                 <div className="flex items-center gap-2 min-w-0">
                   <Badge variant="outline" className={`border-transparent text-[10px] text-white ${XERO_STATUS_COLORS[inv.status] || "bg-zinc-500"}`}>
-                    {inv.status}
+                    {XERO_STATUS_LABELS[inv.status] || inv.status}
                   </Badge>
                   <span className="truncate">
                     {inv.invoicingEntityName && <span className="text-muted-foreground">{inv.invoicingEntityName} — </span>}
@@ -4346,9 +4370,25 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
         {!xeroStatus?.connected && invoices.length === 0 && (
           <p className="text-xs text-muted-foreground">Connect Xero to create and track invoices for this deal.</p>
         )}
+        {!xeroStatus?.connected && invoices.length > 0 && (
+          <button type="button" className="mt-2 text-[11px] text-primary hover:underline" onClick={() => connectMutation.mutate()} disabled={connectMutation.isPending} data-testid="button-connect-xero-another">
+            Sign in to Xero to send another invoice
+          </button>
+        )}
       </CardContent>
     </Card>
   );
+}
+
+// Plain words for company.kycStatus — raw codes like "not_found" were
+// leaking onto deal pages (Woody, 2026-09-27).
+function kycStatusLabel(status: string): string {
+  if (status === "approved") return "Approved";
+  if (status === "in_review") return "In review";
+  if (status === "rejected") return "Rejected";
+  if (status === "not_found") return "Not on Companies House";
+  const words = status.replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 function KYCPartyRow({ company, role, onRunKyc, loading }: { company: CrmCompany; role: string; onRunKyc: (id: string) => void; loading: boolean }) {
@@ -4379,7 +4419,7 @@ function KYCPartyRow({ company, role, onRunKyc, loading }: { company: CrmCompany
         <div className="flex items-center gap-1 shrink-0">
           {kycStatus && kycStatus !== "pending" && (
             <Badge className={`text-[9px] text-white ${kycStatus === "approved" ? "bg-green-600" : kycStatus === "in_review" ? "bg-amber-500" : kycStatus === "rejected" ? "bg-red-500" : "bg-zinc-400"}`}>
-              {kycStatus === "approved" ? "Approved" : kycStatus === "in_review" ? "In review" : kycStatus === "rejected" ? "Rejected" : kycStatus}
+              {kycStatusLabel(kycStatus)}
             </Badge>
           )}
           {!hasKyc && !kycStatus && <Badge variant="outline" className="text-[9px] text-muted-foreground">Not Checked</Badge>}
@@ -4532,7 +4572,7 @@ function getRequiredKycParties(deal: CrmDeal, companies: CrmCompany[]): { compan
   return parties;
 }
 
-export function DealKYCPanel({ deal, companies }: { deal: CrmDeal; companies: CrmCompany[] }) {
+export function DealKYCPanel({ deal, companies, hidePartyList = false }: { deal: CrmDeal; companies: CrmCompany[]; hidePartyList?: boolean }) {
   const { toast } = useToast();
   const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
   const [runningAll, setRunningAll] = useState(false);
@@ -4643,6 +4683,7 @@ export function DealKYCPanel({ deal, companies }: { deal: CrmDeal; companies: Cr
           </div>
         )}
 
+        {!hidePartyList && (
         <div className="space-y-1">
           {parties.map(({ company, role }) => {
             const kycStatus = company.kycStatus;
@@ -4663,7 +4704,7 @@ export function DealKYCPanel({ deal, companies }: { deal: CrmDeal; companies: Cr
                 <div className="flex items-center gap-1 shrink-0">
                   {kycStatus && kycStatus !== "pending" && (
                     <Badge className={`text-[8px] h-4 text-white ${kycStatus === "approved" ? "bg-green-600" : kycStatus === "in_review" ? "bg-amber-500" : kycStatus === "rejected" ? "bg-red-500" : "bg-zinc-400"}`}>
-                      {kycStatus === "approved" ? "Approved" : kycStatus === "in_review" ? "In review" : kycStatus === "rejected" ? "Rejected" : kycStatus}
+                      {kycStatusLabel(kycStatus)}
                     </Badge>
                   )}
                   <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => runKyc(company.id)} disabled={loadingIds.has(company.id)} data-testid={`button-run-kyc-${company.id}`}>
@@ -4674,6 +4715,7 @@ export function DealKYCPanel({ deal, companies }: { deal: CrmDeal; companies: Cr
             );
           })}
         </div>
+        )}
 
         <div className="mt-2 pt-2 border-t flex items-center justify-between">
           <Link href="/compliance-board">
@@ -6193,7 +6235,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           ? `${filteredDeals.length} deal${filteredDeals.length !== 1 ? "s" : ""} · Filtered by ${urlTeamParam} team`
           : activeTeam && activeTeam !== "all"
             ? `${filteredDeals.length} deal${filteredDeals.length !== 1 ? "s" : ""} — ${activeTeam}${trackerOnlyDealCount > 0 ? ` · +${trackerOnlyDealCount} letting deal${trackerOnlyDealCount !== 1 ? "s" : ""} on the Letting Tracker` : ""}`
-            : `${deals.length} deal${deals.length !== 1 ? "s" : ""} in the CRM${trackerOnlyDealCount > 0 ? ` · +${trackerOnlyDealCount} letting deal${trackerOnlyDealCount !== 1 ? "s" : ""} on the Letting Tracker` : ""}`}
+            // baseDeals, not deals — the raw CRM count includes pre-instruction
+            // and withdrawn rows this schedule never shows, so it disagreed
+            // with the "All" chip (289 vs 274) (Woody, 2026-09-27).
+            : `${baseDeals.length} deal${baseDeals.length !== 1 ? "s" : ""} on the schedule${trackerOnlyDealCount > 0 ? ` · +${trackerOnlyDealCount} letting deal${trackerOnlyDealCount !== 1 ? "s" : ""} on the Letting Tracker` : ""}`}
       actions={!isCompsMode ? (
         <>
           {!isMobile && !isClientDeals && (<>

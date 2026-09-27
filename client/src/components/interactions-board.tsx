@@ -81,6 +81,13 @@ const norm = (r: any): InteractionRow => ({
 function relDate(d: string | null | undefined): string {
   if (!d) return "";
   const days = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+  // Upcoming meetings used to render as "-52d ago" (Woody, 2026-09-27).
+  if (days < 0) {
+    const ahead = Math.ceil((new Date(d).getTime() - Date.now()) / 86400000);
+    if (ahead <= 1) return "tomorrow";
+    if (ahead < 30) return `in ${ahead}d`;
+    return new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  }
   if (days === 0) return "today";
   if (days === 1) return "1d ago";
   if (days < 7) return `${days}d ago`;
@@ -95,6 +102,20 @@ function bgpUserDisplay(raw: string | null | undefined, userMap: Map<string, str
   if (userMap.has(lower)) return userMap.get(lower)!;
   const local = lower.includes("@") ? lower.split("@")[0] : lower;
   return local.replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// Teams/Outlook invite boilerplate (the underscore rule and everything after
+// it, join links, meeting IDs, passcodes) isn't the message — show only what
+// the sender wrote (Woody, 2026-09-27).
+function cleanPreview(p: string | null | undefined): string {
+  if (!p) return "";
+  return p.split(/_{3,}/)[0]
+    .replace(/Microsoft Teams( meeting| Need help\?)?/gi, " ")
+    .replace(/Join (the|this) meeting( now)?|Join on your computer[^.]*|Click here to join the meeting/gi, " ")
+    .replace(/Meeting ID:\s*[\d ]+/gi, " ")
+    .replace(/Passcode:\s*\S+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export function InteractionsBoard({ scope, contextId }: Props) {
@@ -158,7 +179,16 @@ export function InteractionsBoard({ scope, contextId }: Props) {
     // records — they're system noise, not real correspondence. Drop them so
     // the board mirrors what the AI Activity card shows.
     const noise = /verification (was )?(expired|approved|declined|submitted|pending|completed|created|reminder)|verification for |\bveriff\b/i;
-    return (data?.interactions || []).map(norm).filter((i: any) => !noise.test(`${i.subject || ""}`));
+    // One row per meeting/email, not one per attendee mailbox: the same
+    // invite lands in every BGP calendar it was sent to (Woody, 2026-09-27).
+    const seen = new Set<string>();
+    return (data?.interactions || []).map(norm).filter((i: any) => {
+      if (noise.test(`${i.subject || ""}`)) return false;
+      const key = `${i.type}|${(i.subject || "").trim().toLowerCase()}|${String(i.interactionDate || "").slice(0, 16)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }, [data]);
   const emailCount = interactions.filter(i => i.type === "email" || i.type === "call" || i.type === "note").length;
   const meetingCount = interactions.filter(i => i.type === "meeting").length;
@@ -300,8 +330,8 @@ export function InteractionsBoard({ scope, contextId }: Props) {
                       <div className="text-sm font-medium leading-snug truncate">{row.subject}</div>
                     )}
                     {/* Line 3: preview (single line, ellipsised) */}
-                    {row.preview && (
-                      <div className="text-xs text-muted-foreground leading-snug truncate">{row.preview}</div>
+                    {cleanPreview(row.preview) && (
+                      <div className="text-xs text-muted-foreground leading-snug truncate">{cleanPreview(row.preview)}</div>
                     )}
                   </div>
                 );

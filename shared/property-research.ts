@@ -27,7 +27,7 @@ export function propertyResearchContext(property: { assetClass?: string | null; 
   const reason = mode === "not_applicable"
     ? "Brand gap research needs recorded retail, hospitality or leisure space. Use Property intelligence for this building, or record the relevant unit use in its tenancy schedule."
     : mode === "local"
-      ? "Local occupier opportunities for the recorded retail or leisure space. Nearby shops are market context, not evidence of tenants in this building."
+      ? "Local occupier opportunities for the retail and leisure space here."
       : "Shopping-centre occupier mix and nearby competing destinations.";
   return { mode, assetClass, uses, reason, cacheKey: JSON.stringify(["property-research-v2", mode, assetClass, uses]) };
 }

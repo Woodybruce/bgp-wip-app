@@ -156,7 +156,8 @@ test('actual profile news output filters before applying its visible limit', () 
     && node.name.getText(ast) === 'news' && node.initializer.getText(ast).includes('isBrandNewsRelevant'));
   const rows = [...Array.from({ length: 40 }, (_, i) => article(`Cook Islands story ${i}`)),
     ...Array.from({ length: 30 }, (_, i) => article(`COOK frozen meal retailer opens shop ${i}`))];
-  const result = evaluate(`exports.result = ({ ${output} }).news;`, { news: { rows }, c: co(), isBrandNewsRelevant }).result;
+  const helpers = ['dedupeNewsStories', 'otherBrandsSocialPost'].map(name => declaration('server/brand-profile.ts', name)).join('\n');
+  const result = evaluate(`${helpers}\nexports.result = ({ ${output} }).news;`, { news: { rows }, c: co(), isBrandNewsRelevant }).result;
   assert.equal(result.length, 20);
   assert.equal(result[0].title, 'COOK frozen meal retailer opens shop 0');
   assert.equal(rows.length, 70);

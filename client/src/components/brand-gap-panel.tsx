@@ -203,7 +203,7 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
       const r = await fetch(`/api/property/${propertyId}/brand-gaps/live-intel`, { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
-        throw new Error(body.error || `HTTP ${r.status}`);
+        throw new Error(body.error || loadError(r.status));
       }
       const fresh = await r.json();
       if (fresh?.cached === false) {
@@ -245,7 +245,7 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
         <p className="text-xs text-muted-foreground italic">No expansion evidence gathered yet — the sweep runs automatically and refreshes weekly.</p>
       ) : (
         <div className="space-y-1.5">
-          {data.market_notes && <p className={`text-xs leading-relaxed ${notesOpen ? "" : "line-clamp-2"} cursor-pointer`} onClick={() => setNotesOpen(v => !v)} title={notesOpen ? undefined : "Click to read the full note"}>{data.market_notes}</p>}
+          {data.market_notes && !/do(?:es)? not establish|no (?:cited |specific )?evidence|could not (?:be )?(?:confirm|establish|find)|not (?:been )?(?:found|confirmed)/i.test(data.market_notes) && <p className={`text-xs leading-relaxed ${notesOpen ? "" : "line-clamp-2"} cursor-pointer`} onClick={() => setNotesOpen(v => !v)} title={notesOpen ? undefined : "Click to read the full note"}>{data.market_notes}</p>}
           {expanding.length === 0 ? (
             <p className="text-xs text-muted-foreground italic">No cited expansion evidence on the current candidates.</p>
           ) : (
@@ -316,6 +316,9 @@ function InternationalWatchlist({ propertyId }: { propertyId: string }) {
   );
 }
 
+// Plain words, not "HTTP 429", when a section can't load.
+const loadError = (status: number) => status === 429 ? "Busy right now — this refreshes in a minute." : "Couldn't load this just now.";
+
 export function BrandGapPanel({ propertyId }: { propertyId: string }) {
   const { data, isLoading, error } = useQuery<BrandGapResult>({
     queryKey: ["/api/property", propertyId, "brand-gaps"],
@@ -326,7 +329,7 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
       const res = await fetch(`/api/property/${propertyId}/brand-gaps`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `HTTP ${res.status}`);
+        throw new Error(body.error || loadError(res.status));
       }
       return res.json();
     },
@@ -637,7 +640,7 @@ function CentreBenchmark({ benchmark, name }: { benchmark: NonNullable<BrandGapR
             <div className="min-w-0 flex items-center gap-1.5">
               <span className="font-medium truncate">{r.name}</span>
               <span className="text-[11px] text-muted-foreground shrink-0 tabular-nums">{r.distance_km}km</span>
-              {r.from_schedule && <span className="text-[11px] text-muted-foreground shrink-0" title="Read from our tenancy schedule">· schedule</span>}
+              {r.from_schedule && <span className="text-[11px] text-muted-foreground shrink-0" title="Counted from our own tenancy schedule">· our data</span>}
             </div>
             <div className="md:contents flex gap-3 text-[11px] text-muted-foreground mt-0.5 md:mt-0">
               <span className="md:text-right tabular-nums md:text-xs md:text-foreground"><span className="md:hidden">Brands </span>{r.brands}</span>
@@ -677,7 +680,7 @@ function CentreOpenings({ propertyId }: { propertyId: string }) {
     queryKey: ["/api/property", propertyId, "centre-openings"],
     queryFn: async () => {
       const r = await fetch(`/api/property/${propertyId}/centre-openings`, { credentials: "include", headers: getAuthHeaders() });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || loadError(r.status));
       return r.json();
     },
     staleTime: 30 * 60 * 1000,

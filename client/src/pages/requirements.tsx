@@ -34,7 +34,8 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Search, Users, FileText, AlertCircle, X, Plus, Pencil, Trash2, Building2, Archive, User, Mail, Phone, Upload, Download, File, MapPin, Check, Circle, Loader2, Sparkles, MessageCircle, Target, Flame } from "lucide-react";
+import { Search, Users, FileText, AlertCircle, X, Plus, Pencil, Trash2, Building2, Archive, User, Mail, Phone, Upload, Download, File, MapPin, Check, Circle, Loader2, Sparkles, MessageCircle, Target, Flame, MoreVertical } from "lucide-react";
+import { formatSizeList, formatSizeText } from "@/lib/format-size";
 import { countLabel } from "@/lib/utils";
 import { TENANT_CATEGORIES, CLIENT_CRM_CATEGORIES } from "@shared/tenant-categories";
 import {
@@ -793,14 +794,22 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
   const [showPast, setShowPast] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
 
+  // Tiles count the same live (Active) requirements as the "N active"
+  // header, with ungrouped ones as "Other", so they add up to it — they
+  // counted every status and hid Ungrouped, summing to 83 of 129
+  // (Woody, 2026-09-27).
   const groupCounts = useMemo(() => {
     const map: Record<string, number> = {};
-    items.forEach((i) => {
+    items.filter((i) => i.status === "Active" || !i.status).forEach((i) => {
       const g = i.groupName || "Ungrouped";
       map[g] = (map[g] || 0) + 1;
     });
     return map;
   }, [items]);
+  const recentViewingCount = useMemo(
+    () => items.filter(item => item.companyId && recentlyViewingBrands.has(item.companyId)).length,
+    [items, recentlyViewingBrands],
+  );
 
   if (error) {
     return (
@@ -818,7 +827,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
     <div className="space-y-4">
       {Object.keys(groupCounts).some((group) => group !== "Ungrouped") && (
       <div className="flex items-center gap-3 flex-wrap">
-        {Object.entries(groupCounts).filter(([group]) => group !== "Ungrouped").map(([group, count]) => {
+        {Object.entries(groupCounts).sort(([a], [b]) => (a === "Ungrouped" ? 1 : 0) - (b === "Ungrouped" ? 1 : 0)).map(([group, count]) => {
           const groupColor = group === "Active" ? "bg-emerald-500" :
             group === "Prospect" ? "bg-blue-500" :
             group === "Target" ? "bg-amber-500" :
@@ -840,7 +849,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
             >
               <CardContent className="p-3">
                 <div className="flex items-center gap-2">
-                  <Badge variant="outline" className={`border-transparent ${groupColor} text-white text-[10px] px-1.5 py-0 shrink-0`}>{group}</Badge>
+                  <Badge variant="outline" className={`border-transparent ${groupColor} text-white text-[10px] px-1.5 py-0 shrink-0`}>{group === "Ungrouped" ? "Other" : group}</Badge>
                   <div>
                     <p className="text-lg font-bold">{count}</p>
                   </div>
@@ -852,10 +861,15 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
       </div>
       )}
 
+      {/* Hidden at 0 — a zero filter plus its caption was dead weight on the
+          page (Woody, 2026-09-27). Stays while switched on so it can be
+          switched off. */}
+      {(recentViewingCount > 0 || recentViewingOnly) && (
       <div className="flex flex-wrap items-center gap-2">
-        <Pill active={recentViewingOnly} aria-pressed={recentViewingOnly} onClick={() => setRecentViewingOnly(v => !v)} data-testid="requirements-recently-viewing">Recently viewing · 90 days <span className="font-mono tabular-nums">{items.filter(item => item.companyId && recentlyViewingBrands.has(item.companyId)).length}</span></Pill>
-        <span className="text-[11px] text-muted-foreground">Confirmed attended viewings, linked to the brand's requirements.</span>
+        <Pill active={recentViewingOnly} aria-pressed={recentViewingOnly} onClick={() => setRecentViewingOnly(v => !v)} data-testid="requirements-recently-viewing">Recently viewing · 90 days <span className="font-mono tabular-nums">{recentViewingCount}</span></Pill>
+        <span className="text-[11px] text-muted-foreground">Brands with a confirmed viewing in the last 90 days.</span>
       </div>
+      )}
       {recentViewingOnly && <Card><CardContent className="p-4 space-y-3">
         <h3 className="text-sm font-semibold">Recent viewing evidence</h3>
         {recentViewingQuery.isLoading ? <Skeleton className="h-24 w-full" /> : recentViewingQuery.isError ? <div className="space-y-2"><p className="text-sm">Viewing evidence could not be loaded.</p><Button variant="outline" size="sm" onClick={() => void recentViewingQuery.refetch()}>Refresh</Button></div> : <>
@@ -998,22 +1012,29 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
           items={[...activeItems, ...pastItems, ...archivedItems].map((item) => ({
             id: item.id,
             title: item.name,
-            subtitle: item.companyId ? companyMap.get(item.companyId)?.name : undefined,
+            // Brand name is usually the requirement name too ("Anna / Anna")
+            // — only show it when it adds something (Woody, 2026-09-27).
+            subtitle: (() => {
+              const brand = item.companyId ? companyMap.get(item.companyId)?.name : undefined;
+              return brand && brand.trim().toLowerCase() !== (item.name || "").trim().toLowerCase() ? brand : undefined;
+            })(),
             status: item.status || "Active",
             statusColor: item.status === "Past" ? "bg-zinc-400" : item.status === "Archived" ? "bg-zinc-300" : "bg-emerald-500",
             fields: [
               { label: "Use", value: Array.isArray(item.use) ? item.use.join(", ") : (item.use as any) },
-              { label: "Size", value: Array.isArray(item.size) ? item.size.join(", ") : (item.size as any) },
+              { label: "Size", value: formatSizeList(item.size as any) },
               { label: "Locations", value: Array.isArray(item.requirementLocations) ? item.requirementLocations.join(", ") : (item.requirementLocations as any) },
               { label: "Type", value: Array.isArray(item.requirementType) ? item.requirementType.join(", ") : (item.requirementType as any) },
             ],
             onEdit: () => setEditItem(item),
-            onDelete: () => setDeleteItem(item),
+            // Delete lives in the ⋮ menu in the footer — a red Delete on every
+            // phone card was one mis-tap from losing a requirement
+            // (Woody, 2026-09-27).
             footer: (() => {
               let pack: { url?: string; name?: string } | null = null;
               if (item.landlordPack) { try { pack = JSON.parse(item.landlordPack); } catch {} }
               return (
-                <span className="inline-flex items-center gap-3">
+                <span className="inline-flex items-center gap-3 whitespace-nowrap">
                   {/* Match was desktop-only, stranding the "N fit your units"
                       KPI on phones (UX #29). */}
                   <button
@@ -1033,9 +1054,24 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
                       className="inline-flex items-center gap-1.5 text-xs font-medium text-primary"
                       data-testid={`download-landlord-pack-${item.id}`}
                     >
-                      <Download className="w-3.5 h-3.5" />
+                      <Download className="w-3.5 h-3.5 shrink-0" />
                       Landlord pack
                     </a>
+                  )}
+                  {!isClientView && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground" aria-label="More actions" data-testid={`button-more-card-${item.id}`}>
+                          <MoreVertical className="w-4 h-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem className="text-red-600 focus:text-red-700" onClick={() => setDeleteItem(item)} data-testid={`button-delete-card-${item.id}`}>
+                          <Trash2 className="w-3.5 h-3.5 mr-2" />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   )}
                 </span>
               );
@@ -1526,7 +1562,16 @@ function LandlordPackCell({ itemId, landlordPack }: { itemId: string; landlordPa
 
 const USE_OPTIONS = CRM_OPTIONS.reqLeasingUse.map((u) => ({ label: u, value: u }));
 const TYPE_OPTIONS = CRM_OPTIONS.reqLeasingType.map((t) => ({ label: t, value: t }));
-const SIZE_OPTIONS = CRM_OPTIONS.reqLeasingSize.map((s) => ({ label: s, value: s }));
+const SIZE_OPTIONS = CRM_OPTIONS.reqLeasingSize.map((s) => ({ label: formatSizeText(s), value: s }));
+// Imported sizes ("10000- ft2") aren't in the option list, so the chip showed
+// the raw string — add the row's own values with a display label
+// (Woody, 2026-09-27). Values are unchanged.
+const sizeOptionsFor = (values: string[] | string | null | undefined) => {
+  const extra = (Array.isArray(values) ? values : values ? [values] : [])
+    .filter((v) => !(CRM_OPTIONS.reqLeasingSize as readonly string[]).includes(v))
+    .map((v) => ({ label: formatSizeText(v), value: v }));
+  return extra.length ? [...SIZE_OPTIONS, ...extra] : SIZE_OPTIONS;
+};
 const LOCATION_OPTIONS = CRM_OPTIONS.reqLeasingLocations.map((l) => ({ label: l, value: l }));
 
 const INVEST_USE_OPTIONS = CRM_OPTIONS.reqInvestmentUse.map((u) => ({ label: u, value: u }));
@@ -2409,7 +2454,7 @@ function LeasingSection({
                     <TableCell className="px-1.5 py-1">
                       <InlineMultiSelect
                         value={item.size}
-                        options={SIZE_OPTIONS}
+                        options={sizeOptionsFor(item.size)}
                         colorMap={CRM_OPTIONS.reqLeasingSizeColors}
                         onSave={(v) => inlineUpdate(item.id, { size: v })}
                         placeholder="Set size"

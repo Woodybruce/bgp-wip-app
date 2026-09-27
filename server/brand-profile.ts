@@ -173,6 +173,32 @@ export function brandNewsPatterns(co: any): { text: string[]; urls: string[] } {
   return { text: [...text], urls: [...urls] };
 }
 
+// "Charles Tyrwhitt (instagram)" mentioning Gail's is another brand's social
+// feed, not news about Gail's — keep social posts to the brand's own channel.
+export function otherBrandsSocialPost(companyName: string, sourceName: string | null | undefined) {
+  const social = /^(.*)\s\((?:instagram|linkedin|tiktok|facebook|x|twitter)\)$/i.exec(sourceName || "");
+  if (!social) return false;
+  const norm = (v: string) => v.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[’']/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+  const own = norm(companyName), channel = norm(social[1]);
+  return !!own && !!channel && !channel.includes(own) && !own.includes(channel);
+}
+
+// One row per story: syndicated copies ("Hundreds queue in Bournemouth
+// square…" from three outlets) collapse to the newest, and scraped site
+// navigation ("News", "Net Zero Carbon Pathway") isn't a story at all.
+export function dedupeNewsStories<T extends { title?: string | null }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  return rows.filter(row => {
+    const title = String(row.title || "").replace(/\s[-–—|]\s[^-–—|]{2,60}$/, "").trim();
+    const words = title.split(/\s+/).filter(Boolean);
+    if (words.length < 3 || (words.length <= 4 && words.every(w => /^[A-Z&,]/.test(w) || /^(and|of|the|&)$/.test(w)))) return false;
+    const key = title.toLowerCase().replace(/[^a-z0-9 ]+/g, "").replace(/\s+/g, " ").slice(0, 70);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function brandNewsQuery(companyId: string, co: any) {
   const { text, urls } = brandNewsPatterns(co);
   const params: any[] = [companyId];
@@ -1028,7 +1054,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       dealTotals: bpScope ? { ...dealTotals, totalFees: null } : dealTotals,
       parentGroup: parentGroup.rows[0] || null,
       siblings: siblings.rows,
-      news: (news.rows as any[]).filter((n: any) => isBrandNewsRelevant(c, n)).slice(0, 20),
+      news: dedupeNewsStories((news.rows as any[]).filter((n: any) => isBrandNewsRelevant(c, n) && !otherBrandsSocialPost(c.name, n.source_name))).slice(0, 20),
       requirements: requirements.rows,
       pitchedTo: pitchedTo.rows,
       liveLocations: liveLocations.rows,

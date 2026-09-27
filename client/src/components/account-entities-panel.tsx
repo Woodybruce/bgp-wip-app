@@ -150,8 +150,10 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false }: { 
                 data-testid={`entity-row-${e.entityId ?? `jsonb-${i}`}`}
               >
                 <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                <span className="text-xs font-medium truncate" title={e.tradingAs ? `${e.name} — trading as ${e.tradingAs}` : e.name}>{e.name}</span>
-                {e.tradingAs && <span className="text-[10px] text-muted-foreground truncate shrink-0">trading as {e.tradingAs}</span>}
+                {/* The legal name gets the room; "trading as" shrinks first
+                    (it squashed names to "GROSVE…"). */}
+                <span className="text-xs font-medium truncate min-w-[6rem]" title={e.tradingAs ? `${e.name} — trading as ${e.tradingAs}` : e.name}>{e.name}</span>
+                {e.tradingAs && <span className="text-[10px] text-muted-foreground truncate min-w-0 shrink-[2]">trading as {e.tradingAs}</span>}
                 {e.companiesHouseNumber ? (
                   <Badge variant="outline" className="text-[9px] font-mono shrink-0">CH {e.companiesHouseNumber}</Badge>
                 ) : (

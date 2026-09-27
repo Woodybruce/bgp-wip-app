@@ -145,8 +145,8 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
           <Briefcase className="w-3.5 h-3.5" /> Deals &amp; activity
           {data && <Badge variant="outline" className="text-[11px] font-mono tabular-nums">{data.total}</Badge>}
           {data && data.completedTotal > 0 && (
-            <span className="text-[10px] text-muted-foreground normal-case font-normal">
-              {data.completedTotal} completed — filter by stage to see them
+            <span className="text-[10px] text-muted-foreground normal-case font-normal tabular-nums">
+              {data.completedTotal} completed
             </span>
           )}
         </CardTitle>
@@ -251,7 +251,7 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                       <td className="py-1.5 pr-2 max-w-[12rem]"><NextActionCell d={d} /></td>
                       {data.feesVisible && (
                         <td className="py-1.5 text-right tabular-nums whitespace-nowrap">
-                          {d.fee != null ? `£${Number(d.fee).toLocaleString()}` : "—"}
+                          {d.fee != null ? `£${Math.round(Number(d.fee)).toLocaleString("en-GB")}` : "—"}
                         </td>
                       )}
                     </tr>

@@ -440,8 +440,11 @@ export function AppSidebar() {
         <SidebarSeparator />
         {user?.isAdmin && (
           <>
+            {/* Shown as "More" — "Unfinished" read as broken to anyone
+                glancing at the nav (Woody, 2026-09-27). storageKey kept so
+                the open/closed memory survives. */}
             <NavSection
-              label="Unfinished"
+              label="More"
               items={unfinishedNavCleaned}
               storageKey="unfinished"
               defaultOpen={false}

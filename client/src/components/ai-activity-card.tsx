@@ -273,6 +273,27 @@ function LastTouchBadge({ iso }: { iso: string }) {
   return <Badge className={`${cls} text-[10px] font-medium`}>Last touch {label}</Badge>;
 }
 
+// The curator sometimes narrates its own working ("the all-mailbox fan-out
+// errored, so I checked Rupert, Woody and Charlotte individually…",
+// "Everything else returned … was noise and has been dropped"). The prompt
+// forbids it; this drops any such sentence from older cached write-ups too
+// (Woody, 2026-09-27).
+const PROCESS_NARRATION_RE = /\bfan-?out\b|\berrored\b|\b(?:was|were|is|as) noise\b|\b(?:has|have) been (?:dropped|filtered)\b|\bfiltered out\b|\beverything else (?:returned|that came back)\b|\bI (?:checked|searched|ran|re-?ran|queried|tried|retried|filtered|dropped|looked through)\b|\bsearch_(?:emails|calendar)\b|\bmailbox="?all"?/i;
+
+function stripProcessNarration(markdown: string): string {
+  return markdown
+    .split("\n")
+    .flatMap((line) => {
+      if (/^#{1,3} /.test(line) || line.trim() === "") return [line];
+      const prefix = line.match(/^(?:[-*] |> )/)?.[0] || "";
+      const body = line.slice(prefix.length);
+      const kept = body.split(/(?<=[.!?])\s+/).filter((s) => !PROCESS_NARRATION_RE.test(s));
+      if (kept.length === 0) return [];
+      return [prefix + kept.join(" ")];
+    })
+    .join("\n");
+}
+
 /**
  * Renders the AI-curated markdown with inline [E#] and [M#] tokens turned
  * into clickable buttons. Inline parser (no react-markdown dep) — handles
@@ -352,7 +373,7 @@ function ActivityMarkdown({
     return out;
   };
 
-  const lines = markdown.split("\n");
+  const lines = stripProcessNarration(markdown).split("\n");
   const blocks: ReactNode[] = [];
   let listBuffer: ReactNode[] = [];
   const flushList = () => {

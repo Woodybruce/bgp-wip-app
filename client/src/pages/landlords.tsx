@@ -167,7 +167,10 @@ export default function LandlordsPage() {
       {/* ── Overview ─────────────────────────────────────────────── */}
       {activeTab === "overview" && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {/* Hunter tile + panel only when there are targets — at 0 they
+              duplicated each other, and the fifth tile sat alone on a phone
+              row; four tiles fill 2×2 (Woody, 2026-09-27). */}
+          <div className={`grid grid-cols-2 ${totals.hunters > 0 ? "md:grid-cols-5" : "md:grid-cols-4"} gap-3`}>
             {/* Stat tiles are informational (docs/DESIGN.md §8) — icons stay
                 muted (no per-tile accent colours; red isn't for emphasis),
                 values in mono. */}
@@ -176,9 +179,9 @@ export default function LandlordsPage() {
               { label: "Active deals", value: totals.activeDeals.toString(), icon: BarChart3 },
               { label: "Properties", value: totals.properties.toString(), icon: Building2 },
               { label: "Total fees", value: formatGBP(totals.totalFee), icon: Landmark },
-              { label: "Hunter targets", value: totals.hunters.toString(), icon: Crosshair },
-            ].map(s => (
-              <Card key={s.label}>
+              ...(totals.hunters > 0 ? [{ label: "Hunter targets", value: totals.hunters.toString(), icon: Crosshair }] : []),
+            ].map((s, i, tiles) => (
+              <Card key={s.label} className={tiles.length % 2 === 1 && i === tiles.length - 1 ? "col-span-2 md:col-span-1" : undefined}>
                 <CardContent className="p-4 flex items-center gap-3">
                   <s.icon className="w-7 h-7 text-muted-foreground shrink-0" />
                   <div className="min-w-0">
@@ -190,7 +193,7 @@ export default function LandlordsPage() {
             ))}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className={`grid grid-cols-1 ${hunters.length > 0 ? "lg:grid-cols-3" : "lg:grid-cols-2"} gap-4`}>
             <Leaderboard
               title="Top by fees"
               icon={Crown}
@@ -205,6 +208,7 @@ export default function LandlordsPage() {
               rows={topByPortfolio}
               metric={l => `${l.property_count || 0} ${(l.property_count || 0) === 1 ? "property" : "properties"}`}
             />
+            {hunters.length > 0 && (
             <Leaderboard
               title="Investment Hunter targets"
               icon={Crosshair}
@@ -213,6 +217,7 @@ export default function LandlordsPage() {
               metric={l => (l.active_deals ? `${l.active_deals} active` : "—")}
               empty="No landlords flagged as targets yet."
             />
+            )}
           </div>
         </>
       )}

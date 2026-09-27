@@ -15,10 +15,11 @@ export const parseReqSize = (size: string[] | string | null): { min: number; max
 };
 
 export const USE_HINTS: Array<[RegExp, RegExp]> = [
-  [/restaurant|a1 food|f&b|caf/i, /f&b|rest|kiosk|caf|food|dining/i],
+  [/restaurant|a1 food|f&b|caf/i, /f&b|rest|kiosk|caf|coffee|food|dining/i],
   [/gym|wellness|fitness/i, /gym|fitness|studio|wellness|health/i],
   [/leisure/i, /leisure|cinema|bowl|golf|padel/i],
-  [/retail/i, /retail|shop|store/i],
+  // "Coffee Shop" is F&B, not a shop for a fashion retailer.
+  [/retail/i, /retail|(?<!coffee |barber |betting )shop|store/i],
 ];
 
 // A live leasing requirement fits a unit when the unit's size sits in the

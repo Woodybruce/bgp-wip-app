@@ -1,3 +1,4 @@
+import { snippetAddsNothing } from "@shared/news-snippet";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
 import { CompanyProfileImage, CompanyImageCoverChoice } from "@/components/company-profile-image";
@@ -1239,7 +1240,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   const aboutBody = (
             <div className="space-y-2" data-testid="brand-factual-summary">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
-              <p className={`text-sm leading-relaxed break-words ${!aboutOpen && (c.description || "").length > ABOUT_CLAMP_CHARS ? "line-clamp-5" : ""}`}>{c.description || "The factual brand profile is awaiting preparation."}</p>
+              {/* No description yet = no line; "awaiting preparation" read as
+                  pipeline status, not a brand fact. */}
+              {c.description && <p className={`text-sm leading-relaxed break-words ${!aboutOpen && c.description.length > ABOUT_CLAMP_CHARS ? "line-clamp-5" : ""}`}>{c.description}</p>}
               {(c.description || "").length > ABOUT_CLAMP_CHARS && (
                 <button type="button" onClick={() => setAboutOpen(open => !open)} className="text-xs text-primary hover:underline" data-testid="button-about-more">{aboutOpen ? "Show less" : "Read more"}</button>
               )}
@@ -1429,8 +1432,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 c.bgp_contact_crm ? <span key="lead">Lead <span className="font-medium text-foreground">{c.bgp_contact_crm}</span></span> : null,
                 <span key="touch">Last touch <span className={`font-medium ${daysSince == null ? "" : daysSince < 30 ? "text-emerald-700" : daysSince < 90 ? "text-amber-600" : "text-red-600"}`}>{daysSince == null ? "—" : daysSince === 0 ? "today" : daysSince === 1 ? "yesterday" : `${daysSince} days ago`}</span></span>,
                 threads ? (stats
-                  ? <button key="threads" type="button" onClick={() => setEmailsOpen(true)} className="hover:text-foreground underline decoration-dotted underline-offset-2" data-testid="button-brand-emails"><span className="font-mono tabular-nums text-foreground">{threads}</span> email threads</button>
-                  : <span key="threads"><span className="font-mono tabular-nums text-foreground">{threads}</span> email threads</span>) : null,
+                  ? <button key="threads" type="button" onClick={() => setEmailsOpen(true)} className="hover:text-foreground underline decoration-dotted underline-offset-2" data-testid="button-brand-emails"><span className="font-mono tabular-nums text-foreground">{threads.toLocaleString("en-GB")}</span> email thread{threads === 1 ? "" : "s"}</button>
+                  : <span key="threads"><span className="font-mono tabular-nums text-foreground">{threads.toLocaleString("en-GB")}</span> email thread{threads === 1 ? "" : "s"}</span>) : null,
                 active90 ? <span key="active"><span className="font-mono tabular-nums text-foreground">{active90}</span> {active90 === 1 ? "person" : "people"} active in 90 days</span> : null,
               ].filter(Boolean);
               return <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground" data-testid="brand-relationship-line">{parts}
@@ -1447,7 +1450,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // and agent layouts.
   const representsBlock = (<>
             {/* Represents (brands this agent reps) */}
-            {(data.representing.length > 0 || isAgent) && (
+            {(data.representing.length > 0 || isAgentFirm) && (
               <div>
                 <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
                   <span className="flex items-center gap-1"><Users className="w-3 h-3" /> Currently representing ({data.representing.length})</span>
@@ -1877,14 +1880,18 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       <div className="flex flex-col gap-3 w-full min-w-0" data-testid="landlord-profile">
         {profileTopRow}
         {refreshStatus}
-        <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} />
+        {/* No BGP take on landlords: it is a fixed count of the linked
+            records ("30 linked CRM properties shown (up to 30)") that the
+            boards right below show properly — and it disagreed with them
+            (Woody, 2026-09-27). */}
         <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
         <AccountDealsBoard companyId={companyId} />
         {!isClientViewer && <AccountTeamViewsCard companyId={companyId} />}
         <MasonryGrid className={masonryCls}>
           <AccountNextActionsCard companyId={companyId} />
           <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
-          <InvestmentRequirementsCard companyId={companyId} />
+          {/* Staff see these rows in Team view → Investment already. */}
+          {isClientViewer && <InvestmentRequirementsCard companyId={companyId} />}
           <BrandProfileSidebar data={data} companyId={companyId} only={["team"]} />
           <div className="flex flex-col gap-3">
             <BrandProfileSidebar data={data} companyId={companyId} only={["compliance"]} />
@@ -1999,7 +2006,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             <div className="mt-2 order-2 space-y-3 empty:hidden">
               {/* The BGP take; the team, last touch and deals it draws on sit
                   under About. */}
-              <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} />
+              <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} hideWhenEmpty />
 
             </div>
 
@@ -2138,7 +2145,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                           </Badge>
                           {Number(p.total_rent_pa) > 0 && (
                             <span className="text-[10px] text-muted-foreground tabular-nums">
-                              £{Math.round(Number(p.total_rent_pa) / 1000)}k pa
+                              £{Math.round(Number(p.total_rent_pa) / 1000).toLocaleString("en-GB")}k pa
                             </span>
                           )}
                         </span>
@@ -2301,7 +2308,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                         })()}
                       </div>
                       <div className="text-right shrink-0">
-                        {u.rent_pa != null && <div className="font-semibold text-xs">£{Math.round(u.rent_pa / 1000)}k pa</div>}
+                        {u.rent_pa != null && <div className="font-semibold text-xs">£{Math.round(u.rent_pa / 1000).toLocaleString("en-GB")}k pa</div>}
                         {u.sqft != null && <div className="text-[10px] text-muted-foreground">{Math.round(u.sqft).toLocaleString()} sqft</div>}
                       </div>
                       <ExternalLink className="w-2.5 h-2.5 text-muted-foreground opacity-0 group-hover:opacity-100 shrink-0" />
@@ -3804,11 +3811,15 @@ export function BrandComplianceCard({
                 : "Confirm the UK trading entity above, then we'll work out which APIs to pull (CH, Red Flag, AML PEP) against the right registered name."}
             </p>
           )}
+          {/* The unticked rows above already say what's still to collect —
+              the box only speaks when there's a decision to make
+              (Woody, 2026-09-27: double-ups). */}
+          {(complianceStatus.identityIssues.length > 0 || complianceStatus.label !== "Checks still to collect") && (
           <div className="mt-2 rounded-md border border-border bg-muted/40 p-3 text-xs space-y-2" data-testid="brand-compliance-review-status" role="status">
             <p className="font-semibold">{complianceStatus.label}</p>
             {complianceStatus.identityIssues.map(issue => <p key={issue}>{issue}</p>)}
-            {amlMissing.length > 0 && <p className="text-muted-foreground">Still to collect: {amlMissing.map(row => row.label).join(" · ")}</p>}
           </div>
+          )}
         </div>
     </div>
   );
@@ -3876,8 +3887,13 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
   // Inside About each list shows 2 (6 in its own card) until Show all —
   // Sainsbury's six suggested pitches made the profile card ~1,400px.
   const cap = showAllTenancies ? Infinity : bare ? 2 : 6;
-  const targeted: any[] = act.targeted || [];
   const pitched: any[] = act.pitched || [];
+  // One row per unit: a unit already pitched (with its evidence) or where
+  // the brand is the tenant doesn't repeat under Targeted — Liverpool ONE
+  // U 8/9 sat in both lists (Woody, 2026-09-27).
+  const unitKey = (propertyId: any, unit: any) => `${propertyId}|${String(unit || "").toLowerCase().replace(/\s+/g, "")}`;
+  const shownUnits = new Set([...pitched.map((p: any) => unitKey(p.propertyId, p.unitName)), ...tenantAt.map((p: any) => unitKey(p.property_id, p.unit_name))]);
+  const targeted: any[] = (act.targeted || []).filter((p: any) => !shownUnits.has(unitKey(p.property_id, p.unit_name)));
   const suggestions: any[] = sugg?.suggestions || [];
   const ledgerPills = [
     ledger?.completed ? `${ledger.completed} completed` : null,
@@ -4910,7 +4926,8 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
                   </button>
                 ))}
               </div>
-              <NewsTagFilterChips selected={newsTagFilter} onChange={setNewsTagFilter} className="text-[10px]" />
+              <NewsTagFilterChips selected={newsTagFilter} onChange={setNewsTagFilter} className="text-[10px]" hideEmpty
+                counts={tabFiltered.reduce((acc: Record<string, number>, a: any) => { for (const t of (a.ai_tags || a.aiTags || [])) acc[String(t).toLowerCase()] = (acc[String(t).toLowerCase()] || 0) + 1; return acc; }, {})} />
               {newsTab === "industry" && allSources.length > 1 && (
                 <div className="flex items-center gap-1 flex-wrap">
                   {newsSourceFilter && (
@@ -4975,7 +4992,8 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
                   // URL domain only if it's NOT a Google proxy.
                   const domain = sourceDomain || (isGoogleUrl ? null : rawUrlDomain);
                   const sourceLabel = cleanSourceName || rawUrlDomain;
-                  const displayText = article.ai_summary || article.summary;
+                  const rawText = article.ai_summary || article.summary;
+                  const displayText = snippetAddsNothing(article.title, rawText) ? null : rawText;
                   return (
                     <a
                       key={article.id}
@@ -5060,7 +5078,7 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
             {/* Account team read-out (Delivery 3) — resolver team with lead
                 + provenance pills. The org chart below stays the editor. */}
             <AccountTeamCard companyId={companyId} />
-            <ClientTeamOrgChart clientCompanyId={companyId} />
+            <ClientTeamOrgChart clientCompanyId={companyId} quietWhenEmpty />
           </CardContent>
         </Card>
       )}

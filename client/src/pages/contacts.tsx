@@ -602,6 +602,14 @@ function formatInteractionDate(dateStr: string) {
 // changed since (Woody, 2026-09-26: "verify with AI should be automatic on
 // opening"); otherwise the saved verdict shows. Verdicts land in the
 // data-health review queue; nothing is auto-applied.
+// Older email-discovered contacts carry a "[Auto-created from email]" tag in
+// their notes — say it in plain words instead (Woody, 2026-09-27).
+function plainNotes(notes: string): string {
+  return notes
+    .replace(/^\[Auto-created from email\]\s*Emailed (\d+) times by ([^.]*)\./, "Added from email — the team has emailed them $1 times ($2).")
+    .replace(/^\[Auto-created[^\]]*\]\s*/, "Added automatically. ");
+}
+
 const VERIFY_STALE_MS = 90 * 24 * 60 * 60 * 1000;
 function ContactSourcePanel({ contact }: { contact: any }) {
   const { toast } = useToast();
@@ -644,12 +652,13 @@ function ContactSourcePanel({ contact }: { contact: any }) {
   const shown = result || saved;
   const status = shown?.status;
   return (
-    <div className="pt-2 border-t flex items-center justify-between gap-2 flex-wrap" data-testid="contact-source-panel">
-      <div className="min-w-0">
-        <p className="text-xs text-muted-foreground">Data source</p>
-        <p className="text-sm flex items-center gap-1.5 flex-wrap">
-          <span>{src}</span>
-          {when && <span className="text-xs text-muted-foreground">· {when}</span>}
+    <div className="pt-2 border-t flex items-start justify-between gap-2 flex-wrap" data-testid="contact-source-panel">
+      {/* The raw source tag ("ai-auto") and the AI's reasoning are
+          back-of-house — folded behind "Source" so the record reads
+          cleanly; the verdict badge stays visible (Woody, 2026-09-27). */}
+      <details className="min-w-0 flex-1">
+        <summary className="text-xs text-muted-foreground cursor-pointer select-none flex items-center gap-1.5 flex-wrap">
+          Source
           {status && (
             <Badge className={`text-[10px] border-transparent ${
               status === "confirmed" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
@@ -657,10 +666,14 @@ function ContactSourcePanel({ contact }: { contact: any }) {
               : "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
             }`}>{status === "confirmed" ? "Verified ✓" : status === "mismatch" ? "Mismatch — in review queue" : "Inconclusive"}</Badge>
           )}
+          {verify.isPending && !shown && <span className="flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />Checking employer…</span>}
+        </summary>
+        <p className="text-sm mt-1">
+          {src}
+          {when && <span className="text-xs text-muted-foreground"> · {when}</span>}
         </p>
-        {verify.isPending && !shown && <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />Checking the employer against RocketReach, email and news…</p>}
         {shown?.reasoning && <p className="text-[11px] text-muted-foreground mt-0.5">{shown.reasoning}{shown.created_at ? ` · checked ${new Date(shown.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}</p>}
-      </div>
+      </details>
       <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => verify.mutate()} disabled={verify.isPending} data-testid="button-verify-contact">
         {verify.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Sparkles className="w-3 h-3 mr-1" />}
         {verify.isPending ? "Checking sources…" : shown ? "Re-check" : "Verify with AI"}
@@ -673,6 +686,7 @@ function ContactDetail({ id }: { id: string }) {
   const { toast } = useToast();
   const { data: cdViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const cdIsClient = cdViewer?.role === "Client" || !!cdViewer?.companyScopeId;
+  const isMobile = useIsMobile();
   const [logActivityOpen, setLogActivityOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
 
@@ -802,12 +816,16 @@ function ContactDetail({ id }: { id: string }) {
       <LogActivityDialog open={logActivityOpen} onOpenChange={setLogActivityOpen} contactId={contact.id} companyId={contact.companyId || undefined} />
 
       <div className="flex items-center gap-3 flex-wrap">
+        {/* The phone shell header already has a back arrow — one back
+            control, not two (Woody, 2026-09-27). */}
+        {!isMobile && (
         <Link href="/contacts">
           <Button variant="ghost" size="sm" data-testid="button-back-contacts">
             <ArrowLeft className="w-4 h-4 mr-1" />
             Back
           </Button>
         </Link>
+        )}
         {contact.avatarUrl ? (
           <img src={contact.avatarUrl} alt={contact.name} className="w-14 h-14 rounded-full bg-muted border-2 border-border" data-testid="avatar-contact-detail" />
         ) : (
@@ -815,8 +833,8 @@ function ContactDetail({ id }: { id: string }) {
             {contact.name?.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
           </div>
         )}
-        <div className="flex-1">
-          <h1 className="text-xl font-bold" data-testid="text-contact-detail-name">{contact.name}</h1>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-xl font-bold break-words" data-testid="text-contact-detail-name">{contact.name}</h1>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             {contact.groupName && (
               <Badge variant="outline" className={`border-transparent ${getGroupColor(contact.groupName)} text-white text-xs`}>
@@ -841,8 +859,30 @@ function ContactDetail({ id }: { id: string }) {
             {contact.role && <Badge variant="outline" className="text-xs">{contact.role}</Badge>}
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          {!cdIsClient && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Phones: Edit stays a button, the rest go under ⋮ — four
+              buttons ran off a 390px screen ("De…") (Woody, 2026-09-27). */}
+          {!cdIsClient && isMobile && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="order-last" aria-label="More actions" data-testid="button-contact-more">
+                  <MoreHorizontal className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setLogActivityOpen(true)} data-testid="button-log-activity">
+                  <Phone className="w-4 h-4 mr-2" />Log activity
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => enrichMutation.mutate()} disabled={enrichMutation.isPending} data-testid="button-enrich-contact">
+                  <Zap className="w-4 h-4 mr-2" />Enrich
+                </DropdownMenuItem>
+                <DropdownMenuItem className="text-destructive" onClick={() => { if (confirm("Delete this contact?")) deleteMutation.mutate(); }} data-testid="button-delete-contact">
+                  <Trash2 className="w-4 h-4 mr-2" />Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          {!cdIsClient && !isMobile && (
           <Button
             variant="outline"
             size="sm"
@@ -854,7 +894,7 @@ function ContactDetail({ id }: { id: string }) {
             Enrich
           </Button>
           )}
-          {!cdIsClient && (
+          {!cdIsClient && !isMobile && (
             <Button variant="outline" size="sm" onClick={() => setLogActivityOpen(true)} data-testid="button-log-activity">
               <Phone className="w-4 h-4 mr-1" />
               Log activity
@@ -880,7 +920,7 @@ function ContactDetail({ id }: { id: string }) {
               </Button>
             );
           })()}
-          {!cdIsClient && (
+          {!cdIsClient && !isMobile && (
           <Button
             variant="outline"
             size="sm"
@@ -901,12 +941,14 @@ function ContactDetail({ id }: { id: string }) {
           <Card>
             <CardContent className="p-4 space-y-3">
               <h3 className="font-semibold text-sm">Contact Details</h3>
-              <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+              {/* One column on phones — long emails ran over the mobile
+                  number beside them (Woody, 2026-09-27). */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm [&>div]:min-w-0">
                 {contact.email && (
                   <div>
                     <p className="text-xs text-muted-foreground">Email</p>
-                    <a href={`mailto:${contact.email}`} className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1" data-testid="link-contact-email">
-                      <AtSign className="w-3 h-3" />{contact.email}
+                    <a href={`mailto:${contact.email}`} className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 break-all" data-testid="link-contact-email">
+                      <AtSign className="w-3 h-3 shrink-0" />{contact.email}
                     </a>
                   </div>
                 )}
@@ -934,16 +976,8 @@ function ContactDetail({ id }: { id: string }) {
                     </p>
                   </div>
                 )}
-                {company && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Company</p>
-                    <Link href={`/companies/${company.id}`}>
-                      <span className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-contact-company">
-                        <Building className="w-3 h-3" />{company.name}
-                      </span>
-                    </Link>
-                  </div>
-                )}
+                {/* Company, website and office address live on the Company
+                    card alongside — they were shown twice (Woody, 2026-09-27). */}
                 {contact.linkedinUrl && (
                   <div>
                     <p className="text-xs text-muted-foreground">LinkedIn</p>
@@ -952,28 +986,11 @@ function ContactDetail({ id }: { id: string }) {
                     </a>
                   </div>
                 )}
-                {company?.domainUrl && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Website</p>
-                    <a href={company.domainUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1" data-testid="link-contact-website">
-                      <Globe className="w-3 h-3" />{company.domainUrl.replace(/^https?:\/\//, '')}
-                    </a>
-                  </div>
-                )}
-                {companyAddress && (companyAddress.street || companyAddress.city) && (
-                  <div className="col-span-2">
-                    <p className="text-xs text-muted-foreground">Office Address</p>
-                    <p className="flex items-center gap-1 text-sm" data-testid="text-contact-address">
-                      <MapPin className="w-3 h-3 text-muted-foreground shrink-0" />
-                      {[companyAddress.street, companyAddress.city, companyAddress.country].filter(Boolean).join(", ")}
-                    </p>
-                  </div>
-                )}
               </div>
               {contact.notes && (
                 <div className="pt-2 border-t">
                   <p className="text-xs text-muted-foreground mb-1">Notes</p>
-                  <p className="text-sm whitespace-pre-wrap" data-testid="text-contact-notes">{contact.notes}</p>
+                  <p className="text-sm whitespace-pre-wrap" data-testid="text-contact-notes">{plainNotes(contact.notes)}</p>
                 </div>
               )}
               {!cdIsClient && <ContactSourcePanel contact={contact} />}

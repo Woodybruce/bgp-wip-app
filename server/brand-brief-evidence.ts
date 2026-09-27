@@ -13,7 +13,8 @@ export const BRAND_BRIEF_EVIDENCE_RULES = `Evidence rules:
 - Financial/covenant conclusions require the supplied financial or covenant evidence. Do not invent turnover, rent affordability, guarantees, balance-sheet strength or financial risk.
 - KYC document collection or a recorded AML/KYC decision is not a credit verdict. If legal_entity_context needs review, do not attribute linked accounts or a covenant grade to the brand; recommend confirming the contracting entity.
 - Separate fact from a proposed action. Start an interpretive claim with "Inference:" and explain the evidence; when the evidence is insufficient say "not established" or "unconfirmed". An inference label does not justify inventing a claim.
-- Name contacts, properties and locations only when supplied. Suggest checking the current property contact when none is established. Do not invent urgency, a decision-maker or a mandate.`;
+- Name contacts, properties and locations only when supplied. Suggest checking the current property contact when none is established. Do not invent urgency, a decision-maker or a mandate.
+- Write for the BGP team in plain English. Never name the data fields or systems behind the records (most_contacted, last_email_touch, evidence check, CRM field) and never write ISO dates — use "23 Sept 2026".`;
 
 function date(value: any): string | null {
   if (!value) return null;

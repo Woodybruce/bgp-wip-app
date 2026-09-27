@@ -1301,7 +1301,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && draft.trim() && !addTask.isPending) addTask.mutate(draft.trim()); }}
-            placeholder="Add a task — e.g. Chase Q3 leasing update"
+            placeholder="Add a task…"
             className="text-xs h-7 flex-1 min-w-[180px]"
           />
           <Select value={assigneeId || "me"} onValueChange={(v) => setAssigneeId(v === "me" ? "" : v)}>
@@ -1314,7 +1314,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
             </SelectContent>
           </Select>
           <Select value={priority} onValueChange={setPriority}>
-            <SelectTrigger className="h-7 w-[80px] text-[10px]" data-testid="focus-task-priority">
+            <SelectTrigger className="h-7 w-[92px] text-[10px]" data-testid="focus-task-priority">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

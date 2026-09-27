@@ -118,11 +118,13 @@ function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | null | u
   // Retry the same source with a cache-buster before settling on initials,
   // so the header picks the asset up as soon as it becomes ready.
   const [retry, setRetry] = useState(0);
+  const [errored, setErrored] = useState(false);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setFailCount(0);
     setRetry(0);
+    setErrored(false);
     return () => { if (retryTimer.current) clearTimeout(retryTimer.current); };
   }, [name, domain]);
 
@@ -135,31 +137,36 @@ function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | null | u
   const local = localBrandLogoUrl(name, domain ?? guessedDomain ?? null);
   if (local) logoSources.push(local);
 
-  if (failCount >= logoSources.length) {
-    const initials = (name || "?").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);
-    return (
-      <div
-        className="rounded-lg bg-muted flex items-center justify-center shrink-0 text-xs font-bold text-muted-foreground"
-        style={{ width: size, height: size }}
-        data-testid="company-logo-fallback"
-      >
-        {initials}
-      </div>
-    );
-  }
+  const initials = (name || "?").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);
+  const fallback = (
+    <div
+      className="rounded-lg bg-muted flex items-center justify-center shrink-0 text-xs font-bold text-muted-foreground"
+      style={{ width: size, height: size }}
+      data-testid="company-logo-fallback"
+    >
+      {initials}
+    </div>
+  );
+  if (failCount >= logoSources.length) return fallback;
 
   const base = logoSources[failCount];
   const src = retry > 0 ? `${base}${base.includes("?") ? "&" : "?"}logoRetry=${retry}` : base;
 
-  return (
+  // While a missing logo is being prepared and retried, show the initials —
+  // the broken-image icon with clipped alt text ("Nanc") read as a bug.
+  // The retry loads in a hidden img and swaps in when it lands.
+  return (<>
+    {errored && fallback}
     <img
       src={src}
       alt={name || "Company logo"}
-      loading="lazy"
+      loading={errored ? "eager" : "lazy"}
       decoding="async"
-      className="rounded-lg shrink-0 object-contain bg-white border"
+      className={`rounded-lg shrink-0 object-contain bg-white border${errored ? " hidden" : ""}`}
       style={{ width: size, height: size }}
+      onLoad={() => setErrored(false)}
       onError={() => {
+        setErrored(true);
         if (retry < 2) {
           retryTimer.current = setTimeout(() => setRetry(r => r + 1), retry === 0 ? 6000 : 15000);
         } else {
@@ -169,7 +176,7 @@ function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | null | u
       }}
       data-testid="company-logo"
     />
-  );
+  </>);
 }
 
 function formatCHAddress(addr: any): string {

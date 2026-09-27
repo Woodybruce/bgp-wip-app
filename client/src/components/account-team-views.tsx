@@ -98,7 +98,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
       <CardHeader className="p-3 pb-2 space-y-2">
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Users className="w-3.5 h-3.5" /> Team view
-          {data && <span className="normal-case tracking-normal font-normal">across {data.portfolioCount} propert{data.portfolioCount === 1 ? "y" : "ies"}</span>}
+          {data && data.portfolioCount > 0 && <span className="normal-case tracking-normal font-normal">across {data.portfolioCount} propert{data.portfolioCount === 1 ? "y" : "ies"}</span>}
         </CardTitle>
         <div className="flex flex-wrap gap-1.5">
           <Pill active={tab === "investment"} onClick={() => setTab("investment")} data-testid="team-tab-investment">Investment</Pill>

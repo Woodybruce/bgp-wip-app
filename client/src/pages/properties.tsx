@@ -1,3 +1,4 @@
+import { snippetAddsNothing } from "@shared/news-snippet";
 import { postcodeFromPropertyAddress, propertyLookupIdentity } from "@shared/property-lookup-identity";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
@@ -2742,7 +2743,8 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
   const occupiers = data?.tenants || [];
   const consultants = data?.consultants || [];
   const trackerUnlinked = data?.trackerUnlinked || [];
-  const total = internal.length + dealsAndTracker.length + trackerUnlinked.length + landlordActive.length + occupiers.length + consultants.length;
+  // People only — tracker units with nobody linked aren't contacts.
+  const total = internal.length + (data?.pinned || []).length + dealsAndTracker.length + landlordActive.length + occupiers.length + consultants.length;
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ internal: true, deals: true });
 
@@ -2841,7 +2843,7 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
             )}
           </div>
         )}
-        {total === 0 ? (
+        {total === 0 && !trackerUnlinked.length ? (
           <div className="text-center py-6">
             <Users className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
             <p className="text-xs text-muted-foreground">Nobody actively involved yet — contacts appear here from the property team, deals, viewings, offers and the tenancy schedule.</p>
@@ -4986,7 +4988,7 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
                     ) : null}
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-semibold leading-snug line-clamp-2">{article.title}</p>
-                      {article.summary && (
+                      {article.summary && !snippetAddsNothing(article.title, article.summary) && (
                         <p className="text-[11px] text-muted-foreground line-clamp-2 mt-0.5">{article.summary}</p>
                       )}
                       <div className="flex items-center gap-1.5 mt-1">

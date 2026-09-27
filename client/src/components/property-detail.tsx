@@ -560,7 +560,6 @@ export function PropertyDetail({ id }: { id: string }) {
                     say Back — "Properties" read as a link to the list. */}
                 {typeof window !== "undefined" && window.history.length > 1 ? "Back" : "Properties"}
               </Button>
-              <span className="hidden sm:inline text-muted-foreground/40">/</span>
               {editingAddress ? (
                 <div className="flex items-center gap-2 flex-1 max-w-lg">
                   <div className="flex-1">
