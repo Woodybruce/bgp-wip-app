@@ -252,6 +252,14 @@ function LandlordsTab({
         {search.trim() && <p className="text-sm text-muted-foreground">{countLabel(filtered.length, "result")}</p>}
       </div>
 
+      {/* A zero-hit search left a blank page under "0 results"
+          (Woody, 2026-09-27). */}
+      {filtered.length === 0 && (
+        <p className="py-8 text-center text-sm text-muted-foreground" data-testid="landlords-empty">
+          {search.trim() ? `No landlords match "${search.trim()}"` : "No landlords in this view"}
+        </p>
+      )}
+
       <BrandSearchHint search={search} companies={companies} resultCount={filtered.length} />
 
       {viewMode === "table" ? (
@@ -650,6 +658,12 @@ function AgentsTab({
 
         <p className="text-sm text-muted-foreground">{countLabel(filtered.length, "firm")}</p>
       </div>
+
+      {filtered.length === 0 && (
+        <p className="py-8 text-center text-sm text-muted-foreground" data-testid="agents-empty">
+          {search.trim() ? `No agents match "${search.trim()}"` : "No agents match these filters"}
+        </p>
+      )}
 
       <BrandSearchHint search={search} companies={companies} resultCount={filtered.length} />
 

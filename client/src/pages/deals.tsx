@@ -6532,6 +6532,13 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   // name) wins as the title — Layla's typed name should show.
                   // Otherwise fall back to the canonical property → deal name.
                   const customDealName = deal.name && deal.name !== propName ? deal.name : null;
+                  // The subtitle already shows the property, so "Nando's –
+                  // Bluewater Shopping Centre" over "Bluewater Shopping Centre"
+                  // becomes "Nando's" (Woody, 2026-09-27).
+                  const escProp = propName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                  const cardTitle = customDealName && propName
+                    ? customDealName.replace(new RegExp(`\\s*[–—\\-|,:·]\\s*${escProp}\\s*$`, "i"), "").replace(new RegExp(`^\\s*${escProp}\\s*[–—\\-|,:·]\\s*`, "i"), "").trim() || customDealName
+                    : customDealName;
                   // Phone triage needs dates without opening each deal:
                   // Target Date drives the WIP bucket, and time-in-status
                   // shows which deals have stalled.
@@ -6545,15 +6552,16 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     : `${statusDays}d in ${(statusCode && DEAL_STATUS_LABELS[statusCode]) || deal.status || "status"}`;
                   return {
                     id: deal.id,
-                    title: customDealName || propName || deal.name,
+                    title: cardTitle || propName || deal.name,
                     subtitle: customDealName && propName ? propName : undefined,
                     href: `/deals/${deal.id}`,
                     status: (statusCode && DEAL_STATUS_LABELS[statusCode]) || deal.status || undefined,
                     statusColor: (statusCode && DEAL_STATUS_DOT_COLORS[statusCode]) || "bg-muted-foreground",
                     // Billing leads \u2014 fee first, then rent. Type/agent follow.
                     fields: [
-                      { label: "Fee", value: deal.fee ? `\u00A3${Number(deal.fee).toLocaleString()}` : null },
-                      { label: "Rent p.a.", value: deal.rentPa ? `\u00A3${Number(deal.rentPa).toLocaleString()}` : null },
+                      // Whole pounds — bare toLocaleString gave "£5,127.5" (Woody, 2026-09-27).
+                      { label: "Fee", value: deal.fee ? `\u00A3${Math.round(Number(deal.fee)).toLocaleString("en-GB")}` : null },
+                      { label: "Rent p.a.", value: deal.rentPa ? `\u00A3${Math.round(Number(deal.rentPa)).toLocaleString("en-GB")}` : null },
                       { label: "Target", value: deal.targetDate ? formatMonthYear(deal.targetDate) : null },
                       { label: "In status", value: statusAge },
                       { label: "Type", value: deal.dealType, badge: true },

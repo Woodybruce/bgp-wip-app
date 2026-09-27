@@ -320,7 +320,9 @@ export default function BrandsHub() {
             <div className="flex items-center gap-2">
               <Trophy className="w-4 h-4 text-muted-foreground" />
               <CardTitle className="text-sm font-semibold">Turnover Leaders</CardTitle>
-              <Badge variant="secondary" className="text-[10px]">{data?.topTurnover?.length || 0}</Badge>
+              {/* Badge = rows shown (the card lists the top 10 of up to 20), and
+                  no height cap — 460px clipped row 10 (Woody, 2026-09-27). */}
+              <Badge variant="secondary" className="text-[10px]">{Math.min(data?.topTurnover?.length || 0, 10)}</Badge>
             </div>
             <Link href="/brands?tab=turnover">
               <Button variant="ghost" size="sm" className="text-xs h-7">
@@ -335,7 +337,7 @@ export default function BrandsHub() {
                 <p className="text-xs">No turnover data yet</p>
               </div>
             ) : (
-              <div className="space-y-1.5 max-h-[460px] overflow-y-auto pr-1">
+              <div className="space-y-1.5">
                 {data.topTurnover.slice(0, 10).map((t, i) => (
                   <div key={t.id} className="flex items-center gap-2 py-1.5 border-b last:border-0">
                     <span className={`text-xs font-bold w-4 shrink-0 ${i < 3 ? "text-primary" : "text-muted-foreground"}`}>
@@ -346,7 +348,7 @@ export default function BrandsHub() {
                       <Link href={`/companies/${t.company_id}`}>
                         <p className="text-xs font-medium hover:underline truncate">{t.company_name}</p>
                       </Link>
-                      <p className="text-[9px] text-muted-foreground truncate">{(t.company_type || "").replace("Tenant - ", "")} · {t.period}</p>
+                      <p className="text-[9px] text-muted-foreground truncate">{[(t.company_type || "").replace("Tenant - ", ""), t.period].filter(Boolean).join(" · ")}</p>
                     </div>
                     <div className="text-right shrink-0">
                       <p className="text-xs font-bold text-emerald-600">{formatTurnover(t.turnover)}</p>

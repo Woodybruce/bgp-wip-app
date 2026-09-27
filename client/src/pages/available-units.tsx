@@ -1602,8 +1602,10 @@ export default function AvailableUnitsPage() {
     <div className="p-4 md:p-6 space-y-4" data-testid="available-units-page">
       {/* z-30 — above the table's sticky Actions & Activity column (head
           z-20, cells z-10), which painted over this header on scroll and hid
-          Focus tracker / Add unit (Woody, 2026-09-27). */}
-      <div className="sticky top-0 z-30 bg-background -mx-4 md:-mx-6 px-4 md:px-6 -mt-4 md:-mt-6 pt-4 md:pt-6 pb-3 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
+          Focus tracker / Add unit (Woody, 2026-09-27). Phone pins only the
+          search row below — the ~200px heading block ate the screen, same
+          as the Deals pass 2 fix (Woody, 2026-09-27). */}
+      <div className={`${isMobile ? "" : "sticky top-0 z-30 bg-background -mx-4 md:-mx-6 px-4 md:px-6 -mt-4 md:-mt-6 pt-4 md:pt-6 pb-3 border-b"} flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4`}>
         <div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Letting Tracker</h1>
           <p className="text-sm text-muted-foreground">
@@ -1780,7 +1782,7 @@ export default function AvailableUnitsPage() {
           </button>
         </div>
       )}
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className={`flex items-center gap-3 flex-wrap ${isMobile ? "sticky top-0 z-30 bg-background -mx-4 px-4 py-2" : ""}`}>
         <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
@@ -1907,6 +1909,9 @@ export default function AvailableUnitsPage() {
 
       {/* KPI stat cards — matching Investment Tracker style. Compact mode
           renders the thin chip row (same filters, ~1/3 the height). */}
+      {/* Zero-count status chips are hidden ("OPPORTUNITY 0", "HOTS 0" read
+          as broken filters) — All and the active chip always stay
+          (Woody, 2026-09-27). */}
       {(isMobile || compactHeader) ? (
         <div className="flex flex-wrap gap-1.5">
           <Pill
@@ -1918,6 +1923,7 @@ export default function AvailableUnitsPage() {
           </Pill>
           {LIVE_PILL_STATUSES.map(s => {
             const count = toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === s).length;
+            if (count === 0 && statusFilter !== s) return null;
             return (
               <Pill
                 key={s}
@@ -1930,7 +1936,7 @@ export default function AvailableUnitsPage() {
               </Pill>
             );
           })}
-          <Pill
+          {(historicCount > 0 || showHistoric) && <Pill
             active={showHistoric}
             onClick={() => {
               if (showHistoric && HISTORIC_PILL_STATUSES.includes(statusFilter as DealStatusCode)) setStatusFilter("all");
@@ -1939,10 +1945,11 @@ export default function AvailableUnitsPage() {
             data-testid="stat-chip-historic"
           >
             Historic <span className="opacity-70 font-mono tabular-nums">{historicCount}</span>
-          </Pill>
+          </Pill>}
           {showHistoric && (<>
           {HISTORIC_PILL_STATUSES.map(s => {
             const count = toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === s).length;
+            if (count === 0 && statusFilter !== s) return null;
             return (
               <Pill
                 key={s}
@@ -1969,6 +1976,7 @@ export default function AvailableUnitsPage() {
           </Pill>
           {LIVE_PILL_STATUSES.map(s => {
             const count = toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === s).length;
+            if (count === 0 && statusFilter !== s) return null;
             return (
               <Pill
                 key={s}
@@ -1981,7 +1989,7 @@ export default function AvailableUnitsPage() {
               </Pill>
             );
           })}
-          <Pill
+          {(historicCount > 0 || showHistoric) && <Pill
             active={showHistoric}
             onClick={() => {
               if (showHistoric && HISTORIC_PILL_STATUSES.includes(statusFilter as DealStatusCode)) setStatusFilter("all");
@@ -1990,10 +1998,11 @@ export default function AvailableUnitsPage() {
             data-testid="stat-card-historic"
           >
             Historic <span className="font-mono normal-case opacity-60 tabular-nums">{historicCount}</span>
-          </Pill>
+          </Pill>}
           {showHistoric && (<>
           {HISTORIC_PILL_STATUSES.map(s => {
             const count = toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === s).length;
+            if (count === 0 && statusFilter !== s) return null;
             return (
               <Pill
                 key={s}
@@ -2084,7 +2093,7 @@ export default function AvailableUnitsPage() {
               // Empty rows hide on the phone card (UX #135, supersedes #42's
               // "—" here) — on a sparse fixture the list was mostly em-dashes.
               const rows = [
-                ...(size ? [{ label: "Area", value: `${Math.round(Number(size)).toLocaleString("en-GB")} sq ft` }] : []),
+                ...(Number(size) > 0 ? [{ label: "Area", value: `${Math.round(Number(size)).toLocaleString("en-GB")} sq ft` }] : []),
                 ...(tenant ? [{ label: "Tenant", value: tenant }] : []),
                 ...(rent ? [{ label: "Rent p.a.", value: `£${Number(rent).toLocaleString()}` }] : []),
               ];
@@ -2516,9 +2525,10 @@ export default function AvailableUnitsPage() {
                             >
                               <span className="font-mono text-[11px] tabular-nums">
                                 {/* "sq ft" like the rest of the app, whole feet
-                                    ("753.91 sf" → "754 sq ft") (Woody, 2026-09-27). */}
-                                {(deal?.totalAreaSqft ?? u.sqft) != null
-                                  ? `${Math.round(Number(deal?.totalAreaSqft ?? u.sqft)).toLocaleString("en-GB")} sq ft`
+                                    ("753.91 sf" → "754 sq ft"); 0 is "not recorded",
+                                    not a 0 sq ft kiosk (Woody, 2026-09-27). */}
+                                {(Number(deal?.totalAreaSqft) || Number(u.sqft)) > 0
+                                  ? `${Math.round(Number(deal?.totalAreaSqft) || Number(u.sqft)).toLocaleString("en-GB")} sq ft`
                                   : <span className="text-muted-foreground">— sq ft</span>}
                               </span>
                               {u.askingRent != null ? (

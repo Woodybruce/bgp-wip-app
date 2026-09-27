@@ -935,9 +935,10 @@ export default function WipReport() {
     // (hidden by default) shows just the invoiced portion.
     { key: "amtWip", label: "Fee", width: "w-20" },
     { key: "amtInvoice", label: "Invoiced", width: "w-20" },
-    // min-w matches the month input so the column never squeezes it to
-    // "Novem"/"Septem" (Woody, 2026-09-27).
-    { key: "dealDate", label: "Target Month", width: "w-[136px] min-w-[136px]" },
+    // The cell shows a compact "Nov 26" label over the month picker — the
+    // native input's "November 2026" still clipped to "Novemb"/"Septem" at
+    // 1440 however wide the column was set (Woody, 2026-09-27).
+    { key: "dealDate", label: "Target Month", width: "w-[100px] min-w-[100px]" },
     { key: "dealType", label: "Deal Type", width: "w-20" },
     { key: "agent", label: "BGP Contact", width: "w-20" },
     { key: "dealStatus", label: "Deal Status", width: "w-20" },
@@ -1193,6 +1194,20 @@ export default function WipReport() {
       cur.invoiced += e.amtInvoice || 0;
       cur.deals.add(e.dealId || e.id);
       byMonth.set(key, cur);
+    }
+    // Months with no fees between the first and last are filled with 0 —
+    // dropping them made Aug next to Nov read as consecutive
+    // (Woody, 2026-09-27). Capped at 36 so one stray date can't explode it.
+    const keys = [...byMonth.keys()].map(getMonthSortKey).filter(k => k !== 99);
+    if (keys.length > 1) {
+      const lo = Math.min(...keys), hi = Math.max(...keys);
+      if (hi - lo <= 36) {
+        const names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        for (let k = lo; k <= hi; k++) {
+          const label = `${names[k % 12]}-${String(Math.floor(k / 12) % 100).padStart(2, "0")}`;
+          if (!byMonth.has(label)) byMonth.set(label, { wip: 0, invoiced: 0, deals: new Set<string>() });
+        }
+      }
     }
     return [...byMonth.entries()]
       .map(([month, v]) => ({ month, wip: v.wip, invoiced: v.invoiced, count: v.deals.size, total: v.wip + v.invoiced }))
@@ -2229,6 +2244,8 @@ export default function WipReport() {
                           return (
                             <div className="flex flex-col gap-0.5">
                               {!isActual && e.dealId ? (
+                                <label key={`wip-target-${e.dealId}-${e.targetDate ?? ""}`} className="relative inline-flex items-center text-xs border border-border rounded px-1 py-0.5 w-[72px] cursor-pointer focus-within:border-ring">
+                                <span className={dateStr ? "" : "text-muted-foreground/70"}>{dateStr || "Set"}</span>
                                 <input
                                   type="month"
                                   // The target date belongs to the DEAL, so this saves to the deal —
@@ -2239,18 +2256,24 @@ export default function WipReport() {
                                   // Change events schedule a debounced save (scheduleTargetSave —
                                   // implausible mid-typing years never save); blur flushes at once, so
                                   // both the popup pick and typed edits land exactly once, when done.
-                                  key={`wip-target-${e.dealId}-${e.targetDate ?? ""}`}
                                   defaultValue={toDateInputValue(e.targetDate).slice(0, 7)}
-                                  className="text-xs border border-border rounded px-1 py-0.5 w-[130px] focus:outline-none focus:border-ring"
+                                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                  onClick={(ev) => { try { ev.currentTarget.showPicker?.(); } catch {} }}
                                   onChange={(ev) => {
                                     const val = ev.target.value;
                                     if (!val || !e.dealId) return;
+                                    // Uncontrolled input — update the visible label now rather
+                                    // than after the debounced save + refetch.
+                                    const [yy, mm] = val.split("-").map(Number);
+                                    const label = ev.currentTarget.previousElementSibling;
+                                    if (label && yy > 1900 && mm) label.textContent = new Date(yy, mm - 1, 1).toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
                                     // Month picker gives yyyy-MM; the deal stores a full date, so the
                                     // save pins the target to the 1st of the chosen month.
                                     scheduleTargetSave(e.dealId, val);
                                   }}
                                   onBlur={() => e.dealId && flushTargetSave(e.dealId)}
                                 />
+                                </label>
                               ) : dateStr ? (
                                 <span className="text-xs">{dateStr}</span>
                               ) : (

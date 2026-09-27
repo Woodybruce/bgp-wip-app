@@ -5296,8 +5296,11 @@ function PropertyOwnershipCell({ item, allCompanies, readOnly }: { item: CrmProp
   const [adding, setAdding] = useState(false);
   const filled = LIST_OWNER_ROLES.filter(r => (item as any)[r.field]);
   const empty = LIST_OWNER_ROLES.filter(r => !(item as any)[r.field]);
+  // Chip names wrap to two lines instead of truncating ("Freeholder ·
+  // Land...") — the column is 240px now, taken from Property's spare width
+  // (Woody, 2026-09-27).
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex flex-col gap-0.5 [&_.truncate]:whitespace-normal [&_.truncate]:break-words [&_.truncate]:line-clamp-2">
       {filled.map(r => (
         <InlineOwnerLink key={r.field} propertyId={item.id} companyId={(item as any)[r.field]} fieldName={r.field} label={r.label} allCompanies={allCompanies} readOnly={readOnly} />
       ))}
@@ -6041,14 +6044,27 @@ function PropertiesList({
                   return {
                     id: item.id,
                     title: item.name,
-                    // Drop the address's first segment when it just repeats the
-                    // title ("1 Wood Street / 1 Wood St, Barbican…") and keep the
-                    // locality (Woody, 2026-09-27).
+                    // Drop the address's leading segments when they just repeat
+                    // the title ("1 Wood Street / 1 Wood St, Barbican…") and keep
+                    // the locality (Woody, 2026-09-27). Segments accumulate and
+                    // compare both ways, so "1 Barrett Street" drops "1, BARRETT
+                    // STREET" and "140 Aldersgate" drops "140 Aldersgate Street".
                     subtitle: (() => {
                       const addr = formatAddress(item.address);
                       const norm = (t: string) => t.toLowerCase().replace(/\bstreet\b/g, "st").replace(/\broad\b/g, "rd").replace(/[^a-z0-9]/g, "");
-                      const [first, ...rest] = addr.split(",");
-                      if (addr && item.name && norm(first).length >= 4 && norm(item.name).startsWith(norm(first))) return rest.join(",").trim() || undefined;
+                      const segs = addr.split(",");
+                      const n = norm(item.name || "");
+                      let acc = "";
+                      let cut = -1;
+                      if (addr && n.length >= 4) {
+                        for (let i = 0; i < segs.length; i++) {
+                          acc += norm(segs[i]);
+                          if (n.startsWith(acc)) { if (acc.length >= 4) cut = i; if (acc === n) break; continue; }
+                          if (acc.startsWith(n)) cut = i;
+                          break;
+                        }
+                      }
+                      if (cut >= 0) return segs.slice(cut + 1).join(",").trim() || undefined;
                       return addr || undefined;
                     })(),
                     href: `/properties/${item.id}`,
@@ -6105,8 +6121,8 @@ function PropertiesList({
                         }}
                       />
                     </TableHead>
-                    <SortableTableHead sortKey="name" sort={propSort} className="min-w-[280px] w-[280px]">Property</SortableTableHead>
-                    {visibleColumns.landlord && <TableHead className="w-[110px] max-w-[110px]">Ownership</TableHead>}
+                    <SortableTableHead sortKey="name" sort={propSort} className="min-w-[240px] w-[240px]">Property</SortableTableHead>
+                    {visibleColumns.landlord && <TableHead className="min-w-[240px] w-[240px]">Ownership</TableHead>}
                     {visibleColumns.status && (
                       <TableHead className="min-w-[90px] w-[90px]">
                         <ColumnFilterPopover
@@ -6219,7 +6235,7 @@ function PropertiesList({
                         </div>
                       </TableCell>
                       {visibleColumns.landlord && (
-                        <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px]" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 min-w-[240px] w-[240px] max-w-[240px]" onClick={(e) => e.stopPropagation()}>
                           <PropertyOwnershipCell item={item} allCompanies={allCompanies} readOnly={isClientViewer} />
                         </TableCell>
                       )}
