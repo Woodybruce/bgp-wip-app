@@ -3336,6 +3336,7 @@ import pipnetRequirementsRouter from "./pipnet-requirements";
 import purgeApolloContactsRouter from "./purge-apollo-contacts";
 import propertyGapAnalysisRouter from "./property-gap-analysis";
 import centreOpeningsRouter from "./centre-openings";
+import tradingNamesRouter from "./trading-names";
 import brandPackRouter from "./brand-pack";
 import dealVerdictsRouter from "./deal-verdicts";
 import evidencePlanRouter from "./evidence-plan";
@@ -4351,6 +4352,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   // (Companies House + The Gazette), which was always the primary source.
   app.use(propertyGapAnalysisRouter);
   app.use(centreOpeningsRouter);
+  app.use(tradingNamesRouter);
   app.use(brandPackRouter);
   app.use(dealVerdictsRouter);
   app.use(evidencePlanRouter);
@@ -5443,6 +5445,21 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
               .catch(err => console.error("[gap-live-intel-cron] failed:", err?.message));
           }
         }, 60 * 60 * 1000);
+      }
+
+      // Nightly trading names — 04:30. Tenancy rows that only carry the
+      // lease's legal entity get the brand they trade as (certain matches
+      // filled, the rest to the property's Needs review).
+      if (process.env.NODE_ENV === "production") {
+        setInterval(() => {
+          const now = new Date();
+          if (now.getHours() === 4 && now.getMinutes() >= 30) {
+            import("./trading-names")
+              .then(m => m.runNightlyTradingNames())
+              .then(r => console.log(`[trading-names-cron] ${r.properties} properties, ${r.filled} filled, ${r.review} to review`))
+              .catch(err => console.error("[trading-names-cron] failed:", err?.message));
+          }
+        }, 30 * 60 * 1000);
       }
 
       // Nightly tenancy-spine re-link — 04:00. Deals created before their

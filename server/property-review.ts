@@ -15,7 +15,8 @@ const LEASING_FIELDS = new Set(["zone", "positioning", "unit_name", "tenant_name
   "rent_pa", "sqft", "mat_psqft", "lfl_percent", "occ_cost_percent", "financial_notes", "target_brands", "optimum_target", "priority", "status", "updates",
   "target_company_ids", "status_band", "meeting_month", "agent_input", "positioning_group", "tenancy_unit_id", "tenant_company_id"]);
 const TABLES: Record<string, Set<string>> = {
-  tenancy_schedule_units: new Set(TENANCY_FIELDS),
+  // tenant_company_id: a chosen trading name links its CRM brand too.
+  tenancy_schedule_units: new Set([...TENANCY_FIELDS, "tenant_company_id"]),
   leasing_schedule_units: LEASING_FIELDS,
 };
 type Write = { table: string; id: string; set: Record<string, any> };

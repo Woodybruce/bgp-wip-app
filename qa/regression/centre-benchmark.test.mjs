@@ -72,3 +72,13 @@ test('duplicate schedule rows for one physical unit share a plan key', async () 
   assert.notEqual(k('U124 Bluewater', 4803), k('U124/U125/U126 Bluewater', 9307));
   assert.notEqual(k('U062 Bluewater - Upper Level', 1408), k('U062/U063 Bluewater', 2706));
 });
+
+test('legal entity names reduce to the brand key the trading-name finder matches on', async () => {
+  const { legalKey } = await import('../../server/trading-names.ts');
+  assert.equal(legalKey('Hotel Chocolat Stores Limited'), 'hotel chocolat');
+  assert.equal(legalKey('Krispy Kreme U.K. Limited'), 'krispy kreme');
+  assert.equal(legalKey('Pho Trading Limited'), 'pho');
+  assert.equal(legalKey('HWS Restaurants Limited (in Administration)'), 'hws');
+  assert.equal(legalKey('Caffè Nero Group Holdings Ltd'), 'caffe nero');
+  assert.equal(legalKey('Five Guys'), 'five guys');
+});
