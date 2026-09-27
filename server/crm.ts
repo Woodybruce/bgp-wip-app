@@ -5031,6 +5031,20 @@ Return a JSON object with these fields (use null for any field you cannot find):
           candidates.push({ companyId: b.id, name: b.name, source: "tracked_brand", category: b.company_type });
         }
       }
+      // 3. The shared target-tenant engine's evidence for this centre (Brand
+      // Gap, top-centre benchmark, openings, BGP conversations and deals,
+      // tracker targets) — one answer across every targeting surface.
+      try {
+        const { centreEvidence, unitCandidates } = await import("./target-tenant-engine");
+        const ev = await centreEvidence(pool, req, unit.property_id);
+        for (const c of unitCandidates(ev, { id: unit.id, unit_name: unit.unit_name, sqft, use_class: unit.use_class }, new Set(), 20)) {
+          const existing = candidates.find((x) => (c.companyId && x.companyId === c.companyId) || String(x.name || "").toLowerCase() === c.name.toLowerCase());
+          if (existing) { existing.evidence = c.evidence; continue; }
+          candidates.push({ companyId: c.companyId, name: c.name, source: "evidence", evidence: c.evidence, facts: c.facts });
+        }
+        const order: Record<string, number> = { live_requirement: 0, evidence: 1, tracked_brand: 2 };
+        candidates.sort((a, b) => (order[a.source] ?? 3) - (order[b.source] ?? 3));
+      } catch (e: any) { console.warn("[brand-suggestions] engine evidence failed:", e?.message); }
       if (!candidates.length) return res.json({ unit: { id: unit.id, unitName: unit.unit_name, sqft }, suggestions: [] });
 
       // 3. Fable ranks the combined list against the actual unit. Uses
@@ -5048,7 +5062,8 @@ Return a JSON object with these fields (use null for any field you cannot find):
               content:
                 "Respond with the JSON array immediately — no preamble. " +
                 "You rank brand targets for a specific vacant retail/leisure unit for a UK leasing team. Prefer live " +
-                "requirements with a genuine size fit, then strong use+location alignment, then well-matched tracked brands. " +
+                "requirements with a genuine size fit, then brands with strong evidence (BGP client or live deal, a new BGP " +
+                "conversation, presence at competing / top UK centres, opening news), then well-matched tracked brands. " +
                 "Output STRICT JSON only: [{\"i\":number,\"score\":0-100,\"reason\":\"one short sentence naming the concrete fit\"}].",
             },
             {

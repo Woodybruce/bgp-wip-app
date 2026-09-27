@@ -1062,7 +1062,7 @@ function TargetTenantRow({ target, onUpdate, onDelete }: {
           )}
         </div>
         {target.rationale && (
-          <button onClick={() => setShowRationale(!showRationale)} className="text-[11px] text-muted-foreground/70 hover:text-muted-foreground mt-0.5" data-testid={`rationale-toggle-${target.id}`}>
+          <button onClick={() => setShowRationale(!showRationale)} className="text-[11px] text-muted-foreground/70 hover:text-muted-foreground mt-0.5 text-left whitespace-pre-line" data-testid={`rationale-toggle-${target.id}`}>
             {showRationale ? target.rationale : "View rationale..."}
           </button>
         )}
@@ -1532,7 +1532,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
       if (!res.ok) { toast({ title: "Batch generation failed", variant: "destructive" }); return; }
       const data = await res.json();
       const genCount = data.results?.reduce((s: number, r: any) => s + (r.generated || 0), 0) || 0;
-      toast({ title: `Generated targets for ${genCount} units` });
+      toast({ title: `Planned ${genCount} targets across the vacant units`, description: data.strategy ? String(data.strategy).slice(0, 300) : undefined });
       refetchTargets();
     } catch { toast({ title: "Generation failed", variant: "destructive" }); }
     finally { setGeneratingAll(false); }

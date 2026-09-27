@@ -1185,169 +1185,30 @@ router.delete("/api/leasing-schedule/target/:id", requireAuth, async (req, res) 
   }
 });
 
+// Target tenants — the shared engine (server/target-tenant-engine.ts):
+// evidence from the Brand Gap, top-centre benchmark, openings, live
+// requirements, BGP's brand conversations and deals, the landlord's tracker
+// targets and past outcomes, planned by Fable with extended thinking.
 router.post("/api/leasing-schedule/unit/:unitId/generate-targets", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const unitCheck = await pool.query(
-      `SELECT u.*, p.name as property_name, p.address as property_address, p.asset_class,
-        c.name as landlord_name
-       FROM leasing_schedule_units u
-       JOIN crm_properties p ON u.property_id = p.id
-       LEFT JOIN crm_companies c ON p.landlord_id = c.id
-       WHERE u.id = $1`,
-      [req.params.unitId]
-    );
-    if (unitCheck.rows.length === 0) return res.status(404).json({ error: "Unit not found" });
-    const unit = unitCheck.rows[0];
-
+    const unit = (await pool.query(`SELECT * FROM leasing_schedule_units WHERE id = $1`, [req.params.unitId])).rows[0];
+    if (!unit) return res.status(404).json({ error: "Unit not found" });
     const { allowed, user } = await checkPropertyAccess(pool, req, unit.property_id);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
-    const siblingUnits = await pool.query(
-      `SELECT unit_name, tenant_name, zone, positioning, status, sqft FROM leasing_schedule_units
-       WHERE property_id = $1 AND id != $2 ORDER BY sort_order`,
-      [unit.property_id, req.params.unitId]
-    );
-
-    const existingTargets = await pool.query(
-      "SELECT brand_name, quality_rating, status, outcome FROM target_tenants WHERE property_id = $1",
-      [unit.property_id]
-    );
-
-    const outcomes = await pool.query(
-      `SELECT t.brand_name, t.quality_rating, t.outcome, t.status, u.unit_name, p.name as property_name
-       FROM target_tenants t
-       JOIN leasing_schedule_units u ON t.unit_id = u.id
-       JOIN crm_properties p ON t.property_id = p.id
-       WHERE t.outcome IS NOT NULL
-       ORDER BY t.updated_at DESC LIMIT 50`
-    );
-
-    const tenantMix = siblingUnits.rows
-      .filter((u: any) => u.status === "Occupied" && u.tenant_name)
-      .map((u: any) => `${u.tenant_name} (${u.zone || ""}/${u.positioning || ""}, ${u.sqft || "?"} sqft)`)
-      .join(", ");
-
-    const existingTargetsList = existingTargets.rows
-      .map((t: any) => `${t.brand_name} [${t.quality_rating}/${t.status}${t.outcome ? `→${t.outcome}` : ""}]`)
-      .join(", ");
-
-    const outcomeContext = outcomes.rows.length > 0
-      ? `\n\nHISTORICAL OUTCOMES (learn from these):\n${outcomes.rows.map((o: any) =>
-          `- ${o.brand_name} at ${o.property_name}/${o.unit_name}: rated ${o.quality_rating}, outcome: ${o.outcome}`
-        ).join("\n")}`
-      : "";
-
-    const propertyAddr = typeof unit.property_address === "object"
-      ? [unit.property_address?.street, unit.property_address?.city, unit.property_address?.postcode].filter(Boolean).join(", ")
-      : unit.property_address || "";
-
-    const prompt = `You are a UK commercial property leasing advisor for Bruce Gillingham Pollard (BGP), specialising in retail, leisure and F&B tenant mix strategy.
-
-PROPERTY: ${unit.property_name}
-LOCATION: ${propertyAddr}
-ASSET CLASS: ${unit.asset_class || "Mixed Use / Retail"}
-LANDLORD/CLIENT: ${unit.landlord_name || "Not specified"}
-
-UNIT DETAILS:
-- Unit: ${unit.unit_name}
-- Zone: ${unit.zone || "Not specified"}
-- Positioning: ${unit.positioning || "Not specified"}
-- Current status: ${unit.status}
-- Current tenant: ${unit.tenant_name || "Vacant"}
-- Size: ${unit.sqft ? `${unit.sqft} sqft` : "Not specified"}
-- Rent: ${unit.rent_pa ? `£${Number(unit.rent_pa).toLocaleString()} p.a.` : "Not specified"}
-
-EXISTING TENANT MIX AT THIS PROPERTY:
-${tenantMix || "No other tenants listed"}
-
-ALREADY TARGETED (avoid duplicating):
-${existingTargetsList || "None yet"}
-${outcomeContext}
-
-POSITIONING CATEGORIES USED:
-- Everyday Connections = Social Dining
-- Quick Refuel = Café / Grab & Go / QSR
-- Joyful Gatherings = Leisure / Bars / Premium Dining
-- Leisurely Refuel = Casual / Premium Casual Dining
-
-Generate exactly 5 target tenant suggestions for this unit. Consider:
-1. The property's location, footfall profile, and catchment area
-2. The positioning category and zone strategy
-3. Complementary fit with the existing tenant mix (avoid competitors)
-4. The unit size and rental affordability
-5. The landlord/client's likely brand strategy and quality expectations
-6. Current UK market trends for this property type
-7. Learn from the historical outcomes above — which types of brands actually signed?
-
-For each suggestion, provide:
-- brand_name: The specific brand name (real UK brands, not generic categories)
-- quality_rating: "green" (A-tier: strong strategic fit, proven performer, actively expanding), "amber" (B-tier: good fit, may need convincing, less proven at this scale), or "red" (C-tier: speculative/stretch target, worth approaching but lower probability)
-- rationale: 2-3 sentences explaining why this brand suits this specific unit and property
-
-Return JSON array only, no markdown:
-[{"brand_name":"...","quality_rating":"...","rationale":"..."}]`;
-
-    const Anthropic = (await import("@anthropic-ai/sdk")).default;
-    const anthropic = new Anthropic({
-      apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
-      ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
-        ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
-        : {}),
-    });
-
-    const aiRes = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 2000,
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    const text = aiRes.content[0]?.type === "text" ? aiRes.content[0].text : "";
-    let suggestions: any[] = [];
-    try {
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (jsonMatch) suggestions = JSON.parse(jsonMatch[0]);
-    } catch {
-      return res.status(500).json({ error: "Failed to parse AI response" });
-    }
-
-    const existingBrands = await pool.query(
-      "SELECT LOWER(brand_name) as bn FROM target_tenants WHERE unit_id = $1",
-      [req.params.unitId]
-    );
-    const existingSet = new Set(existingBrands.rows.map((r: any) => r.bn));
-
-    const inserted: any[] = [];
-    const seenBrands = new Set<string>();
-    for (const s of suggestions.slice(0, 5)) {
-      if (!s.brand_name) continue;
-      const brandLower = s.brand_name.toLowerCase();
-      if (existingSet.has(brandLower) || seenBrands.has(brandLower)) continue;
-      seenBrands.add(brandLower);
-
-      const rating = ["green", "amber", "red"].includes(s.quality_rating) ? s.quality_rating : "amber";
-
-      const companyMatch = await pool.query(
-        "SELECT id, name FROM crm_companies WHERE LOWER(name) = LOWER($1) LIMIT 1",
-        [s.brand_name]
-      );
-      const companyId = companyMatch.rows[0]?.id || null;
-
-      const result = await pool.query(
-        `INSERT INTO target_tenants (unit_id, property_id, company_id, brand_name, rationale, quality_rating, suggested_by, status)
-         VALUES ($1, $2, $3, $4, $5, $6, 'ai', 'suggested')
-         RETURNING *`,
-        [req.params.unitId, unit.property_id, companyId, s.brand_name, s.rationale || null, rating]
-      );
-      inserted.push({ ...result.rows[0], company_name: companyMatch.rows[0]?.name || null });
-    }
+    const { generateTargetsForUnits } = await import("./target-tenant-engine");
+    const preview = req.query.preview === "1";
+    const result = await generateTargetsForUnits(pool, req, unit.property_id, [unit], { save: !preview });
+    if (result.failed.length) return res.status(502).json({ error: result.failed[0].error });
+    const inserted = result.inserted.get(unit.id) || [];
+    if (preview) return res.json({ strategy: result.strategy, targets: inserted });
 
     await logAudit(pool, {
       unitId: req.params.unitId as string, propertyId: unit.property_id,
       userId: user.id, userName: user.username, action: "generate_targets",
-      newValue: `AI generated ${inserted.length} target tenants`,
+      newValue: `AI planned ${inserted.length} target tenants${result.strategy ? ` — ${result.strategy}` : ""}`,
     });
-
     res.json(inserted);
   } catch (e: any) {
     console.error("[target-tenants] AI generation error:", e.message);
@@ -1361,45 +1222,33 @@ router.post("/api/leasing-schedule/property/:propertyId/generate-targets", requi
     const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
-    const units = await pool.query(
-      `SELECT id, unit_name, status FROM leasing_schedule_units
-       WHERE property_id = $1 AND (status IN ('Vacant', 'Under Offer', 'In Negotiation') OR status IS NULL)
-       ORDER BY sort_order`,
+    const units = (await pool.query(
+      `SELECT u.* FROM leasing_schedule_units u
+        WHERE u.property_id = $1 AND (u.status IN ('Vacant', 'Under Offer', 'In Negotiation', 'Opportunity') OR u.status IS NULL)
+        ORDER BY u.sort_order`,
       [req.params.propertyId]
-    );
-
-    if (units.rows.length === 0) {
-      return res.json({ message: "No vacant or negotiating units to generate targets for", generated: 0 });
+    )).rows;
+    if (units.length === 0) {
+      return res.json({ message: "No vacant or negotiating units to generate targets for", generated: 0, results: [] });
     }
+    const counts = new Map<string, number>((await pool.query(
+      `SELECT unit_id, COUNT(*)::int AS n FROM target_tenants WHERE property_id = $1 AND status = 'suggested' GROUP BY unit_id`,
+      [req.params.propertyId])).rows.map((r: any) => [r.unit_id, r.n]));
+    const todo = units.filter((u: any) => (counts.get(u.id) || 0) < 5);
 
-    const results: any[] = [];
-    for (const unit of units.rows) {
-      try {
-        const existingCount = await pool.query(
-          "SELECT COUNT(*) as cnt FROM target_tenants WHERE unit_id = $1 AND status = 'suggested'",
-          [unit.id]
-        );
-        if (parseInt(existingCount.rows[0].cnt) >= 5) {
-          results.push({ unit_id: unit.id, unit_name: unit.unit_name, skipped: true, reason: "Already has 5+ suggestions" });
-          continue;
-        }
-
-        const genRes = await fetch(`http://localhost:${process.env.PORT || 5000}/api/leasing-schedule/unit/${unit.id}/generate-targets`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            cookie: (req.headers.cookie || ""),
-            authorization: (req.headers.authorization || ""),
-          },
-        });
-        const genData = await genRes.json();
-        results.push({ unit_id: unit.id, unit_name: unit.unit_name, generated: Array.isArray(genData) ? genData.length : 0 });
-      } catch (err: any) {
-        results.push({ unit_id: unit.id, unit_name: unit.unit_name, error: err.message });
-      }
-    }
-
-    res.json({ results, total_units: units.rows.length });
+    const { generateTargetsForUnits } = await import("./target-tenant-engine");
+    const result = todo.length ? await generateTargetsForUnits(pool, req, req.params.propertyId as string, todo) : { inserted: new Map(), strategy: "", failed: [] as any[] };
+    const results = units.map((u: any) => {
+      if (!todo.includes(u)) return { unit_id: u.id, unit_name: u.unit_name, skipped: true, reason: "Already has 5+ suggestions" };
+      const fail = result.failed.find((f: any) => f.unit_id === u.id);
+      return fail ? { unit_id: u.id, unit_name: u.unit_name, error: fail.error } : { unit_id: u.id, unit_name: u.unit_name, generated: (result.inserted.get(u.id) || []).length };
+    });
+    await logAudit(pool, {
+      unitId: null as any, propertyId: req.params.propertyId as string,
+      userId: user.id, userName: user.username, action: "generate_targets",
+      newValue: `AI planned targets for ${todo.length} units${result.strategy ? ` — ${result.strategy}` : ""}`,
+    });
+    res.json({ results, total_units: units.length, strategy: result.strategy });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

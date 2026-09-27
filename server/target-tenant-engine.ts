@@ -1,0 +1,342 @@
+// Target tenants — one engine for every "who should we pitch this unit to"
+// surface (Woody, 2026-09-27: "combine the whole process — a really decent
+// target tenants function with genuine deep thought and AI expertise … should
+// also consider all the new tenants BGP are talking to").
+//
+// 1. Centre evidence (cached per property): the current tenant mix, the Brand
+//    Gap (competing centres, top-UK-centre benchmark, missing sectors, live
+//    web expansion intel), opening news at the top centres, live leasing
+//    requirements, the brands BGP is in conversation with (email / meeting
+//    activity, new relationships, new contacts), BGP's tenant-rep clients and
+//    live deals, the landlord's tracker targets and past target outcomes.
+// 2. Unit candidates: brands not trading here, scored per unit (a requirement
+//    whose size fits THIS unit counts most).
+// 3. The plan: Fable with extended thinking works through the centre's
+//    vacant units together — mix, sizing, evidence strength, no brand pushed
+//    at every unit — and returns five rated targets per unit with reasons
+//    that cite the evidence.
+// Client logins never see BGP-internal evidence (conversations, deals,
+// tenant-rep clients); their Brand Gap is already sliced by the gap route.
+import type { Request } from "express";
+import { requirementFitsUnit, parseReqSize } from "@shared/requirement-fit";
+import { isClientCrmCategory } from "@shared/tenant-categories";
+
+export const brandKey = (value: string) => value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/['’]/g, "").replace(/[^a-z0-9&]+/g, " ").trim();
+
+type Brand = {
+  key: string; companyId: string | null; name: string; category: string | null;
+  stores: number | null; rollout: string | null;
+  signals: Array<{ text: string; weight: number }>;
+  requirements: Array<{ size: any; use: string[] | null; requirement_locations: string[] | null; created_at: string | null }>;
+  bgpClient: boolean;
+};
+export type CentreEvidence = {
+  propertyId: string; property: any; client: boolean;
+  mix: Array<{ unit: string; tenant: string; use: string | null; sqft: number | null; expiry: string | null }>;
+  hereKeys: Set<string>; hereIds: Set<string>;
+  brands: Map<string, Brand>;
+  context: string;
+};
+export type TargetUnit = { id: string; unit_name: string; sqft?: number | null; zone?: string | null; positioning?: string | null; status?: string | null;
+  tenant_name?: string | null; rent_pa?: number | null; use_class?: string | null; target_brands?: string | null; optimum_target?: string | null };
+export type UnitCandidate = { name: string; companyId: string | null; evidence: string[]; score: number; facts: string };
+
+const cache = new Map<string, { at: number; value: CentreEvidence }>();
+
+async function selfGet(req: Request, path: string) {
+  const headers: Record<string, string> = {};
+  if (req.headers.cookie) headers.Cookie = String(req.headers.cookie);
+  if (req.headers.authorization) headers.Authorization = String(req.headers.authorization);
+  return fetch(`http://127.0.0.1:${process.env.PORT || "5000"}${path}`, { headers, signal: AbortSignal.timeout(90_000) })
+    .then(r => r.ok ? r.json() : null).catch(() => null);
+}
+const rows = (pool: any, sql: string, params: any[] = []) => pool.query(sql, params).then((r: any) => r.rows).catch(() => [] as any[]);
+const month = (d: any) => d ? new Date(d).toLocaleDateString("en-GB", { month: "short", year: "numeric" }) : "";
+
+export async function centreEvidence(pool: any, req: Request, propertyId: string): Promise<CentreEvidence> {
+  const { isClientRequestUser } = await import("./company-scope");
+  const client = await isClientRequestUser(req as any);
+  const cacheKey = `${propertyId}:${client ? "client" : "staff"}`;
+  const hit = cache.get(cacheKey);
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.value;
+
+  const property = (await rows(pool, `SELECT p.id, p.name, p.asset_class, p.postcode, p.address::text AS address, p.strategic_principles,
+      c.name AS landlord_name FROM crm_properties p LEFT JOIN crm_companies c ON c.id = p.landlord_id WHERE p.id = $1`, [propertyId]))[0] || { id: propertyId, name: "" };
+  const [gaps, openings] = await Promise.all([selfGet(req, `/api/property/${propertyId}/brand-gaps`), selfGet(req, `/api/property/${propertyId}/centre-openings`)]);
+  const gap = gaps?.applicable === false ? null : gaps;
+
+  // Current mix — the tenancy schedule is the truth; leasing rows fill gaps.
+  const tenancy = await rows(pool, `SELECT unit_number, tenant_name, trading_name, permitted_use, nia_sqft, lease_expiry, tenant_company_id
+      FROM tenancy_schedule_units WHERE property_id = $1 AND lower(trim(coalesce(status, ''))) <> 'archived'
+        AND lower(trim(coalesce(occupancy_status, ''))) <> 'archived' ORDER BY unit_number`, [propertyId]);
+  const leasing = await rows(pool, `SELECT unit_name, tenant_name, tenant_company_id, zone, positioning, sqft FROM leasing_schedule_units
+      WHERE property_id = $1 AND tenant_name IS NOT NULL AND tenant_name <> ''`, [propertyId]);
+  const mix: CentreEvidence["mix"] = tenancy.filter((t: any) => t.trading_name || t.tenant_name).map((t: any) => ({
+    unit: String(t.unit_number || "").split(/\s+/)[0], tenant: t.trading_name || t.tenant_name, use: t.permitted_use || null,
+    sqft: t.nia_sqft ? Number(t.nia_sqft) : null, expiry: t.lease_expiry ? String(t.lease_expiry).slice(0, 10) : null,
+  }));
+  if (!mix.length) for (const l of leasing) mix.push({ unit: l.unit_name, tenant: l.tenant_name, use: l.positioning || null, sqft: l.sqft ? Number(l.sqft) : null, expiry: null });
+  const hereIds = new Set<string>([...tenancy, ...leasing].map((t: any) => t.tenant_company_id).filter(Boolean));
+  const hereKeys = new Set<string>([...tenancy.flatMap((t: any) => [t.trading_name, t.tenant_name]), ...leasing.map((l: any) => l.tenant_name)].filter(Boolean).map((n: string) => brandKey(n)));
+  for (const b of gap?.onScheme || []) { hereIds.add(b.brand_company_id); hereKeys.add(brandKey(b.brand_name)); }
+
+  const brands = new Map<string, Brand>();
+  const brandFor = (companyId: string | null, name: string): Brand | null => {
+    if (!name?.trim()) return null;
+    const k = brandKey(name);
+    const key = companyId || `name:${k}`;
+    let b = brands.get(key) || (companyId ? brands.get(`name:${k}`) : [...brands.values()].find(x => brandKey(x.name) === k));
+    if (!b) { b = { key, companyId, name: name.trim(), category: null, stores: null, rollout: null, signals: [], requirements: [], bgpClient: false }; brands.set(key, b); }
+    if (companyId && !b.companyId) { brands.delete(b.key); b.companyId = companyId; b.key = companyId; brands.set(companyId, b); }
+    return b;
+  };
+  const signal = (b: Brand | null, text: string, weight: number) => { if (b && !b.signals.some(s => s.text === text)) b.signals.push({ text, weight }); };
+
+  // Live leasing requirements — sizes are matched per unit later.
+  const reqs = await rows(pool, `SELECT r.company_id, COALESCE(c.name, r.name) AS brand_name, r.size, r.use, r.requirement_locations, r.created_at
+      FROM crm_requirements_leasing r LEFT JOIN crm_companies c ON c.id = r.company_id AND c.merged_into_id IS NULL
+     WHERE r.status IS NULL OR r.status = 'Active'`);
+  for (const r of reqs) { const b = brandFor(r.company_id, r.brand_name); b?.requirements.push(r); }
+
+  if (gap) {
+    for (const b of gap.competitorGaps || []) signal(brandFor(b.brand_company_id, b.brand_name), `trades at ${(b.competing_at || []).join(", ")} (competing centre), not here`, 20);
+    for (const b of gap.peerGaps || []) signal(brandFor(b.brand_company_id, b.brand_name), `at ${(b.peer_schemes || []).length} of the top UK centres, not here`, Math.min(20, 4 + (b.peer_schemes || []).length * 2));
+    for (const b of (gap.localMarket || []).slice(0, 15)) signal(brandFor(b.brand_company_id, b.brand_name), `trading ${Number(b.nearest_distance_km).toFixed(1)}km away`, 5);
+    for (const s of gap.missingSectors || []) for (const e of s.examples || []) signal(brandFor(e.id, e.name), `${s.label} — a sector this centre lacks`, 10);
+    for (const b of Object.values(gap.liveIntel?.byBrand || {}) as any[]) if (b?.expanding) signal(brandFor(null, b.name), `actively expanding: ${String(b.note || "").slice(0, 120)}`, 15);
+  }
+  for (const o of openings?.peers || []) if (o.brand) signal(brandFor(o.brand.id, o.brand.name), `opening news at ${o.centre}${o.date ? ` (${month(o.date)})` : ""}`, 8);
+
+  if (!client) {
+    // Who BGP is talking to — emails and meetings with the brand in the last
+    // 90 days, a new relationship when the first contact is this year's.
+    const talking = await rows(pool, `SELECT c.id, c.name,
+        COUNT(*) FILTER (WHERE i.interaction_date > NOW() - INTERVAL '90 days')::int AS recent,
+        MIN(i.interaction_date) AS first_at, MAX(i.interaction_date) AS last_at,
+        COUNT(*) FILTER (WHERE i.interaction_date > NOW() - INTERVAL '90 days' AND COALESCE(i.type, '') !~* 'email')::int AS meetings
+      FROM crm_interactions i JOIN crm_companies c ON c.id = i.company_id
+     WHERE c.merged_into_id IS NULL AND c.company_type ILIKE 'tenant%'
+       AND i.interaction_date > NOW() - INTERVAL '2 years' AND i.interaction_date <= NOW()
+     GROUP BY c.id, c.name HAVING MAX(i.interaction_date) > NOW() - INTERVAL '90 days'
+     ORDER BY recent DESC LIMIT 250`);
+    for (const t of talking) {
+      const isNew = t.first_at && Date.now() - new Date(t.first_at).getTime() < 180 * 864e5;
+      signal(brandFor(t.id, t.name), `${isNew ? "NEW relationship — " : ""}BGP in conversation: ${t.recent} email${t.recent === 1 ? "" : "s"}${t.meetings ? ` / ${t.meetings} meeting${t.meetings === 1 ? "" : "s"}` : ""} in 90 days, last ${month(t.last_at)}`, isNew ? 16 : Math.min(12, 4 + t.recent));
+    }
+    const contacts = await rows(pool, `SELECT c.id, c.name, COUNT(*)::int AS n FROM crm_contacts k JOIN crm_companies c ON c.id = k.company_id
+      WHERE k.created_at > NOW() - INTERVAL '60 days' AND c.merged_into_id IS NULL AND c.company_type ILIKE 'tenant%'
+      GROUP BY c.id, c.name ORDER BY n DESC LIMIT 100`);
+    for (const k of contacts) signal(brandFor(k.id, k.name), `${k.n} new contact${k.n === 1 ? "" : "s"} added in 60 days`, 4);
+    const clients = await rows(pool, `SELECT DISTINCT c.id, c.name FROM crm_companies c WHERE c.merged_into_id IS NULL AND c.id IN (
+        SELECT d.tenant_id FROM crm_deals d WHERE d.bgp_acting_for = 'tenant' AND d.tenant_id IS NOT NULL
+          AND COALESCE(d.status, '') NOT IN ('COM','INV','WIT','Completed','Invoiced','Withdrawn','Lost','Dead')
+        UNION SELECT company_id FROM tenant_rep_searches WHERE company_id IS NOT NULL
+          AND COALESCE(status, '') NOT IN ('Complete','Completed','Archived','Lost','On Hold'))`);
+    for (const c of clients) { const b = brandFor(c.id, c.name); if (b) { b.bgpClient = true; signal(b, "BGP acts for them (tenant rep)", 25); } }
+    const deals = await rows(pool, `SELECT d.tenant_id, c.name, p.name AS property FROM crm_deals d
+        JOIN crm_companies c ON c.id = d.tenant_id AND c.merged_into_id IS NULL LEFT JOIN crm_properties p ON p.id = d.property_id
+       WHERE d.tenant_id IS NOT NULL AND d.property_id IS DISTINCT FROM $1 AND d.updated_at > NOW() - INTERVAL '12 months'
+         AND COALESCE(d.status, '') NOT IN ('COM','INV','WIT','Completed','Invoiced','Withdrawn','Lost','Dead')`, [propertyId]);
+    for (const d of deals) signal(brandFor(d.tenant_id, d.name), `in a live BGP deal${d.property ? ` at ${d.property}` : ""} — taking space now`, 12);
+  }
+
+  // Brand facts for everything gathered.
+  const ids = [...brands.values()].map(b => b.companyId).filter(Boolean);
+  if (ids.length) {
+    for (const f of await rows(pool, `SELECT id, company_type, store_count, rollout_status FROM crm_companies WHERE id = ANY($1::text[])`, [ids])) {
+      const b = brands.get(f.id); if (b) { b.category = f.company_type; b.stores = f.store_count; b.rollout = f.rollout_status; }
+    }
+  }
+
+  const outcomes = client ? [] : await rows(pool, `SELECT t.brand_name, t.quality_rating, t.outcome, p.name AS property_name
+      FROM target_tenants t JOIN crm_properties p ON t.property_id = p.id WHERE t.outcome IS NOT NULL ORDER BY t.updated_at DESC LIMIT 40`);
+  const bench = gap?.benchmark;
+  const rank = bench ? bench.centres.filter((c: any) => c.brands > bench.here.brands).length + 1 : null;
+  const principles = property.strategic_principles ? JSON.stringify(property.strategic_principles).slice(0, 1500) : "";
+  const context = [
+    `CENTRE: ${property.name}${property.landlord_name ? ` (landlord ${property.landlord_name})` : ""} · ${property.asset_class || "retail / leisure"} · ${[property.postcode].filter(Boolean).join(", ")}`,
+    gap?.competingCentres?.length ? `Competing centres: ${gap.competingCentres.map((c: any) => `${c.name} ${c.distance_km}km`).join(", ")}` : "",
+    bench ? `Against the top UK centres: ${bench.here.brands} F&B / leisure brands across ${bench.here.sectors} sectors — ranks ${rank} of ${bench.centres.length + 1}. Leaders: ${bench.centres.slice(0, 4).map((c: any) => `${c.name} ${c.brands}`).join(", ")}.` : "",
+    gap?.sectors?.length ? `Sector coverage here: ${gap.sectors.map((s: any) => `${s.label} ${s.on_scheme}${s.missing ? " (MISSING)" : ""}`).join("; ")}` : "",
+    principles ? `LANDLORD'S STRATEGIC PRINCIPLES: ${principles}` : "",
+    outcomes.length ? `PAST TARGET OUTCOMES (learn which brands actually signed): ${outcomes.map((o: any) => `${o.brand_name} at ${o.property_name} — ${o.outcome} (was ${o.quality_rating})`).join("; ")}` : "",
+    `CURRENT TENANT MIX (${mix.length}): ${mix.slice(0, 260).map(m => `${m.tenant}${m.use ? ` [${m.use}]` : ""}${m.sqft ? ` ${Math.round(m.sqft)}sf` : ""}${m.expiry && m.expiry < new Date(Date.now() + 548 * 864e5).toISOString().slice(0, 10) ? ` exp ${m.expiry.slice(0, 7)}` : ""}`).join("; ")}`,
+  ].filter(Boolean).join("\n");
+
+  const value: CentreEvidence = { propertyId, property, client, mix, hereKeys, hereIds, brands, context };
+  cache.set(cacheKey, { at: Date.now(), value });
+  return value;
+}
+
+const isHere = (ev: CentreEvidence, b: { companyId: string | null; name: string }) => {
+  if (b.companyId && ev.hereIds.has(b.companyId)) return true;
+  const k = brandKey(b.name);
+  return [...ev.hereKeys].some(n => n === k || n.startsWith(`${k} `));
+};
+
+// Candidates for one unit: every evidenced brand not trading here, with a
+// requirement whose size fits THIS unit weighted highest.
+export function unitCandidates(ev: CentreEvidence, unit: TargetUnit, exclude: Set<string> = new Set(), limit = 30): UnitCandidate[] {
+  const unitText = [unit.unit_name, unit.positioning, unit.zone, unit.use_class].filter(Boolean).join(" ");
+  const retail = /retail|shop|fashion|store|e\s*\(a\)|a1\b/i.test(unitText) && !/f&b|food|dining|caf|restaurant|kiosk|bar\b|leisure/i.test(unitText);
+  const propertyText = [ev.property.name, ev.property.postcode, ev.property.address].filter(Boolean).join(" ");
+  const sqft = Number(unit.sqft) || null;
+  const out: UnitCandidate[] = [];
+  for (const b of ev.brands.values()) {
+    if (isHere(ev, b) || exclude.has(brandKey(b.name)) || (b.companyId && exclude.has(b.companyId))) continue;
+    const evidence = b.signals.map(s => s.text);
+    let score = b.signals.reduce((sum, s) => sum + s.weight, 0);
+    for (const r of b.requirements) {
+      if (requirementFitsUnit(r, { sqft, unit_text: unitText || "f&b", property_text: propertyText })) {
+        const size = Array.isArray(r.size) ? r.size.join(", ") : r.size;
+        evidence.unshift(`live requirement that fits this unit${size ? ` (${size})` : ""}${r.created_at && Date.now() - new Date(r.created_at).getTime() < 120 * 864e5 ? ", new this quarter" : ""}`);
+        score += 35;
+        break;
+      }
+    }
+    if (!evidence.length && b.requirements.length) {
+      const range = parseReqSize(b.requirements[0].size ?? null);
+      if (range && sqft && (sqft < range.min || sqft > range.max)) continue;
+      evidence.push("has a live UK leasing requirement");
+      score += 6;
+    }
+    if (!evidence.length) continue;
+    // The unit's use decides the slice: F&B / leisure units get the
+    // hospitality categories; unknown categories stay in.
+    if (b.category && !retail && !isClientCrmCategory(b.category) && !evidence.some(e => e.startsWith("live requirement"))) continue;
+    const facts = [b.category?.replace(/^Tenant\s*-\s*/i, ""), b.stores ? `${b.stores} stores` : null, b.rollout].filter(Boolean).join(", ");
+    out.push({ name: b.name, companyId: b.companyId, evidence, score, facts });
+  }
+  // The landlord's own tracker targets for the unit.
+  for (const line of `${unit.target_brands || ""}\n${unit.optimum_target || ""}`.split(/\n|,|;/).map(l => l.replace(/^\s*\d+[.)]\s*/, "").replace(/\(.*?\)|optimum:?/gi, "").trim()).filter(l => l && l.length <= 40)) {
+    const k = brandKey(line);
+    const existing = out.find(c => brandKey(c.name) === k);
+    if (existing) { existing.evidence.unshift("named in the landlord's leasing tracker for this unit"); existing.score += 25; continue; }
+    if (isHere(ev, { companyId: null, name: line }) || exclude.has(k)) continue;
+    out.push({ name: line, companyId: null, evidence: ["named in the landlord's leasing tracker for this unit"], score: 25, facts: "" });
+  }
+  return out.sort((a, b) => b.score - a.score).slice(0, limit);
+}
+
+export type PlannedTarget = { brand_name: string; evidenced: boolean; quality_rating: "green" | "amber" | "red"; rationale: string; companyId: string | null; evidence: string[] };
+
+// The deep pass: one Fable call (extended thinking) plans up to eight units
+// together so the targets form a mix, not five brands copied everywhere.
+export async function planTargets(ev: CentreEvidence, units: Array<TargetUnit & { candidates: UnitCandidate[]; existing: string[] }>): Promise<{ strategy: string; byUnit: Map<string, PlannedTarget[]> }> {
+  const unitBlock = units.map(u => [
+    `UNIT ${u.id}: ${u.unit_name}${u.sqft ? ` · ${Math.round(Number(u.sqft))} sq ft` : " · size not recorded"}${u.zone ? ` · zone ${u.zone}` : ""}${u.positioning ? ` · positioning ${u.positioning}` : ""}${u.status ? ` · ${u.status}` : ""}${u.rent_pa ? ` · £${Number(u.rent_pa).toLocaleString()} pa` : ""}${u.tenant_name ? ` · current occupier ${u.tenant_name}` : ""}`,
+    u.existing.length ? `  already targeted (don't repeat): ${u.existing.join(", ")}` : "",
+    `  evidenced candidates:`,
+    ...(u.candidates.length ? u.candidates.map((c, i) => `   ${i + 1}. ${c.name}${c.facts ? ` (${c.facts})` : ""} — ${c.evidence.join("; ")}`) : ["   (none — rely on expertise, and say the evidence is thin)"]),
+  ].filter(Boolean).join("\n")).join("\n\n");
+
+  const system = `You are the head of retail & leisure leasing strategy at Bruce Gillingham Pollard, a London leasing agency that sets the occupier mix for the UK's leading shopping centres and West End estates. You think like a landlord's leasing director: trading performance, dwell time, adjacency and the centre's position against its competitors decide the mix, and only brands with real intent sign. Be rigorous and evidence-led; British English; no hype.`;
+  const prompt = `${ev.context}
+
+VACANT / LETTING UNITS TO PLAN:
+${unitBlock}
+
+Plan the targets for these units TOGETHER. Think it through before answering:
+- What is this centre missing against its competing centres and the top UK centres, sector by sector, and which of these units is the right home for each missing piece (size, zone, positioning, adjacency to the current mix)?
+- Weigh the evidence honestly. Strongest: a live requirement whose size fits the unit, BGP acting for the brand, a live BGP deal elsewhere (taking space now), a new relationship BGP has just opened, the landlord naming the brand. Then presence at competing / top centres with opening news or cited expansion. Presence alone is weaker. A brand whose requirement size doesn't fit the unit is a poor target for it.
+- Avoid a brand that duplicates or directly competes with a current tenant, and never suggest a brand already trading here.
+- Don't put the same brand on more than two units — give it to the unit that fits its requirement best.
+- Prefer the evidenced candidates. You may add at most ONE brand per unit from your own market knowledge when it is clearly stronger than the list; mark it "evidenced": false and say why.
+
+Ratings: "green" = strong fit AND strong intent evidence (fitting requirement, BGP client, live deal, new conversation, or actively opening in centres like this); "amber" = good fit, evidence is presence elsewhere rather than intent; "red" = speculative stretch worth a call.
+
+Return JSON only, no markdown:
+{"strategy":"2-4 sentences: the mix plan for these units","units":[{"unit_id":"<the UNIT id>","targets":[{"brand_name":"exactly as in its candidate list","evidenced":true,"quality_rating":"green|amber|red","rationale":"2-3 sentences for the leasing team: why this brand, why this unit, citing the evidence"}]}]}
+Exactly five targets per unit.`;
+
+  const { callClaude } = await import("./chatbgp");
+  const completion = await callClaude({
+    model: "claude-fable-5", thinking: true, effort: "high", max_completion_tokens: 32000, feature: "target-tenants",
+    messages: [{ role: "system", content: system }, { role: "user", content: prompt }],
+  });
+  const text: string = completion.choices?.[0]?.message?.content || "";
+  const start = text.indexOf("{"), end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error("The target plan came back without JSON");
+  const parsed = JSON.parse(text.slice(start, end + 1));
+  const byUnit = new Map<string, PlannedTarget[]>();
+  for (const u of parsed.units || []) {
+    const unit = units.find(x => x.id === String(u.unit_id));
+    if (!unit) continue;
+    const seen = new Set<string>();
+    const picks: PlannedTarget[] = [];
+    for (const t of u.targets || []) {
+      if (!t?.brand_name) continue;
+      const k = brandKey(t.brand_name);
+      if (seen.has(k) || unit.existing.some(e => brandKey(e) === k) || isHere(ev, { companyId: null, name: t.brand_name })) continue;
+      seen.add(k);
+      const candidate = unit.candidates.find(c => brandKey(c.name) === k);
+      picks.push({
+        brand_name: candidate?.name || String(t.brand_name).trim(),
+        evidenced: !!candidate,
+        quality_rating: ["green", "amber", "red"].includes(t.quality_rating) ? t.quality_rating : "amber",
+        rationale: String(t.rationale || "").trim(),
+        companyId: candidate?.companyId || null,
+        evidence: candidate?.evidence || [],
+      });
+    }
+    byUnit.set(unit.id, picks.slice(0, 5));
+  }
+  return { strategy: String(parsed.strategy || "").trim(), byUnit };
+}
+
+// A CRM brand for a name the model gave: exact, then accent / punctuation-
+// insensitive, never a merged-away row.
+export async function matchBrandCompany(pool: any, name: string): Promise<{ id: string; name: string } | null> {
+  const exact = (await rows(pool, `SELECT id, name FROM crm_companies WHERE LOWER(name) = LOWER($1) AND merged_into_id IS NULL LIMIT 1`, [name]))[0];
+  if (exact) return exact;
+  const key = brandKey(name).replace(/[^a-z0-9]/g, "");
+  if (key.length < 3) return null;
+  const hits = await rows(pool, `SELECT id, name FROM crm_companies WHERE merged_into_id IS NULL AND company_type ILIKE 'tenant%'
+      AND regexp_replace(translate(lower(name), 'àáâäãèéêëìíîïòóôöõùúûüçñ', 'aaaaaeeeeiiiiooooouuuucn'), '[^a-z0-9]', '', 'g') = $1 LIMIT 3`, [key]);
+  return hits.length === 1 ? hits[0] : null;
+}
+
+// Plan and save targets for a set of leasing-schedule units (the Generate
+// buttons). Units go to the model in batches of up to eight, two at a time.
+// save:false plans without writing (?preview=1 on the unit route).
+export async function generateTargetsForUnits(pool: any, req: Request, propertyId: string, units: TargetUnit[], opts: { save?: boolean } = {}) {
+  const ev = await centreEvidence(pool, req, propertyId);
+  const existingRows = await rows(pool, `SELECT unit_id, brand_name FROM target_tenants WHERE property_id = $1`, [propertyId]);
+  const prepared = units.map(u => {
+    const existing = existingRows.filter((r: any) => r.unit_id === u.id).map((r: any) => r.brand_name);
+    return { ...u, existing, candidates: unitCandidates(ev, u, new Set(existing.map((e: string) => brandKey(e)))) };
+  });
+  const batches: typeof prepared[] = [];
+  for (let i = 0; i < prepared.length; i += 8) batches.push(prepared.slice(i, i + 8));
+  const strategies: string[] = [];
+  const inserted = new Map<string, any[]>();
+  const failed: Array<{ unit_id: string; error: string }> = [];
+  let next = 0;
+  await Promise.all([0, 1].map(async () => {
+    while (next < batches.length) {
+      const batch = batches[next++];
+      try {
+        const plan = await planTargets(ev, batch);
+        if (plan.strategy) strategies.push(plan.strategy);
+        for (const unit of batch) {
+          const saved: any[] = [];
+          for (const t of plan.byUnit.get(unit.id) || []) {
+            const company = t.companyId ? { id: t.companyId, name: t.brand_name } : await matchBrandCompany(pool, t.brand_name);
+            const rationale = [t.rationale, t.evidenced ? `Evidence: ${t.evidence.join("; ")}` : "Not in the evidence list — a market-knowledge suggestion."].filter(Boolean).join("\n");
+            const row = opts.save === false
+              ? { unit_id: unit.id, property_id: propertyId, company_id: company?.id || null, brand_name: t.brand_name, rationale, quality_rating: t.quality_rating, preview: true }
+              : (await pool.query(
+                `INSERT INTO target_tenants (unit_id, property_id, company_id, brand_name, rationale, quality_rating, suggested_by, status)
+                 VALUES ($1, $2, $3, $4, $5, $6, 'ai', 'suggested') RETURNING *`,
+                [unit.id, propertyId, company?.id || null, t.brand_name, rationale, t.quality_rating])).rows[0];
+            saved.push({ ...row, company_name: company?.name || null });
+          }
+          inserted.set(unit.id, saved);
+        }
+      } catch (error: any) {
+        for (const unit of batch) failed.push({ unit_id: unit.id, error: String(error?.message || error).slice(0, 200) });
+      }
+    }
+  }));
+  return { inserted, strategy: strategies.join(" "), failed };
+}

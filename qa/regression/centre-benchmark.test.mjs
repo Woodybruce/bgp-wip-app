@@ -37,3 +37,22 @@ test('brand names link whole-word, longest first, single words case-sensitive', 
   assert.equal(brandNamed('five guys to open at Bluewater', list)?.id, '2');
   assert.equal(brandNamed('Moidas opens', list), null);
 });
+
+test('target-tenant engine: evidenced candidates exclude brands trading here and rank a fitting requirement first', async () => {
+  const { unitCandidates } = await import('../../server/target-tenant-engine.ts');
+  const brand = (name, companyId, extra = {}) => ({ key: companyId || `name:${name.toLowerCase()}`, companyId, name, category: 'Tenant - Restaurant', stores: 20, rollout: null, signals: [], requirements: [], bgpClient: false, ...extra });
+  const brands = new Map([
+    ['a', brand('Wingstop', 'a', { requirements: [{ size: '1,500-2,500', use: ['Restaurant'], requirement_locations: ['Kent'], created_at: null }], signals: [{ text: 'BGP in conversation: 4 emails in 90 days', weight: 8 }] })],
+    ['b', brand("Nando's", 'b', { signals: [{ text: 'at 12 of the top UK centres, not here', weight: 20 }] })],
+    ['c', brand('Five Guys', 'c', { signals: [{ text: 'trades at Lakeside (competing centre), not here', weight: 20 }] })],
+    ['d', brand('Screwfix', 'd', { category: 'Tenant - Retail', signals: [{ text: 'BGP in conversation', weight: 8 }] })],
+  ]);
+  const ev = { propertyId: 'p', property: { name: 'Bluewater', postcode: 'DA9 9ST', address: 'Greenhithe, Kent' }, client: false, mix: [],
+    hereKeys: new Set(['nandos']), hereIds: new Set(), brands, context: '' };
+  const out = unitCandidates(ev, { id: 'u', unit_name: 'SVL09', sqft: 2000, positioning: 'Quick Refuel' });
+  assert.deepEqual(out.map(c => c.name), ['Wingstop', 'Five Guys']);
+  assert.match(out[0].evidence[0], /live requirement that fits this unit/);
+  const withTracker = unitCandidates(ev, { id: 'u', unit_name: 'SVL09', sqft: 2000, positioning: 'Quick Refuel', target_brands: '1. Five Guys\n2. Dishoom' });
+  assert.ok(withTracker.find(c => c.name === 'Dishoom')?.evidence[0].includes("landlord's leasing tracker"));
+  assert.ok(withTracker.find(c => c.name === 'Five Guys').evidence[0].includes("landlord's leasing tracker"));
+});
