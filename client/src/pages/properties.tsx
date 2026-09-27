@@ -871,6 +871,7 @@ export function InlineOwnerLink({
   label,
   allCompanies,
   readOnly,
+  roleOnChip = true,
 }: {
   propertyId: string;
   companyId: string | null | undefined;
@@ -878,6 +879,8 @@ export function InlineOwnerLink({
   label: string;
   allCompanies: CrmCompany[];
   readOnly?: boolean;
+  // Off where the row already carries the role label (property page).
+  roleOnChip?: boolean;
 }) {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
@@ -910,7 +913,7 @@ export function InlineOwnerLink({
               chips read as duplicates. */}
           <Badge variant="outline" className="text-[11px] px-2 py-0.5 cursor-pointer hover:bg-muted max-w-full inline-flex items-center" title={`${label}: ${company.name}`}>
             <Building2 className="w-3 h-3 mr-1 text-muted-foreground shrink-0" />
-            <span className="text-muted-foreground mr-1 shrink-0">{label} ·</span>
+            {roleOnChip && <span className="text-muted-foreground mr-1 shrink-0">{label} ·</span>}
             <span className="truncate">{company.name}</span>
           </Badge>
         </Link>
@@ -1954,9 +1957,20 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
               </a>
             )}
             {!subPath && folderData?.exists && folderData?.currentItemId && (
-              <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive hover:text-destructive" onClick={confirmDeleteTree} disabled={deleteMutation.isPending} data-testid="btn-delete-folder-tree" title={`Delete the whole ${activeTeam} folder tree`}>
-                <Trash2 className="w-3 h-3 mr-1" />Delete tree
-              </Button>
+              // Destructive, rarely needed — behind a menu, not a red button
+              // in the everyday toolbar.
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" aria-label="More folder actions" title="More folder actions" data-testid="btn-folder-more">
+                    <MoreVertical className="w-3.5 h-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem className="text-destructive focus:text-destructive text-xs" onClick={confirmDeleteTree} disabled={deleteMutation.isPending} data-testid="btn-delete-folder-tree">
+                    <Trash2 className="w-3 h-3 mr-1.5" />Delete the whole {activeTeam} folder tree
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
             <input
               ref={fileInputRef}
@@ -2721,7 +2735,9 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
     ...(data?.deals || []),
     ...(data?.interest || []).filter(i => !(data?.deals || []).some(d => d.id === i.id)),
   ];
-  const internal = data?.internal || [];
+  // BGP people already show as the team pills at the top of the property
+  // page — the group here is the client's own people.
+  const internal = (data?.internal || []).filter(c => c.side !== "bgp");
   const landlordActive = (data?.landlord || []).filter(l => !internal.some(i => i.id === l.id));
   const occupiers = data?.tenants || [];
   const consultants = data?.consultants || [];
@@ -2834,7 +2850,7 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
           <div className="space-y-1.5 max-h-[480px] overflow-y-auto pr-1">
             {internal.length > 0 && (
               <div>
-                {groupHeader("internal", "Internal team", internal.length, "text-foreground")}
+                {groupHeader("internal", "Client team", internal.length, "text-foreground")}
                 {(openGroups.internal ?? false) && <div className="space-y-0.5 mt-0.5">{internal.map(c => personRow(c, false))}</div>}
               </div>
             )}

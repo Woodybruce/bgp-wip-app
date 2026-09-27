@@ -12,6 +12,8 @@ const money = (value: number) => `£${Math.round(value).toLocaleString("en-GB")}
 
 // Lease events kinds → the Lease events board's event types.
 const TRACK_TYPE: Record<string, string> = { "Lease expiry": "Lease Expiry", "Break date": "Break Option", "Landlord break": "Break Option", "Rent review": "Rent Review" };
+// "Unit L033 Upper Thames Walk" → "L033": the code is what the team says.
+const unitCode = (ref: string) => (ref.match(/^(?:unit|shop|kiosk)?\s*([A-Z]{0,3}\s?\d[\w./-]*)/i)?.[1] || ref).trim();
 const trackKey = (unit: string | null | undefined, type: string, date: string) => `${String(unit || "").toLowerCase().replace(/\s+/g, "")}|${type}|${String(date).slice(0, 7)}`;
 
 // Next lease events with a Track button that adds the event to Lease events
@@ -44,7 +46,10 @@ export function NextLeaseEvents({ propertyId, propertyName, landlordName, rows, 
       const shortRef = (nameAt > 2 ? unitRef.slice(0, nameAt) : unitRef).replace(/[\s,·-]+$/, "").slice(0, 40) || unitRef;
       const done = trackedKeys.get(trackKey(unitRef, TRACK_TYPE[event.kind] || event.kind, event.date));
       return <div key={`${event.unit.id}-${event.kind}`} className="flex items-center justify-between gap-3 text-sm">
-        <Link href={tenancyHref(event.unit)} className="hover:underline min-w-0 truncate" title={unitRef}>{shortRef} · {event.kind}</Link>
+        <Link href={tenancyHref(event.unit)} className="hover:underline min-w-0 truncate" title={`${unitRef} · ${event.unit.tenant_name || ""}`}>
+          <span className="font-medium">{event.unit.trading_name || event.unit.tenant_name || shortRef}</span>
+          <span className="text-muted-foreground"> · {event.unit.trading_name || event.unit.tenant_name ? `${unitCode(shortRef)} · ` : ""}{event.kind}</span>
+        </Link>
         <span className="flex items-center gap-2 shrink-0">
           <span className="font-mono tabular-nums whitespace-nowrap">{formatCalendarDate(event.date)}</span>
           {done ? <Link href="/lease-events" className="text-[10px] text-emerald-700 hover:underline">{done.status || "Tracked"}</Link>
@@ -80,7 +85,7 @@ export function PropertySimpleOverview({ propertyId, propertyName, landlordName,
           <div><p className="text-[11px] text-muted-foreground">Recorded passing rent / year</p><p className="text-2xl font-mono tabular-nums">{knownRent === null ? "Not recorded" : money(knownRent)}</p></div>
           <span className="text-sm text-muted-foreground"><span className="font-mono tabular-nums">{units.length}</span> tenancy {units.length === 1 ? "row" : "rows"}</span>
         </div>
-        {rentRows < units.length && <p className="text-[11px] text-muted-foreground -mt-2" title={`Rent is recorded for ${rentRows} of ${units.length} rows, so this is not a complete income total.`}>Partial · {rentRows} of {units.length} rows</p>}
+        {rentRows > 0 && rentRows < units.length && <p className="text-[11px] text-muted-foreground -mt-2" title={`Rent is recorded for ${rentRows} of ${units.length} rows, so this is not a complete income total.`}>Partial · {rentRows} of {units.length} rows</p>}
         {showUnits && <div className="space-y-2">
           {units.slice(0, 6).map(unit => <Link key={unit.id} href={tenancyHref(unit)} className="block rounded-lg border p-3 hover:bg-muted/50">
             <div className="flex justify-between gap-3 text-sm"><span className="font-semibold">{unit.unit_number || unit.premises || "Unnamed unit"}</span><span className="text-muted-foreground">{unit.is_vacant ? "Vacant" : unit.status || "Status not recorded"}</span></div>

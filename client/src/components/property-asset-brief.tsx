@@ -159,17 +159,7 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
 
   return (
     <div className="flex items-center gap-x-3 gap-y-1 text-xs flex-wrap">
-      {data.owner ? (
-        <Link href={`/companies/${data.owner.id}`} className="flex items-center gap-1.5 min-w-0 hover:underline">
-          <img
-            src={data.owner.logo_url}
-            alt={data.owner.name}
-            className="w-7 h-7 rounded border bg-white object-contain p-0.5 shrink-0"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-          />
-          <span className="font-semibold truncate">{data.owner.name}</span>
-        </Link>
-      ) : null}
+      {/* The owner is in the card's Ownership rows just below — not repeated here. */}
       {data.asset_lead && (
         <>
           <span className="text-muted-foreground/40">·</span>
@@ -388,6 +378,9 @@ export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
   const high = data.risks.filter(r => r.severity === "high");
   const med = data.risks.filter(r => r.severity !== "high");
   const complete = data.data_quality?.risks === "ready";
+  // No schedule recorded = nothing to check; the card only repeated the
+  // missing-schedule warning shown on the overview.
+  if (data.data_quality?.risks === "missing" && !data.risks.length) return null;
   return (
     <Card className="overflow-hidden">
       <CardHeader className="p-3 pb-2 bg-gradient-to-r from-rose-500/[0.06] to-transparent">

@@ -218,7 +218,11 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
   // expanding while its own note says the evidence is missing or stale —
   // those read as working notes, not intel (Woody, 2026-09-27).
   const NO_EVIDENCE = /cannot be confirmed|can'?t be confirmed|no evidence|wasn'?t returned|not returned|outside the (?:roughly )?\d+-month window|does not identify|doesn'?t identify|no (?:specific|direct|cited) evidence|not a direct match/i;
-  const expanding = (data?.brands || []).filter(b => b.expanding && !NO_EVIDENCE.test(b.note || ""));
+  // Caveat sentences ("No Bluewater-specific plan was found.") are the
+  // researcher's working, not intel — drop them from otherwise good notes.
+  const CAVEAT = /^(?:no\b[^.]*\b(?:was|were|has been|have been) (?:found|identified|confirmed|announced)|[^.]*\b(?:not|yet to be) (?:been )?(?:found|confirmed)\b)/i;
+  const tidy = (note?: string | null) => (note || "").split(/(?<=[.!?])\s+/).filter(x => !CAVEAT.test(x.trim())).join(" ");
+  const expanding = (data?.brands || []).filter(b => b.expanding && !NO_EVIDENCE.test(b.note || "")).map(b => ({ ...b, note: tidy(b.note) }));
   const [notesOpen, setNotesOpen] = useState(false);
   return (
     <div className="rounded-lg border border-border bg-muted/40 p-3" data-testid="gap-live-intel">

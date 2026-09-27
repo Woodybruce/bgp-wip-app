@@ -184,7 +184,10 @@ test('rendered performance and risk cards do not reassure the user on an empty o
     assert.match(performance, /unavailable|incomplete/);
     const risk = uiFunction('RiskRegisterCard', bindings)({ propertyId: 'property' });
     assert.doesNotMatch(risk, /No risks flagged|All long-expiry/);
-    assert.match(risk, /unavailable|incomplete/);
+    // No schedule recorded hides the card (the overview already says so);
+    // a failed load still says the checks are unavailable.
+    if (setup.fail) assert.match(risk, /unavailable|incomplete/);
+    else assert.equal(risk, '');
   }
 });
 

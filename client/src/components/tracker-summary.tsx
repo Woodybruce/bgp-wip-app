@@ -23,6 +23,14 @@ import { DEAL_STATUS_BADGE_COLORS, DEAL_STATUS_DOT_COLORS } from "@/lib/deal-sta
 
 const LIVE_CODES = new Set<DealStatusCode>(["OPP", "REP", "AVA", "NEG", "HOT", "SOL", "EXC"]);
 
+// "L063 Bluewater - Whole Demise" → "L063 · Whole Demise" on Bluewater's page.
+function withoutScheme(unitName: string | null, propertyName?: string | null) {
+  const word = (propertyName || "").split(/[\s,(]/)[0];
+  if (!unitName || word.length < 4) return unitName;
+  const out = unitName.replace(new RegExp(`\\s*\\b${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b\\s*(?:-\\s*)?`, "i"), " · ").replace(/^\s*·\s*|\s*·\s*$/g, "").trim();
+  return out || unitName;
+}
+
 type Unit = {
   id: string; propertyId: string; unitName: string | null; sqft: number | null;
   askingRent: number | null; marketingStatus: string | null; dealId?: string | null;
@@ -76,8 +84,10 @@ function trackerHref(propertyId?: string, status?: DealStatusCode) {
   return `/deals/letting${qs ? `?${qs}` : ""}`;
 }
 
-export function TrackerSummary({ propertyId, propertyIds, variant, tall }: {
+export function TrackerSummary({ propertyId, propertyIds, variant, tall, propertyName }: {
   propertyId?: string;
+  // On a property's own page the scheme name inside every unit name is noise.
+  propertyName?: string | null;
   propertyIds?: string[];
   variant: "strip" | "card";
   // Dashboard widget sits beside the (tall) Tasks & Briefing card — let it
@@ -142,7 +152,7 @@ export function TrackerSummary({ propertyId, propertyIds, variant, tall }: {
         <div className={`space-y-1 ${tall ? "max-h-[640px]" : "max-h-[300px]"} overflow-y-auto pr-1`}>
           {live.map(u => (
             <Link key={u.id} href={trackerHref(u.propertyId)} className="flex items-center justify-between gap-2 p-1.5 rounded border bg-card hover:bg-muted/40 min-w-0">
-              <span className="text-xs font-medium truncate">{u.unitName || "—"}</span>
+              <span className="text-xs font-medium truncate" title={u.unitName || undefined}>{withoutScheme(u.unitName, propertyName) || "—"}</span>
               <span className="flex items-center gap-1.5 shrink-0 text-[10px] text-muted-foreground">
                 {u.sqft ? `${Number(u.sqft).toLocaleString()} sqft` : ""}
                 <Badge variant="outline" className={`text-[9px] ${DEAL_STATUS_BADGE_COLORS[effOf(u)] || ""}`}>

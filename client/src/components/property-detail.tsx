@@ -36,6 +36,7 @@ import {
   Store,
   Map as MapIcon,
   AlertTriangle,
+  Plus,
 } from "lucide-react";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
@@ -348,6 +349,8 @@ export function PropertyDetail({ id }: { id: string }) {
   const suggestedView = suggestPropertyView(property?.assetClass, overviewSchedule.isError ? undefined : overviewSchedule.data, property?.name);
   const propertyView = property?.propertyView || suggestedView;
   const [showFullPage, setShowFullPage] = useState(false);
+  const [addingOwner, setAddingOwner] = useState(false);
+  const [showMoreFields, setShowMoreFields] = useState(false);
   const simpleLayout = !showFullPage && (propertyView === "building" || propertyView === "multi_let");
   useEffect(() => { setShowFullPage(false); }, [id]);
   const userColorMap = useMemo(() => buildUserColorMap(allUsers), [allUsers]);
@@ -675,7 +678,14 @@ export function PropertyDetail({ id }: { id: string }) {
               </div>
             </div>
 
-            <p className="text-sm text-muted-foreground">{formatAddress(property.address) || "Address not recorded"}</p>
+            {/* The address often starts with the property's own name
+                ("Bluewater Shopping Centre, Bluewater Pkwy…") — drop it. */}
+            <p className="text-sm text-muted-foreground">{(() => {
+              const full = formatAddress(property.address) || "";
+              const name = String(property.name || "").trim();
+              const trimmed = name && full.toLowerCase().startsWith(name.toLowerCase() + ",") ? full.slice(name.length + 1).trim() : full;
+              return trimmed || "Address not recorded";
+            })()}</p>
             {/* Other names the building goes by (Lucent is Piccadilly Lights) —
                 search finds the property under each of them too. */}
             {Array.isArray((property as any).aliases) && (property as any).aliases.length > 0 && (
@@ -832,19 +842,26 @@ export function PropertyDetail({ id }: { id: string }) {
                                 {isClientViewer ? (
                                   <span className="truncate block">{allCompanies.find(c => c.id === row.id)?.name || "—"}</span>
                                 ) : (
-                                  <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} readOnly={isClientViewer} />
+                                  <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} readOnly={isClientViewer} roleOnChip={false} />
                                 )}
                               </div>
                             </div>
                           ))}
-                          {empty.length > 0 && !isClientViewer && (
-                            <div className="grid grid-cols-[minmax(84px,110px),minmax(0,1fr)] items-center gap-2">
-                              <span className="text-muted-foreground leading-tight truncate" title={empty[0].label}>{empty[0].label}</span>
+                          {/* Empty roles hide behind one "+ Add owner" — a
+                              column of "+ Long Leaseholder" placeholders read
+                              as missing data (Woody, 2026-09-27). */}
+                          {empty.length > 0 && !isClientViewer && (addingOwner ? empty.map(row => (
+                            <div key={row.field} className="grid grid-cols-[minmax(84px,110px),minmax(0,1fr)] items-center gap-2">
+                              <span className="text-muted-foreground leading-tight truncate" title={row.label}>{row.label}</span>
                               <div className="min-w-0">
-                                <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} readOnly={isClientViewer} />
+                                <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} readOnly={isClientViewer} />
                               </div>
                             </div>
-                          )}
+                          )) : (
+                            <button className="text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1 justify-self-start" onClick={() => setAddingOwner(true)} data-testid="button-add-owner-role">
+                              <Plus className="w-3 h-3" />Add owner / lender
+                            </button>
+                          ))}
                         </div>
                       )}
                     </div>
@@ -856,6 +873,11 @@ export function PropertyDetail({ id }: { id: string }) {
                     side-by-side. Competitor agent links to a
                     crm_companies row (company_type='Agent') with an
                     inline 'Add new agent' shortcut. */}
+                {!property.sqft && !(property as any).competitorAgentId && !property.competitorAgent && !showMoreFields ? (
+                  !isClientViewer && <button className="text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1 border-t pt-2 w-full" onClick={() => setShowMoreFields(true)} data-testid="button-add-area-agent">
+                    <Plus className="w-3 h-3" />Add area / competitor agent
+                  </button>
+                ) : (
                 <div className="border-t pt-2 grid grid-cols-2 gap-x-4 gap-y-1">
                   <div data-testid="property-field-area">
                     <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">Area</p>
@@ -881,6 +903,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   </div>
                   )}
                 </div>
+                )}
 
                 </CardContent>
               </Card>
@@ -913,7 +936,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
                 </ErrorBoundary>
                 <ErrorBoundary compact name="Risk register">
-                  <div className="flex-1 min-h-[280px]">
+                  <div className="flex-1 min-h-[280px] empty:hidden">
                     <RiskRegisterCard propertyId={property.id} />
                   </div>
                 </ErrorBoundary>
@@ -1192,7 +1215,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 onToggle={() => toggleSection("availableUnits")}
                 testId="toggle-available-units-section"
               >
-                <AvailableUnitsPanel propertyId={property.id} />
+                <AvailableUnitsPanel propertyId={property.id} propertyName={property.name} />
                 {!isClientViewer && <div className="mt-3 pt-2 border-t">
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Brands that fit the vacant space</div>
                   <PropertySpaceFitsPanel propertyId={property.id} />
@@ -1517,11 +1540,11 @@ interface AvailableUnitRow {
   dealId: string | null;
   dealRef: string | null;
 }
-function AvailableUnitsPanel({ propertyId }: { propertyId: string; readOnly?: boolean }) {
+function AvailableUnitsPanel({ propertyId, propertyName }: { propertyId: string; propertyName?: string | null; readOnly?: boolean }) {
   // Thin wrapper over the canonical tracker summary (Woody, 2026-08-03) —
   // the property sidebar, dashboard widget and page-header strip are all
   // the same component now.
-  return <TrackerSummary variant="card" propertyId={propertyId} />;
+  return <TrackerSummary variant="card" propertyId={propertyId} propertyName={propertyName} />;
 }
 
 // ── Brand pipeline images (auto-attributed from landlord scrape) ────────────

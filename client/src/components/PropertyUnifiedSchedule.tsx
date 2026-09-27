@@ -17,7 +17,9 @@ export function PropertyUnifiedSchedule({ propertyId, presentation = "full" }: {
       {isClientSched && presentation !== "compact" && (
         <p className="text-[11px] text-muted-foreground">Every unit with tenant, rent and lease dates. Live lettings are worked on the Letting Tracker.</p>
       )}
-      <PropertyTenancySchedule propertyId={propertyId} lens="tenancy" presentation={presentation} />
+      {/* No tracker strip here: the property page's Available units card
+          already shows the live lettings pulse. */}
+      <PropertyTenancySchedule propertyId={propertyId} lens="tenancy" presentation={presentation} trackerStrip={false} />
     </div>
   );
 }

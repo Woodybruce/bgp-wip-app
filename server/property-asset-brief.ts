@@ -336,7 +336,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     // as partial coverage rather than presenting it as the full rent roll.
     const lsuQ = await pool.query<any>(
       `WITH schedule_source AS (
-         SELECT id, COALESCE(unit_number, premises) AS unit_name, tenant_name,
+         SELECT id, COALESCE(unit_number, premises) AS unit_name, tenant_name, NULLIF(trim(trading_name), '') AS trading_name,
                 COALESCE(NULLIF(trim(occupancy_status), ''), status) AS status,
                 lease_expiry, break_date AS lease_break, tenant_company_id,
                 id AS tenancy_unit_id, passing_rent_pa AS rent_pa, 'tenancy' AS schedule_source
@@ -344,7 +344,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
              AND lower(trim(COALESCE(status, ''))) <> 'archived'
              AND lower(trim(COALESCE(occupancy_status, ''))) <> 'archived'
          UNION ALL
-         SELECT id, unit_name, tenant_name, status, lease_expiry, lease_break,
+         SELECT id, unit_name, tenant_name, NULL::text AS trading_name, status, lease_expiry, lease_break,
                 tenant_company_id, tenancy_unit_id, rent_pa, 'leasing' AS schedule_source
            FROM leasing_schedule_units WHERE property_id = $1
              AND lower(trim(COALESCE(status, ''))) <> 'archived'
@@ -361,7 +361,14 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
                      (u.tenancy_unit_id IS NOT NULL AND d2.tenancy_unit_id = u.tenancy_unit_id)
                      OR (d2.tenancy_unit_id IS NULL AND pu2.unit_name = u.unit_name)
                    )
-              ) OR EXISTS (
+              ) OR (u.tenant_company_id IS NOT NULL AND EXISTS (
+                -- The tenant is in a live deal at this property (a regear or
+                -- move logged against the brand, not the unit) — Nando's at
+                -- Bluewater showed "no live deal" with one at Solicitors.
+                SELECT 1 FROM crm_deals d4
+                 WHERE d4.property_id = $1 AND d4.tenant_id = u.tenant_company_id
+                   AND COALESCE(d4.status, '') NOT IN ('WIT', 'COM', 'INV')
+              )) OR EXISTS (
                 SELECT 1 FROM available_units au2
                  JOIN crm_deals d3 ON d3.id = au2.deal_id
                  WHERE au2.property_id = $1
@@ -401,12 +408,14 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
       const expiry = u.lease_expiry ? new Date(u.lease_expiry).getTime() : null;
       if (expiry && !u.has_live_deal && expiry > now && expiry - now < horizonMs) {
         const months = Math.round((expiry - now) / (30 * 86400000));
-        risks.push({ kind: "expiry_no_renewal", severity: months < 6 ? "high" : "med", message: `${u.tenant_name || u.unit_name} expires in ${months} months with no live deal`, unit_id: u.id, unit_name: u.unit_name });
+        const when = months <= 0 ? "expires this month" : `expires in ${months} month${months === 1 ? "" : "s"}`;
+        // The name shoppers know (trading name) before the lease entity.
+        risks.push({ kind: "expiry_no_renewal", severity: months < 6 ? "high" : "med", message: `${u.trading_name || u.tenant_name || u.unit_name} ${when} with no live deal`, unit_id: u.id, unit_name: u.unit_name });
       }
       // Tenant in admin / sanctioned — pulled from the linked
       // crm_companies row's KYC fields.
       if (u.kyc_status && /admin|sanctioned/.test(String(u.kyc_status).toLowerCase())) {
-        risks.push({ kind: "tenant_admin", severity: "high", message: `${u.tenant_name} flagged ${u.kyc_status} in KYC`, unit_id: u.id, unit_name: u.unit_name });
+        risks.push({ kind: "tenant_admin", severity: "high", message: `${u.trading_name || u.tenant_name} flagged ${u.kyc_status} in KYC`, unit_id: u.id, unit_name: u.unit_name });
       }
     }
 

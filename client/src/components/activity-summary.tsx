@@ -20,7 +20,7 @@ import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Mail, Phone, Users, Activity, CalendarDays, MapPin, Handshake, Sparkles, Plus, Loader2 } from "lucide-react";
+import { Mail, Phone, Users, Activity, CalendarDays, MapPin, Handshake, Sparkles, Plus, Loader2, UserRound } from "lucide-react";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -183,8 +183,8 @@ function RecentRow({ a, propertyId, summaries, setSummaries }: {
           </Link>
         )}
         {a.contact_id && (
-          <Link href={`/contacts/${a.contact_id}`}>
-            <Badge variant="outline" className="text-[9px] shrink-0 cursor-pointer hover:bg-muted">contact →</Badge>
+          <Link href={`/contacts/${a.contact_id}`} className="shrink-0 p-0.5 rounded hover:bg-muted opacity-60 md:opacity-0 md:group-hover/row:opacity-100 transition-opacity" title="Open the contact" aria-label="Open the contact">
+            <UserRound className="w-3 h-3 text-muted-foreground" />
           </Link>
         )}
       </div>

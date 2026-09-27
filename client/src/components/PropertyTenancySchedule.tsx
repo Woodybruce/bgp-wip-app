@@ -685,11 +685,12 @@ const COMPACT_COLUMN_FIELDS = new Set([
   "passing_rent_pa", "lease_expiry", "next_review_date", "permitted_use",
 ]);
 
-export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentation = "full" }: {
+export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentation = "full", trackerStrip = true }: {
   propertyId: string;
   lens?: "lettings" | "tenancy";
   readOnly?: boolean;
   presentation?: "compact" | "full";
+  trackerStrip?: boolean;
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -1111,7 +1112,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
   // Partial totals still say so, briefly — the full sentence is the tile's
   // hover note (Woody, 2026-09-27: "too much back of house").
   const coverage = (value: { known: number; rows: number }) =>
-    value.rows === 0 ? "No current rows" : value.known < value.rows ? `Partial · ${value.known} of ${value.rows} rows` : "";
+    value.rows === 0 ? "No current rows" : value.known > 0 && value.known < value.rows ? `Partial · ${value.known} of ${value.rows} rows` : "";
   const coverageNote = (value: { known: number; rows: number }, kind = "total") =>
     value.known < value.rows ? `Incomplete ${kind}: ${value.known} of ${value.rows} current rows have a value recorded.` : undefined;
   // WAULT is rent-weighted (Σ rent × term ÷ Σ rent), not a simple mean —
@@ -1377,7 +1378,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
 
       {/* Live lettings pulse — canonical tracker strip; each lozenge opens
           the Letting Tracker pre-filtered (Woody, 2026-08-03). */}
-      {!compact && <TrackerSummary variant="strip" propertyId={propertyId} />}
+      {!compact && trackerStrip && <TrackerSummary variant="strip" propertyId={propertyId} />}
 
       <TenancyImportReview rows={importReviewRows} onSelectCandidate={candidate => {
         setSearch(candidate.unitNumber || candidate.premises || "");
@@ -1696,7 +1697,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                 // On phones the sticky rails ate most of a 390px viewport
                 // (~225px Unit + ~90px actions left a ~74px scroll strip),
                 // so the Unit pin is capped/truncated below md.
-                const stickyCls = ci === 0 ? " sticky left-0 bg-gray-100 dark:bg-gray-800 border-r z-10 max-md:max-w-[120px] max-md:overflow-hidden max-md:text-ellipsis" : "";
+                const stickyCls = ci === 0 ? " sticky left-0 bg-gray-100 dark:bg-gray-800 border-r z-10 max-w-[260px] max-md:max-w-[120px] overflow-hidden text-ellipsis" : "";
                 return (
                   <th key={c.field} className={`p-2 font-medium whitespace-nowrap text-${c.align || "left"}${stickyCls}`} style={{ minWidth: c.width }}>
                     <span className="inline-flex items-center">
@@ -1947,7 +1948,10 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
       {columns.map((c, ci) => {
         // First column (Unit) stays pinned left while the sheet scrolls —
         // solid background so the moving columns slide underneath it.
-        const stickyCls = ci === 0 ? " sticky left-0 bg-background border-r z-[5] max-md:max-w-[120px] max-md:overflow-hidden max-md:text-ellipsis" : "";
+        // Capped on desktop too: long Landsec unit names ("Lake 7A Pontoon Club
+        // Hut & Storage Unit Bluewater - Lake") made the pin ~435px wide and
+        // left a sliver of the sheet to scroll. Full name is on hover.
+        const stickyCls = ci === 0 ? " sticky left-0 bg-background border-r z-[5] max-w-[260px] max-md:max-w-[120px] overflow-hidden text-ellipsis" : "";
         const raw = (unit as any)[c.field];
         // The API returns lease dates as SQL calendar days. Use that same
         // day for both the label and input, with no conversion through UTC.
@@ -2168,7 +2172,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
               // Unit cell leads the row and stays pinned, so the Tracker
               // action lives here — visible without scrolling to the
               // actions column (Woody, 2026-08-04).
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5" title={displayVal || undefined}>
                 {/* Phones: cap the pinned Unit cell so it can't cover the
                     whole scroll window (a long unit name made it 434px wide
                     at 390px — every other column slid underneath, unreadable). */}
@@ -2178,7 +2182,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
                   unitId={unit.id}
                   onSave={onUpdate}
                   type={editType}
-                  className="inline-block align-middle truncate max-w-[34vw] sm:max-w-none"
+                  className="inline-block align-middle truncate max-w-[34vw] sm:max-w-[200px]"
                 />
                 {!letting && !unit.is_vacant && onSendToTracker && (
                   <button
