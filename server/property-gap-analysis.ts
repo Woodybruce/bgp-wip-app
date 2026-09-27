@@ -602,7 +602,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
           shared: there.length - notHere.length,
           not_here: notHere.length,
           not_here_top: (sliceFilter ? notHere.filter(b => sliceFilter!(String(b.brand_company_id))) : notHere)
-            .sort((a, b) => topCount(b) - topCount(a)).slice(0, 4)
+            .sort((a, b) => topCount(b) - topCount(a)).slice(0, 16)
             .map(b => ({ id: b.brand_company_id, name: b.brand_name })),
           from_schedule: scheduleBacked.has(ps.name),
         };

@@ -603,6 +603,14 @@ function CentreBenchmark({ benchmark, name }: { benchmark: NonNullable<BrandGapR
   if (!rows.length) return null;
   const rank = rows.filter(r => r.brands > benchmark.here.brands).length + 1;
   const shown = all ? rows : rows.slice(0, 8);
+  // Each row lists brands not already named above it, so the column reads as
+  // a shopping list rather than the same four national names on every line.
+  const seen = new Set<string>();
+  const distinct = new Map(rows.map(r => {
+    const pick = r.not_here_top.filter(b => !seen.has(b.id)).slice(0, 4);
+    pick.forEach(b => seen.add(b.id));
+    return [r.name, pick];
+  }));
   return (
     <div data-testid="centre-benchmark">
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1.5">
@@ -615,11 +623,11 @@ function CentreBenchmark({ benchmark, name }: { benchmark: NonNullable<BrandGapR
         </span>
       </div>
       <div className="rounded-lg border divide-y">
-        <div className="hidden md:grid grid-cols-[minmax(0,1.3fr)_60px_60px_70px_minmax(0,2fr)] gap-2 px-2 py-1 text-[11px] uppercase tracking-wide text-muted-foreground">
-          <span>Centre</span><span className="text-right">Brands</span><span className="text-right">Shared</span><span className="text-right">Not here</span><span>They have, you don't</span>
+        <div className="hidden md:grid grid-cols-[minmax(0,1.7fr)_56px_56px_64px_minmax(0,2fr)] gap-2 px-2 py-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+          <span>Centre</span><span className="text-right">Brands</span><span className="text-right">Shared</span><span className="text-right">Not here</span><span>They have, you don't (new each row)</span>
         </div>
         {shown.map(r => (
-          <div key={r.name} className="px-2 py-1.5 text-xs md:grid md:grid-cols-[minmax(0,1.3fr)_60px_60px_70px_minmax(0,2fr)] md:gap-2 md:items-center" data-testid={`benchmark-${r.name}`}>
+          <div key={r.name} className="px-2 py-1.5 text-xs md:grid md:grid-cols-[minmax(0,1.7fr)_56px_56px_64px_minmax(0,2fr)] md:gap-2 md:items-center" data-testid={`benchmark-${r.name}`}>
             <div className="min-w-0 flex items-center gap-1.5">
               <span className="font-medium truncate">{r.name}</span>
               <span className="text-[11px] text-muted-foreground shrink-0 tabular-nums">{r.distance_km}km</span>
@@ -631,7 +639,7 @@ function CentreBenchmark({ benchmark, name }: { benchmark: NonNullable<BrandGapR
               <span className="md:text-right tabular-nums md:text-xs"><span className="md:hidden">Not here </span>{r.not_here}</span>
             </div>
             <div className="flex flex-wrap gap-1 mt-1 md:mt-0 min-w-0">
-              {r.not_here_top.map(b => (
+              {(distinct.get(r.name) || []).map(b => (
                 <Link key={b.id} href={`/companies/${b.id}`}>
                   <Badge variant="outline" className="text-[11px] cursor-pointer hover:bg-muted">{b.name}</Badge>
                 </Link>
