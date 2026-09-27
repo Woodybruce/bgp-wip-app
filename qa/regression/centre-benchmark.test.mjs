@@ -62,3 +62,13 @@ test('storage and other ancillary space gets no target tenants', async () => {
   for (const n of ['KL10 & STOL8 Storage', 'BWREST Portakabin Bluewater', 'ATM 3', 'Car Park Level 2', 'Plant room']) assert.ok(isAncillaryUnit({ unit_name: n }), n);
   for (const n of ['L022 Bluewater', 'T12 Thames Walk Bluewater', 'The Blue Lagoon', 'KL04 Bluewater', 'Spotlight 3 Bluewater']) assert.ok(!isAncillaryUnit({ unit_name: n }), n);
 });
+
+test('duplicate schedule rows for one physical unit share a plan key', async () => {
+  const { physicalUnitKey } = await import('../../server/target-tenant-engine.ts');
+  const k = (unit_name, sqft) => physicalUnitKey({ id: 'x', unit_name, sqft }, 'Bluewater');
+  assert.equal(k('U062 Bluewater - Upper Level', 1408), k('U062 Bluewater - Upper Level', 1408));
+  assert.equal(k('The Blue Lagoon Bluewater - Lower Level', 1076), k('The Blue Lagoon', 1076));
+  assert.equal(k('WVL15 & External Seating Area Bluewater - Lower Level', 3708), k('WVL15 & External Seating Area', 3708));
+  assert.notEqual(k('U124 Bluewater', 4803), k('U124/U125/U126 Bluewater', 9307));
+  assert.notEqual(k('U062 Bluewater - Upper Level', 1408), k('U062/U063 Bluewater', 2706));
+});

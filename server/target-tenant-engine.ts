@@ -200,7 +200,7 @@ const isHere = (ev: CentreEvidence, b: { companyId: string | null; name: string 
 
 // Candidates for one unit: every evidenced brand not trading here, with a
 // requirement whose size fits THIS unit weighted highest.
-export function unitCandidates(ev: CentreEvidence, unit: TargetUnit, exclude: Set<string> = new Set(), limit = 30): UnitCandidate[] {
+export function unitCandidates(ev: CentreEvidence, unit: TargetUnit, exclude: Set<string> = new Set(), limit = 40): UnitCandidate[] {
   const unitText = [unit.unit_name, unit.positioning, unit.zone, unit.use_class].filter(Boolean).join(" ");
   const retail = /retail|shop|fashion|store|e\s*\(a\)|a1\b/i.test(unitText) && !/f&b|food|dining|caf|restaurant|kiosk|bar\b|leisure/i.test(unitText);
   const propertyText = [ev.property.name, ev.property.postcode, ev.property.address].filter(Boolean).join(" ");
@@ -265,7 +265,7 @@ Plan the targets for these units TOGETHER. Think it through before answering:
 - What is this centre missing against its competing centres and the top UK centres, sector by sector, and which of these units is the right home for each missing piece (size, zone, positioning, adjacency to the current mix)?
 - Weigh the evidence honestly. Strongest: a live requirement whose size fits the unit, BGP acting for the brand, a live BGP deal elsewhere (taking space now), a new relationship BGP has just opened, the landlord naming the brand. Then presence at competing / top centres with opening news or cited expansion. Presence alone is weaker. A brand whose requirement size doesn't fit the unit is a poor target for it.
 - Avoid a brand that duplicates or directly competes with a current tenant, and never suggest a brand already trading here.
-- Don't put the same brand on more than two units across the centre (including the units already placed above) — give it to the unit that fits its requirement best.
+- A brand can be pitched for at most three units across the centre (including the units already placed above) — give it to the units that fit its requirement best. Spread the plan: the leasing team needs a different conversation for each unit.
 - The landlord client reads every rationale, and should see the brand movement: BGP's conversations with the brand, a new relationship, BGP acting for the brand, live BGP deals on the landlord's own schemes. Items marked [BGP-internal] (email / contact counts, deals on OTHER landlords' schemes) are confidential: use them to judge, but never repeat them — say "acquiring elsewhere now" instead of naming another scheme.
 - Prefer the evidenced candidates. You may add at most ONE brand per unit from your own market knowledge when it is clearly stronger than the list; mark it "evidenced": false and say why.
 
@@ -342,63 +342,99 @@ export async function matchBrandCompany(pool: any, name: string): Promise<{ id: 
 // Live progress of a whole-centre run, for the Generate all poll.
 export const runProgress = new Map<string, { done: number; total: number; failed: number; lastError?: string; finished?: boolean }>();
 
+// A brand is pitched for at most this many units per centre — a first run
+// put Heavenly Desserts on 22 Bluewater units, which tells the team nothing.
+export const MAX_UNITS_PER_BRAND = 3;
+
+// One physical unit can sit on the schedule more than once ("U062 Bluewater -
+// Upper Level" ×4): it is planned once and its twins get the same list.
+export function physicalUnitKey(unit: TargetUnit, centreName = "") {
+  const name = String(unit.unit_name || "").trim();
+  const first = name.split(/[\s,]+/)[0] || "";
+  const base = /\d/.test(first) ? first : brandKey(name.replace(new RegExp(centreName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), "")
+    .replace(/\b(lower|upper) level\b|\bwhole demise\b|\bwhiole demise\b/gi, ""));
+  return `${base.toLowerCase()}|${Math.round(Number(unit.sqft) || 0)}`;
+}
+
 // Plan and save targets for a set of leasing-schedule units (the Generate
 // buttons). Units go to the model three at a time, two batches in flight.
 // save:false plans without writing (?preview=1 on the unit route).
 export async function generateTargetsForUnits(pool: any, req: Request, propertyId: string, units: TargetUnit[], opts: { save?: boolean } = {}) {
   const ev = await centreEvidence(pool, req, propertyId);
-  const existingRows = await rows(pool, `SELECT t.unit_id, t.brand_name, u.unit_name FROM target_tenants t
+  const existingRows = await rows(pool, `SELECT t.unit_id, t.brand_name, u.unit_name, u.sqft FROM target_tenants t
       LEFT JOIN leasing_schedule_units u ON u.id = t.unit_id WHERE t.property_id = $1 AND t.status <> 'rejected'`, [propertyId]);
-  const prepared = units.map(u => {
-    const existing = existingRows.filter((r: any) => r.unit_id === u.id).map((r: any) => r.brand_name);
-    return { ...u, existing, candidates: unitCandidates(ev, u, new Set(existing.map((e: string) => brandKey(e)))) };
-  });
-  const batches: typeof prepared[] = [];
-  for (let i = 0; i < prepared.length; i += 3) batches.push(prepared.slice(i, i + 3));
+  const centreName = String(ev.property.name || "").replace(/\s*shopping cent(re|er)\s*$/i, "");
+  const groups = new Map<string, TargetUnit[]>();
+  for (const u of units) { const k = physicalUnitKey(u, centreName); groups.set(k, [...(groups.get(k) || []), u]); }
+  const primaries = [...groups.values()].map(g => g[0]);
+
+  // Where each brand is already pitched (distinct physical units) and, for
+  // the prompt, the unit codes.
+  const placedUnits = new Map<string, Set<string>>();
+  const placed = new Map<string, string[]>();
+  const place = (brand: string, unit: TargetUnit) => {
+    const k = brandKey(brand), u = physicalUnitKey(unit, centreName);
+    const set = placedUnits.get(k) || new Set<string>();
+    if (set.has(u)) return;
+    set.add(u); placedUnits.set(k, set);
+    placed.set(brand, [...(placed.get(brand) || []), String(unit.unit_name || "").split(/\s+/)[0]]);
+  };
+  for (const r of existingRows) place(r.brand_name, { id: r.unit_id, unit_name: r.unit_name, sqft: r.sqft });
+  const full = () => new Set([...placedUnits.entries()].filter(([, set]) => set.size >= MAX_UNITS_PER_BRAND).map(([k]) => k));
+
+  const batches: TargetUnit[][] = [];
+  for (let i = 0; i < primaries.length; i += 3) batches.push(primaries.slice(i, i + 3));
   const strategies: string[] = [];
   const inserted = new Map<string, any[]>();
   const failed: Array<{ unit_id: string; error: string }> = [];
-  // Two lanes of three-unit batches share one placed-brands list, so each
-  // batch sees where the others already placed brands. Each
-  // AI call is capped at five minutes with one retry — a stalled call once
-  // held a whole-centre run for 20 minutes — and a failed batch doesn't stop
-  // the rest.
+  // Two lanes of three-unit batches share the placed-brands list; candidates
+  // are drawn when a batch starts, so a brand already at the cap is gone.
+  // Each AI call is capped at five minutes with one retry — a stalled call
+  // once held a whole-centre run for 20 minutes — and a failed batch doesn't
+  // stop the rest.
   const progress: { done: number; total: number; failed: number; lastError?: string; finished?: boolean } = { done: 0, total: units.length, failed: 0 };
   runProgress.set(propertyId, progress);
   const timed = <T,>(p: Promise<T>) => Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("The AI plan took too long for this batch")), 5 * 60_000))]);
-  const placed = new Map<string, string[]>();
-  for (const r of existingRows) placed.set(r.brand_name, [...(placed.get(r.brand_name) || []), String(r.unit_name || "another unit").split(/\s+/)[0]]);
   let next = 0;
   await Promise.all([0, 1].map(async () => {
     while (next < batches.length) {
       const batch = batches[next++];
+      const twinsOf = (u: TargetUnit) => groups.get(physicalUnitKey(u, centreName)) || [u];
       try {
-        const plan = await timed(planTargets(ev, batch, placed)).catch(() => timed(planTargets(ev, batch, placed)));
+        const prepared = batch.map(u => {
+          const existing = [...new Set(twinsOf(u).flatMap(t => existingRows.filter((r: any) => r.unit_id === t.id).map((r: any) => r.brand_name)))];
+          const exclude = new Set([...existing.map((e: string) => brandKey(e)), ...full()]);
+          return { ...u, existing, candidates: unitCandidates(ev, u, exclude) };
+        });
+        const plan = await timed(planTargets(ev, prepared, placed)).catch(() => timed(planTargets(ev, prepared, placed)));
         if (plan.strategy) strategies.push(plan.strategy);
-        for (const unit of batch) {
-          const saved: any[] = [];
-          for (const t of plan.byUnit.get(unit.id) || []) {
-            const company = t.companyId ? { id: t.companyId, name: t.brand_name } : await matchBrandCompany(pool, t.brand_name);
-            const rationale = [t.rationale, t.evidenced ? (t.evidence.length ? `Evidence: ${t.evidence.join("; ")}` : "") : "Not in the evidence list — a market-knowledge suggestion."].filter(Boolean).join("\n");
-            const internalEvidence = t.internal.length ? t.internal.join("; ") : null;
-            const row = opts.save === false
-              ? { unit_id: unit.id, property_id: propertyId, company_id: company?.id || null, brand_name: t.brand_name, rationale, internal_evidence: internalEvidence, quality_rating: t.quality_rating, preview: true }
-              : (await pool.query(
-                `INSERT INTO target_tenants (unit_id, property_id, company_id, brand_name, rationale, internal_evidence, quality_rating, suggested_by, status)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'ai', 'suggested') RETURNING *`,
-                [unit.id, propertyId, company?.id || null, t.brand_name, rationale, internalEvidence, t.quality_rating])).rows[0];
-            saved.push({ ...row, company_name: company?.name || null });
-            placed.set(t.brand_name, [...(placed.get(t.brand_name) || []), String(unit.unit_name || "").split(/\s+/)[0]]);
+        for (const unit of prepared) {
+          const picks = (plan.byUnit.get(unit.id) || []).filter(t => (placedUnits.get(brandKey(t.brand_name))?.size || 0) < MAX_UNITS_PER_BRAND);
+          for (const twin of twinsOf(unit)) {
+            const saved: any[] = [];
+            for (const t of picks) {
+              const company = t.companyId ? { id: t.companyId, name: t.brand_name } : await matchBrandCompany(pool, t.brand_name);
+              const rationale = [t.rationale, t.evidenced ? (t.evidence.length ? `Evidence: ${t.evidence.join("; ")}` : "") : "Not in the evidence list — a market-knowledge suggestion."].filter(Boolean).join("\n");
+              const internalEvidence = t.internal.length ? t.internal.join("; ") : null;
+              const row = opts.save === false
+                ? { unit_id: twin.id, property_id: propertyId, company_id: company?.id || null, brand_name: t.brand_name, rationale, internal_evidence: internalEvidence, quality_rating: t.quality_rating, preview: true }
+                : (await pool.query(
+                  `INSERT INTO target_tenants (unit_id, property_id, company_id, brand_name, rationale, internal_evidence, quality_rating, suggested_by, status)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, 'ai', 'suggested') RETURNING *`,
+                  [twin.id, propertyId, company?.id || null, t.brand_name, rationale, internalEvidence, t.quality_rating])).rows[0];
+              saved.push({ ...row, company_name: company?.name || null });
+            }
+            inserted.set(twin.id, saved);
           }
-          inserted.set(unit.id, saved);
+          for (const t of picks) place(t.brand_name, unit);
         }
       } catch (error: any) {
-        for (const unit of batch) failed.push({ unit_id: unit.id, error: String(error?.message || error).slice(0, 200) });
-        progress.failed += batch.length;
+        for (const unit of batch) for (const twin of twinsOf(unit)) failed.push({ unit_id: twin.id, error: String(error?.message || error).slice(0, 200) });
+        progress.failed += batch.reduce((n, u) => n + twinsOf(u).length, 0);
         progress.lastError = String(error?.message || error).slice(0, 300);
         console.warn("[target-tenants] batch failed:", progress.lastError);
       }
-      progress.done += batch.length;
+      progress.done += batch.reduce((n, u) => n + twinsOf(u).length, 0);
     }
   }));
   progress.finished = true;
