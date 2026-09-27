@@ -37,6 +37,8 @@ async function brands(): Promise<BrandIndex> {
   const list = rows
     .map(row => ({ id: row.id, name: row.name.trim() }))
     .filter(row => !(row.name.split(/\s+/).length === 1 && COMMON.has(row.name.toLowerCase())))
+    // A centre's own company row ("Westfield London") isn't a brand going in.
+    .filter(row => !UK_CENTRES.some(centre => [centre.name, ...centre.aliases].some(alias => alias.toLowerCase() === row.name.toLowerCase())))
     // Longest first so "Five Guys" beats "Guys", "Ivy Asia" beats "Ivy".
     .sort((a, b) => b.name.length - a.name.length)
     .map(row => ({ ...row, re: new RegExp(`(^|[^A-Za-z0-9])${escapeRe(row.name)}('s)?([^A-Za-z0-9]|$)`, row.name.includes(" ") ? "i" : "") }));
@@ -62,7 +64,7 @@ async function googleNews(centre: UkCentre): Promise<Array<{ title: string; url:
 }
 
 async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpening[]> {
-  const key = `centre-openings:v3:${centre.name}`;
+  const key = `centre-openings:v4:${centre.name}`;
   const cached = (await pool.query("SELECT value, updated_at FROM system_settings WHERE key = $1", [key])).rows[0];
   if (cached && Date.now() - new Date(cached.updated_at).getTime() < DAY_MS && Array.isArray(cached.value?.items)) return cached.value.items;
 
@@ -77,7 +79,9 @@ async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpe
       ORDER BY COALESCE(s.signal_date, s.created_at) DESC LIMIT 30`, [since, aliases]
   ).then(r => r.rows).catch(() => [] as any[]);
   for (const s of signals) {
-    if (!namesCentre(`${s.headline} ${s.detail || ""}`, centre)) continue;
+    // The headline must name the centre — a detail line mentioning it is
+    // often "…also trades at Bluewater".
+    if (!namesCentre(s.headline, centre) || !isOpeningHeadline(s.headline)) continue;
     items.push({ centre: centre.name, title: s.headline, url: /^https?:/i.test(s.source || "") ? s.source : "", source: /^https?:/i.test(s.source || "") ? null : s.source,
       date: (s.signal_date || s.created_at)?.toISOString?.() || null, brand: { id: s.brand_id, name: s.brand_name }, origin: "signal" });
   }
@@ -105,7 +109,7 @@ async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpe
   for (const a of own) {
     const text = `${a.title} ${a.summary || ""}`;
     const brand = brandNamed(a.title, list) || brandNamed(text, list);
-    if (CLOSING.test(a.title) || (!brand && !OPENING.test(text))) continue;
+    if (!isOpeningHeadline(text)) continue;
     items.push({ centre: centre.name, title: a.title, url: a.url, source: a.source_name, date: a.at?.toISOString?.() || null, brand, origin: "centre" });
   }
   const web = await googleNews(centre).catch(() => []);
@@ -120,7 +124,14 @@ async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpe
   // A feed's future date (an event listing) isn't when the news broke.
   for (const item of items) if (item.date && Date.parse(item.date) > Date.now() + DAY_MS) item.date = null;
   // Several outlets covering one opening collapse onto the brand + month.
+  const words = (title: string) => new Set(title.toLowerCase().replace(/\s+[-–|]\s+[^-–|]{2,40}$/, "").split(/[^a-z0-9&]+/).filter(w => w.length > 2));
+  const kept: Array<{ w: Set<string>; at: number }> = [];
   const deduped = items.filter(item => {
+    // The same story retold ("Next opens its largest UK store at Bluewater")
+    // — most words shared within a fortnight.
+    const w = words(item.title), at = item.date ? Date.parse(item.date) : 0;
+    if (kept.some(k => Math.abs(k.at - at) < 14 * DAY_MS && [...w].filter(x => k.w.has(x)).length / Math.min(w.size, k.w.size) >= 0.6)) return false;
+    kept.push({ w, at });
     const keys = [item.title.replace(/\s+[-–|]\s+[^-–|]{2,40}$/, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 70)];
     if (item.brand) keys.push(`${item.brand.id}:${(item.date || "").slice(0, 7)}`);
     if (keys.some(k => seen.has(k))) return false;

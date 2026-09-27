@@ -69,7 +69,8 @@ export function registerRssAppPruneRoutes(app: Express) {
 
   // Runs as a background job: RSS.app allows only a few deletes a minute.
   // makeRoom: N also frees the N quietest Instagram feeds of brands that
-  // aren't on a BGP deal (their brand page just loses the posts grid).
+  // aren't on a BGP deal (their brand page just loses the posts grid);
+  // feedIds names specific feeds instead.
   app.post("/api/admin/rssapp/prune", requireAuth, requireAdmin, async (req, res) => {
     try {
       const wanted: PruneReason[] = Array.isArray(req.body?.reasons) && req.body.reasons.length
@@ -78,9 +79,12 @@ export function registerRssAppPruneRoutes(app: Express) {
       const report = await audit();
       const targets: Array<(typeof report.rows)[number] & { why: string }> = report.rows
         .filter(r => r.reason && wanted.includes(r.reason) && !r.onDeal).map(r => ({ ...r, why: r.reason as string }));
+      // feedIds: specific feeds an admin chose (never one on a BGP deal).
+      const chosen = new Set<string>(Array.isArray(req.body?.feedIds) ? req.body.feedIds.map(String) : []);
+      if (chosen.size) targets.push(...report.rows.filter(r => chosen.has(r.feedId) && !r.onDeal && !targets.some(t => t.feedId === r.feedId)).map(r => ({ ...r, why: "chosen" })));
       if (makeRoom) {
         const quiet = report.rows
-          .filter(r => !r.reason && !r.onDeal && r.sourceId && r.type === "rssapp_instagram")
+          .filter(r => !r.reason && !r.onDeal && r.sourceId && r.type === "rssapp_instagram" && !chosen.has(r.feedId))
           .sort((a, b) => (a.lastArticle ? Date.parse(a.lastArticle) : 0) - (b.lastArticle ? Date.parse(b.lastArticle) : 0) || a.articles - b.articles)
           .slice(0, makeRoom);
         targets.push(...quiet.map(r => ({ ...r, why: "make_room" })));
