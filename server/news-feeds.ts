@@ -2065,7 +2065,8 @@ export function setupNewsFeedRoutes(app: Express) {
       // that mention that place (Woody, 2026-09-27 — Lucent's feed showed a
       // cocoa-roaster and an AI start-up).
       const singleWord = distinctiveWords.length <= 1 && !propertyName.includes(",");
-      const placeWords = Array.from(new Set(tokenise(String(addressStr || "").split(",")[0] || "")
+      const streetLine = typeof addr === "string" ? addr : (addr?.street || addr?.address || addr?.line1 || "");
+      const placeWords = Array.from(new Set(tokenise(String(streetLine || "").split(",")[0] || "")
         .concat(locationTokens).filter((w: string) => w.length > 3 && !GENERIC_PROP_WORDS.has(w) && !distinctiveWords.includes(w))));
       const aliasNames: string[] = (Array.isArray((property as any).aliases) ? (property as any).aliases : [])
         .map((a: any) => String(a || "").toLowerCase().trim()).filter((a: string) => a.length > 4 && a !== nameLower);
@@ -2154,7 +2155,8 @@ export function setupNewsFeedRoutes(app: Express) {
 
       const existingUrls = new Set(matchedArticles.map(a => a.url));
       const dedupedWeb = webResults.filter(r => r.url && !existingUrls.has(r.url)
-        && (!singleWord || !placeWords.length || placeWords.some((w: string) => hasWord(`${r.title} ${r.snippet}`.toLowerCase(), w))));
+        && (!singleWord || placeWords.some((w: string) => hasWord(`${r.title} ${r.snippet}`.toLowerCase(), w))
+          || aliasNames.some(alias => `${r.title} ${r.snippet}`.toLowerCase().includes(alias))));
 
       const combined = [
         ...matchedArticles.map(a => ({
