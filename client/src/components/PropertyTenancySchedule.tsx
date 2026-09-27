@@ -21,7 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Building2, Upload, Download, Plus, Trash2, Search, ChevronDown, ChevronRight,
   Link2, FileSpreadsheet, X, Loader2, Lock, ExternalLink, MapPin as MapPinIcon,
-  Eye, Filter, RefreshCw
+  Eye, Filter, RefreshCw, Sparkles
 } from "lucide-react";
 
 // Compact retail-tuned set of use labels we want the team to land on across
@@ -433,6 +433,29 @@ function TargetTenantsCell({ unit, letting, onUpdate }: {
   };
 
   const chips = letting ? trackerTargets.map(t => ({ key: t.id, name: t.operatorName, companyId: t.companyId })) : rowNames.map(n => ({ key: n, name: n, companyId: null as string | null }));
+  // The AI target plan for this unit (one fetch per property, shared cache):
+  // suggestions sit beside the curated targets until adopted or dismissed.
+  const { data: aiAll = [] } = useQuery<AiTarget[]>({
+    queryKey: ["/api/properties", unit.property_id, "ai-targets"],
+    queryFn: async () => {
+      const r = await fetch(`/api/properties/${unit.property_id}/ai-targets`, { credentials: "include", headers: getAuthHeaders() });
+      return r.ok ? r.json() : [];
+    },
+    staleTime: 5 * 60_000,
+  });
+  const curated = new Set(chips.map(c => c.name.toLowerCase()));
+  const aiHere = aiAll.filter(a => String(a.tenancy_unit_id) === String(unit.id) && !curated.has(a.brand_name.toLowerCase()));
+  const aiSeen = new Set<string>();
+  const aiChips = aiHere.filter(a => { const k = a.brand_name.toLowerCase(); if (aiSeen.has(k)) return false; aiSeen.add(k); return true; });
+  const settle = async (a: AiTarget, status: "approved" | "rejected") => {
+    await apiRequest("PUT", `/api/leasing-schedule/target/${a.id}`, { status }).catch(() => {});
+    queryClient.invalidateQueries({ queryKey: ["/api/properties", unit.property_id, "ai-targets"] });
+  };
+  const adopt = async (a: AiTarget) => {
+    const pick = { name: a.brand_name, companyId: a.company_id || undefined } as BrandPick;
+    if (letting) await addToTracker(pick); else addToRow(pick);
+    await settle(a, "approved");
+  };
   return (
     <div className="flex items-center gap-1 flex-wrap min-w-0">
       {chips.map(c => c.companyId ? (
@@ -445,6 +468,7 @@ function TargetTenantsCell({ unit, letting, onUpdate }: {
       {letting && (
         <a href="/available" className="text-[9px] text-muted-foreground hover:text-foreground shrink-0" title="Targets live on the Letting Tracker brief for this unit">LT</a>
       )}
+      {aiChips.map(a => <AiTargetChip key={a.id} target={a} onAdopt={() => adopt(a)} onDismiss={() => settle(a, "rejected")} />)}
       <BrandSearchInput
         iconOnly
         placeholder="Add target tenant…"
@@ -453,6 +477,81 @@ function TargetTenantsCell({ unit, letting, onUpdate }: {
         testId={`tenancy-target-add-${unit.id}`}
       />
     </div>
+  );
+}
+
+type AiTarget = { id: string; brand_name: string; company_id: string | null; quality_rating: "green" | "amber" | "red"; rationale: string | null; internal_evidence?: string | null; tenancy_unit_id: string | null; unit_name: string };
+const AI_TIER: Record<string, string> = { green: "A", amber: "B", red: "C" };
+
+// One AI-planned target: tier letter + brand; click for the reasoning, its
+// evidence and Add as target / Dismiss.
+function AiTargetChip({ target, onAdopt, onDismiss }: { target: AiTarget; onAdopt: () => Promise<void>; onDismiss: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [why, evidence] = (target.rationale || "").split(/\nEvidence: /);
+  const run = async (fn: () => Promise<void>) => { setBusy(true); try { await fn(); } finally { setBusy(false); } };
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button type="button" className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-border px-1.5 py-[1px] text-[9px] text-muted-foreground hover:text-foreground hover:border-foreground/40 max-w-[140px]" title="AI-planned target — click for the reasoning" data-testid={`ai-target-${target.id}`}>
+          <span className="font-semibold tabular-nums">{AI_TIER[target.quality_rating] || "B"}</span>
+          <span className="truncate">{target.brand_name}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 text-xs space-y-2" align="start">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-semibold text-sm truncate">{target.brand_name}</span>
+          <span className="text-[11px] text-muted-foreground shrink-0">AI plan · {AI_TIER[target.quality_rating] || "B"}-tier</span>
+        </div>
+        <p className="whitespace-pre-line">{why}</p>
+        {evidence && <p className="text-muted-foreground"><span className="font-medium text-foreground">Evidence:</span> {evidence}</p>}
+        {target.internal_evidence && <p className="text-muted-foreground"><span className="font-medium text-foreground">BGP only:</span> {target.internal_evidence}</p>}
+        <div className="flex items-center gap-2 pt-1">
+          <Button size="sm" className="h-7 text-xs" disabled={busy} onClick={() => run(onAdopt)}>Add as target</Button>
+          <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => run(onDismiss)}>Dismiss</Button>
+          {target.company_id && <a href={`/companies/${target.company_id}`} className="ml-auto text-[11px] text-muted-foreground hover:text-foreground">Brand page →</a>}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// Plan targets with AI — the whole-centre target-tenant engine, run as a
+// server job the button polls (a deep pass over the centre takes minutes).
+function PlanTargetsButton({ propertyId }: { propertyId: string }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [state, setState] = useState<{ done: number; total: number } | null>(null);
+  const url = `/api/leasing-schedule/property/${propertyId}/generate-targets`;
+  const start = async () => {
+    try {
+      const r = await fetch(url, { method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" } });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(out?.error || "Could not start");
+      if (!out.accepted) { toast({ title: out.message || "Nothing to plan" }); return; }
+      setState({ done: 0, total: out.units || 0 });
+      for (let i = 0; i < 900; i++) {
+        await new Promise(res => setTimeout(res, 4000));
+        const job = await fetch(url, { headers: getAuthHeaders() }).then(x => x.json()).catch(() => null);
+        if (job?.progress) setState({ done: job.progress.done, total: job.progress.total });
+        if (job?.state === "done") {
+          const n = (job.result?.results || []).reduce((s: number, x: any) => s + (x.generated || 0), 0);
+          toast({ title: `${n} AI targets planned`, description: "They show as dashed chips in Target Tenants — click one for the reasoning." });
+          queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "ai-targets"] });
+          return;
+        }
+        if (job?.state === "error") throw new Error(job.error || "Planning failed");
+      }
+    } catch (e: any) {
+      toast({ title: "Target planning failed", description: e?.message, variant: "destructive" });
+    } finally { setState(null); }
+  };
+  return (
+    <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={start} disabled={!!state}
+      title="Plan five evidenced target tenants for every vacant / negotiating unit — Brand Gap, top UK centres, openings, live requirements and BGP's brand conversations, planned as a mix by AI. Units that already have five suggestions are kept."
+      data-testid="btn-plan-targets">
+      {state ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Sparkles className="w-3 h-3 mr-1" />}
+      {state ? `Planning ${state.done}/${state.total}…` : "Plan targets"}
+    </Button>
   );
 }
 
@@ -1146,6 +1245,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => UNIFIED_ADD_UNIT_ENABLED ? setUnifiedAddOpen(true) : setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
             <Plus className="w-3 h-3 mr-1" />Add
           </Button>
+          {!isClientViewer && <PlanTargetsButton propertyId={propertyId} />}
           {!isClientViewer && (
           <Button
             size="sm"

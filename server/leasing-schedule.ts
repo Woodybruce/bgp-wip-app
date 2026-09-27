@@ -1044,6 +1044,32 @@ router.get("/api/leasing-schedule/property/:propertyId/targets", requireAuth, as
   }
 });
 
+// The AI target plan for the live Tenancy Schedule: each planned target with
+// the tenancy row its leasing unit maps to (FK first, then unit number).
+router.get("/api/properties/:propertyId/ai-targets", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+    const result = await pool.query(
+      `SELECT tt.id, tt.brand_name, tt.company_id, tt.quality_rating, tt.rationale, tt.internal_evidence, tt.status,
+              l.id AS leasing_unit_id, l.unit_name, t.id AS tenancy_unit_id
+         FROM target_tenants tt
+         JOIN leasing_schedule_units l ON l.id = tt.unit_id
+         LEFT JOIN tenancy_schedule_units t
+           ON (l.tenancy_unit_id IS NOT NULL AND t.id = l.tenancy_unit_id)
+           OR (l.tenancy_unit_id IS NULL AND t.property_id = l.property_id
+               AND lower(trim(t.unit_number)) = lower(trim(COALESCE(l.unit_name, ''))))
+        WHERE tt.property_id = $1 AND tt.suggested_by = 'ai' AND tt.status = 'suggested'
+        ORDER BY CASE tt.quality_rating WHEN 'green' THEN 1 WHEN 'amber' THEN 2 ELSE 3 END, tt.created_at`,
+      [req.params.propertyId]
+    );
+    res.json(await withoutInternalEvidence(req, result.rows));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get("/api/leasing-schedule/unit/:unitId/targets", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
