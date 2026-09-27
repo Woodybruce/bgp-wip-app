@@ -56,3 +56,9 @@ test('target-tenant engine: evidenced candidates exclude brands trading here and
   assert.ok(withTracker.find(c => c.name === 'Dishoom')?.evidence[0].includes("landlord's leasing tracker"));
   assert.ok(withTracker.find(c => c.name === 'Five Guys').evidence[0].includes("landlord's leasing tracker"));
 });
+
+test('storage and other ancillary space gets no target tenants', async () => {
+  const { isAncillaryUnit } = await import('../../server/target-tenant-engine.ts');
+  for (const n of ['KL10 & STOL8 Storage', 'BWREST Portakabin Bluewater', 'ATM 3', 'Car Park Level 2', 'Plant room']) assert.ok(isAncillaryUnit({ unit_name: n }), n);
+  for (const n of ['L022 Bluewater', 'T12 Thames Walk Bluewater', 'The Blue Lagoon', 'KL04 Bluewater', 'Spotlight 3 Bluewater']) assert.ok(!isAncillaryUnit({ unit_name: n }), n);
+});

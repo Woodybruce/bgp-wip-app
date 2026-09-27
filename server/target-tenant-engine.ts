@@ -45,6 +45,12 @@ export type TargetUnit = { id: string; unit_name: string; sqft?: number | null; 
 // deals, tenant-rep clients, new contacts).
 export type UnitCandidate = { name: string; companyId: string | null; evidence: string[]; internal: string[]; score: number; facts: string };
 
+// Space nobody trades from — storage, ATMs, car parks, plant, site cabins —
+// never gets target tenants (Woody, 2026-09-27: "storage etc are irrelevant").
+export const isAncillaryUnit = (unit: { unit_name?: string | null; use_class?: string | null; positioning?: string | null }) =>
+  /\b(storage|stor\d*|remote store|store\s*cage|container|car\s*park|parking|atm|substation|advert\w*|barrow|locker|sprinkler|plant|collection facility|portakabin|cabin|bin store|loading bay|office only)\b/i
+    .test(`${unit.unit_name || ""} ${unit.use_class || ""} ${unit.positioning || ""}`);
+
 const cache = new Map<string, { at: number; value: CentreEvidence }>();
 
 async function selfGet(req: Request, path: string) {

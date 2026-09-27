@@ -1208,7 +1208,8 @@ router.post("/api/leasing-schedule/unit/:unitId/generate-targets", requireAuth, 
 
     const preview = req.query.preview === "1";
     const { startJob } = await import("./brand-jobs");
-    const { generateTargetsForUnits } = await import("./target-tenant-engine");
+    const { generateTargetsForUnits, isAncillaryUnit } = await import("./target-tenant-engine");
+    if (isAncillaryUnit(unit)) return res.status(400).json({ error: "This is storage / ancillary space — no target tenants" });
     const { alreadyRunning } = startJob(`targets:unit:${unit.id}${preview ? ":preview" : ""}`, async () => {
       const result = await generateTargetsForUnits(pool, req, unit.property_id, [unit], { save: !preview });
       if (result.failed.length) throw new Error(result.failed[0].error);
@@ -1258,13 +1259,14 @@ router.post("/api/leasing-schedule/property/:propertyId/generate-targets", requi
     const counts = new Map<string, number>((await pool.query(
       `SELECT unit_id, COUNT(*)::int AS n FROM target_tenants WHERE property_id = $1 AND status = 'suggested' GROUP BY unit_id`,
       [propertyId])).rows.map((r: any) => [r.unit_id, r.n]));
-    const todo = units.filter((u: any) => (counts.get(u.id) || 0) < 5);
+    const { generateTargetsForUnits, isAncillaryUnit } = await import("./target-tenant-engine");
+    const todo = units.filter((u: any) => (counts.get(u.id) || 0) < 5 && !isAncillaryUnit(u));
 
     const { startJob } = await import("./brand-jobs");
-    const { generateTargetsForUnits } = await import("./target-tenant-engine");
     const { alreadyRunning } = startJob(`targets:property:${propertyId}`, async () => {
       const result = todo.length ? await generateTargetsForUnits(pool, req, propertyId, todo) : { inserted: new Map(), strategy: "", failed: [] as any[] };
       const results = units.map((u: any) => {
+        if (isAncillaryUnit(u)) return { unit_id: u.id, unit_name: u.unit_name, skipped: true, reason: "Storage / ancillary space" };
         if (!todo.includes(u)) return { unit_id: u.id, unit_name: u.unit_name, skipped: true, reason: "Already has 5+ suggestions" };
         const fail = result.failed.find((f: any) => f.unit_id === u.id);
         return fail ? { unit_id: u.id, unit_name: u.unit_name, error: fail.error } : { unit_id: u.id, unit_name: u.unit_name, generated: (result.inserted.get(u.id) || []).length };
