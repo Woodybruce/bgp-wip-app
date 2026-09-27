@@ -1108,8 +1108,12 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
   const serviceCharge = recordedTenancyTotal(currentUnits.map(unit => unit.service_charge));
   const erv = recordedTenancyTotal(currentUnits.map(unit => unit.blended_erv));
   const avgERV = erv.total === null ? null : erv.total / erv.known;
-  const coverage = (value: { known: number; rows: number }, kind = "total") =>
-    value.rows === 0 ? "No current rows" : value.known < value.rows ? `Incomplete ${kind} · ${value.known} of ${value.rows} current rows recorded` : "Current rows";
+  // Partial totals still say so, briefly — the full sentence is the tile's
+  // hover note (Woody, 2026-09-27: "too much back of house").
+  const coverage = (value: { known: number; rows: number }) =>
+    value.rows === 0 ? "No current rows" : value.known < value.rows ? `Partial · ${value.known} of ${value.rows} rows` : "";
+  const coverageNote = (value: { known: number; rows: number }, kind = "total") =>
+    value.known < value.rows ? `Incomplete ${kind}: ${value.known} of ${value.rows} current rows have a value recorded.` : undefined;
   // WAULT is rent-weighted (Σ rent × term ÷ Σ rent), not a simple mean —
   // otherwise one 999-year ground lease at a peppercorn drags the figure
   // to absurdity. Falls back to the unweighted mean when no rents exist.
@@ -1193,11 +1197,6 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
 
   return (
     <div className="space-y-3" data-testid="property-tenancy-schedule" data-presentation={compact ? "compact" : "full"}>
-      {compact && (
-        <p className="text-xs text-muted-foreground" data-testid="tenancy-compact-help">
-          Everyday tenancy details. Use Columns for more fields or open the full schedule.
-        </p>
-      )}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
           {/* Tracker link leads the whole schedule header (Woody, 2026-08-03) —
@@ -1250,13 +1249,14 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
           <Button
             size="sm"
             variant="outline"
-            className="h-7 text-xs hidden sm:inline-flex"
+            className="h-7 w-7 p-0 hidden sm:inline-flex"
             onClick={() => resyncMutation.mutate()}
             disabled={resyncMutation.isPending}
-            title="Sweep every tenancy unit in the app: re-link Letting Tracker + leasing rows by unit name and push the current canonical status onto both. Heals any board drift across all properties, not just this one."
+            title="Re-sync all boards — re-links every property's Letting Tracker and leasing rows by unit name and pushes the current status onto both (all properties, not just this one)."
+            aria-label="Re-sync all boards"
             data-testid="btn-resync-mirror"
           >
-            {resyncMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}Re-sync (all)
+            {resyncMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
           </Button>
           )}
           </>)}
@@ -1410,20 +1410,21 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
 
       <div className={`grid grid-cols-2 ${compact ? "" : "lg:grid-cols-5"} gap-2`}>
         {[
-          { label: "Total NIA", value: nia.total === null ? "Not recorded" : fmtNum(nia.total) + " sq ft", sub: coverage(nia) },
-          { label: "Passing Rent", value: rent.total === null ? "Not recorded" : fmtCurrencyCompact(rent.total), full: fmtCurrency(rent.total), sub: coverage(rent) },
-          { label: "Avg ERV £psf", value: avgERV === null ? "Not recorded" : fmtNum(avgERV, 0), sub: coverage(erv, "average") },
-          { label: "WAULT", value: waultUnits.length ? fmtNum(avgWAULT, 1) + " yrs" : "Not recorded", sub: waultExcluded > 0 ? `${waultExcluded} excluded — placeholder expiry` : "Current recorded lease dates" },
-          { label: "Service Charge", value: serviceCharge.total === null ? "Not recorded" : fmtCurrencyCompact(serviceCharge.total), full: fmtCurrency(serviceCharge.total), sub: coverage(serviceCharge) },
+          { label: "Total NIA", value: nia.total === null ? "Not recorded" : fmtNum(nia.total) + " sq ft", sub: coverage(nia), note: coverageNote(nia) },
+          { label: "Passing Rent", value: rent.total === null ? "Not recorded" : fmtCurrencyCompact(rent.total), full: fmtCurrency(rent.total), sub: coverage(rent), note: coverageNote(rent) },
+          { label: "Avg ERV £psf", value: avgERV === null ? "Not recorded" : fmtNum(avgERV, 0), sub: coverage(erv), note: coverageNote(erv, "average") },
+          { label: "WAULT", value: waultUnits.length ? fmtNum(avgWAULT, 1) + " yrs" : "Not recorded", sub: waultExcluded > 0 ? `${waultExcluded} excluded` : "", note: waultExcluded > 0 ? `${waultExcluded} lease${waultExcluded === 1 ? "" : "s"} with a placeholder expiry left out of the WAULT.` : undefined },
+          { label: "Service Charge", value: serviceCharge.total === null ? "Not recorded" : fmtCurrencyCompact(serviceCharge.total), full: fmtCurrency(serviceCharge.total), sub: coverage(serviceCharge), note: coverageNote(serviceCharge) },
         ].filter(s => !compact || ["Total NIA", "Passing Rent"].includes(s.label)).map(s => (
           <div
             key={s.label}
             className="bg-card border border-border rounded-lg p-3 min-w-0"
             data-testid={`tenancy-stat-${s.label.toLowerCase().replace(/\s/g, "-")}`}
+            title={(s as any).note}
           >
             <div className="text-[11px] text-muted-foreground uppercase">{s.label}</div>
             <div className="text-sm font-semibold font-mono tabular-nums leading-tight break-words mt-1" title={s.full && s.full !== s.value ? s.full : undefined}>{s.value}</div>
-            <div className="text-[11px] text-muted-foreground mt-1">{s.sub}</div>
+            {s.sub && <div className="text-[11px] text-muted-foreground mt-1">{s.sub}</div>}
           </div>
         ))}
       </div>
@@ -1942,7 +1943,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
   }
 
   return (
-    <tr className={`border-b hover:bg-gray-50 dark:hover:bg-gray-800/50 ${isVacant ? "bg-amber-50/30 dark:bg-amber-900/10" : ""}`} data-testid={`tenancy-row-${unit.id}`}>
+    <tr className={`group border-b hover:bg-gray-50 dark:hover:bg-gray-800/50 ${isVacant ? "bg-amber-50/30 dark:bg-amber-900/10" : ""}`} data-testid={`tenancy-row-${unit.id}`}>
       {columns.map((c, ci) => {
         // First column (Unit) stays pinned left while the sheet scrolls —
         // solid background so the moving columns slide underneath it.
@@ -2183,7 +2184,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
                   <button
                     onClick={onSendToTracker}
                     disabled={sendingToTracker}
-                    className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 shrink-0"
+                    className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100"
                     title="Create a Letting Tracker listing for this unit"
                     data-testid={`tenancy-to-tracker-${unit.id}`}
                   >

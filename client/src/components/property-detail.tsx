@@ -676,6 +676,13 @@ export function PropertyDetail({ id }: { id: string }) {
             </div>
 
             <p className="text-sm text-muted-foreground">{formatAddress(property.address) || "Address not recorded"}</p>
+            {/* Other names the building goes by (Lucent is Piccadilly Lights) —
+                search finds the property under each of them too. */}
+            {Array.isArray((property as any).aliases) && (property as any).aliases.length > 0 && (
+              <p className="text-xs text-muted-foreground -mt-1" data-testid="property-aliases">
+                Also known as {((property as any).aliases as string[]).filter(a => !/,\s*UK$|^\d+.*,.*,/i.test(a)).join(" · ") || (property as any).aliases.join(" · ")}
+              </p>
+            )}
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="property-view-controls"
               title={property.propertyView ? "Saved for this property. Layout changes keep the same records and editing permissions." : suggestedView ? "Suggested from the recorded property use and tenancy information. Choose a layout to keep it fixed." : "No reliable layout suggestion yet — choose one."}>
               <label className="flex items-center gap-2 min-w-0">Layout
@@ -899,7 +906,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   Brochures moved down to share a row with Brand Gap. */}
               <div className="flex flex-col gap-3 h-full min-h-0">
                 {simpleLayout && !isClientViewer && <PropertyReviewPanel propertyId={property.id} onOpenPlans={() => { setMainSections(previous => ({ ...previous, plans: true })); setPhoneSection("plans"); }} />}
-                {simpleLayout ? <PropertySimpleOverview propertyId={id} propertyName={property.name} landlordName={allCompanies.find(c => c.id === (property as any).landlordId)?.name || null} canTrack={!isClientViewer} showUnits={propertyView === "building"} rows={overviewSchedule.data} loading={overviewSchedule.isPending} failed={overviewSchedule.isError} onRetry={() => overviewSchedule.refetch()} onOpenTenancy={() => { setMainSections(previous => ({ ...previous, leasingSchedule: true })); setPhoneSection("tenancy"); }} /> : <>
+                {simpleLayout ? <div className="flex-1 flex flex-col [&>*]:flex-1"><PropertySimpleOverview propertyId={id} propertyName={property.name} landlordName={allCompanies.find(c => c.id === (property as any).landlordId)?.name || null} canTrack={!isClientViewer} showUnits={propertyView === "building"} rows={overviewSchedule.data} loading={overviewSchedule.isPending} failed={overviewSchedule.isError} onRetry={() => overviewSchedule.refetch()} onOpenTenancy={() => { setMainSections(previous => ({ ...previous, leasingSchedule: true })); setPhoneSection("tenancy"); }} /></div> : <>
                 {/* PropertyNewsPanel renders its own card + "News Feed"
                     header — the old outer Card double-framed it. */}
                 <ErrorBoundary compact name="Property news (top-strip preview)">
@@ -1273,6 +1280,7 @@ export function PropertyDetail({ id }: { id: string }) {
 function PropertyReviewPanel({ propertyId, onOpenPlans }: { propertyId: string; onOpenPlans: () => void }) {
   const { toast } = useToast();
   const [openItem, setOpenItem] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
   const { data } = useQuery<{ items: any[] }>({ queryKey: ["/api/properties", propertyId, "review-items"] });
   const resolve = useMutation({
     mutationFn: async ({ id, option, dismiss }: { id: string; option?: string; dismiss?: boolean }) => (await apiRequest("POST", `/api/review-items/${id}/resolve`, { option, dismiss })).json(),
@@ -1285,7 +1293,7 @@ function PropertyReviewPanel({ propertyId, onOpenPlans }: { propertyId: string; 
   });
   const items = data?.items || [];
   if (!items.length) return null;
-  const KIND: Record<string, string> = { plan_scan: "Plan scan", plan_links: "Plan links", tracker_unit: "Leasing tracker", data_difference: "Data difference" };
+  const KIND: Record<string, string> = { plan_scan: "Plan scan", plan_links: "Plan links", tracker_unit: "Leasing tracker", data_difference: "Data difference", trading_name: "Trading name" };
   return (
     <Card className="border-amber-300" data-testid="property-review-panel">
       <div className="px-3 py-2 flex items-center gap-2 border-b">
@@ -1294,7 +1302,7 @@ function PropertyReviewPanel({ propertyId, onOpenPlans }: { propertyId: string; 
         <Badge variant="secondary" className="text-[10px] h-4 px-1">{items.length}</Badge>
       </div>
       <div className="max-h-[420px] overflow-y-auto divide-y">
-        {items.map(item => (
+        {(showAll ? items : items.slice(0, 4)).map(item => (
           <div key={item.id} className="px-3 py-2 text-xs space-y-1" data-testid={`review-item-${item.kind}`}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
@@ -1305,7 +1313,9 @@ function PropertyReviewPanel({ propertyId, onOpenPlans }: { propertyId: string; 
                 ? <Button variant="outline" size="sm" className="h-6 px-2 text-[10px] shrink-0" onClick={onOpenPlans}>Open plans</Button>
                 : <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] shrink-0" onClick={() => setOpenItem(openItem === item.id ? null : item.id)}>{openItem === item.id ? "Hide" : "Choose"}</Button>}
             </div>
-            {item.detail && <p className="text-[11px] text-muted-foreground whitespace-pre-line">{item.detail}</p>}
+            {/* Detail shows when the item is opened — the card read as a wall
+                of working notes (Woody, 2026-09-27). */}
+            {item.detail && (item.live || openItem === item.id) && <p className={`text-[11px] text-muted-foreground whitespace-pre-line ${item.live ? "line-clamp-2" : ""}`}>{item.detail}</p>}
             {!item.live && openItem === item.id && (
               <div className="space-y-1.5 pt-1">
                 {(item.options || []).map((o: any) => (
@@ -1323,6 +1333,11 @@ function PropertyReviewPanel({ propertyId, onOpenPlans }: { propertyId: string; 
           </div>
         ))}
       </div>
+      {items.length > 4 && (
+        <button className="w-full px-3 py-1.5 text-[11px] text-muted-foreground hover:text-foreground border-t text-left" onClick={() => setShowAll(v => !v)}>
+          {showAll ? "Show fewer" : `Show all ${items.length}`}
+        </button>
+      )}
     </Card>
   );
 }

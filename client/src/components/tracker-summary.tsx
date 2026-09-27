@@ -91,11 +91,12 @@ export function TrackerSummary({ propertyId, propertyIds, variant, tall }: {
   if (variant === "strip") {
     return (
       <div className="flex items-center gap-1.5 flex-wrap" data-testid="tracker-summary-strip">
-        {LETTING_STATUSES.map(code => (
+        {/* Only the stages with units in them — a row of greyed zeros was noise. */}
+        {LETTING_STATUSES.filter(code => counts[code] > 0).map(code => (
           <Link
             key={code}
             href={trackerHref(propertyId, code)}
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 ${counts[code] ? "bg-card" : "opacity-40"}`}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 bg-card"
             title={`${DEAL_STATUS_LABELS[code]} — open on the Letting Tracker`}
           >
             <span className={`w-1.5 h-1.5 rounded-full ${DEAL_STATUS_DOT_COLORS[code] || "bg-muted-foreground"}`} />

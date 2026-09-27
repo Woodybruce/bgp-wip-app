@@ -169,9 +169,7 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
           />
           <span className="font-semibold truncate">{data.owner.name}</span>
         </Link>
-      ) : (
-        <span className="text-[11px] text-muted-foreground italic">Set freeholder above</span>
-      )}
+      ) : null}
       {data.asset_lead && (
         <>
           <span className="text-muted-foreground/40">·</span>
@@ -201,7 +199,10 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
           </div>
         </>
       )}
-      {pct !== null && (
+      {/* Tenant-linking health is back-of-house (Woody, 2026-09-27) — only
+          shown when something is badly unlinked; the detail lives in Data
+          housekeeping. */}
+      {pct !== null && pct < 60 && (
         <>
           <span className="text-muted-foreground/40">·</span>
           <span
@@ -414,10 +415,16 @@ export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
           {med.length > 0 && (
             <Badge className="text-[10px] bg-amber-100 text-amber-700 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300 border-transparent">{med.length} watch</Badge>
           )}
+          {/* Data-coverage caveat as a hover note when there are risks to
+              show — the paragraph read as back-of-house (Woody, 2026-09-27). */}
+          {!complete && data.risks.length > 0 && (
+            <span className="text-[10px] font-normal normal-case tracking-normal text-muted-foreground border rounded px-1" role="status"
+              title={data.data_warnings?.find(w => w.section === "schedule")?.message || "Risk checks are incomplete. Confirm the tenancy schedule before relying on this summary."}>partial</span>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-2">
-        {!complete && <p className="text-xs text-muted-foreground mb-2" role="status">{data.data_warnings?.find(w => w.section === "schedule")?.message || "Risk checks are incomplete. Confirm the tenancy schedule before relying on this summary."}</p>}
+        {!complete && data.risks.length === 0 && <p className="text-xs text-muted-foreground mb-2" role="status">{data.data_warnings?.find(w => w.section === "schedule")?.message || "Risk checks are incomplete. Confirm the tenancy schedule before relying on this summary."}</p>}
         {data.risks.length === 0 ? (
           complete ? <p className="text-xs text-muted-foreground italic">No risks flagged in the recorded lease and covenant data.</p> : null
         ) : (
@@ -1258,7 +1265,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
         {tasksLoading && <p className="text-[11px] text-muted-foreground">Loading property tasks…</p>}
         {tasksError && <div role="status"><p className="text-[11px] text-muted-foreground">Property tasks could not be loaded.</p><Button variant="outline" size="sm" onClick={() => retryTasks()}>Retry tasks</Button></div>}
         {!tasksLoading && !tasksError && tasks.length === 0 && (
-          <p className="text-[11px] text-muted-foreground italic">No open tasks on this property. Add the things being pushed this week below — they'll appear on My Tasks too.</p>
+          <p className="text-[11px] text-muted-foreground">No open tasks — add one below.</p>
         )}
         <div className="space-y-0.5 max-h-[220px] overflow-y-auto pr-1">
           {tasks.slice(0, 10).map(t => {

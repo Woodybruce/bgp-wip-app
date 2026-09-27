@@ -214,7 +214,12 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
     staleTime: 10 * 60 * 1000,
     retry: false,
   });
-  const expanding = (data?.brands || []).filter(b => b.expanding);
+  // Only brands with real evidence. The research sometimes flags a brand as
+  // expanding while its own note says the evidence is missing or stale —
+  // those read as working notes, not intel (Woody, 2026-09-27).
+  const NO_EVIDENCE = /cannot be confirmed|can'?t be confirmed|no evidence|wasn'?t returned|not returned|outside the (?:roughly )?\d+-month window|does not identify|doesn'?t identify|no (?:specific|direct|cited) evidence|not a direct match/i;
+  const expanding = (data?.brands || []).filter(b => b.expanding && !NO_EVIDENCE.test(b.note || ""));
+  const [notesOpen, setNotesOpen] = useState(false);
   return (
     <div className="rounded-lg border border-border bg-muted/40 p-3" data-testid="gap-live-intel">
       <div className="flex items-center gap-1.5 mb-1 text-[11px] font-semibold">
@@ -236,7 +241,7 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
         <p className="text-xs text-muted-foreground italic">No expansion evidence gathered yet — the sweep runs automatically and refreshes weekly.</p>
       ) : (
         <div className="space-y-1.5">
-          {data.market_notes && <p className="text-xs leading-relaxed">{data.market_notes}</p>}
+          {data.market_notes && <p className={`text-xs leading-relaxed ${notesOpen ? "" : "line-clamp-2"} cursor-pointer`} onClick={() => setNotesOpen(v => !v)} title={notesOpen ? undefined : "Click to read the full note"}>{data.market_notes}</p>}
           {expanding.length === 0 ? (
             <p className="text-xs text-muted-foreground italic">No cited expansion evidence on the current candidates.</p>
           ) : (
@@ -393,9 +398,6 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
           <Target className="w-4 h-4 text-muted-foreground" />
           {centre ? "Brand gap analysis" : "Local occupier opportunities"}
           <span className="text-[11px] font-normal text-muted-foreground">hospitality, F&B, wellness &amp; leisure</span>
-          <Badge variant="secondary" className="text-[11px]">
-            {data.stats.brandsWithStores} store locations
-          </Badge>
           {competing.length > 0 && (
             <span className="text-[11px] text-muted-foreground">
               vs {competing.map(c => `${c.name} (${c.distance_km}km)`).join(" · ")}
@@ -404,7 +406,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {data.researchContext && <p className="text-sm text-muted-foreground">{data.researchContext.reason}</p>}
+        {data.researchContext && !centre && <p className="text-sm text-muted-foreground">{data.researchContext.reason}</p>}
         {/* AI gap read */}
         <GapCommentary propertyId={propertyId} />
 
@@ -649,7 +651,7 @@ function CentreBenchmark({ benchmark, name }: { benchmark: NonNullable<BrandGapR
         ))}
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2 mt-1">
-        <p className="text-[11px] text-muted-foreground">From brands' store lists (within ~700m of each centre) and our tenancy schedules where we hold them.</p>
+        <p className="text-[11px] text-muted-foreground cursor-help" title="From brands' store lists (within ~700m of each centre) and our tenancy schedules where we hold them.">How this is counted</p>
         {rows.length > 8 && (
           <button className="text-[11px] text-muted-foreground hover:text-foreground underline" onClick={() => setAll(v => !v)}>
             {all ? "Show fewer" : `Show all ${rows.length}`}

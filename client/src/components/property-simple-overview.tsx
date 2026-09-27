@@ -80,7 +80,7 @@ export function PropertySimpleOverview({ propertyId, propertyName, landlordName,
           <div><p className="text-[11px] text-muted-foreground">Recorded passing rent / year</p><p className="text-2xl font-mono tabular-nums">{knownRent === null ? "Not recorded" : money(knownRent)}</p></div>
           <span className="text-sm text-muted-foreground"><span className="font-mono tabular-nums">{units.length}</span> tenancy {units.length === 1 ? "row" : "rows"}</span>
         </div>
-        {rentRows < units.length && <p className="text-[11px] text-muted-foreground">Rent recorded for {rentRows} of {units.length} rows; this is not a complete income total.</p>}
+        {rentRows < units.length && <p className="text-[11px] text-muted-foreground -mt-2" title={`Rent is recorded for ${rentRows} of ${units.length} rows, so this is not a complete income total.`}>Partial · {rentRows} of {units.length} rows</p>}
         {showUnits && <div className="space-y-2">
           {units.slice(0, 6).map(unit => <Link key={unit.id} href={tenancyHref(unit)} className="block rounded-lg border p-3 hover:bg-muted/50">
             <div className="flex justify-between gap-3 text-sm"><span className="font-semibold">{unit.unit_number || unit.premises || "Unnamed unit"}</span><span className="text-muted-foreground">{unit.is_vacant ? "Vacant" : unit.status || "Status not recorded"}</span></div>
