@@ -632,34 +632,34 @@ export function PropertyDetail({ id }: { id: string }) {
                     const prompt = `Tell me about ${property.name || "this property"} — occupancy, live deals, letting activity and anything notable in the CRM.`;
                     window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt", { detail: { prompt } }));
                   }}
-                  data-testid="button-ask-ai-property"
+                  data-testid="button-ask-ai-property" title="Ask ChatBGP" aria-label="Ask ChatBGP"
                 >
-                  <MessageSquare className="w-3.5 h-3.5" /> Ask ChatBGP
+                  <MessageSquare className="w-3.5 h-3.5" /><span className="hidden sm:inline">Ask ChatBGP</span>
                 </Button>
                 {!isClientViewer && (<>
                 <Link href={`/image-studio?property=${encodeURIComponent(property.name)}&address=${encodeURIComponent(formatAddress(property.address) || property.name)}&propertyId=${encodeURIComponent(property.id)}`}>
-                  <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-image-studio">
+                  <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-image-studio" title="Image Studio" aria-label="Image Studio">
                     <ImageIcon className="w-3.5 h-3.5" />
-                    Image Studio
+                    <span className="hidden sm:inline">Image Studio</span>
                   </Button>
                 </Link>
                 <Link href={`/document-briefs?propertyId=${encodeURIComponent(property.id)}&propertyName=${encodeURIComponent(property.name)}&postcode=${encodeURIComponent(property.postcode || "")}`}>
-                  <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-create-document">
+                  <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-create-document" title="Create document" aria-label="Create document">
                     <FileText className="w-3.5 h-3.5" />
-                    Create document
+                    <span className="hidden sm:inline">Create document</span>
                   </Button>
                 </Link>
                 {linkedEvidencePlan && (
                   <Link href={`/evidence-plans/${linkedEvidencePlan.id}`}>
-                    <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-evidence-plan">
+                    <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-evidence-plan" title="Evidence plan" aria-label="Evidence plan">
                       <MapIcon className="w-3.5 h-3.5" />
-                      Evidence plan
+                      <span className="hidden sm:inline">Evidence plan</span>
                     </Button>
                   </Link>
                 )}
-                <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setFolderDialogOpen(true)} data-testid="button-setup-folders">
+                <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setFolderDialogOpen(true)} data-testid="button-setup-folders" title="Set Up Folders" aria-label="Set Up Folders">
                   <FolderTree className="w-3.5 h-3.5" />
-                  Set Up Folders
+                  <span className="hidden sm:inline">Set Up Folders</span>
                 </Button>
                 <Button
                   variant="outline"
