@@ -52,6 +52,19 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
     FROM investment_comps
     WHERE buyer_company_id = ANY($1::text[]) OR seller_company_id = ANY($1::text[])
     ORDER BY transaction_date DESC NULLS LAST LIMIT 12`, [entityIds]);
+  // Sales they've been sent and bids they've made (the investment board's
+  // Sent To and Offers, linked by company since 2026-09-26).
+  const sentToThem = await rows(q, `SELECT s.id, s.sent_date, s.response, t.id AS tracker_id, t.asset_name, t.deal_id, t.status
+    FROM investment_distributions s JOIN investment_tracker t ON t.id = s.tracker_id
+    WHERE s.company_id = ANY($1::text[]) ORDER BY s.sent_date DESC NULLS LAST LIMIT 20`, [entityIds]);
+  const theirBids = await rows(q, `SELECT o.id, o.offer_price, o.status, o.offer_date, t.id AS tracker_id, t.asset_name, t.deal_id
+    FROM investment_offers o JOIN investment_tracker t ON t.id = o.tracker_id
+    WHERE o.company_id = ANY($1::text[]) ORDER BY o.offer_date DESC NULLS LAST LIMIT 20`, [entityIds]);
+  // Buildings of theirs on BGP's Sales board (live) — a sale is a moment to
+  // approach the tenants (lease advisory, tenant rep).
+  const forSale = await rows(q, `SELECT property_id FROM investment_tracker
+    WHERE board_type = 'Sales' AND property_id = ANY($1::text[]) AND COALESCE(status, '') NOT IN ('COM','INV','WIT')`, [propertyIds]);
+  const forSalePropertyIds = [...new Set(forSale.map((r: any) => r.property_id))];
   const requirements = await rows(q, `SELECT id, name, status, use_types, size_range, requirement_locations, updated_at
     FROM crm_requirements_investment WHERE company_id = ANY($1::text[])
     ORDER BY updated_at DESC NULLS LAST LIMIT 20`, [entityIds]);
@@ -222,7 +235,10 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
       debtEvents: debtEvents.map((e: any) => ({ ...e, property_name: e.property_id ? propertyName.get(e.property_id) || null : null })),
       comps,
       requirements,
+      sentToThem,
+      theirBids,
     },
+    forSalePropertyIds,
     tenantRep: {
       space,
       liveRequirements: requirementsLive.length,

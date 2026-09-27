@@ -89,6 +89,8 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
   const list = (v: any) => Array.isArray(v) ? v.join(", ") : String(v || "").replace(/^\{|\}$/g, "").replace(/"/g, "").split(",").join(", ");
   const spaceWithFits = (tr?.space || []).filter((u: any) => u.fits.length > 0);
   const events: any[] = la?.events || [];
+  const forSale = new Set<string>(data?.forSalePropertyIds || []);
+  const saleBadge = (propertyId: string) => forSale.has(propertyId) ? <Badge className="text-[9px] bg-amber-50 text-amber-800 border-amber-200" title="On BGP's Sales board">for sale</Badge> : null;
   const shownEvents = showAllEvents ? events : events.slice(0, 10);
 
   return (
@@ -153,6 +155,18 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                   <Row key={t.id} href={t.deal_id ? `/deals/${t.deal_id}` : "/investment-tracker"} title={<span className={CLOSED.test(t.status || "") ? "text-muted-foreground" : ""}>{t.asset_name}</span>} sub={[statusLabel(t.status), t.vendor && `vendor ${t.vendor}`].filter(Boolean).join(" · ")} right={money(t.guide_price) && <span className="text-[10px] tabular-nums">{money(t.guide_price)}</span>} />
                 ))}</div>}
               </Section>
+              {(inv.sentToThem?.length > 0 || inv.theirBids?.length > 0) && (
+                <Section title="Sent to them / their bids" count={(inv.sentToThem?.length || 0) + (inv.theirBids?.length || 0)} link="/investment-tracker" linkLabel="Investment tracker">
+                  <div className="space-y-1">
+                    {inv.theirBids.slice(0, 5).map((o: any) => (
+                      <Row key={`b-${o.id}`} href={o.deal_id ? `/deals/${o.deal_id}` : "/investment-tracker"} title={o.asset_name} sub={["Bid", o.status, fmtDate(o.offer_date)].filter(Boolean).join(" · ")} right={money(o.offer_price) && <span className="text-[10px] tabular-nums">{money(o.offer_price)}</span>} />
+                    ))}
+                    {inv.sentToThem.slice(0, 5).map((d: any) => (
+                      <Row key={`s-${d.id}`} href={d.deal_id ? `/deals/${d.deal_id}` : "/investment-tracker"} title={d.asset_name} sub={["Sent particulars", fmtDate(d.sent_date), d.response].filter(Boolean).join(" · ")} />
+                    ))}
+                  </div>
+                </Section>
+              )}
               <Section title="Investment comps" count={inv.comps.length} link="/investment-comps" linkLabel="Comps" empty="No recorded trades as buyer or seller.">
                 {inv.comps.length > 0 && <div className="space-y-1">{inv.comps.slice(0, 5).map((c: any) => (
                   <Row key={c.id} href={c.property_id ? `/properties/${c.property_id}` : "/investment-comps"} title={c.property_name || "Trade"} sub={[c.side === "sold" ? "Sold" : "Bought", c.city, c.cap_rate && `${(Number(c.cap_rate) < 1 ? Number(c.cap_rate) * 100 : Number(c.cap_rate)).toFixed(2)}%`].filter(Boolean).join(" · ")} right={<><span className="text-[10px] tabular-nums">{money(c.price)}</span><span className="text-[10px] text-muted-foreground">{fmtMonth(c.transaction_date)}</span></>} />
@@ -170,7 +184,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                 <Row key={`${u.kind}-${u.id}`} href={u.kind === "marketing" ? `/available?propertyId=${u.propertyId}&unitId=${u.id}` : `/leasing-schedule/${u.propertyId}`}
                   title={`${u.propertyName}${u.unitName ? ` · ${u.unitName}` : ""}`}
                   sub={<>Fits: {u.fits.map((s: any, i: number) => <span key={s.requirementId}>{i > 0 && ", "}{s.bgpClient ? <strong className="text-foreground" title="BGP acts for this brand">{s.name} ★</strong> : s.name}</span>)}{u.fitCount > u.fits.length ? ` +${u.fitCount - u.fits.length}` : ""}</>}
-                  right={<>{u.sqft ? <span className="text-[10px] tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null}<Badge variant="outline" className="text-[9px]">{u.status}</Badge></>} />
+                  right={<>{saleBadge(u.propertyId)}{u.sqft ? <span className="text-[10px] tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null}<Badge variant="outline" className="text-[9px]">{u.status}</Badge></>} />
               ))}</div>}
             </Section>
             <div className="space-y-4">
@@ -215,9 +229,9 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                   <Row key={`${e.propertyId}-${e.unit}-${e.type}-${e.date}-${i}`} href={e.matterId ? `/pla/matters/${e.matterId}` : undefined}
                     title={<span className="flex items-center gap-1.5"><CalendarClock className="w-3 h-3 text-amber-600 shrink-0" />{e.type} · {fmtMonth(e.date)}</span>}
                     sub={[e.propertyName, e.unit, e.tenant].filter(Boolean).join(" · ")}
-                    right={e.trackedId
+                    right={<>{saleBadge(e.propertyId)}{e.trackedId
                       ? <Link href="/lease-events" className="text-[10px] text-emerald-700 hover:underline">{e.trackedStatus || "Tracked"}</Link>
-                      : <Button variant="outline" size="sm" className="h-6 px-2 text-[10px]" disabled={track.isPending} onClick={(ev) => { ev.preventDefault(); track.mutate(e); }} data-testid="button-track-lease-event"><Plus className="w-3 h-3" />Track</Button>} />
+                      : <Button variant="outline" size="sm" className="h-6 px-2 text-[10px]" disabled={track.isPending} onClick={(ev) => { ev.preventDefault(); track.mutate(e); }} data-testid="button-track-lease-event"><Plus className="w-3 h-3" />Track</Button>}</>} />
                 ))}
                 {events.length > 10 && <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setShowAllEvents(v => !v)}>{showAllEvents ? "Show fewer" : `Show all ${events.length}`}</Button>}
               </div>}

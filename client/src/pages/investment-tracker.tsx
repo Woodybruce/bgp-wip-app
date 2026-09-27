@@ -599,6 +599,83 @@ function OffersDialog({ trackerId, assetName, open, onClose }: { trackerId: stri
   );
 }
 
+// Buyers who fit this sale (server/investment-buyers.ts — requirement notes,
+// buying mandates, past comps buyers), ticked and added to Sent To in one go
+// with the firm and person linked (Woody, 2026-09-27).
+function SuggestedBuyers({ trackerId, open }: { trackerId: string; open: boolean }) {
+  const { toast } = useToast();
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [showAll, setShowAll] = useState(false);
+  const { data, isLoading } = useQuery<any>({
+    queryKey: ["/api/investment-tracker", trackerId, "buyers"],
+    queryFn: async () => {
+      const r = await fetch(`/api/investment-tracker/${trackerId}/buyers`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return null;
+      return r.json();
+    },
+    enabled: open,
+    staleTime: 60_000,
+  });
+  const keyOf = (b: any) => b.companyId || b.name;
+  const fresh = (data?.buyers || []).filter((b: any) => !b.sentAt);
+  const shown = showAll ? fresh : fresh.slice(0, 12);
+  const add = useMutation({
+    mutationFn: async (list: any[]) => {
+      for (const b of list) {
+        await apiRequest("POST", `/api/investment-tracker/${trackerId}/distributions`, {
+          companyId: b.companyId || null, companyName: b.name, contactId: b.contactId || null, contactName: b.contactName || null,
+          sentDate: new Date().toISOString(), method: "Email", notes: b.reasons.slice(0, 2).join("; "),
+        });
+      }
+      return list.length;
+    },
+    onSuccess: (n: number) => {
+      setPicked(new Set());
+      queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker", trackerId, "distributions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker", trackerId, "buyers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker/counts"] });
+      toast({ title: `${n} added to Sent To` });
+    },
+    onError: (e: any) => toast({ title: "Couldn't add buyers", description: e?.message, variant: "destructive" }),
+  });
+  if (!open) return null;
+  if (isLoading) return <p className="text-xs text-muted-foreground italic flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" />Finding buyers who fit…</p>;
+  if (!data || fresh.length === 0) return null;
+  const SOURCE: Record<string, string> = { requirement: "Requirement", mandate: "Mandate", comps: "Past buyer" };
+  return (
+    <div className="rounded-md border p-2.5 space-y-2" data-testid="suggested-buyers">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold">Buyers who fit <span className="font-normal text-muted-foreground">· {fresh.length} not yet sent</span></p>
+        <Button size="sm" className="h-7 text-xs" disabled={!picked.size || add.isPending}
+          onClick={() => add.mutate(fresh.filter((b: any) => picked.has(keyOf(b))))} data-testid="button-add-suggested-buyers">
+          {add.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : null}Add {picked.size || ""} to Sent To
+        </Button>
+      </div>
+      <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
+        {shown.map((b: any) => {
+          const k = keyOf(b);
+          return (
+            <label key={k} className="flex items-start gap-2 text-xs rounded px-1.5 py-1 hover:bg-muted/50 cursor-pointer">
+              <input type="checkbox" className="mt-0.5" checked={picked.has(k)} onChange={() => setPicked(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; })} />
+              <span className="min-w-0 flex-1">
+                <span className="font-medium">{b.name}</span>
+                {b.contactName && <span className="text-muted-foreground"> · {b.contactName}</span>}
+                {b.bid && <Badge variant="outline" className="ml-1 text-[9px]">bid</Badge>}
+                <span className="block text-[10px] text-muted-foreground">{b.reasons.map((r: string) => r.replace(/ \((requirement|mandate)\)$/, "")).slice(0, 3).join(" · ")}</span>
+              </span>
+              <span className="flex gap-1 shrink-0">{b.sources.map((src: string) => <Badge key={src} variant="outline" className="text-[9px]">{SOURCE[src] || src}</Badge>)}</span>
+            </label>
+          );
+        })}
+      </div>
+      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+        <button type="button" className="hover:text-foreground" onClick={() => setPicked(new Set(shown.map(keyOf)))}>Tick all shown</button>
+        {fresh.length > 12 && <button type="button" className="text-primary hover:underline" onClick={() => setShowAll(v => !v)}>{showAll ? "Show fewer" : `Show all ${fresh.length}`}</button>}
+      </div>
+    </div>
+  );
+}
+
 function DistributionsDialog({ trackerId, assetName, open, onClose }: { trackerId: string; assetName: string; open: boolean; onClose: () => void }) {
   const { toast } = useToast();
   const [adding, setAdding] = useState(false);
@@ -677,6 +754,7 @@ function DistributionsDialog({ trackerId, assetName, open, onClose }: { trackerI
           <DialogTitle>Sent To — {assetName}</DialogTitle>
           <DialogDescription>Track who has received details about this opportunity</DialogDescription>
         </DialogHeader>
+        <SuggestedBuyers trackerId={trackerId} open={open} />
         {distributions.length > 0 && (
           <div className="flex gap-1 flex-wrap">
             {Object.entries(responseSummary).map(([r, c]) => (

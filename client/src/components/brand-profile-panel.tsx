@@ -600,6 +600,15 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // preparation queue or started explicitly with a Refresh action.
   const [emailsOpen, setEmailsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  // Buildings on BGP's Sales board — a brand's tenancy in one is a moment to
+  // talk to them (lease advisory / tenant rep). Staff only; the tracker list
+  // is cached app-wide.
+  const { data: meForSale } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const staffForSale = !!meForSale && meForSale.role !== "Client" && !meForSale.companyScopeId;
+  const { data: trackerForSale = [] } = useQuery<any[]>({ queryKey: ["/api/investment-tracker"], enabled: staffForSale, staleTime: 10 * 60_000 });
+  const forSaleIds = useMemo(() => new Set((Array.isArray(trackerForSale) ? trackerForSale : [])
+    .filter((t: any) => t.boardType === "Sales" && !["COM", "INV", "WIT"].includes(String(t.status || "").toUpperCase()))
+    .map((t: any) => t.propertyId)), [trackerForSale]);
   const [backersOpen, setBackersOpen] = useState(false);
   useEffect(() => { setEditing(false); setEmailsOpen(false); setAboutOpen(false); setBackersOpen(false); }, [companyId]);
   // Hooks stay above the loading return. One chat instance: beside the profile column on md+ screens, under About below that.
@@ -2123,6 +2132,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                           <span className="text-xs font-medium truncate">{p.name}</span>
                         </Link>
                         <span className="flex items-center gap-1 shrink-0">
+                          {forSaleIds.has(p.id) && <Badge className="text-[9px] bg-amber-50 text-amber-800 border-amber-200" title="BGP is selling this building — worth talking to them about their lease">building for sale</Badge>}
                           <Badge variant="outline" className="text-[9px]">
                             {p.units} unit{Number(p.units) === 1 ? "" : "s"}
                           </Badge>
