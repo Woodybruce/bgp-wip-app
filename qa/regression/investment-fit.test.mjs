@@ -39,3 +39,8 @@ test('use and approach outrank geography', () => {
   assert.ok(!wrongUse.classHit && wrongUse.score < 0, JSON.stringify(wrongUse));
   assert.ok(londonOnly.classHit && londonOnly.score < thematic.score, JSON.stringify(londonOnly));
 });
+
+test('"market" in a buyer note is not an F&B use', () => {
+  assert.deepEqual(useDetailsIn('Logistics units with strong market demand'), []);
+  assert.deepEqual(useDetailsIn('Brixton Village food market and street food'), ['F&B']);
+});

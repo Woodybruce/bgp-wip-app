@@ -76,7 +76,7 @@ const USE_DETAILS: Array<[string, RegExp]> = [
   ["high street", /\b(high streets?|prime retail|parades?|shops)\b/i],
   ["leisure parks", /\b(leisure parks?|leisure schemes?)\b/i],
   ["outlets", /\b(outlets?|outlet cent(re|er)s?)\b/i],
-  ["F&B", /\b(f&b|restaurants?|food (and|&) beverage|food halls?|markets?)\b/i],
+  ["F&B", /(\bf&b\b|\brestaurants?\b|\bfood (and|&) beverage\b|\bfood halls?\b|\bmarket halls?\b|\bstreet food\b|\bcovered markets?\b|\b(village|food) market\b)/i],
   ["logistics", /\b(logistics|last mile|distribution|parcel hubs?|big box)\b/i],
 ];
 export function useDetailsIn(text: string | null | undefined): string[] {
