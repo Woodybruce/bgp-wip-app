@@ -86,6 +86,59 @@ export async function promoteDealToInvestmentComp(dealId: string, deps: { pool?:
   return ins?.id || null;
 }
 
+// Comps' buyer / seller → CRM companies, when the name matches exactly one
+// company (after dropping Ltd / PLC / Group …). Only fills blanks; runs after
+// every RCA import so new trades show on buyers' and sellers' pages.
+export async function linkInvestmentCompCompanies(deps: { pool?: Querier; compIds?: string[] } = {}) {
+  const q = deps.pool ?? (await import("./db")).pool;
+  const { buyerNameKey } = await import("./investment-buyers");
+  const { rows: companies } = await q.query(`SELECT id, name FROM crm_companies WHERE name IS NOT NULL AND merged_into_id IS NULL`);
+  const byKey = new Map<string, string[]>();
+  for (const c of companies) { const k = buyerNameKey(c.name); if (k.length >= 3) byKey.set(k, [...(byKey.get(k) || []), c.id]); }
+  const unique = (name: any) => { const ids = byKey.get(buyerNameKey(name)); return ids && ids.length === 1 ? ids[0] : null; };
+  const scope = deps.compIds ? ` AND id = ANY($1::text[])` : "";
+  const { rows: comps } = await q.query(`SELECT id, buyer, seller FROM investment_comps
+    WHERE ((buyer IS NOT NULL AND buyer_company_id IS NULL) OR (seller IS NOT NULL AND seller_company_id IS NULL))${scope}`, deps.compIds ? [deps.compIds] : []);
+  let linked = 0;
+  for (const c of comps) {
+    const b = unique(c.buyer), s = unique(c.seller);
+    if (!b && !s) continue;
+    await q.query(`UPDATE investment_comps SET buyer_company_id = COALESCE(buyer_company_id, $2), seller_company_id = COALESCE(seller_company_id, $3) WHERE id = $1`, [c.id, b, s]);
+    linked++;
+  }
+  console.log(`[investment-links] linked buyer/seller companies on ${linked} of ${comps.length} comps`);
+  return { comps: comps.length, linked };
+}
+
+// Viewings typed as names (older rows, ChatBGP) → the CRM company when the
+// name matches exactly one, and the person by name within that firm.
+export async function linkInvestmentViewings(deps: { pool?: Querier; viewingIds?: string[] } = {}) {
+  const q = deps.pool ?? (await import("./db")).pool;
+  const scope = deps.viewingIds ? ` AND id = ANY($1::text[])` : "";
+  const { rows: views } = await q.query(`SELECT id, company, contact, company_id, contact_id FROM investment_viewings
+    WHERE ((company IS NOT NULL AND company_id IS NULL) OR (contact IS NOT NULL AND contact_id IS NULL))${scope}`, deps.viewingIds ? [deps.viewingIds] : []);
+  if (!views.length) return { viewings: 0, linked: 0 };
+  const { buyerNameKey } = await import("./investment-buyers");
+  const { rows: companies } = await q.query(`SELECT id, name FROM crm_companies WHERE name IS NOT NULL AND merged_into_id IS NULL`);
+  const byKey = new Map<string, string[]>();
+  for (const c of companies) { const k = buyerNameKey(c.name); if (k.length >= 3) byKey.set(k, [...(byKey.get(k) || []), c.id]); }
+  let linked = 0;
+  for (const v of views) {
+    const ids = v.company ? byKey.get(buyerNameKey(v.company)) : null;
+    const companyId = v.company_id || (ids?.length === 1 ? ids[0] : null);
+    let contactId = v.contact_id;
+    if (!contactId && v.contact) {
+      const { rows } = await q.query(`SELECT id, company_id FROM crm_contacts WHERE lower(trim(name)) = lower(trim($1))${companyId ? " AND company_id = $2" : ""} LIMIT 2`,
+        companyId ? [v.contact, companyId] : [v.contact]);
+      if (rows.length === 1) contactId = rows[0].id;
+    }
+    if (companyId === v.company_id && contactId === v.contact_id) continue;
+    await q.query(`UPDATE investment_viewings SET company_id = $2, contact_id = $3 WHERE id = $1`, [v.id, companyId, contactId]);
+    linked++;
+  }
+  return { viewings: views.length, linked };
+}
+
 // One-offs, once per database (flags in system_settings):
 //  • tracker deals without the Investment team get it — without it a
 //    completed sale was filed as a leasing deal ("Leasing - Invoiced");
@@ -109,21 +162,8 @@ export async function runInvestmentLinkBackfills(deps: { pool?: Querier } = {}) 
 
   const LINK = "migration:investment_comps_company_links_v1";
   if (!(await done(LINK))) {
-    const { buyerNameKey } = await import("./investment-buyers");
-    const { rows: companies } = await q.query(`SELECT id, name FROM crm_companies WHERE name IS NOT NULL AND merged_into_id IS NULL`);
-    const byKey = new Map<string, string[]>();
-    for (const c of companies) { const k = buyerNameKey(c.name); if (k.length >= 3) byKey.set(k, [...(byKey.get(k) || []), c.id]); }
-    const unique = (name: any) => { const ids = byKey.get(buyerNameKey(name)); return ids && ids.length === 1 ? ids[0] : null; };
-    const { rows: comps } = await q.query(`SELECT id, buyer, seller FROM investment_comps WHERE (buyer IS NOT NULL AND buyer_company_id IS NULL) OR (seller IS NOT NULL AND seller_company_id IS NULL)`);
-    let linked = 0;
-    for (const c of comps) {
-      const b = unique(c.buyer), s = unique(c.seller);
-      if (!b && !s) continue;
-      await q.query(`UPDATE investment_comps SET buyer_company_id = COALESCE(buyer_company_id, $2), seller_company_id = COALESCE(seller_company_id, $3) WHERE id = $1`, [c.id, b, s]);
-      linked++;
-    }
-    await mark(LINK, { comps: comps.length, linked, at: new Date().toISOString() });
-    console.log(`[investment-links] linked buyer/seller companies on ${linked} of ${comps.length} comps`);
+    const r = await linkInvestmentCompCompanies({ pool: q });
+    await mark(LINK, { ...r, at: new Date().toISOString() });
   }
 
   const COMPS = "migration:bgp_investment_deal_comps_v1";
@@ -138,6 +178,14 @@ export async function runInvestmentLinkBackfills(deps: { pool?: Querier } = {}) 
   }
 
   await moveInvestmentCompsOutOfLeasing({ pool: q });
+  const VIEW = "migration:investment_viewings_links_v1";
+  if (!(await done(VIEW))) {
+    const r = await linkInvestmentViewings({ pool: q });
+    await mark(VIEW, { ...r, at: new Date().toISOString() });
+    console.log(`[investment-links] linked ${r.linked} of ${r.viewings} viewings to CRM companies / people`);
+  }
+  const { repairMergedCompanyRefs } = await import("./brand-dedupe");
+  await repairMergedCompanyRefs(q);
 }
 
 // Investment trades belong on Investment Comps, never in the lease advisory

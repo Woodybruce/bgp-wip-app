@@ -7807,8 +7807,22 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     }
   });
 
+  // Investment comps are edited by the Investment team (and admins) only —
+  // the page gated it, the endpoints didn't (Woody, 2026-09-27). Every
+  // write below checks here; reads stay open to staff.
+  const investmentCompEditor = async (req: any, res: any): Promise<boolean> => {
+    if (await isClientRequest(req)) { res.status(403).json({ error: "Not available for client accounts" }); return false; }
+    const userId = req.session?.userId || req.tokenUserId;
+    const u = userId ? (await pool.query(`SELECT email, is_admin, team, additional_teams FROM users WHERE id = $1`, [userId])).rows[0] : null;
+    const teams = [u?.team, ...(u?.additional_teams || [])].map((t: any) => String(t || "").toLowerCase());
+    const ok = !!u && (u.is_admin || ["woody@brucegillinghampollard.com", "accounts@brucegillinghampollard.com"].includes(String(u.email || "").toLowerCase()) || teams.includes("investment"));
+    if (!ok) res.status(403).json({ error: "Only the Investment team can change investment comps" });
+    return ok;
+  };
+
   app.post("/api/investment-comps", requireAuth, async (req, res) => {
     try {
+      if (!(await investmentCompEditor(req, res))) return;
       const [entry] = await db.insert(investmentComps).values(req.body).returning();
       res.json(entry);
     } catch (e: any) {
@@ -7818,6 +7832,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
   app.put("/api/investment-comps/:id", requireAuth, async (req, res) => {
     try {
+      if (!(await investmentCompEditor(req, res))) return;
       const [entry] = await db.update(investmentComps).set(req.body).where(eq(investmentComps.id, req.params.id as string)).returning();
       if (!entry) return res.status(404).json({ error: "Not found" });
       res.json(entry);
@@ -7828,6 +7843,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
   app.delete("/api/investment-comps/:id", requireAuth, async (req, res) => {
     try {
+      if (!(await investmentCompEditor(req, res))) return;
       await db.delete(investmentComps).where(eq(investmentComps.id, req.params.id as string));
       res.json({ success: true });
     } catch (e: any) {
@@ -7837,6 +7853,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
   app.post("/api/investment-comps/bulk-delete", requireAuth, async (req, res) => {
     try {
+      if (!(await investmentCompEditor(req, res))) return;
       const { ids } = req.body;
       if (!ids || !Array.isArray(ids)) return res.status(400).json({ error: "ids array required" });
       await db.delete(investmentComps).where(inArray(investmentComps.id, ids));
@@ -7848,6 +7865,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
   app.post("/api/investment-comps/import", requireAuth, multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } }).single("file"), async (req, res) => {
     try {
+      if (!(await investmentCompEditor(req, res))) return;
       if (!req.file) return res.status(400).json({ error: "No file uploaded" });
       const XLSX = (await import("xlsx")).default;
       const wb = XLSX.read(req.file.buffer, { type: "buffer" });
@@ -7929,14 +7947,24 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         }
         inserted = newRecords.length;
       }
+      // Link the new trades' buyers and sellers to CRM companies.
+      let linked = 0;
+      if (inserted) {
+        try {
+          const ids = (await pool.query(`SELECT id FROM investment_comps WHERE source = 'RCA' AND rca_deal_id = ANY($1::text[])`, [newRecords.map(r => r.rcaDealId)])).rows.map((r: any) => r.id);
+          const { linkInvestmentCompCompanies } = await import("./investment-comp-sync");
+          linked = (await linkInvestmentCompCompanies({ compIds: ids })).linked;
+        } catch (e: any) { console.warn("[investment-comps/import] company linking failed:", e?.message); }
+      }
 
-      res.json({ success: true, imported: inserted, skipped: mapped.length - inserted, total: mapped.length });
+      res.json({ success: true, imported: inserted, skipped: mapped.length - inserted, total: mapped.length, linked });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
 
   app.post("/api/investment-comps/enrich", requireAuth, async (req, res) => {
+    if (!(await investmentCompEditor(req, res))) return;
     res.json({ started: true, message: "Enrichment started in background. This will take a few minutes." });
 
     try {

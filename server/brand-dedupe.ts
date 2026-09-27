@@ -50,7 +50,48 @@ const COMPANY_REFS: Array<{ table: string; column: string }> = [
   { table: "brand_agent_representations", column: "brand_company_id" },
   { table: "brand_agent_representations", column: "agent_company_id" },
   { table: "brand_signals",            column: "brand_company_id" },
+  // Investment + lease advisory links (Woody, 2026-09-27: a merge used to
+  // leave bids, particulars and trades on the merged-away duplicate).
+  { table: "crm_deals",                column: "joint_agent_id" },
+  { table: "investment_tracker",       column: "client_id" },
+  { table: "investment_tracker",       column: "vendor_id" },
+  { table: "investment_tracker",       column: "buyer_id" },
+  { table: "investment_offers",        column: "company_id" },
+  { table: "investment_distributions", column: "company_id" },
+  { table: "investment_viewings",      column: "company_id" },
+  { table: "investment_comps",         column: "buyer_company_id" },
+  { table: "investment_comps",         column: "seller_company_id" },
+  { table: "crm_requirements_investment", column: "company_id" },
+  { table: "pla_matters",              column: "other_side_company_id" },
 ];
+
+// The investment / lease-advisory links above were added after many merges
+// had already run — move what still points at a merged-away company onto
+// the company it was merged into (following chains). Once per database.
+export const LATE_COMPANY_REFS = COMPANY_REFS.slice(COMPANY_REFS.findIndex(r => r.column === "joint_agent_id"));
+export async function repairMergedCompanyRefs(q: { query: Function } = pool) {
+  const KEY = "migration:merged_company_investment_refs_v1";
+  if ((await q.query(`SELECT 1 FROM system_settings WHERE key = $1`, [KEY])).rows.length) return;
+  const present = new Set((await q.query(
+    `SELECT table_name || '.' || column_name AS ref FROM information_schema.columns
+      WHERE table_schema = current_schema() AND (table_name || '.' || column_name) = ANY($1::text[])`,
+    [LATE_COMPANY_REFS.map(ref => `${ref.table}.${ref.column}`)])).rows.map((row: any) => row.ref));
+  const moved: Record<string, number> = {};
+  for (const ref of LATE_COMPANY_REFS) {
+    const key = `${ref.table}.${ref.column}`;
+    if (!present.has(key)) continue;
+    for (let hop = 0; hop < 5; hop++) {
+      try {
+        const r = await q.query(`UPDATE ${ref.table} t SET ${ref.column} = c.merged_into_id FROM crm_companies c
+          WHERE t.${ref.column} = c.id AND c.merged_into_id IS NOT NULL AND c.merged_into_id <> c.id`);
+        if (!r.rowCount) break;
+        moved[key] = (moved[key] || 0) + r.rowCount;
+      } catch (e: any) { console.warn(`[dedupe] repair ${key} failed:`, e?.message); break; }
+    }
+  }
+  await q.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING`, [KEY, JSON.stringify({ moved, at: new Date().toISOString() })]);
+  console.log(`[dedupe] repointed investment links off merged companies:`, JSON.stringify(moved));
+}
 
 /**
  * Re-point every company reference from one row to another inside the

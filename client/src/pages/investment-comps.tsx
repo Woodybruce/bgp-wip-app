@@ -436,8 +436,9 @@ function FilterDropdown({ value, onChange, options, label, searchable = false }:
 // changed once the profile loaded.
 export default function InvestmentCompsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isAdmin = ["woody@brucegillinghampollard.com", "accounts@brucegillinghampollard.com"].includes(currentUser?.email || "");
-  const isInvestment = currentUser?.team === "Investment";
+  const isAdmin = !!currentUser?.isAdmin || ["woody@brucegillinghampollard.com", "accounts@brucegillinghampollard.com"].includes((currentUser?.email || "").toLowerCase());
+  // Same rule as the server's write check: main team or an additional team.
+  const isInvestment = [currentUser?.team, ...(currentUser?.additionalTeams || [])].some((t: any) => String(t || "").toLowerCase() === "investment");
   if (currentUser && !isAdmin && !isInvestment) {
     return (
       <div className="p-4 sm:p-6 text-center space-y-4">
@@ -451,8 +452,9 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
 
 function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {}) {
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isAdmin = ["woody@brucegillinghampollard.com", "accounts@brucegillinghampollard.com"].includes(currentUser?.email || "");
-  const isInvestment = currentUser?.team === "Investment";
+  const isAdmin = !!currentUser?.isAdmin || ["woody@brucegillinghampollard.com", "accounts@brucegillinghampollard.com"].includes((currentUser?.email || "").toLowerCase());
+  // Same rule as the server's write check: main team or an additional team.
+  const isInvestment = [currentUser?.team, ...(currentUser?.additionalTeams || [])].some((t: any) => String(t || "").toLowerCase() === "investment");
 
   const { toast } = useToast();
   const isMobile = useIsMobile();
@@ -585,7 +587,7 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/investment-comps"] });
-      toast({ title: "Import complete", description: `${data.imported} records imported` });
+      toast({ title: "Import complete", description: `${data.imported} records imported${data.linked ? ` · ${data.linked} linked to CRM buyers / sellers` : ""}` });
     },
     onError: (err: any) => {
       toast({ title: "Import failed", description: err.message, variant: "destructive" });

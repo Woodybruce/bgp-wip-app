@@ -2138,7 +2138,9 @@ export const investmentViewings = pgTable("investment_viewings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   trackerId: varchar("tracker_id").notNull(),
   company: text("company"),
+  companyId: varchar("company_id"),             // → crm_companies (the viewer)
   contact: text("contact"),
+  contactId: varchar("contact_id"),             // → crm_contacts
   viewingDate: timestamp("viewing_date"),
   attendees: text("attendees"),
   outcome: text("outcome"),

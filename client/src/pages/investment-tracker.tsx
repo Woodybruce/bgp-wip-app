@@ -338,7 +338,7 @@ const DISTRIBUTION_RESPONSES = ["No Response", "Interested", "Not Interested", "
 function ViewingsDialog({ trackerId, assetName, open, onClose }: { trackerId: string; assetName: string; open: boolean; onClose: () => void }) {
   const { toast } = useToast();
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ company: "", contact: "", viewingDate: "", attendees: "", outcome: "", notes: "" });
+  const [form, setForm] = useState({ company: "", contact: "", companyId: "", contactId: "", viewingDate: "", attendees: "", outcome: "", notes: "" });
 
   // CRM rows feeding the picker — same source as the rest of the app so
   // creating a row here surfaces it everywhere else immediately.
@@ -374,7 +374,7 @@ function ViewingsDialog({ trackerId, assetName, open, onClose }: { trackerId: st
       queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker/counts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker/all-viewings"] });
       setAdding(false);
-      setForm({ company: "", contact: "", viewingDate: "", attendees: "", outcome: "", notes: "" });
+      setForm({ company: "", contact: "", companyId: "", contactId: "", viewingDate: "", attendees: "", outcome: "", notes: "" });
       toast({ title: "Viewing added" });
     },
   });
@@ -401,7 +401,10 @@ function ViewingsDialog({ trackerId, assetName, open, onClose }: { trackerId: st
             <Card key={v.id} className="p-3 text-xs space-y-1">
               <div className="flex justify-between items-start">
                 <div>
-                  <p className="font-medium">{v.company || "Unknown company"}{v.contact ? ` — ${v.contact}` : ""}</p>
+                  <p className="font-medium">
+                    {v.companyId ? <Link href={`/companies/${v.companyId}`} className="hover:underline">{v.company || "Company"}</Link> : (v.company || "Unknown company")}
+                    {v.contact ? <> — {v.contactId ? <Link href={`/contacts/${v.contactId}`} className="hover:underline">{v.contact}</Link> : v.contact}</> : null}
+                  </p>
                   {v.viewingDate && <p className="text-muted-foreground">{new Date(v.viewingDate).toLocaleDateString("en-GB")}</p>}
                 </div>
                 <Button variant="ghost" size="icon" className="h-6 w-6 text-red-500" onClick={() => deleteMutation.mutate(v.id)}>
@@ -423,7 +426,7 @@ function ViewingsDialog({ trackerId, assetName, open, onClose }: { trackerId: st
                       items={companyItems}
                       value=""
                       valueName={form.company}
-                      onSelect={(_id, name) => setForm({ ...form, company: name })}
+                      onSelect={(id, name) => setForm({ ...form, company: name, companyId: id || "" })}
                       placeholder="Pick or create company"
                       testId="viewing-company"
                       onCreate={createCompany}
@@ -438,7 +441,11 @@ function ViewingsDialog({ trackerId, assetName, open, onClose }: { trackerId: st
                       items={contactItems}
                       value=""
                       valueName={form.contact}
-                      onSelect={(_id, name) => setForm({ ...form, contact: name })}
+                      onSelect={(id, name) => {
+                        // Picking the person fills their firm when it's blank.
+                        const firm = !form.companyId && id ? crmCompanies.find(c => c.id === crmContacts.find(x => x.id === id)?.companyId) : null;
+                        setForm({ ...form, contact: name, contactId: id || "", ...(firm ? { company: firm.name, companyId: firm.id } : {}) });
+                      }}
                       placeholder="Pick or create contact"
                       testId="viewing-contact"
                       onCreate={createContact}
@@ -453,7 +460,7 @@ function ViewingsDialog({ trackerId, assetName, open, onClose }: { trackerId: st
               <div><Label className="text-xs">Notes</Label><Textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={2} className="text-xs" /></div>
               <div className="flex gap-2 justify-end">
                 <Button variant="outline" size="sm" onClick={() => setAdding(false)}>Cancel</Button>
-                <Button size="sm" onClick={() => addMutation.mutate({ ...form, viewingDate: form.viewingDate ? new Date(form.viewingDate).toISOString() : null })}>Add</Button>
+                <Button size="sm" onClick={() => addMutation.mutate({ ...form, companyId: form.companyId || null, contactId: form.contactId || null, viewingDate: form.viewingDate ? new Date(form.viewingDate).toISOString() : null })}>Add</Button>
               </div>
             </Card>
           ) : (

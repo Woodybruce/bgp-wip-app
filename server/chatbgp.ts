@@ -2800,7 +2800,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
         properties: {
           id: { type: "string", description: "The investment tracker item ID (UUID)" },
           assetName: { type: "string" },
-          status: { type: "string", description: "e.g. Reporting, Under Offer, Exchanged, Completed, Withdrawn, On Hold" },
+          status: { type: "string", description: "Deal status code: REP (reporting), AVA (marketing), NEG, HOT (heads of terms), SOL (solicitors), EXC (exchanged), COM (completed), WIT (withdrawn). HOT / SOL starts AML; EXC / COM make the investment comp and COM hands ownership to the buyer." },
           client: { type: "string" },
           clientContact: { type: "string" },
           vendor: { type: "string" },
@@ -3362,7 +3362,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
         properties: {
           assetName: { type: "string", description: "Property/asset name" },
           address: { type: "string", description: "Full address" },
-          status: { type: "string", description: "e.g. Reporting, Under Offer, Exchanged, Completed, Withdrawn, On Hold" },
+          status: { type: "string", description: "Deal status code: REP (reporting), AVA (marketing), NEG, HOT (heads of terms), SOL (solicitors), EXC (exchanged), COM (completed), WIT (withdrawn). HOT / SOL starts AML; EXC / COM make the investment comp and COM hands ownership to the buyer." },
           boardType: { type: "string", enum: ["Purchases", "Sales"], description: "Which board" },
           client: { type: "string", description: "Client name" },
           clientContact: { type: "string" },
@@ -6573,20 +6573,18 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "update_investment_tracker") {
-    const { investmentTracker } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
+    // Same write path as the Sales / Purchases board: the backing deal,
+    // parties, AML and comps follow (server/investment-tracker-service.ts).
+    const { updateTrackerAsset, linkTrackerNames } = await import("./investment-tracker-service");
     const { id, ...updates } = fnArgs;
-    const existing = await db.select({ id: investmentTracker.id, assetName: investmentTracker.assetName }).from(investmentTracker).where(eq(investmentTracker.id, id)).limit(1);
-    if (!existing.length) {
-      return { data: { success: false, error: `No investment tracker item found with ID "${id}"` } };
-    }
     const cleanUpdates: any = {};
     for (const [k, v] of Object.entries(updates)) {
       if (v !== undefined && v !== null) cleanUpdates[k] = v;
     }
-    cleanUpdates.updatedAt = new Date();
-    await db.update(investmentTracker).set(cleanUpdates).where(eq(investmentTracker.id, id));
-    return { data: { success: true, action: "updated", entity: "investment tracker item", name: existing[0].assetName, fields: Object.keys(cleanUpdates) }, action: { type: "crm_updated", entityType: "investment", id } };
+    const out = await updateTrackerAsset(id, await linkTrackerNames(cleanUpdates), { id: (req as any)?.session?.userId || (req as any)?.tokenUserId || null });
+    if (out.status === 404) return { data: { success: false, error: `No investment tracker item found with ID "${id}"` } };
+    if (out.status !== 200) return { data: { success: false, error: out.body?.message || "Update refused" } };
+    return { data: { success: true, action: "updated", entity: "investment tracker item", name: out.body.assetName, fields: Object.keys(cleanUpdates), amlStarted: !!out.body.amlStarted, amlWarning: out.body.amlWarning || null }, action: { type: "crm_updated", entityType: "investment", id } };
   }
 
   if (fnName === "update_deal") {
@@ -6738,30 +6736,15 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "create_investment_tracker") {
-    const { investmentTracker, crmProperties } = await import("@shared/schema");
-    let propertyId: string;
-    const [existingProp] = await db.select().from(crmProperties).where(eq(crmProperties.name, fnArgs.assetName)).limit(1);
-    if (existingProp) {
-      propertyId = existingProp.id;
-    } else {
-      const [newProp] = await db.insert(crmProperties).values({
-        name: fnArgs.assetName,
-        address: fnArgs.address ? { street: fnArgs.address } : null,
-        tenure: fnArgs.tenure || null,
-      }).returning();
-      propertyId = newProp.id;
-    }
-    const [created] = await db.insert(investmentTracker).values({
-      propertyId,
-      assetName: fnArgs.assetName, address: fnArgs.address, status: fnArgs.status || "Reporting",
-      boardType: fnArgs.boardType || "Purchases", client: fnArgs.client, clientContact: fnArgs.clientContact,
-      vendor: fnArgs.vendor, vendorAgent: fnArgs.vendorAgent, guidePrice: fnArgs.guidePrice,
-      niy: fnArgs.niy, eqy: fnArgs.eqy, sqft: fnArgs.sqft, currentRent: fnArgs.currentRent,
-      ervPa: fnArgs.ervPa, waultBreak: fnArgs.waultBreak, waultExpiry: fnArgs.waultExpiry,
-      occupancy: fnArgs.occupancy, capexRequired: fnArgs.capexRequired,
-      tenure: fnArgs.tenure, fee: fnArgs.fee, feeType: fnArgs.feeType, notes: fnArgs.notes,
-    }).returning();
-    return { data: { success: true, action: "created", entity: "investment tracker item", id: created.id, name: created.assetName }, action: { type: "crm_created", entityType: "investment", id: created.id } };
+    // Same write path as the board: property, backing Investment deal with
+    // its parties, Sales Instruction flag (server/investment-tracker-service.ts).
+    const { createTrackerAsset, linkTrackerNames } = await import("./investment-tracker-service");
+    const fields: any = {};
+    for (const [k, v] of Object.entries(fnArgs || {})) if (v !== undefined && v !== null) fields[k] = v;
+    fields.status = fields.status || "REP";
+    fields.boardType = fields.boardType || "Purchases";
+    const created = await createTrackerAsset(await linkTrackerNames(fields));
+    return { data: { success: true, action: "created", entity: "investment tracker item", id: created.id, name: created.assetName, dealId: (created as any).dealId || null }, action: { type: "crm_created", entityType: "investment", id: created.id } };
   }
 
   if (fnName === "create_available_unit") {
@@ -6953,11 +6936,12 @@ export async function executeCrmToolRaw(
   if (fnName === "log_viewing") {
     if (fnArgs.entityType === "investment") {
       const { investmentViewings } = await import("@shared/schema");
-      await db.insert(investmentViewings).values({
+      const [logged] = await db.insert(investmentViewings).values({
         trackerId: fnArgs.entityId, company: fnArgs.company, contact: fnArgs.contact,
         viewingDate: fnArgs.viewingDate ? new Date(fnArgs.viewingDate) : new Date(),
         attendees: fnArgs.attendees, notes: fnArgs.notes, outcome: fnArgs.outcome,
-      });
+      }).returning();
+      if (logged) { const { linkInvestmentViewings } = await import("./investment-comp-sync"); await linkInvestmentViewings({ viewingIds: [logged.id] }).catch(() => null); }
     } else {
       return { data: await executeLeasingActivity("log_viewing", fnArgs, req) };
     }
@@ -12460,21 +12444,17 @@ export async function handleCrmToolCall(
   }
 
   if (fnName === "update_investment_tracker") {
-    const { investmentTracker } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
+    const { updateTrackerAsset, linkTrackerNames } = await import("./investment-tracker-service");
     const { id, ...updates } = fnArgs;
-    const existing = await db.select({ id: investmentTracker.id, assetName: investmentTracker.assetName }).from(investmentTracker).where(eq(investmentTracker.id, id)).limit(1);
-    if (!existing.length) {
-      return { handled: true, response: { reply: `No investment tracker item found with ID "${id}". Please search first to find the correct record.` } };
-    }
     const cleanUpdates: any = {};
     for (const [k, v] of Object.entries(updates)) {
       if (v !== undefined && v !== null) cleanUpdates[k] = v;
     }
-    cleanUpdates.updatedAt = new Date();
-    await db.update(investmentTracker).set(cleanUpdates).where(eq(investmentTracker.id, id));
-    const reply = await summaryHelper({ success: true, action: "updated", entity: "investment tracker item", id, name: existing[0].assetName, fields: Object.keys(cleanUpdates) });
-    return { handled: true, response: { reply: reply || `Investment tracker item "${existing[0].assetName}" updated.`, action: { type: "crm_updated", entityType: "investment", id } } };
+    const out = await updateTrackerAsset(id, await linkTrackerNames(cleanUpdates), { id: (req as any)?.session?.userId || (req as any)?.tokenUserId || null });
+    if (out.status === 404) return { handled: true, response: { reply: `No investment tracker item found with ID "${id}". Please search first to find the correct record.` } };
+    if (out.status !== 200) return { handled: true, response: { reply: out.body?.message || "That update was refused." } };
+    const reply = await summaryHelper({ success: true, action: "updated", entity: "investment tracker item", id, name: out.body.assetName, fields: Object.keys(cleanUpdates), amlStarted: !!out.body.amlStarted, amlWarning: out.body.amlWarning || null });
+    return { handled: true, response: { reply: reply || `Investment tracker item "${out.body.assetName}" updated.`, action: { type: "crm_updated", entityType: "investment", id } } };
   }
 
   if (fnName === "search_crm") {
@@ -12557,47 +12537,16 @@ export async function handleCrmToolCall(
   }
 
   if (fnName === "create_investment_tracker") {
-    const { investmentTracker, crmProperties } = await import("@shared/schema");
-    let propertyId: string;
-    const [existingProp] = await db.select().from(crmProperties).where(eq(crmProperties.name, fnArgs.assetName)).limit(1);
-    if (existingProp) {
-      propertyId = existingProp.id;
-    } else {
-      const [newProp] = await db.insert(crmProperties).values({
-        name: fnArgs.assetName,
-        address: fnArgs.address ? { street: fnArgs.address } : null,
-        tenure: fnArgs.tenure || null,
-      }).returning();
-      propertyId = newProp.id;
-    }
-    const [created] = await db.insert(investmentTracker).values({
-      propertyId,
-      assetName: fnArgs.assetName,
-      address: fnArgs.address,
-      status: fnArgs.status || "Reporting",
-      boardType: fnArgs.boardType || "Purchases",
-      client: fnArgs.client,
-      clientContact: fnArgs.clientContact,
-      vendor: fnArgs.vendor,
-      vendorAgent: fnArgs.vendorAgent,
-      guidePrice: fnArgs.guidePrice,
-      niy: fnArgs.niy,
-      eqy: fnArgs.eqy,
-      sqft: fnArgs.sqft,
-      currentRent: fnArgs.currentRent,
-      ervPa: fnArgs.ervPa,
-      waultBreak: fnArgs.waultBreak,
-      waultExpiry: fnArgs.waultExpiry,
-      occupancy: fnArgs.occupancy,
-      capexRequired: fnArgs.capexRequired,
-      tenure: fnArgs.tenure,
-      fee: fnArgs.fee,
-      feeType: fnArgs.feeType,
-      notes: fnArgs.notes,
-    }).returning();
-    const reply = await summaryHelper({ success: true, action: "created", entity: "investment tracker item", record: { id: created.id, name: created.assetName } });
+    const { createTrackerAsset, linkTrackerNames } = await import("./investment-tracker-service");
+    const fields: any = {};
+    for (const [k, v] of Object.entries(fnArgs || {})) if (v !== undefined && v !== null) fields[k] = v;
+    fields.status = fields.status || "REP";
+    fields.boardType = fields.boardType || "Purchases";
+    const created = await createTrackerAsset(await linkTrackerNames(fields));
+    const reply = await summaryHelper({ success: true, action: "created", entity: "investment tracker item", id: created.id, name: created.assetName, dealId: (created as any).dealId || null });
     return { handled: true, response: { reply: reply || `Investment tracker item "${created.assetName}" created.`, action: { type: "crm_created", entityType: "investment", id: created.id, name: created.assetName } } };
   }
+
 
   if (fnName === "create_available_unit") {
     const { availableUnits } = await import("@shared/schema");
@@ -12651,6 +12600,7 @@ export async function handleCrmToolCall(
         notes: fnArgs.notes,
         outcome: fnArgs.outcome,
       }).returning();
+      if (created) { const { linkInvestmentViewings } = await import("./investment-comp-sync"); await linkInvestmentViewings({ viewingIds: [created.id] }).catch(() => null); }
       const reply = await summaryHelper({ success: true, action: "logged", entity: "investment viewing", company: fnArgs.company, date: fnArgs.viewingDate });
       return { handled: true, response: { reply: reply || `Viewing logged for ${fnArgs.company || "unknown"} on ${fnArgs.viewingDate}.` } };
     } else {

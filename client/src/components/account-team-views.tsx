@@ -155,9 +155,12 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                   <Row key={t.id} href={t.deal_id ? `/deals/${t.deal_id}` : "/investment-tracker"} title={<span className={CLOSED.test(t.status || "") ? "text-muted-foreground" : ""}>{t.asset_name}</span>} sub={[statusLabel(t.status), t.vendor && `vendor ${t.vendor}`].filter(Boolean).join(" · ")} right={money(t.guide_price) && <span className="text-[10px] tabular-nums">{money(t.guide_price)}</span>} />
                 ))}</div>}
               </Section>
-              {(inv.sentToThem?.length > 0 || inv.theirBids?.length > 0) && (
-                <Section title="Sent to them / their bids" count={(inv.sentToThem?.length || 0) + (inv.theirBids?.length || 0)} link="/investment-tracker" linkLabel="Investment tracker">
+              {(inv.sentToThem?.length > 0 || inv.theirBids?.length > 0 || inv.theirViewings?.length > 0) && (
+                <Section title="Sent to them / viewings / bids" count={(inv.sentToThem?.length || 0) + (inv.theirBids?.length || 0) + (inv.theirViewings?.length || 0)} link="/investment-tracker" linkLabel="Investment tracker">
                   <div className="space-y-1">
+                    {(inv.theirViewings || []).slice(0, 5).map((v: any) => (
+                      <Row key={`v-${v.id}`} href={v.deal_id ? `/deals/${v.deal_id}` : "/investment-tracker"} title={v.asset_name} sub={["Viewed", fmtDate(v.viewing_date), v.contact, v.outcome].filter(Boolean).join(" · ")} />
+                    ))}
                     {inv.theirBids.slice(0, 5).map((o: any) => (
                       <Row key={`b-${o.id}`} href={o.deal_id ? `/deals/${o.deal_id}` : "/investment-tracker"} title={o.asset_name} sub={["Bid", o.status, fmtDate(o.offer_date)].filter(Boolean).join(" · ")} right={money(o.offer_price) && <span className="text-[10px] tabular-nums">{money(o.offer_price)}</span>} />
                     ))}

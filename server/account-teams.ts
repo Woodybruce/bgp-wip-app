@@ -60,6 +60,9 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
   const theirBids = await rows(q, `SELECT o.id, o.offer_price, o.status, o.offer_date, t.id AS tracker_id, t.asset_name, t.deal_id
     FROM investment_offers o JOIN investment_tracker t ON t.id = o.tracker_id
     WHERE o.company_id = ANY($1::text[]) ORDER BY o.offer_date DESC NULLS LAST LIMIT 20`, [entityIds]);
+  const theirViewings = await rows(q, `SELECT v.id, v.viewing_date, v.outcome, v.contact, t.id AS tracker_id, t.asset_name, t.deal_id
+    FROM investment_viewings v JOIN investment_tracker t ON t.id = v.tracker_id
+    WHERE v.company_id = ANY($1::text[]) ORDER BY v.viewing_date DESC NULLS LAST LIMIT 20`, [entityIds]);
   // Buildings of theirs on BGP's Sales board (live) — a sale is a moment to
   // approach the tenants (lease advisory, tenant rep).
   const forSale = await rows(q, `SELECT property_id FROM investment_tracker
@@ -237,6 +240,7 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
       requirements,
       sentToThem,
       theirBids,
+      theirViewings,
     },
     forSalePropertyIds,
     tenantRep: {

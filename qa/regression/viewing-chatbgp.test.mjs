@@ -16,7 +16,7 @@ const request = { session: { userId: 'carly' } };
 const viewingArgs = { entityType: 'unit', entityId: 'unit', company: 'Brand as typed', contact: 'Contact as typed', viewingDate: '2026-09-16', viewingTime: '10:00' };
 const offerArgs = { entityType: 'unit', entityId: 'unit', offerDate: '2026-09-16', rentPa: 45000 };
 function harness({ scope = null, unitAllowed = true, brandAllowed = true, scopeError, serviceError, namedBrand = true, agencyEmployer = false, linkedAgent = true, incomplete = false } = {}) {
-  const calls = [], writes = [];
+  const calls = [], writes = [], linked = [];
   const tables = { unitOffers: 'unit-offers', investmentViewings: 'investment-viewings', investmentOffers: 'investment-offers' };
   const db = { insert(table) { return { values(value) {
     writes.push({ table, value });
@@ -41,6 +41,8 @@ function harness({ scope = null, unitAllowed = true, brandAllowed = true, scopeE
       if (name === '../shared/calendar-date') return { calendarDateValue };
       if (name === '../shared/viewing-workflow') return { viewingMissingDetails };
       if (name === './company-scope') return { isClientVisibleBrand: async () => brandAllowed };
+      // Investment viewings typed as names are linked to CRM ids afterwards.
+      if (name === './investment-comp-sync') return { linkInvestmentViewings: async opts => { linked.push(opts); return { linked: 0 }; } };
       if (name === './storage') return { storage: { async getAvailableUnit(id) { calls.push({ unitId: id }); return { id, propertyId: 'property' }; } } };
       if (name === './leasing-viewings') return {
         async createTrackerViewing(req, unitId, values) {
@@ -66,7 +68,7 @@ function harness({ scope = null, unitAllowed = true, brandAllowed = true, scopeE
     exports.raw = async function(fnName,fnArgs,req) { ${loggingBranches('executeCrmToolRaw')} };
     exports.legacy = async function(fnName,fnArgs,req) { ${loggingBranches('handleCrmToolCall')} };
   `, context);
-  return { ...module, calls, writes };
+  return { ...module, calls, writes, linked };
 }
 
 test('both ChatBGP viewing executors use the shared scoped service with explicit IDs, status and follow-up', async () => {
@@ -191,7 +193,10 @@ test('investment viewing and offer branches retain their original payloads and a
     assert.equal(h.calls.length, 0);
     assert.equal(h.writes[0].value.trackerId, 'investment');
     assert.equal(h.writes[0].value.company, 'Investor');
-    if (name === 'log_viewing') assert.equal(h.writes[0].value.outcome, 'Old investment outcome');
+    if (name === 'log_viewing') {
+      assert.equal(h.writes[0].value.outcome, 'Old investment outcome');
+      assert.equal(JSON.stringify(h.linked), JSON.stringify([{ viewingIds: ['saved-offer'] }]), 'the saved viewing is linked to CRM ids');
+    }
     else assert.equal(h.writes[0].value.offerPrice, 5000000);
   }
 });
