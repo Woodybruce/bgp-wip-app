@@ -108,14 +108,29 @@ function DealBadges({ d }: { d: AccountDealRow }) {
 // name often just restate the property. Show only what adds something
 // (Woody, 2026-09-27).
 const squash = (s: string | null | undefined) => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-// "Nando's – Bluewater Shopping Centre" under Bluewater → "Nando's".
-function dealShort(d: AccountDealRow): string {
-  const name = (d.name || "").trim(), prop = (d.propertyName || "").trim();
-  if (!name || !prop) return name;
-  const words = prop.split(/[\s,]+/).filter(w => w.length > 2).slice(0, 2).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  if (!words.length) return name;
-  const re = new RegExp(`\\s*[-–—:]\\s*${words.join("\\s+")}.*$|^${words.join("\\s+")}[^-–—:]*[-–—:]\\s*`, "i");
-  return name.replace(re, "").trim() || name;
+// "Nando's – Bluewater Shopping Centre" under Bluewater → "Nando's". The
+// link also read "Bompard" beside a "Bompard" counterparty, or kept an
+// abbreviated address ("Luke Irwin – Pimlico Rd, London SW1W", "Ashford -
+// KFC"): drop every part that is the property, its first word, an address
+// or the counterparty; if nothing new is left, show the unit or "Open deal"
+// (Woody, 2026-09-27).
+const DEAL_SEP = /\s+[-–—:]\s+|\s*[–—:]\s*/;
+const POSTCODE = /\b[A-Z]{1,2}\d[A-Z\d]?\b/;
+const STREET = /\b(st|street|rd|road|lane|ln|ave|avenue|pl|place|sq|square|way|row|mews|parade|terrace|hill|gardens|yard)\.?\s*(,|…|$)/i;
+const bare = (s: string | null | undefined) => squash((s || "").replace(/\b(ltd|limited|plc|llp)\b\.?/gi, ""));
+function dealShort(d: AccountDealRow, unit: string | null): string {
+  const name = (d.name || "").trim();
+  const prop = squash(d.propertyName), cp = bare(d.counterparty);
+  const first = squash((d.propertyName || "").trim().split(/[\s,]+/)[0]);
+  const keep = name.split(DEAL_SEP).map(s => s.trim()).filter(seg => {
+    const q = squash(seg);
+    if (!q) return false;
+    if (prop && (q === prop || q.includes(prop) || (q.length >= 4 && prop.includes(q)) || (first.length > 2 && q === first))) return false;
+    if (/^\d/.test(seg) || POSTCODE.test(seg) || STREET.test(seg)) return false;
+    return bare(seg) !== cp;
+  });
+  const rest = keep.join(" – ");
+  return !squash(rest) || bare(rest) === cp ? (unit || "Open deal") : rest;
 }
 function rowLabels(d: AccountDealRow): { unit: string | null; dealRepeats: boolean } {
   const prop = squash(d.propertyName);
@@ -268,7 +283,7 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                     const labels = rowLabels(d);
                     // A repeating deal name gives way to the unit (or a plain
                     // "Open deal") so the deal stays one click away.
-                    const dealLink = labels.dealRepeats && d.propertyId ? (labels.unit || "Open deal") : (d.propertyId ? dealShort(d) : d.name);
+                    const dealLink = labels.dealRepeats && d.propertyId ? (labels.unit || "Open deal") : dealShort(d, labels.unit);
                     return (
                     <tr key={d.dealId} className="border-b border-border/20 last:border-0 hover:bg-muted/40" data-testid={`account-deal-row-${d.dealId}`}>
                       <td className="py-1.5 pr-2 max-w-[12rem]">
@@ -276,7 +291,7 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                           <Link href={`/properties/${d.propertyId}`} className="font-medium hover:underline block truncate">{d.propertyName || "—"}</Link>
                         ) : <span className="text-muted-foreground">—</span>}
                         {labels.unit && dealLink !== labels.unit && <span className="block text-[10px] text-muted-foreground truncate">{labels.unit}</span>}
-                        <Link href={`/deals?id=${d.dealId}`} className="block text-[10px] text-primary hover:underline truncate">{dealLink}</Link>
+                        <Link href={`/deals?id=${d.dealId}`} className="block text-[10px] text-primary hover:underline truncate" title={d.name}>{dealLink}</Link>
                       </td>
                       <td className="py-1.5 pr-2 max-w-[10rem] truncate">{d.counterparty || "—"}</td>
                       <td className="py-1.5 pr-2"><DealBadges d={d} /></td>

@@ -1,4 +1,6 @@
 import { aboutText } from "@/lib/about-text";
+import { formatSizeList } from "@/lib/format-size";
+import { isOwnChannelNews, newsSourceLabel, splitNewsTitle } from "@/components/brand-profile-panel";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { BrandFeedCard } from "@/components/brand-feed-card";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
@@ -197,10 +199,19 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
 
       <div className={sec("chat")}>
       <BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} suggestedDomain={c.ai_generated_fields?.website_suggestion?.domain} />
-      {!isClientViewer && <BrandImageRefreshButton companyId={companyId} />}
+      {/* Image search is a staff tool for brands — agent firms and
+          landlords showed it too (Woody, 2026-09-27). */}
+      {!isClientViewer && !isAgentFirm && !isLandlord && <BrandImageRefreshButton companyId={companyId} />}
       {c.description && <div className="rounded-lg border border-border bg-card p-3 space-y-2">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
-        <p className={`text-sm leading-relaxed whitespace-pre-line ${aboutOpen ? "" : "line-clamp-5"}`}>{aboutText(c.description)}</p>
+        {/* First paragraph clamped on its own; the rest only when expanded. */}
+        {(() => {
+          const paras = aboutText(c.description).split(/\n{2,}/).filter(Boolean);
+          const clamped = !aboutOpen && c.description.length > 220;
+          return (clamped ? paras.slice(0, 1) : paras).map((para, i) => (
+            <p key={i} className={`text-sm leading-relaxed whitespace-pre-line ${clamped ? "line-clamp-5" : ""}`}>{para}</p>
+          ));
+        })()}
         {c.description.length > 220 && <button type="button" onClick={() => setAboutOpen(v => !v)} className="text-xs text-primary hover:underline">{aboutOpen ? "Show less" : "Read more"}</button>}
       </div>}
       {/* Landlords and agent firms have no BGP take on desktop either. */}
@@ -374,7 +385,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
                   <div key={r.id} className={`text-xs border-l-2 pl-2 ${String(r.status || "").toLowerCase() === "active" ? "border-l-emerald-400" : "border-l-muted"}`}>
                     <div className="flex items-center gap-1.5 flex-wrap">
                       {r.status && <Badge variant="outline" className="text-[10px]">{r.status}</Badge>}
-                      {(r.size || []).length > 0 && <span className="font-mono tabular-nums text-[11px]">{r.size.join(" / ")}</span>}
+                      {(r.size || []).length > 0 && <span className="font-mono tabular-nums text-[11px]">{formatSizeList(r.size)}</span>}
                     </div>
                     {(r.requirement_locations || []).length > 0 && (
                       <p className="text-[11px] text-muted-foreground leading-snug line-clamp-2">{r.requirement_locations.join(", ")}</p>
@@ -521,37 +532,44 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           </CardContent>
         </Card>
       )}
-      {/* News & Media — same feed the desktop sidebar shows */}
-      {(data.news || []).length > 0 && (
+      {/* News & Media — same feed (and clean-up) as the desktop Industry
+          tab: the brand's own Instagram / jobs posts are in Social, sources
+          like "Crisis (Google News)" give way to the title's publisher
+          (Woody, 2026-09-27). */}
+      {(() => {
+        const newsM = (data.news || []).filter((n: any) => !isOwnChannelNews(n.source_name));
+        if (newsM.length === 0) return null;
+        return (
         <Card>
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
               <Newspaper className="w-3.5 h-3.5" /> News & media
-              <Badge variant="outline" className="text-[10px] font-mono tabular-nums">{data.news.length}</Badge>
+              <Badge variant="outline" className="text-[10px] font-mono tabular-nums">{newsM.length}</Badge>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-2">
-            {(newsShowAllM ? data.news : data.news.slice(0, 5)).map((n: any) => (
+            {(newsShowAllM ? newsM : newsM.slice(0, 5)).map((n: any) => (
               <a key={n.id} href={n.url} target="_blank" rel="noopener noreferrer" className="flex gap-2.5 min-w-0 group">
                 {n.image_url && (
                   <img src={n.image_url} alt="" loading="lazy" className="w-14 h-14 rounded object-cover shrink-0 bg-muted" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
                 )}
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium leading-snug line-clamp-2 group-hover:underline">{n.title}</p>
+                  <p className="text-xs font-medium leading-snug line-clamp-2 group-hover:underline">{splitNewsTitle(n.title).title}</p>
                   <div className="text-[11px] text-muted-foreground truncate">
-                    {[n.source_name, n.published_at ? new Date(n.published_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : null].filter(Boolean).join(" · ")}
+                    {[newsSourceLabel(n.source_name, n.title, c.name), n.published_at ? new Date(n.published_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : null].filter(Boolean).join(" · ")}
                   </div>
                 </div>
               </a>
             ))}
-            {data.news.length > 5 && (
+            {newsM.length > 5 && (
               <button onClick={() => setNewsShowAllM(v => !v)} className="text-[11px] text-primary hover:underline">
-                {newsShowAllM ? "Show less" : `Show all ${data.news.length}`}
+                {newsShowAllM ? "Show less" : `Show all ${newsM.length}`}
               </button>
             )}
           </CardContent>
         </Card>
-      )}
+        );
+      })()}
       </div>
 
       <div className={sec("stores")}>

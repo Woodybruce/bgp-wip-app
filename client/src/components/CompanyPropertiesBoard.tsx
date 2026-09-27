@@ -504,7 +504,7 @@ export function CompanyPropertiesBoard({
       if (!byId.has(id)) {
         byId.set(id, {
           id,
-          name: seed?.name || crm?.name || "Untitled property",
+          name: seed?.name || crm?.name || "",
           address: seed?.address ?? addressText(crm?.address, crm?.postcode),
           postcode: seed?.postcode ?? crm?.postcode ?? null,
           status: seed?.status ?? crm?.status ?? null,
@@ -557,6 +557,13 @@ export function CompanyPropertiesBoard({
     for (const u of units) {
       const bp = ensure(u.property_id);
       if (bp) bp.units.push(u);
+    }
+
+    // A nameless property read "Untitled property" (British Land's
+    // Strathkelvin) — fall back to its address, then its deal's name
+    // (Woody, 2026-09-27).
+    for (const bp of byId.values()) {
+      if (!bp.name.trim()) bp.name = bp.address || bp.deals.find(d => d.name)?.name || "Property (no name)";
     }
 
     // agents per property
@@ -782,7 +789,8 @@ export function CompanyPropertiesBoard({
         <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
           {([
             ["all", `All ${boardProperties.length + discovered.length}`],
-            ["crm", `In CRM ${boardProperties.length}`],
+            // "All 1 / In CRM 1" said the same thing twice (Woody, 2026-09-27)
+            discovered.length > 0 ? ["crm", `In CRM ${boardProperties.length}`] : null,
             discovered.length > 0 ? ["discovered", `Discovered ${discovered.length}`] : null,
             ["expiring", `Expiring soon ${boardProperties.filter(p => p.units.some(u => isExpiringSoon(u.lease_expiry))).length}`],
           ].filter(Boolean) as [string, string][]).map(([key, label]) => (

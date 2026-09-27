@@ -2083,6 +2083,17 @@ export function setupNewsFeedRoutes(app: Express) {
         if (hits === 1 && locationTokens.some((t: string) => hasWord(text, t))) return true;
         if (ownerName.length > 5 && text.includes(ownerName)) return true;
         return false;
+      }).filter((a, i, all) => {
+        // "News | Bluewater opens…" and the same story from two outlets read
+        // as a double-up on the property page (Woody, 2026-09-27).
+        (a as any).title = String(a.title || "").replace(/^\s*(?:news|press release|latest)\s*[|:]\s*/i, "").replace(/\s+[-–|]\s+[A-Z][^-–|?!]{1,39}$/, "");
+        const words = (t: string) => new Set(t.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(w => w.length > 2));
+        const mine = words((a as any).title);
+        return !all.slice(0, i).some(b => {
+          const theirs = words(String(b.title || ""));
+          const shared = Array.from(mine).filter(w => theirs.has(w)).length;
+          return shared / Math.max(1, Math.min(mine.size, theirs.size)) >= 0.7;
+        });
       }).slice(0, 10);
 
       // Thumbnail the matched slice — DB pipeline articles often land with

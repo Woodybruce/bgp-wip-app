@@ -1072,28 +1072,81 @@ function PropertyUnitCell({
 }
 
 // Drop the property from a deal title when the card subtitle already shows
-// it. Matches the property name's leading words (longest first, down to one
-// significant word) at either end of the title, with or without a separator,
-// so "Brent Cross – Pure Gym" under "Brent Cross Shopping Centre" and
-// "10 Piccadilly Time Out Market" under "10 Piccadilly" both shorten. Never
+// it. First by separator-delimited segment (– — - | : , ·): a segment that is
+// the property (or its leading words — "Kings Road" under "Kings Road Park")
+// goes along with any trailing town after it, so "Pret A Manger – Gunwharf
+// Quays, Portsmouth" → "Pret A Manger"; a leading/trailing segment that is a
+// town in the property's address goes too ("Cardiff - Starbucks Hays" →
+// "Starbucks Hays"). Then by the property's leading words at either end with
+// no separator ("10 Piccadilly Time Out Market" under "10 Piccadilly"). Never
 // strips to empty (Woody, 2026-09-27).
 const TITLE_STOPWORDS = new Set(["the", "and", "of", "at", "on", "in"]);
-function stripPropertyFromTitle(title: string, propName: string): string {
+export function stripPropertyFromTitle(title: string, propName: string, propAddress?: string | null): string {
   // The title is itself a short form of the property ("Brent Cross") — keep it.
   if (propName.trim().toLowerCase().startsWith(title.trim().toLowerCase())) return title;
+  const norm = (v: string) => v.toLowerCase().replace(/[’']/g, "").replace(/&/g, "and").replace(/[^a-z0-9]+/g, " ").trim().replace(/^the /, "");
+  const significant = (n: string) => n.split(" ").some(w => /[a-z]{3,}/.test(w) && !TITLE_STOPWORDS.has(w));
+  const prop = norm(propName);
+  const addr = ` ${norm(propAddress || "")} `;
+  const isProp = (seg: string) => {
+    const n = norm(seg);
+    return !!n && !!prop && significant(n) && (n === prop || prop.startsWith(`${n} `) || n.startsWith(`${prop} `));
+  };
+  const isPlace = (seg: string) => {
+    const n = norm(seg);
+    return !!n && significant(n) && n.split(" ").length <= 3 && addr.includes(` ${n} `);
+  };
+  const trimSep = (v: string) => v.replace(/^[\s–—\-|,:·]+|[\s–—\-|,:·]+$/g, "");
+  // `comma` marks a segment that follows ", " — the "Property, Town" form.
+  const split = (t: string) => {
+    const out: { text: string; start: number; end: number; comma: boolean }[] = [];
+    let last = 0;
+    let comma = false;
+    for (const m of t.matchAll(/\s*[–—|·]\s*|\s+-\s*|\s*-\s+|\s*[,:]\s+/g)) {
+      out.push({ text: t.slice(last, m.index), start: last, end: m.index!, comma });
+      last = m.index! + m[0].length;
+      comma = m[0].trim() === ",";
+    }
+    out.push({ text: t.slice(last), start: last, end: t.length, comma });
+    return out;
+  };
+  // The property's leading words at either end of one segment, with no
+  // separator: "10 Piccadilly Time Out Market", "The Blue Lagoon Bluewater".
   const words = propName.trim().split(/\s+/).filter(Boolean);
   const esc = (w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const sep = "(?:\\s*[–—\\-|,:·]\\s*|\\s+)";
-  for (let k = words.length; k >= 1; k--) {
-    const head = words.slice(0, k);
-    if (!head.some(w => /[a-z]{3,}/i.test(w) && !TITLE_STOPWORDS.has(w.toLowerCase()))) continue;
-    const prefix = head.map(esc).join("\\s+");
-    for (const re of [new RegExp(`^\\s*${prefix}${sep}`, "i"), new RegExp(`${sep}${prefix}\\s*$`, "i")]) {
-      const rest = title.replace(re, "").trim();
-      if (rest && rest !== title.trim()) return rest;
+  const stripEnds = (seg: string) => {
+    for (let k = words.length; k >= 1; k--) {
+      const head = words.slice(0, k);
+      if (!head.some(w => /[a-z]{3,}/i.test(w) && !TITLE_STOPWORDS.has(w.toLowerCase()))) continue;
+      const prefix = head.map(esc).join("\\s+");
+      for (const re of [new RegExp(`^\\s*${prefix}\\s+`, "i"), new RegExp(`\\s+${prefix}\\s*$`, "i")]) {
+        const rest = seg.replace(re, "").trim();
+        if (rest && rest !== seg.trim()) return rest;
+      }
     }
+    return seg;
+  };
+  let base = title;
+  const segs = split(title);
+  if (segs.length > 1) {
+    let rest: string | null = null;
+    const i = segs.findIndex(sg => isProp(sg.text));
+    if (i > 0) {
+      // Keep what follows the property unless it's its town ("…, Portsmouth").
+      const after = segs.slice(i + 1).filter(sg => !sg.comma && !isPlace(sg.text)).map(sg => trimSep(sg.text).trim()).filter(Boolean);
+      rest = [title.slice(0, segs[i].start), ...after].map(v => trimSep(v).trim()).filter(Boolean).join(" – ");
+    } else if (i === 0) {
+      let j = 1;
+      while (j < segs.length - 1 && isPlace(segs[j].text)) j++;
+      rest = title.slice(segs[j].start);
+    } else if (isPlace(segs[0].text)) rest = title.slice(segs[1].start);
+    else if (isPlace(segs[segs.length - 1].text)) rest = title.slice(0, segs[segs.length - 1].start);
+    const out = rest == null ? "" : trimSep(rest).trim();
+    if (out) base = out;
   }
-  return title;
+  const parts = split(base);
+  const rebuilt = parts.map((sg, idx) => (idx ? base.slice(parts[idx - 1].end, sg.start) : "") + stripEnds(sg.text)).join("").trim();
+  return rebuilt || base;
 }
 
 // Consolidated Fee cell — £ amount on top, Fee Agreement chip
@@ -1142,15 +1195,15 @@ function FeeCombinedCell({
               <Plus className="w-3 h-3" /> Add fee
             </span>
           )}
-          {deal.feeAgreement ? (
+          {/* Only a positive FA marker — "No FA" under every fee was noise
+              (Woody, 2026-09-27); the popover still sets it. */}
+          {deal.feeAgreement && (
             <Badge
               variant="secondary"
               className={`text-[9px] px-1 py-0 leading-tight w-fit ${DEAL_FEE_AGREEMENT_COLORS[deal.feeAgreement] || ""}`}
             >
               FA {deal.feeAgreement}
             </Badge>
-          ) : (
-            <span className="text-[10px] text-muted-foreground italic">No FA</span>
           )}
         </button>
       </PopoverTrigger>
@@ -3222,7 +3275,9 @@ function FeeAllocCell({ dealId, dealFee, allAllocations, colorMap, teams, onClic
   const teamBadges = teamList.length > 0 ? (
     <div className="flex flex-wrap gap-0.5 mb-0.5">
       {teamList.map(t => (
-        <Badge key={t} variant="secondary" className={`text-[9px] px-1 py-0 leading-tight ${DEAL_TEAM_COLORS[t] || ""}`}>{t}</Badge>
+        // Long team names ("Development Re-Purposing") truncate with a
+        // tooltip instead of widening/clipping the column (Woody, 2026-09-27).
+        <Badge key={t} variant="secondary" title={t} className={`text-[9px] px-1 py-0 leading-tight max-w-[150px] truncate block ${DEAL_TEAM_COLORS[t] || ""}`}>{t}</Badge>
       ))}
     </div>
   ) : null;
@@ -3239,7 +3294,7 @@ function FeeAllocCell({ dealId, dealFee, allAllocations, colorMap, teams, onClic
   return (
     // min-w + shrink-0 amount — at 1440px the split column squeezed "£15,000"
     // down to "£15" (Woody, 2026-09-27).
-    <div className="space-y-0.5 cursor-pointer group min-w-[150px]" onClick={onClick} data-testid={`fee-alloc-summary-${dealId}`}>
+    <div className="space-y-0.5 cursor-pointer group min-w-[170px]" onClick={onClick} data-testid={`fee-alloc-summary-${dealId}`}>
       {teamBadges}
       {allocations.map((a, i) => {
         const amount = a.allocationType === "percentage"
@@ -3252,7 +3307,7 @@ function FeeAllocCell({ dealId, dealFee, allAllocations, colorMap, teams, onClic
             <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 ${bg}`}>
               <span className="text-[7px] font-bold text-white">{initials}</span>
             </div>
-            <span className="text-[11px] truncate min-w-0 max-w-[60px]">{a.agentName.split(" ")[0]}</span>
+            <span className="text-[11px] truncate min-w-0 max-w-[70px]" title={a.agentName}>{a.agentName.split(" ")[0]}</span>
             <span className="text-[10px] text-muted-foreground ml-auto font-mono tabular-nums shrink-0 whitespace-nowrap">{formatCurrency(amount)}</span>
           </div>
         );
@@ -6553,7 +6608,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
               <>
               <MobileCardView
                 items={(isMobile ? filteredDeals.slice(0, phoneShown) : filteredDeals).map((deal): MobileCardItem => {
-                  const propName = deal.propertyId ? (properties.find(p => p.id === deal.propertyId)?.name || "") : "";
+                  const cardProp = deal.propertyId ? properties.find(p => p.id === deal.propertyId) : undefined;
+                  const propName = cardProp?.name || "";
                   const agents = Array.isArray(deal.internalAgent) ? deal.internalAgent.join(", ") : (deal.internalAgent || "");
                   const teams = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || "");
                   // Custom deal name (different from the auto-filled property
@@ -6564,7 +6620,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   // Bluewater Shopping Centre" over "Bluewater Shopping Centre"
                   // becomes "Nando's" (Woody, 2026-09-27).
                   const cardTitle = customDealName && propName
-                    ? stripPropertyFromTitle(customDealName, propName)
+                    ? stripPropertyFromTitle(customDealName, propName, typeof cardProp?.address === "string" ? cardProp.address : (cardProp?.address as any)?.formatted)
                     : customDealName;
                   // Phone triage needs dates without opening each deal:
                   // Target Date drives the WIP bucket, and time-in-status
@@ -6692,7 +6748,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {effectiveColumns.parties && <TableHead className="min-w-[180px]">Parties</TableHead>}
                     {effectiveColumns.feeCombined && <TableHead className="min-w-[110px]">Fee</TableHead>}
                     {effectiveColumns.fee && <SortableTableHead sortKey="fee" sort={dealsSort} align="right" className="min-w-[80px]">Fee</SortableTableHead>}
-                    {effectiveColumns.feeAlloc && !isClientDeals && <TableHead className="min-w-[160px]">Fee Split</TableHead>}
+                    {effectiveColumns.feeAlloc && !isClientDeals && <TableHead className="min-w-[190px] whitespace-nowrap">Fee Split</TableHead>}
                     {effectiveColumns.agent && <SortableTableHead sortKey="agent" sort={dealsSort} className="min-w-[80px]">BGP Contact</SortableTableHead>}
                     {effectiveColumns.assetClass && (
                       <TableHead className="min-w-[80px]">
@@ -6925,7 +6981,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       {/* Fee Split is the internal per-BGP-agent breakdown —
                           staff-only, never shown to a client/client-view. */}
                       {effectiveColumns.feeAlloc && !isClientDeals && (
-                        <TableCell className="px-1.5 py-1">
+                        <TableCell className="px-1.5 py-1 min-w-[190px]">
                           <FeeAllocCell dealId={deal.id} dealFee={deal.fee} allAllocations={allFeeAllocations} colorMap={userColorMap2} teams={deal.team} onClick={() => setFeeAllocEditDeal(deal)} />
                         </TableCell>
                       )}
@@ -7295,14 +7351,19 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   )}
                   {filteredDeals.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={3 + Object.values(visibleColumns).filter(v => v).length} className="text-center py-12 text-muted-foreground">
-                        <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
-                          <BarChart3 className="w-6 h-6 text-muted-foreground" />
+                      <TableCell colSpan={3 + Object.values(visibleColumns).filter(v => v).length} className="p-0 text-muted-foreground">
+                        {/* Pinned to the left of the visible scroll area — centred
+                            across the full colSpan it landed off-screen right
+                            (Woody, 2026-09-27). */}
+                        <div className="sticky left-0 w-full max-w-[min(28rem,calc(100vw-2rem))] py-12 text-center">
+                          <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
+                            <BarChart3 className="w-6 h-6 text-muted-foreground" />
+                          </div>
+                          <p className="text-sm font-semibold text-foreground">{isCompsMode ? "No comps found" : "No deals found"}</p>
+                          <p className="text-xs mt-1">
+                            {hasFilters ? "Create a deal or adjust your filters" : "Create a deal to get started"}
+                          </p>
                         </div>
-                        <p className="text-sm font-semibold text-foreground">{isCompsMode ? "No comps found" : "No deals found"}</p>
-                        <p className="text-xs mt-1">
-                          {hasFilters ? "Create a deal or adjust your filters" : "Create a deal to get started"}
-                        </p>
                       </TableCell>
                     </TableRow>
                   )}

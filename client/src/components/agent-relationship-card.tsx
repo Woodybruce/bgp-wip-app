@@ -23,7 +23,7 @@ const MATTER_LABEL: Record<string, string> = { rent_review: "Rent review", lease
 
 function Row({ href, title, sub, right }: { href?: string; title: React.ReactNode; sub?: React.ReactNode; right?: React.ReactNode }) {
   const body = (
-    <div className="flex items-center justify-between gap-2 min-w-0 rounded border bg-card px-2 py-1.5 hover:bg-muted/40">
+    <div className="group flex items-center justify-between gap-2 min-w-0 rounded border bg-card px-2 py-1.5 hover:bg-muted/40">
       <div className="min-w-0">
         <div className="text-xs font-medium truncate">{title}</div>
         {sub && <div className="text-[10px] text-muted-foreground truncate">{sub}</div>}
@@ -98,7 +98,10 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
             {data.roles.length
               ? data.roles.map((r: any) => {
                   const meta = AGENT_ROLES.find(x => x.role === r.role);
-                  return <Badge key={r.role} variant="outline" className="text-[11px] font-normal" title={meta?.description}>{meta?.label || r.role} <span className="ml-1 tabular-nums text-muted-foreground">{r.count}</span></Badge>;
+                  // "Tenant rep 10" beside "Tenant rep team 9" read as two
+                  // counts of the same thing — this one is dealings, the team
+                  // header is people (Woody, 2026-09-27).
+                  return <Badge key={r.role} variant="outline" className="text-[11px] font-normal" title={meta?.description}><span className="tabular-nums mr-1">{r.count}</span>{String(meta?.short || r.role).toLowerCase().replace(/[\s_]+/g, "-")} dealing{r.count === 1 ? "" : "s"}</Badge>;
                 })
               : <span className="text-xs text-muted-foreground italic">No recorded dealings yet — roles appear as deals, requirements, viewings and matters link to this firm or its people.</span>}
           </div>
@@ -116,11 +119,15 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
             {(data.teams || []).map((g: any) => {
               const busy = g.people.filter((p: any) => p.activity > 0);
               const quiet = g.people.length - busy.length;
-              const toFix = g.team ? busy.filter((p: any) => p.inferred).map((p: any) => ({ id: p.id, team: g.team })) : [];
+              // Only people whose recorded team isn't this one get a fix; with
+              // two or more the bulk button leads and the row buttons show on
+              // hover only, not on every row (Woody, 2026-09-27).
+              const differs = (p: any) => !!g.team && String(p.recordedTeam || "").toLowerCase() !== String(g.team).toLowerCase();
+              const toFix = g.team ? busy.filter(differs).map((p: any) => ({ id: p.id, team: g.team })) : [];
               return (
                 <div key={g.team || "none"} className="space-y-1">
                   <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
-                    {g.team ? `${g.team} team` : "No team set"}<Badge variant="outline" className="text-[9px] tabular-nums">{g.people.length}</Badge>
+                    {g.team ? `${g.team} team` : "No team set"}<Badge variant="outline" className="text-[9px] tabular-nums normal-case tracking-normal">{g.people.length} {g.people.length === 1 ? "person" : "people"}</Badge>
                     {toFix.length > 1 && <Button variant="ghost" size="sm" className="h-5 px-1.5 text-[10px] normal-case tracking-normal ml-auto" disabled={setTeam.isPending} onClick={() => setTeam.mutate(toFix)} data-testid="button-agent-team-fix-all">Set all {toFix.length} to {g.team}</Button>}
                   </div>
                   {busy.slice(0, 8).map((p: any) => (
@@ -128,10 +135,10 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
                       sub={p.title || undefined}
                       right={<>{Object.entries(p.capacities).sort((a: any, b: any) => b[1] - a[1]).slice(0, 2).map(([role, n]: any) => (
                         <Badge key={role} variant="outline" className="text-[9px]">{AGENT_ROLES.find(r => r.role === role)?.short || role} {n}</Badge>
-                      ))}{p.inferred && g.team && (
+                      ))}{differs(p) && (
                         // The why lives on hover — "recorded as Leasing — their work
                         // is Tenant Rep" under every name read as working notes.
-                        <Button variant="outline" size="sm" className="h-5 px-1.5 text-[10px]" disabled={setTeam.isPending}
+                        <Button variant="outline" size="sm" className={`h-5 px-1.5 text-[10px] ${toFix.length > 1 ? "hidden group-hover:inline-flex" : ""}`} disabled={setTeam.isPending}
                           title={p.recordedTeam ? `Recorded as ${p.recordedTeam}; their deals are ${g.team}` : `Their deals are ${g.team}`}
                           onClick={(e) => { e.preventDefault(); e.stopPropagation(); setTeam.mutate([{ id: p.id, team: g.team }]); }} data-testid="button-agent-team-fix">Set team</Button>
                       )}</>} />

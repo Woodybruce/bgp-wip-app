@@ -1302,7 +1302,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && draft.trim() && !addTask.isPending) addTask.mutate(draft.trim()); }}
             placeholder="Add a task…"
-            className="text-xs h-7 flex-1 min-w-[180px]"
+            className="text-xs h-7 max-md:h-11 max-md:basis-full flex-1 min-w-[180px]"
           />
           <Select value={assigneeId || "me"} onValueChange={(v) => setAssigneeId(v === "me" ? "" : v)}>
             <SelectTrigger className="h-7 w-[110px] text-[10px]" data-testid="focus-task-assignee">

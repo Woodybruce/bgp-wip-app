@@ -220,11 +220,12 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
   const NO_EVIDENCE = /cannot be confirmed|can'?t be confirmed|no evidence|wasn'?t returned|not returned|outside the (?:roughly )?\d+-month window|does not identify|doesn'?t identify|no (?:specific|direct|cited) evidence|not a direct match|available results? (?:gives?|shows?|provides?) no/i;
   // Caveat sentences ("No Bluewater-specific plan was found.") are the
   // researcher's working, not intel — drop them from otherwise good notes.
-  const CAVEAT = /^(?:no\b[^.]*\b(?:was|were|has been|have been) (?:found|identified|confirmed|announced)|[^.]*\b(?:not|yet to be) (?:been )?(?:found|confirmed)\b|no [\w'’ -]+-specific\b|[^.]*\bnot (?:one of )?the specified\b|[^.]*\bnot specifically\b)/i;
+  const CAVEAT = /^(?:no\b[^.]*\b(?:was|were|has been|have been) (?:found|identified|confirmed|announced)|[^.]*\bno [^.]*\b(?:was|were) (?:found|identified|available|returned)\b|[^.]*\b(?:not|yet to be) (?:been )?(?:found|confirmed)\b|no [\w'’ -]+-specific\b|[^.]*\bnot (?:one of )?the specified\b|[^.]*\bnot specifically\b)/i;
   // Also drop the researcher's "[5]" citation markers.
   const tidy = (note?: string | null) => (note || "").replace(/\s*\[\d+\]/g, "").split(/(?<=[.!?])\s+/).filter(x => !CAVEAT.test(x.trim())).join(" ")
     .replace(/,?\s*though not one of the specified centres/gi, "").replace(/\s*[—–-]\s*this is London-wide, not specifically [^.]+\./gi, ".");
-  const expanding = (data?.brands || []).filter(b => b.expanding && !NO_EVIDENCE.test(b.note || "")).map(b => ({ ...b, note: tidy(b.note) }));
+  const expanding = (data?.brands || []).filter(b => b.expanding && !NO_EVIDENCE.test(b.note || "")).map(b => ({ ...b, note: tidy(b.note) })).filter(b => b.note.trim());
+  const marketNotes = tidy(data?.market_notes).trim();
   const [notesOpen, setNotesOpen] = useState(false);
   return (
     <div className="rounded-lg border border-border bg-muted/40 p-3" data-testid="gap-live-intel">
@@ -247,7 +248,7 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
         <p className="text-xs text-muted-foreground italic">No expansion evidence gathered yet — the sweep runs automatically and refreshes weekly.</p>
       ) : (
         <div className="space-y-1.5">
-          {data.market_notes && !/available results? (?:gives?|shows?) no|do(?:es)? not establish|no (?:cited |specific )?evidence|could not (?:be )?(?:confirm|establish|find)|not (?:been )?(?:found|confirmed)/i.test(data.market_notes) && <p className={`text-xs leading-relaxed ${notesOpen ? "" : "line-clamp-2"} cursor-pointer`} onClick={() => setNotesOpen(v => !v)} title={notesOpen ? undefined : "Click to read the full note"}>{data.market_notes}</p>}
+          {marketNotes && !/available results? (?:gives?|shows?) no|do(?:es)? not establish|no (?:cited |specific )?evidence|could not (?:be )?(?:confirm|establish|find)|not (?:been )?(?:found|confirmed)/i.test(marketNotes) && <p className={`text-xs leading-relaxed ${notesOpen ? "" : "line-clamp-2"} cursor-pointer`} onClick={() => setNotesOpen(v => !v)} title={notesOpen ? undefined : "Click to read the full note"}>{marketNotes}</p>}
           {expanding.length === 0 ? (
             <p className="text-xs text-muted-foreground italic">No cited expansion evidence on the current candidates.</p>
           ) : (
@@ -723,7 +724,7 @@ function CentreOpenings({ propertyId }: { propertyId: string }) {
                 <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-2">
                   {tab === "peers" && <span className="font-medium text-foreground/80">{item.centre}</span>}
                   {item.brand && <Link href={`/companies/${item.brand.id}`} className="hover:underline">{item.brand.name}</Link>}
-                  {item.source && <span>{item.source.replace(/\s*\(Google News\)\s*$/i, "")}</span>}
+                  {item.source && item.source.replace(/\s*\(Google News\)\s*$/i, "").toLowerCase() !== item.brand?.name.toLowerCase() && <span>{item.source.replace(/\s*\(Google News\)\s*$/i, "")}</span>}
                 </div>
               </div>
             </div>

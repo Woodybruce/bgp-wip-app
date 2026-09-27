@@ -4923,9 +4923,9 @@ Return a JSON object with these fields (use null for any field you cannot find):
       // Own-company pass: a client opening THEIR OWN profile (a landlord row,
       // never in the tenant slice) must not be refused by the brand gate.
       if (scope && brandId !== scope && !(await isClientVisibleBrand(brandId, scope))) return res.status(403).json({ error: "Access denied" });
-      const brandQ = await pool.query(`SELECT name, company_type FROM crm_companies WHERE id = $1`, [brandId]);
+      const brandQ = await pool.query(`SELECT name, company_type, industry FROM crm_companies WHERE id = $1`, [brandId]);
       if (!brandQ.rows[0]) return res.status(404).json({ error: "Brand not found" });
-      const { name: brandName, company_type: brandType } = brandQ.rows[0];
+      const { name: brandName, company_type: brandType, industry: brandIndustry } = brandQ.rows[0];
 
       const reqQ = await pool.query(
         `SELECT size, use, requirement_locations FROM crm_requirements_leasing
@@ -4940,15 +4940,44 @@ Return a JSON object with these fields (use null for any field you cannot find):
            FROM available_units au JOIN crm_properties p ON p.id = au.property_id
           WHERE au.marketing_status IN ('AVA','NEG')
             ${scope ? "AND (p.landlord_id = $2 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $2))" : ""}
-            AND au.id NOT IN (
-              SELECT b.unit_id FROM unit_target_operators t JOIN unit_briefs b ON b.id = t.brief_id
-               WHERE t.company_id = $1)`,
+            -- Not at a centre where they already trade or are already on a
+            -- target list — pitching Nando's a unit next door to their own
+            -- store read as noise (Woody, 2026-09-27).
+            AND p.id NOT IN (
+              SELECT b.property_id FROM unit_target_operators t JOIN unit_briefs b ON b.id = t.brief_id
+               WHERE t.company_id = $1)
+            AND NOT EXISTS (
+              SELECT 1 FROM leasing_schedule_units lu
+               WHERE lu.property_id = p.id
+                 AND (lu.tenant_name ILIKE (SELECT name FROM crm_companies WHERE id = $1)
+                      OR (SELECT id::text FROM crm_companies WHERE id = $1) = ANY(COALESCE(lu.target_company_ids, '{}'::text[]))))`,
         scope ? [brandId, scope] : [brandId]);
 
-      const typeText = `${brandType || ""} ${brandName}`;
+      // No live requirement: the brand's own tenancies give its typical unit
+      // size when we hold two or more (median sq ft); units outside
+      // 0.6×–1.6× of it are skipped. No stored size → no size filter.
+      let typical: number | null = null;
+      if (!range) {
+        const sizesQ = await pool.query(
+          `SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY sqft) AS median, COUNT(*)::int AS n
+             FROM leasing_schedule_units
+            WHERE tenant_name ILIKE (SELECT name FROM crm_companies WHERE id = $1) AND sqft > 0`, [brandId]);
+        const r = sizesQ.rows[0];
+        if (r && r.n >= 2 && Number(r.median) > 0) typical = Number(r.median);
+      }
+
+      const typeText = `${brandType || ""} ${brandIndustry || ""} ${brandName}`;
+      // Coffee-shop units aren't restaurant pitches and vice versa.
+      const fmtText = `${brandIndustry || ""} ${brandType || ""}`;
+      const brandIsCafe = /coffee|caf[eé]|bakery|patisserie|juice|dessert/i.test(brandIndustry || "") || (!brandIndustry && /coffee|caf[eé]/i.test(brandType || ""));
+      const brandIsRestaurant = !brandIsCafe && /restaurant|dining|takeaway|fast food|quick service/i.test(fmtText);
       const suggestions: any[] = [];
       for (const u of unitsQ.rows) {
         const unitText = `${u.unit_name || ""} ${u.use_class || ""}`;
+        const unitIsCafe = /coffee|caf[eé]/i.test(unitText);
+        const unitIsRestaurant = /restaurant|dining/i.test(unitText);
+        if (brandIsRestaurant && unitIsCafe && !unitIsRestaurant) continue;
+        if (brandIsCafe && unitIsRestaurant && !unitIsCafe) continue;
         if (range && u.sqft != null) {
           const sq = Number(u.sqft);
           if (sq >= range.min && sq <= range.max) {
@@ -4961,6 +4990,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
             continue;
           }
         }
+        if (typical && u.sqft != null && (Number(u.sqft) < typical * 0.6 || Number(u.sqft) > typical * 1.6)) continue;
         const useHit = USE_HINTS.some(([reqRe, unitRe]) => reqRe.test(typeText) && unitRe.test(unitText));
         if (useHit) {
           // "Restaurant suits their Restaurant format" said nothing — name the

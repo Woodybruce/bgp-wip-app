@@ -746,18 +746,53 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
             AND use_class IS NOT NULL
           LIMIT 3
        )
-       -- Same sub-category first, then the bigger chains: the unordered
-       -- list gave every restaurant the same eight names (Woody, 2026-09-27).
-       SELECT id, name, store_count, rollout_status FROM (
-         SELECT DISTINCT c.id, c.name, c.store_count, c.rollout_status, c.company_type
+       -- Ordering by company_type did nothing — Nando's, Wagamama and Wingstop
+       -- all share "Tenant - Restaurant" and got the same eight names. Rank by
+       -- the same industry, then the same format (coffee vs restaurant vs
+       -- bar), then store-count band closest to the brand's own; other formats
+       -- drop out once 4+ same-format peers exist (Woody, 2026-09-27).
+       , me_co AS (
+         SELECT id, name, industry, company_type, store_count, merged_into_id,
+                CASE WHEN COALESCE(industry, '') ~* '(coffee|caf[eé]|bakery|patisserie|tea room|juice|dessert)' THEN 'cafe'
+                     WHEN COALESCE(industry, '') ~* '(restaurant|dining|takeaway|fast food|quick service)' THEN 'restaurant'
+                     WHEN COALESCE(industry, '') ~* '(\\mbar\\M|\\mpub|nightclub|brewery)' THEN 'bar'
+                     WHEN COALESCE(company_type, '') ~* '(coffee|caf[eé])' THEN 'cafe'
+                     WHEN COALESCE(company_type, '') ~* 'restaurant' THEN 'restaurant'
+                     WHEN COALESCE(company_type, '') ~* '(\\mbar\\M|\\mpub)' THEN 'bar'
+                END AS fmt
+           FROM crm_companies WHERE id = $1
+       ), cand AS (
+         SELECT DISTINCT c.id, c.name, c.store_count, c.rollout_status, c.industry,
+                CASE WHEN COALESCE(c.industry, '') ~* '(coffee|caf[eé]|bakery|patisserie|tea room|juice|dessert)' THEN 'cafe'
+                     WHEN COALESCE(c.industry, '') ~* '(restaurant|dining|takeaway|fast food|quick service)' THEN 'restaurant'
+                     WHEN COALESCE(c.industry, '') ~* '(\\mbar\\M|\\mpub|nightclub|brewery)' THEN 'bar'
+                     WHEN COALESCE(c.company_type, '') ~* '(coffee|caf[eé])' THEN 'cafe'
+                     WHEN COALESCE(c.company_type, '') ~* 'restaurant' THEN 'restaurant'
+                     WHEN COALESCE(c.company_type, '') ~* '(\\mbar\\M|\\mpub)' THEN 'bar'
+                END AS fmt
            FROM crm_companies c
            JOIN crm_comps cm ON (cm.tenant ILIKE c.name OR cm.contact_company ILIKE c.name)
           WHERE c.company_type ILIKE 'tenant%'
             AND c.id <> $1
             AND c.merged_into_id IS NULL
+            AND c.id IS DISTINCT FROM (SELECT merged_into_id FROM me_co)
+            AND lower(trim(c.name)) <> (SELECT lower(trim(name)) FROM me_co)
             AND cm.use_class IN (SELECT use_class FROM me)
-       ) x
-       ORDER BY (x.company_type = (SELECT company_type FROM crm_companies WHERE id = $1)) DESC, x.store_count DESC NULLS LAST, x.name
+       ), scored AS (
+         SELECT cand.*,
+                (cand.industry IS NOT NULL AND lower(cand.industry) = (SELECT lower(industry) FROM me_co)) AS same_industry,
+                (cand.fmt IS NOT NULL AND cand.fmt = (SELECT fmt FROM me_co)) AS same_fmt,
+                (cand.fmt IS NOT NULL AND (SELECT fmt FROM me_co) IS NOT NULL AND cand.fmt <> (SELECT fmt FROM me_co)) AS other_fmt,
+                -- log-scale band gap: 40 vs 400 stores is as far as 400 vs 4,000
+                ABS(LN(GREATEST(cand.store_count, 1)) - LN(GREATEST(COALESCE((SELECT store_count FROM me_co), cand.store_count), 1))) AS band_gap
+           FROM cand
+       )
+       SELECT id, name, store_count, rollout_status FROM scored
+        WHERE NOT other_fmt OR (SELECT COUNT(*) FROM scored WHERE same_fmt) < 4
+        ORDER BY same_industry DESC, same_fmt DESC, other_fmt ASC,
+                 -- unknown store counts sit after the known chains of the
+                 -- same format, by name — a tiny unknown can't outrank Nando's
+                 (store_count IS NULL) ASC, band_gap ASC NULLS LAST, store_count DESC NULLS LAST, name
        LIMIT 8`,
       [companyId]
     );

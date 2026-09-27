@@ -87,7 +87,7 @@ export function PropertySimpleOverview({ propertyId, propertyName, landlordName,
             tile) on the same screen — the figure showed twice. */}
         {showUnits && <>
         <div className="flex items-end justify-between border-b pb-3 gap-3">
-          <div><p className="text-[11px] text-muted-foreground">Recorded passing rent / year</p><p className="text-2xl font-mono tabular-nums">{knownRent === null ? "Not recorded" : money(knownRent)}</p></div>
+          <div><p className="text-[11px] text-muted-foreground">Recorded passing rent / year</p>{knownRent === null ? <p className="text-sm text-muted-foreground">Not recorded</p> : <p className="text-2xl font-mono tabular-nums">{money(knownRent)}</p>}</div>
           <span className="text-sm text-muted-foreground"><span className="font-mono tabular-nums">{units.length}</span> tenancy {units.length === 1 ? "row" : "rows"}</span>
         </div>
         {rentRows > 0 && rentRows < units.length && <p className="text-[11px] text-muted-foreground -mt-2" title={`Rent is recorded for ${rentRows} of ${units.length} rows, so this is not a complete income total.`}>Partial · {rentRows} of {units.length} rows</p>}

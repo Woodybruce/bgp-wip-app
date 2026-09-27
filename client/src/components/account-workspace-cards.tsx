@@ -169,11 +169,17 @@ export function AccountNextActionsCard({ companyId }: { companyId: string }) {
         {actions.map(({ a, count }) => {
           const overdue = !isNaN(dueMs(a)) && dueMs(a) < todayStart.getTime();
           const due = a.dueDate ? new Date(a.dueDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : null;
+          // The property chip repeated what the title already said — drop it
+          // and let the title carry the link (Woody, 2026-09-27).
+          const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+          const chipRepeats = !!a.linkLabel && !!squash(a.linkLabel) && squash(a.title).includes(squash(a.linkLabel));
           return (
           <div key={a.taskId} className="flex items-center justify-between gap-2" data-testid={`account-next-action-${a.taskId}`}>
             <div className="min-w-0">
               <span className="flex items-center gap-1 text-xs min-w-0">
-                <span className="truncate">{a.title}</span>
+                {chipRepeats
+                  ? <Link href={actionLink(a)} className="truncate hover:underline">{a.title}</Link>
+                  : <span className="truncate">{a.title}</span>}
                 {count > 1 && <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">×{count}</span>}
               </span>
               <span className="block text-[10px] text-muted-foreground truncate">
@@ -184,7 +190,7 @@ export function AccountNextActionsCard({ companyId }: { companyId: string }) {
                   : `due ${due}`)}
               </span>
             </div>
-            {a.linkLabel && (
+            {a.linkLabel && !chipRepeats && (
               <Link href={actionLink(a)} className="shrink-0">
                 <Badge variant="outline" className="text-[9px] hover:bg-muted max-w-[10rem] truncate">{a.linkLabel}</Badge>
               </Link>

@@ -78,12 +78,19 @@ const norm = (r: any): InteractionRow => ({
   contactId: r.contactId || r.contact_id,
 });
 
+// Calendar days in Europe/London — the same maths as the Activity card's
+// "Next in …" badge, which read 9d against this list's 10d (Woody, 2026-09-27).
+const londonDay = (t: number) => {
+  const [y, m, dd] = new Date(t).toLocaleDateString("en-CA", { timeZone: "Europe/London" }).split("-").map(Number);
+  return Date.UTC(y, m - 1, dd) / 864e5;
+};
+
 function relDate(d: string | null | undefined): string {
   if (!d) return "";
-  const days = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+  const days = Math.ceil(londonDay(Date.now()) - londonDay(new Date(d).getTime()));
   // Upcoming meetings used to render as "-52d ago" (Woody, 2026-09-27).
   if (days < 0) {
-    const ahead = Math.ceil((new Date(d).getTime() - Date.now()) / 86400000);
+    const ahead = -days;
     if (ahead <= 1) return "tomorrow";
     if (ahead < 30) return `in ${ahead}d`;
     return new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
@@ -302,7 +309,8 @@ export function InteractionsBoard({ scope, contextId }: Props) {
                 <div className="flex flex-wrap items-center gap-1 text-xs">
                   <Users className="w-3 h-3 text-muted-foreground shrink-0" />
                   <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-1">Most active BGP</span>
-                  {topBgp.slice(0, 4).map(b => (
+                  {/* Busiest first (Woody, 2026-09-27) */}
+                  {[...topBgp].sort((a, b) => (b.count90d - a.count90d) || (b.countAll - a.countAll)).slice(0, 4).map(b => (
                     <Badge
                       key={b.email}
                       variant="outline"

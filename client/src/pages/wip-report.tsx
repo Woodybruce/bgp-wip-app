@@ -125,10 +125,23 @@ function loadSavedWipFilters(): SavedWipFilters | null {
   }
 }
 
+// Lowercase m/k like the rest of the app's short money — stage chips read
+// "£1.6M" beside "£3.5m" (Woody, 2026-09-27).
 function formatCurrency(value: number): string {
-  if (value >= 1_000_000) return `£${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `£${(value / 1_000).toFixed(0)}K`;
+  if (value >= 1_000_000) return `£${(value / 1_000_000).toFixed(1)}m`;
+  if (value >= 1_000) return `£${(value / 1_000).toFixed(0)}k`;
   return `£${value.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+}
+
+// One month format everywhere: "Sep 26". Month keys stay "Sep-26" (they're
+// the filter values); toLocaleDateString's en-GB "Sept 26" disagreed with the
+// chart axis (Woody, 2026-09-27).
+const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function monthLabel(key: string): string {
+  return key.replace("-", " ");
+}
+function shortMonthYear(d: Date): string {
+  return `${SHORT_MONTHS[d.getMonth()]} ${String(d.getFullYear() % 100).padStart(2, "0")}`;
 }
 
 function formatFullCurrency(value: number): string {
@@ -894,6 +907,18 @@ export default function WipReport() {
   const [phoneFiltersOpen, setPhoneFiltersOpen] = useState(false);
   const summaryRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLDivElement>(null);
+  // The desktop month chart's width decides how many axis/value labels fit —
+  // at ~30 months every label ran into its neighbours (Woody, 2026-09-27).
+  const [monthChartW, setMonthChartW] = useState(1000);
+  const monthChartObs = useRef<ResizeObserver | null>(null);
+  const monthChartRef = useCallback((el: HTMLDivElement | null) => {
+    monthChartObs.current?.disconnect();
+    monthChartObs.current = null;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([entry]) => setMonthChartW(Math.round(entry.contentRect.width)));
+    ro.observe(el);
+    monthChartObs.current = ro;
+  }, []);
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds(prev => {
@@ -1694,6 +1719,7 @@ export default function WipReport() {
               onToggle={(m) => toggleFilter(selectedMonths, setSelectedMonths, m)}
               onClearAll={() => setSelectedMonths(new Set())}
               values={filterFees.month}
+              getLabel={monthLabel}
             />
             {activeFilterCount > 0 && (
               <button
@@ -1751,7 +1777,7 @@ export default function WipReport() {
                       const active = selectedMonths.has(m.month);
                       const bar = (
                         <>
-                          <span className="text-[11px] text-muted-foreground w-12 text-left shrink-0 font-medium">{m.month}</span>
+                          <span className="text-[11px] text-muted-foreground w-12 text-left shrink-0 font-medium">{monthLabel(m.month)}</span>
                           <div className="flex-1 h-4 bg-muted rounded overflow-hidden flex">
                             {m.wip > 0 && <div className="h-full" style={{ width: `${(m.wip / maxM) * 100}%`, backgroundColor: active ? "#16a34a" : "#86efac" }} />}
                             {m.invoiced > 0 && <div className="h-full" style={{ width: `${(m.invoiced / maxM) * 100}%`, backgroundColor: active ? "#15803d" : "#22c55e" }} />}
@@ -1882,11 +1908,16 @@ export default function WipReport() {
                     <span>click to filter</span>
                   </div>
                 </div>
-                <div className="flex items-end gap-1 px-3 pt-2 pb-2">
+                <div ref={monthChartRef} className="flex items-end gap-1 px-3 pt-2 pb-2">
                   {(() => {
                     const maxM = Math.max(...monthlyFees.map(m => m.total), 1);
                     const colH = 104;
-                    const long = monthlyFees.length > 18;
+                    // Axis labels every Nth month so each gets ~48px; value
+                    // labels only when a column is wide enough for "£254k",
+                    // otherwise on hover.
+                    const colW = monthChartW / Math.max(1, monthlyFees.length);
+                    const step = Math.max(1, Math.ceil(48 / Math.max(1, colW)));
+                    const valuesFit = colW >= 44;
                     return monthlyFees.map((m, i) => {
                       const tappable = m.month !== "TBC";
                       const active = selectedMonths.has(m.month);
@@ -1894,23 +1925,23 @@ export default function WipReport() {
                         <button
                           key={m.month}
                           disabled={!tappable}
-                          className={`flex-1 min-w-0 flex flex-col items-center justify-end gap-1 rounded px-0.5 pt-1 pb-0.5 transition-colors ${active ? "bg-green-50 ring-1 ring-green-300" : tappable ? "hover:bg-muted" : ""}`}
+                          className={`group relative flex-1 min-w-0 flex flex-col items-center justify-end gap-1 rounded px-0.5 pt-1 pb-0.5 transition-colors ${active ? "bg-green-50 ring-1 ring-green-300" : tappable ? "hover:bg-muted" : ""}`}
                           onClick={() => tappable && setSelectedMonths(prev => {
                             const next = new Set(prev);
                             if (next.has(m.month)) next.delete(m.month); else next.add(m.month);
                             return next;
                           })}
-                          title={`${m.month} · ${formatFullCurrency(m.total)} · ${m.count} deal${m.count !== 1 ? "s" : ""}`}
+                          title={`${monthLabel(m.month)} · ${formatFullCurrency(m.total)} · ${m.count} deal${m.count !== 1 ? "s" : ""}`}
                           data-testid={`wip-desk-month-${m.month}`}
                         >
                           {/* Filled-in empty months keep the axis honest but don't
                               each need a "£0" label. */}
-                          <span className="text-[10px] font-mono text-muted-foreground">{m.total ? formatCurrency(m.total) : "\u00a0"}</span>
+                          <span className={`text-[10px] font-mono text-muted-foreground whitespace-nowrap ${valuesFit ? "" : "opacity-0 group-hover:opacity-100 relative z-10 bg-card px-0.5 rounded"}`}>{m.total ? formatCurrency(m.total) : "\u00a0"}</span>
                           <div className="w-full max-w-[40px] flex flex-col justify-end rounded-t overflow-hidden" style={{ height: colH }}>
                             {m.wip > 0 && <div className="w-full" style={{ height: `${Math.max(2, (m.wip / maxM) * colH)}px`, backgroundColor: active ? "#16a34a" : "#86efac" }} />}
                             {m.invoiced > 0 && <div className="w-full" style={{ height: `${Math.max(2, (m.invoiced / maxM) * colH)}px`, backgroundColor: active ? "#15803d" : "#22c55e" }} />}
                           </div>
-                          <span className={`text-[10px] whitespace-nowrap ${active ? "font-semibold text-foreground" : "text-muted-foreground"}`}>{!long || m.total || i % 3 === 0 ? m.month : "\u00a0"}</span>
+                          <span className={`text-[10px] whitespace-nowrap ${active ? "font-semibold text-foreground" : "text-muted-foreground"}`}>{i % step === 0 ? monthLabel(m.month) : "\u00a0"}</span>
                         </button>
                       );
                     });
@@ -1958,9 +1989,12 @@ export default function WipReport() {
                 const shared = board.key === "team" && board.rows.reduce((s, r) => s + r.total, 0) > boardTotal + 0.5;
                 return (
                   <div key={board.key} className="bg-card border border-border rounded-lg overflow-hidden flex flex-col" data-testid={`wip-desk-board-${board.key}`}>
-                    <div className="bg-muted/50 border-b px-3 py-2 flex items-center justify-between">
-                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Net fees by {board.title}</span>
-                      <span className="text-[11px] font-mono text-muted-foreground" title={shared ? "Deals shared between teams count in full in each team row" : undefined}>{formatCurrency(boardTotal)}{shared && <span className="font-sans"> · shared deals in each team</span>}</span>
+                    {/* One line — "NET FEES BY / TEAM" wrapped and pushed See all
+                        off the card; the shared-deals note lives in the tooltip
+                        (Woody, 2026-09-27). */}
+                    <div className="bg-muted/50 border-b px-3 py-2 flex items-center justify-between gap-2 whitespace-nowrap">
+                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide truncate min-w-0" title={`Net fees by ${board.title}`}>Net fees by {board.title}</span>
+                      <span className="text-[11px] font-mono text-muted-foreground shrink-0" title={shared ? "Deals shared between teams count in full in each team row" : undefined}>{formatCurrency(boardTotal)}{shared && <span className="font-sans"> · shared</span>}</span>
                     </div>
                     <div className={`p-2 ${expanded ? "max-h-72 overflow-y-auto" : ""}`}>
                       {shown.map(r => {
@@ -2113,7 +2147,7 @@ export default function WipReport() {
                     {e.stage !== "invoiced" && e.targetDate && (() => {
                       const d = new Date(e.targetDate);
                       return isNaN(d.getTime()) ? null : (
-                        <span className="text-[10px] text-muted-foreground">Target {d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" })}</span>
+                        <span className="text-[10px] text-muted-foreground">Target {shortMonthYear(d)}</span>
                       );
                     })()}
                     {e.agent && (
@@ -2243,7 +2277,7 @@ export default function WipReport() {
                             : e.targetDate
                             ? { label: "Target", iso: e.targetDate, cls: "bg-gray-100 text-gray-700" }
                             : null;
-                          const dateStr = pick ? (() => { const d = new Date(pick.iso); return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" }); })() : null;
+                          const dateStr = pick ? (() => { const d = new Date(pick.iso); return isNaN(d.getTime()) ? "—" : shortMonthYear(d); })() : null;
                           return (
                             <div className="flex flex-col gap-0.5">
                               {!isActual && e.dealId ? (
@@ -2271,7 +2305,7 @@ export default function WipReport() {
                                     // than after the debounced save + refetch.
                                     const [yy, mm] = val.split("-").map(Number);
                                     const label = ev.currentTarget.previousElementSibling;
-                                    if (label && yy > 1900 && mm) label.textContent = new Date(yy, mm - 1, 1).toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
+                                    if (label && yy > 1900 && mm) label.textContent = shortMonthYear(new Date(yy, mm - 1, 1));
                                     // Month picker gives yyyy-MM; the deal stores a full date, so the
                                     // save pins the target to the 1st of the chosen month.
                                     scheduleTargetSave(e.dealId, val);

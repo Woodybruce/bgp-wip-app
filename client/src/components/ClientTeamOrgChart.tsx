@@ -377,10 +377,31 @@ export function ClientTeamOrgChart({ clientCompanyId, quietWhenEmpty = false }: 
     return <div className="flex items-center gap-2 text-sm text-gray-400 py-4"><Loader2 className="w-4 h-4 animate-spin" />Loading team...</div>;
   }
 
+  // Empty under the landlord page's "BGP Team" card: one quiet line, not a
+  // card shell holding only Add column / Add to team (Woody, 2026-09-27).
+  const addDialog = showAdd && (
+    <AddMemberDialog
+      clientCompanyId={clientCompanyId}
+      onClose={() => setShowAdd(false)}
+      onAdded={() => {
+        setShowAdd(false);
+        queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] });
+      }}
+    />
+  );
+  if (quietWhenEmpty && members.length === 0) {
+    return (
+      <div className="text-xs text-muted-foreground" data-testid="client-team-orgchart">
+        No team pinned yet · <button type="button" className="text-primary hover:underline" onClick={() => setShowAdd(true)} data-testid="btn-add-team-member">Add to team</button>
+        {addDialog}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3" data-testid="client-team-orgchart">
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        {quietWhenEmpty && members.length === 0 ? <span /> : <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2">
           <Badge variant="secondary" className="text-xs">{visibleMemberCount} team member{visibleMemberCount === 1 ? "" : "s"}</Badge>
           {lead ? (
             <span className="text-[11px] text-muted-foreground flex items-center gap-1">
@@ -391,7 +412,7 @@ export function ClientTeamOrgChart({ clientCompanyId, quietWhenEmpty = false }: 
           ) : (
             <span className="text-[11px] text-muted-foreground italic">{readOnly ? "" : "No lead pinned"}</span>
           )}
-        </div>}
+        </div>
         {!readOnly && (
           <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowAddCol(true)} data-testid="btn-add-column">
@@ -427,7 +448,7 @@ export function ClientTeamOrgChart({ clientCompanyId, quietWhenEmpty = false }: 
         </div>
       )}
 
-      {members.length === 0 ? (quietWhenEmpty ? null :
+      {members.length === 0 ? (
         <div className="border rounded-lg py-12 flex flex-col items-center justify-center text-muted-foreground text-sm">
           <Building2 className="w-8 h-8 opacity-30 mb-2" />
           <div>No BGP team assigned yet</div>
@@ -564,16 +585,7 @@ export function ClientTeamOrgChart({ clientCompanyId, quietWhenEmpty = false }: 
         />
       )}
 
-      {showAdd && (
-        <AddMemberDialog
-          clientCompanyId={clientCompanyId}
-          onClose={() => setShowAdd(false)}
-          onAdded={() => {
-            setShowAdd(false);
-            queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] });
-          }}
-        />
-      )}
+      {addDialog}
     </div>
   );
 }

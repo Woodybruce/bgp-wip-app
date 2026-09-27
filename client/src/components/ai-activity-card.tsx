@@ -301,10 +301,18 @@ export function pickTouchDates(emailHits: EmailRef[] = [], meetingHits: MeetingR
   };
 }
 
+// Calendar days in Europe/London — the same maths as the interactions list,
+// which said "in 10d" beside this badge's "Next in 9d" for 7 Oct (Woody,
+// 2026-09-27).
+const londonDay = (t: number) => {
+  const [y, m, d] = new Date(t).toLocaleDateString("en-CA", { timeZone: "Europe/London" }).split("-").map(Number);
+  return Date.UTC(y, m - 1, d) / 864e5;
+};
+
 function LastTouchBadge({ iso }: { iso: string }) {
   const t = Date.parse(iso);
   if (isNaN(t)) return null;
-  const days = Math.round((Date.now() - t) / (1000 * 60 * 60 * 24));
+  const days = Math.ceil(londonDay(Date.now()) - londonDay(t));
   // Older cached write-ups took the latest date across cited items, so an
   // upcoming meeting showed as "Last touch -23d ago". A future date is the
   // next touch, not the last (Woody, 2026-09-27).

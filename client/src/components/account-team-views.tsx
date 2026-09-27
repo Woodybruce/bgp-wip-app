@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Pill } from "@/components/ui/pill";
 import { ArrowUpRight, CalendarClock, Loader2, Plus, Users } from "lucide-react";
 import { AGENT_ROLES } from "@shared/agent-roles";
+import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
 
 type Tab = "investment" | "tenantRep" | "leaseAdvisory" | "agents";
 
@@ -85,7 +86,8 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
   const byLive = (a: any, b: any) => Number(CLOSED.test(a.status || "")) - Number(CLOSED.test(b.status || ""));
   const sales = (inv?.tracker || []).filter((t: any) => t.side === "selling").sort(byLive);
   const purchases = (inv?.tracker || []).filter((t: any) => t.side !== "selling").sort(byLive);
-  const statusLabel = (st: string) => CLOSED.test(st || "") ? ({ WIT: "Withdrawn", COM: "Completed", INV: "Invoiced" } as Record<string, string>)[st] || st : st;
+  // Every status code reads as words — "AVA"/"LIVE" leaked raw (Woody, 2026-09-27)
+  const statusLabel = (st: string) => { const c = legacyToCode(st); return c ? DEAL_STATUS_LABELS[c] : st; };
   const list = (v: any) => Array.isArray(v) ? v.join(", ") : String(v || "").replace(/^\{|\}$/g, "").replace(/"/g, "").split(",").join(", ");
   const spaceWithFits = (tr?.space || []).filter((u: any) => u.fits.length > 0);
   const events: any[] = la?.events || [];
@@ -130,7 +132,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
               </Section>
               <Section title="Might sell — flagged in the portfolio" count={inv.salesCandidates.length} empty="No properties marked for sale or investment work.">
                 {inv.salesCandidates.length > 0 && <div className="space-y-1">{inv.salesCandidates.slice(0, 6).map((p: any) => (
-                  <Row key={p.id} href={`/properties/${p.id}`} title={p.name} sub={[p.status, list(p.asset_class)].filter(Boolean).join(" · ")} />
+                  <Row key={p.id} href={`/properties/${p.id}`} title={p.name} sub={[p.status && statusLabel(p.status), list(p.asset_class)].filter(Boolean).join(" · ")} />
                 ))}</div>}
               </Section>
               {inv.debtEvents.length > 0 && (
@@ -162,7 +164,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                       <Row key={`v-${v.id}`} href={v.deal_id ? `/deals/${v.deal_id}` : "/investment-tracker"} title={v.asset_name} sub={["Viewed", fmtDate(v.viewing_date), v.contact, v.outcome].filter(Boolean).join(" · ")} />
                     ))}
                     {inv.theirBids.slice(0, 5).map((o: any) => (
-                      <Row key={`b-${o.id}`} href={o.deal_id ? `/deals/${o.deal_id}` : "/investment-tracker"} title={o.asset_name} sub={["Bid", o.status, fmtDate(o.offer_date)].filter(Boolean).join(" · ")} right={money(o.offer_price) && <span className="text-[10px] tabular-nums">{money(o.offer_price)}</span>} />
+                      <Row key={`b-${o.id}`} href={o.deal_id ? `/deals/${o.deal_id}` : "/investment-tracker"} title={o.asset_name} sub={["Bid", o.status && statusLabel(o.status), fmtDate(o.offer_date)].filter(Boolean).join(" · ")} right={money(o.offer_price) && <span className="text-[10px] tabular-nums">{money(o.offer_price)}</span>} />
                     ))}
                     {inv.sentToThem.slice(0, 5).map((d: any) => (
                       <Row key={`s-${d.id}`} href={d.deal_id ? `/deals/${d.deal_id}` : "/investment-tracker"} title={d.asset_name} sub={["Sent particulars", fmtDate(d.sent_date), d.response].filter(Boolean).join(" · ")} />
@@ -187,20 +189,20 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                 <Row key={`${u.kind}-${u.id}`} href={u.kind === "marketing" ? `/available?propertyId=${u.propertyId}&unitId=${u.id}` : `/leasing-schedule/${u.propertyId}`}
                   title={`${u.propertyName}${u.unitName ? ` · ${u.unitName}` : ""}`}
                   sub={<>Fits: {u.fits.map((s: any, i: number) => <span key={s.requirementId}>{i > 0 && ", "}{s.bgpClient ? <strong className="text-foreground" title="BGP acts for this brand">{s.name} ★</strong> : s.name}</span>)}{u.fitCount > u.fits.length ? ` +${u.fitCount - u.fits.length}` : ""}</>}
-                  right={<>{saleBadge(u.propertyId)}{u.sqft ? <span className="text-[10px] tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null}<Badge variant="outline" className="text-[9px]">{u.status}</Badge></>} />
+                  right={<>{saleBadge(u.propertyId)}{u.sqft ? <span className="text-[10px] tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null}{u.status && <Badge variant="outline" className="text-[9px]">{statusLabel(u.status)}</Badge>}</>} />
               ))}</div>}
             </Section>
             <div className="space-y-4">
               <Section title="Other vacant / marketing space" count={tr.space.length - spaceWithFits.length} link="/available" linkLabel="Letting tracker">
                 {tr.space.length - spaceWithFits.length > 0 && <div className="space-y-1">{tr.space.filter((u: any) => !u.fits.length).slice(0, 6).map((u: any) => (
                   <Row key={`${u.kind}-${u.id}`} href={u.kind === "marketing" ? `/available?propertyId=${u.propertyId}&unitId=${u.id}` : `/leasing-schedule/${u.propertyId}`}
-                    title={`${u.propertyName}${u.unitName ? ` · ${u.unitName}` : ""}`} right={<>{u.sqft ? <span className="text-[10px] tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null}<Badge variant="outline" className="text-[9px]">{u.status}</Badge></>} />
+                    title={`${u.propertyName}${u.unitName ? ` · ${u.unitName}` : ""}`} right={<>{u.sqft ? <span className="text-[10px] tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null}{u.status && <Badge variant="outline" className="text-[9px]">{statusLabel(u.status)}</Badge>}</>} />
                 ))}</div>}
               </Section>
               <p className="text-[11px] text-muted-foreground">★ BGP acts for the brand (a live tenant rep deal or search) — <Link href="/tenant-rep" className="text-primary hover:underline">Tenant rep board</Link></p>
               <Section title="BGP acting for tenants here" count={tr.deals.length} link="/deals/list?team=Tenant%20Rep" linkLabel="Tenant rep deals" empty="No live tenant rep deals on their schemes.">
                 {tr.deals.length > 0 && <div className="space-y-1">{tr.deals.slice(0, 6).map((d: any) => (
-                  <Row key={d.id} href={`/deals/${d.id}`} title={d.tenant_name || d.name} sub={[d.property_name, d.deal_type].filter(Boolean).join(" · ")} right={<Badge variant="outline" className="text-[9px]">{d.status}</Badge>} />
+                  <Row key={d.id} href={`/deals/${d.id}`} title={d.tenant_name || d.name} sub={[d.property_name, d.deal_type].filter(Boolean).join(" · ")} right={d.status && <Badge variant="outline" className="text-[9px]">{statusLabel(d.status)}</Badge>} />
                 ))}</div>}
               </Section>
             </div>

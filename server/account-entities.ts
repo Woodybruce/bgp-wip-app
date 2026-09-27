@@ -146,9 +146,30 @@ export function mergeEntityMentions(mentions: EntityMention[]): GroupEntity[] {
     });
   }
 
+  // "The British Land Company PLC · no CH no." listed beside "BRITISH LAND
+  // COMPANY PUBLIC LIMITED COMPANY · CH 00621920", "Hammerson plc" beside
+  // "Hammerson" — an unnumbered trading-entity row whose legal name matches
+  // a numbered entity is that entity. Show it once, the numbered row; the
+  // stored rows are untouched (Woody, 2026-09-27).
+  const legalKey = (s: string | undefined) => String(s || "").toLowerCase()
+    .replace(/public limited company/g, "plc").replace(/[^a-z0-9]+/g, " ")
+    .split(" ").filter(w => w && !["the", "plc", "ltd", "limited"].includes(w)).join(" ");
+  const numberedByKey = new Map<string, GroupEntity>();
+  for (const e of entities) {
+    if (!e.companiesHouseNumber) continue;
+    for (const k of [legalKey(e.name), legalKey(e.tradingAs)]) if (k && !numberedByKey.has(k)) numberedByKey.set(k, e);
+  }
+  const shown = entities.filter(e => {
+    if (e.relation !== "trading_entity" || e.companiesHouseNumber) return true;
+    const twin = numberedByKey.get(legalKey(e.name));
+    if (!twin || twin === e) return true;
+    twin.evidence = [...new Set([...twin.evidence, ...e.evidence, `also listed as "${e.name}" (no CH no.)`])];
+    return false;
+  });
+
   // Deterministic order: self, parent, subsidiaries, trading entities; then name.
   const rank = (r: GroupEntity["relation"]) => ({ self: 0, parent: 1, subsidiary: 2, trading_entity: 3 })[r];
-  return entities.sort((a, b) => rank(a.relation) - rank(b.relation) || a.name.localeCompare(b.name));
+  return shown.sort((a, b) => rank(a.relation) - rank(b.relation) || a.name.localeCompare(b.name));
 }
 
 // ─── Buckets (pure) ──────────────────────────────────────────────────────

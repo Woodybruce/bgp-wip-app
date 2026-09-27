@@ -1,4 +1,5 @@
 import { aboutText } from "@/lib/about-text";
+import { formatSizeList } from "@/lib/format-size";
 import { snippetAddsNothing } from "@shared/news-snippet";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
@@ -490,6 +491,37 @@ function MasonryGrid({ className, children }: { className?: string; children: Re
 // Long About copy is clamped so the profile column (and the chat pinned to
 // its height) stays a sensible size; "Read more" opens the rest.
 const ABOUT_CLAMP_CHARS = 420;
+
+// News clean-up, shared with the phone view (Woody, 2026-09-27). The brand's
+// own channels ("Nando's (instagram)", "(jobs)", "(website news)") live in
+// the Brand feed, not Industry; Google News titles carry the publisher as a
+// suffix (" - The Bury Times"), which becomes the source when the stored one
+// is empty, a junk word ("Crisis", "Source") or just the brand's own name.
+const OWN_CHANNEL_RE = /\s*\((instagram|jobs|website news|openings|linkedin)\)\s*$/i;
+const CHANNEL_LABELS: Record<string, string> = { instagram: "Instagram", jobs: "Jobs", "website news": "Website news", openings: "Openings", linkedin: "LinkedIn" };
+const JUNK_SOURCE_RE = /^(crisis|source|sources|news|press|media|article|update|unknown|other|web|online|google|google news)$/i;
+export const isOwnChannelNews = (source: string | null | undefined) => OWN_CHANNEL_RE.test(source || "");
+export function splitNewsTitle(title: string | null | undefined): { title: string; publisher: string | null } {
+  let t = String(title || "").trim();
+  const parts: string[] = [];
+  for (let i = 0; i < 2; i++) {
+    const m = t.match(/^(.{20,}?)\s+[-–]\s+([A-Z0-9][^-–]{0,40})$/);
+    if (!m || m[2].trim().split(/\s+/).length > 5) break;
+    if (i === 1 && parts[0].split(/\s+/).length > 2) break;
+    parts.unshift(m[2].trim());
+    t = m[1].trim();
+  }
+  return { title: t, publisher: parts.length ? parts.join(" - ") : null };
+}
+export function newsSourceLabel(source: string | null | undefined, title: string | null | undefined, brandName?: string | null): string | null {
+  const clean = String(source || "")
+    .replace(/\s*\(Google News\)\s*$/i, "")
+    .replace(OWN_CHANNEL_RE, (_m, ch: string) => ` (${CHANNEL_LABELS[ch.toLowerCase()] || ch})`)
+    .trim();
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const junk = !clean || JUNK_SOURCE_RE.test(clean) || (!!brandName && norm(clean) === norm(brandName));
+  return junk ? splitNewsTitle(title).publisher : clean;
+}
 
 export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat = false, topSlot }: { companyId: string; showPropertiesBoard?: boolean; flat?: boolean; topSlot?: React.ReactNode }) {
   const { toast } = useToast();
@@ -1243,7 +1275,16 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
               {/* No description yet = no line; "awaiting preparation" read as
                   pipeline status, not a brand fact. */}
-              {c.description && <p className={`text-sm leading-relaxed break-words whitespace-pre-line ${!aboutOpen && c.description.length > ABOUT_CLAMP_CHARS ? "line-clamp-5" : ""}`}>{aboutText(c.description)}</p>}
+              {/* Clamp the first paragraph only — clamping across aboutText's
+                  paragraph break left the ellipsis after "(Putney)." — the
+                  rest shows when expanded (Woody, 2026-09-27). */}
+              {c.description && (() => {
+                const paras = aboutText(c.description).split(/\n{2,}/).filter(Boolean);
+                const clamped = !aboutOpen && c.description.length > ABOUT_CLAMP_CHARS;
+                return (clamped ? paras.slice(0, 1) : paras).map((para, i) => (
+                  <p key={i} className={`text-sm leading-relaxed break-words whitespace-pre-line ${clamped ? "line-clamp-5" : ""}`}>{para}</p>
+                ));
+              })()}
               {(c.description || "").length > ABOUT_CLAMP_CHARS && (
                 <button type="button" onClick={() => setAboutOpen(open => !open)} className="text-xs text-primary hover:underline" data-testid="button-about-more">{aboutOpen ? "Show less" : "Read more"}</button>
               )}
@@ -2481,7 +2522,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 <div className="space-y-0.5">
                   {requirements.filter(r => r.status === "Active").slice(0, 6).map((r) => {
                     const useClass = r.use?.[0] || null;
-                    const size = r.size?.length ? r.size.join(", ") : null;
+                    // "1500-3500 ft2" → "1,500–3,500 sq ft" (Woody, 2026-09-27).
+                    const size = r.size?.length ? formatSizeList(r.size) : null;
                     const locations = r.requirement_locations?.length ? r.requirement_locations.join(", ") : null;
                     return (
                       <Link
@@ -4903,9 +4945,13 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
           return new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
         };
         const brandDomain = c.domain ? c.domain.replace(/^www\./, "") : null;
+        // Industry leaves out the brand's own Instagram / jobs / website
+        // posts — those are the Brand feed (Woody, 2026-09-27).
+        const industryNews = data.news.filter((a: any) => !isOwnChannelNews(a.source_name));
+        const srcOf = (a: any) => newsSourceLabel(a.source_name, a.title, c.name);
         const allSources = [...new Set(
-          data.news
-            .map((a: any) => a.source_name)
+          industryNews
+            .map(srcOf)
             .filter((s: any): s is string => !!s && !/^google( news)?$/i.test(s))
         )];
         // Press = the brand's OWN newsroom only (url on their domain). The
@@ -4913,7 +4959,7 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
         // article, making Press identical to Industry (Woody, 2026-08-19).
         const tabFiltered = newsTab === "press"
           ? data.news.filter((a: any) => brandDomain && a.url?.includes(brandDomain))
-          : (newsSourceFilter ? data.news.filter((a: any) => a.source_name === newsSourceFilter) : data.news);
+          : (newsSourceFilter ? industryNews.filter((a: any) => srcOf(a) === newsSourceFilter) : industryNews);
         const filtered = newsTagFilter.size === 0
           ? tabFiltered
           : tabFiltered.filter((a: any) => {
@@ -4939,7 +4985,7 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
                     onClick={() => { setNewsTab(t); setNewsShowAll(false); setNewsSourceFilter(null); }}
                     className={`text-[10px] font-medium px-2 py-0.5 rounded transition-colors ${newsTab === t ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
                   >
-                    {t === "industry" ? `Industry (${data.news.length})` : "Press"}
+                    {t === "industry" ? `Industry (${industryNews.length})` : "Press"}
                   </button>
                 ))}
               </div>
@@ -4956,7 +5002,7 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
                       onClick={() => setNewsSourceFilter(s === newsSourceFilter ? null : s)}
                       className={`text-[10px] font-medium px-1.5 py-0.5 rounded border transition-colors ${newsSourceFilter === s ? newsSourceColor(s) : "border-border text-muted-foreground hover:bg-muted"}`}
                     >
-                      {s.replace(/\s*\(Google News\)\s*$/i, "")}
+                      {s}
                     </button>
                   ))}
                 </div>
@@ -4970,7 +5016,8 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
                   const isGoogleProxy = /google\.com|gstatic\.com|googleusercontent\.com/i.test(article.image_url || "");
                   const hasRealImage = !!(article.image_url && !isGoogleProxy);
                   // Strip the " (Google News)" suffix that the pipeline appends.
-                  const cleanSourceName = (article.source_name || "").replace(/\s*\(Google News\)\s*$/i, "").trim();
+                  const cleanSourceName = srcOf(article) || "";
+                  const cleanTitle = splitNewsTitle(article.title).title;
                   const rawUrlDomain = (() => { try { return new URL(article.url).hostname.replace(/^www\./, ""); } catch { return null; } })();
                   // Don't use the URL domain for Google-News-proxied articles — it'd
                   // return Google's logo. Map known publishers from source_name instead.
@@ -5039,7 +5086,7 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
                                 onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                               />
                             ) : (
-                              <span className="text-sm font-bold text-muted-foreground">{(article.source_name || "?")[0].toUpperCase()}</span>
+                              <span className="text-sm font-bold text-muted-foreground">{(sourceLabel || "?")[0].toUpperCase()}</span>
                             )}
                           </div>
                         )}
@@ -5053,7 +5100,7 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
                           )}
                           <span className="text-[9px] text-muted-foreground ml-auto shrink-0">{relDate(article.published_at)}</span>
                         </div>
-                        <p className="text-[11px] font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">{article.title}</p>
+                        <p className="text-[11px] font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">{cleanTitle}</p>
                         {displayText && (
                           <p className="text-[10px] text-muted-foreground leading-snug line-clamp-1 mt-0.5">{displayText}</p>
                         )}

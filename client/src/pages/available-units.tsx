@@ -47,6 +47,7 @@ import { BrandSearchInput, type BrandPick } from "@/components/brand-search-inpu
 import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
 import { TargetRowCells, LETTING_CATEGORIES, targetStatusLabel } from "@/components/target-operators-table";
 import { useTeam } from "@/lib/team-context";
+import { stripPropertyFromTitle } from "@/pages/deals";
 import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
@@ -2100,17 +2101,13 @@ export default function AvailableUnitsPage() {
               // UX #130 — unit names often embed the property name; strip it
               // from the title (the subtitle already carries the property) so
               // the ~28 visible chars go to the unit reference.
+              // Same stripping as the phone deal cards, so "The Blue Lagoon
+              // Bluewater - L12" under Bluewater Shopping Centre reads "The Blue
+              // Lagoon - L12" (Woody, 2026-09-27).
               const rawTitle = u.unitName || prop?.name || "Unit";
-              let cardTitle = rawTitle;
-              if (u.unitName && prop?.name) {
-                const propWords = prop.name.split(/[,·]/)[0].trim();
-                for (const strip of [prop.name, propWords]) {
-                  if (strip && cardTitle.toLowerCase() !== strip.toLowerCase()) {
-                    cardTitle = cardTitle.replace(new RegExp(`[,\\s·-]*${strip.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "gi"), "").trim();
-                  }
-                }
-                cardTitle = cardTitle.replace(/^[,·\s-]+|[,·\s-]+$/g, "").trim() || rawTitle;
-              }
+              const cardTitle = u.unitName && prop?.name
+                ? stripPropertyFromTitle(rawTitle, prop.name, typeof prop.address === "string" ? prop.address : (prop.address as any)?.formatted)
+                : rawTitle;
               return (
                 <Fragment key={u.id}>
                 {viewAll && code !== prevCode && (
@@ -2132,10 +2129,14 @@ export default function AvailableUnitsPage() {
                         <p className="text-xs text-muted-foreground truncate mt-0.5">{[u.unitName ? prop?.name : null, u.floor].filter(Boolean).join(" · ")}</p>
                       )}
                     </div>
-                    <Badge variant="secondary" className="shrink-0 text-[10px] px-2 py-0.5 gap-1.5">
-                      <span className={`inline-block w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[code] || "bg-gray-400"}`} />
-                      {DEAL_PIPELINE_LABELS[code] || code}
-                    </Badge>
+                    {/* Grouped by status, the group header already says it —
+                        a "Marketing" chip on all 103 cards was noise. */}
+                    {!viewAll && (
+                      <Badge variant="secondary" className="shrink-0 text-[10px] px-2 py-0.5 gap-1.5">
+                        <span className={`inline-block w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[code] || "bg-gray-400"}`} />
+                        {DEAL_PIPELINE_LABELS[code] || code}
+                      </Badge>
+                    )}
                   </div>
                   {rows.length > 0 && (
                     <div className="space-y-1.5">
@@ -2149,21 +2150,23 @@ export default function AvailableUnitsPage() {
                   )}
                   {/* Tenant-demand actions: View (brochure/details), log a
                       viewing, register an interested tenant + comment, edit. */}
-                  <div className="flex items-center flex-wrap gap-1 pt-2 border-t">
-                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => setFilesUnit(u)} data-testid={`unit-view-${u.id}`}>
+                  {/* One row — five labelled buttons wrapped onto two; Edit
+                      goes icon-only (Woody, 2026-09-27). */}
+                  <div className="flex items-center justify-between gap-0.5 pt-2 border-t">
+                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => setFilesUnit(u)} data-testid={`unit-view-${u.id}`}>
                       <Eye className="w-3.5 h-3.5" /> Files
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setViewingsUnit(u); setAddViewingOpen(true); }} data-testid={`unit-viewing-${u.id}`}>
+                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => { setViewingsUnit(u); setAddViewingOpen(true); }} data-testid={`unit-viewing-${u.id}`}>
                       <CalendarDays className="w-3.5 h-3.5" /> Viewing{vCount ? ` (${vCount})` : ""}
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setOffersUnit(u); setAddOfferOpen(true); }} data-testid={`unit-offer-${u.id}`}>
+                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => { setOffersUnit(u); setAddOfferOpen(true); }} data-testid={`unit-offer-${u.id}`}>
                       <HandCoins className="w-3.5 h-3.5" /> Offer{oCount ? ` (${oCount})` : ""}
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => setInterestUnit(u)} data-testid={`unit-interest-${u.id}`}>
+                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => setInterestUnit(u)} data-testid={`unit-interest-${u.id}`}>
                       <Flame className="w-3.5 h-3.5" /> Interest{(interestCounts[u.id] || 0) ? ` (${interestCounts[u.id]})` : ""}
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
-                      <Pencil className="w-3.5 h-3.5" /> Edit
+                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" aria-label="Edit unit" title="Edit unit" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
+                      <Pencil className="w-3.5 h-3.5" />
                     </Button>
                   </div>
                 </div>
@@ -2235,7 +2238,10 @@ export default function AvailableUnitsPage() {
                     sticky overlay (Woody, 2026-09-01 "target tenant still
                     not right"). */}
                 <TableHead className="p-0" aria-hidden />
-                <TableHead className="w-[205px] min-w-[205px] sticky right-0 z-20 border-l bg-card">Actions &amp; Activity</TableHead>
+                {/* Pinned only when there are rows to act on — with no results
+                    it sat over the headers and left a stray "Tar" of Target
+                    Tenant peeking out beside it (Woody, 2026-09-27). */}
+                <TableHead className={`w-[205px] min-w-[205px] border-l bg-card ${filtered.length > 0 ? "sticky right-0 z-20" : ""}`}>Actions &amp; Activity</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

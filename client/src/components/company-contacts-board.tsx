@@ -97,7 +97,10 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead }:
         <div className="font-medium truncate flex items-center gap-1 text-sm">
           <Link href={`/contacts/${contact.id}`} className="hover:underline">{contact.name}</Link>
           {isLead && <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 bg-foreground text-background border-transparent" title="The AI check's read of BGP's main property contact here">Lead</Badge>}
-          {aiFlag && <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 text-amber-700 border-amber-300" title={aiFlag.note} data-testid="key-contact-ai-flag">{AI_FLAG_LABELS[aiFlag.issue] || "Check"}</Badge>}
+          {/* A "Title?" / "Left?" badge on every row was noise — a small dot
+              with the note on hover; the full list sits in the AI check
+              notes (Woody, 2026-09-27). */}
+          {aiFlag && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" title={`${AI_FLAG_LABELS[aiFlag.issue] || "Check"} ${aiFlag.note}`} aria-label={`AI check: ${AI_FLAG_LABELS[aiFlag.issue] || "Check"}`} data-testid="key-contact-ai-flag" />}
           {discovery?.bgp?.threadCount ? (
             <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 bg-primary/10 text-primary border-primary/30" title="BGP has real email history with this person">
               known · {discovery.bgp.threadCount} threads
@@ -458,10 +461,23 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
         {/* The AI's notes on the list are working notes ("Adrian's email
             domain is unusual…") — folded behind one line, open on click
             (Woody, 2026-09-27). Nothing shows while it runs. */}
-        {aiCheck.check && (aiCheck.check.summary.length > 0 || aiCheck.check.missing.length > 0) && (
+        {aiCheck.check && (aiCheck.check.summary.length > 0 || aiCheck.check.missing.length > 0 || aiCheck.check.flags.length > 0) && (
           <details className="rounded-md border border-border bg-muted/30 px-2 py-1 mb-2" data-testid="key-contacts-ai-check">
-            <summary className="text-[11px] font-medium text-muted-foreground cursor-pointer">AI check · {aiCheck.check.summary.length + aiCheck.check.missing.length} note{aiCheck.check.summary.length + aiCheck.check.missing.length === 1 ? "" : "s"}</summary>
+            <summary className="text-[11px] font-medium text-muted-foreground cursor-pointer">AI check · {aiCheck.check.summary.length + aiCheck.check.missing.length + aiCheck.check.flags.length} note{aiCheck.check.summary.length + aiCheck.check.missing.length + aiCheck.check.flags.length === 1 ? "" : "s"}</summary>
             <ul className="text-xs space-y-0.5 list-disc pl-4 mt-1">{aiCheck.check.summary.map((line, i) => <li key={i}>{line}</li>)}</ul>
+            {aiCheck.check.flags.length > 0 && (
+              <ul className="text-xs space-y-0.5 pl-1 mt-1" data-testid="key-contacts-ai-flags">
+                {aiCheck.check.flags.map((f, i) => {
+                  const who = (contacts || []).find((ct: any) => String(ct.id) === f.contactId)?.name;
+                  return (
+                    <li key={i} className="flex items-start gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0 mt-1.5" />
+                      <span><span className="font-medium">{who || "Contact"}</span> <span className="text-amber-700 dark:text-amber-400">{AI_FLAG_LABELS[f.issue] || "Check"}</span> {f.note}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
             {aiCheck.check.missing.length > 0 && (
               <p className="text-[11px] text-muted-foreground mt-1">Not saved: {aiCheck.check.missing.map(m => `${m.email} (${m.note})`).join(" · ")}</p>
             )}

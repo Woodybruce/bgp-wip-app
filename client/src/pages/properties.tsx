@@ -5884,9 +5884,12 @@ function PropertiesList({
         />
       )}
 
-      {activeView === "list" && <PropertiesBoardHeader items={filteredItems} />}
+      {/* The list view scrolls as one page — with the map open the table got
+          only the ~240px left below it, three rows at 900px tall
+          (Woody, 2026-09-27). */}
+      {activeView === "list" && <div className="flex-1 min-h-0 overflow-y-auto" data-testid="properties-list-scroll">
+        <PropertiesBoardHeader items={filteredItems} />
 
-      {activeView === "list" && <>
         <div className="flex flex-wrap gap-1.5">
           {groupCounts.map((g) => (
             <Pill
@@ -6098,7 +6101,7 @@ function PropertiesList({
             // minWidth ≈ the sum of the column widths. At 2200 the spare
             // ~800px inflated Property/Ownership and pushed Team off the
             // right edge at 1440px ("T" / "Natl/Leas") (Woody, 2026-09-27).
-            <ScrollableTable key={currentPage} minWidth={1420}>
+            <ScrollableTable key={currentPage} minWidth={1420} pageScroll>
               <Table>
                 <TableHeader>
                   {/* §6 header spec — 11px semibold uppercase muted; the
@@ -6440,7 +6443,7 @@ function PropertiesList({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      </>}
+      </div>}
       <ImportAnythingDialog
         open={showImport}
         onOpenChange={setShowImport}

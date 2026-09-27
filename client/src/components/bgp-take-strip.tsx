@@ -85,7 +85,10 @@ export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty, f
   });
   const refreshing = refresh.isPending && refresh.variables?.companyId === companyId && refresh.variables.tab === tab;
   const running = !isError && (!!data?.running || data?.status === "running");
-  const text = typeof data?.text === "string" ? data.text.trim() : "";
+  // The take sometimes quotes a raw address ("jack.barratt@savills.com") —
+  // show the person's name instead (Woody, 2026-09-27).
+  const text = typeof data?.text === "string" ? data.text.trim().replace(/\b([a-z][a-z'-]*)(?:[._]([a-z][a-z'-]*))?@[\w-]+(?:\.[\w-]+)+\b/gi, (_m, first: string, last?: string) =>
+    [first, last].filter(Boolean).map(p => p!.charAt(0).toUpperCase() + p!.slice(1).toLowerCase()).join(" ")) : "";
   const currentRefreshError = refreshError?.companyId === companyId && refreshError.tab === tab ? refreshError.message : "";
   const reason = currentRefreshError || (isError ? friendlyTakeError((error as Error)?.message) : data?.reason);
   const status = reason || (running ? "Preparing the BGP brief. This section will update when it is ready." : data?.pending && text ? "An updated BGP brief is not ready yet." : !text && !isLoading ? "The BGP take has not been prepared yet." : "");

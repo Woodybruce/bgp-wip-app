@@ -1408,6 +1408,9 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
         }}>Show history <span className="font-mono tabular-nums">{archivedCount}</span></Pill>}
       </div>
       {showArchived && <p className="text-[11px] text-muted-foreground" data-testid="tenancy-history-note">Archived rows are included below. Headline figures cover current rows only.</p>}
+      {/* A search narrowed the table but the tiles stayed whole-schedule —
+          read as the search's own totals (Woody, 2026-09-27). */}
+      {!showArchived && (search || statusFilter || Object.keys(colFilters).length > 0) && <p className="text-[11px] text-muted-foreground">Figures below are for the whole schedule, not just the {filtered.length} filtered {filtered.length === 1 ? "row" : "rows"}.</p>}
 
       <div className={`grid grid-cols-2 ${compact ? "" : "lg:grid-cols-5"} gap-2`}>
         {[
@@ -1522,6 +1525,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <span className="text-sm font-medium">{unit.unit_number || unit.premises || "—"}</span>
+                  {tenantLabel && <span className="ml-1.5 text-sm text-muted-foreground">·</span>}
                   {tenantLabel && (
                     tenantId ? (
                       <Link href={`/companies/${tenantId}`} title={`Open ${unit.resolved_tenant_company_name || tenantLabel} board`}>
