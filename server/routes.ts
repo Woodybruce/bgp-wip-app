@@ -1912,7 +1912,7 @@ export async function registerRoutes(
         const [propRows, contactRows, brandRows] = await Promise.all([
           pool.query(
             `SELECT id, name FROM crm_properties
-             WHERE name ILIKE $2 AND (landlord_id = $1 OR id IN
+             WHERE (name ILIKE $2 OR aliases::text ILIKE $2) AND (landlord_id = $1 OR id IN
                (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
              LIMIT 8`, [searchScopeId, like]),
           pool.query(

@@ -1261,7 +1261,8 @@ export class DatabaseStorage implements IStorage {
     const results: { type: string; id: string; name: string; detail?: string }[] = [];
     const q = `%${query}%`;
     const [props, deals, companies, contactsR, leads, comps] = await Promise.all([
-      db.select().from(crmProperties).where(ilike(crmProperties.name, q)).limit(10),
+      // Aliases too ("Piccadilly Lights" finds Lucent) — merged records keep their old names there.
+      db.select().from(crmProperties).where(or(ilike(crmProperties.name, q), sql`${crmProperties.aliases}::text ILIKE ${q}`)).limit(10),
       db.select({
         deal: crmDeals,
         propertyName: crmProperties.name,
