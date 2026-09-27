@@ -5349,7 +5349,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                       { label: "Client", name: selectedDeal.client, icon: "client" },
                       { label: "Client Contact", name: selectedDeal.clientContact, icon: "contact" },
                       { label: "Vendor", name: selectedDeal.vendor, icon: "vendor" },
-                      { label: "Vendor Agent", name: selectedDeal.vendorAgent, icon: "agent" },
+                      { label: "Sale side agent", name: selectedDeal.vendorAgent, icon: "agent" },
                       { label: "Buyer", name: selectedDeal.buyer, icon: "buyer" },
                     ].filter(r => r.name).map(r => {
                       const companyMatch = companies?.find(c => c.name.toLowerCase() === r.name!.toLowerCase());

@@ -12,7 +12,7 @@ import { Pill } from "@/components/ui/pill";
 import { Handshake, Loader2 } from "lucide-react";
 import { AGENT_ROLES, type AgentRole } from "@shared/agent-roles";
 
-type Tab = "deals" | "requirements" | "instructions" | "sales" | "leaseAdvisory" | "viewings";
+type Tab = "teams" | "deals" | "requirements" | "instructions" | "sales" | "leaseAdvisory" | "viewings";
 
 const fmtDate = (d: any) => d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
 const money = (v: any) => { const n = Number(v); if (!n) return null; return n >= 1_000_000 ? `£${(n / 1_000_000).toFixed(1)}m` : `£${Math.round(n / 1000)}k`; };
@@ -52,6 +52,7 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
     staleTime: 5 * 60_000,
   });
   const counts: Record<Tab, number> = {
+    teams: (data?.teams || []).filter((g: any) => g.team).length,
     deals: data?.deals?.length || 0,
     requirements: (data?.leasingRequirements?.length || 0) + (data?.investmentRequirements?.length || 0),
     instructions: data?.competing?.length || 0,
@@ -61,7 +62,7 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
   };
   // Who they act for is listed (with add / end) in the representation card
   // below, so it isn't repeated here.
-  const TABS: Array<[Tab, string]> = [["deals", "Deals"], ["requirements", "Requirements"], ["instructions", "Instructions"], ["sales", "Sales"], ["leaseAdvisory", "Lease advisory"], ["viewings", "Viewings"]];
+  const TABS: Array<[Tab, string]> = [["teams", "Teams"], ["deals", "Deals"], ["requirements", "Requirements"], ["instructions", "Instructions"], ["sales", "Sales"], ["leaseAdvisory", "Lease advisory"], ["viewings", "Viewings"]];
   const shown = TABS.filter(([t]) => counts[t] > 0);
   const [tab, setTab] = useState<Tab | null>(null);
   useEffect(() => { setTab(null); }, [companyId]);
@@ -93,6 +94,29 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
       </CardHeader>
       <CardContent className="p-3 pt-0">
         {isLoading && <p className="text-sm text-muted-foreground italic flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />Gathering their dealings with BGP…</p>}
+        {data && active === "teams" && (
+          <div className="grid gap-3 md:grid-cols-2" data-testid="agent-teams">
+            {(data.teams || []).map((g: any) => {
+              const busy = g.people.filter((p: any) => p.activity > 0);
+              const quiet = g.people.length - busy.length;
+              return (
+                <div key={g.team || "none"} className="space-y-1">
+                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
+                    {g.team ? `${g.team} team` : "No team set"}<Badge variant="outline" className="text-[9px] tabular-nums">{g.people.length}</Badge>
+                  </div>
+                  {busy.slice(0, 8).map((p: any) => (
+                    <Row key={p.id} href={`/contacts/${p.id}`} title={p.name}
+                      sub={[p.title, p.inferred && "team inferred from their work"].filter(Boolean).join(" · ")}
+                      right={<>{Object.entries(p.capacities).sort((a: any, b: any) => b[1] - a[1]).slice(0, 2).map(([role, n]: any) => (
+                        <Badge key={role} variant="outline" className="text-[9px]">{AGENT_ROLES.find(r => r.role === role)?.short || role} {n}</Badge>
+                      ))}</>} />
+                  ))}
+                  {quiet > 0 && <p className="text-[11px] text-muted-foreground">{busy.length ? `+${quiet} more with no recorded dealings` : `${quiet} people, no recorded dealings yet`}</p>}
+                </div>
+              );
+            })}
+          </div>
+        )}
         {data && active === "deals" && (
           <div className="space-y-1">{[...data.deals].sort((a: any, b: any) => Number(b.open) - Number(a.open)).map((d: any) => (
             <Row key={`${d.role}-${d.id}`} href={`/deals/${d.id}`} title={d.name}

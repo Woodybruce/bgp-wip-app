@@ -1,20 +1,33 @@
-// The roles a third-party agent plays relative to BGP (Woody, 2026-09-26).
-// A role belongs to a relationship, not a firm — the same firm can be BGP's
-// competitor on one scheme, the other side on another and a joint agent on
-// a third — so a firm's roles are derived from its actual relationships.
+// The capacities a third-party agent acts in relative to BGP (Woody,
+// 2026-09-26/27). A firm like Savills does all of them; what does the work
+// is a TEAM within the firm (Investment, Tenant Rep, Leasing, Lease
+// Advisory — the contact's agent_specialty) and the individual agent acts in
+// one capacity on each piece of work. So capacity is recorded per person per
+// relationship, a person belongs to a team, and a firm is the sum of its
+// teams.
 // Older fields are mapped in: representation / company agent_type
 // (tenant_rep | landlord_rep | investment) and contact agent_specialty
 // (Leasing | Investment | Tenant Rep | Lease Advisory).
 export type AgentRole = "letting" | "tenant_rep" | "investment_sell" | "investment_buy" | "lease_advisory" | "joint_agent";
 
-export const AGENT_ROLES: Array<{ role: AgentRole; label: string; short: string; description: string }> = [
-  { role: "letting", label: "Letting agent", short: "Letting", description: "Acts for landlords letting space — competitor for instructions, the other side when BGP acts for a tenant." },
-  { role: "tenant_rep", label: "Tenant rep", short: "Tenant rep", description: "Acts for brands finding space — sends requirements and brings tenants to BGP's units." },
-  { role: "investment_sell", label: "Investment (selling)", short: "Sell-side", description: "Acts for vendors — competitor for sale instructions, the other side when BGP buys." },
-  { role: "investment_buy", label: "Investment (buying)", short: "Buy-side", description: "Acts for purchasers — brings bidders to BGP's sales." },
-  { role: "lease_advisory", label: "Other-side surveyor", short: "Lease advisory", description: "The opposite surveyor on rent reviews and renewals." },
-  { role: "joint_agent", label: "Joint agent", short: "Joint agent", description: "Shares an instruction with BGP." },
+export const AGENT_ROLES: Array<{ role: AgentRole; label: string; short: string; team: AgentTeam | null; description: string }> = [
+  { role: "letting", label: "Leasing agent", short: "Leasing agent", team: "Leasing", description: "Acts for a landlord letting space — competitor for instructions, the other side when BGP acts for a tenant." },
+  { role: "tenant_rep", label: "Tenant rep", short: "Tenant rep", team: "Tenant Rep", description: "Acts for a brand finding space — sends requirements and brings tenants to BGP's units." },
+  { role: "investment_sell", label: "Sale side", short: "Sale side", team: "Investment", description: "Acts for a vendor — competitor for sale instructions, the other side when BGP buys." },
+  { role: "investment_buy", label: "Buy side", short: "Buy side", team: "Investment", description: "Acts for a purchaser — brings bidders to BGP's sales." },
+  { role: "lease_advisory", label: "Lease advisory (other side)", short: "Lease advisory", team: "Lease Advisory", description: "The opposite surveyor on rent reviews and renewals." },
+  { role: "joint_agent", label: "Joint agent", short: "Joint agent", team: null, description: "Shares an instruction with BGP." },
 ];
+
+// The teams inside an agent firm — the same values as a contact's
+// agent_specialty (client/src/lib/crm-options.ts).
+export type AgentTeam = "Investment" | "Tenant Rep" | "Leasing" | "Lease Advisory";
+export const AGENT_TEAMS: AgentTeam[] = ["Investment", "Tenant Rep", "Leasing", "Lease Advisory"];
+export const teamForRole = (role: AgentRole): AgentTeam | null => AGENT_ROLES.find(r => r.role === role)?.team ?? null;
+export function teamFromSpecialty(specialty: string | null | undefined): AgentTeam | null {
+  const v = (specialty || "").trim().toLowerCase();
+  return AGENT_TEAMS.find(t => t.toLowerCase() === v) || null;
+}
 
 export const agentRoleLabel = (role: AgentRole) => AGENT_ROLES.find(r => r.role === role)?.label || role;
 
@@ -42,8 +55,8 @@ export function roleFromSpecialty(specialty: string | null | undefined): AgentRo
 // Deal agent column → role.
 export const DEAL_AGENT_ROLES: Array<{ column: string; contactColumn: string; role: AgentRole; label: string }> = [
   { column: "leasing_agent_id", contactColumn: "leasing_agent_contact_id", role: "letting", label: "Leasing agent" },
-  { column: "acquisition_agent_id", contactColumn: "acquisition_agent_contact_id", role: "tenant_rep", label: "Acquisition agent" },
-  { column: "vendor_agent_id", contactColumn: "vendor_agent_contact_id", role: "investment_sell", label: "Vendor agent" },
-  { column: "purchaser_agent_id", contactColumn: "purchaser_agent_contact_id", role: "investment_buy", label: "Purchaser agent" },
+  { column: "acquisition_agent_id", contactColumn: "acquisition_agent_contact_id", role: "tenant_rep", label: "Tenant rep" },
+  { column: "vendor_agent_id", contactColumn: "vendor_agent_contact_id", role: "investment_sell", label: "Sale side agent" },
+  { column: "purchaser_agent_id", contactColumn: "purchaser_agent_contact_id", role: "investment_buy", label: "Buy side agent" },
   { column: "joint_agent_id", contactColumn: "joint_agent_contact_id", role: "joint_agent", label: "Joint agent" },
 ];

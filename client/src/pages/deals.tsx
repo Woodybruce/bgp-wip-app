@@ -844,11 +844,11 @@ const PARTY_ROLES: PartyRole[] = [
   { key: "clientContactId",    label: "Client Contact",    type: "contact" },
   { key: "vendorId",            label: "Vendor",            type: "company-vendor" },
   { key: "purchaserId",         label: "Purchaser",         type: "company-purchaser" },
-  { key: "vendorAgentId",       label: "Vendor Agent",      type: "agent" },
-  { key: "acquisitionAgentId",  label: "Acquisition Agent", type: "agent" },
-  { key: "purchaserAgentId",    label: "Purchaser Agent",   type: "agent" },
-  { key: "leasingAgentId",      label: "Leasing Agent",     type: "agent" },
-  { key: "jointAgentId",        label: "Joint Agent",       type: "agent" },
+  { key: "vendorAgentId",       label: "Sale side agent",   type: "agent" },
+  { key: "acquisitionAgentId",  label: "Tenant rep",        type: "agent" },
+  { key: "purchaserAgentId",    label: "Buy side agent",    type: "agent" },
+  { key: "leasingAgentId",      label: "Leasing agent",     type: "agent" },
+  { key: "jointAgentId",        label: "Joint agent",       type: "agent" },
 ];
 
 function PartiesCell({

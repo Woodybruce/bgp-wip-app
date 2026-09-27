@@ -440,10 +440,10 @@ function AgentsTab({
       const acquisition = person((d as any).acquisitionAgentContactId, d.acquisitionAgentId);
       const purchaser = person((d as any).purchaserAgentContactId, d.purchaserAgentId);
       const leasing = person((d as any).leasingAgentContactId, d.leasingAgentId);
-      if (vendor) addFor(vendor, "Vendor Agent");
-      if (acquisition) addFor(acquisition, "Acquisition Agent");
-      if (purchaser) addFor(purchaser, "Purchaser Agent");
-      if (leasing) addFor(leasing, "Leasing Agent");
+      if (vendor) addFor(vendor, "Sale side agent");
+      if (acquisition) addFor(acquisition, "Tenant rep");
+      if (purchaser) addFor(purchaser, "Buy side agent");
+      if (leasing) addFor(leasing, "Leasing agent");
     }
     return map;
   }, [allDeals]);
@@ -453,7 +453,7 @@ function AgentsTab({
     for (const item of investmentItems) {
       if (item.vendorAgentId) {
         if (!map[item.vendorAgentId]) map[item.vendorAgentId] = [];
-        map[item.vendorAgentId].push({ id: item.id, name: item.assetName, role: "Vendor Agent", status: item.status, guidePrice: item.guidePrice });
+        map[item.vendorAgentId].push({ id: item.id, name: item.assetName, role: "Sale side agent", status: item.status, guidePrice: item.guidePrice });
       }
     }
     return map;

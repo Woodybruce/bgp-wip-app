@@ -6033,10 +6033,10 @@ Return a JSON object with these fields (use null for any field you cannot find):
       for (const d of agentDeals) {
         if (!seenIds.has(d.id)) {
           const roles: string[] = [];
-          if (d.vendorAgentContactId === contactId || d.vendorAgentId === contactId) roles.push("Vendor Agent");
-          if (d.acquisitionAgentContactId === contactId || d.acquisitionAgentId === contactId) roles.push("Acquisition Agent");
-          if (d.purchaserAgentContactId === contactId || d.purchaserAgentId === contactId) roles.push("Purchaser Agent");
-          if (d.leasingAgentContactId === contactId || d.leasingAgentId === contactId) roles.push("Leasing Agent");
+          if (d.vendorAgentContactId === contactId || d.vendorAgentId === contactId) roles.push("Sale side agent");
+          if (d.acquisitionAgentContactId === contactId || d.acquisitionAgentId === contactId) roles.push("Tenant rep");
+          if (d.purchaserAgentContactId === contactId || d.purchaserAgentId === contactId) roles.push("Buy side agent");
+          if (d.leasingAgentContactId === contactId || d.leasingAgentId === contactId) roles.push("Leasing agent");
           if (d.clientContactId === contactId) roles.push("Client Contact");
           results.push({ ...d, linkSource: "agent", agentRoles: roles });
           seenIds.add(d.id);
@@ -6071,7 +6071,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
       );
       const results = items.map(item => {
         const roles: string[] = [];
-        if (item.vendorAgentId === contactId) roles.push("Vendor Agent");
+        if (item.vendorAgentId === contactId) roles.push("Sale side agent");
         if (item.clientContactId === contactId) roles.push("Client Contact");
         return { ...item, agentRoles: roles };
       });
