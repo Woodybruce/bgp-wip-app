@@ -130,9 +130,11 @@ export function CovenantCommentary({ companyNumber, className = "" }: { companyN
       ) : (
         <p className="text-xs italic text-muted-foreground">Grade {data.grade} ({data.score}/100) — AI commentary unavailable.</p>
       )}
-      {missing.length > 0 && (
+      {/* The verdict often closes with its own "To complete the picture…"
+          line — don't say it twice (Woody, 2026-09-27). */}
+      {missing.length > 0 && !/to complete the picture/i.test(data.verdict || "") && (
         <div className="mt-1.5 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground/70">To complete:</span> {missing.join(" · ")}
+          <span className="font-medium text-foreground/70">Still missing:</span> {missing.join(" · ")}
         </div>
       )}
     </div>

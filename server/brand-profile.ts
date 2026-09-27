@@ -187,14 +187,18 @@ export function otherBrandsSocialPost(companyName: string, sourceName: string | 
 // square…" from three outlets) collapse to the newest, and scraped site
 // navigation ("News", "Net Zero Carbon Pathway") isn't a story at all.
 export function dedupeNewsStories<T extends { title?: string | null }>(rows: T[]): T[] {
-  const seen = new Set<string>();
+  const kept: Set<string>[] = [];
   return rows.filter(row => {
     const title = String(row.title || "").replace(/\s[-–—|]\s[^-–—|]{2,60}$/, "").trim();
     const words = title.split(/\s+/).filter(Boolean);
     if (words.length < 3 || (words.length <= 4 && words.every(w => /^[A-Z&,]/.test(w) || /^(and|of|the|&)$/.test(w)))) return false;
-    const key = title.toLowerCase().replace(/[^a-z0-9 ]+/g, "").replace(/\s+/g, " ").slice(0, 70);
-    if (seen.has(key)) return false;
-    seen.add(key);
+    // Corporate filings scraped from a landlord's site aren't stories.
+    if (/\b(?:Companies Act|Modern Slavery|Gender Pay|Tax Strategy|Privacy Notice|Cookie Policy|Section \d+)\b|^UK Real Estate Investment Trust/i.test(title)) return false;
+    // The same story from two outlets ("Black Sheep Coffee signs at two
+    // British Land Scottish retail destinations") — mostly the same words.
+    const set = new Set(title.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(w => w.length > 2));
+    if (kept.some(prev => { let shared = 0; for (const w of set) if (prev.has(w)) shared++; return shared / Math.max(1, Math.min(set.size, prev.size)) >= 0.75; })) return false;
+    kept.push(set);
     return true;
   });
 }

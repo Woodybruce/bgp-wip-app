@@ -125,11 +125,14 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
                   </div>
                   {busy.slice(0, 8).map((p: any) => (
                     <Row key={p.id} href={`/contacts/${p.id}`} title={p.name}
-                      sub={[p.title, p.inferred && (p.recordedTeam ? `recorded as ${p.recordedTeam} — their work is ${g.team}` : "team from their work")].filter(Boolean).join(" · ")}
+                      sub={p.title || undefined}
                       right={<>{Object.entries(p.capacities).sort((a: any, b: any) => b[1] - a[1]).slice(0, 2).map(([role, n]: any) => (
                         <Badge key={role} variant="outline" className="text-[9px]">{AGENT_ROLES.find(r => r.role === role)?.short || role} {n}</Badge>
                       ))}{p.inferred && g.team && (
+                        // The why lives on hover — "recorded as Leasing — their work
+                        // is Tenant Rep" under every name read as working notes.
                         <Button variant="outline" size="sm" className="h-5 px-1.5 text-[10px]" disabled={setTeam.isPending}
+                          title={p.recordedTeam ? `Recorded as ${p.recordedTeam}; their deals are ${g.team}` : `Their deals are ${g.team}`}
                           onClick={(e) => { e.preventDefault(); e.stopPropagation(); setTeam.mutate([{ id: p.id, team: g.team }]); }} data-testid="button-agent-team-fix">Set team</Button>
                       )}</>} />
                   ))}

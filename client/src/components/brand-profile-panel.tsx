@@ -1,3 +1,4 @@
+import { aboutText } from "@/lib/about-text";
 import { snippetAddsNothing } from "@shared/news-snippet";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
@@ -51,7 +52,7 @@ import { AccountDealsBoard } from "@/components/account-deals-board";
 import { AccountTeamViewsCard } from "@/components/account-team-views";
 import { AgentRelationshipCard } from "@/components/agent-relationship-card";
 import { LandlordAccountGallery } from "@/components/account-media-gallery";
-import { AccountNextActionsCard, AccountTeamCard, InvestmentRequirementsCard, AccountFolderTreeCard, useAccountWorkspace } from "@/components/account-workspace-cards";
+import { AccountNextActionsCard, InvestmentRequirementsCard, AccountFolderTreeCard, useAccountWorkspace } from "@/components/account-workspace-cards";
 import { AccountEntitiesPanel } from "@/components/account-entities-panel";
 
 interface BrandProfile {
@@ -1242,7 +1243,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
               {/* No description yet = no line; "awaiting preparation" read as
                   pipeline status, not a brand fact. */}
-              {c.description && <p className={`text-sm leading-relaxed break-words ${!aboutOpen && c.description.length > ABOUT_CLAMP_CHARS ? "line-clamp-5" : ""}`}>{c.description}</p>}
+              {c.description && <p className={`text-sm leading-relaxed break-words whitespace-pre-line ${!aboutOpen && c.description.length > ABOUT_CLAMP_CHARS ? "line-clamp-5" : ""}`}>{aboutText(c.description)}</p>}
               {(c.description || "").length > ABOUT_CLAMP_CHARS && (
                 <button type="button" onClick={() => setAboutOpen(open => !open)} className="text-xs text-primary hover:underline" data-testid="button-about-more">{aboutOpen ? "Show less" : "Read more"}</button>
               )}
@@ -1441,7 +1442,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               </div>;
             })()}
 
-            <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} hideTenancyPropertyIds={liveLocations.map((p: any) => p.id)} pillsOnly={isLandlord} />
+            <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} hideTenancyPropertyIds={liveLocations.map((p: any) => p.id)} pillsOnly={isLandlord || isAgentFirm} />
             </div>
             </div>
   );
@@ -2199,7 +2200,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   {spacePreferences.sqftMin != null && spacePreferences.sqftMax != null && (
                     <div>
                       <div className="text-[10px] text-muted-foreground">Unit size</div>
-                      <div className="font-semibold">{Math.round(spacePreferences.sqftMin).toLocaleString()}–{Math.round(spacePreferences.sqftMax).toLocaleString()} sqft</div>
+                      <div className="font-semibold">{Math.round(spacePreferences.sqftMin) === Math.round(spacePreferences.sqftMax) ? Math.round(spacePreferences.sqftMin).toLocaleString("en-GB") : `${Math.round(spacePreferences.sqftMin).toLocaleString("en-GB")}–${Math.round(spacePreferences.sqftMax).toLocaleString("en-GB")}`} sq ft</div>
                     </div>
                   )}
                   {spacePreferences.rentPsfMin != null && spacePreferences.rentPsfMax != null && (
@@ -5075,9 +5076,10 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
               <Users className="w-3.5 h-3.5 text-muted-foreground" />
               BGP Team
             </h3>
-            {/* Account team read-out (Delivery 3) — resolver team with lead
-                + provenance pills. The org chart below stays the editor. */}
-            <AccountTeamCard companyId={companyId} />
+            {/* The resolved team (with "From deals" provenance) already sits
+                in the profile's BGP team row — this card is just the pinned
+                org chart editor, so the team isn't listed three times
+                (Woody, 2026-09-27). */}
             <ClientTeamOrgChart clientCompanyId={companyId} quietWhenEmpty />
           </CardContent>
         </Card>

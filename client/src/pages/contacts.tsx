@@ -610,6 +610,53 @@ function plainNotes(notes: string): string {
     .replace(/^\[Auto-created[^\]]*\]\s*/, "Added automatically. ");
 }
 
+// The email-discovery note still read like pipeline output ("the team has
+// emailed them 45 times (charlotte, lucy, willp, rupert). Sample subjects:…")
+// — one plain line with real names, subjects behind a toggle (Woody,
+// 2026-09-27). Anything typed after it renders as-is.
+const EMAIL_DISCOVERY_NOTE_RE = /^Added from email — the team has emailed them (\d+) times \(([^)]*)\)\.\s*(?:Sample subjects:\s*([^\n]*))?\n?([\s\S]*)$/;
+function ContactNotes({ notes }: { notes: string }) {
+  const [showSubjects, setShowSubjects] = useState(false);
+  const { data: users = [] } = useQuery<Array<{ name?: string | null; username?: string | null; email?: string | null }>>({
+    queryKey: ["/api/users"],
+    staleTime: 10 * 60 * 1000,
+  });
+  const text = plainNotes(notes);
+  const m = text.match(EMAIL_DISCOVERY_NOTE_RE);
+  if (!m) return <p className="text-sm whitespace-pre-wrap" data-testid="text-contact-notes">{text}</p>;
+  const [, count, who, subjects, rest] = m;
+  const nameFor = (handle: string) => {
+    const h = handle.trim().toLowerCase();
+    const u = users.find((x) => (x.email || "").toLowerCase().split("@")[0] === h || (x.username || "").toLowerCase() === h);
+    const first = (u?.name || "").trim().split(/\s+/)[0] || "";
+    // "willp" → "Will P" when the handle is first name + surname initial.
+    if (first && h === `${first.toLowerCase()}${h.slice(-1)}` && h.length === first.length + 1) return `${first} ${h.slice(-1).toUpperCase()}`;
+    if (first) return first;
+    return h.replace(/\b\w/g, (c) => c.toUpperCase());
+  };
+  const names = who.split(",").map((s) => s.trim()).filter(Boolean).map(nameFor);
+  const nameList = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0] || "the team";
+  const subjectList = (subjects || "").split(/\s*;\s*/).map((s) => s.trim()).filter(Boolean);
+  return (
+    <div className="text-sm space-y-1" data-testid="text-contact-notes">
+      <p>
+        Emailed {count} times by {nameList}.
+        {subjectList.length > 0 && (
+          <button type="button" className="ml-1.5 text-xs text-muted-foreground underline hover:text-foreground" onClick={() => setShowSubjects((v) => !v)}>
+            {showSubjects ? "Hide subjects" : "Sample subjects"}
+          </button>
+        )}
+      </p>
+      {showSubjects && subjectList.length > 0 && (
+        <ul className="text-xs text-muted-foreground list-disc ml-4">
+          {subjectList.map((s, i) => <li key={i}>{s}</li>)}
+        </ul>
+      )}
+      {rest.trim() && <p className="whitespace-pre-wrap">{rest.trim()}</p>}
+    </div>
+  );
+}
+
 const VERIFY_STALE_MS = 90 * 24 * 60 * 60 * 1000;
 function ContactSourcePanel({ contact }: { contact: any }) {
   const { toast } = useToast();
@@ -990,7 +1037,7 @@ function ContactDetail({ id }: { id: string }) {
               {contact.notes && (
                 <div className="pt-2 border-t">
                   <p className="text-xs text-muted-foreground mb-1">Notes</p>
-                  <p className="text-sm whitespace-pre-wrap" data-testid="text-contact-notes">{plainNotes(contact.notes)}</p>
+                  <ContactNotes notes={contact.notes} />
                 </div>
               )}
               {!cdIsClient && <ContactSourcePanel contact={contact} />}
@@ -1195,7 +1242,7 @@ function ContactDetail({ id }: { id: string }) {
               (/api/activity/contact, /api/interactions/contact) — the gateway
               403s them for clients, so don't fire them (and don't render a
               false "no interactions" empty state) for client viewers. */}
-          {!cdIsClient && <AIActivityCard subjectType="contact" subjectId={id} title="Contact Activity (AI curated)" />}
+          {!cdIsClient && <AIActivityCard subjectType="contact" subjectId={id} title="Activity" />}
 
           {!cdIsClient && <InteractionsBoard scope="contact" contextId={id} />}
         </div>

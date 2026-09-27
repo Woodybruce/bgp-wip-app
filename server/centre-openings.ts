@@ -64,7 +64,7 @@ async function googleNews(centre: UkCentre): Promise<Array<{ title: string; url:
 }
 
 async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpening[]> {
-  const key = `centre-openings:v5:${centre.name}`;
+  const key = `centre-openings:v6:${centre.name}`;
   const cached = (await pool.query("SELECT value, updated_at FROM system_settings WHERE key = $1", [key])).rows[0];
   if (cached && Date.now() - new Date(cached.updated_at).getTime() < DAY_MS && Array.isArray(cached.value?.items)) return cached.value.items;
 
@@ -137,7 +137,13 @@ async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpe
     if (keys.some(k => seen.has(k))) return false;
     keys.forEach(k => seen.add(k));
     return true;
-  }).sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 12);
+  }).sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 12)
+    // The outlet sits on the source line — drop its " - Kent Online" /
+    // " | LBBOnline" tail from the headline.
+    .map(item => {
+      const m = /\s+[-–|]\s+([^-–|]{2,40})$/.exec(item.title);
+      return m ? { ...item, title: item.title.slice(0, m.index).trim(), source: item.source || m[1].trim() } : item;
+    });
   await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2::jsonb, NOW())
     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [key, JSON.stringify({ items: deduped })]).catch(() => {});
   return deduped;

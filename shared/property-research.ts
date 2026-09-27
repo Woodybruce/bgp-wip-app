@@ -29,5 +29,5 @@ export function propertyResearchContext(property: { assetClass?: string | null; 
     : mode === "local"
       ? "Local occupier opportunities for the retail and leisure space here."
       : "Shopping-centre occupier mix and nearby competing destinations.";
-  return { mode, assetClass, uses, reason, cacheKey: JSON.stringify(["property-research-v2", mode, assetClass, uses]) };
+  return { mode, assetClass, uses, reason, cacheKey: JSON.stringify(["property-research-v3", mode, assetClass, uses]) };
 }

@@ -126,7 +126,6 @@ export function DealsSummary({ propertyId, propertyIds, variant }: {
           {/* Sales / purchases run on the Investment board and are left out
               here — "nothing live" read as wrong on a property that's for sale. */}
           <p className="text-xs text-muted-foreground">No live leasing deals. Sales and purchases show under Investment.</p>
-          <Link href={boardHref(propertyId)} className="text-[11px] text-primary hover:underline">Open the board →</Link>
         </div>
       ) : (
         <div className="space-y-1 max-h-[300px] overflow-y-auto pr-1">

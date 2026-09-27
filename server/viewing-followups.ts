@@ -50,7 +50,7 @@ export function viewingFollowupDecision(viewing: FollowupViewing, now = new Date
   const date = calendarDateValue(viewing.viewingDate);
   const missing = viewingMissingDetails(viewing);
   if (!viewing.detailsConfirmedAt) missing.push("Review and confirm the booking details");
-  const context = [viewing.companyName || "Unconfirmed brand", viewing.unitName, viewing.propertyName].filter(Boolean).join(" · ");
+  const context = [viewing.companyName || "brand not set", viewing.unitName, viewing.propertyName].filter(Boolean).join(" · ");
   let kind: ViewingFollowupDecision["kind"] = null, dueDate: string | null = null;
   let reasons: string[] = [];
   if (missing.length) {

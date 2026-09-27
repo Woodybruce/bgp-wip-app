@@ -52,7 +52,9 @@ export function CompanyProfileImage({ companyId, companyName, companyType, image
         key={image.id}
         src={`/api/brand/gallery-image/${encodeURIComponent(image.id)}?full=1`}
         alt={index === 0 ? `${companyName} cover photo` : `${companyName} photo`}
-        className={`block w-full h-full min-h-0 object-cover ${tileCls(index, extras.length)}`}
+        // Phones: the cover alone — four photos filled the whole first
+        // screen before the name (Woody, 2026-09-27).
+        className={`block w-full h-full min-h-0 object-cover ${tileCls(index, extras.length)}${index > 0 ? " hidden sm:block" : ""}`}
         loading={index === 0 ? "eager" : "lazy"}
         decoding="async"
         onError={() => markFailed(`${companyId}:${image.id}`)}

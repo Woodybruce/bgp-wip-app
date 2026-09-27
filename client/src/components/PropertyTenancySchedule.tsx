@@ -1532,7 +1532,8 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                     )
                   )}
                 </div>
-                <span className="font-mono tabular-nums text-sm font-semibold shrink-0">{fmtCurrency(unit.passing_rent_pa)}</span>
+                {/* The compact editor repeats the rent as an input below. */}
+                {!(compact && canEdit) && <span className="font-mono tabular-nums text-sm font-semibold shrink-0">{fmtCurrency(unit.passing_rent_pa)}</span>}
               </div>
               <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
                 {[unit.floor_level, unit.permitted_use].filter(Boolean).join(" · ") || "—"}

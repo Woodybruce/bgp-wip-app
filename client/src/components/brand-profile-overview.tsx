@@ -109,7 +109,8 @@ function BrandRetainedFactsReview({ companyId, identityVerified }: { companyId: 
   });
   const labelClass = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
   return <div className="space-y-3">
-    <Button type="button" variant="outline" size="sm" disabled={!identityVerified} onClick={() => setOpen(value => !value)} aria-expanded={open} data-testid="brand-fact-review-toggle">{open ? "Cancel fact review" : "Review retained facts"}</Button>
+    {/* A quiet link, not a full button on every profile (Woody, 2026-09-27). */}
+    <Button type="button" variant="ghost" size="sm" className="h-auto min-h-0 p-0 hover:bg-transparent text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground" disabled={!identityVerified} onClick={() => setOpen(value => !value)} aria-expanded={open} data-testid="brand-fact-review-toggle">{open ? "Cancel fact review" : "Review saved facts"}</Button>
     {open && (isLoading ? <p className="text-sm text-muted-foreground" role="status">Loading saved facts…</p>
       : isError || !review ? <div className="space-y-2"><p className="text-sm">The facts could not be loaded.</p><Button type="button" variant="outline" size="sm" onClick={() => refetch()}>Try again</Button></div>
         : <form className="space-y-3 border-t border-border pt-3" onSubmit={event => { event.preventDefault(); save.mutate(); }} data-testid="brand-fact-review-form">
@@ -219,7 +220,9 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
             {[
               // "0 in the UK" for a 150-store chain read as fact — it only
               // means the stores haven't been mapped yet.
-              locations.length ? `${locations.length} in the UK` : reportedTotal ? null : "UK stores not mapped yet",
+              // It's the stores mapped so far, not the estate — "40 in the UK"
+              // read as Gail's total.
+              locations.length ? `${locations.length} UK store${locations.length === 1 ? "" : "s"} mapped` : reportedTotal ? null : "UK stores not mapped yet",
               abroadCountries ? `${abroadCountries} other countr${abroadCountries === 1 ? "y" : "ies"}` : null,
               reportedTotal != null && reportedTotal !== locations.length ? `${reportedTotal.toLocaleString()} reported in total` : null,
             ].filter(Boolean).join(" · ")}

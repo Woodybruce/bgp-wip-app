@@ -173,7 +173,9 @@ export function buildActivityQuestion(subject: ActivitySubject, clientScope?: { 
     ``,
     `Be concise — under 400 words for the prose.`,
     ``,
-    `Write ONLY the findings. Never narrate your process: don't mention mailboxes, tools, fan-outs, searches you ran, errors or retries, which inboxes you checked, how many results came back, or what you dropped as noise/newsletters. Start straight with the first ## section.`,
+    `Write ONLY the findings. Never narrate your process: don't mention mailboxes, tools, fan-outs, searches you ran, errors or retries, which inboxes you checked, how many results came back, or what you dropped as noise/newsletters. Don't describe the data either ("the system holds…", "records show…", "a clean trail") — say what happened. Start straight with the first ## section.`,
+    ``,
+    `Only include a ## section when it has at least one item under it — never leave an empty heading (e.g. a "## Calendar" with nothing below it).`,
     ``,
     `If after filtering NONE of the items are relevant, just write:`,
     `> No emails or meetings in the BGP system are relevant to this ${subject.type}.`,
@@ -300,14 +302,17 @@ export function parseEmailChatBgpResponse(raw: string): {
  * `lastInteraction` column on the underlying record.
  */
 export function pickLatestActivity(emailHits: EmailRef[], meetingHits: MeetingRef[]): string | null {
+  // Past dates only: an upcoming meeting cited in the write-up isn't the
+  // last touch — it rendered as "Last touch -23d ago" (Woody, 2026-09-27).
+  const now = Date.now();
   const dates: number[] = [];
   for (const e of emailHits) {
     const t = Date.parse(e.date);
-    if (!isNaN(t)) dates.push(t);
+    if (!isNaN(t) && t <= now) dates.push(t);
   }
   for (const m of meetingHits) {
     const t = Date.parse(m.start);
-    if (!isNaN(t)) dates.push(t);
+    if (!isNaN(t) && t <= now) dates.push(t);
   }
   if (!dates.length) return null;
   return new Date(Math.max(...dates)).toISOString();

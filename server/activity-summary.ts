@@ -145,7 +145,7 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
         `${recentSelect}
          LEFT JOIN property_units pu ON pu.id = d.unit_id
          LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
-        WHERE i.interaction_date > NOW() - INTERVAL '14 days'
+        WHERE i.interaction_date > NOW() - INTERVAL '14 days' AND i.interaction_date <= NOW()
           AND (
             (d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1)
             OR (
@@ -179,7 +179,7 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
         `${recentSelect}
          LEFT JOIN property_units pu ON pu.id = d.unit_id
          LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
-        WHERE i.interaction_date > NOW() - INTERVAL '14 days'
+        WHERE i.interaction_date > NOW() - INTERVAL '14 days' AND i.interaction_date <= NOW()
           AND (
             c.company_id = $1 OR i.company_id = $1 OR d.landlord_id = $1 OR d.tenant_id = $1
             OR d.property_id IN (
@@ -199,7 +199,7 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
     } else {
       recentQ = pool.query(
         `${recentSelect}
-        WHERE i.interaction_date > NOW() - INTERVAL '14 days'
+        WHERE i.interaction_date > NOW() - INTERVAL '14 days' AND i.interaction_date <= NOW()
         ORDER BY i.interaction_date DESC
         LIMIT 30`
       );

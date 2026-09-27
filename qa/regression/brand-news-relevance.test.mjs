@@ -155,10 +155,10 @@ test('actual profile news output filters before applying its visible limit', () 
   const output = find('server/brand-profile.ts', (node, ast) => ts.isPropertyAssignment(node)
     && node.name.getText(ast) === 'news' && node.initializer.getText(ast).includes('isBrandNewsRelevant'));
   const rows = [...Array.from({ length: 40 }, (_, i) => article(`Cook Islands story ${i}`)),
-    ...Array.from({ length: 30 }, (_, i) => article(`COOK frozen meal retailer opens shop ${i}`))];
+    ...Array.from({ length: 30 }, (_, i) => article(`COOK frozen meal retailer opens shop ${i} alpha${i} beta${i} gamma${i} delta${i} omega${i}`))];
   const helpers = ['dedupeNewsStories', 'otherBrandsSocialPost'].map(name => declaration('server/brand-profile.ts', name)).join('\n');
   const result = evaluate(`${helpers}\nexports.result = ({ ${output} }).news;`, { news: { rows }, c: co(), isBrandNewsRelevant }).result;
   assert.equal(result.length, 20);
-  assert.equal(result[0].title, 'COOK frozen meal retailer opens shop 0');
+  assert.equal(result[0].title, 'COOK frozen meal retailer opens shop 0 alpha0 beta0 gamma0 delta0 omega0');
   assert.equal(rows.length, 70);
 });

@@ -54,6 +54,15 @@ function useContactsCheck(companyId: string, enabled: boolean) {
   return { check: data?.check || null, running: run.isPending, failed: run.isError };
 }
 
+// A photo that fails to load falls back to initials — hiding the <img>
+// left an empty circle (Woody, 2026-09-27).
+function ContactAvatar({ url, name }: { url?: string | null; name?: string | null }) {
+  const [failed, setFailed] = useState(false);
+  const initials = (name || "").split(/\s+/).map(p => p.replace(/[^A-Za-z0-9]/g, "")[0] || "").join("").slice(0, 2).toUpperCase() || "?";
+  if (!url || failed) return <>{initials}</>;
+  return <img src={url} alt="" className="w-full h-full object-cover" onError={() => setFailed(true)} />;
+}
+
 export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead }: { contact: any; companyId: string; discovery?: any; aiFlag?: { issue: string; note: string } | null; isLead?: boolean }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -82,7 +91,7 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead }:
   return (
     <div className="flex items-start gap-2.5 md:gap-2 text-sm hover:bg-muted/50 rounded p-1.5 md:p-1 -mx-1 transition-colors">
       <Link href={`/contacts/${contact.id}`} className="w-9 h-9 md:w-6 md:h-6 rounded-full bg-muted flex items-center justify-center text-[11px] md:text-[11px] font-medium shrink-0 overflow-hidden">
-        {contact.avatar_url ? <img src={contact.avatar_url} alt="" className="w-full h-full object-cover" onError={(e) => { (e.currentTarget.style.display = "none"); }} /> : (contact.name?.split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase() || "?")}
+        <ContactAvatar url={contact.avatar_url} name={contact.name} />
       </Link>
       <div className="min-w-0 flex-1">
         <div className="font-medium truncate flex items-center gap-1 text-sm">
@@ -221,7 +230,7 @@ function PendingSendersList({ suggestions, companyId }: { suggestions: any[]; co
           <div key={s.email} className="flex items-center gap-1.5 text-[11px] px-1 py-1 rounded hover:bg-muted/50">
             <Mail className="w-2.5 h-2.5 text-muted-foreground shrink-0" />
             <span className="truncate flex-1 text-[11px]">{s.email}</span>
-            <span className="text-[11px] text-muted-foreground shrink-0">{s.touches}{s.last_touch ? ` · ${formatRelativeShort(s.last_touch)}` : ""}</span>
+            <span className="text-[11px] text-muted-foreground shrink-0 tabular-nums" title="Emails with BGP · last one">{Number(s.touches || 0).toLocaleString("en-GB")} email{Number(s.touches) === 1 ? "" : "s"}{s.last_touch ? ` · ${formatRelativeShort(s.last_touch)}` : ""}</span>
             {!psIsClient && (saved[`${companyId}:${s.email}`] ? <Link href={`/contacts/${saved[`${companyId}:${s.email}`].id}`} className="inline-flex min-h-11 md:min-h-0 items-center text-sm md:text-xs underline">In CRM</Link> :
             <Button variant="outline" size="sm"
               onClick={() => promote.mutate({ sender: s, sourceCompanyId: companyId })} disabled={promote.isPending}

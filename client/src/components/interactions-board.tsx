@@ -145,7 +145,11 @@ export function InteractionsBoard({ scope, contextId }: Props) {
   const { data, isLoading, refetch } = useQuery<BoardResponse>({
     queryKey: ["/api/interactions", scope, contextId],
     queryFn: async () => {
-      const r = await fetch(`/api/interactions/${scope}/${encodeURIComponent(contextId)}`, { credentials: "include" });
+      // The endpoint defaults to the newest 50 rows, and upcoming meeting
+      // occurrences (one row per attendee calendar) sort first — on Aaron
+      // Addo they filled all 50, so the board said "Emails (0)" beside
+      // "Lucy Cope · 83" (Woody, 2026-09-27). Ask for enough to reach them.
+      const r = await fetch(`/api/interactions/${scope}/${encodeURIComponent(contextId)}?limit=500`, { credentials: "include" });
       if (!r.ok) return { interactions: [] };
       return r.json();
     },
@@ -180,15 +184,43 @@ export function InteractionsBoard({ scope, contextId }: Props) {
     // the board mirrors what the AI Activity card shows.
     const noise = /verification (was )?(expired|approved|declined|submitted|pending|completed|created|reminder)|verification for |\bveriff\b/i;
     // One row per meeting/email, not one per attendee mailbox: the same
-    // invite lands in every BGP calendar it was sent to (Woody, 2026-09-27).
-    const seen = new Set<string>();
-    return (data?.interactions || []).map(norm).filter((i: any) => {
-      if (noise.test(`${i.subject || ""}`)) return false;
-      const key = `${i.type}|${(i.subject || "").trim().toLowerCase()}|${String(i.interactionDate || "").slice(0, 16)}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+    // invite lands in every BGP calendar it was sent to — keep the first
+    // row and list every BGP attendee on it (Woody, 2026-09-27).
+    const byKey = new Map<string, InteractionRow & { bgpUsers: string[]; laterDates?: string[] }>();
+    for (const i of (data?.interactions || []).map(norm)) {
+      if (noise.test(`${i.subject || ""}`)) continue;
+      const t = new Date(i.interactionDate);
+      const when = isNaN(t.getTime()) ? String(i.interactionDate || "") : t.toISOString().slice(0, 16);
+      const key = `${i.type}|${(i.subject || "").trim().toLowerCase()}|${when}`;
+      const existing = byKey.get(key);
+      if (existing) {
+        if (i.bgpUser && !existing.bgpUsers.includes(i.bgpUser)) existing.bgpUsers.push(i.bgpUser);
+        continue;
+      }
+      byKey.set(key, { ...i, bgpUsers: i.bgpUser ? [i.bgpUser] : [] });
+    }
+    // Upcoming occurrences of one recurring series ("9am: Fortnightly Retail
+    // Leasing Agents Meeting" on 21 Oct, 4 Nov, 18 Nov) read as the same row
+    // three times — show the soonest and note the rest.
+    const now = Date.now();
+    const seriesHead = new Map<string, InteractionRow & { bgpUsers: string[]; laterDates?: string[] }>();
+    const all = Array.from(byKey.values());
+    const upcomingSoonestFirst = all
+      .filter((r) => r.type === "meeting" && new Date(r.interactionDate).getTime() > now && (r.subject || "").trim())
+      .sort((a, b) => new Date(a.interactionDate).getTime() - new Date(b.interactionDate).getTime());
+    const absorbed = new Set<any>();
+    for (const r of upcomingSoonestFirst) {
+      const sk = (r.subject || "").trim().toLowerCase();
+      const head = seriesHead.get(sk);
+      if (head) {
+        (head.laterDates ||= []).push(r.interactionDate);
+        for (const u of r.bgpUsers) if (!head.bgpUsers.includes(u)) head.bgpUsers.push(u);
+        absorbed.add(r);
+      } else {
+        seriesHead.set(sk, r);
+      }
+    }
+    return all.filter((r) => !absorbed.has(r));
   }, [data]);
   const emailCount = interactions.filter(i => i.type === "email" || i.type === "call" || i.type === "note").length;
   const meetingCount = interactions.filter(i => i.type === "meeting").length;
@@ -320,8 +352,15 @@ export function InteractionsBoard({ scope, contextId }: Props) {
                         size and coloured so it pops out of the row. */}
                     <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                       {isMeeting ? <Calendar className="w-3 h-3 text-purple-600 shrink-0" /> : <Mail className="w-3 h-3 text-blue-600 shrink-0" />}
-                      <span className="text-sm font-semibold text-primary">{bgpUserDisplay(row.bgpUser, emailToName)}</span>
-                      <span>· {relDate(row.interactionDate)}</span>
+                      <span className="text-sm font-semibold text-primary truncate min-w-0">
+                        {(row.bgpUsers.length ? row.bgpUsers : [row.bgpUser]).map((u) => bgpUserDisplay(u, emailToName)).filter(Boolean).join(", ")}
+                      </span>
+                      <span className="shrink-0">· {relDate(row.interactionDate)}</span>
+                      {row.laterDates && row.laterDates.length > 0 && (
+                        <span className="shrink-0 opacity-70" title={row.laterDates.map((d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })).join(", ")}>
+                          · then {row.laterDates.slice(0, 2).map((d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" })).join(", ")}{row.laterDates.length > 2 ? ` +${row.laterDates.length - 2}` : ""}
+                        </span>
+                      )}
                       {row.direction && <span className="opacity-70">· {row.direction}</span>}
                       {canOpen && <ExternalLink className="w-2.5 h-2.5 ml-auto opacity-0 group-hover:opacity-60" />}
                     </div>

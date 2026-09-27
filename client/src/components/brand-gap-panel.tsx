@@ -413,7 +413,8 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {data.researchContext && !centre && <p className="text-sm text-muted-foreground">{data.researchContext.reason}</p>}
+        {/* Local mode's reason only repeated the card's own heading. */}
+        {data.researchContext && !centre && data.researchContext.mode !== "local" && <p className="text-sm text-muted-foreground">{data.researchContext.reason}</p>}
         {/* AI gap read */}
         <GapCommentary propertyId={propertyId} />
 

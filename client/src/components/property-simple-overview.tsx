@@ -46,9 +46,11 @@ export function NextLeaseEvents({ propertyId, propertyName, landlordName, rows, 
       const shortRef = (nameAt > 2 ? unitRef.slice(0, nameAt) : unitRef).replace(/[\s,·-]+$/, "").slice(0, 40) || unitRef;
       const done = trackedKeys.get(trackKey(unitRef, TRACK_TYPE[event.kind] || event.kind, event.date));
       return <div key={`${event.unit.id}-${event.kind}`} className="flex items-center justify-between gap-3 text-sm">
-        <Link href={tenancyHref(event.unit)} className="hover:underline min-w-0 truncate" title={`${unitRef} · ${event.unit.tenant_name || ""}`}>
-          <span className="font-medium">{event.unit.trading_name || event.unit.tenant_name || shortRef}</span>
-          <span className="text-muted-foreground"> · {event.unit.trading_name || event.unit.tenant_name ? `${unitCode(shortRef)} · ` : ""}{event.kind}</span>
+        {/* Two lines so the event kind never truncates away on a phone —
+            "Leomonica Yoshoku · …" twice couldn't tell a break from an expiry. */}
+        <Link href={tenancyHref(event.unit)} className="hover:underline min-w-0 flex flex-col leading-tight" title={`${unitRef} · ${event.unit.tenant_name || ""}`}>
+          <span className="font-medium truncate">{event.unit.trading_name || event.unit.tenant_name || shortRef}</span>
+          <span className="text-[11px] text-muted-foreground truncate">{event.unit.trading_name || event.unit.tenant_name ? `${unitCode(shortRef)} · ` : ""}{event.kind}</span>
         </Link>
         <span className="flex items-center gap-2 shrink-0">
           <span className="font-mono tabular-nums whitespace-nowrap">{formatCalendarDate(event.date)}</span>

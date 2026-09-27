@@ -441,11 +441,11 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
   // Data gaps — what would complete the picture. Rendered alongside the
   // grade so a clean-looking report can't hide an unexecuted check.
   const missing: string[] = [];
-  if (!accounts) missing.push("No filed-accounts figures extracted yet — run the accounts extraction for balance-sheet signals");
-  if (gazetteFailed) missing.push("Gazette insolvency screen could not run");
-  if (!directorRisk || directorRisk.historyChecked === 0) missing.push("Director track-record sweep did not run");
-  if (!ticker && /\bPLC\b/i.test(profile.company_name || "")) missing.push("PLC with no stock ticker set — add one for market signals");
-  if (!officersRes?.items?.length) missing.push("No officers returned from Companies House");
+  if (!accounts) missing.push("Filed accounts not read yet");
+  if (gazetteFailed) missing.push("Gazette insolvency check didn't run");
+  if (!directorRisk || directorRisk.historyChecked === 0) missing.push("Directors' track record not checked");
+  if (!ticker && /\bPLC\b/i.test(profile.company_name || "")) missing.push("Listed company with no stock ticker set");
+  if (!officersRes?.items?.length) missing.push("No officers on Companies House");
 
   // Claude commentary — best-effort, never blocks the score.
   let verdict: string | null = null;
@@ -458,7 +458,7 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
       const client = new Anthropic(opts);
       const msg = await client.messages.create({
         model: "claude-haiku-4-5-20251001", max_tokens: 250,
-        messages: [{ role: "user", content: `You are a landlord's covenant analyst. Assess tenant covenant strength in 3-4 short plain-English sentences, each under 22 words, no hedging — sentence 1 is the verdict, then one sentence each for the strongest evidence for and against (the page shows sentence 1 as a headline and the rest as bullets). If data gaps are listed, close with one short sentence starting "To complete the picture:" naming them. Plain prose only — no markdown, no bold, no headings, no bullet points.\n${profile.company_name} (${num}) — grade ${grade} (${score}/100)\nSignals: ${JSON.stringify({ status, flags: flags.map(f => f.label + (f.detail ? ` (${f.detail})` : "")), accounts: signals.accounts, market: signals.market, directorRisk })}\nData gaps: ${missing.length ? missing.join("; ") : "none"}` }],
+        messages: [{ role: "user", content: `You are a landlord's covenant analyst. Assess tenant covenant strength in 3-4 short plain-English sentences, each under 22 words, no hedging — sentence 1 is the verdict, then one sentence each for the strongest evidence for and against (the page shows sentence 1 as a headline and the rest as bullets). Don't list the data gaps — the page shows them separately. Money is pounds sterling (£), never $. Plain prose only — no markdown, no bold, no headings, no bullet points.\n${profile.company_name} (${num}) — grade ${grade} (${score}/100)\nSignals: ${JSON.stringify({ status, flags: flags.map(f => f.label + (f.detail ? ` (${f.detail})` : "")), accounts: signals.accounts, market: signals.market, directorRisk })}\nData gaps: ${missing.length ? missing.join("; ") : "none"}` }],
       });
       verdict = (msg.content[0] as any)?.text?.trim() || null;
     }

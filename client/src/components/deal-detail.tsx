@@ -326,6 +326,14 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   // flow to the board (server/investment-deal-sync.ts); link across.
   const { data: ddTracker = [] } = useQuery<any[]>({ queryKey: ["/api/investment-tracker"], enabled: isInvestmentDeal && !isClientDeal });
   const trackerRow = (Array.isArray(ddTracker) ? ddTracker : []).find((t: any) => t.dealId === id);
+  // Stage "Invoiced"/"Completed" over a Xero invoice still in DRAFT read as a
+  // silent contradiction — say it plainly as an attention chip (Woody,
+  // 2026-09-27). Same query key as XeroInvoiceSection, so no extra fetch.
+  const { data: ddInvoices = [] } = useQuery<any[]>({ queryKey: ["/api/xero/invoices", id], enabled: !isClientDeal });
+  const ddStatusCode = deal?.status ? legacyToCode(deal.status) : null;
+  const draftInvoiceOnInvoicedDeal = (ddStatusCode === "INV" || ddStatusCode === "COM")
+    ? (Array.isArray(ddInvoices) ? ddInvoices : []).find((inv: any) => inv?.status === "DRAFT") || null
+    : null;
   const dealDisplayName = (isInvestmentDeal
     ? (linkedProperty?.name || deal?.name)
     : (deal?.name || linkedProperty?.name)) || "Untitled Deal";
@@ -704,7 +712,18 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
             // linked property — only headline a unit that sits on the deal's
             // property; otherwise flag the mislink (Woody, 2026-09-27).
             const unitOffProperty = !!linkedUnit && !!deal.propertyId && linkedUnit.propertyId !== deal.propertyId;
-            const headingIsUnit = !isInvestment && !!linkedUnit && !unitOffProperty;
+            // The guard above missed the live case: the unit row sits on the
+            // 10 Piccadilly property but is NAMED "55 Regent Street" — a
+            // street address for another building. A numbered-address unit
+            // name only headlines when the deal or property name shares its
+            // street; "Unit 3", "T1" etc. still headline (Woody, 2026-09-27).
+            const streetOf = (s: string) => s.toLowerCase().replace(/^\d+[a-z]?(?:[-–]\d+[a-z]?)?\s+/, "").replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+            const unitNameIsOtherAddress = !!linkedUnit && /^\d+[a-z]?(?:[-–]\d+[a-z]?)?\s+[a-z]/i.test(linkedUnit.unitName || "") && (() => {
+              const street = streetOf(linkedUnit.unitName);
+              const ctx = `${deal.name || ""} ${linkedProperty?.name || ""}`.toLowerCase();
+              return !!street && !ctx.includes(street) && !ctx.includes((linkedUnit.unitName || "").toLowerCase());
+            })();
+            const headingIsUnit = !isInvestment && !!linkedUnit && !unitOffProperty && !unitNameIsOtherAddress;
             const headingText = headingIsUnit
               ? linkedUnit!.unitName
               : dealDisplayName;
@@ -780,15 +799,33 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                       On the {trackerRow.boardType === "Sales" ? "Sales" : "Purchases"} board →
                     </Link>
                   )}
-                  {unitOffProperty && !isClientDeal && (
+                  {(unitOffProperty || (!isInvestment && unitNameIsOtherAddress)) && !isClientDeal && (
                     <button
                       type="button"
                       onClick={openUnitEdit}
                       className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
-                      title="The linked unit belongs to another property — click to pick the right unit"
+                      title="The linked unit looks like it belongs to another building — click to pick the right unit"
                       data-testid="chip-unit-off-property"
                     >
-                      Unit {linkedUnit!.unitName} is on another property
+                      {unitOffProperty ? `Unit ${linkedUnit!.unitName} is on another property` : `Linked unit "${linkedUnit!.unitName}" looks like another building`}
+                    </button>
+                  )}
+                  {draftInvoiceOnInvoicedDeal && (
+                    <button
+                      type="button"
+                      onClick={() => document.querySelector('[data-testid="xero-invoice-section"]')?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                      className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                      title="The deal is marked invoiced/completed but its Xero invoice hasn't been approved yet"
+                      data-testid="chip-invoice-still-draft"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                      Invoice still draft in Xero
+                      {draftInvoiceOnInvoicedDeal.totalAmount != null && (
+                        <span className="tabular-nums">
+                          {" "}· £{Number(draftInvoiceOnInvoicedDeal.totalAmount).toLocaleString("en-GB")}
+                          {deal.fee && Number(draftInvoiceOnInvoicedDeal.totalAmount) > Number(deal.fee) * 1.1 ? " inc. VAT" : ""}
+                        </span>
+                      )}
                     </button>
                   )}
                   {headingIsUnit && (

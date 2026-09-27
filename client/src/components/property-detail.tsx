@@ -137,7 +137,7 @@ function PropertyComplianceBoardWrapper({
   const { data: kycViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientViewer = !kycViewer || kycViewer.role === "Client" || !!kycViewer.companyScopeId;
 
-  const { data, isLoading } = useQuery<any>({
+  const { data, isLoading, isError } = useQuery<any>({
     queryKey: ["/api/brand", ownerId, "profile"],
     queryFn: async () => {
       const res = await fetch(`/api/brand/${ownerId}/profile`, { credentials: "include", headers: getAuthHeaders() });
@@ -173,6 +173,19 @@ function PropertyComplianceBoardWrapper({
     );
     if (embedded) return empty;
     return <Card><CardContent className="p-3">{empty}</CardContent></Card>;
+  }
+
+  // A missing owner record (404) ends the load — it used to leave the
+  // skeleton up for good (Brixton).
+  if (!isLoading && (isError || !data?.company)) {
+    const gone = (
+      <div className="space-y-2.5">
+        {billingEntityRow}
+        <p className="text-[11px] text-muted-foreground italic border-t pt-2">The owner's company record couldn't be found — re-link the owner above.</p>
+      </div>
+    );
+    if (embedded) return gone;
+    return <Card><CardContent className="p-3">{gone}</CardContent></Card>;
   }
 
   if (isLoading || !data?.company) {
@@ -1215,10 +1228,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 testId="toggle-available-units-section"
               >
                 <AvailableUnitsPanel propertyId={property.id} propertyName={property.name} />
-                {!isClientViewer && <div className="mt-3 pt-2 border-t">
-                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Brands that fit the vacant space</div>
-                  <PropertySpaceFitsPanel propertyId={property.id} />
-                </div>}
+                {!isClientViewer && <PropertySpaceFitsPanel propertyId={property.id} />}
               </ReferenceSection>
               </PropertySection>
 
@@ -1373,9 +1383,12 @@ function PropertySpaceFitsPanel({ propertyId }: { propertyId: string }) {
   if (isLoading) return <div className="text-xs text-muted-foreground py-2">Loading…</div>;
   const space = data?.space || [];
   const fitting = space.filter(u => u.fits.length > 0);
-  if (!space.length) return <p className="text-xs text-muted-foreground">No vacant or marketing units recorded.</p>;
+  // Nothing vacant = no section (the Available units card above already
+  // says so) — Brixton said "empty" three times in one card.
+  if (!space.length) return null;
   return (
-    <div className="space-y-1">
+    <div className="mt-3 pt-2 border-t space-y-1">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Brands that fit the vacant space</div>
       {fitting.map(u => (
         <div key={`${u.kind}-${u.id}`} className="py-1.5 border-b last:border-0 text-xs" data-testid={`space-fit-${u.id}`}>
           <div className="flex items-center justify-between gap-2">

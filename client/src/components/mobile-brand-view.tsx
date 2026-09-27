@@ -1,3 +1,4 @@
+import { aboutText } from "@/lib/about-text";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { BrandFeedCard } from "@/components/brand-feed-card";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
@@ -195,10 +196,11 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       {!isClientViewer && <BrandImageRefreshButton companyId={companyId} />}
       {c.description && <div className="rounded-lg border border-border bg-card p-3 space-y-2">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
-        <p className={`text-sm leading-relaxed ${aboutOpen ? "" : "line-clamp-5"}`}>{c.description}</p>
-        {c.description.length > 320 && <button type="button" onClick={() => setAboutOpen(v => !v)} className="text-xs text-primary hover:underline">{aboutOpen ? "Show less" : "Read more"}</button>}
+        <p className={`text-sm leading-relaxed whitespace-pre-line ${aboutOpen ? "" : "line-clamp-5"}`}>{aboutText(c.description)}</p>
+        {c.description.length > 220 && <button type="button" onClick={() => setAboutOpen(v => !v)} className="text-xs text-primary hover:underline">{aboutOpen ? "Show less" : "Read more"}</button>}
       </div>}
-      {!isLandlord && <BgpTakeStrip companyId={companyId} tab="brand" hideWhenEmpty />}
+      {/* Landlords and agent firms have no BGP take on desktop either. */}
+      {!isLandlord && !isAgentFirm && <BgpTakeStrip companyId={companyId} tab="brand" hideWhenEmpty />}
       <div className="rounded-lg border border-border bg-card p-3 space-y-3">
         <Button variant="outline" size="sm" onClick={() => setConversationOpen(value => !value)} aria-expanded={conversationOpen} data-testid="button-brand-conversation">{conversationOpen ? "Close conversation" : "Open conversation"}</Button>
         {conversationOpen && <div className="h-96"><CompanyMiniChat companyId={companyId} companyName={c.name} fill starters={askTopics(c.name, isLandlord, !isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type))} /></div>}
@@ -403,7 +405,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       )}
 
       {/* Portfolio activity — tenant at / targeted / pitched / suggested */}
-      <PortfolioActivityBlock companyId={companyId} />
+      {!isAgentFirm && <PortfolioActivityBlock companyId={companyId} />}
 
       {/* Signals — phone twin of the desktop feed: semantic type pill +
           mono date on a meta row, clamped headline underneath, sentiment

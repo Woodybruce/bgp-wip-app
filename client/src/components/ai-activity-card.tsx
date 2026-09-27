@@ -188,13 +188,22 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, cachedO
       <Card data-testid={`ai-activity-${subjectType}-${subjectId}`}>
         <CardHeader className={compact ? "pb-1.5 pt-2 px-3" : "pb-2"}>
           <div className="flex items-center justify-between gap-2 flex-wrap">
-            <CardTitle className={`flex items-center gap-2 ${compact ? "text-sm" : "text-base"}`}>
-              <Sparkles className="w-4 h-4 text-muted-foreground" />
-              {title || "Activity"}
-              {lastTouchPill}
-              {data?.generatedAt && (
-                <span className="text-[10px] text-muted-foreground font-normal">
-                  — analysed {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+            {/* Title, then pill + analysed date — stacked on phones so the
+                date isn't squeezed into a narrow column beside a title
+                wrapping onto three lines (Woody, 2026-09-27). */}
+            <CardTitle className={`flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-2 min-w-0 ${compact ? "text-sm" : "text-base"}`}>
+              <span className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-muted-foreground shrink-0" />
+                {title || "Activity"}
+              </span>
+              {(lastTouchPill || data?.generatedAt) && (
+                <span className="flex items-center gap-2 flex-wrap">
+                  {lastTouchPill}
+                  {data?.generatedAt && (
+                    <span className="text-[10px] text-muted-foreground font-normal">
+                      Analysed {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                    </span>
+                  )}
                 </span>
               )}
             </CardTitle>
@@ -266,6 +275,14 @@ function LastTouchBadge({ iso }: { iso: string }) {
   const t = Date.parse(iso);
   if (isNaN(t)) return null;
   const days = Math.round((Date.now() - t) / (1000 * 60 * 60 * 24));
+  // Older cached write-ups took the latest date across cited items, so an
+  // upcoming meeting showed as "Last touch -23d ago". A future date is the
+  // next touch, not the last (Woody, 2026-09-27).
+  if (days < 0) {
+    const ahead = -days;
+    const when = ahead === 1 ? "tomorrow" : ahead < 30 ? `in ${ahead}d` : new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    return <Badge variant="outline" className="text-[10px] font-medium">Next {when}</Badge>;
+  }
   const cls = days <= 7 ? "bg-emerald-50 text-emerald-700 border-emerald-200"
     : days <= 30 ? "bg-amber-50 text-amber-700 border-amber-200"
     : "bg-red-50 text-red-700 border-red-200";
@@ -279,19 +296,45 @@ function LastTouchBadge({ iso }: { iso: string }) {
 // forbids it; this drops any such sentence from older cached write-ups too
 // (Woody, 2026-09-27).
 const PROCESS_NARRATION_RE = /\bfan-?out\b|\berrored\b|\b(?:was|were|is|as) noise\b|\b(?:has|have) been (?:dropped|filtered)\b|\bfiltered out\b|\beverything else (?:returned|that came back)\b|\bI (?:checked|searched|ran|re-?ran|queried|tried|retried|filtered|dropped|looked through)\b|\bsearch_(?:emails|calendar)\b|\bmailbox="?all"?/i;
+// Describing the data instead of the deal — "The system holds a clean
+// invoicing trail…", "Records show…", "The search returned…". Anchored to
+// the sentence start so real content ("Land Registry records show the
+// freehold…") and the "No emails … in the BGP system are relevant" fallback
+// survive (Woody, 2026-09-27).
+const DATA_NARRATION_RE = /^(?:the )?(?:BGP |mailbox |email |calendar )?(?:records?|system|search(?:es)?|results?|inbox(?:es)?|mailboxes|calendars?) (?:holds?|has|have|shows?|contains?|records?|returned|surfaced|found|indicates?|came back)\b|\bholds? an? (?:\w+ ){0,3}trail\b/i;
+
+function isHeadingLine(line: string): boolean {
+  return /^#{1,3} /.test(line) || /^\*\*[^*]+\*\*:?\s*$/.test(line.trim());
+}
+function headingLevel(line: string): number {
+  const m = line.match(/^(#{1,3}) /);
+  return m ? m[1].length : 4;
+}
 
 function stripProcessNarration(markdown: string): string {
-  return markdown
+  const lines = markdown
     .split("\n")
     .flatMap((line) => {
       if (/^#{1,3} /.test(line) || line.trim() === "") return [line];
       const prefix = line.match(/^(?:[-*] |> )/)?.[0] || "";
       const body = line.slice(prefix.length);
-      const kept = body.split(/(?<=[.!?])\s+/).filter((s) => !PROCESS_NARRATION_RE.test(s));
+      const kept = body.split(/(?<=[.!?:])\s+/).filter((s) => !PROCESS_NARRATION_RE.test(s) && !DATA_NARRATION_RE.test(s.trim()));
       if (kept.length === 0) return [];
       return [prefix + kept.join(" ")];
-    })
-    .join("\n");
+    });
+  // Drop headings left with nothing under them ("## Calendar" followed
+  // straight by "## Next steps") — walk bottom-up so a section whose only
+  // sub-heading was empty goes too.
+  const out: string[] = [];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (isHeadingLine(line)) {
+      const next = out.find((l) => l.trim() !== "");
+      if (next === undefined || (isHeadingLine(next) && headingLevel(next) <= headingLevel(line))) continue;
+    }
+    out.unshift(line);
+  }
+  return out.join("\n");
 }
 
 /**

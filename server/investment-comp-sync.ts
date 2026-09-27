@@ -159,6 +159,30 @@ export async function runInvestmentLinkBackfills(deps: { pool?: Querier } = {}) 
     console.log(`[property-links] ${removed} duplicate property team links removed`);
   }
 
+  // Scraped UK trading entities carried page text ("of Boots UK Limited",
+  // "Copyright 2026 Wildstone Capital Limited", PayPal as Toolstation's
+  // entity) — tidy them once. When the linked Companies House record's
+  // name ends with the tidied tail, use the registered name ("s Chickenland
+  // Limited" → NANDO'S CHICKENLAND LIMITED).
+  const ENTITY = "migration:uk_entity_name_tidy_v1";
+  if (!(await done(ENTITY))) {
+    const { tidyScrapedEntityName } = await import("@shared/entity-name");
+    const rows = (await q.query(`SELECT id, name, uk_entity_name, companies_house_data FROM crm_companies WHERE uk_entity_name IS NOT NULL AND uk_entity_name <> ''`)).rows;
+    const changes: Array<{ id: string; from: string; to: string | null }> = [];
+    for (const row of rows) {
+      // The apostrophe split: "s Chickenland Limited" on Nando's.
+      const possessive = /^s\s+\S/.test(row.uk_entity_name) && /['’]s$/i.test(String(row.name || "").trim());
+      let to = possessive ? `${String(row.name).trim().replace(/’/g, "'")}${row.uk_entity_name.slice(1)}` : tidyScrapedEntityName(row.uk_entity_name);
+      const registered = row.companies_house_data?.profile?.companyName || row.companies_house_data?.profile?.company_name;
+      if (to && registered && to !== row.uk_entity_name && String(registered).toLowerCase().replace(/’/g, "'").endsWith(to.toLowerCase())) to = registered;
+      if (to === row.uk_entity_name) continue;
+      await q.query(`UPDATE crm_companies SET uk_entity_name = $2 WHERE id = $1`, [row.id, to]);
+      changes.push({ id: row.id, from: row.uk_entity_name, to });
+    }
+    await mark(ENTITY, { changed: changes.length, changes, at: new Date().toISOString() });
+    console.log(`[entity-names] ${changes.length} scraped UK trading entities tidied`);
+  }
+
   const TEAM = "migration:tracker_deals_investment_team_v1";
   if (!(await done(TEAM))) {
     const r = await q.query(`UPDATE crm_deals SET team = array_append(COALESCE(team, ARRAY[]::text[]), 'Investment')

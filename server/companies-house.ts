@@ -1,3 +1,4 @@
+import { tidyScrapedEntityName } from "@shared/entity-name";
 import { Router } from "express";
 import { requireAuth } from "./auth";
 import { scraperFetch, isScraperApiAvailable } from "./utils/scraperapi";
@@ -2506,17 +2507,17 @@ export async function scrapeUkEntityFromWebsite(
 
   // Patterns that match "XXX Limited/Ltd/plc/LLP registered in England/Wales"
   const ENTITY_PATTERNS: RegExp[] = [
-    /refers\s+to\s+([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP|LP))/i,
-    /([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP|LP))\s+(?:is\s+)?(?:a\s+company\s+)?registered\s+in\s+England/i,
-    /contracting\s+party:?\s*([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
-    /([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))\s+\((?:company\s+)?(?:registered\s+)?(?:number|no\.?)/i,
-    /registered\s+company(?:\s+name)?:?\s*([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
-    /©\s*(?:\d{4}[-–]\d{2,4}|\d{4})\s+([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
-    /trading\s+(?:as|name):?\s*([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+    /refers\s+to\s+([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP|LP))/i,
+    /([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP|LP))\s+(?:is\s+)?(?:a\s+company\s+)?registered\s+in\s+England/i,
+    /contracting\s+party:?\s*([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+    /([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))\s+\((?:company\s+)?(?:registered\s+)?(?:number|no\.?)/i,
+    /registered\s+company(?:\s+name)?:?\s*([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+    /©\s*(?:\d{4}[-–]\d{2,4}|\d{4})\s+([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+    /trading\s+(?:as|name):?\s*([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
     // H&M Group / Scandinavian brands use "through X Ltd., org. no.XXXXXXXX"
-    /through\s+([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))\s*[,.]?\s*org\.\s*no\./i,
+    /through\s+([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))\s*[,.]?\s*org\.\s*no\./i,
     // "we/us means X Ltd" — common in modern retail T&Cs
-    /(?:we|us|our\s+company)\s+(?:means?|refers?\s+to|is)\s+([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+    /(?:we|us|our\s+company)\s+(?:means?|refers?\s+to|is)\s+([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
   ];
 
   const CH_PATTERNS: RegExp[] = [
@@ -2546,8 +2547,10 @@ export async function scrapeUkEntityFromWebsite(
     for (const pat of ENTITY_PATTERNS) {
       const m = text.match(pat);
       if (m?.[1]) {
-        const candidate = m[1].trim().replace(/\s+/g, " ");
-        if (candidate.length <= 80 && !/[\[\]<>{}|]/.test(candidate) && balancedParens(candidate)) {
+        const candidate = m[1].trim().replace(/\s+/g, " ").replace(/’/g, "'").replace(/^(?:copyright|all rights reserved)\s+(?:\d{4}\s+)?/i, "");
+        // /i lets [A-Z] match lower case — "s Chickenland Limited" was the
+        // tail of "Nando’s Chickenland Limited"; a name starts upper case.
+        if (candidate.length <= 80 && /^[A-Z0-9]/.test(candidate) && !/[\[\]<>{}|]/.test(candidate) && balancedParens(candidate)) {
           entityName = candidate;
           break;
         }
@@ -2565,11 +2568,11 @@ export async function scrapeUkEntityFromWebsite(
       // and "("-prefixed tokens ("Starbucks Coffee Company (UK) Limited") —
       // without \(? the match started INSIDE the bracket and stored the
       // fragment "UK) Limited".
-      const BROAD = /\b([A-Z][A-Za-z0-9&'.,()\-]+(?:\s+(?:&\s+)?\(?[A-Z0-9][A-Za-z0-9&'.,()\-]*\)?){0,5}\s+(?:Limited|Ltd\.?|PLC|plc|LLP|LP))\b/g;
+      const BROAD = /\b([A-Z][A-Za-z0-9&'’.,()\-]+(?:\s+(?:&\s+)?\(?[A-Z0-9][A-Za-z0-9&'’.,()\-]*\)?){0,5}\s+(?:Limited|Ltd\.?|PLC|plc|LLP|LP))\b/g;
       const scores = new Map<string, number>();
       let m: RegExpExecArray | null;
       while ((m = BROAD.exec(text)) !== null) {
-        const name = m[1].trim().replace(/\s+/g, " ");
+        const name = m[1].trim().replace(/\s+/g, " ").replace(/’/g, "'");
         if (name.length < 6 || name.length > 80) continue;
         if (/[\[\]<>{}|]/.test(name) || !balancedParens(name)) continue;
         if (/^(?:The|This|These|Our|Your|Their|All|Any|Some|Such|Other|Same|Both|Each|Every)\b/i.test(name)) continue;
@@ -2596,6 +2599,8 @@ export async function scrapeUkEntityFromWebsite(
       const m = text.match(pat);
       if (m?.[1]) { chNumber = m[1].trim().padStart(8, "0"); break; }
     }
+    // Strip page text caught before the name ("Copyright 2026 …", "of …").
+    if (entityName) entityName = tidyScrapedEntityName(entityName);
     if (entityName || chNumber) return { entityName, chNumber, sourceUrl };
     return null;
   }
@@ -3267,7 +3272,7 @@ router.get("/api/scraper-test", requireAuth, async (req, res) => {
       const ndMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
       const ndText = ndMatch ? ndMatch[1] : "";
       // Broad Ltd/PLC search in stripped text
-      const ltdMatch = text.match(/([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|PLC|plc|LLP))/);
+      const ltdMatch = text.match(/([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|PLC|plc|LLP))/);
       // org.no / company number search
       const cnMatch = text.match(/(?:org\.\s*no\.?|company\s+(?:number|no\.?))\s*[:\s]*(0?\d{7,8})/i);
       // Specific phrases

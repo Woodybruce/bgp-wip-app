@@ -286,6 +286,9 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
          LEFT JOIN property_units pu ON pu.id = d.unit_id
          LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
         WHERE i.interaction_date > NOW() - INTERVAL '14 days'
+          -- Diary entries for next month are not recent activity (a 23 Dec
+          -- meeting read as "held" in September's commentary).
+          AND i.interaction_date <= NOW()
           AND (
             (d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1)
             OR (
@@ -308,7 +311,25 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
         LIMIT 30`,
       [propertyId]
     ).catch(unavailable("activity", "Recent activity could not be loaded."));
-    const activity = activityQ.rows.map(a => ({
+    // One meeting is stored once per attendee pair (2 BGP people × 7
+    // guests = 14 rows) — fold it back into one line.
+    const meetingGroups = new Map<string, any>();
+    const activityRows: any[] = [];
+    for (const a of activityQ.rows) {
+      if (a.type !== "meeting") { activityRows.push(a); continue; }
+      const key = `${new Date(a.interaction_date).toISOString().slice(0, 16)}|${a.deal_id || ""}`;
+      const g = meetingGroups.get(key);
+      if (!g) { const first = { ...a, _users: new Set([a.bgp_user].filter(Boolean)), _who: new Set([a.contact_name || a.company_name].filter(Boolean)) }; meetingGroups.set(key, first); activityRows.push(first); continue; }
+      if (a.bgp_user) g._users.add(a.bgp_user);
+      if (a.contact_name || a.company_name) g._who.add(a.contact_name || a.company_name);
+    }
+    for (const g of meetingGroups.values()) {
+      const users = [...g._users].map((u: string) => u.split(" ")[0]);
+      const who = [...g._who] as string[];
+      g.bgp_user = users.length > 1 ? `${users.slice(0, -1).join(", ")} and ${users[users.length - 1]}` : users[0] || null;
+      g.contact_name = who.length > 2 ? `${who.slice(0, 2).join(", ")} and ${who.length - 2} other${who.length - 2 === 1 ? "" : "s"}` : who.join(" and ") || null;
+    }
+    const activity = activityRows.map(a => ({
       id: a.id,
       kind: a.type,                                  // email / call / meeting / note
       direction: a.direction,                        // inbound / outbound
@@ -559,7 +580,7 @@ function stageLabel(status: string | null | undefined): string {
 
 function buildActivitySummary(a: any): string {
   const who = a.contact_name || a.company_name || "contact";
-  const by = a.bgp_user ? `${a.bgp_user.split(" ")[0]} ` : "";
+  const by = a.bgp_user ? `${/ and |, /.test(a.bgp_user) ? a.bgp_user : a.bgp_user.split(" ")[0]} ` : "";
   const verb = a.type === "email"
     ? (a.direction === "outbound" ? "emailed" : "got an email from")
     : a.type === "call"
@@ -670,7 +691,7 @@ ${(brief.data_warnings || []).length ? `Data caveats (state nothing these make u
   - **Live activity:** what's actively moving — live deals AND Letting Tracker units in play; only say nothing is transacting if BOTH lists are empty.
   - **Momentum:** what the recent email/meeting activity shows.
   - **Risks:** the vacancies / expiries / covenant points worth flagging. No flagged risks only means none were found in the recorded data; it is not a complete covenant or lease review.
-  - **BGP focus:** where BGP's focus is this week, with one forward-looking clause.
+  - **BGP focus:** where BGP's focus is this week, with one forward-looking clause. If no tasks are recorded, name the focus from the live deals and risks — never say that no tasks are recorded.
 
 Rules: British English, partner-tone, no hype, no "I'm pleased to". Each bullet ONE sentence, at most ~30 words — name the few that matter, don't list every tenant. Bold the key tenant and unit names with **double asterisks**. Reference the actual tenants / units / figures above — don't generalise. Never state BGP fees or commissions. No other headings. No preamble or "here is".`;
 
