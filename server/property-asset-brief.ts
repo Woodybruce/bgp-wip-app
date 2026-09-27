@@ -650,13 +650,15 @@ ${focusLines}
 
 Performance: ${brief.performance.vacancy_rate == null ? "Vacancy unavailable" : `${(brief.performance.vacancy_rate * 100).toFixed(1)}% recorded vacancy`}${brief.performance.wault_years != null ? `, rent-weighted lease term ${brief.performance.wault_years.toFixed(1)} yrs` : "; weighted lease term unavailable"}.
 
-Write the operational commentary for the asset owner reading this, as FOUR SHORT paragraphs separated by blank lines, each opening with a bold lead-in exactly like this: **Live activity.** / **Momentum.** / **Risks.** / **BGP focus.** Cover in order:
-1. What's actively moving right now — live deals AND Letting Tracker units in play; only say nothing is transacting if BOTH lists are empty.
-2. What the recent email/meeting activity shows about momentum.
-3. The risks worth flagging (vacancies / expiries / covenant). No flagged risks only means none were found in the recorded data; it is not a complete covenant or lease review.
-4. Where BGP's focus is this week + a forward-looking line.
+Write the operational commentary for the asset owner reading this as a HEADLINE plus FOUR bullets (Woody, 2026-09-27: "headline plus bullets, like the covenant summary"):
+- First line: one bold headline sentence — the single thing to know about the asset right now, e.g. **Four lettings at solicitors; vacancy is the pressure point.**
+- Then exactly four bullets, each starting "- " and a bold lead-in, in this order:
+  - **Live activity:** what's actively moving — live deals AND Letting Tracker units in play; only say nothing is transacting if BOTH lists are empty.
+  - **Momentum:** what the recent email/meeting activity shows.
+  - **Risks:** the vacancies / expiries / covenant points worth flagging. No flagged risks only means none were found in the recorded data; it is not a complete covenant or lease review.
+  - **BGP focus:** where BGP's focus is this week, with one forward-looking clause.
 
-Rules: British English, partner-tone, no hype, no "I'm pleased to". Keep each paragraph to 1-3 sentences. Bold the key tenant and unit names with **double asterisks**. Reference the actual tenants / units / figures above — don't generalise. Never state BGP fees or commissions. No headings beyond the bold lead-ins, no lists. No preamble or "here is".`;
+Rules: British English, partner-tone, no hype, no "I'm pleased to". Each bullet ONE sentence, at most ~30 words — name the few that matter, don't list every tenant. Bold the key tenant and unit names with **double asterisks**. Reference the actual tenants / units / figures above — don't generalise. Never state BGP fees or commissions. No other headings. No preamble or "here is".`;
 
     let msg: any;
     try {
