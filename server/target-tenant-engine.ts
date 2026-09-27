@@ -323,6 +323,9 @@ export async function matchBrandCompany(pool: any, name: string): Promise<{ id: 
   return hits.length === 1 ? hits[0] : null;
 }
 
+// Live progress of a whole-centre run, for the Generate all poll.
+export const runProgress = new Map<string, { done: number; total: number; failed: number }>();
+
 // Plan and save targets for a set of leasing-schedule units (the Generate
 // buttons). Units go to the model in batches of up to six, one after another.
 // save:false plans without writing (?preview=1 on the unit route).
@@ -339,13 +342,19 @@ export async function generateTargetsForUnits(pool: any, req: Request, propertyI
   const strategies: string[] = [];
   const inserted = new Map<string, any[]>();
   const failed: Array<{ unit_id: string; error: string }> = [];
-  // Batches run in turn so each sees where earlier ones placed brands.
+  // Batches run in turn so each sees where earlier ones placed brands. Each
+  // AI call is capped at five minutes with one retry — a stalled call once
+  // held a whole-centre run for 20 minutes — and a failed batch doesn't stop
+  // the rest.
+  const progress = { done: 0, total: units.length, failed: 0 };
+  runProgress.set(propertyId, progress);
+  const timed = <T,>(p: Promise<T>) => Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("The AI plan took too long for this batch")), 5 * 60_000))]);
   const placed = new Map<string, string[]>();
   for (const r of existingRows) placed.set(r.brand_name, [...(placed.get(r.brand_name) || []), String(r.unit_name || "another unit").split(/\s+/)[0]]);
   for (const batch of batches) {
     {
       try {
-        const plan = await planTargets(ev, batch, placed);
+        const plan = await timed(planTargets(ev, batch, placed)).catch(() => timed(planTargets(ev, batch, placed)));
         if (plan.strategy) strategies.push(plan.strategy);
         for (const unit of batch) {
           const saved: any[] = [];
@@ -366,8 +375,11 @@ export async function generateTargetsForUnits(pool: any, req: Request, propertyI
         }
       } catch (error: any) {
         for (const unit of batch) failed.push({ unit_id: unit.id, error: String(error?.message || error).slice(0, 200) });
+        progress.failed += batch.length;
       }
+      progress.done += batch.length;
     }
   }
+  runProgress.delete(propertyId);
   return { inserted, strategy: strategies.join(" "), failed };
 }

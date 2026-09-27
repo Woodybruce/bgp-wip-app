@@ -1101,7 +1101,7 @@ async function runTargetJob(url: string): Promise<any> {
   const started = await start.json().catch(() => ({}));
   if (!start.ok) throw new Error(started?.error || "Could not start");
   if (!started.accepted) return started;
-  for (let i = 0; i < 200; i++) {
+  for (let i = 0; i < 600; i++) {
     await new Promise(r => setTimeout(r, 3000));
     const job = await fetch(url, { headers: getAuthHeaders() }).then(r => r.json()).catch(() => null);
     if (job?.state === "done") return job.result;

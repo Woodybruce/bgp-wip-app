@@ -1288,7 +1288,8 @@ router.get("/api/leasing-schedule/property/:propertyId/generate-targets", requir
   const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
   if (!allowed) return res.status(403).json({ error: "Access denied" });
   const { getJobStatus } = await import("./brand-jobs");
-  res.json(getJobStatus(`targets:property:${req.params.propertyId}`) || { state: "idle" });
+  const { runProgress } = await import("./target-tenant-engine");
+  res.json({ ...(getJobStatus(`targets:property:${req.params.propertyId}`) || { state: "idle" }), progress: runProgress.get(req.params.propertyId as string) || null });
 });
 
 async function buildStyledSheet(wb: any, ExcelJS: any, propertyName: string, units: any[], targetTenants?: any[]) {
