@@ -15,8 +15,10 @@
 //    vacant units together — mix, sizing, evidence strength, no brand pushed
 //    at every unit — and returns five rated targets per unit with reasons
 //    that cite the evidence.
-// Client logins never see BGP-internal evidence (conversations, deals,
-// tenant-rep clients); their Brand Gap is already sliced by the gap route.
+// Landlord clients see the brand movement (BGP conversations, new
+// relationships, BGP clients, BGP deals on their own schemes); counts and
+// other landlords' deals stay BGP-only. Their Brand Gap is sliced by the gap
+// route.
 import type { Request } from "express";
 import { requirementFitsUnit, parseReqSize } from "@shared/requirement-fit";
 import { isClientCrmCategory } from "@shared/tenant-categories";
@@ -26,7 +28,7 @@ export const brandKey = (value: string) => value.normalize("NFKD").replace(/\p{M
 type Brand = {
   key: string; companyId: string | null; name: string; category: string | null;
   stores: number | null; rollout: string | null;
-  signals: Array<{ text: string; weight: number }>;
+  signals: Array<{ text: string; weight: number; internal?: boolean }>;
   requirements: Array<{ size: any; use: string[] | null; requirement_locations: string[] | null; created_at: string | null }>;
   bgpClient: boolean;
 };
@@ -39,7 +41,9 @@ export type CentreEvidence = {
 };
 export type TargetUnit = { id: string; unit_name: string; sqft?: number | null; zone?: string | null; positioning?: string | null; status?: string | null;
   tenant_name?: string | null; rent_pa?: number | null; use_class?: string | null; target_brands?: string | null; optimum_target?: string | null };
-export type UnitCandidate = { name: string; companyId: string | null; evidence: string[]; score: number; facts: string };
+// evidence = shareable with the landlord; internal = BGP-only (conversations,
+// deals, tenant-rep clients, new contacts).
+export type UnitCandidate = { name: string; companyId: string | null; evidence: string[]; internal: string[]; score: number; facts: string };
 
 const cache = new Map<string, { at: number; value: CentreEvidence }>();
 
@@ -60,7 +64,7 @@ export async function centreEvidence(pool: any, req: Request, propertyId: string
   const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.value;
 
-  const property = (await rows(pool, `SELECT p.id, p.name, p.asset_class, p.postcode, p.address::text AS address, p.strategic_principles,
+  const property = (await rows(pool, `SELECT p.id, p.name, p.asset_class, p.postcode, p.address::text AS address, p.strategic_principles, p.landlord_id,
       c.name AS landlord_name FROM crm_properties p LEFT JOIN crm_companies c ON c.id = p.landlord_id WHERE p.id = $1`, [propertyId]))[0] || { id: propertyId, name: "" };
   const [gaps, openings] = await Promise.all([selfGet(req, `/api/property/${propertyId}/brand-gaps`), selfGet(req, `/api/property/${propertyId}/centre-openings`)]);
   const gap = gaps?.applicable === false ? null : gaps;
@@ -90,7 +94,7 @@ export async function centreEvidence(pool: any, req: Request, propertyId: string
     if (companyId && !b.companyId) { brands.delete(b.key); b.companyId = companyId; b.key = companyId; brands.set(companyId, b); }
     return b;
   };
-  const signal = (b: Brand | null, text: string, weight: number) => { if (b && !b.signals.some(s => s.text === text)) b.signals.push({ text, weight }); };
+  const signal = (b: Brand | null, text: string, weight: number, internal = false) => { if (b && !b.signals.some(s => s.text === text)) b.signals.push({ text, weight, internal }); };
 
   // Live leasing requirements — sizes are matched per unit later.
   const reqs = await rows(pool, `SELECT r.company_id, COALESCE(c.name, r.name) AS brand_name, r.size, r.use, r.requirement_locations, r.created_at
@@ -107,37 +111,51 @@ export async function centreEvidence(pool: any, req: Request, propertyId: string
   }
   for (const o of openings?.peers || []) if (o.brand) signal(brandFor(o.brand.id, o.brand.name), `opening news at ${o.centre}${o.date ? ` (${month(o.date)})` : ""}`, 8);
 
-  if (!client) {
-    // Who BGP is talking to — emails and meetings with the brand in the last
-    // 90 days, a new relationship when the first contact is this year's.
-    const talking = await rows(pool, `SELECT c.id, c.name,
-        COUNT(*) FILTER (WHERE i.interaction_date > NOW() - INTERVAL '90 days')::int AS recent,
-        MIN(i.interaction_date) AS first_at, MAX(i.interaction_date) AS last_at,
-        COUNT(*) FILTER (WHERE i.interaction_date > NOW() - INTERVAL '90 days' AND COALESCE(i.type, '') !~* 'email')::int AS meetings
-      FROM crm_interactions i JOIN crm_companies c ON c.id = i.company_id
-     WHERE c.merged_into_id IS NULL AND c.company_type ILIKE 'tenant%'
-       AND i.interaction_date > NOW() - INTERVAL '2 years' AND i.interaction_date <= NOW()
-     GROUP BY c.id, c.name HAVING MAX(i.interaction_date) > NOW() - INTERVAL '90 days'
-     ORDER BY recent DESC LIMIT 250`);
-    for (const t of talking) {
-      const isNew = t.first_at && Date.now() - new Date(t.first_at).getTime() < 180 * 864e5;
-      signal(brandFor(t.id, t.name), `${isNew ? "NEW relationship — " : ""}BGP in conversation: ${t.recent} email${t.recent === 1 ? "" : "s"}${t.meetings ? ` / ${t.meetings} meeting${t.meetings === 1 ? "" : "s"}` : ""} in 90 days, last ${month(t.last_at)}`, isNew ? 16 : Math.min(12, 4 + t.recent));
+  // BGP's own brand movement (Woody, 2026-09-27: "we need Landsec to see
+  // brand movement and internal discussions on their projects"). Shared with
+  // the landlord: that BGP is in conversation with a brand (and whether it's a
+  // new relationship), that BGP acts for it, and live BGP deals on this
+  // landlord's own schemes. BGP-only: email / meeting / contact counts and
+  // deals on other landlords' schemes (the landlord just sees "acquiring
+  // elsewhere now").
+  const note = (b: Brand | null, text: string, weight: number, internal = false) => { if (!(internal && client)) signal(b, text, weight, internal); };
+  const talking = await rows(pool, `SELECT c.id, c.name,
+      COUNT(*) FILTER (WHERE i.interaction_date > NOW() - INTERVAL '90 days')::int AS recent,
+      MIN(i.interaction_date) AS first_at, MAX(i.interaction_date) AS last_at,
+      COUNT(*) FILTER (WHERE i.interaction_date > NOW() - INTERVAL '90 days' AND COALESCE(i.type, '') !~* 'email')::int AS meetings
+    FROM crm_interactions i JOIN crm_companies c ON c.id = i.company_id
+   WHERE c.merged_into_id IS NULL AND c.company_type ILIKE 'tenant%'
+     AND i.interaction_date > NOW() - INTERVAL '2 years' AND i.interaction_date <= NOW()
+   GROUP BY c.id, c.name HAVING MAX(i.interaction_date) > NOW() - INTERVAL '90 days'
+   ORDER BY recent DESC LIMIT 250`);
+  for (const t of talking) {
+    const isNew = t.first_at && Date.now() - new Date(t.first_at).getTime() < 180 * 864e5;
+    const b = brandFor(t.id, t.name);
+    note(b, `BGP in active conversation with the brand${isNew ? " — a new relationship" : ""}`, isNew ? 16 : Math.min(12, 4 + t.recent));
+    note(b, `${t.recent} email${t.recent === 1 ? "" : "s"}${t.meetings ? ` / ${t.meetings} meeting${t.meetings === 1 ? "" : "s"}` : ""} in 90 days, last ${month(t.last_at)}`, 0, true);
+  }
+  const contacts = client ? [] : await rows(pool, `SELECT c.id, c.name, COUNT(*)::int AS n FROM crm_contacts k JOIN crm_companies c ON c.id = k.company_id
+    WHERE k.created_at > NOW() - INTERVAL '60 days' AND c.merged_into_id IS NULL AND c.company_type ILIKE 'tenant%'
+    GROUP BY c.id, c.name ORDER BY n DESC LIMIT 100`);
+  for (const k of contacts) note(brandFor(k.id, k.name), `${k.n} new contact${k.n === 1 ? "" : "s"} added in 60 days`, 4, true);
+  const clients = await rows(pool, `SELECT DISTINCT c.id, c.name FROM crm_companies c WHERE c.merged_into_id IS NULL AND c.id IN (
+      SELECT d.tenant_id FROM crm_deals d WHERE d.bgp_acting_for = 'tenant' AND d.tenant_id IS NOT NULL
+        AND COALESCE(d.status, '') NOT IN ('COM','INV','WIT','Completed','Invoiced','Withdrawn','Lost','Dead')
+      UNION SELECT company_id FROM tenant_rep_searches WHERE company_id IS NOT NULL
+        AND COALESCE(status, '') NOT IN ('Complete','Completed','Archived','Lost','On Hold'))`);
+  for (const c of clients) { const b = brandFor(c.id, c.name); if (b) { b.bgpClient = true; note(b, "BGP acts for the brand (tenant rep)", 25); } }
+  const deals = await rows(pool, `SELECT d.tenant_id, c.name, p.name AS property, (p.landlord_id IS NOT DISTINCT FROM $2 AND $2 IS NOT NULL) AS same_landlord
+      FROM crm_deals d
+      JOIN crm_companies c ON c.id = d.tenant_id AND c.merged_into_id IS NULL LEFT JOIN crm_properties p ON p.id = d.property_id
+     WHERE d.tenant_id IS NOT NULL AND d.property_id IS DISTINCT FROM $1 AND d.updated_at > NOW() - INTERVAL '12 months'
+       AND COALESCE(d.status, '') NOT IN ('COM','INV','WIT','Completed','Invoiced','Withdrawn','Lost','Dead')`, [propertyId, property.landlord_id || null]);
+  for (const d of deals) {
+    const b = brandFor(d.tenant_id, d.name);
+    if (d.same_landlord && d.property) note(b, `in a live BGP deal at ${d.property}${property.landlord_name ? ` (${property.landlord_name})` : ""} — taking space now`, 14);
+    else {
+      note(b, "acquiring elsewhere now (a live BGP deal)", 12);
+      if (d.property) note(b, `live BGP deal at ${d.property}`, 0, true);
     }
-    const contacts = await rows(pool, `SELECT c.id, c.name, COUNT(*)::int AS n FROM crm_contacts k JOIN crm_companies c ON c.id = k.company_id
-      WHERE k.created_at > NOW() - INTERVAL '60 days' AND c.merged_into_id IS NULL AND c.company_type ILIKE 'tenant%'
-      GROUP BY c.id, c.name ORDER BY n DESC LIMIT 100`);
-    for (const k of contacts) signal(brandFor(k.id, k.name), `${k.n} new contact${k.n === 1 ? "" : "s"} added in 60 days`, 4);
-    const clients = await rows(pool, `SELECT DISTINCT c.id, c.name FROM crm_companies c WHERE c.merged_into_id IS NULL AND c.id IN (
-        SELECT d.tenant_id FROM crm_deals d WHERE d.bgp_acting_for = 'tenant' AND d.tenant_id IS NOT NULL
-          AND COALESCE(d.status, '') NOT IN ('COM','INV','WIT','Completed','Invoiced','Withdrawn','Lost','Dead')
-        UNION SELECT company_id FROM tenant_rep_searches WHERE company_id IS NOT NULL
-          AND COALESCE(status, '') NOT IN ('Complete','Completed','Archived','Lost','On Hold'))`);
-    for (const c of clients) { const b = brandFor(c.id, c.name); if (b) { b.bgpClient = true; signal(b, "BGP acts for them (tenant rep)", 25); } }
-    const deals = await rows(pool, `SELECT d.tenant_id, c.name, p.name AS property FROM crm_deals d
-        JOIN crm_companies c ON c.id = d.tenant_id AND c.merged_into_id IS NULL LEFT JOIN crm_properties p ON p.id = d.property_id
-       WHERE d.tenant_id IS NOT NULL AND d.property_id IS DISTINCT FROM $1 AND d.updated_at > NOW() - INTERVAL '12 months'
-         AND COALESCE(d.status, '') NOT IN ('COM','INV','WIT','Completed','Invoiced','Withdrawn','Lost','Dead')`, [propertyId]);
-    for (const d of deals) signal(brandFor(d.tenant_id, d.name), `in a live BGP deal${d.property ? ` at ${d.property}` : ""} — taking space now`, 12);
   }
 
   // Brand facts for everything gathered.
@@ -184,7 +202,8 @@ export function unitCandidates(ev: CentreEvidence, unit: TargetUnit, exclude: Se
   const out: UnitCandidate[] = [];
   for (const b of ev.brands.values()) {
     if (isHere(ev, b) || exclude.has(brandKey(b.name)) || (b.companyId && exclude.has(b.companyId))) continue;
-    const evidence = b.signals.map(s => s.text);
+    const evidence = b.signals.filter(s => !s.internal).map(s => s.text);
+    const internal = b.signals.filter(s => s.internal).map(s => s.text);
     let score = b.signals.reduce((sum, s) => sum + s.weight, 0);
     for (const r of b.requirements) {
       if (requirementFitsUnit(r, { sqft, unit_text: unitText || "f&b", property_text: propertyText })) {
@@ -194,18 +213,18 @@ export function unitCandidates(ev: CentreEvidence, unit: TargetUnit, exclude: Se
         break;
       }
     }
-    if (!evidence.length && b.requirements.length) {
+    if (!evidence.length && !internal.length && b.requirements.length) {
       const range = parseReqSize(b.requirements[0].size ?? null);
       if (range && sqft && (sqft < range.min || sqft > range.max)) continue;
       evidence.push("has a live UK leasing requirement");
       score += 6;
     }
-    if (!evidence.length) continue;
+    if (!evidence.length && !internal.length) continue;
     // The unit's use decides the slice: F&B / leisure units get the
     // hospitality categories; unknown categories stay in.
     if (b.category && !retail && !isClientCrmCategory(b.category) && !evidence.some(e => e.startsWith("live requirement"))) continue;
     const facts = [b.category?.replace(/^Tenant\s*-\s*/i, ""), b.stores ? `${b.stores} stores` : null, b.rollout].filter(Boolean).join(", ");
-    out.push({ name: b.name, companyId: b.companyId, evidence, score, facts });
+    out.push({ name: b.name, companyId: b.companyId, evidence, internal, score, facts });
   }
   // The landlord's own tracker targets for the unit.
   for (const line of `${unit.target_brands || ""}\n${unit.optimum_target || ""}`.split(/\n|,|;/).map(l => l.replace(/^\s*\d+[.)]\s*/, "").replace(/\(.*?\)|optimum:?/gi, "").trim()).filter(l => l && l.length <= 40)) {
@@ -213,12 +232,12 @@ export function unitCandidates(ev: CentreEvidence, unit: TargetUnit, exclude: Se
     const existing = out.find(c => brandKey(c.name) === k);
     if (existing) { existing.evidence.unshift("named in the landlord's leasing tracker for this unit"); existing.score += 25; continue; }
     if (isHere(ev, { companyId: null, name: line }) || exclude.has(k)) continue;
-    out.push({ name: line, companyId: null, evidence: ["named in the landlord's leasing tracker for this unit"], score: 25, facts: "" });
+    out.push({ name: line, companyId: null, evidence: ["named in the landlord's leasing tracker for this unit"], internal: [], score: 25, facts: "" });
   }
   return out.sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
-export type PlannedTarget = { brand_name: string; evidenced: boolean; quality_rating: "green" | "amber" | "red"; rationale: string; companyId: string | null; evidence: string[] };
+export type PlannedTarget = { brand_name: string; evidenced: boolean; quality_rating: "green" | "amber" | "red"; rationale: string; companyId: string | null; evidence: string[]; internal: string[] };
 
 // The deep pass: one Fable call (extended thinking) plans up to six units
 // together so the targets form a mix, not five brands copied everywhere.
@@ -227,7 +246,7 @@ export async function planTargets(ev: CentreEvidence, units: Array<TargetUnit & 
     `UNIT ${u.id}: ${u.unit_name}${u.sqft ? ` · ${Math.round(Number(u.sqft))} sq ft` : " · size not recorded"}${u.zone ? ` · zone ${u.zone}` : ""}${u.positioning ? ` · positioning ${u.positioning}` : ""}${u.status ? ` · ${u.status}` : ""}${u.rent_pa ? ` · £${Number(u.rent_pa).toLocaleString()} pa` : ""}${u.tenant_name ? ` · current occupier ${u.tenant_name}` : ""}`,
     u.existing.length ? `  already targeted (don't repeat): ${u.existing.join(", ")}` : "",
     `  evidenced candidates:`,
-    ...(u.candidates.length ? u.candidates.map((c, i) => `   ${i + 1}. ${c.name}${c.facts ? ` (${c.facts})` : ""} — ${c.evidence.join("; ")}`) : ["   (none — rely on expertise, and say the evidence is thin)"]),
+    ...(u.candidates.length ? u.candidates.map((c, i) => `   ${i + 1}. ${c.name}${c.facts ? ` (${c.facts})` : ""} — ${[...c.evidence, ...c.internal.map(x => `[BGP-internal] ${x}`)].join("; ")}`) : ["   (none — rely on expertise, and say the evidence is thin)"]),
   ].filter(Boolean).join("\n")).join("\n\n");
 
   const system = `You are the head of retail & leisure leasing strategy at Bruce Gillingham Pollard, a London leasing agency that sets the occupier mix for the UK's leading shopping centres and West End estates. You think like a landlord's leasing director: trading performance, dwell time, adjacency and the centre's position against its competitors decide the mix, and only brands with real intent sign. Be rigorous and evidence-led; British English; no hype.`;
@@ -241,6 +260,7 @@ Plan the targets for these units TOGETHER. Think it through before answering:
 - Weigh the evidence honestly. Strongest: a live requirement whose size fits the unit, BGP acting for the brand, a live BGP deal elsewhere (taking space now), a new relationship BGP has just opened, the landlord naming the brand. Then presence at competing / top centres with opening news or cited expansion. Presence alone is weaker. A brand whose requirement size doesn't fit the unit is a poor target for it.
 - Avoid a brand that duplicates or directly competes with a current tenant, and never suggest a brand already trading here.
 - Don't put the same brand on more than two units — give it to the unit that fits its requirement best.
+- The landlord client reads every rationale, and should see the brand movement: BGP's conversations with the brand, a new relationship, BGP acting for the brand, live BGP deals on the landlord's own schemes. Items marked [BGP-internal] (email / contact counts, deals on OTHER landlords' schemes) are confidential: use them to judge, but never repeat them — say "acquiring elsewhere now" instead of naming another scheme.
 - Prefer the evidenced candidates. You may add at most ONE brand per unit from your own market knowledge when it is clearly stronger than the list; mark it "evidenced": false and say why.
 
 Ratings: "green" = strong fit AND strong intent evidence (fitting requirement, BGP client, live deal, new conversation, or actively opening in centres like this); "amber" = good fit, evidence is presence elsewhere rather than intent; "red" = speculative stretch worth a call.
@@ -277,6 +297,7 @@ Exactly five targets per unit.`;
         rationale: String(t.rationale || "").trim(),
         companyId: candidate?.companyId || null,
         evidence: candidate?.evidence || [],
+        internal: candidate?.internal || [],
       });
     }
     byUnit.set(unit.id, picks.slice(0, 5));
@@ -322,13 +343,14 @@ export async function generateTargetsForUnits(pool: any, req: Request, propertyI
           const saved: any[] = [];
           for (const t of plan.byUnit.get(unit.id) || []) {
             const company = t.companyId ? { id: t.companyId, name: t.brand_name } : await matchBrandCompany(pool, t.brand_name);
-            const rationale = [t.rationale, t.evidenced ? `Evidence: ${t.evidence.join("; ")}` : "Not in the evidence list — a market-knowledge suggestion."].filter(Boolean).join("\n");
+            const rationale = [t.rationale, t.evidenced ? (t.evidence.length ? `Evidence: ${t.evidence.join("; ")}` : "") : "Not in the evidence list — a market-knowledge suggestion."].filter(Boolean).join("\n");
+            const internalEvidence = t.internal.length ? t.internal.join("; ") : null;
             const row = opts.save === false
-              ? { unit_id: unit.id, property_id: propertyId, company_id: company?.id || null, brand_name: t.brand_name, rationale, quality_rating: t.quality_rating, preview: true }
+              ? { unit_id: unit.id, property_id: propertyId, company_id: company?.id || null, brand_name: t.brand_name, rationale, internal_evidence: internalEvidence, quality_rating: t.quality_rating, preview: true }
               : (await pool.query(
-                `INSERT INTO target_tenants (unit_id, property_id, company_id, brand_name, rationale, quality_rating, suggested_by, status)
-                 VALUES ($1, $2, $3, $4, $5, $6, 'ai', 'suggested') RETURNING *`,
-                [unit.id, propertyId, company?.id || null, t.brand_name, rationale, t.quality_rating])).rows[0];
+                `INSERT INTO target_tenants (unit_id, property_id, company_id, brand_name, rationale, internal_evidence, quality_rating, suggested_by, status)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'ai', 'suggested') RETURNING *`,
+                [unit.id, propertyId, company?.id || null, t.brand_name, rationale, internalEvidence, t.quality_rating])).rows[0];
             saved.push({ ...row, company_name: company?.name || null });
           }
           inserted.set(unit.id, saved);

@@ -987,6 +987,7 @@ interface TargetTenant {
   company_id: string | null;
   brand_name: string;
   rationale: string | null;
+  internal_evidence?: string | null;
   quality_rating: "green" | "amber" | "red";
   status: "suggested" | "approved" | "rejected" | "converted";
   suggested_by: "ai" | "manual";
@@ -1064,6 +1065,7 @@ function TargetTenantRow({ target, onUpdate, onDelete }: {
         {target.rationale && (
           <button onClick={() => setShowRationale(!showRationale)} className="text-[11px] text-muted-foreground/70 hover:text-muted-foreground mt-0.5 text-left whitespace-pre-line" data-testid={`rationale-toggle-${target.id}`}>
             {showRationale ? target.rationale : "View rationale..."}
+            {showRationale && target.internal_evidence && <span className="block mt-0.5 text-muted-foreground">BGP only: {target.internal_evidence}</span>}
           </button>
         )}
       </div>
@@ -1204,7 +1206,7 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
     <div className="space-y-0.5" data-testid={`target-panel-${unitId}`}>
       {generating && (
         <div className="flex items-center gap-2 px-2 py-1.5 text-[11px] text-violet-500">
-          <Loader2 className="w-3 h-3 animate-spin" />Generating AI targets...
+          <Loader2 className="w-3 h-3 animate-spin" />Planning targets from the centre's evidence — about a minute…
         </div>
       )}
       {unitTargets.map(t => (

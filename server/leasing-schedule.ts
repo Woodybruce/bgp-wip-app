@@ -27,6 +27,14 @@ async function getUserInfo(pool: any, req: Request) {
   return result.rows[0] || null;
 }
 
+// BGP-internal evidence on AI targets (conversations, deals, tenant-rep
+// clients) is staff-only.
+async function withoutInternalEvidence(req: Request, rows: any[]) {
+  const { isClientRequestUser } = await import("./company-scope");
+  if (!(await isClientRequestUser(req as any))) return rows;
+  return rows.map(({ internal_evidence, ...row }) => row);
+}
+
 async function checkPropertyAccess(pool: any, req: Request, propertyId: string): Promise<{ allowed: boolean; user: any }> {
   const user = await getUserInfo(pool, req);
   if (!user) return { allowed: false, user: null };
@@ -1030,7 +1038,7 @@ router.get("/api/leasing-schedule/property/:propertyId/targets", requireAuth, as
          t.created_at`,
       [req.params.propertyId]
     );
-    res.json(result.rows);
+    res.json(await withoutInternalEvidence(req, result.rows));
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -1053,7 +1061,7 @@ router.get("/api/leasing-schedule/unit/:unitId/targets", requireAuth, async (req
        ORDER BY CASE t.quality_rating WHEN 'green' THEN 1 WHEN 'amber' THEN 2 WHEN 'red' THEN 3 END, t.created_at`,
       [req.params.unitId]
     );
-    res.json(result.rows);
+    res.json(await withoutInternalEvidence(req, result.rows));
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -1226,7 +1234,9 @@ router.get("/api/leasing-schedule/unit/:unitId/generate-targets", requireAuth, a
   const { allowed } = await checkPropertyAccess(pool, req, unit.property_id);
   if (!allowed) return res.status(403).json({ error: "Access denied" });
   const { getJobStatus } = await import("./brand-jobs");
-  res.json(getJobStatus(`targets:unit:${req.params.unitId}${req.query.preview === "1" ? ":preview" : ""}`) || { state: "idle" });
+  const job: any = getJobStatus(`targets:unit:${req.params.unitId}${req.query.preview === "1" ? ":preview" : ""}`) || { state: "idle" };
+  if (job.result?.targets) job.result = { ...job.result, targets: await withoutInternalEvidence(req, job.result.targets) };
+  res.json(job);
 });
 
 router.post("/api/leasing-schedule/property/:propertyId/generate-targets", requireAuth, async (req, res) => {

@@ -5980,6 +5980,9 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
               updated_at timestamp DEFAULT now()
             )
           `));
+          // BGP-internal evidence behind an AI target (conversations, deals,
+          // tenant-rep clients) — staff only, never sent to client logins.
+          await db.execute(sql.raw(`ALTER TABLE target_tenants ADD COLUMN IF NOT EXISTS internal_evidence text`));
 
           await db.execute(sql.raw(`
             CREATE TABLE IF NOT EXISTS kyc_investigations (
