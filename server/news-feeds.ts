@@ -2060,8 +2060,19 @@ export function setupNewsFeedRoutes(app: Express) {
       // Thames & Hudson book review (Woody, 2026-09-15). Now: the full name,
       // OR two distinctive words, OR one distinctive word plus the place,
       // OR the owner's name.
+      // A one-word name ("Lucent") is an ordinary word in the news: anchor
+      // it to the street / area from the address, and keep only stories
+      // that mention that place (Woody, 2026-09-27 — Lucent's feed showed a
+      // cocoa-roaster and an AI start-up).
+      const singleWord = distinctiveWords.length <= 1 && !propertyName.includes(",");
+      const placeWords = Array.from(new Set(tokenise(String(addressStr || "").split(",")[0] || "")
+        .concat(locationTokens).filter((w: string) => w.length > 3 && !GENERIC_PROP_WORDS.has(w) && !distinctiveWords.includes(w))));
+      const aliasNames: string[] = (Array.isArray((property as any).aliases) ? (property as any).aliases : [])
+        .map((a: any) => String(a || "").toLowerCase().trim()).filter((a: string) => a.length > 4 && a !== nameLower);
       const matchedArticles = dbArticles.filter(a => {
         const text = `${a.title} ${a.summary || ""} ${a.aiSummary || ""}`.toLowerCase();
+        if (aliasNames.some(alias => text.includes(alias))) return true;
+        if (singleWord) return hasWord(text, nameLower) && placeWords.some((w: string) => hasWord(text, w));
         if (text.includes(nameLower)) return true;
         const hits = distinctiveWords.filter((w: string) => hasWord(text, w)).length;
         if (hits >= 2) return true;
@@ -2097,13 +2108,6 @@ export function setupNewsFeedRoutes(app: Express) {
 
       // Quote the building, add the place unquoted — "Hudson Yard" Vauxhall —
       // so Google News anchors on the building rather than any Hudson.
-      // A one-word name ("Lucent") is an ordinary word in the news: anchor
-      // it to the street / area from the address, and keep only stories
-      // that mention that place (Woody, 2026-09-27 — Lucent's feed showed a
-      // cocoa-roaster and an AI start-up).
-      const singleWord = distinctiveWords.length <= 1 && !propertyName.includes(",");
-      const placeWords = Array.from(new Set(tokenise(String(addressStr || "").split(",")[0] || "")
-        .concat(locationTokens).filter((w: string) => w.length > 3 && !GENERIC_PROP_WORDS.has(w) && !distinctiveWords.includes(w))));
       const searchQuery = propertyName.includes(",")
         ? `"${propertyName.slice(0, propertyName.indexOf(",")).trim()}" ${propertyName.slice(propertyName.indexOf(",") + 1).trim()}`
         : `"${propertyName}"${singleWord && placeWords.length ? " " + placeWords[0] : locationTokens.length ? " " + locationTokens[0] : ""}`;
