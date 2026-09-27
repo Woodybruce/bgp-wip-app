@@ -180,13 +180,13 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
           <div className="flex items-center flex-wrap gap-2 p-2 border-b">
             <span className="text-xs text-muted-foreground uppercase tracking-widest">Units on {activePlan.floor} · {units.length}</span>
             {mismatches > 0 && <span className="text-xs text-amber-700 inline-flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{mismatches} label{mismatches === 1 ? "" : "s"} differ from the schedule</span>}
-            {canEdit && unlinkedLabelled > 0 && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={autoLink.isPending} onClick={() => autoLink.mutate()} data-testid="button-plan-auto-link"><Link2 className="w-3 h-3 mr-1" />{autoLink.isPending ? "Linking…" : `Link ${unlinkedLabelled} outline${unlinkedLabelled === 1 ? "" : "s"} to schedule`}</Button>}
+            {canEdit && unlinkedLabelled > 0 && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={autoLink.isPending} onClick={() => autoLink.mutate()} data-testid="button-plan-auto-link"><Link2 className="w-3 h-3 mr-1" />{autoLink.isPending ? "Matching…" : `Match ${unlinkedLabelled} unlinked outline${unlinkedLabelled === 1 ? "" : "s"} to the schedule`}</Button>}
             <label className="ml-auto flex items-center gap-1 border rounded px-2 h-7"><Search className="w-3 h-3 text-muted-foreground" /><input value={unitSearch} onChange={event => setUnitSearch(event.target.value)} placeholder="Find a unit or tenant" className="text-xs bg-transparent outline-none w-40" aria-label="Find a unit or tenant" /></label>
           </div>
           <div className="max-h-56 overflow-y-auto divide-y">
             {listedUnits.map(unit => <button key={unit.id} onClick={() => { setSelectedUnitId(unit.id); setFocusUnitId(unit.id); }} onMouseEnter={() => setFocusUnitId(unit.id)} onMouseLeave={() => setFocusUnitId(null)} className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-muted">
               <span className="w-2.5 h-2.5 rounded-sm border-2 shrink-0" style={{ borderColor: (STATUS_COLOURS[unit.status] || STATUS_COLOURS.unknown).stroke }} />
-              <span className="font-medium w-20 truncate">{unit.label || unit.unit_name || "Unlabelled"}</span>
+              <span className="font-medium w-44 max-w-[45%] truncate" title={unit.label || unit.unit_name || undefined}>{unit.label || unit.unit_name || "Unlabelled"}</span>
               <span className="flex-1 truncate text-muted-foreground">{unit.tenant_name || (unit.tenancy_unit_id ? (unit.status === "vacant" ? "Vacant" : "") : "Not linked")}{unit.label_mismatch ? ` · schedule says ${unit.unit_name}` : ""}</span>
               {unit.label_mismatch && <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />}
               {unit.rent_pa != null && <span className="tabular-nums text-muted-foreground">{formatMoney(unit.rent_pa)}</span>}
@@ -286,9 +286,10 @@ function PlanCanvas({ plan, units, mode, busy, pendingPoints, setPendingPoints, 
           }} onMouseLeave={() => { setHoverUnit(null); setTooltipPos(null); }} />;
         })}
         {view === "labels" && [...markers.entries()].map(([id, marker]) => {
-          if (!marker.width) return null;
+          // Only labels that fit their unit — no dots: the drawing already
+          // prints names, and zooming in brings more labels in.
+          if (!marker.width || marker.kind === "dot") return null;
           const cx = marker.x * naturalSize.w, cy = marker.y * naturalSize.h;
-          if (marker.kind === "dot") return <circle key={`m-${id}`} cx={cx} cy={cy} r={marker.width / 2 * pxToSvg} fill="#334155" style={{ pointerEvents: "none" }} />;
           const w = marker.width * pxToSvg, h = marker.height * pxToSvg;
           return <g key={`m-${id}`} style={{ pointerEvents: "none" }}>
             <rect x={cx - w / 2} y={cy - h / 2} width={w} height={h} rx={h / 3} fill="white" fillOpacity={0.9} stroke="#334155" strokeWidth={0.75 * pxToSvg} />
