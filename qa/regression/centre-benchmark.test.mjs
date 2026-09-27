@@ -82,3 +82,11 @@ test('legal entity names reduce to the brand key the trading-name finder matches
   assert.equal(legalKey('Caffè Nero Group Holdings Ltd'), 'caffe nero');
   assert.equal(legalKey('Five Guys'), 'five guys');
 });
+
+test('trading names drop the legal suffix a CRM brand row may carry', async () => {
+  const { displayTradingName } = await import('../../server/trading-names.ts');
+  assert.equal(displayTradingName('Pizza Hut UK Ltd'), 'Pizza Hut');
+  assert.equal(displayTradingName('Marks & Spencer Plc'), 'Marks & Spencer');
+  assert.equal(displayTradingName('Côte'), 'Côte');
+  assert.equal(displayTradingName('The Ivy Collection'), 'The Ivy Collection');
+});

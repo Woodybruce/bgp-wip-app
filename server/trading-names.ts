@@ -21,6 +21,12 @@ export const legalKey = (value: string) => {
   for (let i = 0; i < 4; i++) v = v.replace(LEGAL, "").trim();
   return v.replace(/[^a-z0-9&]+/g, " ").trim();
 };
+// A trading name is what shoppers see: "Pizza Hut UK Ltd" → "Pizza Hut".
+export const displayTradingName = (name: string) => {
+  let v = name.trim();
+  for (let i = 0; i < 3; i++) v = v.replace(/[\s,]+(limited|ltd\.?|plc|llp|uk ltd|\(uk\)|uk|group)$/i, "").trim();
+  return v || name.trim();
+};
 const NOT_A_TENANT = /^(sole trader|vacant|tbc|n\/?a|unknown|landlord|various)$/i;
 
 type Row = { id: string; property_id: string; unit_number: string | null; tenant_name: string; permitted_use: string | null; tenant_company_id: string | null };
@@ -102,16 +108,16 @@ export async function findTradingNames(propertyId: string) {
       options: choices.map((name, i) => {
         const m = book.byName.get(legalKey(name)) || [];
         return { key: `brand-${i + 1}`, label: name, detail: m.length === 1 ? "Links the CRM brand too" : "Not in the CRM yet — sets the trading name only",
-          writes: [{ table: "tenancy_schedule_units", id: r.id, set: { trading_name: m.length === 1 ? m[0].name : name, ...(m.length === 1 ? { tenant_company_id: m[0].id } : {}) } }] };
+          writes: [{ table: "tenancy_schedule_units", id: r.id, set: { trading_name: displayTradingName(m.length === 1 ? m[0].name : name), ...(m.length === 1 ? { tenant_company_id: m[0].id } : {}) } }] };
       }),
     });
   }
 
   for (const f of filled) {
     await pool.query(`UPDATE tenancy_schedule_units SET trading_name = $2, tenant_company_id = COALESCE(tenant_company_id, $3), updated_at = NOW()
-      WHERE id::text = $1 AND COALESCE(trim(trading_name), '') = ''`, [f.row.id, f.brand.name, f.brand.id]).catch(() =>
+      WHERE id::text = $1 AND COALESCE(trim(trading_name), '') = ''`, [f.row.id, displayTradingName(f.brand.name), f.brand.id]).catch(() =>
       pool.query(`UPDATE tenancy_schedule_units SET trading_name = $2, tenant_company_id = COALESCE(tenant_company_id, $3)
-        WHERE id::text = $1 AND COALESCE(trim(trading_name), '') = ''`, [f.row.id, f.brand.name, f.brand.id]));
+        WHERE id::text = $1 AND COALESCE(trim(trading_name), '') = ''`, [f.row.id, displayTradingName(f.brand.name), f.brand.id]));
     // Teach the brand its legal entity so the next import resolves by itself.
     if (f.brand.id && f.how === "AI" && legalKey(f.row.tenant_name) !== legalKey(f.brand.name)) {
       await pool.query(`UPDATE crm_companies SET trading_entities = COALESCE(CASE WHEN jsonb_typeof(trading_entities) = 'array' THEN trading_entities END, '[]'::jsonb)
@@ -130,7 +136,7 @@ export async function findTradingNames(propertyId: string) {
   const { backfillPropertyTenants } = await import("./tenant-brand-resolver");
   await backfillPropertyTenants(propertyId).catch(() => {});
   return { property: property.name, checked: rows.length, filled: filled.length, review: reviews.length,
-    filledRows: filled.map(f => ({ legal: f.row.tenant_name, trading: f.brand.name, how: f.how })),
+    filledRows: filled.map(f => ({ legal: f.row.tenant_name, trading: displayTradingName(f.brand.name), how: f.how })),
     reviewRows: reviews.map(r => r.title) };
 }
 
