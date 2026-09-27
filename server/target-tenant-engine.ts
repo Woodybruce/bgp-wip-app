@@ -245,7 +245,7 @@ export function unitCandidates(ev: CentreEvidence, unit: TargetUnit, exclude: Se
 
 export type PlannedTarget = { brand_name: string; evidenced: boolean; quality_rating: "green" | "amber" | "red"; rationale: string; companyId: string | null; evidence: string[]; internal: string[] };
 
-// The deep pass: one Fable call (extended thinking) plans up to six units
+// The deep pass: one Fable call (extended thinking) plans a few units
 // together so the targets form a mix, not five brands copied everywhere.
 export async function planTargets(ev: CentreEvidence, units: Array<TargetUnit & { candidates: UnitCandidate[]; existing: string[] }>, placed: Map<string, string[]> = new Map()): Promise<{ strategy: string; byUnit: Map<string, PlannedTarget[]> }> {
   const unitBlock = units.map(u => [
@@ -324,10 +324,10 @@ export async function matchBrandCompany(pool: any, name: string): Promise<{ id: 
 }
 
 // Live progress of a whole-centre run, for the Generate all poll.
-export const runProgress = new Map<string, { done: number; total: number; failed: number }>();
+export const runProgress = new Map<string, { done: number; total: number; failed: number; lastError?: string; finished?: boolean }>();
 
 // Plan and save targets for a set of leasing-schedule units (the Generate
-// buttons). Units go to the model in batches of up to six, one after another.
+// buttons). Units go to the model three at a time, two batches in flight.
 // save:false plans without writing (?preview=1 on the unit route).
 export async function generateTargetsForUnits(pool: any, req: Request, propertyId: string, units: TargetUnit[], opts: { save?: boolean } = {}) {
   const ev = await centreEvidence(pool, req, propertyId);
@@ -338,21 +338,24 @@ export async function generateTargetsForUnits(pool: any, req: Request, propertyI
     return { ...u, existing, candidates: unitCandidates(ev, u, new Set(existing.map((e: string) => brandKey(e)))) };
   });
   const batches: typeof prepared[] = [];
-  for (let i = 0; i < prepared.length; i += 6) batches.push(prepared.slice(i, i + 6));
+  for (let i = 0; i < prepared.length; i += 3) batches.push(prepared.slice(i, i + 3));
   const strategies: string[] = [];
   const inserted = new Map<string, any[]>();
   const failed: Array<{ unit_id: string; error: string }> = [];
-  // Batches run in turn so each sees where earlier ones placed brands. Each
+  // Two lanes of three-unit batches share one placed-brands list, so each
+  // batch sees where the others already placed brands. Each
   // AI call is capped at five minutes with one retry — a stalled call once
   // held a whole-centre run for 20 minutes — and a failed batch doesn't stop
   // the rest.
-  const progress = { done: 0, total: units.length, failed: 0 };
+  const progress: { done: number; total: number; failed: number; lastError?: string; finished?: boolean } = { done: 0, total: units.length, failed: 0 };
   runProgress.set(propertyId, progress);
   const timed = <T,>(p: Promise<T>) => Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("The AI plan took too long for this batch")), 5 * 60_000))]);
   const placed = new Map<string, string[]>();
   for (const r of existingRows) placed.set(r.brand_name, [...(placed.get(r.brand_name) || []), String(r.unit_name || "another unit").split(/\s+/)[0]]);
-  for (const batch of batches) {
-    {
+  let next = 0;
+  await Promise.all([0, 1].map(async () => {
+    while (next < batches.length) {
+      const batch = batches[next++];
       try {
         const plan = await timed(planTargets(ev, batch, placed)).catch(() => timed(planTargets(ev, batch, placed)));
         if (plan.strategy) strategies.push(plan.strategy);
@@ -376,10 +379,12 @@ export async function generateTargetsForUnits(pool: any, req: Request, propertyI
       } catch (error: any) {
         for (const unit of batch) failed.push({ unit_id: unit.id, error: String(error?.message || error).slice(0, 200) });
         progress.failed += batch.length;
+        progress.lastError = String(error?.message || error).slice(0, 300);
+        console.warn("[target-tenants] batch failed:", progress.lastError);
       }
       progress.done += batch.length;
     }
-  }
-  runProgress.delete(propertyId);
+  }));
+  progress.finished = true;
   return { inserted, strategy: strategies.join(" "), failed };
 }
