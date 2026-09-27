@@ -1102,10 +1102,13 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
     //    (the client-side leasing owners, same rule as the tracker's
     //    client-contact picker).
     const bgpTeamQ = pool.query(
-      `SELECT u.id, u.name, u.email, pa.role AS agent_role
-         FROM crm_property_agents pa JOIN users u ON u.id = pa.user_id
-        WHERE pa.property_id = $1
-        ORDER BY CASE pa.role WHEN 'Lead' THEN 0 WHEN 'Investment' THEN 1 WHEN 'Leasing' THEN 2 ELSE 3 END, u.name`,
+      `SELECT * FROM (
+         SELECT DISTINCT ON (u.id) u.id, u.name, u.email, pa.role AS agent_role,
+                CASE pa.role WHEN 'Lead' THEN 0 WHEN 'Investment' THEN 1 WHEN 'Leasing' THEN 2 ELSE 3 END AS rank
+           FROM crm_property_agents pa JOIN users u ON u.id = pa.user_id
+          WHERE pa.property_id = $1
+          ORDER BY u.id, rank) t
+        ORDER BY rank, name`,
       [pid]
     );
     const clientLeadsQ = pool.query(

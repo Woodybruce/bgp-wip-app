@@ -108,6 +108,10 @@ export async function mergeProperties(keepId: string, mergeId: string): Promise<
     }
   }
 
+  // 3b. Team links carry no unique key, so both copies survived a merge
+  //     (Lucent showed each BGP agent twice) — keep one per person.
+  await dedupePropertyAgents(keepId);
+
   // 4. Remove the duplicate.
   await pool.query(`DELETE FROM crm_properties WHERE id = $1`, [mergeId]);
 
@@ -168,4 +172,17 @@ export async function findDuplicateProperties(nameQuery?: string): Promise<Array
     }
   }
   return groups;
+}
+
+// One crm_property_agents row per person per property, keeping the most
+// senior role (Lead, then Investment, Leasing, the rest).
+const AGENT_RANK = (t: string) => `CASE ${t}.role WHEN 'Lead' THEN 0 WHEN 'Investment' THEN 1 WHEN 'Leasing' THEN 2 ELSE 3 END`;
+export async function dedupePropertyAgents(propertyId?: string): Promise<number> {
+  const r = await pool.query(
+    `DELETE FROM crm_property_agents a USING crm_property_agents b
+      WHERE a.property_id = b.property_id AND a.user_id = b.user_id AND a.ctid <> b.ctid
+        AND (${AGENT_RANK("a")} > ${AGENT_RANK("b")} OR (${AGENT_RANK("a")} = ${AGENT_RANK("b")} AND a.ctid > b.ctid))
+        ${propertyId ? "AND a.property_id = $1" : ""}`,
+    propertyId ? [propertyId] : []);
+  return r.rowCount || 0;
 }

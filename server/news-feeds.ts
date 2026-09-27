@@ -2097,9 +2097,16 @@ export function setupNewsFeedRoutes(app: Express) {
 
       // Quote the building, add the place unquoted — "Hudson Yard" Vauxhall —
       // so Google News anchors on the building rather than any Hudson.
+      // A one-word name ("Lucent") is an ordinary word in the news: anchor
+      // it to the street / area from the address, and keep only stories
+      // that mention that place (Woody, 2026-09-27 — Lucent's feed showed a
+      // cocoa-roaster and an AI start-up).
+      const singleWord = distinctiveWords.length <= 1 && !propertyName.includes(",");
+      const placeWords = Array.from(new Set(tokenise(String(addressStr || "").split(",")[0] || "")
+        .concat(locationTokens).filter((w: string) => w.length > 3 && !GENERIC_PROP_WORDS.has(w) && !distinctiveWords.includes(w))));
       const searchQuery = propertyName.includes(",")
         ? `"${propertyName.slice(0, propertyName.indexOf(",")).trim()}" ${propertyName.slice(propertyName.indexOf(",") + 1).trim()}`
-        : `"${propertyName}"${locationTokens.length ? " " + locationTokens[0] : ""}`;
+        : `"${propertyName}"${singleWord && placeWords.length ? " " + placeWords[0] : locationTokens.length ? " " + locationTokens[0] : ""}`;
 
       // Live search via Google News RSS — a stable XML feed, unlike the old
       // DuckDuckGo HTML scrape which silently returned 0 when DDG changed
@@ -2142,7 +2149,8 @@ export function setupNewsFeedRoutes(app: Express) {
       }
 
       const existingUrls = new Set(matchedArticles.map(a => a.url));
-      const dedupedWeb = webResults.filter(r => r.url && !existingUrls.has(r.url));
+      const dedupedWeb = webResults.filter(r => r.url && !existingUrls.has(r.url)
+        && (!singleWord || !placeWords.length || placeWords.some((w: string) => hasWord(`${r.title} ${r.snippet}`.toLowerCase(), w))));
 
       const combined = [
         ...matchedArticles.map(a => ({

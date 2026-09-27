@@ -929,9 +929,9 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 2026-09-26). Investment deals take their side from the
                 vendor / purchaser. */}
             {!partiesInvestment && (
-            <div className="flex flex-col gap-1" data-testid="deal-bgp-acting-for">
+            <div className="flex items-center gap-2 sm:col-span-3" data-testid="deal-bgp-acting-for">
               <p className="text-[10px] text-muted-foreground leading-tight">BGP acting for</p>
-              <div className="flex gap-1">
+              <div className="flex flex-wrap gap-1">
                 {(["landlord", "tenant"] as const).map(side => (
                   <Pill key={side} active={((deal as any).bgpActingFor || "landlord") === side} onClick={() => handleActingForSave(side)} data-testid={`deal-acting-for-${side}`}>
                     {side === "landlord" ? "Landlord" : "Tenant"}

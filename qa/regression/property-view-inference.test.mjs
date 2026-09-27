@@ -88,3 +88,9 @@ test('shopping centres are recognised by name and by size', () => {
   assert.equal(suggestPropertyView('Office', units(40), '123 Victoria Street'), 'multi_let', 'a big office stays multi-let');
   assert.equal(suggestPropertyView('Retail', units(3), '6-17 Tottenham Court Road'), 'multi_let');
 });
+
+test('a mixed-use scheme stays multi-let however many units it has', () => {
+  const rows = Array.from({ length: 30 }, (_, i) => ({ id: i, unit_number: `U${i}`, tenant_name: `T${i}`, status: 'Occupied' }));
+  assert.equal(suggestPropertyView('Mixed', rows, 'Lucent'), 'multi_let');
+  assert.equal(suggestPropertyView('Retail', rows, 'Bluewater'), 'centre');
+});

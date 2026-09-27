@@ -47,7 +47,9 @@ export function suggestPropertyView(assetClass: string | null | undefined, rows:
   const canonical = current.filter(row => !row.is_vacant);
   if (!canonical.length) return fallback;
   const count = new Set(current.map(row => row.property_unit_id || `row:${row.id}`)).size;
-  if (count >= CENTRE_UNITS && /\b(retail|leisure|shopping|f&b|mixed)/i.test(assetClass || "")) return "centre";
+  // Mixed-use schemes stay multi-let however many units (Lucent, Cardinal
+  // Place) — only retail / leisure schemes read as centres by size.
+  if (count >= CENTRE_UNITS && /\b(retail|leisure|shopping|f&b)/i.test(assetClass || "") && !/\bmixed\b/i.test(assetClass || "")) return "centre";
   if (count > 1 || /\bmixed[ -]use\b/i.test(assetClass || "")) return "multi_let";
   return "building";
 }

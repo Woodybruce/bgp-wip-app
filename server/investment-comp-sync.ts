@@ -151,6 +151,14 @@ export async function runInvestmentLinkBackfills(deps: { pool?: Querier } = {}) 
   const done = async (key: string) => (await q.query(`SELECT 1 FROM system_settings WHERE key = $1`, [key])).rows.length > 0;
   const mark = (key: string, value: any) => q.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING`, [key, JSON.stringify(value)]);
 
+  const AGENTS = "migration:property_agents_dedupe_v1";
+  if (!(await done(AGENTS))) {
+    const { dedupePropertyAgents } = await import("./property-merge");
+    const removed = await dedupePropertyAgents();
+    await mark(AGENTS, { removed, at: new Date().toISOString() });
+    console.log(`[property-links] ${removed} duplicate property team links removed`);
+  }
+
   const TEAM = "migration:tracker_deals_investment_team_v1";
   if (!(await done(TEAM))) {
     const r = await q.query(`UPDATE crm_deals SET team = array_append(COALESCE(team, ARRAY[]::text[]), 'Investment')
