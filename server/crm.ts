@@ -1631,15 +1631,24 @@ export function setupCrmRoutes(app: Express) {
         LEFT JOIN (
           SELECT landlord_id,
                  COUNT(*) FILTER (WHERE status NOT IN ('ARCH','COM','INV','WIT')) AS active_deals,
-                 SUM(COALESCE(fee, 0)) FILTER (WHERE status NOT IN ('ARCH','WIT')) AS total_fee,
+                 -- WIP stages only (WIP_STATUSES), so pre-instruction rows
+                 -- don't inflate the fee past the WIP report (Woody, 2026-09-27).
+                 SUM(COALESCE(fee, 0)) FILTER (WHERE status IN ('AVA','NEG','HOT','SOL','EXC','COM','INV')) AS total_fee,
                  MAX(updated_at) AS last_deal_update
             FROM crm_deals
            WHERE landlord_id IS NOT NULL
            GROUP BY landlord_id
         ) deal_stats ON deal_stats.landlord_id = c.id
+        -- Properties = landlord_id on the property OR a crm_company_properties
+        -- link — the same set the CRM landlord cards count, which read 0 / 4
+        -- where this board said 2 (Woody, 2026-09-27).
         LEFT JOIN (
           SELECT company_id, COUNT(DISTINCT property_id) AS property_count
-            FROM crm_company_properties
+            FROM (
+              SELECT company_id, property_id FROM crm_company_properties
+              UNION
+              SELECT landlord_id AS company_id, id AS property_id FROM crm_properties WHERE landlord_id IS NOT NULL
+            ) links
            GROUP BY company_id
         ) prop_stats ON prop_stats.company_id = c.id
         LEFT JOIN (

@@ -466,7 +466,7 @@ export default function BrandsHub() {
                             2,500-3,500 sq ft; Jamie's Italian: …") must clip
                             inside the card, not bleed across the grid. */}
                         {r.size?.length ? (
-                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 max-w-full" title={formatSize(r.size)}>
+                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 max-w-full" title={r.size.join("; ")}>
                             <Maximize2 className="w-2.5 h-2.5 mr-0.5 shrink-0" />
                             <span className="truncate">{formatSize(r.size)}</span>
                           </Badge>
@@ -477,11 +477,17 @@ export default function BrandsHub() {
                             <span className="truncate">{r.requirement_locations.slice(0, 2).join(", ")}</span>
                           </Badge>
                         )}
-                        {r.use?.length ? (
-                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 max-w-full" title={r.use.join(", ")}>
-                            <span className="truncate">{r.use.join(", ")}</span>
-                          </Badge>
-                        ) : null}
+                        {/* Use chip skips the category the subtitle already
+                            shows ("Retail" + "Retail, A1 Food") (Woody, 2026-09-27). */}
+                        {(() => {
+                          const cat = brandCategory(r.company_type).toLowerCase();
+                          const uses = (r.use || []).filter(u => u.trim().toLowerCase() !== cat);
+                          return uses.length ? (
+                            <Badge variant="outline" className="text-[9px] px-1.5 py-0 max-w-full" title={uses.join(", ")}>
+                              <span className="truncate">{uses.join(", ")}</span>
+                            </Badge>
+                          ) : null;
+                        })()}
                       </div>
                     </div>
                   </div>

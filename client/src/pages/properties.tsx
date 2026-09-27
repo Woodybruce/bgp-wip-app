@@ -191,7 +191,9 @@ export function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | n
   if (local) logoSources.push(local);
 
   if (failCount >= logoSources.length) {
-    const initials = (name || "?").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);
+    // Letters/digits only — "F(" for FPE (UK), "A&" for Alvarez & Marsal
+    // (Woody, 2026-09-27).
+    const initials = (name || "").split(/\s+/).map(w => w.replace(/[^\p{L}\p{N}]/gu, "")[0] || "").join("").toUpperCase().slice(0, 2) || "?";
     return (
       <div
         className="rounded-lg bg-muted flex items-center justify-center shrink-0 text-xs font-bold text-muted-foreground"
@@ -4987,7 +4989,7 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
                       />
                     ) : null}
                     <div className="min-w-0 flex-1">
-                      <p className="text-xs font-semibold leading-snug line-clamp-2">{article.title}</p>
+                      <p className="text-xs font-semibold leading-snug line-clamp-2">{String(article.title || "").replace(/\s+[-–|]\s+Home$/i, "")}</p>
                       {article.summary && !snippetAddsNothing(article.title, article.summary) && (
                         <p className="text-[11px] text-muted-foreground line-clamp-2 mt-0.5">{article.summary}</p>
                       )}
@@ -5239,17 +5241,13 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
       href: `/properties/${p.id}`,
     };
   }), [items]);
-  const geocodedCount = stores.filter(s => s.lat != null && s.lng != null).length;
 
   return (
     <div className="space-y-2" data-testid="properties-board-header">
       {/* Summary chips follow the app pill standard (ui/pill.tsx metrics). */}
+      {/* No "N properties" chip — the subtitle, the All pill and the
+          pagination already say it (523 read four times) (Woody, 2026-09-27). */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide bg-card">
-          <Building2 className="w-3 h-3 text-muted-foreground" />
-          <span className="font-mono tabular-nums">{items.length}</span>
-          <span className="text-muted-foreground">propert{items.length === 1 ? "y" : "ies"}</span>
-        </span>
         <Link href="/deals/letting" className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide hover:opacity-80 ${liveLettings ? "bg-card" : "opacity-40"}`} title="Open the Letting Tracker">
           <Store className="w-3 h-3 text-muted-foreground" />
           <span className="font-mono tabular-nums">{liveLettings}</span>
@@ -5273,14 +5271,52 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
       </div>
       {mapOpen && (
         <div className="border rounded-lg overflow-hidden" data-testid="properties-portfolio-map">
+          {/* No "N of M have a map position — still geocoding" caption:
+              back-of-house detail, not something the team acts on
+              (Woody, 2026-09-27). */}
           <BrandPortfolioMap stores={stores} height={260} alwaysRender />
-          {geocodedCount < items.length && (
-            <p className="text-[10px] text-muted-foreground px-2 py-1 border-t">
-              {geocodedCount} of {items.length} properties have a map position — the rest are still geocoding.
-            </p>
-          )}
         </div>
       )}
+    </div>
+  );
+}
+
+// List-row ownership: filled roles plus ONE "+ Add owner" that reveals the
+// empty slots — five "+ Owner / Landlord + Freeholder + …" prompts on every
+// row buried the table (Woody, 2026-09-27).
+const LIST_OWNER_ROLES = [
+  { field: "landlordId", label: "Owner / Landlord" },
+  { field: "freeholderId", label: "Freeholder" },
+  { field: "longLeaseholderId", label: "Long Leaseholder" },
+  { field: "seniorLenderId", label: "Senior Lender" },
+  { field: "juniorLenderId", label: "Junior Lender" },
+] as const;
+
+function PropertyOwnershipCell({ item, allCompanies, readOnly }: { item: CrmProperty; allCompanies: CrmCompany[]; readOnly?: boolean }) {
+  const [adding, setAdding] = useState(false);
+  const filled = LIST_OWNER_ROLES.filter(r => (item as any)[r.field]);
+  const empty = LIST_OWNER_ROLES.filter(r => !(item as any)[r.field]);
+  return (
+    <div className="flex flex-col gap-0.5">
+      {filled.map(r => (
+        <InlineOwnerLink key={r.field} propertyId={item.id} companyId={(item as any)[r.field]} fieldName={r.field} label={r.label} allCompanies={allCompanies} readOnly={readOnly} />
+      ))}
+      {!readOnly && empty.length > 0 && (adding ? (
+        empty.map(r => (
+          <InlineOwnerLink key={r.field} propertyId={item.id} companyId={null} fieldName={r.field} label={r.label} allCompanies={allCompanies} />
+        ))
+      ) : (
+        <button
+          type="button"
+          onClick={() => setAdding(true)}
+          className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground w-fit"
+          data-testid={`add-owner-${item.id}`}
+        >
+          <Plus className="w-3 h-3" />
+          {filled.length ? "Add role" : "Add owner"}
+        </button>
+      ))}
+      {readOnly && filled.length === 0 && <span className="text-xs text-muted-foreground">—</span>}
     </div>
   );
 }
@@ -6005,7 +6041,16 @@ function PropertiesList({
                   return {
                     id: item.id,
                     title: item.name,
-                    subtitle: formatAddress(item.address) || undefined,
+                    // Drop the address's first segment when it just repeats the
+                    // title ("1 Wood Street / 1 Wood St, Barbican…") and keep the
+                    // locality (Woody, 2026-09-27).
+                    subtitle: (() => {
+                      const addr = formatAddress(item.address);
+                      const norm = (t: string) => t.toLowerCase().replace(/\bstreet\b/g, "st").replace(/\broad\b/g, "rd").replace(/[^a-z0-9]/g, "");
+                      const [first, ...rest] = addr.split(",");
+                      if (addr && item.name && norm(first).length >= 4 && norm(item.name).startsWith(norm(first))) return rest.join(",").trim() || undefined;
+                      return addr || undefined;
+                    })(),
                     href: `/properties/${item.id}`,
                     status: item.status || undefined,
                     statusColor: BUILDING_ICON_COLORS[item.status || ""]?.replace("text-", "bg-") || "bg-muted-foreground",
@@ -6014,7 +6059,7 @@ function PropertiesList({
                       { label: "Team", value: teams },
                       { label: "Tenure", value: item.tenure },
                       { label: "BGP Contacts", value: agentNames },
-                      { label: "Sq Ft", value: item.sqft ? Number(item.sqft).toLocaleString() : null },
+                      { label: "Sq Ft", value: item.sqft ? Math.round(Number(item.sqft)).toLocaleString("en-GB") : null },
                     ],
                   };
                 })}
@@ -6083,7 +6128,7 @@ function PropertiesList({
                       </TableHead>
                     )}
                     {visibleColumns.engagement && (
-                      <TableHead className="w-[140px] max-w-[140px]">
+                      <TableHead className="min-w-[160px] w-[160px]">
                         <ColumnFilterPopover
                           label="Team"
                           options={engagementValues}
@@ -6095,7 +6140,7 @@ function PropertiesList({
                     {visibleColumns.deals && <TableHead className="w-[140px] max-w-[140px]">WIP</TableHead>}
                     {visibleColumns.tenants && <TableHead className="w-[110px] max-w-[110px]">Tenants</TableHead>}
                     {visibleColumns.agents && <TableHead className="w-[110px] max-w-[110px]">BGP Contacts</TableHead>}
-                    {visibleColumns.sqft && <SortableTableHead sortKey="sqft" sort={propSort} align="right" className="min-w-[60px] w-[60px]">Sq Ft</SortableTableHead>}
+                    {visibleColumns.sqft && <SortableTableHead sortKey="sqft" sort={propSort} align="right" className="min-w-[90px] w-[90px]">Sq Ft</SortableTableHead>}
                     {visibleColumns.folderTree && <TableHead className="w-[110px] max-w-[110px]">Folder Tree</TableHead>}
                   </TableRow>
                 </TableHeader>
@@ -6148,68 +6193,34 @@ function PropertiesList({
                               })()}
                             </div>
                             <div onClick={(e) => e.stopPropagation()}>
-                              {isClientViewer ? (
-                                addressToResult(item.address)?.formatted ? (
+                              {(() => {
+                              // Same fields as the phone card (formatAddress) —
+                              // addressToResult misses formatted/line1/postcode
+                              // shapes, so desktop said "Set address" where the
+                              // phone showed one (Woody, 2026-09-27).
+                              const listAddress = addressToResult(item.address) || (formatAddress(item.address) ? { formatted: formatAddress(item.address), placeId: "" } : null);
+                              return isClientViewer ? (
+                                listAddress?.formatted ? (
                                   <span className="text-xs flex items-center gap-1">
                                     <MapPin className="w-3 h-3 text-muted-foreground shrink-0" />
-                                    <span className="truncate max-w-[180px]">{addressToResult(item.address)?.formatted}</span>
+                                    <span className="truncate max-w-[180px]">{listAddress?.formatted}</span>
                                   </span>
                                 ) : null
                               ) : (
                               <InlineAddress
-                                value={addressToResult(item.address)}
+                                value={listAddress}
                                 onSave={(result) => inlineUpdateMutation.mutate({ id: item.id, field: "address", value: resultToAddress(result) })}
                                 placeholder="Set address"
                               />
-                              )}
+                              );
+                              })()}
                             </div>
                           </div>
                         </div>
                       </TableCell>
                       {visibleColumns.landlord && (
                         <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px]" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex flex-col gap-0.5">
-                            <InlineOwnerLink
-                              propertyId={item.id}
-                              companyId={(item as any).landlordId}
-                              fieldName="landlordId"
-                              label="Owner / Landlord"
-                              allCompanies={allCompanies}
-                              readOnly={isClientViewer}
-                            />
-                            <InlineOwnerLink
-                              propertyId={item.id}
-                              companyId={(item as any).freeholderId}
-                              fieldName="freeholderId"
-                              label="Freeholder"
-                              allCompanies={allCompanies}
-                              readOnly={isClientViewer}
-                            />
-                            <InlineOwnerLink
-                              propertyId={item.id}
-                              companyId={(item as any).longLeaseholderId}
-                              fieldName="longLeaseholderId"
-                              label="Long Leaseholder"
-                              allCompanies={allCompanies}
-                              readOnly={isClientViewer}
-                            />
-                            <InlineOwnerLink
-                              propertyId={item.id}
-                              companyId={(item as any).seniorLenderId}
-                              fieldName="seniorLenderId"
-                              label="Senior Lender"
-                              allCompanies={allCompanies}
-                              readOnly={isClientViewer}
-                            />
-                            <InlineOwnerLink
-                              propertyId={item.id}
-                              companyId={(item as any).juniorLenderId}
-                              fieldName="juniorLenderId"
-                              label="Junior Lender"
-                              allCompanies={allCompanies}
-                              readOnly={isClientViewer}
-                            />
-                          </div>
+                          <PropertyOwnershipCell item={item} allCompanies={allCompanies} readOnly={isClientViewer} />
                         </TableCell>
                       )}
                       {visibleColumns.status && (
@@ -6243,8 +6254,9 @@ function PropertiesList({
                           )}
                         </TableCell>
                       )}
+                      {/* min-w — max-w-[140px] clipped "Set team" to "Set tean" (Woody, 2026-09-27). */}
                       {visibleColumns.engagement && (
-                        <TableCell className="px-1.5 py-1 w-[140px] max-w-[140px]" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 min-w-[160px] w-[160px]" onClick={(e) => e.stopPropagation()}>
                           {isClientViewer ? (
                             <span className="text-xs">{Array.isArray(item.bgpEngagement) ? item.bgpEngagement.join(", ") : (item.bgpEngagement || "—")}</span>
                           ) : (
@@ -6294,7 +6306,9 @@ function PropertiesList({
                           <InlineNumber
                             value={item.sqft}
                             onSave={(val) => inlineUpdateMutation.mutate({ id: item.id, field: "sqft", value: val })}
-                            suffix=" sf"
+                            suffix=" sq ft"
+                            // Whole sq ft for display ("753.91" → "754") (Woody, 2026-09-27).
+                            format={(v) => Math.round(v).toLocaleString("en-GB")}
                             className="text-xs"
                             data-testid={`inline-sqft-${item.id}`}
                           />

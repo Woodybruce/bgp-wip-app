@@ -2084,7 +2084,7 @@ export default function AvailableUnitsPage() {
               // Empty rows hide on the phone card (UX #135, supersedes #42's
               // "—" here) — on a sparse fixture the list was mostly em-dashes.
               const rows = [
-                ...(size ? [{ label: "Area", value: `${Number(size).toLocaleString()} sq ft` }] : []),
+                ...(size ? [{ label: "Area", value: `${Math.round(Number(size)).toLocaleString("en-GB")} sq ft` }] : []),
                 ...(tenant ? [{ label: "Tenant", value: tenant }] : []),
                 ...(rent ? [{ label: "Rent p.a.", value: `£${Number(rent).toLocaleString()}` }] : []),
               ];
@@ -2192,7 +2192,10 @@ export default function AvailableUnitsPage() {
                     reduced in width") — Target Tenant and Comments carry no
                     fixed width, so THEY absorb spare page width instead of
                     every column inflating evenly. */}
-                <TableHead className="w-[120px] min-w-[112px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("property")} data-testid="sort-property">
+                {/* Property / Unit takes width from Client — names wrapped to
+                    three lines and cut off while Client sat half empty
+                    (Woody, 2026-09-27). */}
+                <TableHead className="w-[180px] min-w-[170px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("property")} data-testid="sort-property">
                   Property / Unit{sortBy === "property" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                 </TableHead>
                 {/* "Existing Tenant" wrapped to two lines and sat out of
@@ -2203,7 +2206,7 @@ export default function AvailableUnitsPage() {
                 {showCol("pipelineStatus") && <TableHead className="w-[104px] min-w-[100px]">Deal Status</TableHead>}
                 {showCol("website") && <TableHead className="w-[92px] min-w-[88px]">Website</TableHead>}
                 {!hideClientCol && showCol("client") && (
-                  <TableHead className="w-[128px] min-w-[120px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("client")} data-testid="sort-client">
+                  <TableHead className="w-[116px] min-w-[108px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("client")} data-testid="sort-client">
                     Client{sortBy === "client" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                   </TableHead>
                 )}
@@ -2309,7 +2312,7 @@ export default function AvailableUnitsPage() {
                         ) : "—"}
                       </TableCell>
                       )}
-                      <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 max-w-[120px]">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 max-w-[180px]">
                         {/* Unit leads, property is the sub-line — on a
                             one-property board the property name repeats on
                             every row and carries no signal (UX #97). */}
@@ -2319,7 +2322,7 @@ export default function AvailableUnitsPage() {
                               <Input
                                 autoFocus
                                 defaultValue={u.unitName}
-                                className="h-6 text-xs px-1.5 py-0 max-w-[104px]"
+                                className="h-6 text-xs px-1.5 py-0 max-w-[164px]"
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter") {
                                     const v = (e.target as HTMLInputElement).value.trim();
@@ -2459,7 +2462,7 @@ export default function AvailableUnitsPage() {
                       </TableCell>
                       )}
                       {!hideClientCol && showCol("client") && (
-                      <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[150px]">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[116px]">
                         <div className="flex flex-col gap-0.5">
                         {deal ? (() => {
                           const isTenantRep = (deal.dealType || "").toLowerCase().includes("tenant rep");
@@ -2512,9 +2515,11 @@ export default function AvailableUnitsPage() {
                               data-testid={`costs-cell-${u.id}`}
                             >
                               <span className="font-mono text-[11px] tabular-nums">
+                                {/* "sq ft" like the rest of the app, whole feet
+                                    ("753.91 sf" → "754 sq ft") (Woody, 2026-09-27). */}
                                 {(deal?.totalAreaSqft ?? u.sqft) != null
-                                  ? `${Number(deal?.totalAreaSqft ?? u.sqft).toLocaleString("en-GB")} sf`
-                                  : <span className="text-muted-foreground">— sf</span>}
+                                  ? `${Math.round(Number(deal?.totalAreaSqft ?? u.sqft)).toLocaleString("en-GB")} sq ft`
+                                  : <span className="text-muted-foreground">— sq ft</span>}
                               </span>
                               {u.askingRent != null ? (
                                 <span className="font-mono text-[11px] tabular-nums">£{Number(u.askingRent).toLocaleString("en-GB")}</span>
@@ -2552,7 +2557,8 @@ export default function AvailableUnitsPage() {
                                     }
                                     if (field === "totalAreaSqft") inlineUpdate(u.id, "sqft", v);
                                   }}
-                                  suffix=" sf"
+                                  suffix=" sq ft"
+                                  format={(n) => Math.round(n).toLocaleString("en-GB")}
                                 />
                               </div>
                             ))}

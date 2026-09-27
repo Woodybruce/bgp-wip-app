@@ -935,7 +935,9 @@ export default function WipReport() {
     // (hidden by default) shows just the invoiced portion.
     { key: "amtWip", label: "Fee", width: "w-20" },
     { key: "amtInvoice", label: "Invoiced", width: "w-20" },
-    { key: "dealDate", label: "Target Month", width: "w-24" },
+    // min-w matches the month input so the column never squeezes it to
+    // "Novem"/"Septem" (Woody, 2026-09-27).
+    { key: "dealDate", label: "Target Month", width: "w-[136px] min-w-[136px]" },
     { key: "dealType", label: "Deal Type", width: "w-20" },
     { key: "agent", label: "BGP Contact", width: "w-20" },
     { key: "dealStatus", label: "Deal Status", width: "w-20" },
@@ -1486,11 +1488,13 @@ export default function WipReport() {
               {teamLabel && <span className="hidden md:inline text-base font-normal text-muted-foreground ml-2 whitespace-nowrap">— {teamLabel}</span>}
             </h1>
             <p className="text-sm text-muted-foreground">
-              <span className="md:hidden">{teamLabel && `${teamLabel} · `}<span className="font-mono tabular-nums">{sortedDetailEntries.length}</span> deal{sortedDetailEntries.length !== 1 ? "s" : ""}</span>
+              <span className="md:hidden">{teamLabel && `${teamLabel} · `}<span className="font-mono tabular-nums">{sortedDetailEntries.length.toLocaleString("en-GB")}</span> deal{sortedDetailEntries.length !== 1 ? "s" : ""} in the WIP (pipeline to invoiced)</span>
               <span className="hidden md:inline">
                 {/* Deals, not fee-split entries — the old "945 transactions" never
-                    matched Deal Detail's one-row-per-deal count (Woody, 2026-09-27). */}
-                <span className="font-mono tabular-nums">{mergedDetailEntries.length}</span> deal{mergedDetailEntries.length !== 1 ? "s" : ""} · Total net fees: <span className="font-mono tabular-nums">{formatFullCurrency(totalNetFees)}</span>
+                    matched Deal Detail's one-row-per-deal count (Woody, 2026-09-27).
+                    "in the WIP (pipeline to invoiced)" — /deals counts only its
+                    schedule, so a bare "467 deals" read as contradicting its 274. */}
+                <span className="font-mono tabular-nums">{mergedDetailEntries.length.toLocaleString("en-GB")}</span> deal{mergedDetailEntries.length !== 1 ? "s" : ""} in the WIP (pipeline to invoiced) · Total net fees: <span className="font-mono tabular-nums">{formatFullCurrency(totalNetFees)}</span>
               </span>
             </p>
           </div>
@@ -1547,7 +1551,10 @@ export default function WipReport() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button size="sm" asChild className="min-h-11 md:min-h-0 shrink-0 whitespace-nowrap" data-testid="wip-new-deal-button">
+          {/* md:min-h-8, not md:min-h-0 — min-h-0 dropped the size="sm"
+              floor and squashed the link to half the height of its
+              neighbours (Woody, 2026-09-27). */}
+          <Button size="sm" asChild className="min-h-11 md:min-h-8 shrink-0 whitespace-nowrap" data-testid="wip-new-deal-button">
             <Link href="/deals/list?new=1">
               <Plus className="h-4 w-4 mr-1" />
               Add deal
@@ -1794,7 +1801,8 @@ export default function WipReport() {
             ] as const).map(board => {
               if (board.rows.length === 0) return null;
               const expanded = expandedBoards.has(board.key);
-              const shown = expanded ? board.rows.slice(0, 40) : board.rows.slice(0, 6);
+              // Expanded shows every row, so "See all N" is true (Woody, 2026-09-27).
+              const shown = expanded ? board.rows : board.rows.slice(0, 6);
               const maxB = Math.max(...board.rows.map(r => r.total), 1);
               const boardTotal = feeBoards.totals[board.key] ?? 0;
               const shared = board.key === "team" && board.rows.reduce((s, r) => s + r.total, 0) > boardTotal + 0.5;
@@ -1804,7 +1812,7 @@ export default function WipReport() {
                     <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Net fees by {board.title}</span>
                     <span className="text-[11px] font-mono text-muted-foreground" title={shared ? "Deals shared between teams count in full in each team row" : undefined}>{formatCurrency(boardTotal)}{shared && <span className="font-sans"> · shared deals in each team</span>}</span>
                   </div>
-                  <div className="p-2">
+                  <div className={`p-2 ${expanded ? "max-h-96 overflow-y-auto" : ""}`}>
                     {shown.map(r => {
                       const active = board.selected.has(r.name);
                       return (
@@ -1834,7 +1842,7 @@ export default function WipReport() {
                         })}
                         data-testid={`wip-phone-board-${board.key}-more`}
                       >
-                        {expanded ? "Show top 6" : `All ${Math.min(board.rows.length, 40)}${board.rows.length > 40 ? ` of ${board.rows.length}` : ""} →`}
+                        {expanded ? "Show top 6" : `See all ${board.rows.length.toLocaleString("en-GB")} →`}
                       </button>
                     )}
                   </div>
@@ -1924,7 +1932,9 @@ export default function WipReport() {
               ] as const).map(board => {
                 if (board.rows.length === 0) return null;
                 const expanded = expandedBoards.has(`desk-${board.key}`);
-                const shown = expanded ? board.rows.slice(0, 60) : board.rows.slice(0, 8);
+                // Expanded shows every row (scrolls in max-h-72), so "See all N" is
+                // true (Woody, 2026-09-27).
+                const shown = expanded ? board.rows : board.rows.slice(0, 8);
                 const maxB = Math.max(...board.rows.map(r => r.total), 1);
                 const boardTotal = feeBoards.totals[board.key] ?? 0;
                 const shared = board.key === "team" && board.rows.reduce((s, r) => s + r.total, 0) > boardTotal + 0.5;
@@ -1965,7 +1975,7 @@ export default function WipReport() {
                         })}
                         data-testid={`wip-desk-board-${board.key}-more`}
                       >
-                        {expanded ? "Show top 8" : `All ${Math.min(board.rows.length, 60)}${board.rows.length > 60 ? ` of ${board.rows.length}` : ""} →`}
+                        {expanded ? "Show top 8" : `See all ${board.rows.length.toLocaleString("en-GB")} →`}
                       </button>
                     )}
                   </div>
@@ -2231,7 +2241,7 @@ export default function WipReport() {
                                   // both the popup pick and typed edits land exactly once, when done.
                                   key={`wip-target-${e.dealId}-${e.targetDate ?? ""}`}
                                   defaultValue={toDateInputValue(e.targetDate).slice(0, 7)}
-                                  className="text-xs border border-border rounded px-1 py-0.5 w-[150px] focus:outline-none focus:border-ring"
+                                  className="text-xs border border-border rounded px-1 py-0.5 w-[130px] focus:outline-none focus:border-ring"
                                   onChange={(ev) => {
                                     const val = ev.target.value;
                                     if (!val || !e.dealId) return;

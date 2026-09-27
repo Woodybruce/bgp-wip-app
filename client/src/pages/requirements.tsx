@@ -791,6 +791,12 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
   const activeItems = useMemo(() => filteredItems.filter((i) => i.status === "Active" || !i.status), [filteredItems]);
   const pastItems = useMemo(() => filteredItems.filter((i) => i.status === "Past"), [filteredItems]);
   const archivedItems = useMemo(() => filteredItems.filter((i) => i.status === "Archived"), [filteredItems]);
+  // Phone renders 30 cards then "Show more" — every requirement at once made
+  // a ~26,000px page (Woody, 2026-09-27).
+  const PHONE_PAGE = 30;
+  const [phoneShown, setPhoneShown] = useState(PHONE_PAGE);
+  useEffect(() => { setPhoneShown(PHONE_PAGE); }, [filteredItems]);
+  const phoneItems = useMemo(() => [...activeItems, ...pastItems, ...archivedItems], [activeItems, pastItems, archivedItems]);
   const [showPast, setShowPast] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
 
@@ -1003,13 +1009,13 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
         )}
       </div>
 
-      {isMobile ? (
+      {isMobile ? (<>
         <MobileCardView
           emptyMessage="No requirements"
           emptyDescription={search || groupFilter !== "all" || Object.keys(columnFilters).length > 0
             ? "Try adjusting your filters"
             : isClientView ? "No live requirements for your portfolio yet — BGP logs these on your behalf" : "No live requirements yet"}
-          items={[...activeItems, ...pastItems, ...archivedItems].map((item) => ({
+          items={phoneItems.slice(0, phoneShown).map((item) => ({
             id: item.id,
             title: item.name,
             // Brand name is usually the requirement name too ("Anna / Anna")
@@ -1078,7 +1084,12 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
             })(),
           }))}
         />
-      ) : (<>
+        {phoneItems.length > phoneShown && (
+          <Button variant="outline" className="w-full mt-3" onClick={() => setPhoneShown(n => n + PHONE_PAGE)} data-testid="mobile-requirements-show-more">
+            Show more ({(phoneItems.length - phoneShown).toLocaleString("en-GB")} left)
+          </Button>
+        )}
+      </>) : (<>
       <LeasingSection
         title="Active Requirements"
         items={activeItems}

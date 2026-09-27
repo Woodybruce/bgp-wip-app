@@ -4338,6 +4338,8 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
                   {inv.totalAmount != null && (
                     <span className="text-muted-foreground font-mono text-xs">
                       £{inv.totalAmount.toLocaleString("en-GB", { minimumFractionDigits: 2 })}
+                      {/* Xero totals include VAT — say so beside a net fee. */}
+                      {deal.fee != null && inv.totalAmount > Number(deal.fee) * 1.1 ? " inc. VAT" : ""}
                     </span>
                   )}
                 </div>
@@ -6109,6 +6111,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     [teamFilteredDeals, search, matchesSearch],
   );
 
+  // Phone card view renders 30 cards then "Show more" — every deal at once
+  // made a ~54,000px page (Woody, 2026-09-27).
+  const PHONE_PAGE = 30;
+  const [phoneShown, setPhoneShown] = useState(PHONE_PAGE);
+  useEffect(() => { setPhoneShown(PHONE_PAGE); }, [search, activeGroup, columnFilters, activeTeam, propertyIdFilter]);
+
   const statusCounts = useMemo(() => {
     return statusValues
       .filter(s => isCompsMode ? COMPLETED_STATUS_CODES.includes(s as DealStatusCode) : true)
@@ -6228,7 +6236,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     <PageLayout
       title={isCompsMode ? "Leasing Comps" : "Deals"}
       icon={Handshake}
-      fullHeight
+      // Phones scroll the whole page with only the search row sticky — the
+      // fixed-height layout pinned tabs, h1, New Deal, chips and search
+      // (~365 of 844px) over an inner-scrolling list (Woody, 2026-09-27).
+      fullHeight={!isMobile}
       subtitle={isCompsMode
         ? `${baseDeals.length} completed deal${baseDeals.length !== 1 ? "s" : ""} — comparable transactions`
         : urlTeamParam
@@ -6238,7 +6249,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             // baseDeals, not deals — the raw CRM count includes pre-instruction
             // and withdrawn rows this schedule never shows, so it disagreed
             // with the "All" chip (289 vs 274) (Woody, 2026-09-27).
-            : `${baseDeals.length} deal${baseDeals.length !== 1 ? "s" : ""} on the schedule${trackerOnlyDealCount > 0 ? ` · +${trackerOnlyDealCount} letting deal${trackerOnlyDealCount !== 1 ? "s" : ""} on the Letting Tracker` : ""}`}
+            // "deal schedule" + the WIP pointer — the WIP Report's bigger
+            // count includes pipeline, and bare "deals" read as a
+            // contradiction (Woody, 2026-09-27).
+            : `${baseDeals.length.toLocaleString("en-GB")} deal${baseDeals.length !== 1 ? "s" : ""} on the deal schedule (WIP Report adds pipeline)${trackerOnlyDealCount > 0 ? ` · +${trackerOnlyDealCount} letting deal${trackerOnlyDealCount !== 1 ? "s" : ""} on the Letting Tracker` : ""}`}
       actions={!isCompsMode ? (
         <>
           {!isMobile && !isClientDeals && (<>
@@ -6277,7 +6291,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           </Button>
         </>
       ) : undefined}
-      className="h-[calc(100vh-3rem)] flex flex-col"
+      className={isMobile ? undefined : "h-[calc(100vh-3rem)] flex flex-col"}
       testId={isCompsMode ? "comps-page" : "deals-page"}
     >
 
@@ -6344,7 +6358,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       </ScrollArea>
       )}
 
-      <div className="flex items-center gap-3 flex-wrap shrink-0">
+      <div className={`flex items-center gap-3 flex-wrap shrink-0 ${isMobile ? "sticky top-0 z-20 bg-background -mx-4 px-4 py-2" : ""}`}>
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -6508,8 +6522,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                 ))}
               </div>
             ) : (
+              <>
               <MobileCardView
-                items={filteredDeals.map((deal): MobileCardItem => {
+                items={(isMobile ? filteredDeals.slice(0, phoneShown) : filteredDeals).map((deal): MobileCardItem => {
                   const propName = deal.propertyId ? (properties.find(p => p.id === deal.propertyId)?.name || "") : "";
                   const agents = Array.isArray(deal.internalAgent) ? deal.internalAgent.join(", ") : (deal.internalAgent || "");
                   const teams = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || "");
@@ -6549,6 +6564,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                 emptyMessage="No deals found"
                 emptyIcon={BarChart3}
               />
+              {isMobile && filteredDeals.length > phoneShown && (
+                <div className="p-3">
+                  <Button variant="outline" className="w-full" onClick={() => setPhoneShown(n => n + PHONE_PAGE)} data-testid="mobile-deals-show-more">
+                    Show more ({(filteredDeals.length - phoneShown).toLocaleString("en-GB")} left)
+                  </Button>
+                </div>
+              )}
+              </>
             )}
           </CardContent>
         </Card>

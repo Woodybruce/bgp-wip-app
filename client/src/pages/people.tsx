@@ -66,7 +66,9 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
   if (local) logoSources.push(local);
 
   if (failCount >= logoSources.length) {
-    const initials = (company.name || "?").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);
+    // Letters/digits only — "F(" for FPE (UK), "A&" for Alvarez & Marsal
+    // (Woody, 2026-09-27).
+    const initials = (company.name || "").split(/\s+/).map(w => w.replace(/[^\p{L}\p{N}]/gu, "")[0] || "").join("").toUpperCase().slice(0, 2) || "?";
     return (
       <div className={`${sizeClass} rounded-lg bg-muted flex items-center justify-center ${textSize} font-semibold text-muted-foreground border shrink-0`}>
         {initials}
@@ -155,6 +157,12 @@ function LandlordsTab({
   const nonClientLandlords = useMemo(() => landlords.filter((c) => !clientLandlords.find((cl) => cl.id === c.id)), [landlords, clientLandlords]);
 
   const displayList = landlordFilter === "clients" ? clientLandlords : landlordFilter === "non-clients" ? nonClientLandlords : landlords;
+  // Phone renders 30 cards then "Show more" — every landlord at once made a
+  // ~41,000px page (Woody, 2026-09-27).
+  const isMobile = useIsMobile();
+  const PHONE_PAGE = 30;
+  const [phoneShown, setPhoneShown] = useState(PHONE_PAGE);
+  useEffect(() => { setPhoneShown(PHONE_PAGE); }, [landlordFilter, search]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return displayList;
@@ -177,16 +185,25 @@ function LandlordsTab({
     return map;
   }, [contacts]);
 
+  // Landlord properties = landlord_id on the property OR a
+  // crm_company_properties link — the same set Landlord Intelligence counts,
+  // which disagreed with these cards (0 vs 2) (Woody, 2026-09-27).
+  const { data: companyPropertyLinks = [] } = useQuery<{ companyId: string; propertyId: string }[]>({
+    queryKey: ["/api/crm/company-property-links"],
+  });
   const propertiesByLandlord = useMemo(() => {
+    const byId = new Map(properties.map((p) => [p.id, p]));
     const map: Record<string, CrmProperty[]> = {};
-    properties.forEach((p) => {
-      if (p.landlordId) {
-        if (!map[p.landlordId]) map[p.landlordId] = [];
-        map[p.landlordId].push(p);
-      }
-    });
+    const seen = new Set<string>();
+    const add = (companyId: string, p: CrmProperty | undefined) => {
+      if (!p || seen.has(`${companyId}:${p.id}`)) return;
+      seen.add(`${companyId}:${p.id}`);
+      (map[companyId] ||= []).push(p);
+    };
+    properties.forEach((p) => { if (p.landlordId) add(p.landlordId, p); });
+    companyPropertyLinks.forEach((l) => add(l.companyId, byId.get(l.propertyId)));
     return map;
-  }, [properties]);
+  }, [properties, companyPropertyLinks]);
 
   const dealsByLandlord = useMemo(() => {
     const map: Record<string, CrmDeal[]> = {};
@@ -281,7 +298,7 @@ function LandlordsTab({
                             <button onClick={(e) => { e.stopPropagation(); onScopeLandlord(company.id); }} className="text-xs text-primary hover:text-primary/80 font-medium whitespace-nowrap">Open people</button>
                           )}
                           {onDeleteCompany && (
-                            <button onClick={(e) => { e.stopPropagation(); onDeleteCompany(company.id, company.name); }} className="p-1 rounded-full opacity-60 md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all">
+                            <button onClick={(e) => { e.stopPropagation(); onDeleteCompany(company.id, company.name); }} className="p-1 rounded-full hidden md:block md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all">
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           )}
@@ -295,8 +312,9 @@ function LandlordsTab({
           </div>
         </Card>
       ) : (
+      <>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        {filtered.map((company) => {
+        {(isMobile ? filtered.slice(0, phoneShown) : filtered).map((company) => {
           const compContacts = contactsByCompany[company.id] || [];
           const compProps = propertiesByLandlord[company.id] || [];
           const compDeals = dealsByLandlord[company.id] || [];
@@ -304,10 +322,13 @@ function LandlordsTab({
           return (
             <Link key={company.id} href={`/companies/${company.id}`}>
               <Card className="hover:shadow-md transition-shadow cursor-pointer h-full relative group" data-testid={`card-landlord-${company.id}`}>
+                {/* Desktop hover only — on phones the bin sat at 60% over the
+                    crown/title on every card; delete from the company page
+                    (Woody, 2026-09-27). */}
                 {onDeleteCompany && (
                   <button
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDeleteCompany(company.id, company.name); }}
-                    className="absolute top-2 right-2 p-1 rounded-full opacity-60 md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
+                    className="absolute top-2 right-2 p-1 rounded-full hidden md:block md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
                     title="Delete"
                     data-testid={`button-delete-landlord-${company.id}`}
                   >
@@ -361,6 +382,12 @@ function LandlordsTab({
           );
         })}
       </div>
+      {isMobile && filtered.length > phoneShown && (
+        <Button variant="outline" className="w-full" onClick={() => setPhoneShown(n => n + PHONE_PAGE)} data-testid="landlord-cards-show-more">
+          Show more ({(filtered.length - phoneShown).toLocaleString("en-GB")} left)
+        </Button>
+      )}
+      </>
       )}
     </div>
   );
@@ -640,7 +667,7 @@ function AgentsTab({
                 {onDeleteCompany && (
                   <button
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDeleteCompany(company.id, company.name); }}
-                    className="absolute top-2 right-2 p-1 rounded-full opacity-60 md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
+                    className="absolute top-2 right-2 p-1 rounded-full hidden md:block md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
                     title="Delete"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -1760,7 +1787,8 @@ function PeopleHub() {
             CRM
           </h1>
           <p className="text-sm text-muted-foreground">
-            {`${countLabel(landlordCompanies.length, "landlord")} · ${countLabel(agentCompaniesCount, "agent")} · ${countLabel(hubContactCount, "contact")}`}
+            {/* toLocaleString — countLabel printed "1110 contacts" (Woody, 2026-09-27). */}
+            {[[landlordCompanies.length, "landlord"], [agentCompaniesCount, "agent"], [hubContactCount, "contact"]].map(([n, w]) => `${(n as number).toLocaleString("en-GB")} ${w}${n === 1 ? "" : "s"}`).join(" · ")}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
