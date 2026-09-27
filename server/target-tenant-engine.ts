@@ -247,7 +247,7 @@ export type PlannedTarget = { brand_name: string; evidenced: boolean; quality_ra
 
 // The deep pass: one Fable call (extended thinking) plans up to six units
 // together so the targets form a mix, not five brands copied everywhere.
-export async function planTargets(ev: CentreEvidence, units: Array<TargetUnit & { candidates: UnitCandidate[]; existing: string[] }>): Promise<{ strategy: string; byUnit: Map<string, PlannedTarget[]> }> {
+export async function planTargets(ev: CentreEvidence, units: Array<TargetUnit & { candidates: UnitCandidate[]; existing: string[] }>, placed: Map<string, string[]> = new Map()): Promise<{ strategy: string; byUnit: Map<string, PlannedTarget[]> }> {
   const unitBlock = units.map(u => [
     `UNIT ${u.id}: ${u.unit_name}${u.sqft ? ` · ${Math.round(Number(u.sqft))} sq ft` : " · size not recorded"}${u.zone ? ` · zone ${u.zone}` : ""}${u.positioning ? ` · positioning ${u.positioning}` : ""}${u.status ? ` · ${u.status}` : ""}${u.rent_pa ? ` · £${Number(u.rent_pa).toLocaleString()} pa` : ""}${u.tenant_name ? ` · current occupier ${u.tenant_name}` : ""}`,
     u.existing.length ? `  already targeted (don't repeat): ${u.existing.join(", ")}` : "",
@@ -258,14 +258,14 @@ export async function planTargets(ev: CentreEvidence, units: Array<TargetUnit & 
   const system = `You are the head of retail & leisure leasing strategy at Bruce Gillingham Pollard, a London leasing agency that sets the occupier mix for the UK's leading shopping centres and West End estates. You think like a landlord's leasing director: trading performance, dwell time, adjacency and the centre's position against its competitors decide the mix, and only brands with real intent sign. Be rigorous and evidence-led; British English; no hype.`;
   const prompt = `${ev.context}
 
-VACANT / LETTING UNITS TO PLAN:
+${placed.size ? `ALREADY PLACED on other units at this centre (counts toward the two-unit limit): ${[...placed.entries()].map(([b, us]) => `${b} → ${us.join(", ")}`).join("; ")}\n\n` : ""}VACANT / LETTING UNITS TO PLAN:
 ${unitBlock}
 
 Plan the targets for these units TOGETHER. Think it through before answering:
 - What is this centre missing against its competing centres and the top UK centres, sector by sector, and which of these units is the right home for each missing piece (size, zone, positioning, adjacency to the current mix)?
 - Weigh the evidence honestly. Strongest: a live requirement whose size fits the unit, BGP acting for the brand, a live BGP deal elsewhere (taking space now), a new relationship BGP has just opened, the landlord naming the brand. Then presence at competing / top centres with opening news or cited expansion. Presence alone is weaker. A brand whose requirement size doesn't fit the unit is a poor target for it.
 - Avoid a brand that duplicates or directly competes with a current tenant, and never suggest a brand already trading here.
-- Don't put the same brand on more than two units — give it to the unit that fits its requirement best.
+- Don't put the same brand on more than two units across the centre (including the units already placed above) — give it to the unit that fits its requirement best.
 - The landlord client reads every rationale, and should see the brand movement: BGP's conversations with the brand, a new relationship, BGP acting for the brand, live BGP deals on the landlord's own schemes. Items marked [BGP-internal] (email / contact counts, deals on OTHER landlords' schemes) are confidential: use them to judge, but never repeat them — say "acquiring elsewhere now" instead of naming another scheme.
 - Prefer the evidenced candidates. You may add at most ONE brand per unit from your own market knowledge when it is clearly stronger than the list; mark it "evidenced": false and say why.
 
@@ -324,11 +324,12 @@ export async function matchBrandCompany(pool: any, name: string): Promise<{ id: 
 }
 
 // Plan and save targets for a set of leasing-schedule units (the Generate
-// buttons). Units go to the model in batches of up to six, two at a time.
+// buttons). Units go to the model in batches of up to six, one after another.
 // save:false plans without writing (?preview=1 on the unit route).
 export async function generateTargetsForUnits(pool: any, req: Request, propertyId: string, units: TargetUnit[], opts: { save?: boolean } = {}) {
   const ev = await centreEvidence(pool, req, propertyId);
-  const existingRows = await rows(pool, `SELECT unit_id, brand_name FROM target_tenants WHERE property_id = $1`, [propertyId]);
+  const existingRows = await rows(pool, `SELECT t.unit_id, t.brand_name, u.unit_name FROM target_tenants t
+      LEFT JOIN leasing_schedule_units u ON u.id = t.unit_id WHERE t.property_id = $1 AND t.status <> 'rejected'`, [propertyId]);
   const prepared = units.map(u => {
     const existing = existingRows.filter((r: any) => r.unit_id === u.id).map((r: any) => r.brand_name);
     return { ...u, existing, candidates: unitCandidates(ev, u, new Set(existing.map((e: string) => brandKey(e)))) };
@@ -338,12 +339,13 @@ export async function generateTargetsForUnits(pool: any, req: Request, propertyI
   const strategies: string[] = [];
   const inserted = new Map<string, any[]>();
   const failed: Array<{ unit_id: string; error: string }> = [];
-  let next = 0;
-  await Promise.all([0, 1].map(async () => {
-    while (next < batches.length) {
-      const batch = batches[next++];
+  // Batches run in turn so each sees where earlier ones placed brands.
+  const placed = new Map<string, string[]>();
+  for (const r of existingRows) placed.set(r.brand_name, [...(placed.get(r.brand_name) || []), String(r.unit_name || "another unit").split(/\s+/)[0]]);
+  for (const batch of batches) {
+    {
       try {
-        const plan = await planTargets(ev, batch);
+        const plan = await planTargets(ev, batch, placed);
         if (plan.strategy) strategies.push(plan.strategy);
         for (const unit of batch) {
           const saved: any[] = [];
@@ -358,6 +360,7 @@ export async function generateTargetsForUnits(pool: any, req: Request, propertyI
                  VALUES ($1, $2, $3, $4, $5, $6, $7, 'ai', 'suggested') RETURNING *`,
                 [unit.id, propertyId, company?.id || null, t.brand_name, rationale, internalEvidence, t.quality_rating])).rows[0];
             saved.push({ ...row, company_name: company?.name || null });
+            placed.set(t.brand_name, [...(placed.get(t.brand_name) || []), String(unit.unit_name || "").split(/\s+/)[0]]);
           }
           inserted.set(unit.id, saved);
         }
@@ -365,6 +368,6 @@ export async function generateTargetsForUnits(pool: any, req: Request, propertyI
         for (const unit of batch) failed.push({ unit_id: unit.id, error: String(error?.message || error).slice(0, 200) });
       }
     }
-  }));
+  }
   return { inserted, strategy: strategies.join(" "), failed };
 }
