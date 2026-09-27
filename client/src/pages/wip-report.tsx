@@ -1886,7 +1886,8 @@ export default function WipReport() {
                   {(() => {
                     const maxM = Math.max(...monthlyFees.map(m => m.total), 1);
                     const colH = 104;
-                    return monthlyFees.map(m => {
+                    const long = monthlyFees.length > 18;
+                    return monthlyFees.map((m, i) => {
                       const tappable = m.month !== "TBC";
                       const active = selectedMonths.has(m.month);
                       return (
@@ -1902,12 +1903,14 @@ export default function WipReport() {
                           title={`${m.month} · ${formatFullCurrency(m.total)} · ${m.count} deal${m.count !== 1 ? "s" : ""}`}
                           data-testid={`wip-desk-month-${m.month}`}
                         >
-                          <span className="text-[10px] font-mono text-muted-foreground">{formatCurrency(m.total)}</span>
+                          {/* Filled-in empty months keep the axis honest but don't
+                              each need a "£0" label. */}
+                          <span className="text-[10px] font-mono text-muted-foreground">{m.total ? formatCurrency(m.total) : "\u00a0"}</span>
                           <div className="w-full max-w-[40px] flex flex-col justify-end rounded-t overflow-hidden" style={{ height: colH }}>
                             {m.wip > 0 && <div className="w-full" style={{ height: `${Math.max(2, (m.wip / maxM) * colH)}px`, backgroundColor: active ? "#16a34a" : "#86efac" }} />}
                             {m.invoiced > 0 && <div className="w-full" style={{ height: `${Math.max(2, (m.invoiced / maxM) * colH)}px`, backgroundColor: active ? "#15803d" : "#22c55e" }} />}
                           </div>
-                          <span className={`text-[10px] whitespace-nowrap ${active ? "font-semibold text-foreground" : "text-muted-foreground"}`}>{m.month}</span>
+                          <span className={`text-[10px] whitespace-nowrap ${active ? "font-semibold text-foreground" : "text-muted-foreground"}`}>{!long || m.total || i % 3 === 0 ? m.month : "\u00a0"}</span>
                         </button>
                       );
                     });
