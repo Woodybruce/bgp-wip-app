@@ -141,6 +141,13 @@ async function sweepSectorClassification() {
 // centre point, or a tenant on its tenancy schedule when the scheme is one
 // of our properties. The peer list itself lives in shared/uk-centres.ts.
 const PEER_PRESENCE_KM = 0.7;
+// Tenant / brand names compared without accents or apostrophes ("Caffè
+// Nero" on a schedule is the Caffe Nero brand).
+const brandKey = (value: string) => value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/['’]/g, "").replace(/\s+/g, " ").trim();
+// A store whose own name or address names the centre is at it, whatever
+// its geocode says (out-of-town schemes spread past any radius).
+const namesScheme = (text: string, scheme: { name: string; aliases: string[] }) =>
+  [scheme.name, ...scheme.aliases].some(alias => ` ${text} `.includes(` ${brandKey(alias).replace(/[^a-z0-9]+/g, " ").trim()} `));
 
 type LocResolveResult =
   | { ok: true; lat: number; lng: number; postcode: string | null; name: string }
@@ -273,6 +280,11 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     // National comparison = the top-25 centres; the full list still feeds
     // "competing centres" (Bluewater → Lakeside, The Glades).
     const topPeers = peerSchemes.filter(ps => ps.top25);
+    // This centre's own names, for store addresses that say it.
+    const subjectScheme = researchContext.mode === "centre"
+      ? UK_CENTRES.find(ps => haversineKm(location.lat, location.lng, ps.lat, ps.lng) <= siteRadiusKm(ps))
+        || { name: location.name, aliases: [location.name.replace(/\s*(shopping cent(?:re|er)|retail park|outlet village)\s*$/i, "").trim()] }
+      : null;
     const topPeerNames = new Set(topPeers.map(ps => ps.name));
     const topCount = (b: { peer_scheme_set: Set<string> }) => Array.from(b.peer_scheme_set).filter(n => topPeerNames.has(n)).length;
 
@@ -318,7 +330,9 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       }
       // Which peer scheme (if any) is this store at? A store sits at one
       // scheme at most — the nearest one in range.
-      let atScheme: string | null = null, atKm = Infinity;
+      const storeText = brandKey(`${s.store_name || ""} ${s.address || ""}`).replace(/[^a-z0-9]+/g, " ");
+      if (subjectScheme && researchContext.mode === "centre" && namesScheme(storeText, subjectScheme)) entry.nearest_distance_km = Math.min(entry.nearest_distance_km, 0.01);
+      let atScheme: string | null = peerSchemes.find(ps => namesScheme(storeText, ps))?.name || null, atKm = atScheme ? 0 : Infinity;
       for (const ps of peerSchemes) {
         const km = haversineKm(ps.lat, ps.lng, s.lat, s.lng);
         if (km <= (ps.radiusKm ?? PEER_PRESENCE_KM) && km < atKm) { atScheme = ps.name; atKm = km; }
@@ -359,14 +373,14 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
           const scheme = schemeOf.get(String(t.property_id))!;
           const entry = byScheme.get(scheme) || { ids: new Set<string>(), names: [] };
           if (t.id) entry.ids.add(t.id);
-          if (t.name) entry.names.push(t.name);
+          if (t.name) entry.names.push(brandKey(t.name));
           byScheme.set(scheme, entry);
         }
         for (const [scheme, entry] of byScheme) {
           if (!entry.ids.size && !entry.names.length) continue;
           scheduleBacked.add(scheme);
           for (const b of brandMap.values()) {
-            const bn = b.brand_name.toLowerCase().replace(/'/g, "");
+            const bn = brandKey(b.brand_name);
             if (entry.ids.has(String(b.brand_company_id)) || entry.names.some(n => n === bn || n.startsWith(bn + " "))) b.peer_scheme_set.add(scheme);
           }
         }
@@ -394,14 +408,18 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
        SELECT DISTINCT tenant_company_id::text AS id, lower(replace(coalesce(tenant_name, ''), '''', '')) AS name
          FROM tenancy_schedule_units
         WHERE property_id = $1 AND lower(trim(coalesce(status, ''))) <> 'archived'
-          AND (tenant_company_id IS NOT NULL OR tenant_name IS NOT NULL)`,
+          AND (tenant_company_id IS NOT NULL OR tenant_name IS NOT NULL)
+       UNION
+       SELECT NULL AS id, lower(replace(trading_name, '''', '')) AS name
+         FROM tenancy_schedule_units
+        WHERE property_id = $1 AND lower(trim(coalesce(status, ''))) <> 'archived' AND COALESCE(trading_name, '') <> ''`,
       [propertyId]
     ).then(r => r.rows).catch(() => [] as any[]);
     const occIds = new Set(occ.map((r: any) => r.id).filter(Boolean));
-    const occNames = occ.map((r: any) => r.name).filter(Boolean);
+    const occNames = occ.map((r: any) => r.name && brandKey(r.name)).filter(Boolean);
     const knownOccupation = new Set<string>();
     for (const b of hospitality) {
-      const bn = b.brand_name.toLowerCase().replace(/'/g, "");
+      const bn = brandKey(b.brand_name);
       const inOccupation = occIds.has(String(b.brand_company_id))
         || occNames.some((n: string) => n === bn || n.startsWith(bn + " "));
       if (inOccupation) {

@@ -8,7 +8,7 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
-import { TOP_25_CENTRES, centreAt, type UkCentre } from "../shared/uk-centres";
+import { UK_CENTRES, TOP_25_CENTRES, centreAt, type UkCentre } from "../shared/uk-centres";
 
 const router = Router();
 const OPENING = /\b(opens?|opening|opened|to open|coming (?:soon )?to|set to (?:open|launch|arrive)|launch(?:es|ed|ing)?|signs?|signed|joins?|joining|debuts?|arriv(?:es|ing)|new (?:store|restaurant|shop|site|unit|flagship|venue|outlet)|takes? (?:space|a unit|units?)|secures?|lets? to|unveil(?:s|ed)?|expan(?:ds?|sion) (?:in|into|at|to))\b/i;
@@ -62,7 +62,7 @@ async function googleNews(centre: UkCentre): Promise<Array<{ title: string; url:
 }
 
 async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpening[]> {
-  const key = `centre-openings:v2:${centre.name}`;
+  const key = `centre-openings:v3:${centre.name}`;
   const cached = (await pool.query("SELECT value, updated_at FROM system_settings WHERE key = $1", [key])).rows[0];
   if (cached && Date.now() - new Date(cached.updated_at).getTime() < DAY_MS && Array.isArray(cached.value?.items)) return cached.value.items;
 
@@ -82,9 +82,13 @@ async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpe
       date: (s.signal_date || s.created_at)?.toISOString?.() || null, brand: { id: s.brand_id, name: s.brand_name }, origin: "signal" });
   }
   const news = await pool.query(
-    `SELECT title, summary, url, source_name, published_at FROM news_articles
-      WHERE published_at >= $1 AND (title ILIKE ANY($2::text[]) OR summary ILIKE ANY($2::text[]))
-      ORDER BY published_at DESC LIMIT 40`, [since, aliases]
+    // Press only — brand Instagram / LinkedIn / jobs posts ("join us in
+    // store…", influencer ads) aren't opening news.
+    `SELECT a.title, a.summary, a.url, a.source_name, a.published_at FROM news_articles a
+       LEFT JOIN news_sources ns ON ns.id = a.source_id
+      WHERE a.published_at >= $1 AND (a.title ILIKE ANY($2::text[]) OR a.summary ILIKE ANY($2::text[]))
+        AND COALESCE(ns.type, '') NOT IN ('rssapp_instagram', 'rssapp_linkedin', 'rssapp_careers')
+      ORDER BY a.published_at DESC LIMIT 40`, [since, aliases]
   ).then(r => r.rows).catch(() => [] as any[]);
   for (const a of news) {
     if (!namesCentre(`${a.title} ${a.summary || ""}`, centre) || !isOpeningHeadline(a.title)) continue;
@@ -113,9 +117,11 @@ async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpe
   // One story, one row: the brand signal wins, then feed news, the centre's
   // own page and the web search.
   const seen = new Set<string>();
+  // A feed's future date (an event listing) isn't when the news broke.
+  for (const item of items) if (item.date && Date.parse(item.date) > Date.now() + DAY_MS) item.date = null;
   // Several outlets covering one opening collapse onto the brand + month.
   const deduped = items.filter(item => {
-    const keys = [item.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 70)];
+    const keys = [item.title.replace(/\s+[-–|]\s+[^-–|]{2,40}$/, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 70)];
     if (item.brand) keys.push(`${item.brand.id}:${(item.date || "").slice(0, 7)}`);
     if (keys.some(k => seen.has(k))) return false;
     keys.forEach(k => seen.add(k));
@@ -146,7 +152,10 @@ router.get("/api/property/:propertyId/centre-openings", requireAuth, async (req:
     const property = (await pool.query("SELECT name, latitude, longitude FROM crm_properties WHERE id = $1", [propertyId])).rows[0];
     if (!property) return res.status(404).json({ error: "Property not found" });
     const lat = parseFloat(property.latitude), lng = parseFloat(property.longitude);
-    const listed = Number.isFinite(lat) && Number.isFinite(lng) ? centreAt(lat, lng) : null;
+    // Coordinates first, else the name ("Bluewater Shopping Centre").
+    const plain = (v: string) => ` ${v.toLowerCase().replace(/['’]/g, "").replace(/[^a-z0-9]+/g, " ").trim()} `;
+    const listed = (Number.isFinite(lat) && Number.isFinite(lng) ? centreAt(lat, lng) : null)
+      || UK_CENTRES.find(centre => [centre.name, ...centre.aliases].some(alias => plain(property.name).includes(plain(alias)))) || null;
     // A centre we don't list is searched by its own name.
     const here: UkCentre = listed || { name: property.name, lat, lng, aliases: [String(property.name).replace(/\s*(shopping cent(?:re|er)|retail park)\s*$/i, "").trim() || property.name] };
     const peers = TOP_25_CENTRES.filter(centre => centre.name !== here.name);
