@@ -14,7 +14,7 @@ const router = Router();
 const OPENING = /\b(opens?|opening|opened|to open|coming (?:soon )?to|set to (?:open|launch|arrive)|launch(?:es|ed|ing)?|signs?|signed|joins?|joining|debuts?|arriv(?:es|ing)|new (?:store|restaurant|shop|site|unit|flagship|venue|outlet)|takes? (?:space|a unit|units?)|secures?|lets? to|unveil(?:s|ed)?|expan(?:ds?|sion) (?:in|into|at|to))\b/i;
 const CLOSING = /\b(clos(?:e|es|ed|ing|ure)|shut(?:s|ting)?|administration|exit(?:s|ing)?|quits?|vacat(?:e|es|ing))\b/i;
 // Property-market stories that read like openings ("launches £80m office sale").
-const NOISE = /\b(office (?:sale|building|space|scheme)|refinanc\w*|acquisitions?|acquires?|homes|apartments?|flats|planning application|brunch|menu|pop-?up)\b/i;
+const NOISE = /\b(office (?:sale|building|space|scheme)|refinanc\w*|acquisitions?|acquires?|homes|apartments?|flats|planning application|brunch|menu|pop-?up|masterclass|advent|giveaway|competition|festival|workshop)\b/i;
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Single-word brand names that are ordinary words in a headline.
 const COMMON = new Set(["next", "boots", "game", "office", "river", "space", "white", "black", "house", "coffee", "pizza", "burger", "kitchen", "store", "market", "grand", "central", "square", "lakeside", "bluewater", "trafford", "arndale", "meadowhall", "bullring", "highcross", "silverburn", "braehead", "oracle", "lexicon", "touchwood", "westfield", "trinity"]);
@@ -64,7 +64,7 @@ async function googleNews(centre: UkCentre): Promise<Array<{ title: string; url:
 }
 
 async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpening[]> {
-  const key = `centre-openings:v4:${centre.name}`;
+  const key = `centre-openings:v5:${centre.name}`;
   const cached = (await pool.query("SELECT value, updated_at FROM system_settings WHERE key = $1", [key])).rows[0];
   if (cached && Date.now() - new Date(cached.updated_at).getTime() < DAY_MS && Array.isArray(cached.value?.items)) return cached.value.items;
 
@@ -109,7 +109,7 @@ async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpe
   for (const a of own) {
     const text = `${a.title} ${a.summary || ""}`;
     const brand = brandNamed(a.title, list) || brandNamed(text, list);
-    if (!isOpeningHeadline(text)) continue;
+    if (!isOpeningHeadline(a.title)) continue;
     items.push({ centre: centre.name, title: a.title, url: a.url, source: a.source_name, date: a.at?.toISOString?.() || null, brand, origin: "centre" });
   }
   const web = await googleNews(centre).catch(() => []);
