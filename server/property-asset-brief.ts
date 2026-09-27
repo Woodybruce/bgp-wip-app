@@ -598,7 +598,10 @@ router.post("/api/properties/:id/bgp-commentary/regenerate", requireAuth, async 
     if (!briefRes.ok) return res.status(briefRes.status).json({ error: "Couldn't load asset brief" });
     const brief = await briefRes.json();
     const required = ["deals", "lettings", "activity", "schedule", "risks"];
-    if (required.some(section => brief.data_quality?.[section] !== "ready")) {
+    // Missing or failed data blocks a rewrite; partial data doesn't — on a
+    // 191-unit centre something is always partial, which froze Bluewater's
+    // commentary at 4 Aug. The caveats go into the prompt instead.
+    if (required.some(section => !["ready", "partial"].includes(brief.data_quality?.[section]))) {
       return res.status(409).json({ error: "Commentary was kept unchanged. Complete or reload the property data before regenerating it.", data_warnings: brief.data_warnings || [] });
     }
 
@@ -650,7 +653,9 @@ ${focusLines}
 
 Performance: ${brief.performance.vacancy_rate == null ? "Vacancy unavailable" : `${(brief.performance.vacancy_rate * 100).toFixed(1)}% recorded vacancy`}${brief.performance.wault_years != null ? `, rent-weighted lease term ${brief.performance.wault_years.toFixed(1)} yrs` : "; weighted lease term unavailable"}.
 
-Write the operational commentary for the asset owner reading this as a HEADLINE plus FOUR bullets (Woody, 2026-09-27: "headline plus bullets, like the covenant summary"):
+${(brief.data_warnings || []).length ? `Data caveats (state nothing these make uncertain — no vacancy rate or totals the data can't support): ${(brief.data_warnings || []).map((w: any) => w.message).join(" ")}
+
+` : ""}Write the operational commentary for the asset owner reading this as a HEADLINE plus FOUR bullets (Woody, 2026-09-27: "headline plus bullets, like the covenant summary"):
 - First line: one bold headline sentence — the single thing to know about the asset right now, e.g. **Four lettings at solicitors; vacancy is the pressure point.**
 - Then exactly four bullets, each starting "- " and a bold lead-in, in this order:
   - **Live activity:** what's actively moving — live deals AND Letting Tracker units in play; only say nothing is transacting if BOTH lists are empty.

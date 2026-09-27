@@ -126,14 +126,22 @@ function regeneration({ brief, tasks = [{ title: 'Chase the lease renewal', owne
   } };
 }
 
-test('missing/partial/failed source data prevents any AI call or persisted commentary change', async () => {
+test('missing/failed source data prevents any AI call or persisted commentary change', async () => {
   const ready = (await briefHandler().run()).body;
-  for (const status of ['missing', 'partial', 'error']) for (const section of ['deals', 'lettings', 'activity', 'schedule', 'risks']) {
+  for (const status of ['missing', 'error']) for (const section of ['deals', 'lettings', 'activity', 'schedule', 'risks']) {
     const fixture = regeneration({ brief: { ...ready, data_quality: { ...ready.data_quality, [section]: status } } });
     assert.equal((await fixture.run()).code, 409);
     assert.equal(fixture.providerCalls, 0);
     assert.equal(fixture.writes.length, 0);
   }
+});
+
+test('partial source data still refreshes the commentary, with the caveat in the prompt', async () => {
+  const ready = (await briefHandler().run()).body;
+  const fixture = regeneration({ brief: { ...ready, data_quality: { ...ready.data_quality, schedule: 'partial' }, data_warnings: [{ section: 'schedule', message: '19 units have no confirmed occupancy status.' }] } });
+  assert.equal((await fixture.run()).code, 200);
+  assert.equal(fixture.providerCalls, 1);
+  assert.match(fixture.prompt, /Data caveats.*19 units have no confirmed occupancy status/);
 });
 
 test('commentary uses visible current tasks, keeps authentication and never rewrites manual notes', async () => {
