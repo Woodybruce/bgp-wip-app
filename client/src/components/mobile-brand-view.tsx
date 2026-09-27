@@ -21,7 +21,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pill } from "@/components/ui/pill";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Building2, TrendingUp, ClipboardList, Instagram, Store, Swords, ExternalLink, Globe, Newspaper } from "lucide-react";
+import { Building2, TrendingUp, ClipboardList, Instagram, Store, Swords, ExternalLink, Globe, Newspaper, RefreshCw } from "lucide-react";
 import {
   CompanyMiniChat, MenuIntelCard, PortfolioActivityBlock, BrandComplianceCard,
   askTopics, PipnetRequirementsRow, StockSnapshotCard, ApolloDetailChips,
@@ -178,8 +178,12 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           </Button>
         )}
       </div>
-      <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
-      {!isClientViewer && <Button variant="outline" size="sm" onClick={() => refreshProfile.mutate()} disabled={refreshProfile.isPending} data-testid="button-brand-refresh">{refreshProfile.isPending ? "Refreshing…" : "Refresh profile"}</Button>}
+      {/* Status and refresh on one quiet line — a full-width button above the
+          tabs pushed the content down the phone (Woody, 2026-09-27). */}
+      <div className="flex items-center justify-between gap-2">
+        <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
+        {!isClientViewer && <Button variant="ghost" size="sm" className="h-8 px-2 text-xs shrink-0" onClick={() => refreshProfile.mutate()} disabled={refreshProfile.isPending} data-testid="button-brand-refresh"><RefreshCw className={`w-3.5 h-3.5 mr-1 ${refreshProfile.isPending ? "animate-spin" : ""}`} />{refreshProfile.isPending ? "Refreshing…" : "Refresh"}</Button>}
+      </div>
       {/* Success commentary is dropped (Woody, 2026-09-23 — "we don't need the commentary"); progress and problems still show. */}
         {!isClientViewer && refreshProfile.message && !/^Profile (refreshed|checked)\./.test(refreshProfile.message) && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{refreshProfile.message}</p>}
       <div className="flex flex-wrap gap-1.5" data-testid="company-phone-sections">

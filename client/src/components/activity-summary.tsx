@@ -237,7 +237,7 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
     if (autoRanFor.current === scopeKey) return;
     autoRanFor.current = scopeKey;
     const targets = (data.recent || [])
-      .filter(a => a.kind !== "deal" && !a.ai_summary)
+      .filter(a => a.kind !== "deal" && !a.ai_summary && !(a as any).summary_skipped)
       .slice(0, 5);
     (async () => {
       for (const a of targets) {

@@ -721,7 +721,7 @@ function CentreOpenings({ propertyId }: { propertyId: string }) {
                 <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-2">
                   {tab === "peers" && <span className="font-medium text-foreground/80">{item.centre}</span>}
                   {item.brand && <Link href={`/companies/${item.brand.id}`} className="hover:underline">{item.brand.name}</Link>}
-                  {item.source && <span>{item.source}</span>}
+                  {item.source && <span>{item.source.replace(/\s*\(Google News\)\s*$/i, "")}</span>}
                 </div>
               </div>
             </div>

@@ -41,6 +41,10 @@ function summarise(a: any): string {
 // Cached per-interaction AI summary — written by the summarise endpoint
 // below, surfaced straight into the feed on later loads.
 let aiSummaryEnsured = false;
+// Stored when there was nothing to summarise, so it isn't asked again.
+const NO_SUMMARY = "(none)";
+const REFUSAL = /don't have access|do not have access|would need to see|unable to (provide|summarise|summarize|access)|no meeting content|cannot summari[sz]e|cannot determine|can only see|can't see the|you've asked me|you have asked me|preview content is (blank|empty)/i;
+
 async function ensureAiSummaryColumn() {
   if (aiSummaryEnsured) return;
   await pool.query(`ALTER TABLE crm_interactions ADD COLUMN IF NOT EXISTS ai_summary TEXT`).catch(() => {});
@@ -49,8 +53,9 @@ async function ensureAiSummaryColumn() {
   await pool.query(
     `UPDATE crm_interactions SET ai_summary = NULL
       WHERE ai_summary IS NOT NULL
-        AND (ai_summary ~* '(don''t|do not) have access|would need to see|unable to (provide|summari[sz]e)|no meeting content|cannot summari[sz]e|you''ve asked me|you have asked me|preview content is (blank|empty)'
-             OR ai_summary ~ '^NOTHING')`
+        AND ai_summary <> '(none)'
+        AND (ai_summary ~* '(don''t|do not) have access|would need to see|unable to (provide|summari[sz]e|access)|no meeting content|cannot summari[sz]e|cannot determine|can only see|you''ve asked me|you have asked me|preview content is (blank|empty)'
+             OR ai_summary ~ '^NOTHING' OR ai_summary ~ 'NOTHING[.]?[[:space:]]*$')`
   ).catch(() => {});
   aiSummaryEnsured = true;
 }
@@ -259,7 +264,8 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
           // The meeting/email REASON — subject line, cleaned of reply
           // prefixes (Woody, 2026-08-04: "show what the meeting was about").
           subject: (a.subject || "").replace(/^((re|fw|fwd):\s*)+/i, "").trim() || null,
-          ai_summary: a.ai_summary || null,
+          ai_summary: a.ai_summary && a.ai_summary !== NO_SUMMARY ? a.ai_summary : null,
+          summary_skipped: a.ai_summary === NO_SUMMARY,
           contact_id: a.contact_id,
           contact_email: a.contact_email || null,
           microsoft_id: a.microsoft_id || null,
@@ -334,6 +340,7 @@ router.post("/api/interactions/:id/summarise", requireAuth, async (req: Request,
     }
 
     if (it.ai_summary && req.query.refresh !== "1") {
+      if (it.ai_summary === NO_SUMMARY) return res.json({ summary: null, skipped: true, cached: true, reason: "Not enough content to summarise." });
       return res.json({ summary: it.ai_summary, cached: true });
     }
 
@@ -358,7 +365,10 @@ router.post("/api/interactions/:id/summarise", requireAuth, async (req: Request,
     });
     const summary = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
     // Refusal / nothing-to-say output never gets cached or shown.
-    if (!summary || /^NOTHING\b/.test(summary) || /don't have access|do not have access|would need to see|unable to (provide|summarise|summarize)|no meeting content|cannot summarise|cannot summarize|you've asked me|you have asked me|preview content is (blank|empty)/i.test(summary)) {
+    if (!summary || /^NOTHING\b|\bNOTHING\.?\s*$/.test(summary) || REFUSAL.test(summary)) {
+      // Remember it: otherwise every page open re-asked the model about the
+      // same empty email (five AI calls per property view).
+      await pool.query(`UPDATE crm_interactions SET ai_summary = $1 WHERE id = $2`, [NO_SUMMARY, id]).catch(() => {});
       return res.json({ summary: null, skipped: true, reason: "Not enough content to summarise." });
     }
     await pool.query(`UPDATE crm_interactions SET ai_summary = $1 WHERE id = $2`, [summary, id]).catch(() => {});

@@ -1597,7 +1597,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                   <button
                     onClick={() => sendToTrackerMutation.mutate(unit)}
                     disabled={sendToTrackerMutation.isPending}
-                    className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 whitespace-nowrap"
+                    className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 whitespace-nowrap"
                     title="Create a Letting Tracker listing for this unit"
                     data-testid={`tenancy-to-tracker-card-${unit.id}`}
                   >

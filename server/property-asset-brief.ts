@@ -416,7 +416,11 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     const vacantRows = lsuQ.rows.filter((u: any) => briefOccupancy(u.status) === "vacant");
     const vacantNoDeal = vacantRows.filter((u: any) => !u.has_live_deal);
     if (vacantNoDeal.length > 0) {
-      const names = vacantNoDeal.slice(0, 5).map((u: any) => u.unit_name || "Unit").join(", ");
+      // Unit codes without the scheme's name ("EVU01 Bluewater, Bluewater, …"
+      // read as a stutter) and without repeats.
+      const scheme = String(p?.name || "").split(/[\s,(]/)[0].toLowerCase();
+      const short = (n: string) => (scheme.length >= 4 ? n.replace(new RegExp(`\\s*\\b${scheme.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b.*$`, "i"), "") : n).trim() || n;
+      const names = [...new Set(vacantNoDeal.map((u: any) => short(u.unit_name || "Unit")).filter((n: string) => n && n.toLowerCase() !== scheme))].slice(0, 5).join(", ");
       const more = vacantNoDeal.length > 5 ? ` +${vacantNoDeal.length - 5} more` : "";
       const withDeal = vacantRows.length - vacantNoDeal.length;
       risks.push({
@@ -428,7 +432,9 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     for (const u of lsuQ.rows) {
       const expiry = u.lease_expiry ? new Date(u.lease_expiry).getTime() : null;
       if (expiry && !u.has_live_deal && expiry > now && expiry - now < horizonMs) {
-        const months = Math.round((expiry - now) / (30 * 86400000));
+        // Calendar months, so 11 Nov and 17 Nov read the same from September.
+        const e = new Date(expiry), n = new Date(now);
+        const months = (e.getFullYear() - n.getFullYear()) * 12 + e.getMonth() - n.getMonth();
         const when = months <= 0 ? "expires this month" : `expires in ${months} month${months === 1 ? "" : "s"}`;
         // The name shoppers know (trading name) before the lease entity.
         risks.push({ kind: "expiry_no_renewal", severity: months < 6 ? "high" : "med", message: `${u.trading_name || u.tenant_name || u.unit_name} ${when} with no live deal`, unit_id: u.id, unit_name: u.unit_name });

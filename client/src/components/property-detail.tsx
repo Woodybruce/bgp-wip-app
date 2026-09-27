@@ -125,10 +125,11 @@ function PropertyComplianceBoardWrapper({
   allCompanies: CrmCompany[];
   embedded?: boolean;
 }) {
+  // First owner link that still points at a company — Brixton's freeholder
+  // id pointed at a deleted record and the card could only say "not found".
+  const ownerCandidates = [(property as any).freeholderId, (property as any).longLeaseholderId, (property as any).landlordId].filter(Boolean) as string[];
   const ownerId: string | null =
-    (property as any).freeholderId
-    || (property as any).longLeaseholderId
-    || (property as any).landlordId
+    (allCompanies.length ? ownerCandidates.find(id => allCompanies.some(c => c.id === id)) : ownerCandidates[0])
     || null;
 
   // Billing entity is BGP invoicing bookkeeping — the setter's PUT
@@ -611,7 +612,8 @@ export function PropertyDetail({ id }: { id: string }) {
                 </div>
               ) : (
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="property-eyebrow">
+                  {/* Phones already say "Property" in the top bar and breadcrumb. */}
+                  <span className="hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="property-eyebrow">
                     Property
                   </span>
                   <h1 className="text-2xl font-bold tracking-tight" data-testid="text-property-name">
@@ -696,8 +698,9 @@ export function PropertyDetail({ id }: { id: string }) {
               const full = formatAddress(property.address) || "";
               const name = String(property.name || "").trim();
               const trimmed = name && full.toLowerCase().startsWith(name.toLowerCase() + ",") ? full.slice(name.length + 1).trim() : full;
-              return trimmed || "Address not recorded";
-            })()}</p>
+              // A name that is itself a street address needs no "not recorded".
+              return trimmed || (/^\d/.test(name) ? "" : "Address not recorded");
+            })() || null}</p>
             {/* Other names the building goes by (Lucent is Piccadilly Lights) —
                 search finds the property under each of them too. */}
             {Array.isArray((property as any).aliases) && (property as any).aliases.length > 0 && (

@@ -8,9 +8,13 @@ type ComplianceCompany = {
 };
 
 function legalName(value: string): string {
+  // "The British Land Company PLC" is Companies House's "BRITISH LAND
+  // COMPANY PUBLIC LIMITED COMPANY(THE)" — the same entity, not a review.
   return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
     .replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim()
-    .replace(/\b(limited|ltd)\b/g, "limited").replace(/\s+/g, " ");
+    .replace(/\bpublic limited company\b/g, "plc")
+    .replace(/\b(limited|ltd)\b/g, "limited")
+    .replace(/^the\s+|\s+the$/g, "").replace(/\s+/g, " ").trim();
 }
 
 /** Reports recorded review state; collected documents never establish approval. */

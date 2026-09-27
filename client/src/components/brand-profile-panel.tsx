@@ -4940,7 +4940,7 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
                       onClick={() => setNewsSourceFilter(s === newsSourceFilter ? null : s)}
                       className={`text-[10px] font-medium px-1.5 py-0.5 rounded border transition-colors ${newsSourceFilter === s ? newsSourceColor(s) : "border-border text-muted-foreground hover:bg-muted"}`}
                     >
-                      {s}
+                      {s.replace(/\s*\(Google News\)\s*$/i, "")}
                     </button>
                   ))}
                 </div>

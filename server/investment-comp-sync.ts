@@ -183,6 +183,41 @@ export async function runInvestmentLinkBackfills(deps: { pool?: Querier } = {}) 
     console.log(`[entity-names] ${changes.length} scraped UK trading entities tidied`);
   }
 
+  // The same page text sits in the group-entity lists: crm_trading_entities
+  // rows and the older crm_companies.trading_entities jsonb ("s Chickenland
+  // Limited" under Nando's Group entities).
+  const ENTITY_ROWS = "migration:trading_entity_names_tidy_v1";
+  if (!(await done(ENTITY_ROWS))) {
+    const { tidyScrapedEntityName } = await import("@shared/entity-name");
+    const fix = (name: string, companyName: string): string | null => {
+      if (/^s\s+\S/.test(name) && /['’]s$/i.test(companyName.trim())) return `${companyName.trim().replace(/’/g, "'")}${name.slice(1)}`;
+      return tidyScrapedEntityName(name);
+    };
+    const changes: Array<{ table: string; id: string; from: string; to: string | null }> = [];
+    const rows = (await q.query(`SELECT te.id, te.name, c.name AS company_name FROM crm_trading_entities te JOIN crm_companies c ON c.id = te.parent_company_id WHERE te.name IS NOT NULL AND te.name <> ''`).catch(() => ({ rows: [] as any[] }))).rows;
+    for (const row of rows) {
+      const to = fix(row.name, row.company_name || "");
+      if (!to || to === row.name) continue;   // never blank a formal entity row
+      await q.query(`UPDATE crm_trading_entities SET name = $2 WHERE id = $1`, [row.id, to]);
+      changes.push({ table: "crm_trading_entities", id: row.id, from: row.name, to });
+    }
+    const companies = (await q.query(`SELECT id, name, trading_entities FROM crm_companies WHERE jsonb_typeof(trading_entities) = 'array' AND jsonb_array_length(trading_entities) > 0`).catch(() => ({ rows: [] as any[] }))).rows;
+    for (const row of companies) {
+      let changed = false;
+      const next = (row.trading_entities as any[]).map(entry => {
+        if (!entry || typeof entry !== "object" || !entry.name) return entry;
+        const to = fix(String(entry.name), row.name || "");
+        if (!to || to === entry.name) return entry;
+        changed = true;
+        changes.push({ table: "crm_companies.trading_entities", id: row.id, from: entry.name, to });
+        return { ...entry, name: to };
+      });
+      if (changed) await q.query(`UPDATE crm_companies SET trading_entities = $2::jsonb WHERE id = $1`, [row.id, JSON.stringify(next)]);
+    }
+    await mark(ENTITY_ROWS, { changed: changes.length, changes, at: new Date().toISOString() });
+    console.log(`[entity-names] ${changes.length} group entity names tidied`);
+  }
+
   const TEAM = "migration:tracker_deals_investment_team_v1";
   if (!(await done(TEAM))) {
     const r = await q.query(`UPDATE crm_deals SET team = array_append(COALESCE(team, ARRAY[]::text[]), 'Investment')

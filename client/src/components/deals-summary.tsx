@@ -76,6 +76,16 @@ export function DealsSummary({ propertyId, propertyIds, variant }: {
   variant: "strip" | "card";
 }) {
   const { live, counts, isLoading, isError, refetch } = useBoardDeals(propertyId, propertyIds);
+  // On a property's own page the cached property record gives its name, so
+  // "Nando's – Bluewater Shopping Centre" reads "Nando's" (no extra fetch).
+  const { data: ownProperty } = useQuery<any>({ queryKey: ["/api/crm/properties", propertyId], enabled: false });
+  const dealLabel = (name: string | null) => {
+    const own = String(ownProperty?.name || "").trim();
+    if (!name || !own) return name;
+    const at = name.toLowerCase().indexOf(own.toLowerCase().split(/[,(]/)[0].trim());
+    const cut = at > 2 ? name.slice(0, at).replace(/[\s,–—-]+$/, "") : name;
+    return cut || name;
+  };
   if (isError) return <div className="space-y-2" role="status"><p className="text-xs text-muted-foreground">Deals data could not be loaded.</p><Button variant="outline" size="sm" onClick={() => refetch()}>Retry deals</Button><Link href={boardHref(propertyId)} className="text-xs hover:underline">Open Deals board</Link></div>;
   if (isLoading) return <p className="text-xs text-muted-foreground">Loading deals…</p>;
 
@@ -131,7 +141,7 @@ export function DealsSummary({ propertyId, propertyIds, variant }: {
         <div className="space-y-1 max-h-[300px] overflow-y-auto pr-1">
           {live.map(d => (
             <Link key={d.id} href={`/deals/${d.id}`} className="flex items-center justify-between gap-2 p-1.5 rounded border bg-card hover:bg-muted/40 min-w-0">
-              <span className="text-xs font-medium truncate">{d.name || "—"}</span>
+              <span className="text-xs font-medium truncate" title={d.name || undefined}>{dealLabel(d.name) || "—"}</span>
               <span className="flex items-center gap-1.5 shrink-0 text-[10px] text-muted-foreground">
                 {d.dealType || ""}
                 <Badge variant="outline" className={`text-[9px] ${DEAL_STATUS_BADGE_COLORS[legacyToCode(d.status) || ""] || ""}`}>

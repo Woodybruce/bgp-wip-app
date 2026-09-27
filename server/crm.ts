@@ -4957,7 +4957,15 @@ Return a JSON object with these fields (use null for any field you cannot find):
           }
         }
         const useHit = USE_HINTS.some(([reqRe, unitRe]) => reqRe.test(typeText) && unitRe.test(unitText));
-        if (useHit) suggestions.push({ ...u, reason: `${u.use_class || "Unit"} suits their ${(brandType || "category").replace(/^Tenant - /, "")} format`, strength: 1 });
+        if (useHit) {
+          // "Restaurant suits their Restaurant format" said nothing — name the
+          // unit's use once and the size.
+          const use = String(u.use_class || "").trim();
+          const format = (brandType || "").replace(/^Tenant - /, "").trim();
+          const sameWord = use && format && use.toLowerCase().split(/[\s/,&]+/).some(w => w.length > 2 && format.toLowerCase().includes(w));
+          const reason = sameWord ? `${use} unit — same use as their stores` : `${use || "Unit"} use fits their ${format || "format"}`;
+          suggestions.push({ ...u, reason: `${reason}${u.sqft ? ` · ${Number(u.sqft).toLocaleString("en-GB")} sq ft` : ""}`, strength: 1 });
+        }
       }
       suggestions.sort((a, b) => b.strength - a.strength);
       res.json({ brandName, liveRequirement: !!liveReq, suggestions: suggestions.slice(0, 8) });
