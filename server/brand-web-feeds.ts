@@ -13,6 +13,7 @@ import { startJob, getJobStatus } from "./brand-jobs";
 import { pool } from "./db";
 import { createRssAppFeed, deleteRssAppFeed, rssappHealth } from "./rssapp";
 import { getBrandIdentity, normalizeBrandDomain } from "./brand-identity";
+import { UK_CENTRES } from "../shared/uk-centres";
 import { BRAND_FEED_TABS, BRAND_WATCH_FILTERS, BRAND_WEB_FEED_TYPES, MARKET_FEED_TYPES, type BrandWebFeedKind } from "../shared/brand-feed-types";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -170,6 +171,9 @@ export const MARKET_SOURCES: Array<{ name: string; url: string; feedUrl?: string
   { name: "British Land — news", url: "https://www.britishland.com/news/", type: MARKET_FEED_TYPES.landlords, category: "Property" },
   { name: "Shaftesbury Capital — news", url: "https://www.shaftesburycapital.com/en/media/news.html", type: MARKET_FEED_TYPES.landlords, category: "Property" },
   { name: "Grosvenor — news", url: "https://www.grosvenor.com/news-insights", type: MARKET_FEED_TYPES.landlords, category: "Property" },
+  ...UK_CENTRES.filter(centre => centre.feedPage).map(centre => ({
+    name: `${centre.name} — what's new`, url: centre.feedPage!, feedUrl: centre.feedRss, type: MARKET_FEED_TYPES.centres, category: `centre:${centre.name}`,
+  })),
 ];
 
 export async function seedMarketFeeds(opts: { dryRun?: boolean } = {}) {

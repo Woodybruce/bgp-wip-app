@@ -14,15 +14,20 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { isClientCrmCategory } from "../shared/tenant-categories";
+import { suggestPropertyView } from "../shared/property-view";
+import { UK_CENTRES, haversineKm, siteRadiusKm } from "../shared/uk-centres";
 import { propertyResearchContext, PROPERTY_RESEARCH_USE_PATTERN, PROPERTY_RESEARCH_CENTRE_PATTERN, type PropertyResearchContext } from "../shared/property-research";
 
 const router = Router();
 
 async function readPropertyResearchContext(propertyId: string): Promise<PropertyResearchContext | null> {
-  const property = (await pool.query("SELECT asset_class, property_view FROM crm_properties WHERE id = $1", [propertyId])).rows[0];
+  const property = (await pool.query("SELECT name, asset_class, property_view FROM crm_properties WHERE id = $1", [propertyId])).rows[0];
   if (!property) return null;
-  const units = (await pool.query("SELECT permitted_use, status, occupancy_status FROM tenancy_schedule_units WHERE property_id = $1", [propertyId])).rows;
-  return propertyResearchContext({ assetClass: property.asset_class, propertyView: property.property_view }, units);
+  const units = (await pool.query("SELECT id, property_unit_id, permitted_use, status, occupancy_status FROM tenancy_schedule_units WHERE property_id = $1", [propertyId])).rows;
+  // Same view the property page shows: the stored choice, else the inferred
+  // one — Bluewater ("Retail", 200+ units, no stored view) is a centre.
+  const propertyView = property.property_view || suggestPropertyView(property.asset_class, units, property.name);
+  return propertyResearchContext({ assetClass: property.asset_class, propertyView }, units);
 }
 
 async function researchCacheMatches(propertyId: string, section: string, context: PropertyResearchContext): Promise<boolean> {
@@ -132,61 +137,10 @@ async function sweepSectorClassification() {
   }
 }
 
-// Haversine distance in km between two lat/lng pairs
-function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6371;
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(a));
-}
-
-// Major UK shopping centres / retail destinations used as the peer set for
-// the "at other schemes, not here" comparison (Woody, 2026-08-04: "can we
-// look at other shopping centres for the brand gap analysis"). Approximate
-// centre points; presence = any brand store within PEER_PRESENCE_KM.
+// Presence at a peer scheme = any brand store within PEER_PRESENCE_KM of its
+// centre point, or a tenant on its tenancy schedule when the scheme is one
+// of our properties. The peer list itself lives in shared/uk-centres.ts.
 const PEER_PRESENCE_KM = 0.7;
-const PEER_SCHEMES: Array<{ name: string; lat: number; lng: number }> = [
-  { name: "Bluewater", lat: 51.4389, lng: 0.2705 },
-  { name: "Lakeside", lat: 51.489, lng: 0.2848 },
-  { name: "Westfield London", lat: 51.5074, lng: -0.221 },
-  { name: "Westfield Stratford", lat: 51.5439, lng: -0.0079 },
-  { name: "Brent Cross", lat: 51.5766, lng: -0.2237 },
-  { name: "Canary Wharf", lat: 51.5054, lng: -0.0192 },
-  { name: "Battersea Power Station", lat: 51.4818, lng: -0.1445 },
-  { name: "The Glades Bromley", lat: 51.4029, lng: 0.0159 },
-  { name: "Trafford Centre", lat: 53.4669, lng: -2.3486 },
-  { name: "Manchester Arndale", lat: 53.4831, lng: -2.2416 },
-  { name: "Meadowhall", lat: 53.4139, lng: -1.4119 },
-  { name: "Metrocentre", lat: 54.9575, lng: -1.665 },
-  { name: "Eldon Square", lat: 54.9744, lng: -1.6153 },
-  { name: "Merry Hill", lat: 52.4818, lng: -2.1207 },
-  { name: "Bullring", lat: 52.4778, lng: -1.8942 },
-  { name: "Touchwood Solihull", lat: 52.4123, lng: -1.7767 },
-  { name: "centre:mk", lat: 52.0416, lng: -0.7558 },
-  { name: "Rushden Lakes", lat: 52.2926, lng: -0.5813 },
-  { name: "Liverpool ONE", lat: 53.4043, lng: -2.9865 },
-  { name: "Trinity Leeds", lat: 53.7969, lng: -1.5437 },
-  { name: "White Rose Leeds", lat: 53.758, lng: -1.5738 },
-  { name: "St David's Cardiff", lat: 51.4796, lng: -3.1748 },
-  { name: "Cabot Circus", lat: 51.4586, lng: -2.5852 },
-  { name: "Cribbs Causeway", lat: 51.5252, lng: -2.5983 },
-  { name: "Highcross Leicester", lat: 52.636, lng: -1.1359 },
-  { name: "Victoria Centre Nottingham", lat: 52.957, lng: -1.1482 },
-  { name: "The Oracle Reading", lat: 51.4525, lng: -0.9689 },
-  { name: "Festival Place", lat: 51.267, lng: -1.087 },
-  { name: "WestQuay", lat: 50.9034, lng: -1.4059 },
-  { name: "Gunwharf Quays", lat: 50.7953, lng: -1.1077 },
-  { name: "Churchill Square Brighton", lat: 50.8225, lng: -0.1445 },
-  { name: "The Lexicon Bracknell", lat: 51.416, lng: -0.753 },
-  { name: "Westgate Oxford", lat: 51.75, lng: -1.2607 },
-  { name: "Braintree Village", lat: 51.864, lng: 0.5457 },
-  { name: "Braehead", lat: 55.8768, lng: -4.3651 },
-  { name: "Silverburn", lat: 55.8214, lng: -4.3441 },
-  { name: "St James Quarter", lat: 55.954, lng: -3.1852 },
-  { name: "Buchanan Galleries", lat: 55.8631, lng: -4.252 },
-];
 
 type LocResolveResult =
   | { ok: true; lat: number; lng: number; postcode: string | null; name: string }
@@ -313,9 +267,14 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     // Peer schemes for the "at other shopping centres, not here" comparison —
     // drop any that ARE this property (or share its site) so the subject
     // never counts as its own peer.
-    const peerSchemes = (researchContext.mode === "centre" ? PEER_SCHEMES : []).filter(
-      ps => haversineKm(location.lat, location.lng, ps.lat, ps.lng) > 1.5
+    const peerSchemes = (researchContext.mode === "centre" ? UK_CENTRES : []).filter(
+      ps => haversineKm(location.lat, location.lng, ps.lat, ps.lng) > siteRadiusKm(ps)
     );
+    // National comparison = the top-25 centres; the full list still feeds
+    // "competing centres" (Bluewater → Lakeside, The Glades).
+    const topPeers = peerSchemes.filter(ps => ps.top25);
+    const topPeerNames = new Set(topPeers.map(ps => ps.name));
+    const topCount = (b: { peer_scheme_set: Set<string> }) => Array.from(b.peer_scheme_set).filter(n => topPeerNames.has(n)).length;
 
     // Group by brand — calculate nearest store distance per brand
     const brandMap = new Map<string, {
@@ -358,11 +317,58 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
         }
       }
       // Which peer scheme (if any) is this store at? A store sits at one
-      // scheme at most, so stop at the first hit.
+      // scheme at most — the nearest one in range.
+      let atScheme: string | null = null, atKm = Infinity;
       for (const ps of peerSchemes) {
-        if (haversineKm(ps.lat, ps.lng, s.lat, s.lng) <= PEER_PRESENCE_KM) {
-          entry.peer_scheme_set.add(ps.name);
-          break;
+        const km = haversineKm(ps.lat, ps.lng, s.lat, s.lng);
+        if (km <= (ps.radiusKm ?? PEER_PRESENCE_KM) && km < atKm) { atScheme = ps.name; atKm = km; }
+      }
+      if (atScheme) entry.peer_scheme_set.add(atScheme);
+    }
+
+    // Peer schemes that are our own properties read their tenancy schedule —
+    // exact, where the store radius only approximates.
+    const scheduleBacked = new Set<string>();
+    if (peerSchemes.length) {
+      const norm = (v: string) => ` ${v.toLowerCase().replace(/['’]/g, "").replace(/[^a-z0-9]+/g, " ").trim()} `;
+      const ours = await pool.query(
+        `SELECT p.id, p.name, p.latitude, p.longitude FROM crm_properties p
+          WHERE p.id <> $1 AND COALESCE(p.latitude, '') <> '' AND COALESCE(p.longitude, '') <> ''
+            AND EXISTS (SELECT 1 FROM tenancy_schedule_units t WHERE t.property_id = p.id)`, [propertyId]
+      ).then(r => r.rows).catch(() => [] as any[]);
+      const schemeOf = new Map<string, string>();
+      for (const ps of peerSchemes) {
+        const names = [ps.name, ...ps.aliases].map(norm);
+        const hit = ours.find((p: any) => {
+          const lat = parseFloat(p.latitude), lng = parseFloat(p.longitude);
+          return Number.isFinite(lat) && Number.isFinite(lng) && haversineKm(lat, lng, ps.lat, ps.lng) <= siteRadiusKm(ps)
+            && names.some(n => norm(p.name).includes(n) || n.includes(norm(p.name)));
+        });
+        if (hit) schemeOf.set(String(hit.id), ps.name);
+      }
+      if (schemeOf.size) {
+        const tenants = await pool.query(
+          `SELECT property_id, tenant_company_id::text AS id,
+                  lower(replace(coalesce(nullif(trading_name, ''), tenant_name, ''), '''', '')) AS name
+             FROM tenancy_schedule_units
+            WHERE property_id = ANY($1::text[]) AND lower(trim(coalesce(status, ''))) <> 'archived'
+              AND lower(trim(coalesce(occupancy_status, ''))) <> 'archived'`, [[...schemeOf.keys()]]
+        ).then(r => r.rows).catch(() => [] as any[]);
+        const byScheme = new Map<string, { ids: Set<string>; names: string[] }>();
+        for (const t of tenants) {
+          const scheme = schemeOf.get(String(t.property_id))!;
+          const entry = byScheme.get(scheme) || { ids: new Set<string>(), names: [] };
+          if (t.id) entry.ids.add(t.id);
+          if (t.name) entry.names.push(t.name);
+          byScheme.set(scheme, entry);
+        }
+        for (const [scheme, entry] of byScheme) {
+          if (!entry.ids.size && !entry.names.length) continue;
+          scheduleBacked.add(scheme);
+          for (const b of brandMap.values()) {
+            const bn = b.brand_name.toLowerCase().replace(/'/g, "");
+            if (entry.ids.has(String(b.brand_company_id)) || entry.names.some(n => n === bn || n.startsWith(bn + " "))) b.peer_scheme_set.add(scheme);
+          }
         }
       }
     }
@@ -465,13 +471,13 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       matchingRequirements.map((r: any) => String(r.company_id || "")).filter(Boolean)
     );
     const peerGaps = hospitality
-      .filter(b => b.peer_scheme_set.size > 0 && !isOnScheme(b))
+      .filter(b => topCount(b) > 0 && !isOnScheme(b))
       .map(b => ({
         ...b,
-        peer_schemes: Array.from(b.peer_scheme_set).sort(),
+        peer_schemes: Array.from(b.peer_scheme_set).filter(n => topPeerNames.has(n)).sort(),
         has_live_requirement: reqCompanyIds.has(String(b.brand_company_id)),
         peer_gap_score:
-          b.peer_scheme_set.size * 10 +
+          topCount(b) * 10 +
           (reqCompanyIds.has(String(b.brand_company_id)) ? 25 : 0) +
           (b.rollout_status === "scaling" || b.rollout_status === "entering_uk" ? 15 : 0) +
           Math.min(b.total_stores, 30) / 3,
@@ -514,12 +520,12 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       const inSector = hospitality.filter(b => b.sector === def.key);
       const here = inSector.filter(b => isOnScheme(b));
       const atCompeting = inSector.filter(b => Array.from(b.peer_scheme_set).some(n => competingNames.has(n)));
-      const atPeers = inSector.filter(b => b.peer_scheme_set.size > 0);
+      const atPeers = inSector.filter(b => topCount(b) > 0);
       const examples = inSector
-        .filter(b => !isOnScheme(b) && b.peer_scheme_set.size > 0)
-        .sort((a, b) => b.peer_scheme_set.size - a.peer_scheme_set.size)
+        .filter(b => !isOnScheme(b) && topCount(b) > 0)
+        .sort((a, b) => topCount(b) - topCount(a))
         .slice(0, 4)
-        .map(b => ({ id: b.brand_company_id, name: b.brand_name, peers: b.peer_scheme_set.size, live_req: reqCompanyIds.has(String(b.brand_company_id)) }));
+        .map(b => ({ id: b.brand_company_id, name: b.brand_name, peers: topCount(b), live_req: reqCompanyIds.has(String(b.brand_company_id)) }));
       return {
         key: def.key,
         label: def.label,
@@ -540,7 +546,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     if (gapScope) {
       const { clientBrandSliceSql, isClientRequestUser } = await import("./company-scope");
       if (await isClientRequestUser(req as any)) {
-        const candidateIds = [...new Set([...onScheme, ...wider, ...gap, ...peerGaps, ...competitorGaps, ...localMarket].map(b => String(b.brand_company_id)))];
+        const candidateIds = [...new Set([...onScheme, ...wider, ...gap, ...peerGaps, ...competitorGaps, ...localMarket, ...hospitality.filter(b => topCount(b) > 0)].map(b => String(b.brand_company_id)))];
         if (candidateIds.length) {
           const sliceSql = await clientBrandSliceSql(gapScope);
           const visible = await pool.query(
@@ -559,6 +565,31 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     const slicedReqs = sliceFilter
       ? matchingRequirements.filter((r: any) => !r.company_id || sliceFilter!(String(r.company_id)))
       : matchingRequirements;
+
+    // Top-25 benchmark — this centre against each of the other top-25 UK
+    // centres on the same hospitality / leisure slice (Woody, 2026-09-27).
+    const hereBrands = hospitality.filter(b => isOnScheme(b));
+    const hereIds = new Set(hereBrands.map(b => String(b.brand_company_id)));
+    const sectorCount = (list: typeof hospitality) => new Set(list.map(b => b.sector).filter(Boolean)).size;
+    const benchmark = researchContext.mode === "centre" ? {
+      here: { brands: hereBrands.length, sectors: sectorCount(hereBrands) },
+      centres: topPeers.map(ps => {
+        const there = hospitality.filter(b => b.peer_scheme_set.has(ps.name));
+        const notHere = there.filter(b => !hereIds.has(String(b.brand_company_id)));
+        return {
+          name: ps.name,
+          distance_km: Math.round(haversineKm(location.lat, location.lng, ps.lat, ps.lng)),
+          brands: there.length,
+          sectors: sectorCount(there),
+          shared: there.length - notHere.length,
+          not_here: notHere.length,
+          not_here_top: (sliceFilter ? notHere.filter(b => sliceFilter!(String(b.brand_company_id))) : notHere)
+            .sort((a, b) => topCount(b) - topCount(a)).slice(0, 4)
+            .map(b => ({ id: b.brand_company_id, name: b.brand_name })),
+          from_schedule: scheduleBacked.has(ps.name),
+        };
+      }).sort((a, b) => b.brands - a.brands),
+    } : null;
 
     // Cached Perplexity expansion intel (the live-intel route below) rides
     // along keyed by lowercased brand name so every lens can badge
@@ -595,7 +626,8 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       sectors,
       missingSectors,
       sectorLabels: SECTOR_LABELS,
-      peerSchemesConsidered: peerSchemes.length,
+      peerSchemesConsidered: topPeers.length,
+      benchmark,
       matchingRequirements: slicedReqs,
       categorySignature,
       radii: { onScheme: onSchemeRadiusKm, wider: widerRadiusKm, peerPresence: PEER_PRESENCE_KM },
@@ -661,7 +693,7 @@ router.get("/api/property/:propertyId/brand-gaps/commentary", requireAuth, async
       `${b.brand_name}${b.has_live_requirement ? " (LIVE REQUIREMENT)" : ""}${b.competing_at?.length ? ` — at ${b.competing_at.join(", ")}` : b.peer_schemes?.length ? ` — at ${b.peer_schemes.slice(0, 3).join(", ")}` : ""}`
     ).join("\n") || "(none)";
     const sectorLines = (g.sectors || []).map((s: any) =>
-      `${s.label}: ${s.on_scheme} on scheme${s.on_scheme ? ` (${s.on_scheme_names.slice(0, 3).join(", ")})` : ""}, at ${s.at_peers} peer schemes${s.missing ? " — MISSING HERE" : ""}${s.examples?.length ? ` [targets: ${s.examples.map((e: any) => e.name).join(", ")}]` : ""}`
+      `${s.label}: ${s.on_scheme} on scheme${s.on_scheme ? ` (${s.on_scheme_names.slice(0, 3).join(", ")})` : ""}, ${s.at_peers} brands at the top UK centres${s.missing ? " — MISSING HERE" : ""}${s.examples?.length ? ` [targets: ${s.examples.map((e: any) => e.name).join(", ")}]` : ""}`
     ).join("\n");
 
     const prompt = `You are a BGP leasing analyst writing the hospitality & leisure gap read for ${row.name}, for the asset owner. Property type: ${researchContext.assetClass || "not recorded"}. Recorded unit uses: ${researchContext.uses.join(", ") || "not recorded"}. ${researchContext.mode === "local" ? "This is a building/local occupier review, NOT a shopping-centre mix exercise. Confine advice to the recorded retail/leisure space; do not propose anchors for an office building or invent missing sectors. Nearby stores are market context, not tenants in this building. No shopping-centre peer comparisons are supplied." : "This is a shopping-centre occupier-mix review."} British English, no hype, no fees. Data:
@@ -674,7 +706,7 @@ ${fmtList(g.competitorGaps || [])}
 Brands trading in the local market (within 5km) but not on scheme:
 ${fmtList(g.localMarket || [], 6)}
 
-Strongest national peer-scheme gaps:
+Strongest gaps versus the top-25 UK centres:
 ${fmtList(g.peerGaps || [], 6)}
 
 Sector coverage (hospitality/F&B/wellness/leisure):

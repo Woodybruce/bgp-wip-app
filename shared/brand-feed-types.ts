@@ -18,11 +18,13 @@ export const BRAND_FEED_TABS: Array<{ type: string; label: string }> = [
 ];
 
 // Market-wide sources shown on News → Brand watch beside the brand channels.
-export const MARKET_FEED_TYPES = { openings: "market_openings", landlords: "market_landlord" } as const;
+// Centres: each benchmark shopping centre's own "what's new" page.
+export const MARKET_FEED_TYPES = { openings: "market_openings", landlords: "market_landlord", centres: "market_centre" } as const;
 
 export const BRAND_WATCH_FILTERS: Array<{ key: string; label: string; types: string[] }> = [
   { key: "all", label: "All", types: [...Object.values(BRAND_WEB_FEED_TYPES), ...Object.values(MARKET_FEED_TYPES)] },
-  { key: "openings", label: "Openings", types: [BRAND_WEB_FEED_TYPES.locations, MARKET_FEED_TYPES.openings] },
+  { key: "openings", label: "Openings", types: [BRAND_WEB_FEED_TYPES.locations, MARKET_FEED_TYPES.openings, MARKET_FEED_TYPES.centres] },
+  { key: "centres", label: "Centres", types: [MARKET_FEED_TYPES.centres] },
   { key: "website", label: "Brand websites", types: [BRAND_WEB_FEED_TYPES.website] },
   { key: "careers", label: "Jobs", types: [BRAND_WEB_FEED_TYPES.careers] },
   { key: "linkedin", label: "LinkedIn", types: [BRAND_WEB_FEED_TYPES.linkedin] },

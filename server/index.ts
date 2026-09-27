@@ -3335,6 +3335,7 @@ import instagramRouter from "./instagram";
 import pipnetRequirementsRouter from "./pipnet-requirements";
 import purgeApolloContactsRouter from "./purge-apollo-contacts";
 import propertyGapAnalysisRouter from "./property-gap-analysis";
+import centreOpeningsRouter from "./centre-openings";
 import brandPackRouter from "./brand-pack";
 import dealVerdictsRouter from "./deal-verdicts";
 import evidencePlanRouter from "./evidence-plan";
@@ -4349,6 +4350,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   // account") — covenant strength comes from the covenant engine
   // (Companies House + The Gazette), which was always the primary source.
   app.use(propertyGapAnalysisRouter);
+  app.use(centreOpeningsRouter);
   app.use(brandPackRouter);
   app.use(dealVerdictsRouter);
   app.use(evidencePlanRouter);

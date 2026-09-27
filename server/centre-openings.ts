@@ -1,0 +1,167 @@
+// New brands going into the top UK centres (Woody, 2026-09-27: "any news
+// about new brands going into those shopping centres"). Three sources, one
+// feed per centre: brand opening signals already on brand pages, news
+// articles the feeds pulled in, and a Google News search per centre. A
+// headline counts when it names the centre and reads as an opening; the
+// brand is linked when a CRM brand is named in it. Cached per centre for a
+// day in system_settings, so every property page shares one fetch.
+import { Router, type Request, type Response } from "express";
+import { requireAuth } from "./auth";
+import { pool } from "./db";
+import { TOP_25_CENTRES, centreAt, type UkCentre } from "../shared/uk-centres";
+
+const router = Router();
+const OPENING = /\b(opens?|opening|opened|to open|coming (?:soon )?to|set to (?:open|launch|arrive)|launch(?:es|ed|ing)?|signs?|signed|joins?|joining|debuts?|arriv(?:es|ing)|new (?:store|restaurant|shop|site|unit|flagship|venue|outlet)|takes? (?:space|a unit|units?)|secures?|lets? to|unveil(?:s|ed)?|expan(?:ds?|sion) (?:in|into|at|to))\b/i;
+const CLOSING = /\b(clos(?:e|es|ed|ing|ure)|shut(?:s|ting)?|administration|exit(?:s|ing)?|quits?|vacat(?:e|es|ing))\b/i;
+// Property-market stories that read like openings ("launches £80m office sale").
+const NOISE = /\b(office (?:sale|building|space|scheme)|refinanc\w*|acquisitions?|acquires?|homes|apartments?|flats|planning application|brunch|menu|pop-?up)\b/i;
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Single-word brand names that are ordinary words in a headline.
+const COMMON = new Set(["next", "boots", "game", "office", "river", "space", "white", "black", "house", "coffee", "pizza", "burger", "kitchen", "store", "market", "grand", "central", "square", "lakeside", "bluewater", "trafford", "arndale", "meadowhall", "bullring", "highcross", "silverburn", "braehead", "oracle", "lexicon", "touchwood", "westfield", "trinity"]);
+
+export interface CentreOpening { centre: string; title: string; url: string; source: string | null; date: string | null; brand: { id: string; name: string } | null; origin: "signal" | "centre" | "news" | "web" }
+
+const escapeRe = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const namesCentre = (text: string, centre: UkCentre) => [centre.name, ...centre.aliases]
+  .some(alias => new RegExp(`(^|[^a-z0-9])${escapeRe(alias.toLowerCase().replace(/['’]/g, "'"))}([^a-z0-9]|$)`).test(text.toLowerCase().replace(/[’]/g, "'")));
+export const isOpeningHeadline = (text: string) => OPENING.test(text) && !CLOSING.test(text) && !NOISE.test(text);
+
+type BrandIndex = Array<{ id: string; name: string; re: RegExp }>;
+let brandIndex: { at: number; list: BrandIndex } | null = null;
+async function brands(): Promise<BrandIndex> {
+  if (brandIndex && Date.now() - brandIndex.at < 6 * 60 * 60 * 1000) return brandIndex.list;
+  const rows = (await pool.query(
+    `SELECT id, name FROM crm_companies
+      WHERE merged_into_id IS NULL AND company_type ILIKE 'tenant%' AND length(name) >= 4`
+  )).rows as Array<{ id: string; name: string }>;
+  const list = rows
+    .map(row => ({ id: row.id, name: row.name.trim() }))
+    .filter(row => !(row.name.split(/\s+/).length === 1 && COMMON.has(row.name.toLowerCase())))
+    // Longest first so "Five Guys" beats "Guys", "Ivy Asia" beats "Ivy".
+    .sort((a, b) => b.name.length - a.name.length)
+    .map(row => ({ ...row, re: new RegExp(`(^|[^A-Za-z0-9])${escapeRe(row.name)}('s)?([^A-Za-z0-9]|$)`, row.name.includes(" ") ? "i" : "") }));
+  brandIndex = { at: Date.now(), list };
+  return list;
+}
+export function brandNamed(text: string, list: BrandIndex) {
+  const hit = list.find(brand => brand.re.test(text));
+  return hit ? { id: hit.id, name: hit.name } : null;
+}
+
+async function googleNews(centre: UkCentre): Promise<Array<{ title: string; url: string; source: string | null; date: string | null }>> {
+  const Parser = (await import("rss-parser")).default;
+  const parser = new Parser({ timeout: 10000, headers: { "User-Agent": "BGP-Dashboard/1.0" } });
+  const q = `"${centre.aliases[0]}" (opens OR opening OR "coming to" OR "set to open" OR signs OR launches OR "new store" OR "new restaurant")`;
+  const feed = await parser.parseURL(`https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-GB&gl=GB&ceid=GB:en`);
+  return (feed.items || []).slice(0, 25).map((item: any) => {
+    let title = String(item.title || "").trim(), source: string | null = null;
+    const dash = title.lastIndexOf(" - ");
+    if (dash > 0) { source = title.slice(dash + 3).trim(); title = title.slice(0, dash).trim(); }
+    return { title, url: item.link || "", source, date: item.isoDate || item.pubDate || null };
+  });
+}
+
+async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpening[]> {
+  const key = `centre-openings:v2:${centre.name}`;
+  const cached = (await pool.query("SELECT value, updated_at FROM system_settings WHERE key = $1", [key])).rows[0];
+  if (cached && Date.now() - new Date(cached.updated_at).getTime() < DAY_MS && Array.isArray(cached.value?.items)) return cached.value.items;
+
+  const since = new Date(Date.now() - 365 * DAY_MS);
+  const aliases = [centre.name, ...centre.aliases].map(alias => `%${alias}%`);
+  const items: CentreOpening[] = [];
+  const signals = await pool.query(
+    `SELECT s.headline, s.detail, s.source, s.signal_date, s.created_at, c.id AS brand_id, c.name AS brand_name
+       FROM brand_signals s JOIN crm_companies c ON c.id = s.brand_company_id
+      WHERE s.signal_type = 'opening' AND COALESCE(s.signal_date, s.created_at) >= $1
+        AND (s.headline ILIKE ANY($2::text[]) OR s.detail ILIKE ANY($2::text[]))
+      ORDER BY COALESCE(s.signal_date, s.created_at) DESC LIMIT 30`, [since, aliases]
+  ).then(r => r.rows).catch(() => [] as any[]);
+  for (const s of signals) {
+    if (!namesCentre(`${s.headline} ${s.detail || ""}`, centre)) continue;
+    items.push({ centre: centre.name, title: s.headline, url: /^https?:/i.test(s.source || "") ? s.source : "", source: /^https?:/i.test(s.source || "") ? null : s.source,
+      date: (s.signal_date || s.created_at)?.toISOString?.() || null, brand: { id: s.brand_id, name: s.brand_name }, origin: "signal" });
+  }
+  const news = await pool.query(
+    `SELECT title, summary, url, source_name, published_at FROM news_articles
+      WHERE published_at >= $1 AND (title ILIKE ANY($2::text[]) OR summary ILIKE ANY($2::text[]))
+      ORDER BY published_at DESC LIMIT 40`, [since, aliases]
+  ).then(r => r.rows).catch(() => [] as any[]);
+  for (const a of news) {
+    if (!namesCentre(`${a.title} ${a.summary || ""}`, centre) || !isOpeningHeadline(a.title)) continue;
+    items.push({ centre: centre.name, title: a.title, url: a.url, source: a.source_name, date: a.published_at?.toISOString?.() || null, brand: brandNamed(a.title, list), origin: "news" });
+  }
+  // The centre's own "what's new" page, followed through RSS.app (market
+  // sources, category 'centre:<name>') — its items needn't name the centre.
+  const own = await pool.query(
+    `SELECT a.title, a.summary, a.url, ns.name AS source_name, COALESCE(a.published_at, a.fetched_at) AS at
+       FROM news_articles a JOIN news_sources ns ON ns.id = a.source_id
+      WHERE ns.category = $1 AND COALESCE(a.published_at, a.fetched_at) >= $2
+      ORDER BY COALESCE(a.published_at, a.fetched_at) DESC LIMIT 40`, [`centre:${centre.name}`, since]
+  ).then(r => r.rows).catch(() => [] as any[]);
+  for (const a of own) {
+    const text = `${a.title} ${a.summary || ""}`;
+    const brand = brandNamed(a.title, list) || brandNamed(text, list);
+    if (CLOSING.test(a.title) || (!brand && !OPENING.test(text))) continue;
+    items.push({ centre: centre.name, title: a.title, url: a.url, source: a.source_name, date: a.at?.toISOString?.() || null, brand, origin: "centre" });
+  }
+  const web = await googleNews(centre).catch(() => []);
+  for (const a of web) {
+    if (a.date && new Date(a.date) < since) continue;
+    if (!namesCentre(a.title, centre) || !isOpeningHeadline(a.title)) continue;
+    items.push({ centre: centre.name, title: a.title, url: a.url, source: a.source, date: a.date ? new Date(a.date).toISOString() : null, brand: brandNamed(a.title, list), origin: "web" });
+  }
+  // One story, one row: the brand signal wins, then feed news, the centre's
+  // own page and the web search.
+  const seen = new Set<string>();
+  // Several outlets covering one opening collapse onto the brand + month.
+  const deduped = items.filter(item => {
+    const keys = [item.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 70)];
+    if (item.brand) keys.push(`${item.brand.id}:${(item.date || "").slice(0, 7)}`);
+    if (keys.some(k => seen.has(k))) return false;
+    keys.forEach(k => seen.add(k));
+    return true;
+  }).sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 12);
+  await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2::jsonb, NOW())
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [key, JSON.stringify({ items: deduped })]).catch(() => {});
+  return deduped;
+}
+
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) { const i = next++; out[i] = await fn(items[i]); }
+  }));
+  return out;
+}
+
+// GET /api/property/:propertyId/centre-openings — this centre first, then
+// the top-25 UK centres.
+router.get("/api/property/:propertyId/centre-openings", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const propertyId = String(req.params.propertyId);
+    const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+    const scope = await resolveCompanyScope(req as any);
+    if (scope && !(await isPropertyInScope(scope, propertyId))) return res.status(403).json({ error: "Access denied" });
+    const property = (await pool.query("SELECT name, latitude, longitude FROM crm_properties WHERE id = $1", [propertyId])).rows[0];
+    if (!property) return res.status(404).json({ error: "Property not found" });
+    const lat = parseFloat(property.latitude), lng = parseFloat(property.longitude);
+    const listed = Number.isFinite(lat) && Number.isFinite(lng) ? centreAt(lat, lng) : null;
+    // A centre we don't list is searched by its own name.
+    const here: UkCentre = listed || { name: property.name, lat, lng, aliases: [String(property.name).replace(/\s*(shopping cent(?:re|er)|retail park)\s*$/i, "").trim() || property.name] };
+    const peers = TOP_25_CENTRES.filter(centre => centre.name !== here.name);
+    const list = await brands();
+    const [hereItems, ...peerItems] = await mapLimit([here, ...peers], 6, centre => centreFeed(centre, list).catch(() => [] as CentreOpening[]));
+    res.json({
+      centre: here.name,
+      here: hereItems,
+      peers: peerItems.flat().sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 60),
+      peerCount: peers.length,
+    });
+  } catch (error: any) {
+    console.error("[centre-openings]", error?.message);
+    res.status(500).json({ error: error?.message || "Could not load openings" });
+  }
+});
+
+export default router;

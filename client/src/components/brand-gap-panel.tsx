@@ -56,6 +56,10 @@ interface BrandGapResult {
   }>;
   missingSectors?: BrandGapResult["sectors"];
   peerSchemesConsidered?: number;
+  benchmark?: {
+    here: { brands: number; sectors: number };
+    centres: Array<{ name: string; distance_km: number; brands: number; sectors: number; shared: number; not_here: number; not_here_top: Array<{ id: string; name: string }>; from_schedule: boolean }>;
+  } | null;
   categorySignature: Record<string, number>;
   matchingRequirements?: Array<{
     id: string; name: string | null; use: string[] | null; size: string | null;
@@ -407,6 +411,9 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
         {/* Live web sweep — who is actively taking sites right now */}
         <LiveExpansionIntel propertyId={propertyId} />
 
+        {centre && data.benchmark && <CentreBenchmark benchmark={data.benchmark} name={data.property.name} />}
+        {centre && <CentreOpenings propertyId={propertyId} />}
+
         {/* Minimise everything below the read */}
         <button
           onClick={() => setDetailsOpen(o => !o)}
@@ -465,8 +472,8 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
           <GapColumn
             icon={AlertCircle}
             tint="text-muted-foreground"
-            title="At other UK schemes, not here"
-            sub={data.peerSchemesConsidered ? `Across ${data.peerSchemesConsidered} major UK schemes` : undefined}
+            title="At the top UK centres, not here"
+            sub={data.peerSchemesConsidered ? `Across the ${data.peerSchemesConsidered} benchmark centres` : undefined}
             brands={data.peerGaps || []}
             contextFor={(b) => {
               const ps = b.peer_schemes || [];
@@ -514,7 +521,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
                   </div>
                   <div className="text-[11px] text-muted-foreground mt-0.5">
                     {s.missing
-                      ? `0 on scheme · at ${s.at_peers} peer scheme${s.at_peers === 1 ? "" : "s"}${s.at_competing ? ` · ${s.at_competing} at competitors` : ""}`
+                      ? `0 on scheme · ${s.at_peers} brand${s.at_peers === 1 ? "" : "s"} at the top centres${s.at_competing ? ` · ${s.at_competing} at competitors` : ""}`
                       : s.on_scheme_names.slice(0, 3).join(", ") + (s.on_scheme > 3 ? ` +${s.on_scheme - 3}` : "")}
                   </div>
                   {s.examples.length > 0 && (
@@ -524,7 +531,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
                           <Badge
                             variant="outline"
                             className={`text-[11px] cursor-pointer hover:bg-muted ${e.live_req ? "border-border text-foreground" : ""}`}
-                            title={`At ${e.peers} peer scheme${e.peers === 1 ? "" : "s"}${e.live_req ? " · live requirement" : ""}`}
+                            title={`At ${e.peers} of the top centres${e.live_req ? " · live requirement" : ""}`}
                           >
                             {e.name}
                           </Badge>
@@ -585,5 +592,129 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
         </>)}
       </CardContent>
     </Card>
+  );
+}
+
+// This centre against each benchmark centre on the same hospitality /
+// leisure slice (Woody, 2026-09-27: "compare the top 25 shopping centres").
+function CentreBenchmark({ benchmark, name }: { benchmark: NonNullable<BrandGapResult["benchmark"]>; name: string }) {
+  const [all, setAll] = useState(false);
+  const rows = benchmark.centres;
+  if (!rows.length) return null;
+  const rank = rows.filter(r => r.brands > benchmark.here.brands).length + 1;
+  const shown = all ? rows : rows.slice(0, 8);
+  return (
+    <div data-testid="centre-benchmark">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1.5">
+        <div className="text-[11px] font-semibold flex items-center gap-1.5">
+          <TrendingUp className="w-3.5 h-3.5 text-muted-foreground" />
+          Against the top UK centres
+        </div>
+        <span className="text-[11px] text-muted-foreground">
+          {name}: <span className="tabular-nums font-medium text-foreground">{benchmark.here.brands}</span> F&amp;B &amp; leisure brands · {benchmark.here.sectors} sectors · ranks {rank} of {rows.length + 1}
+        </span>
+      </div>
+      <div className="rounded-lg border divide-y">
+        <div className="hidden md:grid grid-cols-[minmax(0,1.3fr)_60px_60px_70px_minmax(0,2fr)] gap-2 px-2 py-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+          <span>Centre</span><span className="text-right">Brands</span><span className="text-right">Shared</span><span className="text-right">Not here</span><span>They have, you don't</span>
+        </div>
+        {shown.map(r => (
+          <div key={r.name} className="px-2 py-1.5 text-xs md:grid md:grid-cols-[minmax(0,1.3fr)_60px_60px_70px_minmax(0,2fr)] md:gap-2 md:items-center" data-testid={`benchmark-${r.name}`}>
+            <div className="min-w-0 flex items-center gap-1.5">
+              <span className="font-medium truncate">{r.name}</span>
+              <span className="text-[11px] text-muted-foreground shrink-0 tabular-nums">{r.distance_km}km</span>
+              {r.from_schedule && <span className="text-[11px] text-muted-foreground shrink-0" title="Read from our tenancy schedule">· schedule</span>}
+            </div>
+            <div className="md:contents flex gap-3 text-[11px] text-muted-foreground mt-0.5 md:mt-0">
+              <span className="md:text-right tabular-nums md:text-xs md:text-foreground"><span className="md:hidden">Brands </span>{r.brands}</span>
+              <span className="md:text-right tabular-nums md:text-xs"><span className="md:hidden">Shared </span>{r.shared}</span>
+              <span className="md:text-right tabular-nums md:text-xs"><span className="md:hidden">Not here </span>{r.not_here}</span>
+            </div>
+            <div className="flex flex-wrap gap-1 mt-1 md:mt-0 min-w-0">
+              {r.not_here_top.map(b => (
+                <Link key={b.id} href={`/companies/${b.id}`}>
+                  <Badge variant="outline" className="text-[11px] cursor-pointer hover:bg-muted">{b.name}</Badge>
+                </Link>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-2 mt-1">
+        <p className="text-[11px] text-muted-foreground">From brands' store lists (within ~700m of each centre) and our tenancy schedules where we hold them.</p>
+        {rows.length > 8 && (
+          <button className="text-[11px] text-muted-foreground hover:text-foreground underline" onClick={() => setAll(v => !v)}>
+            {all ? "Show fewer" : `Show all ${rows.length}`}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+type CentreOpening = { centre: string; title: string; url: string; source: string | null; date: string | null; brand: { id: string; name: string } | null; origin: string };
+
+// New brands going in — here and at the benchmark centres (Woody,
+// 2026-09-27: "any news about new brands going into those shopping centres").
+function CentreOpenings({ propertyId }: { propertyId: string }) {
+  const [tab, setTab] = useState<"here" | "peers">("here");
+  const [more, setMore] = useState(false);
+  const { data, isLoading, error } = useQuery<{ centre: string; here: CentreOpening[]; peers: CentreOpening[]; peerCount: number }>({
+    queryKey: ["/api/property", propertyId, "centre-openings"],
+    queryFn: async () => {
+      const r = await fetch(`/api/property/${propertyId}/centre-openings`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+      return r.json();
+    },
+    staleTime: 30 * 60 * 1000,
+    retry: false,
+  });
+  const items = (tab === "here" ? data?.here : data?.peers) || [];
+  const shown = more ? items : items.slice(0, 6);
+  const fmt = (d: string | null) => d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" }) : "";
+  return (
+    <div data-testid="centre-openings">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+        <div className="text-[11px] font-semibold flex items-center gap-1.5">
+          <Store className="w-3.5 h-3.5 text-muted-foreground" />
+          New brands going in
+        </div>
+        <div className="flex gap-1">
+          {(["here", "peers"] as const).map(key => (
+            <button key={key} onClick={() => { setTab(key); setMore(false); }}
+              className={`rounded-full border px-2.5 py-0.5 text-[11px] ${tab === key ? "bg-foreground text-background border-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+              {key === "here" ? `Here${data ? ` · ${data.here.length}` : ""}` : `Top centres${data ? ` · ${data.peers.length}` : ""}`}
+            </button>
+          ))}
+        </div>
+      </div>
+      {isLoading && <p className="text-xs text-muted-foreground italic flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Reading opening news across the centres…</p>}
+      {error && <p className="text-xs text-muted-foreground">{(error as Error).message}</p>}
+      {data && !items.length && <p className="text-xs text-muted-foreground">{tab === "here" ? `No opening news for ${data.centre} in the last 12 months.` : "No opening news at the top centres in the last 12 months."}</p>}
+      {shown.length > 0 && (
+        <div className="rounded-lg border divide-y">
+          {shown.map((item, i) => (
+            <div key={`${item.title}-${i}`} className="px-2 py-1.5 text-xs flex items-start gap-2 min-w-0">
+              <span className="text-[11px] text-muted-foreground tabular-nums w-16 shrink-0 pt-px">{fmt(item.date)}</span>
+              <div className="min-w-0 flex-1">
+                {item.url
+                  ? <a href={item.url} target="_blank" rel="noopener noreferrer" className="hover:underline">{item.title}<ExternalLink className="inline w-3 h-3 ml-1 text-muted-foreground" /></a>
+                  : <span>{item.title}</span>}
+                <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-2">
+                  {tab === "peers" && <span className="font-medium text-foreground/80">{item.centre}</span>}
+                  {item.brand && <Link href={`/companies/${item.brand.id}`} className="hover:underline">{item.brand.name}</Link>}
+                  {item.source && <span>{item.source}</span>}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {items.length > 6 && (
+        <button className="text-[11px] text-muted-foreground hover:text-foreground underline mt-1" onClick={() => setMore(v => !v)}>
+          {more ? "Show fewer" : `Show all ${items.length}`}
+        </button>
+      )}
+    </div>
   );
 }
