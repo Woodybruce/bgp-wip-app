@@ -31,14 +31,23 @@ export function currentPropertyUnits(rows: PropertyOverviewUnit[]): PropertyOver
 
 // Presentation can be simple for a known office without asserting a unit
 // count. Physical IDs avoid counting separate leases as units.
-export function suggestPropertyView(assetClass: string | null | undefined, rows: PropertyOverviewUnit[] | undefined): PropertyView | null {
-  if (/\bshopping cent(?:re|er)\b|\bretail park\b|\bindustrial estate\b/i.test(assetClass || "")) return "centre";
+// Shopping centres, retail / leisure parks and outlet villages (Woody,
+// 2026-09-27: "Bluewater is a shopping centre — almost all of Landsec's
+// stuff is"). The asset class alone often just says "Retail", so the
+// scheme's name counts too.
+const CENTRE_RE = /\bshopping cent(?:re|er)\b|\bretail park\b|\bleisure park\b|\bindustrial estate\b|\boutlet\b|\bgalleries\b|\bxscape\b|\bmall\b/i;
+// A retail / leisure scheme with this many physical units is run as a centre.
+const CENTRE_UNITS = 20;
+
+export function suggestPropertyView(assetClass: string | null | undefined, rows: PropertyOverviewUnit[] | undefined, name?: string | null): PropertyView | null {
+  if (CENTRE_RE.test(assetClass || "") || CENTRE_RE.test(name || "")) return "centre";
   const fallback = /\bmixed[ -]use\b/i.test(assetClass || "") ? "multi_let" : /\boffices?\b|\bresidential\b/i.test(assetClass || "") ? "building" : null;
   if (!rows) return fallback;
   const current = currentPropertyUnits(rows);
   const canonical = current.filter(row => !row.is_vacant);
   if (!canonical.length) return fallback;
   const count = new Set(current.map(row => row.property_unit_id || `row:${row.id}`)).size;
+  if (count >= CENTRE_UNITS && /\b(retail|leisure|shopping|f&b|mixed)/i.test(assetClass || "")) return "centre";
   if (count > 1 || /\bmixed[ -]use\b/i.test(assetClass || "")) return "multi_let";
   return "building";
 }

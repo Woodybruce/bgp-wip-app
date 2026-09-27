@@ -57,6 +57,7 @@ import {
   PropertyLinkageCard,
 } from "@/components/property-asset-brief";
 import { trackRecentItem } from "@/hooks/use-recent-items";
+import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -304,6 +305,9 @@ function SalesBoardLink({ property }: { property: any }) {
     onError: (e: any) => toast({ title: "Couldn't add to the Sales board", description: e?.message, variant: "destructive" }),
   });
   if (!isStaff) return null;
+  // On the board → always say so (Brixton Market sits on the Sales board as
+  // a 'BGP Instruction'); the add button only on a Sales Instruction.
+  if (!onBoard && property.status !== "Sales Instruction") return null;
   return onBoard
     ? <Link href="/investment-tracker" className="text-[11px] text-emerald-700 hover:underline" data-testid="link-sales-board">On the Sales board</Link>
     : <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={() => add.mutate()} disabled={add.isPending} data-testid="button-add-sales-board">{add.isPending ? "Adding…" : "Add to Sales board"}</Button>;
@@ -341,7 +345,7 @@ export function PropertyDetail({ id }: { id: string }) {
     queryFn: async () => (await apiRequest("GET", `/api/tenancy-schedule/property/${id}`)).json(),
     enabled: Boolean(property),
   });
-  const suggestedView = suggestPropertyView(property?.assetClass, overviewSchedule.isError ? undefined : overviewSchedule.data);
+  const suggestedView = suggestPropertyView(property?.assetClass, overviewSchedule.isError ? undefined : overviewSchedule.data, property?.name);
   const propertyView = property?.propertyView || suggestedView;
   const [showFullPage, setShowFullPage] = useState(false);
   const simpleLayout = !showFullPage && (propertyView === "building" || propertyView === "multi_let");
@@ -388,6 +392,7 @@ export function PropertyDetail({ id }: { id: string }) {
     deals: true,
     availableUnits: true,
     investmentComps: true,
+    investment: true,
     landRegistry: false,
     images: false,
     compliance: true,
@@ -608,7 +613,7 @@ export function PropertyDetail({ id }: { id: string }) {
                       {property.status}
                     </Badge>
                   )}
-                  {property.status === "Sales Instruction" && <SalesBoardLink property={property} />}
+                  <SalesBoardLink property={property} />
                   {property.groupName && (
                     <Badge variant="outline" className="text-[10px]" data-testid="badge-property-group">{property.groupName}</Badge>
                   )}
@@ -1214,6 +1219,20 @@ export function PropertyDetail({ id }: { id: string }) {
               {!isClientViewer && (
               <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
               <ReferenceSection
+                title="Investment"
+                icon={Landmark}
+                open={sidebarSections.investment}
+                onToggle={() => toggleSection("investment")}
+                testId="toggle-investment-section"
+              >
+                <PropertyInvestmentPanel propertyId={property.id} />
+              </ReferenceSection>
+              </PropertySection>
+              )}
+
+              {!isClientViewer && (
+              <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
+              <ReferenceSection
                 title="Investment comps"
                 icon={TrendingUp}
                 open={sidebarSections.investmentComps}
@@ -1248,6 +1267,80 @@ export function PropertyDetail({ id }: { id: string }) {
         </div>
 
       </div>
+    </div>
+  );
+}
+
+// ── Investment work on the property ─────────────────────────────────────────
+// The property's Sales / Purchases board assets (Woody, 2026-09-27: the
+// property board should carry the sale): status, guide, viewings, bids,
+// particulars sent and the best-fitting buyers not yet approached, plus the
+// ownership history completions wrote. Staff only.
+function PropertyInvestmentPanel({ propertyId }: { propertyId: string }) {
+  const { data, isLoading } = useQuery<{ assets: any[]; ownership: any[] }>({ queryKey: ["/api/properties", propertyId, "investment"] });
+  const money = (v: any) => { const n = Number(v); return n ? (n >= 1e6 ? `£${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}m` : `£${Math.round(n / 1e3)}k`) : null; };
+  const when = (d: any) => d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
+  if (isLoading) return <div className="text-xs text-muted-foreground py-2">Loading…</div>;
+  const assets = data?.assets || [], ownership = data?.ownership || [];
+  if (!assets.length && !ownership.length) return (
+    <div className="text-xs text-muted-foreground space-y-1">
+      <p>Not on BGP's Sales or Purchases boards.</p>
+      <Link href="/deals/investment" className="text-[11px] text-primary hover:underline">Investment tracker →</Link>
+    </div>
+  );
+  return (
+    <div className="space-y-3">
+      {assets.map(a => {
+        const code = legacyToCode(a.status);
+        return (
+          <div key={a.id} className="space-y-1.5" data-testid={`property-investment-${a.id}`}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium">{a.board_type === "Sales" ? "Sale" : "Purchase"}{a.client ? ` for ${a.client}` : ""}</span>
+              <Badge variant="outline" className="text-[10px]">{code ? DEAL_STATUS_LABELS[code] : a.status || "Reporting"}</Badge>
+            </div>
+            <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-2 tabular-nums">
+              {money(a.guide_price) && <span>Guide {money(a.guide_price)}</span>}
+              {a.niy && <span>NIY {Number(a.niy).toFixed(2)}%</span>}
+              {a.bid_deadline && <span>Bids {a.bid_deadline}</span>}
+            </div>
+            <div className="grid grid-cols-3 gap-1 text-center">
+              {[["Sent", a.sent], ["Viewings", a.viewings], ["Bids", a.bids]].map(([label, n]) => (
+                <div key={label as string} className="rounded border py-1">
+                  <div className="text-sm font-semibold tabular-nums">{n || 0}</div>
+                  <div className="text-[10px] text-muted-foreground">{label}</div>
+                </div>
+              ))}
+            </div>
+            {money(a.best_bid) && <p className="text-[11px]">Best bid <span className="font-medium tabular-nums">{money(a.best_bid)}</span>{a.buyer ? <> · buyer {a.buyer_id ? <Link href={`/companies/${a.buyer_id}`} className="hover:underline">{a.buyer}</Link> : a.buyer}</> : null}</p>}
+            {a.fits?.length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-0.5">Buyers who fit — not yet sent{a.fitsTotal > a.fits.length ? ` (top ${a.fits.length} of ${a.fitsTotal})` : ""}</div>
+                {a.fits.map((b: any) => (
+                  <div key={b.companyId || b.name} className="text-[11px] flex justify-between gap-2">
+                    {b.companyId ? <Link href={`/companies/${b.companyId}`} className="font-medium hover:underline truncate">{b.name}</Link> : <span className="font-medium truncate">{b.name}</span>}
+                    <span className="text-muted-foreground truncate">{(b.reasons || []).join(" · ")}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-3 text-[11px]">
+              <Link href="/deals/investment" className="text-primary hover:underline">On the {a.board_type === "Sales" ? "Sales" : "Purchases"} board →</Link>
+              {a.deal_id && <Link href={`/deals/${a.deal_id}`} className="text-primary hover:underline">Deal{a.deal_ref ? ` #${a.deal_ref}` : ""} →</Link>}
+            </div>
+          </div>
+        );
+      })}
+      {ownership.length > 0 && (
+        <div className="border-t pt-2">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-0.5">Ownership history</div>
+          {ownership.map((o, i) => (
+            <div key={i} className="text-[11px]">
+              {when(o.date)}: {o.fromId ? <Link href={`/companies/${o.fromId}`} className="hover:underline">{o.from || "seller"}</Link> : (o.from || "seller")} → {o.toId ? <Link href={`/companies/${o.toId}`} className="hover:underline font-medium">{o.to || "buyer"}</Link> : (o.to || "buyer")}
+              {o.dealId && <> · <Link href={`/deals/${o.dealId}`} className="text-primary hover:underline">deal</Link></>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

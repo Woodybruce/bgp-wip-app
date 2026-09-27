@@ -174,7 +174,53 @@ export async function getPropertyInvestmentComps(propertyId: string, deps: { poo
   return { property: { id: p.id, name: p.name, classes: profile.classes, uses: profile.uses, london: profile.london }, here, similar };
 }
 
+// The property page's view of its investment work (Woody, 2026-09-27: the
+// property board should carry the sale): each Sales / Purchases board asset
+// on the property with its status, guide, bids, viewings and particulars
+// sent, the best-fitting buyers for a sale, and the ownership history that
+// completions wrote.
+export async function getPropertyInvestment(propertyId: string, deps: { pool?: Querier } = {}) {
+  const q = deps.pool ?? (await import("./db")).pool;
+  const assets = await rows(q, `SELECT t.id, t.asset_name, t.board_type, t.status, t.guide_price, t.niy, t.client, t.client_id, t.buyer, t.buyer_id,
+      t.vendor, t.vendor_id, t.bid_deadline, t.marketing_date, t.deal_id, d.deal_ref,
+      (SELECT COUNT(*)::int FROM investment_viewings v WHERE v.tracker_id = t.id) AS viewings,
+      (SELECT COUNT(*)::int FROM investment_distributions s WHERE s.tracker_id = t.id) AS sent,
+      (SELECT COUNT(*)::int FROM investment_offers o WHERE o.tracker_id = t.id) AS bids,
+      (SELECT MAX(o.offer_price) FROM investment_offers o WHERE o.tracker_id = t.id) AS best_bid
+    FROM investment_tracker t LEFT JOIN crm_deals d ON d.id = t.deal_id
+    WHERE t.property_id = $1 ORDER BY t.updated_at DESC NULLS LAST`, [propertyId]);
+  const LIVE = /^(REP|AVA|LIVE|NEG|HOT|SOL|SPEC|OPP|Reporting|Available|Under Offer)$/i;
+  for (const a of assets) {
+    a.fits = [];
+    if (a.board_type === "Sales" && LIVE.test(String(a.status || "REP"))) {
+      try {
+        const r = await getBuyersForAsset(a.id, { pool: q });
+        a.fits = r.buyers.filter((b: any) => !b.sentAt && !b.bid).slice(0, 5).map((b: any) => ({ name: b.name, companyId: b.companyId, reasons: b.reasons.slice(0, 2), sources: b.sources }));
+        a.fitsTotal = r.buyers.filter((b: any) => !b.sentAt && !b.bid).length;
+      } catch { /* buyers are a nice-to-have on the property page */ }
+    }
+  }
+  const ownership = await rows(q, `SELECT e.occurred_at, e.payload, e.deal_id, d.name AS deal_name, n.name AS to_name, o.name AS from_name
+    FROM deal_events e JOIN crm_deals d ON d.id = e.deal_id
+    LEFT JOIN crm_companies n ON n.id = e.payload->>'to'
+    LEFT JOIN crm_companies o ON o.id = e.payload->'previous'->>'landlordId'
+    WHERE e.event_type = 'ownership_transferred' AND e.payload->>'propertyId' = $1
+    ORDER BY e.occurred_at DESC`, [propertyId]);
+  return {
+    assets,
+    ownership: ownership.map((o: any) => ({ date: o.occurred_at, dealId: o.deal_id, dealName: o.deal_name, from: o.from_name, fromId: o.payload?.previous?.landlordId || null, to: o.to_name, toId: o.payload?.to || null })),
+  };
+}
+
 const router = Router();
+
+router.get("/api/properties/:id/investment", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { resolveCompanyScope } = await import("./company-scope");
+    if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Available in the staff view." });
+    res.json(await getPropertyInvestment(String(req.params.id)));
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
 
 router.get("/api/properties/:id/investment-comps", requireAuth, async (req: Request, res: Response) => {
   try {
