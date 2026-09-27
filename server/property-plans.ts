@@ -59,7 +59,7 @@ async function unitForRequest(req: Request, res: Response, db: any, authorisedOw
 router.get("/api/properties/:propertyId/plans", requireAuth, async (req: Request, res: Response) => {
   try {
     if (await clientBlockedForProperty(req, String(req.params.propertyId))) return res.status(403).json({ error: "This property is outside your access." });
-    const { rows } = await pool.query(`SELECT id, property_id, floor, display_order, storage_key, width, height, source, notes, created_at, updated_at
+    const { rows } = await pool.query(`SELECT id, property_id, floor, display_order, storage_key, width, height, source, notes, (original_pdf_key IS NOT NULL) AS has_pdf, pdf_page, created_at, updated_at
       FROM property_plans WHERE property_id = $1 AND COALESCE(is_geo, false) = false ORDER BY display_order, floor`, [req.params.propertyId]);
     res.json({ plans: rows });
   } catch (err) { errorResponse(res, err, "Could not load plans."); }
@@ -73,6 +73,9 @@ router.post("/api/properties/:propertyId/plans", requireAuth, upload.single("fil
     if (!property.rows[0]) return res.status(404).json({ error: "Property not found." });
     const file = req.file;
     if (!file) return res.status(400).json({ error: "Choose a plan image." });
+    if (file.mimetype === "application/pdf" || /\.pdf$/i.test(file.originalname || "") || file.buffer.subarray(0, 5).toString() === "%PDF-") {
+      return res.json(await savePdfPlan(req, propertyId, file));
+    }
     let metadata;
     try { metadata = await sharp(file.buffer, { limitInputPixels: 100_000_000, failOn: "error" }).metadata(); }
     catch { return res.status(400).json({ error: "Use a valid PNG, JPEG or WebP image, up to 100 megapixels." }); }
@@ -94,8 +97,112 @@ router.post("/api/properties/:propertyId/plans", requireAuth, upload.single("fil
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING id, property_id, floor, display_order, storage_key, width, height, source, notes, created_at, updated_at`,
       [planId, propertyId, floor, source, notes, storageKey, width, height]);
-    res.json(rows[0]);
+    const scanning = await autoScanPlans(req, rows);
+    res.json({ ...rows[0], scanning });
   } catch (err) { errorResponse(res, err, "Could not upload the plan."); }
+});
+
+// A PDF plan: every page rendered on the server at print quality (300 dpi,
+// hairlines kept, lossless PNG — the lease advisory evidence-plan renderer),
+// one plan per page named from the page's own title ("Lower Level", "Upper
+// Mall"…) where it has one, and the original PDF kept for download. BGP
+// staff uploads start the unit scan straight away.
+async function savePdfPlan(req: Request, propertyId: string, file: Express.Multer.File) {
+  const { renderEvidencePlanPdf } = await import("./plan-image-render");
+  const baseFloor = String(req.body?.floor || "").trim().slice(0, 100);
+  const source = String(req.body?.source || "leasing-plan").trim().slice(0, 100);
+  const notes = req.body?.notes ? String(req.body.notes).trim() : null;
+  const pdfId = crypto.randomUUID();
+  const pdfKey = `property-plans/${propertyId}/pdf-${pdfId}/original.pdf`;
+  const pages: any[] = [];
+  try {
+    for await (const page of renderEvidencePlanPdf(file.buffer)) pages.push(page);
+  } catch (error: any) {
+    if (error?.code === "ENOENT" || /spawn|not found/i.test(String(error?.message))) {
+      throw new PropertyPlanInputError("PDF rendering isn't available on this server. Export the page as a PNG and upload that.", 503);
+    }
+    throw new PropertyPlanInputError(error?.message || "Couldn't read the PDF.", 400);
+  }
+  await saveFile(pdfKey, file.buffer, "application/pdf", file.originalname);
+  const order = (await pool.query(`SELECT COALESCE(MAX(display_order), -1) + 1 AS next FROM property_plans WHERE property_id = $1`, [propertyId])).rows[0]?.next || 0;
+  const created: any[] = [];
+  for (const page of pages) {
+    const planId = crypto.randomUUID();
+    const storageKey = `property-plans/${propertyId}/pdf-${pdfId}/page-${page.page}.png`;
+    await saveFile(storageKey, page.buffer, "image/png", `${(file.originalname || "plan").replace(/\.pdf$/i, "")}-p${page.page}.png`);
+    const floor = (page.name || (pages.length === 1 ? baseFloor : baseFloor ? `${baseFloor} · page ${page.page}` : `Page ${page.page}`) || "Ground").slice(0, 100);
+    const { rows } = await pool.query(`INSERT INTO property_plans (id, property_id, floor, source, notes, storage_key, width, height, display_order, original_pdf_key, pdf_page)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      RETURNING id, property_id, floor, display_order, storage_key, width, height, source, notes, original_pdf_key, pdf_page, created_at, updated_at`,
+      [planId, propertyId, floor, source, notes, storageKey, page.width, page.height, order + page.page - 1, pdfKey, page.page]);
+    created.push(rows[0]);
+  }
+  const scanned = await autoScanPlans(req, created);
+  return { plans: created, pages: created.length, namedFromPdf: pages.filter(p => p.name).length, scanning: scanned };
+}
+
+// Start the unit scan on freshly uploaded plans — lease advisory detects
+// units on upload; property plans now do too. Staff only (the scan uses the
+// AI reader); the proposals still wait for review before anything is saved.
+export async function autoScanPlans(req: Request, plans: any[]): Promise<number> {
+  const { isClientRequestUser } = await import("./company-scope");
+  if (!process.env.ANTHROPIC_API_KEY || await isClientRequestUser(req) || req.body?.autoScan === "false") return 0;
+  const { startPropertyPlanScan } = await import("./property-plan-scan-store");
+  const { runPropertyPlanScan } = await import("./property-plan-scanning");
+  let started = 0;
+  for (const plan of plans) {
+    try {
+      const { job, plan: locked, reused } = await startPropertyPlanScan(pool, plan.id, async () => true);
+      if (!reused) void runPropertyPlanScan(job, locked);
+      started++;
+    } catch (error: any) { console.warn("[property-plans] auto-scan failed to start:", error?.message); }
+  }
+  return started;
+}
+
+// Link every unlinked outline on a plan whose label (or saved tenant) matches
+// exactly one tenancy row not already on a plan of this property. Same matcher
+// as the scan and the lease advisory plans; anything unsure stays unlinked.
+router.post("/api/plans/:planId/auto-link", requireAuth, async (req: Request, res: Response) => {
+  let db: import("pg").PoolClient | undefined;
+  try {
+    const authorisedPlan = await planForRequest(req, res);
+    if (!authorisedPlan) return;
+    const { suggestPropertyPlanLink } = await import("./property-plan-scan");
+    const options = await queryPickableUnits(pool, authorisedPlan.property_id);
+    db = await pool.connect();
+    await db.query("BEGIN");
+    const plan = await planForRequest(req, res, db, true, authorisedPlan.property_id);
+    if (!plan) { await db.query("ROLLBACK"); return; }
+    const used = new Set((await db.query(`SELECT u.tenancy_unit_id FROM property_plan_units u JOIN property_plans p ON p.id = u.plan_id
+      WHERE p.property_id = $1 AND u.tenancy_unit_id IS NOT NULL`, [plan.property_id])).rows.map((r: any) => r.tenancy_unit_id));
+    const unlinked = (await db.query(`SELECT id, label FROM property_plan_units WHERE plan_id = $1 AND tenancy_unit_id IS NULL AND unit_id IS NULL AND label IS NOT NULL FOR UPDATE`, [plan.id])).rows;
+    const linked: Array<{ id: string; label: string; unit_name: string }> = [];
+    for (const unit of unlinked) {
+      const match = suggestPropertyPlanLink(unit.label, null, options.filter((o: any) => !used.has(o.tenancy_unit_id)));
+      if (!match?.tenancy_unit_id) continue;
+      const link = await validatePlanUnitLink(db, plan.property_id, { tenancy_unit_id: match.tenancy_unit_id, unit_id: match.unit_id });
+      await db.query(`UPDATE property_plan_units SET tenancy_unit_id = $2, unit_id = $3, updated_at = NOW() WHERE id = $1`, [unit.id, link.tenancy_unit_id, link.unit_id]);
+      used.add(link.tenancy_unit_id);
+      linked.push({ id: unit.id, label: unit.label, unit_name: match.unit_name });
+    }
+    await db.query("COMMIT");
+    res.json({ checked: unlinked.length, linked: linked.length, links: linked });
+  } catch (err) { if (db) await db.query("ROLLBACK").catch(() => {}); errorResponse(res, err, "Could not link the outlines."); }
+  finally { db?.release(); }
+});
+
+router.get("/api/plans/:planId/original-pdf", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const plan = await planForRequest(req, res);
+    if (!plan) return;
+    if (!plan.original_pdf_key) return res.status(404).json({ error: "This plan was uploaded as an image." });
+    const file = await getFile(plan.original_pdf_key);
+    if (!file) return res.status(404).json({ error: "The original PDF is missing." });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${String(plan.floor || "plan").replace(/[^\w .-]/g, "")}.pdf"`);
+    res.end(file.data);
+  } catch (err) { errorResponse(res, err, "Could not load the original PDF."); }
 });
 
 router.patch("/api/plans/:planId", requireAuth, async (req: Request, res: Response) => {
@@ -152,7 +259,13 @@ router.get("/api/plans/:planId/units", requireAuth, async (req: Request, res: Re
   try {
     if (!await planForRequest(req, res)) return;
     const rows = await queryPropertyPlanUnits(pool, String(req.params.planId));
-    res.json({ units: rows.map(row => ({ ...row, status: propertyPlanUnitStatus(row) })) });
+    const { evidenceScheduleRefsEquivalent } = await import("./evidence-plan-schedule");
+    // A linked outline whose printed label names a different unit than its
+    // tenancy row — the lease advisory plan's schedule-conflict flag.
+    res.json({ units: rows.map(row => ({ ...row, status: propertyPlanUnitStatus(row),
+      label_mismatch: !!(row.tenancy_unit_id && row.label && row.unit_name && row.label.trim().toLowerCase() !== String(row.unit_name).trim().toLowerCase()
+        && /\d/.test(row.label) && !evidenceScheduleRefsEquivalent(row.label, row.unit_name)
+        && !evidenceScheduleRefsEquivalent(row.label, String(row.unit_name).trim().split(/\s+/)[0])) })) });
   } catch (err) { errorResponse(res, err, "Could not load plan units."); }
 });
 

@@ -972,6 +972,10 @@ installGoogleBudgetGuard();
     `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS bbox_east DOUBLE PRECISION`,
     `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS bbox_west DOUBLE PRECISION`,
     `CREATE INDEX IF NOT EXISTS idx_property_plans_geo ON property_plans (is_geo, bbox_west, bbox_east, bbox_south, bbox_north) WHERE is_geo = true`,
+    // PDF plans are rendered on the server (the lease advisory engine) and
+    // the original PDF is kept beside the page images (Woody, 2026-09-27).
+    `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS original_pdf_key TEXT`,
+    `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS pdf_page INT`,
 
     // Property brochures — leasing / investment / OM PDFs uploaded
     // directly to a property's brochure board. Same pattern as

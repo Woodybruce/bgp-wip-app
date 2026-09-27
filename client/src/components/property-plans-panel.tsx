@@ -11,7 +11,9 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { formatCalendarDate } from "@shared/calendar-date";
-import { Map as MapIcon, Upload, Trash2, Pencil, FileText, Layers, ChevronRight, ScanLine, Hand, Undo2, Link2 } from "lucide-react";
+import { Map as MapIcon, Upload, Trash2, Pencil, FileText, Layers, ChevronRight, ScanLine, Hand, Undo2, Link2, Maximize2, Minimize2, Search, AlertTriangle } from "lucide-react";
+import { interiorPoint } from "@shared/plan-geometry";
+import { layoutPlanMarkers } from "@shared/plan-marker-layout";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { PropertyPlanScanReview } from "./property-plan-scan-review";
 import { PropertyPlanPreview, usePropertyPlanImage } from "./property-plan-preview";
@@ -31,6 +33,9 @@ function formatDate(s: string | null | undefined): string {
   return formatCalendarDate(s) ?? "—";
 }
 type EditorMode = "select" | "trace" | "draw";
+// Plan display, as on the lease advisory plans: labels on the outlines, the
+// outlines alone, or the clean drawing.
+type PlanView = "labels" | "outlines" | "clean";
 
 export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
   const queryClient = useQueryClient();
@@ -46,6 +51,16 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
   const [highlightedLabel, setHighlightedLabel] = useState<string | null>(null);
   const [highlightedTenancyId, setHighlightedTenancyId] = useState<string | null>(null);
   const [highlightRequest, setHighlightRequest] = useState(0);
+  const [planView, setPlanView] = useState<PlanView>("labels");
+  const [fullScreen, setFullScreen] = useState(false);
+  const [unitSearch, setUnitSearch] = useState("");
+  const [focusUnitId, setFocusUnitId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!fullScreen) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setFullScreen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullScreen]);
   const resolvedHighlight = useRef<string | null>(null);
   useEffect(() => {
     const read = () => {
@@ -110,8 +125,22 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
     void queryClient.invalidateQueries({ queryKey: ["/api/plans", "property-links", propertyId] });
     return queryClient.invalidateQueries({ queryKey: ["/api/plans", activePlan?.id, "units"] });
   };
+  const autoLink = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/plans/${activePlan!.id}/auto-link`, {})).json(),
+    onSuccess: (result: { checked: number; linked: number }) => {
+      void refreshUnits();
+      toast({ title: result.linked ? `Linked ${result.linked} outline${result.linked === 1 ? "" : "s"} to the tenancy schedule` : "No confident matches",
+        description: result.linked < result.checked ? `${result.checked - result.linked} outline${result.checked - result.linked === 1 ? "" : "s"} need a manual choice — select them to link.` : undefined });
+    },
+    onError: error => toast({ title: "Could not link outlines", description: error.message, variant: "destructive" }),
+  });
+  const unlinkedLabelled = units.filter(unit => !unit.tenancy_unit_id && !unit.unit_id && unit.label).length;
+  const mismatches = units.filter(unit => unit.label_mismatch).length;
+  const searchKey = unitSearch.trim().toLowerCase();
+  const listedUnits = units.filter(unit => !searchKey || [unit.label, unit.unit_name, unit.tenant_name].some(value => value?.toLowerCase().includes(searchKey)))
+    .sort((a, b) => String(a.label || a.unit_name || "").localeCompare(String(b.label || b.unit_name || ""), undefined, { numeric: true }));
   function changeMode(next: EditorMode) { setMode(previous => previous === next ? "select" : next); setPendingPoints([]); }
-  return <Card data-testid="property-plans-panel">
+  return <Card data-testid="property-plans-panel" className={fullScreen ? "fixed inset-0 z-50 rounded-none overflow-y-auto" : undefined}>
     <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 p-4 pb-2 space-y-0">
       <CardTitle className="text-sm flex items-center gap-2"><MapIcon className="w-4 h-4" /> Plans <Badge variant="secondary" className="text-xs">{plans.length}</Badge></CardTitle>
       <div className="flex flex-wrap items-center gap-1.5">
@@ -122,6 +151,7 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
           <Button size="sm" variant={mode === "draw" ? "default" : "outline"} className="h-8 text-xs" onClick={() => changeMode("draw")} disabled={trace.isPending} data-testid="button-toggle-draw-mode"><Pencil className="w-3.5 h-3.5 mr-1" />{mode === "draw" ? "Cancel drawing" : "Draw unit"}</Button>
           <DeletePlanButton plan={activePlan} onDeleted={() => setActivePlanId(null)} />
         </>}
+        {activePlan && <Button size="sm" variant="outline" className="h-8 px-2" onClick={() => setFullScreen(value => !value)} aria-label={fullScreen ? "Exit full screen" : "Full screen"} title={fullScreen ? "Exit full screen (Esc)" : "Full screen"} data-testid="button-plan-fullscreen">{fullScreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}</Button>}
       </div>
     </CardHeader>
     <CardContent className="p-4 pt-0 space-y-3">
@@ -135,13 +165,35 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
             try { await apiRequest("PATCH", `/api/plans/${plan.id}`, { floor: next }); queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plans"] }); }
             catch (error: any) { toast({ title: "Could not rename floor", description: error.message, variant: "destructive" }); }
           }} className={`text-xs px-2 py-1 rounded border ${plan.id === activePlan.id ? "bg-foreground text-background border-foreground" : "bg-card hover:bg-muted"}`} data-testid={`button-floor-${plan.floor}`} title={canEdit ? "Click to switch · double-click to rename" : "Click to switch"}><Layers className="w-3 h-3 inline mr-1" />{plan.floor}</button>)}
+          <span className="ml-auto flex items-center gap-1">
+            {activePlan.has_pdf && <OriginalPdfLink plan={activePlan} />}
+            {(["labels", "outlines", "clean"] as PlanView[]).map(view => <button key={view} onClick={() => setPlanView(view)} className={`text-xs px-2 py-1 rounded-full border ${planView === view ? "bg-foreground text-background border-foreground" : "bg-card hover:bg-muted"}`} data-testid={`button-plan-view-${view}`}>{view === "labels" ? "Labels" : view === "outlines" ? "Outlines" : "Clean plan"}</button>)}
+          </span>
         </div>
         <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">{["occupied", "lease_event", "under_offer", "deal_in_progress", "vacant", "unlinked"].map(status => <span key={status} className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm border-2" style={{ borderColor: STATUS_COLOURS[status].stroke }} />{STATUS_COLOURS[status].label}</span>)}</div>
         {highlightPlansQ.isError && <p role="alert" className="text-xs text-destructive">Could not find this unit across all floors. <button className="underline" onClick={() => highlightPlansQ.refetch()}>Retry</button></p>}
         {unitsQ.isError && <p role="alert" className="text-sm text-destructive">Unit outlines could not be loaded. <button className="underline" onClick={() => unitsQ.refetch()}>Retry</button></p>}
-        <PlanCanvas key={activePlan.id} plan={activePlan} units={units} mode={mode} busy={trace.isPending} pendingPoints={pendingPoints} setPendingPoints={setPendingPoints} onTrace={([x, y]) => { if (!trace.isPending) trace.mutate({ planId: activePlan.id, x, y }); }} onFinishPolygon={points => { setLinkDialog({ polygon: { points } }); setPendingPoints([]); setMode("select"); }} onSelectUnit={unit => setSelectedUnitId(unit.id)} highlightedLabel={highlightedLabel} highlightedTenancyId={highlightedTenancyId} multipleFloors={plans.length > 1} />
+        <PlanCanvas key={activePlan.id} plan={activePlan} units={units} mode={mode} busy={trace.isPending} pendingPoints={pendingPoints} setPendingPoints={setPendingPoints} onTrace={([x, y]) => { if (!trace.isPending) trace.mutate({ planId: activePlan.id, x, y }); }} onFinishPolygon={points => { setLinkDialog({ polygon: { points } }); setPendingPoints([]); setMode("select"); }} onSelectUnit={unit => setSelectedUnitId(unit.id)} highlightedLabel={highlightedLabel} highlightedTenancyId={highlightedTenancyId} multipleFloors={plans.length > 1} view={planView} focusUnitId={focusUnitId} />
         {mode === "draw" && <div className="flex items-center flex-wrap gap-2"><Button size="sm" variant="outline" disabled={!pendingPoints.length} onClick={() => setPendingPoints(points => points.slice(0, -1))}><Undo2 className="w-3.5 h-3.5 mr-1" />Undo point</Button><Button size="sm" disabled={pendingPoints.length < 3} onClick={() => { setLinkDialog({ polygon: { points: pendingPoints } }); setPendingPoints([]); setMode("select"); }}>Review boundary</Button><span className="text-xs text-muted-foreground">{pendingPoints.length} points · click corners in order, then review.</span></div>}
         <p className="text-xs text-muted-foreground">Select an outline to view its tenancy details or change its link. Trace unit follows a closed boundary around the point you click; use Draw unit where lines are open or unclear.</p>
+        {units.length > 0 && <div className="border rounded-lg" data-testid="plan-unit-list">
+          <div className="flex items-center flex-wrap gap-2 p-2 border-b">
+            <span className="text-xs text-muted-foreground uppercase tracking-widest">Units on {activePlan.floor} · {units.length}</span>
+            {mismatches > 0 && <span className="text-xs text-amber-700 inline-flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{mismatches} label{mismatches === 1 ? "" : "s"} differ from the schedule</span>}
+            {canEdit && unlinkedLabelled > 0 && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={autoLink.isPending} onClick={() => autoLink.mutate()} data-testid="button-plan-auto-link"><Link2 className="w-3 h-3 mr-1" />{autoLink.isPending ? "Linking…" : `Link ${unlinkedLabelled} outline${unlinkedLabelled === 1 ? "" : "s"} to schedule`}</Button>}
+            <label className="ml-auto flex items-center gap-1 border rounded px-2 h-7"><Search className="w-3 h-3 text-muted-foreground" /><input value={unitSearch} onChange={event => setUnitSearch(event.target.value)} placeholder="Find a unit or tenant" className="text-xs bg-transparent outline-none w-40" aria-label="Find a unit or tenant" /></label>
+          </div>
+          <div className="max-h-56 overflow-y-auto divide-y">
+            {listedUnits.map(unit => <button key={unit.id} onClick={() => { setSelectedUnitId(unit.id); setFocusUnitId(unit.id); }} onMouseEnter={() => setFocusUnitId(unit.id)} onMouseLeave={() => setFocusUnitId(null)} className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-muted">
+              <span className="w-2.5 h-2.5 rounded-sm border-2 shrink-0" style={{ borderColor: (STATUS_COLOURS[unit.status] || STATUS_COLOURS.unknown).stroke }} />
+              <span className="font-medium w-20 truncate">{unit.label || unit.unit_name || "Unlabelled"}</span>
+              <span className="flex-1 truncate text-muted-foreground">{unit.tenant_name || (unit.tenancy_unit_id ? (unit.status === "vacant" ? "Vacant" : "") : "Not linked")}{unit.label_mismatch ? ` · schedule says ${unit.unit_name}` : ""}</span>
+              {unit.label_mismatch && <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />}
+              {unit.rent_pa != null && <span className="tabular-nums text-muted-foreground">{formatMoney(unit.rent_pa)}</span>}
+            </button>)}
+            {!listedUnits.length && <p className="p-2 text-xs text-muted-foreground">No units match "{unitSearch}".</p>}
+          </div>
+        </div>}
       </>}
       {linkDialog && activePlan && <LinkPolygonDialog propertyId={propertyId} plan={activePlan} polygon={linkDialog.polygon} imageKey={linkDialog.imageKey} existingUnit={linkDialog.existingUnit} onClose={() => setLinkDialog(null)} onSaved={() => { setLinkDialog(null); refreshUnits(); }} />}
       {selectedUnit && activePlan && !linkDialog && <UnitDetailDrawer key={selectedUnit.id} unit={selectedUnit} propertyId={propertyId} onClose={() => setSelectedUnitId(null)} onUpdated={refreshUnits} onRelink={() => setLinkDialog({ polygon: selectedUnit.polygon, existingUnit: selectedUnit })} readOnly={!canEdit} />}
@@ -149,11 +201,12 @@ export function PropertyPlansPanel({ propertyId }: { propertyId: string }) {
   </Card>;
 }
 
-function PlanCanvas({ plan, units, mode, busy, pendingPoints, setPendingPoints, onFinishPolygon, onTrace, onSelectUnit, highlightedLabel, highlightedTenancyId, multipleFloors }: {
+function PlanCanvas({ plan, units, mode, busy, pendingPoints, setPendingPoints, onFinishPolygon, onTrace, onSelectUnit, highlightedLabel, highlightedTenancyId, multipleFloors, view = "labels", focusUnitId = null }: {
   plan: Plan; units: PlanUnit[]; mode: EditorMode; busy: boolean; pendingPoints: [number, number][];
   setPendingPoints: (points: [number, number][]) => void; onFinishPolygon: (points: [number, number][]) => void;
   onTrace: (point: [number, number]) => void; onSelectUnit: (unit: PlanUnit) => void;
   highlightedLabel: string | null; highlightedTenancyId: string | null; multipleFloors: boolean;
+  view?: PlanView; focusUnitId?: string | null;
 }) {
   const image = usePropertyPlanImage(plan.id);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -174,6 +227,23 @@ function PlanCanvas({ plan, units, mode, busy, pendingPoints, setPendingPoints, 
     return units.find(unit => [unit.label, unit.unit_name, unit.tenancy_unit_id, unit.unit_id].some(value => value?.toLowerCase().replace(/[^a-z0-9]/g, "") === key))?.id;
   }, [units, highlightedLabel, highlightedTenancyId]);
   useEffect(() => { setPanMode(false); suppressClick.current = false; dragRef.current = null; }, [mode]);
+  const [boxWidth, setBoxWidth] = useState(800);
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(entries => setBoxWidth(entries[0]?.contentRect.width || 800));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  // Labels sit inside their own outline and never overlap a neighbour's —
+  // the lease advisory plan's marker layout; a unit too small for its label
+  // gets a dot (its name is in the unit list and the hover card).
+  const markers = useMemo(() => view !== "labels" ? new Map() : layoutPlanMarkers(units.map(unit => {
+    const polygon = unit.polygon.points.map(([x, y]) => ({ x, y }));
+    return { id: unit.id, label: unit.label || unit.unit_name || "", price: null, hasEvidence: !!unit.tenancy_unit_id, polygon, anchor: interiorPoint(polygon) };
+  }).filter(input => input.label && input.polygon.length >= 3), { mode: "compact", screenWidth: boxWidth * scale, aspect: naturalSize.h / naturalSize.w, selectedId: focusUnitId, showPrices: false }),
+  [units, view, boxWidth, scale, naturalSize, focusUnitId]);
+  const pxToSvg = naturalSize.w / Math.max(1, boxWidth * scale);
   function click(event: React.MouseEvent<HTMLDivElement>) {
     if (suppressClick.current) { suppressClick.current = false; return; }
     if (busy || isPanning || !image.src) return;
@@ -207,13 +277,23 @@ function PlanCanvas({ plan, units, mode, busy, pendingPoints, setPendingPoints, 
       }} onPointerUp={() => { dragRef.current = null; }} onPointerCancel={() => { dragRef.current = null; suppressClick.current = true; }} onPointerLeave={() => { if (!suppressClick.current) dragRef.current = null; }}>
       {image.src && <img src={image.src} alt={`${plan.floor} plan`} className="block w-full h-full pointer-events-none select-none" draggable={false} onLoad={event => setNaturalSize({ w: event.currentTarget.naturalWidth, h: event.currentTarget.naturalHeight })} />}
       <svg viewBox={`0 0 ${naturalSize.w} ${naturalSize.h}`} preserveAspectRatio="none" className="absolute inset-0 w-full h-full" style={{ pointerEvents: "none" }}>
-        {units.map(unit => {
+        {view !== "clean" && units.map(unit => {
           const colour = STATUS_COLOURS[unit.status] || STATUS_COLOURS.unknown;
-          const hover = hoverUnit?.id === unit.id;
+          const hover = hoverUnit?.id === unit.id || focusUnitId === unit.id;
           return <polygon key={unit.id} points={unit.polygon.points.map(([x, y]) => `${x * naturalSize.w},${y * naturalSize.h}`).join(" ")} fill={colour.stroke} fillOpacity={hover ? 0.15 : 0} stroke={unit.id === highlighted ? "#6366f1" : colour.stroke} strokeWidth={unit.id === highlighted || hover ? 3 : 1.5} vectorEffect="non-scaling-stroke" className={unit.id === highlighted ? "animate-pulse" : ""} style={{ pointerEvents: mode === "select" && !panMode ? "auto" : "none", cursor: "pointer" }} role="button" tabIndex={mode === "select" && !panMode ? 0 : -1} aria-label={`View ${unit.unit_name || unit.label || "unit"}`} onClick={event => { if (suppressClick.current) return; event.stopPropagation(); onSelectUnit(unit); }} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelectUnit(unit); } }} onMouseEnter={event => {
             setHoverUnit(unit); const rect = containerRef.current?.getBoundingClientRect();
             if (rect) setTooltipPos({ x: Math.max(4, Math.min(rect.width - 250, event.clientX - rect.left + 8)), y: Math.max(4, Math.min(rect.height - 80, event.clientY - rect.top + 8)) });
           }} onMouseLeave={() => { setHoverUnit(null); setTooltipPos(null); }} />;
+        })}
+        {view === "labels" && [...markers.entries()].map(([id, marker]) => {
+          if (!marker.width) return null;
+          const cx = marker.x * naturalSize.w, cy = marker.y * naturalSize.h;
+          if (marker.kind === "dot") return <circle key={`m-${id}`} cx={cx} cy={cy} r={marker.width / 2 * pxToSvg} fill="#334155" style={{ pointerEvents: "none" }} />;
+          const w = marker.width * pxToSvg, h = marker.height * pxToSvg;
+          return <g key={`m-${id}`} style={{ pointerEvents: "none" }}>
+            <rect x={cx - w / 2} y={cy - h / 2} width={w} height={h} rx={h / 3} fill="white" fillOpacity={0.9} stroke="#334155" strokeWidth={0.75 * pxToSvg} />
+            <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fontSize={12 * pxToSvg} fontFamily="Arial, sans-serif" fontWeight={600} fill="#0f172a">{marker.displayLabel}</text>
+          </g>;
         })}
         {mode === "draw" && pendingPoints.length > 0 && <>
           <polyline points={pendingPoints.map(([x, y]) => `${x * naturalSize.w},${y * naturalSize.h}`).join(" ")} fill="none" stroke="#6366f1" strokeWidth={2} vectorEffect="non-scaling-stroke" />
@@ -260,7 +340,28 @@ function UploadPlanButton({ propertyId, onUploaded }: { propertyId: string; onUp
     let pdfDocument: import("pdfjs-dist").PDFDocumentProxy | undefined;
     try {
       if (file.size > 25 * 1024 * 1024) throw new Error("Choose a file no larger than 25MB.");
-      if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) {
+      const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+      // PDFs are rendered on the server at print quality with the original
+      // kept (the lease advisory plan engine); each page's title names its
+      // floor. The browser render below is only the fallback.
+      let serverRendered = false;
+      if (isPdf && completedPages === 0) {
+        setProgress("Rendering the PDF at print quality…");
+        const form = new FormData();
+        form.append("file", file); form.append("floor", floor); form.append("source", "leasing-plan");
+        const response = await fetch(`/api/properties/${propertyId}/plans`, { method: "POST", body: form, credentials: "include", headers: getAuthHeaders() });
+        const body = await response.json().catch(() => ({}));
+        if (response.ok) {
+          serverRendered = true;
+          const saved: Plan[] = body.plans || [];
+          if (saved[0]) onUploaded(saved[0]);
+          toast({ title: `Uploaded ${saved.length} page${saved.length === 1 ? "" : "s"}`,
+            description: [body.namedFromPdf ? `${body.namedFromPdf} floor name${body.namedFromPdf === 1 ? "" : "s"} read from the PDF.` : "Double-click a floor name to rename it.",
+              body.scanning ? "Scanning for units — Review scan when it's ready." : null, "The original PDF is kept."].filter(Boolean).join(" ") });
+        } else if (response.status !== 503) throw new Error(body.error || `Upload failed (${response.status})`);
+      }
+      if (serverRendered) { /* done */ }
+      else if (isPdf) {
         const pdfjs = await import("pdfjs-dist");
         pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
         pdfDocument = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
@@ -286,8 +387,9 @@ function UploadPlanButton({ propertyId, onUploaded }: { propertyId: string; onUp
         toast({ title: `Uploaded ${pdfDocument.numPages} page${pdfDocument.numPages === 1 ? "" : "s"}`, description: "Each page has its own plan. Double-click its floor name to rename it." });
       } else {
         setProgress("Uploading original image…");
-        onUploaded(await uploadImage(file, floor));
-        toast({ title: "Plan uploaded", description: "The original image resolution has been kept." });
+        const plan: any = await uploadImage(file, floor);
+        onUploaded(plan);
+        toast({ title: "Plan uploaded", description: `The original image resolution has been kept.${plan.scanning ? " Scanning for units — Review scan when it's ready." : ""}` });
       }
       setOpen(false); setFile(null); setCompletedPages(0); setProgress("");
     } catch (cause: any) {
@@ -304,14 +406,27 @@ function UploadPlanButton({ propertyId, onUploaded }: { propertyId: string; onUp
     <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setOpen(true)} data-testid="button-upload-plan"><Upload className="w-3.5 h-3.5 mr-1" />Upload plan</Button>
     <Dialog open={open} onOpenChange={value => { if (!uploading) setOpen(value); }}><DialogContent><DialogHeader><DialogTitle>Upload property plan</DialogTitle></DialogHeader>
       <div className="space-y-3">
-        <label className="block text-sm">Floor / plan name<input value={floor} disabled={uploading || completedPages > 0} onChange={event => setFloor(event.target.value)} className="mt-1 w-full text-sm border rounded px-2 py-2 bg-background" /></label>
+        <label className="block text-sm">Floor / plan name <span className="text-xs text-muted-foreground">(PDF pages with a title use it)</span><input value={floor} disabled={uploading || completedPages > 0} onChange={event => setFloor(event.target.value)} className="mt-1 w-full text-sm border rounded px-2 py-2 bg-background" /></label>
         <label className="block text-sm">PDF, PNG, JPG or WebP · up to 25MB<input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" disabled={uploading} onChange={event => { setFile(event.target.files?.[0] || null); setCompletedPages(0); setError(null); setProgress(""); }} className="mt-2 block w-full text-sm" /></label>
-        <p className="text-xs text-muted-foreground">Images keep their original resolution. PDFs are rendered as high-resolution images, with one plan per page. Rename each page to its floor after upload.</p>
+        <p className="text-xs text-muted-foreground">Images keep their original resolution. PDFs are rendered at print quality with the original kept, one plan per page, each named from its title where the page has one (e.g. "Lower Level"). The BGP team's uploads start a unit scan straight away.</p>
         {progress && <p role="status" className="text-sm">{progress}</p>}
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       </div><DialogFooter><Button variant="outline" disabled={uploading} onClick={() => setOpen(false)}>Cancel</Button><Button onClick={submit} disabled={uploading || !file || !floor.trim()}>{uploading ? "Uploading…" : completedPages ? "Resume upload" : "Upload"}</Button></DialogFooter>
     </DialogContent></Dialog>
   </>;
+}
+
+function OriginalPdfLink({ plan }: { plan: Plan }) {
+  const { toast } = useToast();
+  return <button className="text-xs px-2 py-1 rounded-full border bg-card hover:bg-muted inline-flex items-center gap-1" data-testid="button-plan-original-pdf" onClick={async () => {
+    try {
+      const response = await fetch(`/api/plans/${plan.id}/original-pdf`, { credentials: "include", headers: getAuthHeaders() });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || "The original PDF could not be opened.");
+      const url = URL.createObjectURL(await response.blob());
+      window.open(url, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error: any) { toast({ title: "Could not open the PDF", description: error.message, variant: "destructive" }); }
+  }}><FileText className="w-3 h-3" />Original PDF</button>;
 }
 
 function DeletePlanButton({ plan, onDeleted }: { plan: Plan; onDeleted: () => void }) {
@@ -389,6 +504,7 @@ function UnitDetailDrawer({ unit, propertyId, onClose, onUpdated, onRelink, read
         </dl>
         {unit.marketing_status && <p className="mt-3 text-xs text-muted-foreground">Marketing: {unit.marketing_status}{unit.asking_rent != null ? ` · ${formatMoney(unit.asking_rent)} pa asking` : ""}</p>}
       </div>
+      {unit.label_mismatch && <p className="text-sm text-amber-700 flex items-start gap-1.5"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />The plan label “{unit.label}” names a different unit than its tenancy row ({unit.unit_name}). Check the link or the schedule.</p>}
       {!unit.tenancy_unit_id && <p className="text-sm text-muted-foreground">{unit.link_state === "ambiguous" ? "More than one tenancy row could match this property unit. Choose the correct row so the plan shows reliable information." : "Link this outline to a tenancy row to display its lease information."}</p>}
       <div className="flex flex-wrap gap-2">
         {!readOnly && <Button size="sm" variant="outline" onClick={onRelink}><Link2 className="w-3.5 h-3.5 mr-1" />{unit.tenancy_unit_id ? "Change tenancy link" : "Link to tenancy"}</Button>}

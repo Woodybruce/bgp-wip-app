@@ -7,6 +7,8 @@ export interface PropertyPlan {
   height: number | null;
   source: string | null;
   notes: string | null;
+  has_pdf?: boolean;
+  pdf_page?: number | null;
 }
 
 export interface PlanPolygon { points: [number, number][] }
@@ -36,6 +38,8 @@ export interface PropertyPlanUnit {
   asking_rent: number | null;
   active_deals: Array<{ id: string; name: string; status: string; tenant_id: string | null; deal_type: string | null }> | null;
   status: string;
+  /** The printed label names a different unit than the linked tenancy row. */
+  label_mismatch?: boolean;
 }
 
 export interface PickablePlanUnit {

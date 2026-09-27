@@ -3,6 +3,7 @@ import { isValidPolygon } from "../shared/plan-geometry";
 type PlanDatabase = { query: (sql: string, values?: any[]) => Promise<{ rows: any[] }> };
 export class PropertyPlanInputError extends Error {
   status = 400;
+  constructor(message?: string, status = 400) { super(message); this.status = status; }
 }
 
 export function validatePropertyPlanPolygon(value: unknown): { points: Array<[number, number]> } {

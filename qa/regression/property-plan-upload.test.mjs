@@ -13,11 +13,12 @@ const handlerSource = find(file, (node, ast) => ts.isCallExpression(node) && ts.
 const errorHelper = find(file, node => ts.isFunctionDeclaration(node) && node.name?.text === 'errorResponse');
 function fixture({ blocked = false, missing = false } = {}) {
   let handler;
-  const saved = [], queries = [];
+  const saved = [], queries = [], pdfCalls = [];
   evaluate(`${errorHelper}\n${handlerSource}`, {
     sharp, PropertyPlanInputError, crypto: { randomUUID }, requireAuth() {}, upload: { single() {} },
     router: { post(_path, _auth, _upload, fn) { handler = fn; } },
     clientBlockedForProperty: async () => blocked,
+    autoScanPlans: async () => 0, savePdfPlan: async (_req, propertyId, file) => { pdfCalls.push({ propertyId, name: file.originalname }); return { plans: [{ id: 'page-1' }], pages: 1 }; },
     saveFile: async (...args) => saved.push(args),
     pool: { async query(sql, values) {
       queries.push({ sql, values });
@@ -25,7 +26,7 @@ function fixture({ blocked = false, missing = false } = {}) {
         : { rows: [{ id: values[0], property_id: values[1], storage_key: values[5], width: values[6], height: values[7] }] };
     } },
   });
-  return { saved, queries, async upload(buffer, body = {}, mimetype = 'image/png') {
+  return { saved, queries, pdfCalls, async upload(buffer, body = {}, mimetype = 'image/png') {
     let status = 200, data;
     const res = { status(value) { status = value; return this; }, json(value) { data = value; return this; } };
     await handler({ params: { propertyId: 'own-property' }, body, file: { buffer, mimetype, originalname: 'plan.png' } }, res);
@@ -69,4 +70,13 @@ test('out-of-scope and missing properties reject uploads before image storage', 
   const missing = fixture({ missing: true });
   assert.equal((await missing.upload(Buffer.from('unused'))).status, 404);
   assert.equal(missing.saved.length, 0);
+});
+
+test('a PDF plan goes to the server renderer (print quality, original kept), never the image path', async () => {
+  const target = fixture();
+  const response = await target.upload(Buffer.from('%PDF-1.7\n%fake'), {}, 'application/octet-stream');
+  assert.equal(response.status, 200, response.data?.error);
+  assert.equal(target.pdfCalls.length, 1);
+  assert.equal(target.pdfCalls[0].propertyId, 'own-property');
+  assert.equal(target.saved.length, 0, 'the image branch never stores a PDF as a plan image');
 });

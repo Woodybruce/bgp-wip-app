@@ -5,6 +5,7 @@ import React from 'react';
 import { createRequire } from 'node:module';
 import { planUnitChoiceKey } from '../../client/src/components/property-plan-types.ts';
 import { interiorPoint, isValidPolygon, pointInPolygon } from '../../shared/plan-geometry.ts';
+import { layoutPlanMarkers } from '../../shared/plan-marker-layout.ts';
 const require = createRequire(import.meta.url);
 const { source, ts } = require('./source-harness.cjs');
 
@@ -40,7 +41,7 @@ function fixture(name, { file = 'client/src/components/property-plans-panel.tsx'
     if (ts.isFunctionDeclaration(node) && !keptFunctions.has(node.name?.text)) bindings[node.name.text] = function Leaf() { return null; };
   }
   Object.assign(bindings, {
-    React, exports, console, URLSearchParams, planUnitChoiceKey, interiorPoint, isValidPolygon, pointInPolygon, queryClient,
+    React, exports, console, URLSearchParams, planUnitChoiceKey, interiorPoint, isValidPolygon, pointInPolygon, layoutPlanMarkers, queryClient,
     window: { location: { hash }, addEventListener: (name, handler) => { handlers[name] = handler; }, removeEventListener: noop },
     useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial; return [slots[index], next => { const value = typeof next === 'function' ? next(slots[index]) : next; changed ||= !Object.is(value, slots[index]); slots[index] = value; }]; },
     useMemo: fn => fn(), useEffect(fn, deps) { const index = effectCursor++; if (!runEffects) return; if (!effectSlots[index] || deps.some((dep, i) => !Object.is(dep, effectSlots[index][i]))) { effectSlots[index] = deps; effects.push(fn); } },

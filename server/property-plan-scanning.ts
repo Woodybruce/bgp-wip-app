@@ -62,7 +62,7 @@ router.post("/api/plans/:planId/auto-detect", requireAuth, async (_req: Request,
   res.status(409).json({ error: "Plan scanning now includes boundary review. Refresh the page and choose Scan units." });
 });
 
-async function runPropertyPlanScan(job: any, plan: any) {
+export async function runPropertyPlanScan(job: any, plan: any) {
   let inactive = false;
   const checkpoint = async (message: string, completed: number, total: number) => {
     if (inactive) throw new Error("This scan has stopped. Start a new scan.");
