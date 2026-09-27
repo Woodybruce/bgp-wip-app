@@ -115,13 +115,18 @@ export async function getAgentRelationship(firmId: string, deps: { pool?: Querie
   for (const t of sentSales) credit(t.person_id, "investment_buy");
   for (const t of sellingFor) credit(t.person_id, "investment_sell");
   for (const m of otherSide) credit(m.person_id, "lease_advisory");
+  // The work wins: contact imports defaulted everyone's specialty to
+  // "Leasing" (Savills had 42 "Leasing" people sending tenant-rep
+  // requirements), so a person whose recorded dealings point to a team sits
+  // in that team, with the recorded value shown when it differs. With no
+  // dealings the recorded specialty stands.
   const team = (p: any, caps: Record<string, number>) => {
     const recorded = teamFromSpecialty(p.agent_specialty);
-    if (recorded) return { team: recorded, inferred: false };
     const byTeam: Record<string, number> = {};
     for (const [role, n] of Object.entries(caps)) { const t = teamForRole(role as AgentRole); if (t) byTeam[t] = (byTeam[t] || 0) + n; }
-    const top = Object.entries(byTeam).sort((a, b) => b[1] - a[1])[0];
-    return top ? { team: top[0], inferred: true } : { team: null, inferred: false };
+    const top = Object.entries(byTeam).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+    if (top) return { team: top, inferred: top !== recorded, recordedTeam: recorded };
+    return { team: recorded, inferred: false, recordedTeam: recorded };
   };
   const teamPeople = people.map((p: any) => {
     const caps = capacities.get(p.id) || {};

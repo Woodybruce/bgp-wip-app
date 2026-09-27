@@ -106,7 +106,7 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
                   </div>
                   {busy.slice(0, 8).map((p: any) => (
                     <Row key={p.id} href={`/contacts/${p.id}`} title={p.name}
-                      sub={[p.title, p.inferred && "team inferred from their work"].filter(Boolean).join(" · ")}
+                      sub={[p.title, p.inferred && (p.recordedTeam ? `recorded as ${p.recordedTeam} — their work is ${g.team}` : "team from their work")].filter(Boolean).join(" · ")}
                       right={<>{Object.entries(p.capacities).sort((a: any, b: any) => b[1] - a[1]).slice(0, 2).map(([role, n]: any) => (
                         <Badge key={role} variant="outline" className="text-[9px]">{AGENT_ROLES.find(r => r.role === role)?.short || role} {n}</Badge>
                       ))}</>} />
