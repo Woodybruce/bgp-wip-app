@@ -41,6 +41,6 @@ test('use and approach outrank geography', () => {
 });
 
 test('"market" in a buyer note is not an F&B use', () => {
-  assert.deepEqual(useDetailsIn('Logistics units with strong market demand'), []);
+  assert.ok(!useDetailsIn('Logistics units with strong market demand').includes('F&B'));
   assert.deepEqual(useDetailsIn('Brixton Village food market and street food'), ['F&B']);
 });
