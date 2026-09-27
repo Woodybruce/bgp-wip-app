@@ -896,6 +896,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   is visible at a glance alongside the news ticker.
                   Brochures moved down to share a row with Brand Gap. */}
               <div className="flex flex-col gap-3 h-full min-h-0">
+                {simpleLayout && !isClientViewer && <PropertyReviewPanel propertyId={property.id} onOpenPlans={() => { setMainSections(previous => ({ ...previous, plans: true })); setPhoneSection("plans"); }} />}
                 {simpleLayout ? <PropertySimpleOverview propertyId={id} propertyName={property.name} landlordName={allCompanies.find(c => c.id === (property as any).landlordId)?.name || null} canTrack={!isClientViewer} showUnits={propertyView === "building"} rows={overviewSchedule.data} loading={overviewSchedule.isPending} failed={overviewSchedule.isError} onRetry={() => overviewSchedule.refetch()} onOpenTenancy={() => { setMainSections(previous => ({ ...previous, leasingSchedule: true })); setPhoneSection("tenancy"); }} /> : <>
                 {/* PropertyNewsPanel renders its own card + "News Feed"
                     header — the old outer Card double-framed it. */}
@@ -1106,7 +1107,7 @@ export function PropertyDetail({ id }: { id: string }) {
               Files+Contacts, Compliance+Activity, BGP Contacts+Client
               Board, Deals+Units (Woody, 2026-07-30). */}
           <aside className={simpleLayout ? ["files", "deals", "kyc", "activity"].includes(phoneSection) ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-start" : "hidden" : "space-y-3 lg:sticky lg:top-4 self-start"}>
-              {!isClientViewer && (
+              {!isClientViewer && !simpleLayout && (
               <PropertySection name={"overview"} active={phoneSection} simple={simpleLayout}>
                 <PropertyReviewPanel propertyId={property.id} onOpenPlans={() => {
                   setMainSections(previous => ({ ...previous, plans: true }));
