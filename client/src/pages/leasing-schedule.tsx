@@ -1092,6 +1092,22 @@ function TargetTenantRow({ target, onUpdate, onDelete }: {
   );
 }
 
+// Target plans run as a server job (a deep AI pass over the centre's
+// evidence takes a minute or more): start it, then poll until it's done.
+async function runTargetJob(url: string): Promise<any> {
+  const start = await fetch(url, { method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" } });
+  const started = await start.json().catch(() => ({}));
+  if (!start.ok) throw new Error(started?.error || "Could not start");
+  if (!started.accepted) return started;
+  for (let i = 0; i < 200; i++) {
+    await new Promise(r => setTimeout(r, 3000));
+    const job = await fetch(url, { headers: getAuthHeaders() }).then(r => r.json()).catch(() => null);
+    if (job?.state === "done") return job.result;
+    if (job?.state === "error") throw new Error(job.error || "Generation failed");
+  }
+  throw new Error("Still planning — check back in a minute");
+}
+
 function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
   unitId: string;
   propertyId: string;
@@ -1110,14 +1126,10 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
   const handleGenerate = async () => {
     setGenerating(true);
     try {
-      const res = await fetch(`/api/leasing-schedule/unit/${unitId}/generate-targets`, {
-        method: "POST",
-        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-      });
-      if (!res.ok) { toast({ title: "Generation failed", variant: "destructive" }); return; }
-      toast({ title: "Target tenants generated" });
+      const out = await runTargetJob(`/api/leasing-schedule/unit/${unitId}/generate-targets`);
+      toast({ title: `${out.targets?.length || 0} target tenants planned`, description: out.strategy ? String(out.strategy).slice(0, 300) : undefined });
       onRefresh();
-    } catch { toast({ title: "Generation failed", variant: "destructive" }); }
+    } catch (e: any) { toast({ title: "Generation failed", description: e?.message, variant: "destructive" }); }
     finally { setGenerating(false); }
   };
 
@@ -1200,7 +1212,7 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
       ))}
       <div className="flex items-center gap-1 pt-0.5">
         <button onClick={handleGenerate} disabled={generating} className="flex items-center gap-1 text-[10px] text-violet-400 hover:text-violet-600 px-1 py-0.5 rounded hover:bg-violet-50" data-testid={`regenerate-${unitId}`}>
-          <Sparkles className="w-2.5 h-2.5" />{generating ? "Generating..." : "More"}
+          <Sparkles className="w-2.5 h-2.5" />{generating ? "Planning…" : "More"}
         </button>
         <button onClick={() => setShowAdd(!showAdd)} className="text-[10px] text-muted-foreground/70 hover:text-muted-foreground px-1 py-0.5" data-testid={`add-manual-${unitId}`}>
           <Plus className="w-2.5 h-2.5 inline" />Add
@@ -1525,16 +1537,11 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
   const handleGenerateAll = async () => {
     setGeneratingAll(true);
     try {
-      const res = await fetch(`/api/leasing-schedule/property/${propertyId}/generate-targets`, {
-        method: "POST",
-        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-      });
-      if (!res.ok) { toast({ title: "Batch generation failed", variant: "destructive" }); return; }
-      const data = await res.json();
+      const data = await runTargetJob(`/api/leasing-schedule/property/${propertyId}/generate-targets`);
       const genCount = data.results?.reduce((s: number, r: any) => s + (r.generated || 0), 0) || 0;
       toast({ title: `Planned ${genCount} targets across the vacant units`, description: data.strategy ? String(data.strategy).slice(0, 300) : undefined });
       refetchTargets();
-    } catch { toast({ title: "Generation failed", variant: "destructive" }); }
+    } catch (e: any) { toast({ title: "Generation failed", description: e?.message, variant: "destructive" }); }
     finally { setGeneratingAll(false); }
   };
 
@@ -1761,7 +1768,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
           <Button variant="outline" size="sm" onClick={handleGenerateAll} disabled={generatingAll}
             className="border-violet-300 text-violet-700 hover:bg-violet-50" data-testid="btn-generate-all-targets">
             {generatingAll ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
-            {generatingAll ? "Generating..." : "AI Targets"}
+            {generatingAll ? "Planning targets…" : "AI Targets"}
           </Button>
           <Button variant="outline" size="sm" onClick={() => setShowAuditLog(!showAuditLog)} data-testid="btn-audit-log">
             <History className="w-3.5 h-3.5 mr-1" />Audit Log

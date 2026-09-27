@@ -1188,7 +1188,8 @@ router.delete("/api/leasing-schedule/target/:id", requireAuth, async (req, res) 
 // Target tenants — the shared engine (server/target-tenant-engine.ts):
 // evidence from the Brand Gap, top-centre benchmark, openings, live
 // requirements, BGP's brand conversations and deals, the landlord's tracker
-// targets and past outcomes, planned by Fable with extended thinking.
+// targets and past outcomes, planned by Fable with extended thinking. A plan
+// takes a minute or more, so POST starts a background job and GET polls it.
 router.post("/api/leasing-schedule/unit/:unitId/generate-targets", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
@@ -1197,61 +1198,85 @@ router.post("/api/leasing-schedule/unit/:unitId/generate-targets", requireAuth, 
     const { allowed, user } = await checkPropertyAccess(pool, req, unit.property_id);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
-    const { generateTargetsForUnits } = await import("./target-tenant-engine");
     const preview = req.query.preview === "1";
-    const result = await generateTargetsForUnits(pool, req, unit.property_id, [unit], { save: !preview });
-    if (result.failed.length) return res.status(502).json({ error: result.failed[0].error });
-    const inserted = result.inserted.get(unit.id) || [];
-    if (preview) return res.json({ strategy: result.strategy, targets: inserted });
-
-    await logAudit(pool, {
-      unitId: req.params.unitId as string, propertyId: unit.property_id,
-      userId: user.id, userName: user.username, action: "generate_targets",
-      newValue: `AI planned ${inserted.length} target tenants${result.strategy ? ` — ${result.strategy}` : ""}`,
+    const { startJob } = await import("./brand-jobs");
+    const { generateTargetsForUnits } = await import("./target-tenant-engine");
+    const { alreadyRunning } = startJob(`targets:unit:${unit.id}${preview ? ":preview" : ""}`, async () => {
+      const result = await generateTargetsForUnits(pool, req, unit.property_id, [unit], { save: !preview });
+      if (result.failed.length) throw new Error(result.failed[0].error);
+      const inserted = result.inserted.get(unit.id) || [];
+      if (!preview) await logAudit(pool, {
+        unitId: unit.id, propertyId: unit.property_id,
+        userId: user.id, userName: user.username, action: "generate_targets",
+        newValue: `AI planned ${inserted.length} target tenants${result.strategy ? ` — ${result.strategy}` : ""}`,
+      });
+      return { strategy: result.strategy, targets: inserted };
     });
-    res.json(inserted);
+    res.status(202).json({ accepted: true, alreadyRunning });
   } catch (e: any) {
     console.error("[target-tenants] AI generation error:", e.message);
     res.status(500).json({ error: e.message });
   }
 });
 
+router.get("/api/leasing-schedule/unit/:unitId/generate-targets", requireAuth, async (req, res) => {
+  const pool = await getPool();
+  const unit = (await pool.query(`SELECT property_id FROM leasing_schedule_units WHERE id = $1`, [req.params.unitId])).rows[0];
+  if (!unit) return res.status(404).json({ error: "Unit not found" });
+  const { allowed } = await checkPropertyAccess(pool, req, unit.property_id);
+  if (!allowed) return res.status(403).json({ error: "Access denied" });
+  const { getJobStatus } = await import("./brand-jobs");
+  res.json(getJobStatus(`targets:unit:${req.params.unitId}${req.query.preview === "1" ? ":preview" : ""}`) || { state: "idle" });
+});
+
 router.post("/api/leasing-schedule/property/:propertyId/generate-targets", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
+    const propertyId = req.params.propertyId as string;
+    const { allowed, user } = await checkPropertyAccess(pool, req, propertyId);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
     const units = (await pool.query(
       `SELECT u.* FROM leasing_schedule_units u
         WHERE u.property_id = $1 AND (u.status IN ('Vacant', 'Under Offer', 'In Negotiation', 'Opportunity') OR u.status IS NULL)
         ORDER BY u.sort_order`,
-      [req.params.propertyId]
+      [propertyId]
     )).rows;
     if (units.length === 0) {
       return res.json({ message: "No vacant or negotiating units to generate targets for", generated: 0, results: [] });
     }
     const counts = new Map<string, number>((await pool.query(
       `SELECT unit_id, COUNT(*)::int AS n FROM target_tenants WHERE property_id = $1 AND status = 'suggested' GROUP BY unit_id`,
-      [req.params.propertyId])).rows.map((r: any) => [r.unit_id, r.n]));
+      [propertyId])).rows.map((r: any) => [r.unit_id, r.n]));
     const todo = units.filter((u: any) => (counts.get(u.id) || 0) < 5);
 
+    const { startJob } = await import("./brand-jobs");
     const { generateTargetsForUnits } = await import("./target-tenant-engine");
-    const result = todo.length ? await generateTargetsForUnits(pool, req, req.params.propertyId as string, todo) : { inserted: new Map(), strategy: "", failed: [] as any[] };
-    const results = units.map((u: any) => {
-      if (!todo.includes(u)) return { unit_id: u.id, unit_name: u.unit_name, skipped: true, reason: "Already has 5+ suggestions" };
-      const fail = result.failed.find((f: any) => f.unit_id === u.id);
-      return fail ? { unit_id: u.id, unit_name: u.unit_name, error: fail.error } : { unit_id: u.id, unit_name: u.unit_name, generated: (result.inserted.get(u.id) || []).length };
+    const { alreadyRunning } = startJob(`targets:property:${propertyId}`, async () => {
+      const result = todo.length ? await generateTargetsForUnits(pool, req, propertyId, todo) : { inserted: new Map(), strategy: "", failed: [] as any[] };
+      const results = units.map((u: any) => {
+        if (!todo.includes(u)) return { unit_id: u.id, unit_name: u.unit_name, skipped: true, reason: "Already has 5+ suggestions" };
+        const fail = result.failed.find((f: any) => f.unit_id === u.id);
+        return fail ? { unit_id: u.id, unit_name: u.unit_name, error: fail.error } : { unit_id: u.id, unit_name: u.unit_name, generated: (result.inserted.get(u.id) || []).length };
+      });
+      await logAudit(pool, {
+        propertyId, userId: user.id, userName: user.username, action: "generate_targets",
+        newValue: `AI planned targets for ${todo.length} units${result.strategy ? ` — ${result.strategy}` : ""}`,
+      });
+      return { results, total_units: units.length, strategy: result.strategy };
     });
-    await logAudit(pool, {
-      unitId: null as any, propertyId: req.params.propertyId as string,
-      userId: user.id, userName: user.username, action: "generate_targets",
-      newValue: `AI planned targets for ${todo.length} units${result.strategy ? ` — ${result.strategy}` : ""}`,
-    });
-    res.json({ results, total_units: units.length, strategy: result.strategy });
+    res.status(202).json({ accepted: true, alreadyRunning, units: todo.length });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
+});
+
+router.get("/api/leasing-schedule/property/:propertyId/generate-targets", requireAuth, async (req, res) => {
+  const pool = await getPool();
+  const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
+  if (!allowed) return res.status(403).json({ error: "Access denied" });
+  const { getJobStatus } = await import("./brand-jobs");
+  res.json(getJobStatus(`targets:property:${req.params.propertyId}`) || { state: "idle" });
 });
 
 async function buildStyledSheet(wb: any, ExcelJS: any, propertyName: string, units: any[], targetTenants?: any[]) {

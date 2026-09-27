@@ -5036,7 +5036,10 @@ Return a JSON object with these fields (use null for any field you cannot find):
       // tracker targets) — one answer across every targeting surface.
       try {
         const { centreEvidence, unitCandidates } = await import("./target-tenant-engine");
-        const ev = await centreEvidence(pool, req, unit.property_id);
+        // Bounded: the first read of a centre runs the Brand Gap and openings;
+        // this dialog shouldn't wait on it past the request limit.
+        const ev = await Promise.race([centreEvidence(pool, req, unit.property_id),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("centre evidence still loading")), 20_000))]);
         for (const c of unitCandidates(ev, { id: unit.id, unit_name: unit.unit_name, sqft, use_class: unit.use_class }, new Set(), 20)) {
           const existing = candidates.find((x) => (c.companyId && x.companyId === c.companyId) || String(x.name || "").toLowerCase() === c.name.toLowerCase());
           if (existing) { existing.evidence = c.evidence; continue; }
