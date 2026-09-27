@@ -49,7 +49,8 @@ async function ensureAiSummaryColumn() {
   await pool.query(
     `UPDATE crm_interactions SET ai_summary = NULL
       WHERE ai_summary IS NOT NULL
-        AND ai_summary ~* '(don''t|do not) have access|would need to see|unable to (provide|summari[sz]e)|no meeting content|cannot summari[sz]e'`
+        AND (ai_summary ~* '(don''t|do not) have access|would need to see|unable to (provide|summari[sz]e)|no meeting content|cannot summari[sz]e|you''ve asked me|you have asked me|preview content is (blank|empty)'
+             OR ai_summary ~ '^NOTHING')`
   ).catch(() => {});
   aiSummaryEnsured = true;
 }
@@ -357,7 +358,7 @@ router.post("/api/interactions/:id/summarise", requireAuth, async (req: Request,
     });
     const summary = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
     // Refusal / nothing-to-say output never gets cached or shown.
-    if (!summary || summary === "NOTHING" || /don't have access|do not have access|would need to see|unable to (provide|summarise|summarize)|no meeting content|cannot summarise|cannot summarize/i.test(summary)) {
+    if (!summary || /^NOTHING\b/.test(summary) || /don't have access|do not have access|would need to see|unable to (provide|summarise|summarize)|no meeting content|cannot summarise|cannot summarize|you've asked me|you have asked me|preview content is (blank|empty)/i.test(summary)) {
       return res.json({ summary: null, skipped: true, reason: "Not enough content to summarise." });
     }
     await pool.query(`UPDATE crm_interactions SET ai_summary = $1 WHERE id = $2`, [summary, id]).catch(() => {});
