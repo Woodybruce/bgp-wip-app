@@ -40,7 +40,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
 import { PropertyUnifiedSchedule } from "@/components/PropertyUnifiedSchedule";
 import { PropertyPlansPanel } from "@/components/property-plans-panel";
-import { PropertySimpleOverview } from "@/components/property-simple-overview";
+import { PropertySimpleOverview, NextLeaseEvents } from "@/components/property-simple-overview";
 import { PROPERTY_VIEW_LABELS, suggestPropertyView, type PropertyOverviewUnit } from "@shared/property-view";
 import { BrandGapPanel } from "@/components/brand-gap-panel";
 import { NotesPanel } from "@/components/notes-panel";
@@ -393,6 +393,8 @@ export function PropertyDetail({ id }: { id: string }) {
     availableUnits: true,
     investmentComps: true,
     investment: true,
+    spaceFits: true,
+    leaseEvents: true,
     landRegistry: false,
     images: false,
     compliance: true,
@@ -772,16 +774,13 @@ export function PropertyDetail({ id }: { id: string }) {
                   // properties where most ownership slots are blank.
                   // A single "+ Add owner" affordance at the end keeps
                   // adding new entries one click away.
-                  // landlordId is the property-level "Client" — whoever BGP
-                  // is working for on this asset. The deals board surfaces
-                  // this implicitly via the deal-type → client-role logic
-                  // (landlord on a New Letting, vendor on a Sale, etc.).
-                  // At property level there's no deal type, so we expose
-                  // it directly as Client / Landlord. Same company can
-                  // sit in both the Freeholder + Client slots when the
-                  // legal owner is the operator too.
+                  // landlordId is the property's owner / landlord. It used
+                  // to read "Client / Landlord", but a completed sale hands
+                  // it to the buyer, who needn't be BGP's client (Woody,
+                  // 2026-09-27) — who BGP acts for lives on the deals.
+                  // Same company can sit in the Freeholder slot too.
                   const allRows = [
-                    { label: "Client / Landlord", field: "landlordId",        id: (property as any).landlordId },
+                    { label: "Owner / Landlord", field: "landlordId",        id: (property as any).landlordId },
                     { label: "Freeholder",        field: "freeholderId",      id: (property as any).freeholderId },
                     { label: "Long Leaseholder",  field: "longLeaseholderId", id: (property as any).longLeaseholderId },
                     { label: "Senior Lender",     field: "seniorLenderId",    id: (property as any).seniorLenderId },
@@ -896,7 +895,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   is visible at a glance alongside the news ticker.
                   Brochures moved down to share a row with Brand Gap. */}
               <div className="flex flex-col gap-3 h-full min-h-0">
-                {simpleLayout ? <PropertySimpleOverview propertyId={id} showUnits={propertyView === "building"} rows={overviewSchedule.data} loading={overviewSchedule.isPending} failed={overviewSchedule.isError} onRetry={() => overviewSchedule.refetch()} onOpenTenancy={() => { setMainSections(previous => ({ ...previous, leasingSchedule: true })); setPhoneSection("tenancy"); }} /> : <>
+                {simpleLayout ? <PropertySimpleOverview propertyId={id} propertyName={property.name} landlordName={allCompanies.find(c => c.id === (property as any).landlordId)?.name || null} canTrack={!isClientViewer} showUnits={propertyView === "building"} rows={overviewSchedule.data} loading={overviewSchedule.isPending} failed={overviewSchedule.isError} onRetry={() => overviewSchedule.refetch()} onOpenTenancy={() => { setMainSections(previous => ({ ...previous, leasingSchedule: true })); setPhoneSection("tenancy"); }} /> : <>
                 {/* PropertyNewsPanel renders its own card + "News Feed"
                     header — the old outer Card double-framed it. */}
                 <ErrorBoundary compact name="Property news (top-strip preview)">
@@ -1216,6 +1215,34 @@ export function PropertyDetail({ id }: { id: string }) {
               </ReferenceSection>
               </PropertySection>
 
+              {!isClientViewer && !simpleLayout && (overviewSchedule.data || []).length > 0 && (
+              <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
+              <ReferenceSection
+                title="Next lease events"
+                icon={CalendarIcon}
+                open={sidebarSections.leaseEvents}
+                onToggle={() => toggleSection("leaseEvents")}
+                testId="toggle-lease-events-section"
+              >
+                <NextLeaseEvents propertyId={property.id} propertyName={property.name} landlordName={allCompanies.find(c => c.id === (property as any).landlordId)?.name || null} rows={overviewSchedule.data || []} limit={6} />
+              </ReferenceSection>
+              </PropertySection>
+              )}
+
+              {!isClientViewer && (
+              <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
+              <ReferenceSection
+                title="Brands that fit"
+                icon={Store}
+                open={sidebarSections.spaceFits}
+                onToggle={() => toggleSection("spaceFits")}
+                testId="toggle-space-fits-section"
+              >
+                <PropertySpaceFitsPanel propertyId={property.id} />
+              </ReferenceSection>
+              </PropertySection>
+              )}
+
               {!isClientViewer && (
               <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
               <ReferenceSection
@@ -1267,6 +1294,44 @@ export function PropertyDetail({ id }: { id: string }) {
         </div>
 
       </div>
+    </div>
+  );
+}
+
+// ── Brands that fit the property's vacant units ─────────────────────────────
+// Each vacant / marketing unit with the brands whose live leasing requirement
+// fits it (size plus use or location) — the landlord page's Tenant rep view,
+// for one building. ★ = BGP acts for the brand. Staff only.
+function PropertySpaceFitsPanel({ propertyId }: { propertyId: string }) {
+  const { data, isLoading } = useQuery<{ space: any[] }>({ queryKey: ["/api/properties", propertyId, "space-fits"] });
+  if (isLoading) return <div className="text-xs text-muted-foreground py-2">Loading…</div>;
+  const space = data?.space || [];
+  const fitting = space.filter(u => u.fits.length > 0);
+  if (!space.length) return <p className="text-xs text-muted-foreground">No vacant or marketing units recorded.</p>;
+  return (
+    <div className="space-y-1">
+      {fitting.map(u => (
+        <div key={`${u.kind}-${u.id}`} className="py-1.5 border-b last:border-0 text-xs" data-testid={`space-fit-${u.id}`}>
+          <div className="flex items-center justify-between gap-2">
+            <Link href={u.kind === "marketing" ? `/available?propertyId=${propertyId}&unitId=${u.id}` : `/leasing-schedule/${propertyId}`} className="font-medium hover:underline truncate">{u.unitName || "Unit"}</Link>
+            <span className="flex items-center gap-1.5 shrink-0">
+              {u.sqft ? <span className="text-[10px] tabular-nums text-muted-foreground">{Number(u.sqft).toLocaleString()} sq ft</span> : null}
+              <Badge variant="outline" className="text-[9px]">{u.status}</Badge>
+            </span>
+          </div>
+          <div className="text-[11px] text-muted-foreground">
+            {u.fits.map((f: any, i: number) => (
+              <span key={f.requirementId}>{i > 0 && ", "}
+                {f.companyId ? <Link href={`/companies/${f.companyId}`} className={`hover:underline ${f.bgpClient ? "font-semibold text-foreground" : ""}`}>{f.name}{f.bgpClient ? " ★" : ""}</Link> : <span>{f.name}</span>}
+              </span>
+            ))}
+            {u.fitCount > u.fits.length ? ` +${u.fitCount - u.fits.length}` : ""}
+          </div>
+        </div>
+      ))}
+      {fitting.length === 0 && <p className="text-xs text-muted-foreground">{space.length} vacant or marketing unit{space.length === 1 ? "" : "s"} — none fits a live requirement's size with a matching use or location.</p>}
+      {fitting.length > 0 && space.length > fitting.length && <p className="text-[11px] text-muted-foreground">{space.length - fitting.length} other vacant unit{space.length - fitting.length === 1 ? "" : "s"} with no fit yet.</p>}
+      <p className="text-[10px] text-muted-foreground">★ BGP acts for the brand · <Link href="/requirements?type=leasing" className="text-primary hover:underline">Requirements</Link></p>
     </div>
   );
 }

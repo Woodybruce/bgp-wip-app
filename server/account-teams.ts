@@ -22,6 +22,43 @@ async function rows(q: Querier, sql: string, params: any[]): Promise<any[]> {
   catch (e: any) { console.warn("[account-teams]", e?.message); return []; }
 }
 
+// Vacant and marketing space on these properties with the brands whose live
+// leasing requirement fits each unit (size plus use or location; ★ = BGP acts
+// for the brand). Shared by the landlord Team view and the property page.
+export async function spaceFitsFor(q: Querier, propertyIds: string[]) {
+  const units = await rows(q, `SELECT au.id, au.property_id, au.unit_name, au.sqft, au.asking_rent, au.marketing_status, au.use_class,
+      p.name AS property_name, COALESCE(p.address::text, '') || ' ' || COALESCE(p.postcode, '') || ' ' || p.name AS property_text
+    FROM available_units au JOIN crm_properties p ON p.id = au.property_id
+    WHERE au.property_id = ANY($1::text[]) AND au.marketing_status IN ('OPP','AVA','NEG')
+    ORDER BY p.name, au.unit_name LIMIT 80`, [propertyIds]);
+  const scheduleVacancies = await rows(q, `SELECT lu.id, lu.property_id, lu.unit_name, lu.sqft, lu.status,
+      p.name AS property_name, COALESCE(p.address::text, '') || ' ' || COALESCE(p.postcode, '') || ' ' || p.name AS property_text
+    FROM leasing_schedule_units lu JOIN crm_properties p ON p.id = lu.property_id
+    WHERE lu.property_id = ANY($1::text[]) AND lu.status IN ('Vacant','Opportunity')
+      AND NOT EXISTS (SELECT 1 FROM available_units au WHERE au.leasing_schedule_unit_id = lu.id)
+    ORDER BY p.name, lu.unit_name LIMIT 60`, [propertyIds]);
+  // Brands looking for space: live leasing requirements, with the brands BGP
+  // acts for (a live tenant-rep deal or search) marked and listed first.
+  const requirementsLive = await rows(q, `SELECT r.id, r.company_id, COALESCE(c.name, r.name) AS brand_name, r.size, r.use, r.requirement_locations
+    FROM crm_requirements_leasing r LEFT JOIN crm_companies c ON c.id = r.company_id
+    WHERE r.status IS NULL OR r.status = 'Active'`, []);
+  const bgpClients = new Set((await rows(q, `SELECT DISTINCT d.tenant_id AS id FROM crm_deals d
+      WHERE d.bgp_acting_for = 'tenant' AND d.tenant_id IS NOT NULL AND ${OPEN_DEAL}
+    UNION SELECT DISTINCT company_id FROM tenant_rep_searches
+      WHERE company_id IS NOT NULL AND COALESCE(status, '') NOT IN ('Complete','Completed','Archived','Lost','On Hold')`, [])).map((r: any) => r.id));
+  const space = [
+    ...units.map((u: any) => ({ id: u.id, kind: "marketing" as const, propertyId: u.property_id, propertyName: u.property_name, unitName: u.unit_name, sqft: u.sqft, askingRent: u.asking_rent, status: u.marketing_status, text: u.property_text, unitText: `${u.unit_name || ""} ${u.use_class || ""}` })),
+    ...scheduleVacancies.map((u: any) => ({ id: u.id, kind: "schedule" as const, propertyId: u.property_id, propertyName: u.property_name, unitName: u.unit_name, sqft: u.sqft, askingRent: null, status: u.status, text: u.property_text, unitText: u.unit_name || "" })),
+  ].map(({ text, unitText, ...u }) => {
+    const fits = requirementsLive.filter((r: any) => requirementFitsUnit(r, { sqft: u.sqft, unit_text: unitText, property_text: text }))
+      .map((r: any) => ({ requirementId: r.id, companyId: r.company_id, name: r.brand_name, bgpClient: bgpClients.has(r.company_id) }))
+      .sort((a: any, b: any) => Number(b.bgpClient) - Number(a.bgpClient));
+    const seen = new Set<string>();
+    return { ...u, fits: fits.filter((f: any) => { const k = f.companyId || f.name; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 6), fitCount: fits.length };
+  }).sort((a, b) => Number(b.fits.some((f: any) => f.bgpClient)) - Number(a.fits.some((f: any) => f.bgpClient)) || b.fits.length - a.fits.length);
+  return { space, bgpClients, liveRequirements: requirementsLive.length };
+}
+
 export async function getAccountTeams(companyId: string, deps: { pool?: Querier } = {}) {
   const q = deps.pool ?? (await import("./db")).pool;
   const view = await resolveAccountView(companyId, {}, { pool: q });
@@ -73,36 +110,7 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
     ORDER BY updated_at DESC NULLS LAST LIMIT 20`, [entityIds]);
 
   // ── Tenant rep ──
-  const units = await rows(q, `SELECT au.id, au.property_id, au.unit_name, au.sqft, au.asking_rent, au.marketing_status, au.use_class,
-      p.name AS property_name, COALESCE(p.address::text, '') || ' ' || COALESCE(p.postcode, '') || ' ' || p.name AS property_text
-    FROM available_units au JOIN crm_properties p ON p.id = au.property_id
-    WHERE au.property_id = ANY($1::text[]) AND au.marketing_status IN ('OPP','AVA','NEG')
-    ORDER BY p.name, au.unit_name LIMIT 80`, [propertyIds]);
-  const scheduleVacancies = await rows(q, `SELECT lu.id, lu.property_id, lu.unit_name, lu.sqft, lu.status,
-      p.name AS property_name, COALESCE(p.address::text, '') || ' ' || COALESCE(p.postcode, '') || ' ' || p.name AS property_text
-    FROM leasing_schedule_units lu JOIN crm_properties p ON p.id = lu.property_id
-    WHERE lu.property_id = ANY($1::text[]) AND lu.status IN ('Vacant','Opportunity')
-      AND NOT EXISTS (SELECT 1 FROM available_units au WHERE au.leasing_schedule_unit_id = lu.id)
-    ORDER BY p.name, lu.unit_name LIMIT 60`, [propertyIds]);
-  // Brands looking for space: live leasing requirements, with the brands BGP
-  // acts for (a live tenant-rep deal or search) marked and listed first.
-  const requirementsLive = await rows(q, `SELECT r.id, r.company_id, COALESCE(c.name, r.name) AS brand_name, r.size, r.use, r.requirement_locations
-    FROM crm_requirements_leasing r LEFT JOIN crm_companies c ON c.id = r.company_id
-    WHERE r.status IS NULL OR r.status = 'Active'`, []);
-  const bgpClients = new Set((await rows(q, `SELECT DISTINCT d.tenant_id AS id FROM crm_deals d
-      WHERE d.bgp_acting_for = 'tenant' AND d.tenant_id IS NOT NULL AND ${OPEN_DEAL}
-    UNION SELECT DISTINCT company_id FROM tenant_rep_searches
-      WHERE company_id IS NOT NULL AND COALESCE(status, '') NOT IN ('Complete','Completed','Archived','Lost','On Hold')`, [])).map((r: any) => r.id));
-  const space = [
-    ...units.map((u: any) => ({ id: u.id, kind: "marketing" as const, propertyId: u.property_id, propertyName: u.property_name, unitName: u.unit_name, sqft: u.sqft, askingRent: u.asking_rent, status: u.marketing_status, text: u.property_text, unitText: `${u.unit_name || ""} ${u.use_class || ""}` })),
-    ...scheduleVacancies.map((u: any) => ({ id: u.id, kind: "schedule" as const, propertyId: u.property_id, propertyName: u.property_name, unitName: u.unit_name, sqft: u.sqft, askingRent: null, status: u.status, text: u.property_text, unitText: u.unit_name || "" })),
-  ].map(({ text, unitText, ...u }) => {
-    const fits = requirementsLive.filter((r: any) => requirementFitsUnit(r, { sqft: u.sqft, unit_text: unitText, property_text: text }))
-      .map((r: any) => ({ requirementId: r.id, companyId: r.company_id, name: r.brand_name, bgpClient: bgpClients.has(r.company_id) }))
-      .sort((a: any, b: any) => Number(b.bgpClient) - Number(a.bgpClient));
-    const seen = new Set<string>();
-    return { ...u, fits: fits.filter((f: any) => { const k = f.companyId || f.name; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 6), fitCount: fits.length };
-  }).sort((a, b) => Number(b.fits.some((f: any) => f.bgpClient)) - Number(a.fits.some((f: any) => f.bgpClient)) || b.fits.length - a.fits.length);
+  const { space, bgpClients, liveRequirements } = await spaceFitsFor(q, propertyIds);
   const tenantRepDeals = await rows(q, `SELECT d.id, d.name, d.status, d.deal_type, d.property_id, t.name AS tenant_name, d.tenant_id
     FROM crm_deals d LEFT JOIN crm_companies t ON t.id = d.tenant_id
     WHERE d.property_id = ANY($1::text[]) AND d.bgp_acting_for = 'tenant' AND ${OPEN_DEAL}
@@ -245,7 +253,7 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
     forSalePropertyIds,
     tenantRep: {
       space,
-      liveRequirements: requirementsLive.length,
+      liveRequirements,
       bgpClients: bgpClients.size,
       deals: tenantRepDeals.map((d: any) => ({ ...d, property_name: propertyName.get(d.property_id) || null })),
     },
@@ -258,6 +266,17 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
 }
 
 const router = Router();
+
+// One property's vacant / marketing space with the brands that fit it.
+router.get("/api/properties/:id/space-fits", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { resolveCompanyScope } = await import("./company-scope");
+    if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Available in the staff view." });
+    const { pool } = await import("./db");
+    const { space } = await spaceFitsFor(pool, [String(req.params.id)]);
+    res.json({ space });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
 
 router.get("/api/accounts/:id/teams", requireAuth, async (req: Request, res: Response) => {
   try {

@@ -6153,7 +6153,7 @@ function PropertiesList({
                               propertyId={item.id}
                               companyId={(item as any).landlordId}
                               fieldName="landlordId"
-                              label="Client / Landlord"
+                              label="Owner / Landlord"
                               allCompanies={allCompanies}
                               readOnly={isClientViewer}
                             />
