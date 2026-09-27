@@ -369,7 +369,8 @@ export default function BrandsHub() {
             <div className="flex items-center gap-2">
               <Flame className="w-4 h-4 text-orange-500" />
               <CardTitle className="text-sm font-semibold">Who's Hot</CardTitle>
-              <Badge variant="secondary" className="text-[10px]">{filteredHot.length}</Badge>
+              {/* Badge = rows shown, not the full list — it said 20 over 10 rows (Woody, 2026-09-27). */}
+              <Badge variant="secondary" className="text-[10px]">{Math.min(filteredHot.length, 10)}</Badge>
             </div>
             <span className="text-[10px] text-muted-foreground">last 90 days</span>
           </CardHeader>

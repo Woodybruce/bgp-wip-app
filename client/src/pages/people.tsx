@@ -28,7 +28,6 @@ import { CrmMeetingsTab } from "@/components/crm-meetings-tab";
 import { Pill } from "@/components/ui/pill";
 import { countLabel } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CRM_OPTIONS } from "@/lib/crm-options";
 import { guessDomain, extractDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import type { CrmCompany, CrmContact, CrmDeal, CrmProperty, CrmRequirementsLeasing, CrmRequirementsInvestment, InvestmentTracker } from "@shared/schema";
 
@@ -527,8 +526,6 @@ function AgentsTab({
     return Array.from(locs).sort();
   }, [agentCompanies]);
 
-  const specialties = CRM_OPTIONS.agentSpecialty;
-
   const filtered = useMemo(() => {
     let list = agentCompanies;
 
@@ -578,25 +575,28 @@ function AgentsTab({
 
   return (
     <div className="space-y-4">
+      {/* One reset chip (the list is always firms — "Individual Agents" was a
+          second always-active chip doing the same reset, now a plain count),
+          and zero-count specialty chips hidden unless selected. The old
+          All/Leasing/… segmented row repeated these chips and is gone
+          (Woody, 2026-09-27). */}
       <div className="flex flex-wrap items-center gap-1.5">
         <Pill active={!specialtyFilter} onClick={() => { setSpecialtyFilter(null); setLocationFilter(null); setSearch(""); }} data-testid="stat-agent-firms">
           Agent Firms <span className="font-mono tabular-nums">{agentCompanies.length}</span>
         </Pill>
-        <Pill active={!specialtyFilter} onClick={() => { setSpecialtyFilter(null); setLocationFilter(null); setSearch(""); }} data-testid="stat-individual-agents">
-          Individual Agents <span className="font-mono tabular-nums">{agentContacts.length}</span>
-        </Pill>
-        <Pill active={specialtyFilter === "Leasing"} onClick={() => setSpecialtyFilter(specialtyFilter === "Leasing" ? null : "Leasing")} data-testid="stat-leasing">
-          Leasing <span className="font-mono tabular-nums">{agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "leasing").length}</span>
-        </Pill>
-        <Pill active={specialtyFilter === "Investment"} onClick={() => setSpecialtyFilter(specialtyFilter === "Investment" ? null : "Investment")} data-testid="stat-investment">
-          Investment <span className="font-mono tabular-nums">{agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "investment").length}</span>
-        </Pill>
-        <Pill active={specialtyFilter === "Tenant Rep"} onClick={() => setSpecialtyFilter(specialtyFilter === "Tenant Rep" ? null : "Tenant Rep")} data-testid="stat-tenant-rep">
-          Tenant Rep <span className="font-mono tabular-nums">{agentContacts.filter(c => agentReqCounts[c.id] > 0).length}</span>
-        </Pill>
-        <Pill active={specialtyFilter === "Lease Advisory"} onClick={() => setSpecialtyFilter(specialtyFilter === "Lease Advisory" ? null : "Lease Advisory")} data-testid="stat-lease-advisory">
-          Lease Advisory <span className="font-mono tabular-nums">{agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "lease advisory").length}</span>
-        </Pill>
+        {([
+          ["Leasing", "stat-leasing", agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "leasing").length],
+          ["Investment", "stat-investment", agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "investment").length],
+          ["Tenant Rep", "stat-tenant-rep", agentContacts.filter(c => agentReqCounts[c.id] > 0).length],
+          ["Lease Advisory", "stat-lease-advisory", agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "lease advisory").length],
+        ] as const).filter(([label, , n]) => n > 0 || specialtyFilter === label).map(([label, testId, n]) => (
+          <Pill key={label} active={specialtyFilter === label} onClick={() => setSpecialtyFilter(specialtyFilter === label ? null : label)} data-testid={testId}>
+            {label} <span className="font-mono tabular-nums">{n}</span>
+          </Pill>
+        ))}
+        <span className="text-xs text-muted-foreground ml-1" data-testid="stat-individual-agents">
+          <span className="font-mono tabular-nums">{agentContacts.length}</span> individual agents
+        </span>
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">
@@ -614,32 +614,6 @@ function AgentsTab({
               <X className="w-3.5 h-3.5 text-muted-foreground" />
             </button>
           )}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <div className="inline-flex rounded-lg border bg-muted p-0.5">
-            <button
-              onClick={() => setSpecialtyFilter(null)}
-              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                !specialtyFilter ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-              }`}
-              data-testid="filter-specialty-all"
-            >
-              All
-            </button>
-            {specialties.map((s) => (
-              <button
-                key={s}
-                onClick={() => setSpecialtyFilter(specialtyFilter === s ? null : s)}
-                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                  specialtyFilter === s ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-                }`}
-                data-testid={`filter-specialty-${s.toLowerCase().replace(/\s/g, "-")}`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
         </div>
 
         {locations.length > 0 && (

@@ -2241,9 +2241,14 @@ export default function AvailableUnitsPage() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="text-center py-12 text-muted-foreground">
-                    <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                    {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
+                  <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="p-0 text-muted-foreground">
+                    {/* Pinned to the left of the visible scroll area — centred
+                        across the wide span only a stray letter showed at the
+                        right edge (Woody, 2026-09-27). */}
+                    <div className="sticky left-0 w-full max-w-[min(28rem,calc(100vw-2rem))] py-12 text-center">
+                      <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                      {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : (
@@ -2526,10 +2531,11 @@ export default function AvailableUnitsPage() {
                               <span className="font-mono text-[11px] tabular-nums">
                                 {/* "sq ft" like the rest of the app, whole feet
                                     ("753.91 sf" → "754 sq ft"); 0 is "not recorded",
-                                    not a 0 sq ft kiosk (Woody, 2026-09-27). */}
+                                    not a 0 sq ft kiosk; unknown is a bare "—", no unit
+                                    (Woody, 2026-09-27). */}
                                 {(Number(deal?.totalAreaSqft) || Number(u.sqft)) > 0
                                   ? `${Math.round(Number(deal?.totalAreaSqft) || Number(u.sqft)).toLocaleString("en-GB")} sq ft`
-                                  : <span className="text-muted-foreground">— sq ft</span>}
+                                  : <span className="text-muted-foreground">—</span>}
                               </span>
                               {u.askingRent != null ? (
                                 <span className="font-mono text-[11px] tabular-nums">£{Number(u.askingRent).toLocaleString("en-GB")}</span>

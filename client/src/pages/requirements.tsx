@@ -2640,9 +2640,14 @@ function LeasingSection({
                 ))}
                 {items.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={20} className="text-center py-8 text-muted-foreground">
-                      <Users className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                      <p className="text-sm">{isArchived ? "No archived requirements" : "No active requirements found"}</p>
+                    <TableCell colSpan={20} className="p-0 text-muted-foreground">
+                      {/* Pinned to the left of the visible scroll area — centred
+                          across 20 columns it landed off-screen and the row read
+                          as a blank grey box (Woody, 2026-09-27). */}
+                      <div className="sticky left-0 w-full max-w-[min(28rem,calc(100vw-2rem))] py-8 text-center">
+                        <Users className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                        <p className="text-sm">{isArchived ? "No archived requirements" : "No active requirements found"}</p>
+                      </div>
                     </TableCell>
                   </TableRow>
                 )}

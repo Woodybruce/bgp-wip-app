@@ -1071,6 +1071,31 @@ function PropertyUnitCell({
   );
 }
 
+// Drop the property from a deal title when the card subtitle already shows
+// it. Matches the property name's leading words (longest first, down to one
+// significant word) at either end of the title, with or without a separator,
+// so "Brent Cross – Pure Gym" under "Brent Cross Shopping Centre" and
+// "10 Piccadilly Time Out Market" under "10 Piccadilly" both shorten. Never
+// strips to empty (Woody, 2026-09-27).
+const TITLE_STOPWORDS = new Set(["the", "and", "of", "at", "on", "in"]);
+function stripPropertyFromTitle(title: string, propName: string): string {
+  // The title is itself a short form of the property ("Brent Cross") — keep it.
+  if (propName.trim().toLowerCase().startsWith(title.trim().toLowerCase())) return title;
+  const words = propName.trim().split(/\s+/).filter(Boolean);
+  const esc = (w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const sep = "(?:\\s*[–—\\-|,:·]\\s*|\\s+)";
+  for (let k = words.length; k >= 1; k--) {
+    const head = words.slice(0, k);
+    if (!head.some(w => /[a-z]{3,}/i.test(w) && !TITLE_STOPWORDS.has(w.toLowerCase()))) continue;
+    const prefix = head.map(esc).join("\\s+");
+    for (const re of [new RegExp(`^\\s*${prefix}${sep}`, "i"), new RegExp(`${sep}${prefix}\\s*$`, "i")]) {
+      const rest = title.replace(re, "").trim();
+      if (rest && rest !== title.trim()) return rest;
+    }
+  }
+  return title;
+}
+
 // Consolidated Fee cell — £ amount on top, Fee Agreement chip
 // underneath. Popover lets the team set both without touching two
 // columns.
@@ -1082,7 +1107,8 @@ function FeeCombinedCell({
   readOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const feeStr = deal.fee != null ? `£${Number(deal.fee).toLocaleString("en-GB")}` : null;
+  // Whole pounds, as on the phone card — "£5,127.5" read as a typo (Woody, 2026-09-27).
+  const feeStr = deal.fee != null ? `£${Math.round(Number(deal.fee)).toLocaleString("en-GB")}` : null;
 
   // Clients (and client-view mode) see the fee they're paying, read-only —
   // no edit popover, and no "Add fee" placeholder when it's unset.
@@ -1324,8 +1350,10 @@ function ClientXeroCell({
   onXeroChange: (c: { ContactID: string; Name: string; AccountNumber: string | null; BillingAddress: any } | null) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // No "Linked client" stand-in — it read as a real client name. An
+  // unresolved link shows "—" like an empty one (Woody, 2026-09-27).
   const clientName = deal.landlordId
-    ? (companies.find(c => c.id === deal.landlordId)?.name || "Linked client")
+    ? (companies.find(c => c.id === deal.landlordId)?.name || null)
     : null;
   const xeroName = (deal as any).xeroContactName || null;
   const xeroAcct = (deal as any).xeroAccountNumber || null;
@@ -1341,9 +1369,7 @@ function ClientXeroCell({
           {clientName ? (
             <span className="text-sm font-medium truncate" title={clientName}>{clientName}</span>
           ) : (
-            <span className="text-muted-foreground text-[11px] flex items-center gap-1">
-              <Plus className="w-3 h-3" /> Add client
-            </span>
+            <span className="text-muted-foreground text-[11px]">—</span>
           )}
           {xeroName ? (
             <span className="text-[11px] text-muted-foreground truncate flex items-center gap-1 min-w-0 max-w-full">
@@ -1353,9 +1379,9 @@ function ClientXeroCell({
                   painting across the Deal Type column. */}
               <span className="truncate min-w-0" title={`${xeroName}${xeroAcct ? ` · A/C ${xeroAcct}` : ""}`}>{xeroName}{xeroAcct ? ` · A/C ${xeroAcct}` : ""}</span>
             </span>
-          ) : (
+          ) : clientName ? (
             <span className="text-[10px] text-muted-foreground italic">No Xero contact</span>
-          )}
+          ) : null}
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-[380px] p-3 space-y-2.5" align="start">
@@ -3211,7 +3237,9 @@ function FeeAllocCell({ dealId, dealFee, allAllocations, colorMap, teams, onClic
     );
   }
   return (
-    <div className="space-y-0.5 cursor-pointer group" onClick={onClick} data-testid={`fee-alloc-summary-${dealId}`}>
+    // min-w + shrink-0 amount — at 1440px the split column squeezed "£15,000"
+    // down to "£15" (Woody, 2026-09-27).
+    <div className="space-y-0.5 cursor-pointer group min-w-[150px]" onClick={onClick} data-testid={`fee-alloc-summary-${dealId}`}>
       {teamBadges}
       {allocations.map((a, i) => {
         const amount = a.allocationType === "percentage"
@@ -3224,8 +3252,8 @@ function FeeAllocCell({ dealId, dealFee, allAllocations, colorMap, teams, onClic
             <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 ${bg}`}>
               <span className="text-[7px] font-bold text-white">{initials}</span>
             </div>
-            <span className="text-[11px] truncate max-w-[60px]">{a.agentName.split(" ")[0]}</span>
-            <span className="text-[10px] text-muted-foreground ml-auto font-mono">{formatCurrency(amount)}</span>
+            <span className="text-[11px] truncate min-w-0 max-w-[60px]">{a.agentName.split(" ")[0]}</span>
+            <span className="text-[10px] text-muted-foreground ml-auto font-mono tabular-nums shrink-0 whitespace-nowrap">{formatCurrency(amount)}</span>
           </div>
         );
       })}
@@ -6535,9 +6563,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   // The subtitle already shows the property, so "Nando's –
                   // Bluewater Shopping Centre" over "Bluewater Shopping Centre"
                   // becomes "Nando's" (Woody, 2026-09-27).
-                  const escProp = propName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
                   const cardTitle = customDealName && propName
-                    ? customDealName.replace(new RegExp(`\\s*[–—\\-|,:·]\\s*${escProp}\\s*$`, "i"), "").replace(new RegExp(`^\\s*${escProp}\\s*[–—\\-|,:·]\\s*`, "i"), "").trim() || customDealName
+                    ? stripPropertyFromTitle(customDealName, propName)
                     : customDealName;
                   // Phone triage needs dates without opening each deal:
                   // Target Date drives the WIP bucket, and time-in-status
@@ -6665,7 +6692,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {effectiveColumns.parties && <TableHead className="min-w-[180px]">Parties</TableHead>}
                     {effectiveColumns.feeCombined && <TableHead className="min-w-[110px]">Fee</TableHead>}
                     {effectiveColumns.fee && <SortableTableHead sortKey="fee" sort={dealsSort} align="right" className="min-w-[80px]">Fee</SortableTableHead>}
-                    {effectiveColumns.feeAlloc && !isClientDeals && <TableHead className="min-w-[120px]">Fee Split</TableHead>}
+                    {effectiveColumns.feeAlloc && !isClientDeals && <TableHead className="min-w-[160px]">Fee Split</TableHead>}
                     {effectiveColumns.agent && <SortableTableHead sortKey="agent" sort={dealsSort} className="min-w-[80px]">BGP Contact</SortableTableHead>}
                     {effectiveColumns.assetClass && (
                       <TableHead className="min-w-[80px]">
@@ -6884,12 +6911,13 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       {effectiveColumns.fee && (
                         <TableCell className="px-1.5 py-1">
                           {isClientDeals ? (
-                            <span className="font-mono text-xs">{deal.fee != null ? `£${Number(deal.fee).toLocaleString("en-GB")}` : "—"}</span>
+                            <span className="font-mono text-xs">{deal.fee != null ? `£${Math.round(Number(deal.fee)).toLocaleString("en-GB")}` : "—"}</span>
                           ) : (
                             <InlineNumber
                               value={deal.fee}
                               onSave={(v) => handleInlineSave(deal.id, "fee", v)}
                               prefix="£"
+                              format={(n) => Math.round(n).toLocaleString("en-GB")}
                             />
                           )}
                         </TableCell>

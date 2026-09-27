@@ -2247,8 +2247,10 @@ export default function WipReport() {
                           return (
                             <div className="flex flex-col gap-0.5">
                               {!isActual && e.dealId ? (
-                                <label key={`wip-target-${e.dealId}-${e.targetDate ?? ""}`} className="relative inline-flex items-center text-xs border border-border rounded px-1 py-0.5 w-[72px] cursor-pointer focus-within:border-ring">
-                                <span className={dateStr ? "" : "text-muted-foreground/70"}>{dateStr || "Set"}</span>
+                                <label key={`wip-target-${e.dealId}-${e.targetDate ?? ""}`} title="Set target month" className="relative inline-flex items-center text-xs border border-border rounded px-1 py-0.5 w-[72px] cursor-pointer focus-within:border-ring">
+                                {/* Empty reads "—" like every other blank cell here — "Set" on
+                                    one row among dashes looked like data (Woody, 2026-09-27). */}
+                                <span className={dateStr ? "" : "text-muted-foreground/70"}>{dateStr || "—"}</span>
                                 <input
                                   type="month"
                                   // The target date belongs to the DEAL, so this saves to the deal —

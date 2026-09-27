@@ -6095,7 +6095,10 @@ function PropertiesList({
               ))}
             </div>
           ) : (
-            <ScrollableTable key={currentPage} minWidth={2200}>
+            // minWidth ≈ the sum of the column widths. At 2200 the spare
+            // ~800px inflated Property/Ownership and pushed Team off the
+            // right edge at 1440px ("T" / "Natl/Leas") (Woody, 2026-09-27).
+            <ScrollableTable key={currentPage} minWidth={1420}>
               <Table>
                 <TableHeader>
                   {/* §6 header spec — 11px semibold uppercase muted; the
@@ -6343,12 +6346,16 @@ function PropertiesList({
                   ))}
                   {filteredItems.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={2 + Object.values(visibleColumns).filter(v => v).length} className="text-center py-12 text-muted-foreground">
-                        <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
-                          <Building2 className="w-6 h-6 text-muted-foreground" />
+                      <TableCell colSpan={2 + Object.values(visibleColumns).filter(v => v).length} className="p-0 text-muted-foreground">
+                        {/* Pinned to the left of the visible scroll area — centred
+                            across every column it ran off-screen (Woody, 2026-09-27). */}
+                        <div className="sticky left-0 w-full max-w-[min(28rem,calc(100vw-2rem))] py-12 text-center">
+                          <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
+                            <Building2 className="w-6 h-6 text-muted-foreground" />
+                          </div>
+                          <p className="text-sm font-semibold text-foreground">No properties found</p>
+                          <p className="text-xs mt-1">Add a property or adjust your filters</p>
                         </div>
-                        <p className="text-sm font-semibold text-foreground">No properties found</p>
-                        <p className="text-xs mt-1">Add a property or adjust your filters</p>
                       </TableCell>
                     </TableRow>
                   )}
