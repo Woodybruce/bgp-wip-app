@@ -1038,6 +1038,25 @@ installGoogleBudgetGuard();
        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
      )`,
     `CREATE INDEX IF NOT EXISTS idx_property_plan_scans_plan ON property_plan_scans(plan_id, created_at DESC)`,
+    // Property "Needs review" items (Woody, 2026-09-27): imports and matches
+    // that need a person — a tracker line that fits two units, source-data
+    // differences held back — listed on the property page with the choices.
+    `CREATE TABLE IF NOT EXISTS property_review_items (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       property_id TEXT NOT NULL,
+       kind TEXT NOT NULL,
+       title TEXT NOT NULL,
+       detail TEXT,
+       source TEXT,
+       options JSONB NOT NULL DEFAULT '[]'::jsonb,
+       status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved','dismissed')),
+       resolution TEXT,
+       resolved_by TEXT,
+       resolved_at TIMESTAMPTZ,
+       created_by TEXT,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_property_review_items_open ON property_review_items(property_id) WHERE status = 'open'`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_property_plan_scans_running ON property_plan_scans(plan_id) WHERE status = 'running'`,
     // Type-mismatch cleanup (may already be correct — that's fine)
     `ALTER TABLE crm_deals ALTER COLUMN break_option TYPE TEXT USING break_option::text`,
@@ -3290,6 +3309,7 @@ import accountWorkspaceRouter from "./account-workspace";
 import accountTeamsRouter from "./account-teams";
 import agentRelationshipRouter from "./agent-relationship";
 import investmentBuyersRouter from "./investment-buyers";
+import propertyReviewRouter from "./property-review";
 import accountMediaRouter from "./account-media";
 import signatureContactSyncRouter from "./signature-contact-sync";
 import accountFolderInventoryRouter from "./account-folder-inventory";
@@ -4295,6 +4315,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(accountTeamsRouter);
   app.use(agentRelationshipRouter);
   app.use(investmentBuyersRouter);
+  app.use(propertyReviewRouter);
   app.use(accountMediaRouter);
   app.use(signatureContactSyncRouter);
   app.use(accountFolderInventoryRouter);

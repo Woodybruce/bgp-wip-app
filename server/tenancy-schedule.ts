@@ -167,7 +167,7 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
 // Full list of columns the API accepts on create/update. Mirrors the
 // Landsec-aligned schema in server/index.ts auto-migrate. Used by both POST
 // (create) and PUT (update) below + by the xlsx import header → field mapper.
-const TENANCY_FIELDS = [
+export const TENANCY_FIELDS = [
   // Unit Details
   "grouping", "floor_level", "premises", "unit_number", "permitted_use", "status", "am_initiative",
   // Tenant Details

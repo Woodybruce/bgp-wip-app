@@ -35,6 +35,7 @@ import {
   TrendingUp,
   Store,
   Map as MapIcon,
+  AlertTriangle,
 } from "lucide-react";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
@@ -1105,6 +1106,16 @@ export function PropertyDetail({ id }: { id: string }) {
               Files+Contacts, Compliance+Activity, BGP Contacts+Client
               Board, Deals+Units (Woody, 2026-07-30). */}
           <aside className={simpleLayout ? ["files", "deals", "kyc", "activity"].includes(phoneSection) ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-start" : "hidden" : "space-y-3 lg:sticky lg:top-4 self-start"}>
+              {!isClientViewer && (
+              <PropertySection name={"overview"} active={phoneSection} simple={simpleLayout}>
+                <PropertyReviewPanel propertyId={property.id} onOpenPlans={() => {
+                  setMainSections(previous => ({ ...previous, plans: true }));
+                  setPhoneSection(simpleLayout ? "plans" : "boards");
+                  requestAnimationFrame(() => document.querySelector('[data-testid="toggle-plans"]')?.scrollIntoView({ behavior: "smooth", block: "start" }));
+                }} />
+              </PropertySection>
+              )}
+
               {/* Clients get the read-only jailed browser (their own
                   SharePoint area, no internal team names) instead of the
                   staff panel — restored per Woody, 2026-08-03. */}
@@ -1295,6 +1306,68 @@ export function PropertyDetail({ id }: { id: string }) {
 
       </div>
     </div>
+  );
+}
+
+// ── Needs review ────────────────────────────────────────────────────────────
+// Things on this property waiting for a person (Woody, 2026-09-27): plan scans
+// to review, outlines to link, tracker lines that fit two units, source data
+// held back. Each item carries its choices; resolving applies the chosen
+// schedule edits. Hidden when nothing is waiting. Staff only.
+function PropertyReviewPanel({ propertyId, onOpenPlans }: { propertyId: string; onOpenPlans: () => void }) {
+  const { toast } = useToast();
+  const [openItem, setOpenItem] = useState<string | null>(null);
+  const { data } = useQuery<{ items: any[] }>({ queryKey: ["/api/properties", propertyId, "review-items"] });
+  const resolve = useMutation({
+    mutationFn: async ({ id, option, dismiss }: { id: string; option?: string; dismiss?: boolean }) => (await apiRequest("POST", `/api/review-items/${id}/resolve`, { option, dismiss })).json(),
+    onSuccess: (_r, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "review-items"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      toast({ title: vars.dismiss ? "Dismissed" : "Done — the schedule has been updated" });
+    },
+    onError: (e: any) => toast({ title: "Couldn't apply that", description: e?.message, variant: "destructive" }),
+  });
+  const items = data?.items || [];
+  if (!items.length) return null;
+  const KIND: Record<string, string> = { plan_scan: "Plan scan", plan_links: "Plan links", tracker_unit: "Leasing tracker", data_difference: "Data difference" };
+  return (
+    <Card className="border-amber-300" data-testid="property-review-panel">
+      <div className="px-3 py-2 flex items-center gap-2 border-b">
+        <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+        <span className="text-xs font-semibold">Needs review</span>
+        <Badge variant="secondary" className="text-[10px] h-4 px-1">{items.length}</Badge>
+      </div>
+      <div className="max-h-[420px] overflow-y-auto divide-y">
+        {items.map(item => (
+          <div key={item.id} className="px-3 py-2 text-xs space-y-1" data-testid={`review-item-${item.kind}`}>
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{KIND[item.kind] || item.kind}</div>
+                <div className="font-medium">{item.title}</div>
+              </div>
+              {item.live
+                ? <Button variant="outline" size="sm" className="h-6 px-2 text-[10px] shrink-0" onClick={onOpenPlans}>Open plans</Button>
+                : <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] shrink-0" onClick={() => setOpenItem(openItem === item.id ? null : item.id)}>{openItem === item.id ? "Hide" : "Choose"}</Button>}
+            </div>
+            {item.detail && <p className="text-[11px] text-muted-foreground whitespace-pre-line">{item.detail}</p>}
+            {!item.live && openItem === item.id && (
+              <div className="space-y-1.5 pt-1">
+                {(item.options || []).map((o: any) => (
+                  <div key={o.key} className="rounded border p-2 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">{o.label}</span>
+                      <Button size="sm" className="h-6 px-2 text-[10px]" disabled={resolve.isPending} onClick={() => resolve.mutate({ id: item.id, option: o.key })} data-testid={`review-apply-${o.key}`}>Apply</Button>
+                    </div>
+                    {o.detail && <p className="text-[11px] text-muted-foreground whitespace-pre-line">{o.detail}</p>}
+                  </div>
+                ))}
+                <button className="text-[11px] text-muted-foreground underline" disabled={resolve.isPending} onClick={() => resolve.mutate({ id: item.id, dismiss: true })}>Dismiss — nothing to change</button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 
