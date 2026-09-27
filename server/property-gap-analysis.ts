@@ -748,7 +748,7 @@ Write FOUR SHORT paragraphs separated by blank lines, each opening with a bold l
     try {
       msg = await client.messages.create({
         model: "claude-sonnet-4-6",
-        max_tokens: 500,
+        max_tokens: 1200,
         messages: [{ role: "user", content: prompt }],
       });
     } catch (aiErr: any) {

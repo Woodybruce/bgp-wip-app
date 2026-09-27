@@ -199,22 +199,9 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
           </div>
         </>
       )}
-      {/* Tenant-linking health is back-of-house (Woody, 2026-09-27) — only
-          shown when something is badly unlinked; the detail lives in Data
-          housekeeping. */}
-      {pct !== null && pct < 60 && (
-        <>
-          <span className="text-muted-foreground/40">·</span>
-          <span
-            className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border ${spineTone}`}
-            title={spineTitle}
-            data-testid="chip-spine-health"
-          >
-            <span className={`w-1.5 h-1.5 rounded-full ${gapTotal === 0 && pct >= 95 ? "bg-emerald-500" : pct >= 60 ? "bg-amber-500" : "bg-rose-500"}`} />
-            Tenants linked {tr.resolved}/{tr.total}{gapTotal > 0 ? ` · ${gapTotal} to review` : ""}
-          </span>
-        </>
-      )}
+      {/* Tenant-linking health is back-of-house (Woody, 2026-09-27): the
+          detail lives in Data housekeeping and the nightly trading-name /
+          brand linking fills the gaps. */}
       <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
         <span className="uppercase tracking-wider mr-1">Last activity</span>
         <span className="text-foreground font-medium">{timeAgo(data.property.last_updated_at)}</span>

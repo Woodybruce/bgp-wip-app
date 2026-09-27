@@ -2064,10 +2064,13 @@ export function setupNewsFeedRoutes(app: Express) {
       // it to the street / area from the address, and keep only stories
       // that mention that place (Woody, 2026-09-27 — Lucent's feed showed a
       // cocoa-roaster and an AI start-up).
-      const singleWord = distinctiveWords.length <= 1 && !propertyName.includes(",");
+      // Only a name that IS one word — "Bluewater Shopping Centre" is a
+      // destination name, not an everyday word.
+      const singleWord = propertyName.trim().split(/\s+/).length === 1;
       const streetLine = typeof addr === "string" ? addr : (addr?.street || addr?.address || addr?.line1 || "");
       const placeWords = Array.from(new Set(tokenise(String(streetLine || "").split(",")[0] || "")
-        .concat(locationTokens).filter((w: string) => w.length > 3 && !GENERIC_PROP_WORDS.has(w) && !distinctiveWords.includes(w))));
+        .concat(locationTokens).filter((w: string) => w.length > 3 && !GENERIC_PROP_WORDS.has(w) && !distinctiveWords.includes(w)
+          && !/^(pkwy|parkway|avenue|lane|close|drive|crescent|terrace|walk|mews)$/.test(w))));
       const aliasNames: string[] = (Array.isArray((property as any).aliases) ? (property as any).aliases : [])
         .map((a: any) => String(a || "").toLowerCase().trim()).filter((a: string) => a.length > 4 && a !== nameLower);
       const matchedArticles = dbArticles.filter(a => {

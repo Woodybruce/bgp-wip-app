@@ -91,8 +91,8 @@ export function PropertySimpleOverview({ propertyId, propertyName, landlordName,
         </div>}
         <div className="border-t pt-3 space-y-2">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Next lease events</h2>
-          {canTrack ? <NextLeaseEvents propertyId={propertyId} propertyName={propertyName} landlordName={landlordName} rows={rows} onOpenTenancy={onOpenTenancy} /> : <>
-          {nextEvents.slice(0, 3).map(event => <Link key={`${event.unit.id}-${event.kind}`} href={tenancyHref(event.unit)} className="flex justify-between gap-3 text-sm hover:underline"><span>{event.unit.unit_number || event.unit.premises || "Unit"} · {event.kind}</span><span className="font-mono tabular-nums whitespace-nowrap">{formatCalendarDate(event.date)}</span></Link>)}
+          {canTrack ? <NextLeaseEvents propertyId={propertyId} propertyName={propertyName} landlordName={landlordName} rows={rows} limit={showUnits ? 3 : 5} onOpenTenancy={onOpenTenancy} /> : <>
+          {nextEvents.slice(0, showUnits ? 3 : 5).map(event => <Link key={`${event.unit.id}-${event.kind}`} href={tenancyHref(event.unit)} className="flex justify-between gap-3 text-sm hover:underline"><span>{event.unit.unit_number || event.unit.premises || "Unit"} · {event.kind}</span><span className="font-mono tabular-nums whitespace-nowrap">{formatCalendarDate(event.date)}</span></Link>)}
           {!nextEvents.length && <p className="text-sm text-muted-foreground">No upcoming lease dates recorded.</p>}
           {pastEvents.length > 0 && <button type="button" onClick={onOpenTenancy} className="text-sm underline text-left">{pastEvents.length} recorded lease {pastEvents.length === 1 ? "date has" : "dates have"} passed — review the schedule</button>}
           </>}
