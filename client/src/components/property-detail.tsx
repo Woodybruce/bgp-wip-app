@@ -1316,9 +1316,12 @@ function PropertyInvestmentPanel({ propertyId }: { propertyId: string }) {
               <div>
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-0.5">Buyers who fit — not yet sent{a.fitsTotal > a.fits.length ? ` (top ${a.fits.length} of ${a.fitsTotal})` : ""}</div>
                 {a.fits.map((b: any) => (
-                  <div key={b.companyId || b.name} className="text-[11px] flex justify-between gap-2">
-                    {b.companyId ? <Link href={`/companies/${b.companyId}`} className="font-medium hover:underline truncate">{b.name}</Link> : <span className="font-medium truncate">{b.name}</span>}
-                    <span className="text-muted-foreground truncate">{(b.reasons || []).join(" · ")}</span>
+                  <div key={b.companyId || b.name} className="py-1 border-b last:border-0">
+                    <div className="text-[11px] flex items-center justify-between gap-2">
+                      {b.companyId ? <Link href={`/companies/${b.companyId}`} className="font-medium hover:underline truncate">{b.name}</Link> : <span className="font-medium truncate">{b.name}</span>}
+                      <span className="text-[10px] text-muted-foreground shrink-0">{(b.sources || []).map((x: string) => x === "comps" ? "past buyer" : x).join(" · ")}</span>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">{(b.reasons || []).map((r: string) => r.replace(/ \((requirement|mandate)\)$/, "")).join(" · ")}</div>
                   </div>
                 ))}
               </div>
@@ -1364,8 +1367,13 @@ function PropertyInvestmentCompsPanel({ propertyId }: { propertyId: string }) {
       </div>
       <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-1">
         <span>{[c.status === "Sale - Pending" ? "Exchanged" : "Sold", when(c.transaction_date), c.city].filter(Boolean).join(" · ")}</span>
-        {(c.seller || c.buyer) && <span>· {party(c.seller, c.seller_company_id) || "?"} → {party(c.buyer, c.buyer_company_id) || "?"}</span>}
       </div>
+      {(c.seller || c.buyer) && (
+        <div className="text-[11px] text-muted-foreground">
+          {c.seller && c.buyer ? <>{party(c.seller, c.seller_company_id)} → {party(c.buyer, c.buyer_company_id)}</>
+            : c.seller ? <>Sold by {party(c.seller, c.seller_company_id)}</> : <>Bought by {party(c.buyer, c.buyer_company_id)}</>}
+        </div>
+      )}
       {extra && <div className="text-[10px] text-muted-foreground">{extra}</div>}
     </div>
   );

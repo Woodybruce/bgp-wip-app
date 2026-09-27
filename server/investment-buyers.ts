@@ -22,6 +22,14 @@ export const buyerNameKey = (v: any) => String(v || "").toLowerCase()
   .replace(/\b(plc|ltd|limited|llp|lp|inc|group|holdings|investments?|asset management|am|real estate|properties|property|partners|capital|uk)\b/g, "")
   .replace(/[^a-z0-9]/g, "");
 
+// A comp's class comes from its recorded type (RCA: Retail / Office /
+// Hotel …) — the name only when the type is blank ("Holiday Inn —
+// Kensington High Street" is a hotel, not high-street retail).
+const compClasses = (c: { transaction_type?: string | null; subtype?: string | null; property_name?: string | null }) => {
+  const fromType = assetClassesIn(`${c.transaction_type || ""} ${c.subtype || ""}`);
+  return fromType.length ? fromType : assetClassesIn(c.property_name || "");
+};
+
 const fmtM = (v: number) => v >= 1e9 ? `£${(v / 1e9).toFixed(1)}bn` : `£${Math.round(v / 1e6)}m`;
 
 export async function getBuyersForAsset(trackerId: string, deps: { pool?: Querier } = {}) {
@@ -94,7 +102,7 @@ export async function getBuyersForAsset(trackerId: string, deps: { pool?: Querie
       const key = keyFor(c.buyer_company_id, raw);
       const e = compBuyers.get(key) || { name: raw.trim(), companyId: c.buyer_company_id || companyByKey.get(buyerNameKey(raw))?.id || null, sameClass: 0, sameUse: 0, nearPrice: 0, sameArea: 0, latest: null };
       const cText = `${c.transaction_type || ""} ${c.subtype || ""} ${c.property_name || ""}`;
-      const cClasses = assetClassesIn(cText);
+      const cClasses = compClasses(c);
       if (!classes.some(x => cClasses.includes(x))) { compBuyers.set(key, e); continue; }
       e.sameClass++;
       if (profile.uses.some(u => useDetailsIn(`${cText} ${c.subtype === "Centers" ? "shopping centre" : ""}`).includes(u))) e.sameUse++;
@@ -153,7 +161,9 @@ export async function getPropertyInvestmentComps(propertyId: string, deps: { poo
     WHERE property_id = $1 OR (property_id IS NULL AND lower(property_name) = lower($2))
     ORDER BY transaction_date DESC NULLS LAST LIMIT 20`, [propertyId, p.name || ""]);
   const assetClass = Array.isArray(p.asset_class) ? p.asset_class.join(" ") : String(p.asset_class || "");
-  const profile = assetProfile({ assetType: assetClass, name: p.name, address: `${p.address || ""} ${p.postcode || ""}` });
+  const [guide] = await rows(q, `SELECT guide_price FROM investment_tracker WHERE property_id = $1 AND guide_price IS NOT NULL ORDER BY updated_at DESC NULLS LAST LIMIT 1`, [propertyId]);
+  const guidePrice = Number(guide?.guide_price) || null;
+  const profile = assetProfile({ assetType: assetClass, name: p.name, address: `${p.address || ""} ${p.postcode || ""}`, guidePrice });
   let similar: any[] = [];
   if (profile.classes.length) {
     const candidates = await rows(q, `SELECT ${cols} FROM investment_comps
@@ -162,11 +172,13 @@ export async function getPropertyInvestmentComps(propertyId: string, deps: { poo
     const hereIds = new Set(here.map((c: any) => c.id));
     similar = candidates.filter((c: any) => !hereIds.has(c.id)).map((c: any) => {
       const text = `${c.transaction_type || ""} ${c.subtype || ""} ${c.property_name || ""}`;
-      if (!assetClassesIn(text).some(x => profile.classes.includes(x))) return null;
+      if (!compClasses(c).some(x => profile.classes.includes(x))) return null;
       const uses = useDetailsIn(`${text} ${c.subtype === "Centers" ? "shopping centre" : ""}`).filter(u => profile.uses.includes(u));
       const sameSide = assetIsLondon(`${c.city || ""} ${c.address || ""} ${c.postal_code || ""}`) === profile.london;
-      const reasons = [profile.classes[0], ...uses, sameSide ? (profile.london ? "London" : "outside London") : null].filter(Boolean);
-      return { ...c, score: 4 + uses.length * 2 + (sameSide ? 1 : 0), reasons };
+      const price = Number(c.price) || 0;
+      const nearPrice = !!(guidePrice && price && price >= guidePrice / 3 && price <= guidePrice * 3);
+      const reasons = [profile.classes[0], ...uses, sameSide ? (profile.london ? "London" : "outside London") : null, nearPrice ? `near the £${Math.round(guidePrice! / 1e6)}m guide` : null].filter(Boolean);
+      return { ...c, score: 4 + uses.length * 2 + (sameSide ? 1 : 0) + (nearPrice ? 1 : 0), reasons };
     }).filter(Boolean)
       .sort((a: any, b: any) => b.score - a.score || String(b.transaction_date || "").localeCompare(String(a.transaction_date || "")))
       .slice(0, 12);
@@ -195,7 +207,7 @@ export async function getPropertyInvestment(propertyId: string, deps: { pool?: Q
     if (a.board_type === "Sales" && LIVE.test(String(a.status || "REP"))) {
       try {
         const r = await getBuyersForAsset(a.id, { pool: q });
-        a.fits = r.buyers.filter((b: any) => !b.sentAt && !b.bid).slice(0, 5).map((b: any) => ({ name: b.name, companyId: b.companyId, reasons: b.reasons.slice(0, 2), sources: b.sources }));
+        a.fits = r.buyers.filter((b: any) => !b.sentAt && !b.bid).slice(0, 5).map((b: any) => ({ name: b.name, companyId: b.companyId, reasons: b.reasons.slice(0, 3), sources: b.sources }));
         a.fitsTotal = r.buyers.filter((b: any) => !b.sentAt && !b.bid).length;
       } catch { /* buyers are a nice-to-have on the property page */ }
     }
