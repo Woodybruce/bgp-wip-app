@@ -155,7 +155,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
               </Section>
               <Section title="Investment comps" count={inv.comps.length} link="/investment-comps" linkLabel="Comps" empty="No recorded trades as buyer or seller.">
                 {inv.comps.length > 0 && <div className="space-y-1">{inv.comps.slice(0, 5).map((c: any) => (
-                  <Row key={c.id} title={c.property_name || "Trade"} sub={[c.side === "sold" ? "Sold" : "Bought", c.city, c.cap_rate && `${Number(c.cap_rate).toFixed(2)}%`].filter(Boolean).join(" · ")} right={<><span className="text-[10px] tabular-nums">{money(c.price)}</span><span className="text-[10px] text-muted-foreground">{fmtMonth(c.transaction_date)}</span></>} />
+                  <Row key={c.id} href={c.property_id ? `/properties/${c.property_id}` : "/investment-comps"} title={c.property_name || "Trade"} sub={[c.side === "sold" ? "Sold" : "Bought", c.city, c.cap_rate && `${(Number(c.cap_rate) < 1 ? Number(c.cap_rate) * 100 : Number(c.cap_rate)).toFixed(2)}%`].filter(Boolean).join(" · ")} right={<><span className="text-[10px] tabular-nums">{money(c.price)}</span><span className="text-[10px] text-muted-foreground">{fmtMonth(c.transaction_date)}</span></>} />
                 ))}</div>}
               </Section>
             </div>

@@ -84,17 +84,15 @@ export async function normaliseFirmOnlyDealFees(q: Pool | PoolClient): Promise<A
 async function maybeCopyDealToComps(deal: any): Promise<void> {
   if (!deal?.id) return;
   const dealType = String(deal.dealType || "").toLowerCase();
-  const isInvestment = dealType.includes("investment") || dealType.includes("acquisition") || dealType === "sale" || dealType === "purchase";
+  // "Lease Acquisition" is a tenant-rep leasing deal, not an investment one.
+  const isInvestment = dealType.includes("investment") || (dealType.includes("acquisition") && !dealType.includes("lease")) || dealType === "sale" || dealType === "purchase";
 
   if (isInvestment) {
-    const existing = await pool.query(`SELECT 1 FROM investment_comps WHERE rca_deal_id = $1 LIMIT 1`, [deal.id]);
-    if ((existing.rowCount ?? 0) > 0) return;
-    await pool.query(
-      `INSERT INTO investment_comps (id, rca_deal_id, status, transaction_type, property_name, transaction_date, price)
-       VALUES (gen_random_uuid(), $1, 'COM', $2, $3, $4, $5)`,
-      [deal.id, deal.dealType || null, deal.name || null, deal.completedAt ? new Date(deal.completedAt).toISOString().slice(0, 10) : null, deal.fee || null]
-    );
-    console.log(`[deal->comps] Copied investment deal ${deal.id} (${deal.name}) into investment_comps`);
+    // One comp per investment deal, linked to buyer / seller / property
+    // (server/investment-comp-sync.ts) — this path used to add a second,
+    // unlinked comp with the fee as the price.
+    const { promoteDealToInvestmentComp } = await import("./investment-comp-sync");
+    await promoteDealToInvestmentComp(deal.id);
   } else {
     const existing = await pool.query(`SELECT 1 FROM crm_comps WHERE deal_id = $1 LIMIT 1`, [deal.id]);
     if ((existing.rowCount ?? 0) > 0) return;
@@ -4070,57 +4068,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (statusChanged && nowComplete) {
         if (isInvestmentTeam) {
           try {
-            const existing = await db.select().from(investmentComps)
-              .where(eq(investmentComps.rcaDealId, `bgp-${deal.id}`)).limit(1);
-
-            if (existing.length === 0) {
-              let propertyName = deal.name;
-              let address = "";
-              let city = "";
-              let postalCode = "";
-
-              if (deal.propertyId) {
-                const [prop] = await db.select().from(crmProperties).where(eq(crmProperties.id, deal.propertyId)).limit(1);
-                if (prop) {
-                  propertyName = prop.name || deal.name;
-                  const addr = typeof prop.address === "object" && prop.address ? prop.address as Record<string, any> : {};
-                  address = addr.street || addr.line1 || addr.address || "";
-                  city = addr.city || addr.town || "";
-                  postalCode = addr.postcode || addr.postalCode || addr.zip || "";
-                }
-              }
-
-              let buyerName = "";
-              let sellerName = "";
-              if (deal.purchaserId) {
-                const [co] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, deal.purchaserId)).limit(1);
-                if (co) buyerName = co.name;
-              }
-              if (deal.vendorId) {
-                const [co] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, deal.vendorId)).limit(1);
-                if (co) sellerName = co.name;
-              }
-
-              await db.insert(investmentComps).values({
-                rcaDealId: `bgp-${deal.id}`,
-                status: "Sale",
-                transactionType: deal.dealType || "Sale",
-                propertyName,
-                address,
-                city,
-                postalCode,
-                price: deal.pricing || null,
-                pricePsf: deal.pricePsf || null,
-                capRate: deal.yieldPercent ? deal.yieldPercent / 100 : null,
-                areaSqft: deal.totalAreaSqft || null,
-                transactionDate: deal.completedAt ? new Date(deal.completedAt).toISOString().slice(0, 10) : new Date().toISOString().split("T")[0],
-                buyer: buyerName || null,
-                seller: sellerName || null,
-                comments: deal.comments || null,
-                source: "BGP",
-              });
-              console.log(`Auto-promoted investment deal ${deal.id} to Investment Comps`);
-            }
+            const { promoteDealToInvestmentComp } = await import("./investment-comp-sync");
+            await promoteDealToInvestmentComp(deal.id);
           } catch (compErr: any) {
             console.error("Investment Comps auto-promotion error:", compErr.message);
           }

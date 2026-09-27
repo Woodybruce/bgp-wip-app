@@ -3285,6 +3285,7 @@ import accountDealsRouter from "./account-deals";
 import accountWorkspaceRouter from "./account-workspace";
 import accountTeamsRouter from "./account-teams";
 import agentRelationshipRouter from "./agent-relationship";
+import investmentBuyersRouter from "./investment-buyers";
 import accountMediaRouter from "./account-media";
 import signatureContactSyncRouter from "./signature-contact-sync";
 import accountFolderInventoryRouter from "./account-folder-inventory";
@@ -4289,6 +4290,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(accountWorkspaceRouter);
   app.use(accountTeamsRouter);
   app.use(agentRelationshipRouter);
+  app.use(investmentBuyersRouter);
   app.use(accountMediaRouter);
   app.use(signatureContactSyncRouter);
   app.use(accountFolderInventoryRouter);
@@ -5107,6 +5109,15 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
           }
         } catch (e: any) { console.error("[expansion] v2 backfill failed to start:", e?.message); }
       }, 40000);
+      // Investment links (tracker deals' Investment team, comp buyer/seller
+      // company links, one linked comp per exchanged / completed BGP
+      // investment deal) — each once, flagged in system_settings.
+      setTimeout(async () => {
+        try {
+          const { runInvestmentLinkBackfills } = await import("./investment-comp-sync");
+          await runInvestmentLinkBackfills();
+        } catch (e: any) { console.error("[investment-links] backfill failed:", e?.message); }
+      }, 45000);
       setTimeout(async () => {
         const KEY = "rssapp_curated_ig_feeds_last_run";
         try {

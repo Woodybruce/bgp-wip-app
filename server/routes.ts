@@ -5733,10 +5733,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           propertyId: row.propertyId,
           status: legacyToCode(row.status) || "REP",
           dealType,
+          team: ["Investment"],
           internalAgent: await resolveAgentNames(row.agentUserIds),
           fee: row.fee ?? undefined,
-          ...(row.clientId ? (dealType === "Sale" ? { vendorId: row.clientId, landlordId: row.clientId } : { purchaserId: row.clientId, landlordId: row.clientId }) : {}),
+          ...(row.clientId ? (dealType === "Sale" ? { vendorId: row.clientId, landlordId: row.clientId } : { purchaserId: row.clientId }) : {}),
           ...(row.vendorId && dealType === "Purchase" ? { vendorId: row.vendorId } : {}),
+          ...(row.buyerId && dealType === "Sale" ? { purchaserId: row.buyerId } : {}),
         } as any);
         await db.update(invTracker).set({ dealId: deal.id }).where(eq(invTracker.id, row.id));
         created++;
@@ -7806,15 +7808,16 @@ These terms are indicative only and do not constitute a binding agreement.`;
     if (sale) {
       if (row.clientId) { parties.vendorId = row.clientId; parties.landlordId = row.clientId; }
       else if (row.vendorId) parties.vendorId = row.vendorId;
-      if (row.buyerId) parties.purchaserId = row.buyerId;
+      parties.purchaserId = row.buyerId || null;          // cleared buyer clears the purchaser
     } else {
       if (row.clientId) parties.purchaserId = row.clientId;
       if (row.vendorId) parties.vendorId = row.vendorId;
     }
+    parties.vendorAgentContactId = row.vendorAgentId || null;
+    parties.vendorAgentId = null;
     if (row.vendorAgentId) {
-      parties.vendorAgentContactId = row.vendorAgentId;
       const agentFirm = await pool.query(`SELECT company_id FROM crm_contacts WHERE id = $1`, [row.vendorAgentId]).catch(() => ({ rows: [] as any[] }));
-      if (agentFirm.rows[0]?.company_id) parties.vendorAgentId = agentFirm.rows[0].company_id;
+      parties.vendorAgentId = agentFirm.rows[0]?.company_id || null;
     }
     return parties;
   };
@@ -7922,7 +7925,25 @@ These terms are indicative only and do not constitute a binding agreement.`;
         if ("status" in updates) dealPatch.status = updates.status;
         if ("fee" in updates) dealPatch.fee = updates.fee;
         if ("agentUserIds" in updates) dealPatch.internalAgent = await resolveAgentNames(updates.agentUserIds);
-        if ("clientId" in updates) dealPatch.landlordId = updates.clientId || null;
+        // The client is the landlord only when BGP is selling for them.
+        if ("clientId" in updates && ((("boardType" in updates ? updates.boardType : row.boardType) || "Purchases") === "Sales")) dealPatch.landlordId = updates.clientId || null;
+        // Pricing, yield, size, property and dates follow the tracker so the
+        // deal (and the comp it becomes) carries them.
+        if ("guidePrice" in updates) dealPatch.pricing = updates.guidePrice ?? null;
+        if ("niy" in updates) dealPatch.yieldPercent = updates.niy ?? null;
+        if ("sqft" in updates) dealPatch.totalAreaSqft = updates.sqft ?? null;
+        if ("propertyId" in updates && updates.propertyId) dealPatch.propertyId = updates.propertyId;
+        if ("completionDate" in updates && updates.completionDate) dealPatch.completedAt = new Date(updates.completionDate);
+        if ("status" in updates) {
+          const code = legacyToCode(updates.status as string);
+          if (code === "EXC") dealPatch.exchangedAt = new Date();
+          if (code === "COM" && !row.completionDate) {
+            const today = new Date().toISOString().slice(0, 10);
+            await db.update(investmentTracker).set({ completionDate: today }).where(eq(investmentTracker.id, row.id));
+            (row as any).completionDate = today;
+            dealPatch.completedAt = new Date();
+          }
+        }
         if ("vendorId" in updates) dealPatch.vendorId = updates.vendorId || null;
         // Board switch (Sales ⇄ Purchases) retypes the backing deal so the
         // Deals board, WIP report and the deal form's party rules follow.
@@ -7952,6 +7973,16 @@ These terms are indicative only and do not constitute a binding agreement.`;
             await storage.updateCrmDeal(row.dealId, dealPatch as any);
           } catch (e: any) {
             console.warn(`[investment-tracker PATCH] deal sync failed for ${row.dealId}:`, e?.message);
+          }
+        }
+        // Exchanged / completed → the one linked comp (the deal route's
+        // promotion never fires here since we call storage directly).
+        if ("status" in updates && ["EXC", "COM", "INV"].includes(legacyToCode(updates.status as string) || "")) {
+          try {
+            const { promoteDealToInvestmentComp } = await import("./investment-comp-sync");
+            await promoteDealToInvestmentComp(row.dealId);
+          } catch (e: any) {
+            console.warn(`[investment-tracker PATCH] comp promotion failed for ${row.dealId}:`, e?.message);
           }
         }
         // We bypass /api/crm/deals/:id (calling storage directly), so the

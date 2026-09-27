@@ -430,7 +430,25 @@ function FilterDropdown({ value, onChange, options, label, searchable = false }:
   );
 }
 
+// The access check sits in this wrapper, ahead of the board's hooks — the
+// board's early return used to come before later hooks, so the hook order
+// changed once the profile loaded.
 export default function InvestmentCompsPage({ embedded = false }: { embedded?: boolean } = {}) {
+  const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isAdmin = ["woody@brucegillinghampollard.com", "accounts@brucegillinghampollard.com"].includes(currentUser?.email || "");
+  const isInvestment = currentUser?.team === "Investment";
+  if (currentUser && !isAdmin && !isInvestment) {
+    return (
+      <div className="p-4 sm:p-6 text-center space-y-4">
+        <h2 className="text-lg font-semibold">Access Restricted</h2>
+        <p className="text-sm text-muted-foreground">This page is only available to the Investment team.</p>
+      </div>
+    );
+  }
+  return <InvestmentCompsBoard embedded={embedded} />;
+}
+
+function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {}) {
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isAdmin = ["woody@brucegillinghampollard.com", "accounts@brucegillinghampollard.com"].includes(currentUser?.email || "");
   const isInvestment = currentUser?.team === "Investment";
@@ -743,8 +761,8 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
             <InlineLinkSelect
               value={comp.buyerCompanyId}
               options={companyOptions}
-              href={comp.buyerCompanyId ? `/companies?highlight=${comp.buyerCompanyId}` : undefined}
-              onSave={(v) => handleUpdate(id, "buyerCompanyId", v)}
+              href={comp.buyerCompanyId ? `/companies/${comp.buyerCompanyId}` : undefined}
+              onSave={(v) => { handleUpdate(id, "buyerCompanyId", v); const n = companyOptions.find((o: any) => o.id === v)?.name; if (n && !val) handleUpdate(id, "buyer", n); }}
               onCreate={async (name) => { const c = await createCompany(name); handleUpdate(id, "buyerCompanyId", c.id); }}
               compact
             />
@@ -762,8 +780,8 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
             <InlineLinkSelect
               value={comp.sellerCompanyId}
               options={companyOptions}
-              href={comp.sellerCompanyId ? `/companies?highlight=${comp.sellerCompanyId}` : undefined}
-              onSave={(v) => handleUpdate(id, "sellerCompanyId", v)}
+              href={comp.sellerCompanyId ? `/companies/${comp.sellerCompanyId}` : undefined}
+              onSave={(v) => { handleUpdate(id, "sellerCompanyId", v); const n = companyOptions.find((o: any) => o.id === v)?.name; if (n && !val) handleUpdate(id, "seller", n); }}
               onCreate={async (name) => { const c = await createCompany(name); handleUpdate(id, "sellerCompanyId", c.id); }}
               compact
             />
@@ -896,14 +914,6 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
     }
   };
 
-  if (currentUser && !isAdmin && !isInvestment) {
-    return (
-      <div className="p-4 sm:p-6 text-center space-y-4">
-        <h2 className="text-lg font-semibold">Access Restricted</h2>
-        <p className="text-sm text-muted-foreground">This page is only available to the Investment team.</p>
-      </div>
-    );
-  }
 
   const stats = useMemo(() => {
     const total = comps.length;

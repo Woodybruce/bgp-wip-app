@@ -35,9 +35,9 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
       mandate_asset_class, mandate_lot_size_min, mandate_lot_size_max, mandate_geographies, capital_source, aum
     FROM crm_companies WHERE id = $1`, [companyId]);
   const tracker = await rows(q, `SELECT id, asset_name, board_type, status, guide_price, niy, property_id, deal_id,
-      client, client_id, vendor, vendor_id, buyer, bid_deadline, completion_date, updated_at
+      client, client_id, vendor, vendor_id, buyer, buyer_id, bid_deadline, completion_date, updated_at
     FROM investment_tracker
-    WHERE client_id = ANY($1::text[]) OR vendor_id = ANY($1::text[]) OR property_id = ANY($2::text[])
+    WHERE client_id = ANY($1::text[]) OR vendor_id = ANY($1::text[]) OR buyer_id = ANY($1::text[]) OR property_id = ANY($2::text[])
     ORDER BY updated_at DESC NULLS LAST LIMIT 40`, [entityIds, propertyIds]);
   const salesCandidates = await rows(q, `SELECT p.id, p.name, p.status, p.bgp_engagement, p.asset_class
     FROM crm_properties p
@@ -47,7 +47,7 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
   const debtEvents = await rows(q, `SELECT id, property_id, event_type, event_date, lender, amount, notes
     FROM landlord_debt_events WHERE landlord_id = ANY($1::text[])
     ORDER BY event_date DESC NULLS LAST LIMIT 20`, [entityIds]);
-  const comps = await rows(q, `SELECT id, property_name, city, price, cap_rate, transaction_date,
+  const comps = await rows(q, `SELECT id, property_name, property_id, city, price, cap_rate, transaction_date,
       CASE WHEN seller_company_id = ANY($1::text[]) THEN 'sold' ELSE 'bought' END AS side
     FROM investment_comps
     WHERE buyer_company_id = ANY($1::text[]) OR seller_company_id = ANY($1::text[])
@@ -154,7 +154,7 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
   const nameKey = (v: any) => String(v || "").toLowerCase().replace(/\b(plc|ltd|limited|group|properties|property)\b/g, "").replace(/[^a-z0-9]/g, "");
   const entityNames = new Set([view.root.name, ...view.entities.map(e => e.name)].map(nameKey).filter(Boolean));
   const isUs = (id: any, name: any) => entitySet.has(id) || (!id && !!name && entityNames.has(nameKey(name)));
-  const side = (t: any) => isUs(t.vendor_id, t.vendor) ? "selling"
+  const side = (t: any) => isUs(t.buyer_id, t.buyer) ? "buying" : isUs(t.vendor_id, t.vendor) ? "selling"
     : isUs(t.client_id, t.client) ? (t.board_type === "Sales" ? "selling" : "buying")
     : t.board_type === "Sales" ? "selling" : "buying";
 
