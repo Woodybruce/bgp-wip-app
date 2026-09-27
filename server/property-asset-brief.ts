@@ -681,7 +681,7 @@ ${riskLines}
 Asset lead's stated focus this week:
 ${focusLines}
 
-Performance: ${brief.performance.vacancy_rate == null ? "Vacancy unavailable" : `${(brief.performance.vacancy_rate * 100).toFixed(1)}% recorded vacancy`}${brief.performance.wault_years != null ? `, rent-weighted lease term ${brief.performance.wault_years.toFixed(1)} yrs` : "; weighted lease term unavailable"}.
+Performance: ${[brief.performance.vacancy_rate == null ? null : `${(brief.performance.vacancy_rate * 100).toFixed(1)}% recorded vacancy`, brief.performance.wault_years != null ? `rent-weighted lease term ${brief.performance.wault_years.toFixed(1)} yrs` : null].filter(Boolean).join(", ") || "(no figures)"}.
 
 ${(brief.data_warnings || []).length ? `Data caveats (state nothing these make uncertain — no vacancy rate or totals the data can't support): ${(brief.data_warnings || []).map((w: any) => w.message).join(" ")}
 
@@ -693,7 +693,7 @@ ${(brief.data_warnings || []).length ? `Data caveats (state nothing these make u
   - **Risks:** the vacancies / expiries / covenant points worth flagging. No flagged risks only means none were found in the recorded data; it is not a complete covenant or lease review.
   - **BGP focus:** where BGP's focus is this week, with one forward-looking clause. If no tasks are recorded, name the focus from the live deals and risks — never say that no tasks are recorded.
 
-Rules: British English, partner-tone, no hype, no "I'm pleased to". Each bullet ONE sentence, at most ~30 words — name the few that matter, don't list every tenant. Bold the key tenant and unit names with **double asterisks**. Reference the actual tenants / units / figures above — don't generalise. Never state BGP fees or commissions. No other headings. No preamble or "here is".`;
+Rules: British English, partner-tone, no hype, no "I'm pleased to". Never mention data that is missing, unavailable or unrecorded — say only what the records show. Each bullet ONE sentence, at most ~30 words — name the few that matter, don't list every tenant. Bold the key tenant and unit names with **double asterisks**. Reference the actual tenants / units / figures above — don't generalise. Never state BGP fees or commissions. No other headings. No preamble or "here is".`;
 
     let msg: any;
     try {
