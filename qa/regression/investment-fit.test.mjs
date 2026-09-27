@@ -17,6 +17,8 @@ test('uses, approaches and London are recognised', () => {
   assert.deepEqual(approachesIn('Core-plus to value-add, some long income'), ['long income', 'core-plus', 'value-add']);
   assert.equal(assetIsLondon('Coldharbour Lane, Brixton, London SW9 8PS'), true);
   assert.equal(assetIsLondon('The Bridges, Market Square, Sunderland SR1 3LB'), false);
+  assert.equal(assetIsLondon('Coventry London Rd CV3 4'), false, 'a London Road elsewhere is not London');
+  assert.equal(assetIsLondon('London 522 Old Kent Rd SE1 5'), true);
 });
 
 test('the sale profile reads approach from its numbers', () => {

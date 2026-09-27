@@ -64,7 +64,8 @@ export function locationsIn(text: string | null | undefined): { london: boolean;
 }
 
 export function assetIsLondon(address: string | null | undefined): boolean {
-  const a = String(address || "");
+  // "London Road, Coventry" is a street name, not London.
+  const a = String(address || "").replace(/\blondon\s+(road|rd|street|st|lane|ln|avenue|ave|way)\b/gi, "");
   return /\blondon\b/i.test(a) || /\b(E|EC|N|NW|SE|SW|W|WC)\d{1,2}[A-Z]?\s*\d[A-Z]{2}\b/i.test(a);
 }
 
