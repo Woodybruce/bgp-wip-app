@@ -4,8 +4,10 @@
 // sales, lease advisory as the other side, viewings. Staff only.
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
-import { useQuery } from "@tanstack/react-query";
-import { getAuthHeaders } from "@/lib/queryClient";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Pill } from "@/components/ui/pill";
@@ -65,6 +67,21 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
   const TABS: Array<[Tab, string]> = [["teams", "Teams"], ["deals", "Deals"], ["requirements", "Requirements"], ["instructions", "Instructions"], ["sales", "Sales"], ["leaseAdvisory", "Lease advisory"], ["viewings", "Viewings"]];
   const shown = TABS.filter(([t]) => counts[t] > 0);
   const [tab, setTab] = useState<Tab | null>(null);
+  const { toast } = useToast();
+  // Set a person's recorded team (agent specialty) to the team their work
+  // points to — corrects the imported "Leasing" default over time.
+  const setTeam = useMutation({
+    mutationFn: async (people: Array<{ id: string; team: string }>) => {
+      for (const p of people) await apiRequest("PUT", `/api/crm/contacts/${p.id}`, { agentSpecialty: p.team });
+      return people.length;
+    },
+    onSuccess: (n: number) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", companyId, "relationship"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      toast({ title: `Team updated for ${n} ${n === 1 ? "person" : "people"}` });
+    },
+    onError: (e: any) => toast({ title: "Couldn't update the team", description: e?.message, variant: "destructive" }),
+  });
   useEffect(() => { setTab(null); }, [companyId]);
   const active = tab && counts[tab] > 0 ? tab : shown[0]?.[0] || null;
 
@@ -99,17 +116,22 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
             {(data.teams || []).map((g: any) => {
               const busy = g.people.filter((p: any) => p.activity > 0);
               const quiet = g.people.length - busy.length;
+              const toFix = g.team ? busy.filter((p: any) => p.inferred).map((p: any) => ({ id: p.id, team: g.team })) : [];
               return (
                 <div key={g.team || "none"} className="space-y-1">
                   <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
                     {g.team ? `${g.team} team` : "No team set"}<Badge variant="outline" className="text-[9px] tabular-nums">{g.people.length}</Badge>
+                    {toFix.length > 1 && <Button variant="ghost" size="sm" className="h-5 px-1.5 text-[10px] normal-case tracking-normal ml-auto" disabled={setTeam.isPending} onClick={() => setTeam.mutate(toFix)} data-testid="button-agent-team-fix-all">Set all {toFix.length} to {g.team}</Button>}
                   </div>
                   {busy.slice(0, 8).map((p: any) => (
                     <Row key={p.id} href={`/contacts/${p.id}`} title={p.name}
                       sub={[p.title, p.inferred && (p.recordedTeam ? `recorded as ${p.recordedTeam} — their work is ${g.team}` : "team from their work")].filter(Boolean).join(" · ")}
                       right={<>{Object.entries(p.capacities).sort((a: any, b: any) => b[1] - a[1]).slice(0, 2).map(([role, n]: any) => (
                         <Badge key={role} variant="outline" className="text-[9px]">{AGENT_ROLES.find(r => r.role === role)?.short || role} {n}</Badge>
-                      ))}</>} />
+                      ))}{p.inferred && g.team && (
+                        <Button variant="outline" size="sm" className="h-5 px-1.5 text-[10px]" disabled={setTeam.isPending}
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setTeam.mutate([{ id: p.id, team: g.team }]); }} data-testid="button-agent-team-fix">Set team</Button>
+                      )}</>} />
                   ))}
                   {quiet > 0 && <p className="text-[11px] text-muted-foreground">{busy.length ? `+${quiet} more with no recorded dealings` : `${quiet} people, no recorded dealings yet`}</p>}
                 </div>
@@ -154,7 +176,7 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
         {data && active === "leaseAdvisory" && (
           <div className="space-y-1">{data.otherSide.map((m: any) => (
             <Row key={m.id} href={`/pla/matters/${m.id}`} title={`${MATTER_LABEL[m.matter_type] || m.matter_type}${m.property_name ? ` · ${m.property_name}` : ""}`}
-              sub={["Other side", m.surveyor_name, m.acting_for && `BGP acting for ${m.acting_for}`, m.agreed_rent ? `agreed ${money(m.agreed_rent)}` : m.counter_quoting_rent ? `their quote ${money(m.counter_quoting_rent)}` : null].filter(Boolean).join(" · ")}
+              sub={[m.acting_for ? `Acting for the ${m.acting_for === "landlord" ? "tenant" : "landlord"}` : "Other side", m.surveyor_name, m.acting_for && `BGP for the ${m.acting_for}`, m.agreed_rent ? `agreed ${money(m.agreed_rent)}` : m.counter_quoting_rent ? `their quote ${money(m.counter_quoting_rent)}` : null].filter(Boolean).join(" · ")}
               right={<Badge variant="outline" className="text-[9px]">{m.status}</Badge>} />
           ))}</div>
         )}

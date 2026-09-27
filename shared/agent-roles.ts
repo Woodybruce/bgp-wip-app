@@ -15,8 +15,8 @@ export const AGENT_ROLES: Array<{ role: AgentRole; label: string; short: string;
   { role: "tenant_rep", label: "Tenant rep", short: "Tenant rep", team: "Tenant Rep", description: "Acts for a brand finding space — sends requirements and brings tenants to BGP's units." },
   { role: "investment_sell", label: "Sale side", short: "Sale side", team: "Investment", description: "Acts for a vendor — competitor for sale instructions, the other side when BGP buys." },
   { role: "investment_buy", label: "Buy side", short: "Buy side", team: "Investment", description: "Acts for a purchaser — brings bidders to BGP's sales." },
-  { role: "lease_advisory", label: "Lease advisory (other side)", short: "Lease advisory", team: "Lease Advisory", description: "The opposite surveyor on rent reviews and renewals." },
-  { role: "joint_agent", label: "Joint agent", short: "Joint agent", team: null, description: "Shares an instruction with BGP." },
+  { role: "lease_advisory", label: "Lease advisory (other side)", short: "Lease advisory", team: "Lease Advisory", description: "The opposite surveyor on rent reviews and renewals — acting for the landlord or the tenant, whichever side BGP isn't." },
+  { role: "joint_agent", label: "Joint agent", short: "Joint agent", team: "Leasing", description: "Shares a leasing instruction with BGP — a Leasing team capacity, like leasing agent." },
 ];
 
 // The teams inside an agent firm — the same values as a contact's
