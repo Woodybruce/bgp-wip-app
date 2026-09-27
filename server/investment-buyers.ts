@@ -11,7 +11,7 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import type { Querier } from "./account-resolver";
-import { assetClassOf, assetClassesIn, assetIsLondon, criteriaFit, type AssetClass } from "@shared/investment-fit";
+import { assetClassesIn, assetIsLondon, assetProfile, criteriaFit, useDetailsIn } from "@shared/investment-fit";
 
 async function rows(q: Querier, sql: string, params: any[]): Promise<any[]> {
   try { return (await q.query(sql, params)).rows; }
@@ -27,13 +27,19 @@ const fmtM = (v: number) => v >= 1e9 ? `£${(v / 1e9).toFixed(1)}bn` : `£${Math
 export async function getBuyersForAsset(trackerId: string, deps: { pool?: Querier } = {}) {
   const q = deps.pool ?? (await import("./db")).pool;
   const [asset] = await rows(q, `SELECT t.id, t.asset_name, t.asset_type, t.guide_price, t.address, t.board_type, t.client_id, t.client, t.vendor_id, t.vendor,
+      t.notes, t.wault_break, t.wault_expiry, t.occupancy, t.capex_required,
       p.name AS property_name, p.address::text AS property_address, p.asset_class
     FROM investment_tracker t LEFT JOIN crm_properties p ON p.id = t.property_id WHERE t.id = $1`, [trackerId]);
   if (!asset) throw new Error("asset not found");
   const address = [asset.address, asset.property_address].filter(Boolean).join(" ");
-  const classes: AssetClass[] = [...new Set([...assetClassOf(asset.asset_type, asset.asset_name), ...assetClassesIn(String(asset.asset_class || ""))])];
-  const guidePrice = Number(asset.guide_price) || null;
-  const london = assetIsLondon(address);
+  // Use first, then approach, then London / national (Woody, 2026-09-27).
+  const profile = assetProfile({
+    assetType: asset.asset_type, name: asset.asset_name, notes: asset.notes,
+    assetClass: Array.isArray(asset.asset_class) ? asset.asset_class.join(" ") : asset.asset_class,
+    address, guidePrice: asset.guide_price, waultBreak: asset.wault_break, waultExpiry: asset.wault_expiry,
+    occupancy: asset.occupancy, capex: asset.capex_required,
+  });
+  const { classes, guidePrice, london } = profile;
   const excludeIds = new Set([asset.client_id, asset.vendor_id].filter(Boolean));
   const excludeNames = new Set([asset.client, asset.vendor].map(buyerNameKey).filter(Boolean));
 
@@ -56,8 +62,8 @@ export async function getBuyersForAsset(trackerId: string, deps: { pool?: Querie
     WHERE r.status IS NULL OR r.status = 'Active'`, []);
   for (const r of reqs) {
     const text = [r.comments, r.extract, typeof r.location === "string" ? r.location : ""].filter(Boolean).join(" ");
-    const fit = criteriaFit(text, { classes, guidePrice, address });
-    if (fit.score < 3) continue;
+    const fit = criteriaFit(text, profile);
+    if (!fit.classHit || fit.score < 4) continue;
     const name = r.company_name || r.name;
     const b = upsert(keyFor(r.company_id, name), { name });
     b.companyId = b.companyId || r.company_id || companyByKey.get(buyerNameKey(name))?.id || null;
@@ -71,9 +77,9 @@ export async function getBuyersForAsset(trackerId: string, deps: { pool?: Querie
   for (const m of mandates) {
     const geo = Array.isArray(m.mandate_geographies) ? m.mandate_geographies.join(" ") : String(m.mandate_geographies || "");
     const lot = m.mandate_lot_size_min || m.mandate_lot_size_max ? `£${Math.round((Number(m.mandate_lot_size_min) || 0) / 1e6)}m-£${Math.round((Number(m.mandate_lot_size_max) || 0) / 1e6) || ""}m${m.mandate_lot_size_max ? "" : "+"}` : "";
-    const fit = criteriaFit([m.mandate_asset_class, lot, geo, m.acquiring_now_notes].filter(Boolean).join(" "), { classes, guidePrice, address });
+    const fit = criteriaFit([m.mandate_asset_class, lot, geo, m.acquiring_now_notes].filter(Boolean).join(" "), profile);
     const score = fit.score + (m.acquiring_now ? 2 : 0);
-    if (score < 3) continue;
+    if (!fit.classHit || score < 4) continue;
     const b = upsert(`id:${m.id}`, { name: m.name, companyId: m.id });
     b.score += score; b.reasons.push(...(m.acquiring_now ? ["buying now"] : []), ...fit.reasons.map(x => `${x} (mandate)`)); b.sources.push("mandate");
   }
@@ -82,29 +88,33 @@ export async function getBuyersForAsset(trackerId: string, deps: { pool?: Querie
   const comps = await rows(q, `SELECT buyer, buyer_company_id, transaction_type, subtype, price, city, address, property_name, transaction_date
     FROM investment_comps WHERE buyer IS NOT NULL
       AND (transaction_date IS NULL OR transaction_date !~ '^\\d{4}-\\d{2}-\\d{2}' OR TO_DATE(substr(transaction_date, 1, 10), 'YYYY-MM-DD') >= NOW() - INTERVAL '4 years')`, []);
-  const compBuyers = new Map<string, { name: string; companyId: string | null; sameClass: number; nearPrice: number; sameArea: number; latest: string | null }>();
+  const compBuyers = new Map<string, { name: string; companyId: string | null; sameClass: number; sameUse: number; nearPrice: number; sameArea: number; latest: string | null }>();
   for (const c of comps) {
     for (const raw of String(c.buyer).split(/\s*(?:\/|;|&| and )\s*/i).filter(Boolean)) {
       const key = keyFor(c.buyer_company_id, raw);
-      const e = compBuyers.get(key) || { name: raw.trim(), companyId: c.buyer_company_id || companyByKey.get(buyerNameKey(raw))?.id || null, sameClass: 0, nearPrice: 0, sameArea: 0, latest: null };
-      const cClasses = assetClassesIn(`${c.transaction_type || ""} ${c.subtype || ""} ${c.property_name || ""}`);
-      if (classes.some(x => cClasses.includes(x))) e.sameClass++;
+      const e = compBuyers.get(key) || { name: raw.trim(), companyId: c.buyer_company_id || companyByKey.get(buyerNameKey(raw))?.id || null, sameClass: 0, sameUse: 0, nearPrice: 0, sameArea: 0, latest: null };
+      const cText = `${c.transaction_type || ""} ${c.subtype || ""} ${c.property_name || ""}`;
+      const cClasses = assetClassesIn(cText);
+      if (!classes.some(x => cClasses.includes(x))) { compBuyers.set(key, e); continue; }
+      e.sameClass++;
+      if (profile.uses.some(u => useDetailsIn(`${cText} ${c.subtype === "Centers" ? "shopping centre" : ""}`).includes(u))) e.sameUse++;
       const price = Number(c.price) || 0;
       if (guidePrice && price && price >= guidePrice * 0.33 && price <= guidePrice * 3) e.nearPrice++;
-      const cAddr = `${c.city || ""} ${c.address || ""}`;
-      if ((london && assetIsLondon(cAddr)) || (!london && c.city && address.toLowerCase().includes(String(c.city).toLowerCase()))) e.sameArea++;
+      // London vs national only.
+      const cLondon = assetIsLondon(`${c.city || ""} ${c.address || ""}`);
+      if (cLondon === london) e.sameArea++;
       const d = c.transaction_date ? new Date(c.transaction_date).toISOString() : null;
       if (d && (!e.latest || d > e.latest)) e.latest = d;
       compBuyers.set(key, e);
     }
   }
   for (const [key, e] of compBuyers) {
-    const score = Math.min(e.sameClass, 2) * 2 + (e.nearPrice ? 1 : 0) + (e.sameArea ? 2 : 0);
-    if (score < 3 || !e.sameClass) continue;
+    const score = 4 + (e.sameClass >= 3 ? 1 : 0) + (e.sameUse ? 2 : 0) + (e.nearPrice ? 1 : 0) + (e.sameArea ? 1 : 0);
+    if (!e.sameClass || score < 5) continue;
     const b = upsert(key, { name: e.name, companyId: e.companyId });
     b.companyId = b.companyId || e.companyId;
     b.score += score;
-    b.reasons.push(`bought ${e.sameClass} ${classes[0] || "similar"} deal${e.sameClass === 1 ? "" : "s"}${e.sameArea ? (london ? " in London" : " nearby") : ""}${e.nearPrice && guidePrice ? ` around ${fmtM(guidePrice)}` : ""}`);
+    b.reasons.push(`bought ${e.sameClass} ${classes[0] || "similar"} deal${e.sameClass === 1 ? "" : "s"}${e.sameUse ? ` incl. ${profile.uses[0]}` : ""}${e.sameArea ? (london ? " in London" : " outside London") : ""}${e.nearPrice && guidePrice ? ` around ${fmtM(guidePrice)}` : ""}`);
     b.sources.push("comps");
   }
 
@@ -123,7 +133,7 @@ export async function getBuyersForAsset(trackerId: string, deps: { pool?: Querie
     .slice(0, 60);
 
   return {
-    asset: { id: asset.id, name: asset.asset_name, classes, guidePrice, london, board: asset.board_type },
+    asset: { id: asset.id, name: asset.asset_name, classes, uses: profile.uses, approaches: profile.approaches, guidePrice, london, board: asset.board_type },
     buyers: list,
     counts: { requirements: reqs.length, mandates: mandates.length, compBuyers: compBuyers.size },
   };
