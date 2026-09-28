@@ -232,6 +232,7 @@ const BACKGROUND_INDEXES: Array<[string, string]> = [
   ["idx_crm_interactions_company_id", "ON crm_interactions (company_id)"],
   ["idx_crm_interactions_contact_id", "ON crm_interactions (contact_id)"],
   ["idx_news_articles_url", "ON news_articles (url)"],
+  ["idx_leasing_schedule_units_tenant_lower", "ON leasing_schedule_units (lower(tenant_name))"],
   ["idx_crm_interactions_participants", "ON crm_interactions USING gin (participants)"],
   // Domain lookups ("every email with someone @ardent") read participants
   // as text through this.
@@ -762,7 +763,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
          FROM leasing_schedule_units u
          JOIN crm_properties p ON p.id = u.property_id,
               (SELECT name FROM crm_companies WHERE id = $1) AS co
-        WHERE u.tenant_name ILIKE co.name
+        WHERE lower(u.tenant_name) = lower(co.name)
           AND (
             (u.lease_expiry IS NOT NULL AND u.lease_expiry BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '18 months')
             OR (u.lease_break IS NOT NULL AND u.lease_break BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '18 months')
