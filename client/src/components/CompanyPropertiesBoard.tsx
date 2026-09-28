@@ -843,14 +843,14 @@ export function CompanyPropertiesBoard({
                   <span className="w-2 h-2 rounded-full bg-teal-500 shrink-0" />
                   {/* The name keeps at least ~9rem; the metadata gives way
                       (Canary Wharf Estate collapsed to "C" beside its chips). */}
-                  <Link href={`/properties/${p.id}`} className="text-sm font-medium truncate min-w-[9rem] shrink-0 max-w-[60%] hover:underline" onClick={e => e.stopPropagation()}>
+                  <Link href={`/properties/${p.id}`} className="text-sm font-medium truncate min-w-[9rem] flex-1 hover:underline" onClick={e => e.stopPropagation()}>
                     {p.name}
                   </Link>
                   {/* Counts as quiet metadata and the BGP people as a colour
                       dot + first name — identity colours are dots, never
                       fills (DESIGN §14); the chips squeezed the name to
                       "Canary Wharf …". */}
-                  <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 ml-auto min-w-0 text-[11px] text-muted-foreground [&>*]:whitespace-nowrap">
+                  <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 ml-auto min-w-0 max-w-[60%] text-[11px] text-muted-foreground [&>*]:whitespace-nowrap">
                     {p.units.length > 0 && (
                       <span><span className="font-mono tabular-nums">{p.units.length}</span> unit{p.units.length !== 1 ? "s" : ""} · <span className="font-mono tabular-nums">{occ}</span> let</span>
                     )}
