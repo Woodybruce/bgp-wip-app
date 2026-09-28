@@ -1,10 +1,13 @@
 import { isArchivedTenancy } from "./tenancy-schedule-display";
+import type { PositioningSource, SchemePositioning } from "./scheme-positioning";
 
 export interface PropertyResearchContext {
   mode: "centre" | "local" | "not_applicable";
   assetClass: string;
   uses: string[];
   reason: string;
+  positioning: SchemePositioning;
+  positioningSource: PositioningSource;
   cacheKey: string;
 }
 
@@ -17,7 +20,7 @@ const retailUse = new RegExp(PROPERTY_RESEARCH_USE_PATTERN, "i");
 const centreUse = new RegExp(PROPERTY_RESEARCH_CENTRE_PATTERN, "i");
 const matchesRetailUse = (value: string) => retailUse.test(value.normalize("NFKD").replace(/\p{M}/gu, ""));
 
-export function propertyResearchContext(property: { assetClass?: string | null; propertyView?: string | null }, units: Array<{ permitted_use?: string | null; status?: string | null; occupancy_status?: string | null }> = []): PropertyResearchContext {
+export function propertyResearchContext(property: { assetClass?: string | null; propertyView?: string | null; positioning?: SchemePositioning | null; positioningSource?: PositioningSource }, units: Array<{ permitted_use?: string | null; status?: string | null; occupancy_status?: string | null }> = []): PropertyResearchContext {
   const assetClass = property.assetClass?.trim() || "";
   const uses = [...new Set(units.filter(unit => !isArchivedTenancy(unit))
     .map(unit => unit.permitted_use?.trim()).filter((use): use is string => Boolean(use)))].sort();
@@ -29,5 +32,8 @@ export function propertyResearchContext(property: { assetClass?: string | null; 
     : mode === "local"
       ? "Local occupier opportunities for the retail and leisure space here."
       : "Shopping-centre occupier mix and nearby competing destinations.";
-  return { mode, assetClass, uses, reason, cacheKey: JSON.stringify(["property-research-v3", mode, assetClass, uses]) };
+  const positioning = property.positioning || "mainstream";
+  // Mainstream keeps its old key, so only re-positioned schemes re-research.
+  return { mode, assetClass, uses, reason, positioning, positioningSource: property.positioning ? property.positioningSource || "tag" : "default",
+    cacheKey: JSON.stringify(["property-research-v3", mode, assetClass, uses, ...(positioning === "mainstream" ? [] : [positioning])]) };
 }

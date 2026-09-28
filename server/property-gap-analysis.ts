@@ -15,19 +15,32 @@ import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { isClientCrmCategory } from "../shared/tenant-categories";
 import { suggestPropertyView } from "../shared/property-view";
-import { UK_CENTRES, haversineKm, siteRadiusKm } from "../shared/uk-centres";
+import { UK_CENTRES, haversineKm, siteRadiusKm, peerCentresFor, benchmarkCentresFor } from "../shared/uk-centres";
 import { propertyResearchContext, PROPERTY_RESEARCH_USE_PATTERN, PROPERTY_RESEARCH_CENTRE_PATTERN, type PropertyResearchContext } from "../shared/property-research";
+import { isArchivedTenancy } from "../shared/tenancy-schedule-display";
+import { brandTier, fitsPositioning, isHotelGroup, positioningBoost, positioningFromTags, positioningFromTenants, LUXURY_RETAIL_SECTORS, POSITIONING_PROFILES, type BrandTier, type PositioningSource } from "../shared/scheme-positioning";
 
 const router = Router();
 
-async function readPropertyResearchContext(propertyId: string): Promise<PropertyResearchContext | null> {
-  const property = (await pool.query("SELECT name, asset_class, property_view FROM crm_properties WHERE id = $1", [propertyId])).rows[0];
+export async function readPropertyResearchContext(propertyId: string): Promise<PropertyResearchContext | null> {
+  const property = (await pool.query("SELECT name, asset_class, property_view, tags FROM crm_properties WHERE id = $1", [propertyId])).rows[0];
   if (!property) return null;
-  const units = (await pool.query("SELECT id, property_unit_id, permitted_use, status, occupancy_status FROM tenancy_schedule_units WHERE property_id = $1", [propertyId])).rows;
+  const units = (await pool.query("SELECT id, property_unit_id, permitted_use, status, occupancy_status, tenant_company_id FROM tenancy_schedule_units WHERE property_id = $1", [propertyId])).rows;
   // Same view the property page shows: the stored choice, else the inferred
   // one — Bluewater ("Retail", 200+ units, no stored view) is a centre.
   const propertyView = property.property_view || suggestPropertyView(property.asset_class, units, property.name);
-  return propertyResearchContext({ assetClass: property.asset_class, propertyView }, units);
+  // Positioning: the property's tags, else the current tenants' brand tiers.
+  let positioning = positioningFromTags(property.tags);
+  let positioningSource: PositioningSource = "tag";
+  if (!positioning) {
+    const tenantIds = [...new Set(units.filter((u: any) => !isArchivedTenancy(u)).map((u: any) => u.tenant_company_id).filter(Boolean).map(String))];
+    const leasingIds = (await pool.query("SELECT DISTINCT tenant_company_id::text AS id FROM leasing_schedule_units WHERE property_id = $1 AND tenant_company_id IS NOT NULL", [propertyId]).catch(() => ({ rows: [] as any[] }))).rows.map((r: any) => r.id);
+    const ids = [...new Set([...tenantIds, ...leasingIds])];
+    const tenants = ids.length ? (await pool.query("SELECT name, company_type, industry, description, store_count FROM crm_companies WHERE id = ANY($1::text[]) AND merged_into_id IS NULL", [ids]).catch(() => ({ rows: [] as any[] }))).rows : [];
+    positioning = positioningFromTenants(tenants.map((t: any) => brandTier({ name: t.name, companyType: t.company_type, industry: t.industry, description: t.description, storeCount: t.store_count })));
+    positioningSource = "tenant_mix";
+  }
+  return propertyResearchContext({ assetClass: property.asset_class, propertyView, positioning, positioningSource }, units);
 }
 
 async function researchCacheMatches(propertyId: string, section: string, context: PropertyResearchContext): Promise<boolean> {
@@ -79,12 +92,19 @@ const FNB_SECTORS: Array<{ key: string; label: string; rx: RegExp }> = [
   { key: "leisure_entertainment", label: "Leisure & entertainment", rx: /cinema|entertainment|bingo|casino|soft play/i },
   { key: "casual_dining", label: "Casual dining", rx: /restaurant|dining|kitchen\b|eatery|bistro|brasserie|food hall/i },
 ];
-const SECTOR_LABELS: Record<string, string> = Object.fromEntries(FNB_SECTORS.map(s => [s.key, s.label]));
+const SECTOR_LABELS: Record<string, string> = Object.fromEntries([...LUXURY_RETAIL_SECTORS, ...FNB_SECTORS].map(s => [s.key, s.label]));
 
 function heuristicSector(name: string, industry: string | null, companyType: string | null): string | null {
   const hay = `${name} ${industry || ""} ${companyType || ""}`;
   for (const s of FNB_SECTORS) if (s.rx.test(hay)) return s.key;
   return null;
+}
+
+// A retail brand on a luxury board: jewellery / fashion / beauty / gifting
+// from its description, else the F&B sectors (Ladurée is a patisserie).
+function retailSector(b: { name: string; industry: string | null; companyType: string | null; description: string | null }): string | null {
+  const hay = `${b.name} ${b.industry || ""} ${b.companyType || ""} ${b.description || ""}`;
+  return [...LUXURY_RETAIL_SECTORS, ...FNB_SECTORS].find(s => s.rx.test(hay))?.key || null;
 }
 
 // Definitive sector label written by the Haiku sweep; commentary cache on
@@ -141,6 +161,9 @@ async function sweepSectorClassification() {
 // centre point, or a tenant on its tenancy schedule when the scheme is one
 // of our properties. The peer list itself lives in shared/uk-centres.ts.
 const PEER_PRESENCE_KM = 0.7;
+// A store naming a scheme only counts within this distance of it — Bond
+// Street Leeds and the Royal Exchange Manchester aren't the London schemes.
+const NAME_MATCH_KM = 15;
 // Tenant / brand names compared without accents or apostrophes ("Caffè
 // Nero" on a schedule is the Caffe Nero brand).
 const brandKey = (value: string) => value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/['’]/g, "").replace(/\s+/g, " ").trim();
@@ -229,7 +252,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     const researchContext = await readPropertyResearchContext(propertyId);
     if (!researchContext) return res.status(404).json({ error: "Property not found" });
     if (researchContext.mode === "not_applicable") return res.json({ applicable: false, researchContext, reason: researchContext.reason });
-    const onSchemeRadiusKm = Number(req.query.onSchemeKm) || 0.5;
+    const positioning = researchContext.positioning;
     const widerRadiusKm = Number(req.query.widerKm) || 2.0;
     const limit = Number(req.query.limit) || 30;
 
@@ -272,19 +295,26 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       });
 
     // Peer schemes for the "at other shopping centres, not here" comparison —
-    // drop any that ARE this property (or share its site) so the subject
-    // never counts as its own peer.
-    const peerSchemes = (researchContext.mode === "centre" ? UK_CENTRES : []).filter(
+    // the scheme's positioning picks the set (a luxury arcade against the
+    // luxury destinations, not regional malls); drop any that ARE this
+    // property (or share its site) so the subject never counts as its own peer.
+    const peerSchemes = (researchContext.mode === "centre" ? peerCentresFor(positioning) : []).filter(
       ps => haversineKm(location.lat, location.lng, ps.lat, ps.lng) > siteRadiusKm(ps)
     );
-    // National comparison = the top-25 centres; the full list still feeds
-    // "competing centres" (Bluewater → Lakeside, The Glades).
-    const topPeers = peerSchemes.filter(ps => ps.top25);
+    // National comparison = the top-25 centres (every luxury peer for a
+    // luxury scheme); the full list still feeds "competing centres"
+    // (Bluewater → Lakeside, The Glades).
+    const benchmarkNames = new Set(benchmarkCentresFor(positioning).map(ps => ps.name));
+    const topPeers = peerSchemes.filter(ps => benchmarkNames.has(ps.name));
     // This centre's own names, for store addresses that say it.
+    const listedSubject = researchContext.mode === "centre"
+      ? UK_CENTRES.find(ps => haversineKm(location.lat, location.lng, ps.lat, ps.lng) <= siteRadiusKm(ps)) : undefined;
     const subjectScheme = researchContext.mode === "centre"
-      ? UK_CENTRES.find(ps => haversineKm(location.lat, location.lng, ps.lat, ps.lng) <= siteRadiusKm(ps))
-        || { name: location.name, aliases: [location.name.replace(/\s*(shopping cent(?:re|er)|retail park|outlet village)\s*$/i, "").trim()] }
+      ? listedSubject || { name: location.name, aliases: [location.name.replace(/\s*(shopping cent(?:re|er)|retail park|outlet village)\s*$/i, "").trim()] }
       : null;
+    // A listed scheme's own footprint is its on-scheme ring — 500m round the
+    // Royal Exchange took in every café at Bank.
+    const onSchemeRadiusKm = Number(req.query.onSchemeKm) || listedSubject?.radiusKm || 0.5;
     const topPeerNames = new Set(topPeers.map(ps => ps.name));
     const topCount = (b: { peer_scheme_set: Set<string> }) => Array.from(b.peer_scheme_set).filter(n => topPeerNames.has(n)).length;
 
@@ -301,6 +331,10 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       brand_group_id: string | null;
       peer_scheme_set: Set<string>;
       sector: string | null;
+      industry: string | null;
+      store_count: number | null;
+      tier: BrandTier;
+      hotel: boolean;
     }>();
 
     for (const s of stores) {
@@ -319,6 +353,10 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
           brand_group_id: s.brand_group_id,
           peer_scheme_set: new Set<string>(),
           sector: (s.fnb_sector as string | null) || heuristicSector(s.brand_name, s.industry, s.company_type),
+          industry: s.industry,
+          store_count: s.store_count,
+          tier: null,
+          hotel: false,
         };
         brandMap.set(s.brand_company_id, entry);
       } else {
@@ -331,8 +369,8 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       // Which peer scheme (if any) is this store at? A store sits at one
       // scheme at most — the nearest one in range.
       const storeText = brandKey(`${s.store_name || ""} ${s.address || ""}`).replace(/[^a-z0-9]+/g, " ");
-      if (subjectScheme && researchContext.mode === "centre" && namesScheme(storeText, subjectScheme)) entry.nearest_distance_km = Math.min(entry.nearest_distance_km, 0.01);
-      let atScheme: string | null = peerSchemes.find(ps => namesScheme(storeText, ps))?.name || null, atKm = atScheme ? 0 : Infinity;
+      if (subjectScheme && researchContext.mode === "centre" && dist <= NAME_MATCH_KM && namesScheme(storeText, subjectScheme)) entry.nearest_distance_km = Math.min(entry.nearest_distance_km, 0.01);
+      let atScheme: string | null = peerSchemes.find(ps => namesScheme(storeText, ps) && haversineKm(ps.lat, ps.lng, s.lat, s.lng) <= NAME_MATCH_KM)?.name || null, atKm = atScheme ? 0 : Infinity;
       for (const ps of peerSchemes) {
         const km = haversineKm(ps.lat, ps.lng, s.lat, s.lng);
         if (km <= (ps.radiusKm ?? PEER_PRESENCE_KM) && km < atKm) { atScheme = ps.name; atKm = km; }
@@ -388,11 +426,25 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     }
 
     const allBrands = Array.from(brandMap.values());
-    // The whole board speaks hospitality/F&B/wellness/café/leisure only —
+    // Brand tiers (luxury / premium / mass-market) and hotel groups, for a
+    // scheme positioned away from the mainstream.
+    if (positioning !== "mainstream" && allBrands.length) {
+      const described = await pool.query(`SELECT id, description FROM crm_companies WHERE id = ANY($1::text[])`, [allBrands.map(b => String(b.brand_company_id))])
+        .then(r => new Map(r.rows.map((row: any) => [String(row.id), row.description as string | null]))).catch(() => new Map<string, string | null>());
+      for (const b of allBrands) {
+        const facts = { name: b.brand_name, companyType: b.company_type, industry: b.industry, description: described.get(String(b.brand_company_id)) || null, storeCount: Math.max(b.store_count || 0, b.total_stores) };
+        b.tier = brandTier(facts);
+        b.hotel = isHotelGroup(facts);
+        if (positioning === "luxury" && !isClientCrmCategory(b.company_type)) b.sector = retailSector(facts);
+      }
+    }
+    // A mainstream board speaks hospitality/F&B/wellness/café/leisure only —
     // "they didn't want to see normal retail; hide those, work in the
-    // background" (Woody, 2026-08-04). Retail stays in brand_stores for
-    // other consumers; it just never renders here.
-    const hospitality = allBrands.filter(b => isClientCrmCategory(b.company_type));
+    // background" (Woody, 2026-08-04). A luxury board adds luxury & premium
+    // retail and drops quick-service / mass-market chains and hotel groups;
+    // a value board drops luxury brands.
+    const eligible = allBrands.filter(b => fitsPositioning(positioning, { companyType: b.company_type, tier: b.tier, hotel: b.hotel }));
+    const boost = (b: { tier: BrandTier }) => positioningBoost(positioning, b.tier);
 
     // The tenancy schedule is the on-scheme truth — store geocodes cluster
     // outside the 500m centroid ring on big out-of-town schemes, which had
@@ -418,7 +470,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     const occIds = new Set(occ.map((r: any) => r.id).filter(Boolean));
     const occNames = occ.map((r: any) => r.name && brandKey(r.name)).filter(Boolean);
     const knownOccupation = new Set<string>();
-    for (const b of hospitality) {
+    for (const b of eligible) {
       const bn = brandKey(b.brand_name);
       const inOccupation = occIds.has(String(b.brand_company_id))
         || occNames.some((n: string) => n === bn || n.startsWith(bn + " "));
@@ -430,17 +482,17 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
 
     const isOnScheme = (brand: { brand_company_id: string; nearest_distance_km: number }) => researchContext.mode === "local"
       ? knownOccupation.has(String(brand.brand_company_id)) : brand.nearest_distance_km <= onSchemeRadiusKm;
-    const onScheme = hospitality
+    const onScheme = eligible
       .filter(b => isOnScheme(b))
       .sort((a, b) => a.nearest_distance_km - b.nearest_distance_km);
 
-    const wider = hospitality
+    const wider = eligible
       .filter(b => !isOnScheme(b) && b.nearest_distance_km <= widerRadiusKm)
       .sort((a, b) => a.nearest_distance_km - b.nearest_distance_km);
 
     // Gap: peer brands with >= 3 stores but nearest is > widerRadiusKm from subject.
     // These are brands that have chosen similar UK locations but not this one.
-    const gap = hospitality
+    const gap = eligible
       .filter(b => b.nearest_distance_km > widerRadiusKm && b.total_stores >= 3)
       // Prioritise scaling brands + those with reasonable proximity somewhere (active in the region)
       .map(b => ({
@@ -448,7 +500,8 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
         gap_score:
           (b.rollout_status === "scaling" || b.rollout_status === "entering_uk" ? 30 : 0) +
           Math.min(b.total_stores, 50) +
-          Math.max(0, 30 - b.nearest_distance_km),
+          Math.max(0, 30 - b.nearest_distance_km) +
+          boost(b),
       }))
       .sort((a, b) => b.gap_score - a.gap_score)
       .slice(0, limit);
@@ -488,7 +541,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     const reqCompanyIds = new Set(
       matchingRequirements.map((r: any) => String(r.company_id || "")).filter(Boolean)
     );
-    const peerGaps = hospitality
+    const peerGaps = eligible
       .filter(b => topCount(b) > 0 && !isOnScheme(b))
       .map(b => ({
         ...b,
@@ -498,7 +551,8 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
           topCount(b) * 10 +
           (reqCompanyIds.has(String(b.brand_company_id)) ? 25 : 0) +
           (b.rollout_status === "scaling" || b.rollout_status === "entering_uk" ? 15 : 0) +
-          Math.min(b.total_stores, 30) / 3,
+          Math.min(b.total_stores, 30) / 3 +
+          boost(b),
       }))
       .sort((a, b) => b.peer_gap_score - a.peer_gap_score)
       .slice(0, limit);
@@ -512,7 +566,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       .sort((a, b) => a.distance_km - b.distance_km)
       .slice(0, 4);
     const competingNames = new Set(competingCentres.map(c => c.name));
-    const competitorGaps = hospitality
+    const competitorGaps = eligible
       .filter(b => !isOnScheme(b) && Array.from(b.peer_scheme_set).some(n => competingNames.has(n)))
       .map(b => ({
         ...b,
@@ -520,22 +574,23 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
         competing_at: Array.from(b.peer_scheme_set).filter(n => competingNames.has(n)).sort(),
         has_live_requirement: reqCompanyIds.has(String(b.brand_company_id)),
       }))
-      .sort((a, b) => (b.has_live_requirement ? 1 : 0) - (a.has_live_requirement ? 1 : 0) || b.peer_scheme_set.size - a.peer_scheme_set.size)
+      .sort((a, b) => (b.has_live_requirement ? 1 : 0) - (a.has_live_requirement ? 1 : 0) || boost(b) - boost(a) || b.peer_scheme_set.size - a.peer_scheme_set.size)
       .slice(0, limit);
 
     // ── Local market — trading in the surrounding town/city (0.5–5km)
     //    but not on scheme: the in-town operators a scheme could poach.
-    const localMarket = hospitality
+    const localMarket = eligible
       .filter(b => !isOnScheme(b) && b.nearest_distance_km <= 5)
       .map(b => ({ ...b, peer_schemes: Array.from(b.peer_scheme_set).sort(), has_live_requirement: reqCompanyIds.has(String(b.brand_company_id)) }))
-      .sort((a, b) => a.nearest_distance_km - b.nearest_distance_km)
+      .sort((a, b) => boost(b) - boost(a) || a.nearest_distance_km - b.nearest_distance_km)
       .slice(0, limit);
 
     // ── Sector coverage — which hospitality sectors the scheme has vs the
     //    peer set, surfacing whole missing cuisines ("no Mexican, no fine
-    //    dining" — Landsec, 2026-08-04).
-    const sectors = FNB_SECTORS.map(def => {
-      const inSector = hospitality.filter(b => b.sector === def.key);
+    //    dining" — Landsec, 2026-08-04). A luxury board leads with its retail
+    //    sectors (jewellery & watches, fashion, beauty, gifting).
+    const sectors = [...(positioning === "luxury" ? LUXURY_RETAIL_SECTORS : []), ...FNB_SECTORS].map(def => {
+      const inSector = eligible.filter(b => b.sector === def.key);
       const here = inSector.filter(b => isOnScheme(b));
       const atCompeting = inSector.filter(b => Array.from(b.peer_scheme_set).some(n => competingNames.has(n)));
       const atPeers = inSector.filter(b => topCount(b) > 0);
@@ -564,7 +619,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     if (gapScope) {
       const { clientBrandSliceSql, isClientRequestUser } = await import("./company-scope");
       if (await isClientRequestUser(req as any)) {
-        const candidateIds = [...new Set([...onScheme, ...wider, ...gap, ...peerGaps, ...competitorGaps, ...localMarket, ...hospitality.filter(b => topCount(b) > 0)].map(b => String(b.brand_company_id)))];
+        const candidateIds = [...new Set([...onScheme, ...wider, ...gap, ...peerGaps, ...competitorGaps, ...localMarket, ...eligible.filter(b => topCount(b) > 0)].map(b => String(b.brand_company_id)))];
         if (candidateIds.length) {
           const sliceSql = await clientBrandSliceSql(gapScope);
           const visible = await pool.query(
@@ -585,14 +640,15 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       : matchingRequirements;
 
     // Top-25 benchmark — this centre against each of the other top-25 UK
-    // centres on the same hospitality / leisure slice (Woody, 2026-09-27).
-    const hereBrands = hospitality.filter(b => isOnScheme(b));
+    // centres on the same hospitality / leisure slice (Woody, 2026-09-27);
+    // a luxury scheme against the luxury destinations on its own slice.
+    const hereBrands = eligible.filter(b => isOnScheme(b));
     const hereIds = new Set(hereBrands.map(b => String(b.brand_company_id)));
-    const sectorCount = (list: typeof hospitality) => new Set(list.map(b => b.sector).filter(Boolean)).size;
+    const sectorCount = (list: typeof eligible) => new Set(list.map(b => b.sector).filter(Boolean)).size;
     const benchmark = researchContext.mode === "centre" ? {
       here: { brands: hereBrands.length, sectors: sectorCount(hereBrands) },
       centres: topPeers.map(ps => {
-        const there = hospitality.filter(b => b.peer_scheme_set.has(ps.name));
+        const there = eligible.filter(b => b.peer_scheme_set.has(ps.name));
         const notHere = there.filter(b => !hereIds.has(String(b.brand_company_id)));
         return {
           name: ps.name,
@@ -632,6 +688,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     res.json({
       applicable: true,
       researchContext,
+      positioning: { key: positioning, source: researchContext.positioningSource, ...POSITIONING_PROFILES[positioning] },
       liveIntel,
       property: { id: propertyId, name: location.name, postcode: location.postcode, lat: location.lat, lng: location.lng },
       onScheme: sliced(onScheme).map(publish),
@@ -651,7 +708,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       radii: { onScheme: onSchemeRadiusKm, wider: widerRadiusKm, peerPresence: PEER_PRESENCE_KM },
       stats: {
         totalBrands: allBrands.length,
-        hospitalityBrands: hospitality.length,
+        hospitalityBrands: eligible.length,
         brandsWithStores: stores.length,
       },
     });
@@ -710,11 +767,13 @@ router.get("/api/property/:propertyId/brand-gaps/commentary", requireAuth, async
     const fmtList = (arr: any[], n = 8) => arr.slice(0, n).map((b: any) =>
       `${b.brand_name}${b.has_live_requirement ? " (LIVE REQUIREMENT)" : ""}${b.competing_at?.length ? ` — at ${b.competing_at.join(", ")}` : b.peer_schemes?.length ? ` — at ${b.peer_schemes.slice(0, 3).join(", ")}` : ""}`
     ).join("\n") || "(none)";
+    const luxury = researchContext.positioning === "luxury";
+    const profile = POSITIONING_PROFILES[researchContext.positioning];
     const sectorLines = (g.sectors || []).map((s: any) =>
-      `${s.label}: ${s.on_scheme} on scheme${s.on_scheme ? ` (${s.on_scheme_names.slice(0, 3).join(", ")})` : ""}, ${s.at_peers} brands at the top UK centres${s.missing ? " — MISSING HERE" : ""}${s.examples?.length ? ` [targets: ${s.examples.map((e: any) => e.name).join(", ")}]` : ""}`
+      `${s.label}: ${s.on_scheme} on scheme${s.on_scheme ? ` (${s.on_scheme_names.slice(0, 3).join(", ")})` : ""}, ${s.at_peers} brands at ${profile.peers}${s.missing ? " — MISSING HERE" : ""}${s.examples?.length ? ` [targets: ${s.examples.map((e: any) => e.name).join(", ")}]` : ""}`
     ).join("\n");
 
-    const prompt = `You are a BGP leasing analyst writing the hospitality & leisure gap read for ${row.name}, for the asset owner. Property type: ${researchContext.assetClass || "not recorded"}. Recorded unit uses: ${researchContext.uses.join(", ") || "not recorded"}. ${researchContext.mode === "local" ? "This is a building/local occupier review, NOT a shopping-centre mix exercise. Confine advice to the recorded retail/leisure space; do not propose anchors for an office building or invent missing sectors. Nearby stores are market context, not tenants in this building. No shopping-centre peer comparisons are supplied." : "This is a shopping-centre occupier-mix review."} British English, no hype, no fees. Data:
+    const prompt = `You are a BGP leasing analyst writing the ${luxury ? "luxury retail & premium dining" : "hospitality & leisure"} gap read for ${row.name}, for the asset owner. Property type: ${researchContext.assetClass || "not recorded"}. Recorded unit uses: ${researchContext.uses.join(", ") || "not recorded"}. ${researchContext.mode === "local" ? "This is a building/local occupier review, NOT a shopping-centre mix exercise. Confine advice to the recorded retail/leisure space; do not propose anchors for an office building or invent missing sectors. Nearby stores are market context, not tenants in this building. No shopping-centre peer comparisons are supplied." : luxury ? "This is a luxury / prime destination occupier-mix review, benchmarked against London's luxury destinations. Favour luxury and premium retail (jewellery & watches, fashion & accessories, beauty & fragrance, gifting) and premium restaurants, cafés and patisserie; never recommend quick-service, value or mass-market chains or hotel groups." : "This is a shopping-centre occupier-mix review."} British English, no hype, no fees. Data:
 
 Competing centres nearby: ${(g.competingCentres || []).map((c: any) => `${c.name} (${c.distance_km}km)`).join(", ") || "none within range"}
 
@@ -724,10 +783,10 @@ ${fmtList(g.competitorGaps || [])}
 Brands trading in the local market (within 5km) but not on scheme:
 ${fmtList(g.localMarket || [], 6)}
 
-Strongest gaps versus the top-25 UK centres:
+Strongest gaps versus ${luxury ? profile.peers : "the top-25 UK centres"}:
 ${fmtList(g.peerGaps || [], 6)}
 
-Sector coverage (hospitality/F&B/wellness/leisure):
+Sector coverage (${luxury ? profile.categories : "hospitality/F&B/wellness/leisure"}):
 ${sectorLines}
 
 Live brand requirements matching an available unit: ${(g.matchingRequirements || []).map((r: any) => r.company_name || r.name).filter(Boolean).slice(0, 10).join(", ") || "none"}
@@ -802,7 +861,11 @@ router.get("/api/property/:propertyId/brand-gaps/international", requireAuth, as
       return res.json({ items: row.gap_intl, generatedAt: row.gap_intl_at, cached: true });
     }
 
-    const prompt = `You are a BGP international retail & leisure analyst. For ${row.name}, a major UK shopping destination, list 10 INTERNATIONAL hospitality/F&B/leisure/experiential concepts that are NOT yet established in the UK (or have at most 1-2 UK sites) and would suit a top-four UK shopping centre. Think AREA15/Meow Wolf-style experiential leisure, international F&B groups expanding into Europe, competitive-socialising formats, wellness concepts. As of your knowledge, be factual about where they currently trade; do not invent brands.
+    const prompt = researchContext.positioning === "luxury"
+      ? `You are a BGP international luxury retail analyst. For ${row.name}, a luxury / prime London destination, list 10 INTERNATIONAL luxury and premium concepts — jewellery & watch houses, fashion & accessories, beauty & fragrance, gifting, premium restaurants, cafés and patisserie — that are NOT yet established in the UK (or have at most 1-2 UK sites) and would suit a prime London luxury arcade or street. No quick-service, value or mass-market formats. As of your knowledge, be factual about where they currently trade; do not invent brands.
+
+Reply as strict JSON array only: [{"name": "...", "sector": "...", "origin": "...", "trades_in": "...", "uk_status": "none|entering|1-2 sites", "why": "one sentence on the fit"}]`
+      : `You are a BGP international retail & leisure analyst. For ${row.name}, a major UK shopping destination, list 10 INTERNATIONAL hospitality/F&B/leisure/experiential concepts that are NOT yet established in the UK (or have at most 1-2 UK sites) and would suit a top-four UK shopping centre. Think AREA15/Meow Wolf-style experiential leisure, international F&B groups expanding into Europe, competitive-socialising formats, wellness concepts. As of your knowledge, be factual about where they currently trade; do not invent brands.
 
 Reply as strict JSON array only: [{"name": "...", "sector": "...", "origin": "...", "trades_in": "...", "uk_status": "none|entering|1-2 sites", "why": "one sentence on the fit"}]`;
 
@@ -909,7 +972,7 @@ router.get("/api/property/:propertyId/brand-gaps/live-intel", requireAuth, async
     let px;
     try {
       px = await askPerplexity(
-        `These UK hospitality/F&B/leisure brands trade elsewhere but NOT at ${row.name}${row.postcode ? ` (${row.postcode})` : ""}. For EACH brand, is there evidence from roughly the last 12 months that it is ACTIVELY EXPANDING — new site openings, announced pipeline, publicly stated site requirements, or funding raised for rollout? Prefer evidence relevant to this area: ${region}. Be factual; where there is no evidence, return expanding=false with a short note. Property type: ${researchContext.assetClass || "not recorded"}; recorded unit uses: ${researchContext.uses.join(", ") || "not recorded"}. Also give 2-3 sentences of market_notes — positive market observations only, never what the results do or don't establish — relevant to ${researchContext.mode === "centre" ? "this shopping destination" : "the recorded retail/leisure space in this building; do not treat the whole building as a shopping centre or recommend leisure anchors for offices"}. Brands:\n${candidates.map((n, i) => `${i + 1}. ${n}`).join("\n")}`,
+        `These UK ${researchContext.positioning === "luxury" ? "luxury, premium retail and dining" : "hospitality/F&B/leisure"} brands trade elsewhere but NOT at ${row.name}${row.postcode ? ` (${row.postcode})` : ""}. For EACH brand, is there evidence from roughly the last 12 months that it is ACTIVELY EXPANDING — new site openings, announced pipeline, publicly stated site requirements, or funding raised for rollout? Prefer evidence relevant to this area: ${region}. Be factual; where there is no evidence, return expanding=false with a short note. Property type: ${researchContext.assetClass || "not recorded"}; recorded unit uses: ${researchContext.uses.join(", ") || "not recorded"}. Also give 2-3 sentences of market_notes — positive market observations only, never what the results do or don't establish — relevant to ${researchContext.mode === "centre" ? "this shopping destination" : "the recorded retail/leisure space in this building; do not treat the whole building as a shopping centre or recommend leisure anchors for offices"}. Brands:\n${candidates.map((n, i) => `${i + 1}. ${n}`).join("\n")}`,
         {
           searchRecency: "year",
           maxTokens: 2200,

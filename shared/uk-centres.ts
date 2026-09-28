@@ -14,7 +14,11 @@
 // and Chinatown have no usable news page — Google News covers them.
 // radiusKm: store-presence radius where the default 0.7km would swallow a
 // neighbouring estate (the West End estates sit a few hundred metres apart).
-export interface UkCentre { name: string; lat: number; lng: number; top25?: boolean; aliases: string[]; radiusKm?: number; feedPage?: string; feedRss?: string }
+// positioning "luxury": a luxury / prime destination — the peer set for a
+// luxury scheme (Woody, 2026-09-28: the Royal Exchange benchmarks against
+// Burlington Arcade, the Royal and Piccadilly Arcades and Bond Street, not
+// regional malls). Luxury-only entries stay out of a mainstream scheme's peers.
+export interface UkCentre { name: string; lat: number; lng: number; top25?: boolean; positioning?: "luxury"; aliases: string[]; radiusKm?: number; feedPage?: string; feedRss?: string }
 
 export const UK_CENTRES: UkCentre[] = [
   { name: "Bluewater", lat: 51.4389, lng: 0.2705, top25: true, aliases: ["Bluewater"], feedPage: "https://www.bluewater.co.uk/en/news-listing-page" },
@@ -24,9 +28,21 @@ export const UK_CENTRES: UkCentre[] = [
   { name: "Brent Cross", lat: 51.5766, lng: -0.2237, top25: true, aliases: ["Brent Cross"] },
   { name: "Canary Wharf", lat: 51.5054, lng: -0.0192, aliases: ["Canary Wharf"] },
   { name: "Battersea Power Station", lat: 51.4818, lng: -0.1445, top25: true, aliases: ["Battersea Power Station"], feedPage: "https://batterseapowerstation.co.uk/category/news/" },
-  { name: "Covent Garden", lat: 51.5117, lng: -0.1233, top25: true, aliases: ["Covent Garden"], radiusKm: 0.3, feedPage: "https://www.coventgarden.london/press-centre" },
+  { name: "Covent Garden", lat: 51.5117, lng: -0.1233, top25: true, positioning: "luxury", aliases: ["Covent Garden"], radiusKm: 0.3, feedPage: "https://www.coventgarden.london/press-centre" },
   { name: "Carnaby", lat: 51.5132, lng: -0.1389, top25: true, aliases: ["Carnaby Street", "Carnaby London", "Carnaby"], radiusKm: 0.3, feedPage: "https://www.thisissoho.co.uk/whats-on/" },
   { name: "Chinatown London", lat: 51.5113, lng: -0.1310, top25: true, aliases: ["Chinatown London", "London's Chinatown"], radiusKm: 0.3 },
+  { name: "Royal Exchange", lat: 51.5137, lng: -0.0875, positioning: "luxury", aliases: ["Royal Exchange", "The Royal Exchange"], radiusKm: 0.08 },
+  { name: "Leadenhall Market", lat: 51.5128, lng: -0.0834, positioning: "luxury", aliases: ["Leadenhall Market"], radiusKm: 0.08 },
+  { name: "Burlington Arcade", lat: 51.509, lng: -0.14, positioning: "luxury", aliases: ["Burlington Arcade"], radiusKm: 0.08 },
+  { name: "Piccadilly Arcade", lat: 51.5079, lng: -0.1385, positioning: "luxury", aliases: ["Piccadilly Arcade"], radiusKm: 0.05 },
+  { name: "Royal Arcade", lat: 51.5093, lng: -0.1418, positioning: "luxury", aliases: ["Royal Arcade Mayfair", "Royal Arcade"], radiusKm: 0.05 },
+  { name: "Bond Street", lat: 51.5118, lng: -0.1438, positioning: "luxury", aliases: ["New Bond Street", "Old Bond Street", "Bond Street"], radiusKm: 0.35 },
+  { name: "Mount Street Mayfair", lat: 51.5098, lng: -0.1515, positioning: "luxury", aliases: ["Mount Street"], radiusKm: 0.2 },
+  { name: "Sloane Street", lat: 51.4965, lng: -0.159, positioning: "luxury", aliases: ["Sloane Street"], radiusKm: 0.4 },
+  { name: "Knightsbridge", lat: 51.4994, lng: -0.1635, positioning: "luxury", aliases: ["Brompton Road", "Knightsbridge"], radiusKm: 0.25 },
+  { name: "Marylebone High Street", lat: 51.5205, lng: -0.1515, positioning: "luxury", aliases: ["Marylebone High Street", "Marylebone Village"], radiusKm: 0.3 },
+  { name: "Seven Dials", lat: 51.514, lng: -0.1268, positioning: "luxury", aliases: ["Seven Dials"], radiusKm: 0.15 },
+  { name: "Coal Drops Yard", lat: 51.5355, lng: -0.1257, positioning: "luxury", aliases: ["Coal Drops Yard"], radiusKm: 0.15 },
   { name: "The Glades Bromley", lat: 51.4029, lng: 0.0159, aliases: ["The Glades Bromley", "Glades shopping centre"] },
   { name: "Trafford Centre", lat: 53.4669, lng: -2.3486, top25: true, aliases: ["Trafford Centre", "intu Trafford"] },
   { name: "Manchester Arndale", lat: 53.4831, lng: -2.2416, top25: true, aliases: ["Manchester Arndale", "Arndale Centre"], feedPage: "https://manchesterarndale.com/whats-on/" },
@@ -61,6 +77,16 @@ export const UK_CENTRES: UkCentre[] = [
 ];
 
 export const TOP_25_CENTRES = UK_CENTRES.filter(centre => centre.top25);
+
+// Peers by positioning: a luxury scheme is read against the luxury
+// destinations; every other scheme against the list minus luxury-only
+// entries. The benchmark rows are the top 25, or every luxury peer.
+export function peerCentresFor(positioning: string | null | undefined): UkCentre[] {
+  return positioning === "luxury" ? UK_CENTRES.filter(centre => centre.positioning === "luxury") : UK_CENTRES.filter(centre => centre.positioning !== "luxury" || centre.top25);
+}
+export function benchmarkCentresFor(positioning: string | null | undefined): UkCentre[] {
+  return positioning === "luxury" ? peerCentresFor(positioning) : TOP_25_CENTRES;
+}
 
 export function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371;

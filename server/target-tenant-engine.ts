@@ -22,6 +22,7 @@
 import type { Request } from "express";
 import { requirementFitsUnit, parseReqSize } from "@shared/requirement-fit";
 import { isClientCrmCategory } from "@shared/tenant-categories";
+import { brandTier, isHotelGroup, POSITIONING_PROFILES, type BrandTier, type SchemePositioning } from "@shared/scheme-positioning";
 
 export const brandKey = (value: string) => value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/['’]/g, "").replace(/[^a-z0-9&]+/g, " ").trim();
 
@@ -31,9 +32,11 @@ type Brand = {
   signals: Array<{ text: string; weight: number; internal?: boolean }>;
   requirements: Array<{ size: any; use: string[] | null; requirement_locations: string[] | null; created_at: string | null }>;
   bgpClient: boolean;
+  tier?: BrandTier; hotel?: boolean;
 };
 export type CentreEvidence = {
   propertyId: string; property: any; client: boolean;
+  positioning?: SchemePositioning;
   mix: Array<{ unit: string; tenant: string; use: string | null; sqft: number | null; expiry: string | null }>;
   hereKeys: Set<string>; hereIds: Set<string>;
   brands: Map<string, Brand>;
@@ -74,6 +77,8 @@ export async function centreEvidence(pool: any, req: Request, propertyId: string
       c.name AS landlord_name FROM crm_properties p LEFT JOIN crm_companies c ON c.id = p.landlord_id WHERE p.id = $1`, [propertyId]))[0] || { id: propertyId, name: "" };
   const [gaps, openings] = await Promise.all([selfGet(req, `/api/property/${propertyId}/brand-gaps`), selfGet(req, `/api/property/${propertyId}/centre-openings`)]);
   const gap = gaps?.applicable === false ? null : gaps;
+  const positioning: SchemePositioning = gap?.researchContext?.positioning || "mainstream";
+  const profile = POSITIONING_PROFILES[positioning];
 
   // Current mix — the tenancy schedule is the truth; leasing rows fill gaps.
   const tenancy = await rows(pool, `SELECT unit_number, tenant_name, trading_name, permitted_use, nia_sqft, lease_expiry, tenant_company_id
@@ -110,7 +115,7 @@ export async function centreEvidence(pool: any, req: Request, propertyId: string
 
   if (gap) {
     for (const b of gap.competitorGaps || []) signal(brandFor(b.brand_company_id, b.brand_name), `trades at ${(b.competing_at || []).join(", ")} (competing centre), not here`, 20);
-    for (const b of gap.peerGaps || []) signal(brandFor(b.brand_company_id, b.brand_name), `at ${(b.peer_schemes || []).length} of the top UK centres, not here`, Math.min(20, 4 + (b.peer_schemes || []).length * 2));
+    for (const b of gap.peerGaps || []) signal(brandFor(b.brand_company_id, b.brand_name), `at ${(b.peer_schemes || []).length} of ${profile.peers}, not here`, Math.min(20, 4 + (b.peer_schemes || []).length * 2));
     for (const b of (gap.localMarket || []).slice(0, 15)) signal(brandFor(b.brand_company_id, b.brand_name), `trading ${Number(b.nearest_distance_km).toFixed(1)}km away`, 5);
     for (const s of gap.missingSectors || []) for (const e of s.examples || []) signal(brandFor(e.id, e.name), `${s.label} — a sector this centre lacks`, 10);
     for (const b of Object.values(gap.liveIntel?.byBrand || {}) as any[]) if (b?.expanding) signal(brandFor(null, b.name), `actively expanding: ${String(b.note || "").slice(0, 120)}`, 15);
@@ -167,10 +172,15 @@ export async function centreEvidence(pool: any, req: Request, propertyId: string
   // Brand facts for everything gathered.
   const ids = [...brands.values()].map(b => b.companyId).filter(Boolean);
   if (ids.length) {
-    for (const f of await rows(pool, `SELECT id, company_type, store_count, rollout_status FROM crm_companies WHERE id = ANY($1::text[])`, [ids])) {
-      const b = brands.get(f.id); if (b) { b.category = f.company_type; b.stores = f.store_count; b.rollout = f.rollout_status; }
+    for (const f of await rows(pool, `SELECT id, name, company_type, store_count, rollout_status, industry, description FROM crm_companies WHERE id = ANY($1::text[])`, [ids])) {
+      const b = brands.get(f.id); if (!b) continue;
+      b.category = f.company_type; b.stores = f.store_count; b.rollout = f.rollout_status;
+      const facts = { name: f.name, companyType: f.company_type, industry: f.industry, description: f.description, storeCount: f.store_count };
+      b.tier = brandTier(facts); b.hotel = isHotelGroup(facts);
     }
   }
+  // Brands known only by name (web intel) are tiered on the name alone.
+  for (const b of brands.values()) if (b.tier === undefined) { b.tier = brandTier({ name: b.name }); b.hotel = isHotelGroup({ name: b.name }); }
 
   const outcomes = client ? [] : await rows(pool, `SELECT t.brand_name, t.quality_rating, t.outcome, p.name AS property_name
       FROM target_tenants t JOIN crm_properties p ON t.property_id = p.id WHERE t.outcome IS NOT NULL ORDER BY t.updated_at DESC LIMIT 40`);
@@ -179,15 +189,17 @@ export async function centreEvidence(pool: any, req: Request, propertyId: string
   const principles = property.strategic_principles ? JSON.stringify(property.strategic_principles).slice(0, 1500) : "";
   const context = [
     `CENTRE: ${property.name}${property.landlord_name ? ` (landlord ${property.landlord_name})` : ""} · ${property.asset_class || "retail / leisure"} · ${[property.postcode].filter(Boolean).join(", ")}`,
+    positioning === "luxury" ? `POSITIONING: ${profile.label} — a luxury destination. Pitch luxury and premium brands (jewellery & watches, fashion & accessories, beauty & fragrance, gifting, premium restaurants, cafés and patisserie) only; never quick-service, value or mass-market chains or hotel groups.` : "",
+    positioning === "value" ? `POSITIONING: ${profile.label} — pitch value and mainstream operators; not luxury brands.` : "",
     gap?.competingCentres?.length ? `Competing centres: ${gap.competingCentres.map((c: any) => `${c.name} ${c.distance_km}km`).join(", ")}` : "",
-    bench ? `Against the top UK centres: ${bench.here.brands} F&B / leisure brands across ${bench.here.sectors} sectors — ranks ${rank} of ${bench.centres.length + 1}. Leaders: ${bench.centres.slice(0, 4).map((c: any) => `${c.name} ${c.brands}`).join(", ")}.` : "",
+    bench ? `Against ${profile.peers}: ${bench.here.brands} ${positioning === "luxury" ? profile.brandsNoun : "F&B / leisure brands"} across ${bench.here.sectors} sectors — ranks ${rank} of ${bench.centres.length + 1}. Leaders: ${bench.centres.slice(0, 4).map((c: any) => `${c.name} ${c.brands}`).join(", ")}.` : "",
     gap?.sectors?.length ? `Sector coverage here: ${gap.sectors.map((s: any) => `${s.label} ${s.on_scheme}${s.missing ? " (MISSING)" : ""}`).join("; ")}` : "",
     principles ? `LANDLORD'S STRATEGIC PRINCIPLES: ${principles}` : "",
     outcomes.length ? `PAST TARGET OUTCOMES (learn which brands actually signed): ${outcomes.map((o: any) => `${o.brand_name} at ${o.property_name} — ${o.outcome} (was ${o.quality_rating})`).join("; ")}` : "",
     `CURRENT TENANT MIX (${mix.length}): ${mix.slice(0, 260).map(m => `${m.tenant}${m.use ? ` [${m.use}]` : ""}${m.sqft ? ` ${Math.round(m.sqft)}sf` : ""}${m.expiry && m.expiry < new Date(Date.now() + 548 * 864e5).toISOString().slice(0, 10) ? ` exp ${m.expiry.slice(0, 7)}` : ""}`).join("; ")}`,
   ].filter(Boolean).join("\n");
 
-  const value: CentreEvidence = { propertyId, property, client, mix, hereKeys, hereIds, brands, context };
+  const value: CentreEvidence = { propertyId, property, client, positioning, mix, hereKeys, hereIds, brands, context };
   cache.set(cacheKey, { at: Date.now(), value });
   return value;
 }
@@ -229,6 +241,11 @@ export function unitCandidates(ev: CentreEvidence, unit: TargetUnit, exclude: Se
     // The unit's use decides the slice: F&B / leisure units get the
     // hospitality categories; unknown categories stay in.
     if (b.category && !retail && !isClientCrmCategory(b.category) && !evidence.some(e => e.startsWith("live requirement"))) continue;
+    // Positioning: a luxury scheme never gets quick-service / mass-market
+    // chains or hotel groups, and its retail only luxury & premium brands;
+    // a value scheme no luxury brands.
+    if (ev.positioning === "luxury" && (b.hotel || b.tier === "mass" || (b.category && !isClientCrmCategory(b.category) && b.tier !== "luxury" && b.tier !== "premium"))) continue;
+    if (ev.positioning === "value" && b.tier === "luxury") continue;
     const facts = [b.category?.replace(/^Tenant\s*-\s*/i, ""), b.stores ? `${b.stores} stores` : null, b.rollout].filter(Boolean).join(", ");
     out.push({ name: b.name, companyId: b.companyId, evidence, internal, score, facts });
   }
@@ -262,7 +279,7 @@ ${placed.size ? `ALREADY PLACED on other units at this centre (counts toward the
 ${unitBlock}
 
 Plan the targets for these units TOGETHER. Think it through before answering:
-- What is this centre missing against its competing centres and the top UK centres, sector by sector, and which of these units is the right home for each missing piece (size, zone, positioning, adjacency to the current mix)?
+- What is this centre missing against its competing centres and ${ev.positioning === "luxury" ? POSITIONING_PROFILES.luxury.peers : "the top UK centres"}, sector by sector, and which of these units is the right home for each missing piece (size, zone, positioning, adjacency to the current mix)?
 - Weigh the evidence honestly. Strongest: a live requirement whose size fits the unit, BGP acting for the brand, a live BGP deal elsewhere (taking space now), a new relationship BGP has just opened, the landlord naming the brand. Then presence at competing / top centres with opening news or cited expansion. Presence alone is weaker. A brand whose requirement size doesn't fit the unit is a poor target for it.
 - Avoid a brand that duplicates or directly competes with a current tenant, and never suggest a brand already trading here.
 - A brand can be pitched for at most three units across the centre (including the units already placed above) — give it to the units that fit its requirement best. Spread the plan: the leasing team needs a different conversation for each unit.
