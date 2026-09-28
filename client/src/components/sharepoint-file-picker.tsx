@@ -29,6 +29,7 @@ export interface SharePointCandidate {
 interface CandidateResponse {
   candidates: SharePointCandidate[];
   linkedFolder: string | null;
+  linkedFolders?: string[];
   propertyName: string;
   warnings: string[];
 }
@@ -87,7 +88,7 @@ export function SharePointFilePicker({
             {!data
               ? "Looking in the property's SharePoint folder and searching SharePoint…"
               : data.linkedFolder
-                ? `From the linked folder and a SharePoint search for “${data.propertyName}”.`
+                ? `From the ${(data.linkedFolders?.length || 1) > 1 ? `${data.linkedFolders!.length} linked folders` : "linked folder"} and a SharePoint search for “${data.propertyName}”.`
                 : `No SharePoint folder is linked to this property, so these are search results for “${data.propertyName}”. Link the folder in Files to include it.`}
           </DialogDescription>
         </DialogHeader>

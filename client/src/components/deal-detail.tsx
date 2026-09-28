@@ -646,6 +646,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           {linkedProperty && !isClientDeal && (
             <PropertyFoldersPanel
               propertyName={linkedProperty.name}
+              propertyId={linkedProperty.id}
               folderTeams={(linkedProperty as any).folderTeams}
               sharepointFolderUrl={(linkedProperty as any).sharepointFolderUrl}
             />

@@ -114,6 +114,9 @@ installGoogleBudgetGuard();
     )`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS leasing_privacy_enabled BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS sharepoint_folder_url TEXT`,
+    // Per-team and extra SharePoint folders ({"Investment": url, "Leases":
+    // url}); sharepoint_folder_url stays the default for the other tabs.
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS sharepoint_team_folders JSONB`,
     `ALTER TABLE lease_events ADD COLUMN IF NOT EXISTS landlord TEXT`,
     `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS source_url TEXT`,
     `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS source_title TEXT`,
