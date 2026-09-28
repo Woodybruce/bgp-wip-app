@@ -1205,6 +1205,17 @@ installGoogleBudgetGuard();
        added_at TIMESTAMP DEFAULT now()
      )`,
     `CREATE INDEX IF NOT EXISTS investment_tracker_clients_tracker_idx ON investment_tracker_clients (tracker_id)`,
+    // KYC4U request grid, pulled from their SharePoint (server/kyc4u.ts).
+    `CREATE TABLE IF NOT EXISTS kyc4u_requests (
+       list_id VARCHAR NOT NULL,
+       item_id VARCHAR NOT NULL,
+       list_name TEXT, title TEXT, status TEXT, entity_name TEXT,
+       company_id VARCHAR, company_id_manual VARCHAR,
+       fields JSONB, web_url TEXT,
+       created_at_source TIMESTAMPTZ, modified_at_source TIMESTAMPTZ,
+       synced_at TIMESTAMP DEFAULT now(),
+       PRIMARY KEY (list_id, item_id)
+     )`,
     // Digital business cards (Woody, 2026-09-28, "like blinq"): one public
     // slug per staff member, and everyone who shares their details back.
     `CREATE TABLE IF NOT EXISTS business_cards (

@@ -9,12 +9,14 @@ const ComplianceBoard = lazy(() => import("@/pages/compliance-board"));
 const AmlTraining = lazy(() => import("@/pages/aml-training"));
 const AmlCompliance = lazy(() => import("@/pages/aml-compliance"));
 const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
+const Kyc4uPanel = lazy(() => import("@/components/kyc4u-panel"));
 
-type TabId = "board" | "investigator" | "training" | "settings";
+type TabId = "board" | "investigator" | "kyc4u" | "training" | "settings";
 
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: "board", label: "Compliance Board" },
   { id: "investigator", label: "Investigator" },
+  { id: "kyc4u", label: "KYC4U" },
   { id: "training", label: "Training" },
   { id: "settings", label: "Firm Settings" },
 ];
@@ -78,6 +80,9 @@ export default function KycHub() {
             </TabsContent>
             <TabsContent value="investigator" className="m-0">
               <KycClouseau />
+            </TabsContent>
+            <TabsContent value="kyc4u" className="m-0">
+              <Kyc4uPanel />
             </TabsContent>
             <TabsContent value="training" className="m-0">
               <AmlTraining />
