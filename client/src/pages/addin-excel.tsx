@@ -2794,7 +2794,7 @@ function AddinExcel() {
                 {loading && (liveSteps.length > 0 || liveText) && (
                   <div className="text-[13px] text-foreground leading-relaxed">
                     {liveSteps.length > 0 && (
-                      <ul className="mb-1.5 space-y-0.5 text-[11px] text-muted-foreground">{liveSteps.map((st, i) => <li key={i}>✓ {st}</li>)}</ul>
+                      <p className="mb-1.5 text-[11px] text-muted-foreground truncate">{liveSteps.length} step{liveSteps.length === 1 ? "" : "s"} · {liveSteps[liveSteps.length - 1]}</p>
                     )}
                     {liveText && <ChatBGPMarkdown content={liveText.replace(/\[\[([^\]]+)\]\]/g, "$1")} />}
                   </div>

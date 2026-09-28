@@ -16013,7 +16013,7 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
       // Lean context — keep the task-relevant Excel supplement; fetch the rest on demand.
       let dynamicContext = excelSupplement;
       if (agentMode) {
-        const { EXCEL_AGENT_PROMPT, workbookHistoryContext } = await import("./excel-agent");
+        const { EXCEL_AGENT_PROMPT, OFFICE_VOICE, workbookHistoryContext } = await import("./excel-agent");
         const { OUTLOOK_AGENT_PROMPT } = await import("./outlook-agent");
         const { WORD_AGENT_PROMPT, PPT_AGENT_PROMPT } = await import("./office-agents");
         const memory = excelScopeCompanyId ? "" : await getMemoryContext(userId).catch(() => "");
@@ -16021,10 +16021,10 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
         const docPrompt = host === "outlook" ? OUTLOOK_AGENT_PROMPT : host === "word" ? WORD_AGENT_PROMPT : host === "powerpoint" ? PPT_AGENT_PROMPT : "";
         const docLabel = host === "outlook" ? "The open email" : host === "word" ? "The open document (snapshot — read it for the rest)" : "The open deck (snapshot — read it for the rest)";
         dynamicContext = host !== "excel"
-          ? docPrompt + memory + history
+          ? docPrompt + OFFICE_VOICE + memory + history
             + (workbookName && host !== "outlook" ? `\n**Open file:** ${workbookName.replace(/^(word|ppt):/, "")}\n` : "")
             + (safeExcelContext ? `\n**${docLabel}:**\n${safeExcelContext}\n` : "")
-          : EXCEL_AGENT_PROMPT + memory + history
+          : EXCEL_AGENT_PROMPT + OFFICE_VOICE + memory + history
             + (workbookName ? `\n**Open workbook:** ${workbookName}\n` : "")
             + (safeExcelContext ? `\n**Snapshot of the open workbook (may be stale mid-task — read ranges before relying on them):**\n${safeExcelContext}\n` : "");
       }

@@ -162,13 +162,18 @@ export function AddinAgentChat({ host, token, onUnauthorised, readDoc, runTool, 
           <div key={m.id} className="flex justify-end"><div className="max-w-[85%] rounded-2xl rounded-br-md px-3 py-2 text-[13px] bg-primary text-primary-foreground">{m.content}</div></div>
         ) : (
           <div key={m.id} className="text-[13px] leading-relaxed">
-            {m.steps && <ul className="mb-1 text-[11px] text-muted-foreground space-y-0.5">{m.steps.map((s, i) => <li key={i}>✓ {s}</li>)}</ul>}
+            {m.steps && (
+              <details className="mb-1 text-[11px] text-muted-foreground">
+                <summary className="cursor-pointer select-none">{m.steps.length} step{m.steps.length === 1 ? "" : "s"}</summary>
+                <ul className="mt-1 space-y-0.5 pl-3">{m.steps.map((s, i) => <li key={i}>{s}</li>)}</ul>
+              </details>
+            )}
             <ChatBGPMarkdown content={m.content} />
           </div>
         ))}
         {loading && (
           <div className="text-[13px] leading-relaxed">
-            {liveSteps.length > 0 && <ul className="mb-1 text-[11px] text-muted-foreground space-y-0.5">{liveSteps.map((s, i) => <li key={i}>✓ {s}</li>)}</ul>}
+            {liveSteps.length > 0 && <p className="mb-1 text-[11px] text-muted-foreground truncate">{liveSteps.length} step{liveSteps.length === 1 ? "" : "s"} · {liveSteps[liveSteps.length - 1]}</p>}
             {liveText && <ChatBGPMarkdown content={liveText} />}
             <p className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1"><Loader2 className="w-3 h-3 animate-spin" />{progress || "Thinking…"}</p>
           </div>
