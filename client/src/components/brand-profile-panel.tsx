@@ -2219,7 +2219,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // Profile card beside the conversation — the top row of the landlord and
   // agent layouts.
   const profileTopRow = (
-        <div className="md:grid md:grid-cols-2 md:gap-4">
+        <div className="[@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4">
           <div className="min-w-0">
             <div className="rounded-xl border border-card-border bg-card shadow-sm px-3 pb-3" data-testid="brand-profile-card">
               {header}
@@ -2245,9 +2245,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // account boards balanced in two columns; Gallery last. Group entities
   // sit with Compliance & KYC instead of heading the page.
   if (isLandlord && flat) {
-    const masonryCls = "space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-x-4 lg:items-start lg:auto-rows-[4px] lg:grid-flow-row-dense";
+    const masonryCls = "space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense";
     return (
-      <div className="flex flex-col gap-3 w-full min-w-0" data-testid="landlord-profile">
+      <div className="flex flex-col gap-3 w-full min-w-0 [container-type:inline-size]" data-testid="landlord-profile">
         {profileTopRow}
         {refreshStatus}
         {/* No BGP take on landlords: it is a fixed count of the linked
@@ -2290,9 +2290,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // with BGP (roles from the evidence, with each strand listed), then who
   // they represent, their people and news.
   if (isAgentFirm && flat) {
-    const masonryCls = "space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-x-4 lg:items-start lg:auto-rows-[4px] lg:grid-flow-row-dense";
+    const masonryCls = "space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense";
     return (
-      <div className="flex flex-col gap-3 w-full min-w-0" data-testid="agent-profile">
+      <div className="flex flex-col gap-3 w-full min-w-0 [container-type:inline-size]" data-testid="agent-profile">
         {profileTopRow}
         {refreshStatus}
         {!isClientViewer && <AgentRelationshipCard companyId={companyId} />}
@@ -2316,7 +2316,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
 
   return (
     <div className={(isLandlord || isBrand)
-      ? "flex flex-col gap-3 items-stretch w-full min-w-0"
+      ? "flex flex-col gap-3 items-stretch w-full min-w-0 [container-type:inline-size]"
       : "flex flex-col md:flex-row gap-3 items-start w-full min-w-0"}>
     {/* flat (the company page): no outer card, so these boards sit on the page
         exactly like Key contacts / Covenant below (Woody, 2026-09-24: "the
@@ -2331,7 +2331,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       {/* The profile header, website, details, actions and About are ONE card
           (Woody, 2026-09-26: "combine the about and profile into one card"). */}
       {flat ? (
-        <div className="md:grid md:grid-cols-2 md:gap-4">
+        <div className="[@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4">
           <div className="min-w-0 space-y-3">
             {topSlot}
             <div className="rounded-xl border border-card-border bg-card shadow-sm px-3 pb-3" data-testid="brand-profile-card">
@@ -2412,7 +2412,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 real investment requirements for the landlord's entity set.
                 Both render nothing when there is nothing to show. */}
             {isLandlord && (
-              <MasonryGrid className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-x-4 lg:items-start lg:auto-rows-[4px] lg:grid-flow-row-dense">
+              <MasonryGrid className="space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense">
                 <AccountNextActionsCard companyId={companyId} />
                 <InvestmentRequirementsCard companyId={companyId} />
                 {/* Standard client folder tree (Delivery 5) — the dry-run
@@ -2478,7 +2478,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 first free slot, so the section packs whatever a brand has
                 (Woody, 2026-09-26: "so it all fits well regardless of the
                 brand and their info"). */}
-            <MasonryGrid className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-x-4 lg:items-start lg:auto-rows-[4px] lg:grid-flow-row-dense">
+            <MasonryGrid className="space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense">
             <div className={`${panelSec("relationship")} lg:contents lg:space-y-0`}>
             {/* ── Zone 4: BGP Relationship — now client-visible too (Woody,
                 2026-08-04: "BGP relationship still not on Landsec viewing
