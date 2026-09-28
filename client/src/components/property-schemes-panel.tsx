@@ -184,7 +184,7 @@ export function SchemePillRow({ schemes, items, value, onChange, testId = "schem
   return (
     <div className="flex flex-wrap items-center gap-1.5" aria-label="Scheme filter" data-testid={testId}>
       <Pill active={!value} onClick={() => onChange("")}>All schemes <span className="font-mono tabular-nums">{items.length}</span></Pill>
-      {schemes.map(s => (
+      {schemes.filter(s => counts.get(s.name) || value === s.name).map(s => (
         <Pill key={s.name} active={value === s.name} onClick={() => onChange(value === s.name ? "" : s.name)}>
           {s.name} <span className="font-mono tabular-nums">{counts.get(s.name) || 0}</span>
         </Pill>

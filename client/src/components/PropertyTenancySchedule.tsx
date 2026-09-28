@@ -141,6 +141,8 @@ interface TenancyUnit {
   // Synthetic — set true when this row is a vacant derived from
   // available_units (no real tenancy_schedule_units row backing it).
   is_vacant?: boolean;
+  deal_stage?: "let" | "under_offer" | null;
+  tenant_from_deal?: boolean;
   available_unit_id?: string | null;
 }
 
@@ -696,6 +698,16 @@ const COMPACT_COLUMN_FIELDS = new Set([
   "unit_number", "floor_level", "tenant_name", "status", "nia_sqft",
   "passing_rent_pa", "lease_expiry", "next_review_date", "permitted_use",
 ]);
+
+// Letting Tracker units not on the spine: vacant, or — once their deal is at
+// solicitors or later — under offer / let to the deal's tenant.
+function trackerRowLabel(unit: { deal_stage?: string | null; unit_number?: string | null; premises?: string | null; tenant_name?: string | null }) {
+  const name = unit.unit_number || unit.premises || "—";
+  const tenant = unit.tenant_name && unit.tenant_name !== "VACANT" ? ` · ${unit.tenant_name}` : "";
+  if (unit.deal_stage === "let") return `${name}${tenant} · let by BGP`;
+  if (unit.deal_stage === "under_offer") return `${name}${tenant} · under offer`;
+  return `VACANT — ${name}`;
+}
 
 export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentation = "full", trackerStrip = true }: {
   propertyId: string;
@@ -1576,10 +1588,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
 
           if (unit.is_vacant) {
             return (
-              <div key={unit.id} className="px-3 py-3 bg-amber-50/40 dark:bg-amber-900/10" data-testid={`tenancy-card-${unit.id}`}>
+              <div key={unit.id} className={`px-3 py-3 ${unit.deal_stage ? "" : "bg-amber-50/40 dark:bg-amber-900/10"}`} data-testid={`tenancy-card-${unit.id}`}>
                 <div className="flex items-start justify-between gap-2">
-                  <span className="text-sm font-medium text-amber-700 dark:text-amber-400 min-w-0">
-                    VACANT — {unit.unit_number || unit.premises || "—"}
+                  <span className={`text-sm font-medium min-w-0 ${unit.deal_stage ? "" : "text-amber-700 dark:text-amber-400"}`}>
+                    {trackerRowLabel(unit)}
                   </span>
                   <span className="font-mono tabular-nums text-sm shrink-0">
                     {unit.erv_pa ? `${fmtCurrency(unit.erv_pa)} asking` : "—"}
@@ -2008,9 +2020,9 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
 
   if (unit.is_vacant) {
     return (
-      <tr className="border-b hover:bg-amber-100/40 dark:hover:bg-amber-900/20 bg-amber-50/40 dark:bg-amber-900/10" data-testid={`tenancy-row-${unit.id}`}>
-        <td className="p-1 font-medium text-amber-700 dark:text-amber-400" colSpan={Math.min(columns.length, 6)}>
-          VACANT — {unit.unit_number || unit.premises || "—"}
+      <tr className={`border-b ${unit.deal_stage ? "hover:bg-muted/40" : "hover:bg-amber-100/40 dark:hover:bg-amber-900/20 bg-amber-50/40 dark:bg-amber-900/10"}`} data-testid={`tenancy-row-${unit.id}`}>
+        <td className={`p-1 font-medium ${unit.deal_stage ? "" : "text-amber-700 dark:text-amber-400"}`} colSpan={Math.min(columns.length, 6)}>
+          {trackerRowLabel(unit)}
           {unit.nia_sqft ? ` · ${Math.round(unit.nia_sqft).toLocaleString("en-GB")} sq ft` : ""}
           {unit.erv_pa ? ` · £${unit.erv_pa.toLocaleString()} pa asking` : ""}
         </td>
