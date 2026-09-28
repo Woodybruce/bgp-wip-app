@@ -233,6 +233,9 @@ const BACKGROUND_INDEXES: Array<[string, string]> = [
   ["idx_crm_interactions_contact_id", "ON crm_interactions (contact_id)"],
   ["idx_news_articles_url", "ON news_articles (url)"],
   ["idx_crm_interactions_participants", "ON crm_interactions USING gin (participants)"],
+  // Domain lookups ("every email with someone @ardent") read participants
+  // as text through this.
+  ["idx_crm_interactions_participants_trgm", "ON crm_interactions USING gin ((participants::text) gin_trgm_ops)"],
   ["idx_news_articles_title_trgm", "ON news_articles USING gin (title gin_trgm_ops)"],
   ["idx_news_articles_summary_trgm", "ON news_articles USING gin (summary gin_trgm_ops)"],
   ["idx_news_articles_url_trgm", "ON news_articles USING gin (url gin_trgm_ops)"],

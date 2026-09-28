@@ -16,6 +16,7 @@ import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { escapeLike } from "./utils/escape-like";
 import { emitNewMessage, emitMessageUpdated, emitMessageDeleted, emitThreadUpdated, emitMemberAdded, emitMemberRemoved, emitNotification, getIO } from "./websocket";
 import { saveSubscription, removeSubscription, removeSubscriptionForUser, sendPushNotification, getVapidPublicKey } from "./push-notifications";
+import { registerBusinessCardRoutes } from "./business-cards";
 import {
   insertProjectSchema,
   users,
@@ -4213,6 +4214,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     teamPhotoList = { at: Date.now(), rows };
     return rows;
   };
+
+  registerBusinessCardRoutes(app, requireAuth);
 
   app.get("/api/public/team-photos", async (_req, res) => {
     try {

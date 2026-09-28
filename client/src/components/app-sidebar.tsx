@@ -83,7 +83,7 @@ import { useBrand } from "@/lib/brand-context";
 import { isEquityUser } from "@/lib/utils";
 import type { User } from "@shared/schema";
 import { useRecentItems, type RecentItem } from "@/hooks/use-recent-items";
-import { History, ClipboardCheck } from "lucide-react";
+import { History, ClipboardCheck, QrCode } from "lucide-react";
 import { dealDisplayTitle } from "@/lib/format";
 
 export { dealDisplayTitle };
@@ -106,6 +106,7 @@ const coreNavBase = [
   { title: "CRM", url: "/contacts", icon: Handshake },
   { title: "People & HR", url: "/hr", icon: Users },
   { title: "My Card", url: "/my-expenses", icon: CreditCard },
+  { title: "Business card", url: "/business-card", icon: QrCode },
   // Lease Advisory is Pete's toolset (Woody, 2026-09-02): jobs, evidence
   // plans and leasing comps linked by pill row across the three pages.
   // Comps has no standalone entry for staff — it's reached through here
@@ -628,6 +629,7 @@ export const mobileOverlayItems = [
   { title: "CRM", url: "/contacts", icon: Handshake },
   { title: "People & HR", url: "/hr", icon: Users },
   { title: "My Card", url: "/my-expenses", icon: CreditCard },
+  { title: "Business card", url: "/business-card", icon: QrCode },
   { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase, adminOnly: true },
   // Leasing Schedule retired (archived) — route stays live for old links.
   { title: "Comps", url: "/comps", icon: Scale },
