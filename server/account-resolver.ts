@@ -600,14 +600,17 @@ export async function resolveAccountView(
     // By contact link OR address in the participants — inbox-saved people
     // ("Mshulman") read 0 emails and sank (Woody, 2026-09-28).
     const { rows: statRows } = await q.query(
-      `WITH cts AS (SELECT id, lower(email) AS e FROM crm_contacts WHERE id = ANY($1::text[])),
+      `WITH cts AS (SELECT id, lower(email) AS e, email AS raw FROM crm_contacts WHERE id = ANY($1::text[])),
+            -- The GIN index on participants answers ?| — unpacking every
+            -- email's participants took Ardent's page to 34s.
+            addrs AS (SELECT COALESCE(array_agg(DISTINCT x), '{}') AS a FROM cts, unnest(ARRAY[raw, e]) AS x WHERE COALESCE(x, '') <> ''),
             hits AS (
               SELECT i.id AS iid, i.interaction_date AS d, i.contact_id AS cid, NULL::text AS e
                 FROM crm_interactions i WHERE i.contact_id = ANY($1::text[]) AND i.interaction_date <= NOW()
               UNION ALL
               SELECT i.id, i.interaction_date, NULL, lower(p)
                 FROM crm_interactions i CROSS JOIN LATERAL jsonb_array_elements_text(i.participants) AS p
-               WHERE jsonb_typeof(i.participants) = 'array' AND i.interaction_date <= NOW()
+               WHERE i.participants ?| (SELECT a FROM addrs) AND jsonb_typeof(i.participants) = 'array' AND i.interaction_date <= NOW()
                  AND lower(p) IN (SELECT e FROM cts WHERE e IS NOT NULL AND e <> ''))
        SELECT c.id AS contact_id, COUNT(DISTINCT h.iid)::int AS touches, MAX(h.d) AS last_touch
          FROM cts c JOIN hits h ON h.cid = c.id OR (h.e IS NOT NULL AND h.e = c.e)

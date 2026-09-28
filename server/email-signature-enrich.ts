@@ -116,15 +116,11 @@ async function fetchLatestInboundFrom(fromEmail: string): Promise<{ body: string
     `SELECT bgp_user
        FROM crm_interactions
       WHERE bgp_user IS NOT NULL
-        AND participants IS NOT NULL
-        AND EXISTS (
-          SELECT 1 FROM jsonb_array_elements_text(participants) AS p(addr)
-          WHERE lower(addr) = $1
-        )
+        AND participants ?| ARRAY[$1, $2]
       GROUP BY bgp_user
       ORDER BY COUNT(*) DESC
       LIMIT 4`,
-    [fromEmail.toLowerCase()],
+    [fromEmail.toLowerCase(), fromEmail.trim()],
   );
 
   // Fall back to a known senior mailbox if no candidates — shouldn't
