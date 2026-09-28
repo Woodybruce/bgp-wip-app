@@ -2367,7 +2367,15 @@ export default function AvailableUnitsPage() {
                                   title={u.unitName ? `${u.unitName} — open unit brief` : "Open unit brief"}
                                   data-testid={`unit-name-${u.id}`}
                                 >
-                                  {u.unitName ? displayUnitName(u.unitName) : <span className="italic opacity-60">Unit name</span>}
+                                  {/* Same property stripping as the phone cards — the
+                                      property sits on the line below, so "The Blue
+                                      Lagoon Bluewater - Lower Level" reads "The Blue
+                                      Lagoon - Lower Level" (Woody, 2026-09-28). */}
+                                  {u.unitName ? (() => {
+                                    const p = propertyMap[u.propertyId] as any;
+                                    const name = displayUnitName(u.unitName);
+                                    return p?.name ? stripPropertyFromTitle(name, p.name, typeof p.address === "string" ? p.address : p.address?.formatted) : name;
+                                  })() : <span className="italic opacity-60">Unit name</span>}
                                 </button>
                                 <button
                                   type="button"

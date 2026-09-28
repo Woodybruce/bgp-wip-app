@@ -1,5 +1,5 @@
 import { formatSizeList } from "@/lib/format-size";
-import { isOwnChannelNews, newsSourceLabel, splitNewsTitle, isOwnBrandSource, dedupeNearNews, ukDate, sentenceCaseShouting, aboutParagraphs, isSocialNews, snippetPublisher, isSignalNoise, cleanUnitLabel } from "@/components/brand-profile-panel";
+import { isOwnChannelNews, newsSourceLabel, splitNewsTitle, isOwnBrandSource, dedupeNearNews, ukDate, sentenceCaseShouting, aboutParagraphs, isSocialNews, snippetPublisher, isSignalNoise, cleanUnitLabel, signalKind, accountBoardContacts } from "@/components/brand-profile-panel";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { BrandFeedCard } from "@/components/brand-feed-card";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
@@ -31,6 +31,7 @@ import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import { CompanyContactsBoard } from "@/components/company-contacts-board";
 import { CovenantBadge, CovenantCommentary, useCovenantReport } from "@/components/covenant-badge";
 import { ActivitySummary } from "@/components/activity-summary";
+import { useAccountWorkspace } from "@/components/account-workspace-cards";
 
 // `embedded`: inside a deal's Brand tab, which has its own KYC tab — no
 // second Compliance pill there (Woody, 2026-09-28).
@@ -121,6 +122,8 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
     retry: false,
   });
   const refreshProfile = useBrandProfileRefresh(companyId, !isClientViewer);
+  // Same contact source as the desktop landlord board (Woody, 2026-09-28).
+  const { data: accountWorkspace } = useAccountWorkspace(data?.company && isLandlordCompany(data.company.company_type, data.isLandlord) ? companyId : undefined);
   const covenantReport = useCovenantReport(data?.company?.companies_house_number);
 
   if (isError) return <Card className="p-4 space-y-3"><p className="text-sm text-muted-foreground">The saved brand profile could not be loaded.</p><Button size="sm" variant="outline" onClick={() => reloadSavedProfile()}>Try again</Button></Card>;
@@ -264,7 +267,7 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
       <CompanyContactsBoard
         companyId={companyId}
         companyName={c.name}
-        contacts={data.contacts || []}
+        contacts={isLandlord && accountWorkspace ? accountBoardContacts(accountWorkspace) : data.contacts || []}
         pendingSenders={data.pendingContactSuggestions || []}
         isLandlord={isLandlord}
       />
@@ -455,6 +458,8 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
             {(signalsShowAll ? signals : signals.slice(0, 4)).map((s: any) => {
               const typeCls: Record<string, string> = {
                 opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
+                hiring:      "bg-teal-50 text-teal-700 border-teal-200",
+                headcount_down: "bg-amber-50 text-amber-700 border-amber-200",
                 closure:     "bg-red-50 text-red-700 border-red-200",
                 funding:     "bg-violet-50 text-violet-700 border-violet-200",
                 exec_change: "bg-blue-50 text-blue-700 border-blue-200",
@@ -470,8 +475,8 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
               const body = (
                 <>
                   <div className="flex items-center gap-2 mb-0.5">
-                    <Badge variant="outline" className={`text-[10px] shrink-0 ${typeCls[s.signal_type] || typeCls.news}`}>
-                      {(s.signal_type || "news").replace(/_/g, " ")}
+                    <Badge variant="outline" className={`text-[10px] shrink-0 ${typeCls[signalKind(s)] || typeCls.news}`}>
+                      {signalKind(s).replace(/_/g, " ")}
                     </Badge>
                     {s.signal_date && (
                       <span className="text-[11px] font-mono tabular-nums text-muted-foreground">

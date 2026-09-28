@@ -972,7 +972,9 @@ export default function WipReport() {
     // 1440 however wide the column was set (Woody, 2026-09-27).
     // Header "Target" (tooltip + Columns menu say "Target month") — "Target
     // Month" clipped to "Target" at the table's right edge (Woody, 2026-09-28).
-    { key: "dealDate", label: "Target", title: "Target month", width: "w-[128px] min-w-[128px]" },
+    // 92px fits the 72px month pill; 128px pushed the pills past the visible
+    // edge at 1440 (Woody, 2026-09-28).
+    { key: "dealDate", label: "Target", title: "Target month", width: "w-[92px] min-w-[92px]" },
     { key: "dealType", label: "Deal Type", width: "w-20" },
     { key: "agent", label: "BGP Contact", width: "w-20" },
     { key: "dealStatus", label: "Deal Status", width: "w-20" },
@@ -2010,8 +2012,9 @@ export default function WipReport() {
               ] as const).map(board => {
                 if (board.rows.length === 0) return null;
                 const expanded = expandedBoards.has(`desk-${board.key}`);
-                // Expanded shows every row (scrolls in max-h-72), so "See all N" is
-                // true (Woody, 2026-09-27).
+                // Expanded shows every row, so "See all N" is true (Woody,
+                // 2026-09-27). The card grows to 70vh before scrolling — max-h-72
+                // was the collapsed height and cut the 9th row (Woody, 2026-09-28).
                 const shown = expanded ? board.rows : board.rows.slice(0, 8);
                 const maxB = Math.max(...board.rows.map(r => r.total), 1);
                 const boardTotal = feeBoards.totals[board.key] ?? 0;
@@ -2025,7 +2028,7 @@ export default function WipReport() {
                       <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide truncate min-w-0" title={`Net fees by ${board.title}`}>Net fees by {board.title}</span>
                       <span className="text-[11px] font-mono text-muted-foreground shrink-0" title={shared ? "Deals shared between teams count in full in each team row" : undefined}>{formatCurrency(boardTotal)}{shared && <span className="font-sans"> · shared</span>}</span>
                     </div>
-                    <div className={`p-2 ${expanded ? "max-h-72 overflow-y-auto" : ""}`}>
+                    <div className={`p-2 ${expanded ? "max-h-[70vh] overflow-y-auto" : ""}`}>
                       {shown.map(r => {
                         const active = board.selected.has(r.name);
                         return (
@@ -2197,7 +2200,7 @@ export default function WipReport() {
               )}
             </div>
             <div className="hidden md:block">
-            <ScrollableTable minWidth={1400} pageScroll>
+            <ScrollableTable minWidth={1300} pageScroll>
               <table className="w-full">
                 <thead className="bg-muted/50 border-b sticky top-0 z-10 text-sm">
                   <tr>

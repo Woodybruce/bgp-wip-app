@@ -114,7 +114,7 @@ const squash = (s: string | null | undefined) => (s || "").toLowerCase().replace
 // link also read "Bompard" beside a "Bompard" counterparty, or kept an
 // abbreviated address ("Luke Irwin – Pimlico Rd, London SW1W", "Ashford -
 // KFC"): drop every part that is the property, its first word, an address
-// or the counterparty; if nothing new is left, show the unit or "Open deal"
+// or the counterparty; if nothing new is left, show the unit or a fallback
 // (Woody, 2026-09-27).
 const DEAL_SEP = /\s+[-–—:]\s+|\s*[–—:]\s*/;
 const POSTCODE = /\b[A-Z]{1,2}\d[A-Z\d]?\b/;
@@ -136,7 +136,17 @@ function dealShort(d: AccountDealRow, unit: string | null): string {
   // town word isn't a label, so it falls back like an empty name (Woody,
   // 2026-09-28).
   const loneTown = keep.length === 1 && name.split(DEAL_SEP).length > 1 && !!cp && /^[A-Z][a-z]+$/.test(rest);
-  return !squash(rest) || bare(rest) === cp || loneTown ? (unit || "Open deal") : rest;
+  return !squash(rest) || bare(rest) === cp || loneTown ? dealFallback(d, unit) : rest;
+}
+// "Open deal" on most landlord rows said nothing: the unit, else the
+// service and month ("Letting · Mar 2026"), else the counterparty — "Open
+// deal" only when there's nothing at all (Woody, 2026-09-28).
+function dealFallback(d: AccountDealRow, unit: string | null): string {
+  if (unit) return unit;
+  const when = d.instructedAt || d.lastActivityAt || d.targetDate;
+  const month = when ? gbDate(when, { month: "short", year: "numeric" }) : "";
+  const typed = [d.service, month].filter(Boolean).join(" · ");
+  return typed || d.counterparty || "Open deal";
 }
 // Units also restated the property at the END or middle ("Unit 7 Eureka
 // Leisure Park", "R6 - Gunwharf Quays", "146 Queen Street (LK16), Westgate,
@@ -318,9 +328,9 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                 <tbody>
                   {data.deals.map(d => {
                     const labels = rowLabels(d);
-                    // A repeating deal name gives way to the unit (or a plain
-                    // "Open deal") so the deal stays one click away.
-                    const dealLink = labels.dealRepeats && d.propertyId ? (labels.unit || "Open deal") : dealShort(d, labels.unit);
+                    // A repeating deal name gives way to the unit (or the
+                    // service + month) so the deal stays one click away.
+                    const dealLink = labels.dealRepeats && d.propertyId ? dealFallback(d, labels.unit) : dealShort(d, labels.unit);
                     return (
                     <tr key={d.dealId} className="border-b border-border/20 last:border-0 hover:bg-muted/40" data-testid={`account-deal-row-${d.dealId}`}>
                       <td className="py-1.5 pr-2 max-w-[12rem]">

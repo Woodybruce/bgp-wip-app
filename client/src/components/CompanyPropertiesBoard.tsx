@@ -16,6 +16,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { buildUserColorMap } from "@/lib/agent-colors";
+import { gbDate } from "@/lib/format";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import type { CrmDeal, CrmProperty } from "@shared/schema";
 
@@ -710,7 +711,7 @@ export function CompanyPropertiesBoard({
                 ? "All official destinations accounted for"
                 : "Official destinations outstanding"}
               {" · "}
-              {new Date(reconciliation.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+              {gbDate(reconciliation.generatedAt, { day: "numeric", month: "short", year: "numeric" })}
             </span>
           </div>
           <div className="overflow-x-auto">
@@ -858,7 +859,7 @@ export function CompanyPropertiesBoard({
                             <div key={u.id} className="flex items-center gap-2 text-xs py-0.5">
                               <span className="truncate flex-1">{u.unit_name}{u.tenant_name ? ` · ${u.tenant_name}` : ""}</span>
                               <span className={`shrink-0 ${u.status === "Occupied" ? "text-emerald-600" : "text-amber-600"}`}>{u.status}</span>
-                              {u.lease_expiry && <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">{new Date(u.lease_expiry).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</span>}
+                              {u.lease_expiry && <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">{gbDate(u.lease_expiry, { month: "short", year: "numeric" })}</span>}
                             </div>
                           ))}
                           {p.units.length > 12 && <p className="text-[10px] text-muted-foreground">+{p.units.length - 12} more units</p>}

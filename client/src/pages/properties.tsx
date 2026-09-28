@@ -956,13 +956,15 @@ export function InlineOwnerLink({
           {/* Role label on the chip — the same company often fills several
               roles (Landsec as Landlord AND Freeholder), and unlabelled
               chips read as duplicates. */}
-          {/* Role in full, short form ("Owner", "LLH"); the chip wraps
-              between role and name rather than cutting the role to "Own…"
-              (Woody, 2026-09-28). */}
+          {/* Role in full, short form ("Owner", "Long leaseholder"); the chip
+              wraps between role and name rather than cutting the role to
+              "Own…" (Woody, 2026-09-28). The name wraps to two lines — a
+              single-line truncate cut "335 Ramsbury Oxford…" and "The Office
+              Group (TO…" (Woody, 2026-09-28). */}
           <Badge variant="outline" className="text-[11px] px-2 py-0.5 cursor-pointer hover:bg-muted max-w-full inline-flex flex-wrap items-center" title={`${label}: ${company.name}`}>
             <Building2 className="w-3 h-3 mr-1 text-muted-foreground shrink-0" />
             {roleOnChip && <span className="text-muted-foreground mr-1 whitespace-nowrap shrink-0">{chipLabel || label} ·</span>}
-            <span className={`truncate ${roleOnChip ? "shrink-0 max-w-[70%]" : "min-w-0"}`}>{company.name}</span>
+            <span className="min-w-0 max-w-full line-clamp-2 break-words">{company.name}</span>
           </Badge>
         </Link>
         {!readOnly && (
@@ -1292,8 +1294,15 @@ export function InlineDeals({
   // three show before "+N" (Woody, 2026-09-28: six "Bluewater - …" chips
   // and two identical "10 Piccadilly T…").
   const dealGroups: { label: string; deals: DealLink[] }[] = [];
+  // The property's first word mid-label goes too ("U052B Bluewater upper
+  // level" → "U052B upper level") (Woody, 2026-09-28).
+  const propWord = (propertyName || "").trim().replace(/^the\s+/i, "").split(/[\s,(]+/)[0] || "";
+  const dropPropWord = (v: string) => {
+    if (propWord.length < 4 || !/^[A-Za-z'’]+$/.test(propWord) || /^(north|south|east|west|great|little|upper|lower|royal|unit|saint)$/i.test(propWord)) return v;
+    return v.replace(new RegExp(`\\s+${propWord}(?=\\s)`, "ig"), "").trim() || v;
+  };
   for (const d of linkedDeals) {
-    const label = propertyName ? stripPropertyFromTitle(d.name, propertyName, propertyAddress) : d.name;
+    const label = propertyName ? dropPropWord(stripPropertyFromTitle(d.name, propertyName, propertyAddress)) : d.name;
     const g = dealGroups.find(x => x.label === label);
     if (g) g.deals.push(d); else dealGroups.push({ label, deals: [d] });
   }
@@ -1344,7 +1353,14 @@ export function InlineDeals({
                 data-testid={`deal-badge-${deal.id}`}
               >
                 <Handshake className="w-2.5 h-2.5 mr-0.5 shrink-0 text-muted-foreground" />
-                <span className="truncate">{label}</span>
+                {/* Truncate the middle, keep the end — "Time Out Mar…" hid
+                    the T1/T2 that tells two chips apart (Woody, 2026-09-28). */}
+                {(() => {
+                  const m = label.match(/^(.+?)\s+(\S{1,8})$/);
+                  return m ? (
+                    <><span className="truncate min-w-0">{m[1]}</span><span className="shrink-0 whitespace-pre">{` ${m[2]}`}</span></>
+                  ) : <span className="truncate">{label}</span>;
+                })()}
                 {deals.length > 1 && <span className="ml-0.5 shrink-0 font-mono tabular-nums text-muted-foreground">×{deals.length}</span>}
               </Badge>
             </Link>
@@ -1464,7 +1480,9 @@ export function InlineTenants({
     },
   });
 
-  const MAX_VISIBLE = 3;
+  // Two chips + "+N" (names in the tooltip) — three still ran past the
+  // table's right edge (Woody, 2026-09-28).
+  const MAX_VISIBLE = 2;
   const visibleCompanies = assignedCompanies.slice(0, MAX_VISIBLE);
   const hiddenCount = assignedCompanies.length - MAX_VISIBLE;
 
@@ -1474,15 +1492,15 @@ export function InlineTenants({
     <div className="flex items-center gap-1 flex-wrap min-w-0">
       {visibleCompanies.map(company => (
         <span key={company.id} className="inline-flex items-center gap-0.5 min-w-0 max-w-full">
-          <Link href={`/companies/${company.id}`} className="min-w-0">
+          <Link href={`/companies/${company.id}`} className="min-w-0 max-w-full">
             <Badge
               variant="outline"
-              className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted group max-w-full"
+              className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted group max-w-full overflow-hidden"
               title={company.name}
               data-testid={`tenant-badge-${propertyId}-${company.id}`}
             >
               <Building2 className="w-2.5 h-2.5 mr-0.5 text-muted-foreground shrink-0" />
-              <span className="truncate">{company.name}</span>
+              <span className="truncate min-w-0">{company.name}</span>
             </Badge>
           </Link>
           {!readOnly && (
@@ -1497,7 +1515,7 @@ export function InlineTenants({
         </span>
       ))}
       {hiddenCount > 0 && (
-        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">+{hiddenCount} more</Badge>
+        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0" title={assignedCompanies.slice(MAX_VISIBLE).map(c => c.name).join("\n")}>+{hiddenCount}</Badge>
       )}
       {!readOnly && (
       <DropdownMenu>
@@ -5359,7 +5377,17 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
           {/* No "N of M have a map position — still geocoding" caption:
               back-of-house detail, not something the team acts on
               (Woody, 2026-09-27). */}
-          <BrandPortfolioMap stores={stores} height={260} alwaysRender />
+          {/* No pins at all (a search for one ungeocoded property) left the
+              map on its last view, a blank grey panel — say so instead
+              (Woody, 2026-09-28). */}
+          {stores.some(st => st.lat != null && st.lng != null) ? (
+            <BrandPortfolioMap stores={stores} height={260} alwaysRender />
+          ) : (
+            <div className="flex items-center gap-2 px-3 py-4 text-xs text-muted-foreground" data-testid="properties-map-empty">
+              <MapPin className="w-3.5 h-3.5 shrink-0" />
+              {items.length === 1 ? "This property has no map position yet." : "None of these properties has a map position yet."}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -5372,7 +5400,7 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
 const LIST_OWNER_ROLES = [
   { field: "landlordId", label: "Owner / Landlord", short: "Owner" },
   { field: "freeholderId", label: "Freeholder", short: "Freeholder" },
-  { field: "longLeaseholderId", label: "Long Leaseholder", short: "LLH" },
+  { field: "longLeaseholderId", label: "Long Leaseholder", short: "Long leaseholder" },
   { field: "seniorLenderId", label: "Senior Lender", short: "Sr Lender" },
   { field: "juniorLenderId", label: "Junior Lender", short: "Jr Lender" },
 ] as const;
@@ -6135,7 +6163,8 @@ function PropertiesList({
         </>)}
       </div>
 
-      <div ref={resultsStartRef} className="space-y-2 scroll-mt-4">
+      {/* mt-3: "1 property" sat jammed under the search box (Woody, 2026-09-28). */}
+      <div ref={resultsStartRef} className="space-y-2 scroll-mt-4 mt-3">
         {paginationControls("top")}
         {selectedIds.size > 0 && <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="property-selection-options">
           {selectedIds.size < filteredItems.length && <Button variant="outline" size="sm" onClick={() => setSelectedIds(new Set(filteredItems.map(item => item.id)))} data-testid="select-all-matching-properties">Select all {filteredItems.length} matching properties</Button>}
@@ -6269,7 +6298,7 @@ function PropertiesList({
                         />
                       </TableHead>
                     )}
-                    {visibleColumns.deals && <TableHead className="w-[140px] max-w-[140px]">WIP</TableHead>}
+                    {visibleColumns.deals && <TableHead className="w-[160px] max-w-[160px]">WIP</TableHead>}
                     {visibleColumns.tenants && <TableHead className="w-[110px] max-w-[110px]">Tenants</TableHead>}
                     {visibleColumns.agents && <TableHead className="w-[110px] max-w-[110px]">BGP Contacts</TableHead>}
                     {visibleColumns.sqft && <SortableTableHead sortKey="sqft" sort={propSort} align="right" className="min-w-[90px] w-[90px]">Sq Ft</SortableTableHead>}
@@ -6417,7 +6446,7 @@ function PropertiesList({
                         </TableCell>
                       )}
                       {visibleColumns.deals && (
-                        <TableCell className="px-1.5 py-1 w-[140px] max-w-[140px]" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 w-[160px] max-w-[160px]" onClick={(e) => e.stopPropagation()}>
                           <InlineDeals
                             propertyId={item.id}
                             dealLinks={dealLinks}

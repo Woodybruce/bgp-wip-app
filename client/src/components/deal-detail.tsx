@@ -63,7 +63,7 @@ import { Link, useLocation } from "wouter";
 import type { CrmDeal, CrmProperty, CrmCompany, CrmContact } from "@shared/schema";
 import { buildUserColorMap, resolveDealAgents } from "@/lib/agent-colors";
 import { Breadcrumbs } from "@/components/breadcrumbs";
-import { stripPropertyFromTitle } from "@/lib/format";
+import { dealDisplayTitle } from "@/components/app-sidebar";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
 import { MobileBrandView } from "@/components/mobile-brand-view";
 import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as STATUS_CHIP_COLORS, legacyToCode } from "@shared/deal-status";
@@ -148,6 +148,7 @@ function SidebarSection({
         onClick={onToggle}
         className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors"
         data-testid={testId}
+        aria-expanded={open}
       >
         <div className="flex items-center gap-2">
           <Icon className="w-4 h-4 text-muted-foreground" />
@@ -311,15 +312,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const userColorMap = useMemo(() => buildUserColorMap(users as any), [users]);
 
   useEffect(() => {
-    if (deal) {
-      // Deal's own name first: many deals share a property name ("Canary
-      // Wharf Estate…"), which made the deal and property entries in Quick
-      // Access indistinguishable. The property rides along as the subtitle.
-      trackRecentItem({ id: deal.id, type: "deal", name: deal.name || (deal as any).propertyName || "Untitled Deal", subtitle: (deal as any).propertyName || deal.status || undefined, team: Array.isArray(deal.team) ? deal.team[0] : undefined });
-    }
-  }, [deal?.id, deal?.name, (deal as any)?.propertyName]);
-
-  useEffect(() => {
     if (!deal || !window.location.search.includes("tab=invoice")) return;
     const timer = setTimeout(() => {
       const el = document.querySelector('[data-testid="xero-invoice-section"]');
@@ -347,9 +339,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const draftInvoiceOnInvoicedDeal = (ddStatusCode === "INV" || ddStatusCode === "COM")
     ? (Array.isArray(ddInvoices) ? ddInvoices : []).find((inv: any) => inv?.status === "DRAFT") || null
     : null;
-  const dealDisplayName = (isInvestmentDeal
-    ? (linkedProperty?.name || deal?.name)
-    : (deal?.name || linkedProperty?.name)) || "Untitled Deal";
   // A unit linked from a different property (e.g. heading "55 Regent
   // Street" over a 10 Piccadilly deal) contradicted the breadcrumb and
   // linked property — only headline a unit that sits on the deal's
@@ -371,12 +360,27 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   // and "10 Piccadilly Time Out Market T1" restating the property linked
   // below it: one title everywhere on the page — the unit, else the deal
   // name without its property — with the full name as the tooltip
-  // (Woody, 2026-09-28).
-  const pageTitle = headingIsUnit
-    ? linkedUnit!.unitName
-    : !isInvestmentDeal && deal?.name && linkedProperty?.name
-      ? stripPropertyFromTitle(deal.name, linkedProperty.name, typeof linkedProperty.address === "string" ? linkedProperty.address : (linkedProperty.address as any)?.formatted, deal.tenantId ? companies.find((c) => c.id === deal.tenantId)?.name : null)
-      : dealDisplayName;
+  // (Woody, 2026-09-28). A bare "Unit 3" didn't say which deal, so the
+  // shared helper pairs the unit with its tenant (Woody, 2026-09-28).
+  const pageTitle = dealDisplayTitle({
+    name: deal?.name,
+    propertyName: linkedProperty?.name,
+    propertyAddress: typeof linkedProperty?.address === "string" ? linkedProperty.address : (linkedProperty?.address as any)?.formatted,
+    tenantName: deal?.tenantId ? companies.find((c) => c.id === deal.tenantId)?.name : null,
+    unitName: headingIsUnit ? linkedUnit!.unitName : null,
+    isInvestment: isInvestmentDeal,
+  });
+
+  useEffect(() => {
+    if (deal) {
+      // Deal's own name first: many deals share a property name ("Canary
+      // Wharf Estate…"), which made the deal and property entries in Quick
+      // Access indistinguishable. The property rides along as the subtitle.
+      // Same title as the page header (Woody, 2026-09-28).
+      const propName = linkedProperty?.name || (deal as any).propertyName;
+      trackRecentItem({ id: deal.id, type: "deal", name: pageTitle, subtitle: (propName && propName !== pageTitle ? propName : deal.status) || undefined, team: Array.isArray(deal.team) ? deal.team[0] : undefined });
+    }
+  }, [deal?.id, deal?.name, (deal as any)?.propertyName, pageTitle]);
 
   const linkedLandlord = deal?.landlordId ? companies.find((c) => c.id === deal.landlordId) : null;
   const linkedTenant = deal?.tenantId ? companies.find((c) => c.id === deal.tenantId) : null;

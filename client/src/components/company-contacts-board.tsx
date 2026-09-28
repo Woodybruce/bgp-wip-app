@@ -116,7 +116,8 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead }:
               className="ml-auto text-[9px] px-1 py-0 shrink-0 tabular-nums text-muted-foreground"
               title={lastTouch ? `${touches} touch${touches === 1 ? "" : "es"} · last ${new Date(lastTouch).toLocaleDateString("en-GB")}` : `${touches} touches`}
             >
-              {touches.toLocaleString("en-GB")}{lastTouchLabel ? ` · ${lastTouchLabel}` : ""}
+              {/* "447 · 3d" had no unit (Woody, 2026-09-28). */}
+              {touches.toLocaleString("en-GB")} email{touches === 1 ? "" : "s"}{lastTouchLabel ? ` · ${lastTouchLabel === "today" ? "today" : `${lastTouchLabel} ago`}` : ""}
             </Badge>
           )}
         </div>
@@ -203,12 +204,16 @@ interface PromotedContact {
 // Automated senders aren't people to add (noreply@wagamama.com was offered
 // with Add to CRM) (Woody, 2026-09-28).
 const AUTOMATED_SENDER_RE = /^(?:no-?reply|do-?not-?reply|notifications?|mailer-daemon|postmaster|bounces?)(?:[+._-][^@]*)?@/i;
+// Meeting-room and resource mailboxes (mr4.4@shaftesburycapital.com) aren't
+// people either (Woody, 2026-09-28).
+const ROOM_MAILBOX_RE = /^(?:mr[._-]?\d[^@]*|(?:meeting-?)?rooms?(?:[\d._-][^@]*)?|[^@]*(?:meetingroom|meeting\.room|boardroom|confroom|conferenceroom)[^@]*|resources?(?:[\d._-][^@]*)?|reception(?:[\d._-][^@]*)?)@/i;
+const isMachineMailbox = (email: unknown) => { const e = String(email || "").trim(); return AUTOMATED_SENDER_RE.test(e) || ROOM_MAILBOX_RE.test(e); };
 const CONTACT_ROW_CAP = 8;
 // "Jane Smith/GBR" — a directory's country suffix, display only.
 export const contactDisplayName = (name: string | null | undefined) => String(name || "").replace(/\s*\/\s*[A-Z]{2,3}\s*$/, "");
 
 function PendingSendersList({ suggestions: allSuggestions, companyId }: { suggestions: any[]; companyId: string }) {
-  const suggestions = allSuggestions.filter(s => !AUTOMATED_SENDER_RE.test(String(s.email || "").trim()));
+  const suggestions = allSuggestions.filter(s => !isMachineMailbox(s.email));
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: psViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -363,7 +368,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   const discoveryFor = (c: any) => discoveryByKey.get(normEmail(c.email)) || discoveryByKey.get(normName(c.name)) || null;
   const seenDiscovered = new Set<string>();
   const discovered = (cascade?.contacts || [])
-    .filter((k: any) => k.ai?.verdict !== "drop" && !k.bgp?.inCrm)
+    .filter((k: any) => k.ai?.verdict !== "drop" && !k.bgp?.inCrm && !isMachineMailbox(k.email))
     .filter((k: any) => {
       const e = normEmail(k.email);
       const n = normName(k.name);

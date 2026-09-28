@@ -58,15 +58,30 @@ function containsName(text: string, name: string): boolean {
 }
 // "Grosvenor Casinos", "the Grosvenor Arms", "Grosvenor Hotel" are namesakes,
 // not the estate — unless the story is about property (Woody, 2026-09-28).
-const NAMESAKE_NOUNS = /^(?:casinos?|arms|hotels?|square|street|st|road|rd|house|avenue|place|park|gardens|bridge|crescent|terrace|lane|inn|pub|tavern|bar|club|cinema|theatre|school|college|hospital|chapel|court|hall|lodge)$/;
+const NAMESAKE_NOUNS = /^(?:casinos?|arms|hotels?|square|street|st|road|rd|house|avenue|place|park|gardens|bridge|crescent|terrace|lane|inn|pubs?|tavern|bar|club|cinema|theatre|school|college|hospital|chapel|court|hall|lodge|centres?|centers?)$/;
+// Venue namesakes ("Grosvenor Pubs", "Grosvenor Centre") and a town's own
+// ("Chester's Grosvenor Park") stay out even in property stories —
+// only a story naming the estate itself keeps them (Woody, 2026-09-28).
+const VENUE_NAMESAKES = /^(?:casinos?|arms|hotels?|park|inn|pubs?|tavern|bar|club|cinema|theatre|school|college|hospital|chapel|hall|lodge|centres?|centers?)$/;
 const PROPERTY_CONTEXT = /\b(?:property|properties|estate|estates|landlord|landlords|real estate|developer|development|portfolio|leasing|lettings?|freehold|leasehold|mayfair|belgravia)\b/;
 function namesakeOnly(name: string, text: string): boolean {
   const drop = possessiveReading(text, name);
   if (drop === null) return false;
   const normalized = words(text, true, drop);
   const followers = [...normalized.matchAll(new RegExp(`(?:^| )${escapeRegex(name)}(?: (\\w+)|$)`, "g"))].map(m => m[1] || "");
-  return followers.length > 0 && followers.every(w => NAMESAKE_NOUNS.test(w)) && !PROPERTY_CONTEXT.test(normalized);
+  if (!followers.length || !followers.every(w => NAMESAKE_NOUNS.test(w))) return false;
+  const nameRe = name.split(" ").map(w => w === "and" ? "(?:and|&)" : escapeRegex(w)).join("[^a-z0-9]+");
+  const lowered = plainText(text).toLowerCase().replace(/’/g, "'");
+  const townOwned = [...lowered.matchAll(new RegExp(`(?:^|[^a-z0-9'])[a-z]+'s\\s+${nameRe}(?![a-z0-9'])(?:[^a-z0-9]+([a-z]+))?`, "g"))]
+    .map(m => m[1] || "").filter(w => NAMESAKE_NOUNS.test(w));
+  const estateNamed = new RegExp(`\\b${escapeRegex(name)} (?:britain|property|properties|group|estates?)\\b|\\b(?:mayfair|belgravia)\\b`).test(normalized);
+  const venue = townOwned.length > 0 || followers.some(w => VENUE_NAMESAKES.test(w));
+  return venue ? !estateNamed : !PROPERTY_CONTEXT.test(normalized);
 }
+// Crime, court and tabloid stories that happen to name a brand ("kidnapped
+// outside Nando's", "bikini") aren't its news — a robbery at a store is
+// local-news noise too (Woody, 2026-09-28).
+const CRIME_TABLOID = /\b(?:kidnap\w*|abduct\w*|murder\w*|stabb(?:ed|ing)|knife (?:crime|attack)|knifepoint|arrest(?:ed|s)?|jailed|jail|prison|sentenced|(?:pleads?|pleaded|found) guilty|convicted|rap(?:e|ed|ist)|assault\w*|robbery|robbed|burglar\w*|bikini|sex|sexual|naked|topless|(?:crown|magistrates'?|high|county|youth) court|in court|court (?:case|hears|heard|told|ruling|battle)|inquest)\b/i;
 // Competition T&Cs pages are not news about anyone (Deliveroo's promo
 // terms were landing on Nando's and Wingstop, Woody 2026-09-28).
 const TERMS_PAGE = /\b(?:terms (?:and|&) conditions|t ?& ?cs?|competition (?:terms|rules)|terms of (?:entry|use)|promotion terms|prize draw terms)\b/i;
@@ -167,6 +182,7 @@ export function isBrandNewsRelevant(company: any, article: NewsArticle): boolean
   const identity = confirmedNewsIdentity(company);
   if (!identity.names.length) return false;
   if (TERMS_PAGE.test(article.title || "") || TERMS_URL.test(String(article.url || "").replace(/^https?:\/\/[^/]+/i, ""))) return false;
+  if (CRIME_TABLOID.test(plainText(article.title || ""))) return false;
   // Ignore AI summaries: a generated mention cannot corroborate its own link.
   const rawTitle = article.title || "";
   const title = rawTitle.replace(/\s[-–—|·]\s[^-–—|·]{2,60}$/, "");

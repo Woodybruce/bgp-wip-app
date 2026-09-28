@@ -2488,16 +2488,25 @@ function LeasingSection({
                         testId={`select-size-${item.id}`}
                       />
                     </TableCell>
-                    {/* Capped so the chips wrap inside the column. */}
+                    {/* Capped so the chips wrap inside the column. Three chips
+                        then "+N" (the rest in the tooltip) — a fourth ran off
+                        the table edge as "Chest"/"Nor" (Woody, 2026-09-28). */}
                     <TableCell className="px-1.5 py-1 max-w-[260px]">
-                      <InlineMultiSelect
-                        value={item.requirementLocations}
-                        options={LOCATION_OPTIONS}
-                        colorMap={CRM_OPTIONS.reqLeasingLocationsColors}
-                        onSave={(v) => inlineUpdate(item.id, { requirementLocations: v })}
-                        placeholder="Set locations"
-                        testId={`select-locations-${item.id}`}
-                      />
+                      <div className="flex items-center gap-0.5 min-w-0 [&>button>div:nth-child(n+4)]:hidden">
+                        <InlineMultiSelect
+                          value={item.requirementLocations}
+                          options={LOCATION_OPTIONS}
+                          colorMap={CRM_OPTIONS.reqLeasingLocationsColors}
+                          onSave={(v) => inlineUpdate(item.id, { requirementLocations: v })}
+                          placeholder="Set locations"
+                          testId={`select-locations-${item.id}`}
+                        />
+                        {(item.requirementLocations?.length || 0) > 3 && (
+                          <span className="text-[10px] font-mono tabular-nums text-muted-foreground shrink-0" title={item.requirementLocations!.slice(3).join(", ")} data-testid={`locations-more-${item.id}`}>
+                            +{item.requirementLocations!.length - 3}
+                          </span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="px-1.5 py-1" data-testid={`cell-fits-${item.id}`}>
                       {(() => {

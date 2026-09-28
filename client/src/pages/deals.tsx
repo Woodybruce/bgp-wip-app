@@ -111,6 +111,7 @@ import { buildUserColorMap } from "@/lib/agent-colors";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass, teamLabel } from "@/lib/crm-options";
 import { toDateInputValue, stripPropertyFromTitle, gbDate } from "@/lib/format";
+import { cleanUnit } from "@/components/account-deals-board";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { PageLayout } from "@/components/page-layout";
@@ -290,11 +291,13 @@ export function formatDate(val: string | Date | null | undefined): string {
 }
 
 // Target Date drives the WIP report's month / fiscal-year bucket, so it's
-// only ever meaningful to the month — show "Jul 2026", not the exact day.
+// only ever meaningful to the month — show "Jul 26", not the exact day. Same
+// "Sep 26" as the WIP report's Target column, phone cards included (Woody,
+// 2026-09-28).
 export function formatMonthYear(val: string | Date | null | undefined): string {
   if (!val) return "—";
   try {
-    return gbDate(val, { month: "short", year: "numeric" });
+    return gbDate(val, { month: "short", year: "2-digit" });
   } catch {
     return typeof val === "string" ? val : "—";
   }
@@ -1017,8 +1020,10 @@ function PropertyUnitCell({
   const propertyName = deal.propertyId
     ? (properties.find(p => p.id === deal.propertyId)?.name || "Linked property")
     : null;
+  // "EVL16 & Adjoining Premises Bluewater, Lower Level" under Bluewater reads
+  // "EVL16 & Adjoining Premises · Lower Level" (Woody, 2026-09-28).
   const unitName = deal.unitId
-    ? (propertyUnits.find(u => u.id === deal.unitId)?.unitName || null)
+    ? cleanUnit(propertyUnits.find(u => u.id === deal.unitId)?.unitName, propertyName || null)
     : null;
   const unitOptions = propertyUnits.filter(pu => !deal.propertyId || pu.propertyId === deal.propertyId);
 
@@ -6654,7 +6659,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {effectiveColumns.clientXero && <TableHead className="min-w-[160px]">Client / Billing</TableHead>}
                     {effectiveColumns.landlord && <SortableTableHead sortKey="landlord" sort={dealsSort} className="min-w-[120px] px-1.5">Client</SortableTableHead>}
                     {effectiveColumns.type && (
-                      <TableHead className="min-w-[120px]">
+                      {/* Two-word headers wrapped when Save View / Clear all
+                          narrowed the table (Woody, 2026-09-28). */}
+                      <TableHead className="min-w-[120px] whitespace-nowrap">
                         <div className="flex items-center gap-1">
                           <ColumnFilterPopover
                             label="Deal Type"
@@ -6669,7 +6676,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       </TableHead>
                     )}
                     {effectiveColumns.status && (
-                      <TableHead className="min-w-[120px]">
+                      <TableHead className="min-w-[120px] whitespace-nowrap">
                         <div className="flex items-center gap-1">
                           <ColumnFilterPopover
                             label="Deal Status"
@@ -6693,7 +6700,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         />
                       </TableHead>
                     )}
-                    {effectiveColumns.tenant && <SortableTableHead sortKey="tenant" sort={dealsSort} className="min-w-[120px]">Tenant</SortableTableHead>}
+                    {effectiveColumns.tenant && <SortableTableHead sortKey="tenant" sort={dealsSort} className="min-w-[170px]">Tenant</SortableTableHead>}
                     {effectiveColumns.parties && <TableHead className="min-w-[180px]">Parties</TableHead>}
                     {effectiveColumns.feeCombined && <TableHead className="min-w-[110px]">Fee</TableHead>}
                     {effectiveColumns.fee && <SortableTableHead sortKey="fee" sort={dealsSort} align="right" className="min-w-[80px]">Fee</SortableTableHead>}
@@ -6880,7 +6887,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {effectiveColumns.tenant && (
                         <TableCell className="px-1.5 py-1">
-                          <div className="w-[110px] overflow-hidden">
+                          {/* 110px cut "Time Out Market" to "Time Out Mar…" beside
+                              free space (Woody, 2026-09-28). */}
+                          <div className="w-[160px] overflow-hidden">
                             <InlineLinkSelect
                               value={deal.tenantId}
                               options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.id === deal.tenantId).map(c => ({ id: c.id, name: c.name }))}

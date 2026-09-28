@@ -154,13 +154,23 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
               <Section title="Buying — investment requirements" count={inv.requirements.length} link="/requirements?type=investment" linkLabel="Requirements" empty="No investment requirements recorded.">
                 {/* Title from the requirement itself (use / size / where),
                     not the landlord's own name (Woody, 2026-09-28). */}
-                {inv.requirements.length > 0 && <div className="space-y-1">{inv.requirements.slice(0, 6).map((r: any) => {
-                  const detail = [list(r.use_types), list(r.requirement_types), list(r.size_range), list(r.requirement_locations) || r.locations].filter((s: any) => s && String(s).trim()).join(" · ");
-                  const when = [r.requirement_date, r.updated_at].find((v: any) => v && !isNaN(Date.parse(v)));
-                  const title = !r.ownName ? r.name : detail || (r.comments ? String(r.comments).slice(0, 80) : `Investment requirement${when ? ` · ${fmtDate(when)}` : ""}`);
-                  const sub = [!r.ownName && detail, r.ownName && detail && r.comments && String(r.comments).slice(0, 80), r.updated_at && `updated ${fmtMonth(r.updated_at)}`].filter(Boolean).join(" · ");
-                  return <Row key={r.id} href="/requirements?type=investment" title={title} sub={sub} right={r.status && <Badge variant="outline" className="text-[9px]">{statusLabel(r.status)}</Badge>} />;
-                })}</div>}
+                {/* With nothing descriptive, keep the requirement's own name
+                    plus its date — the generic "Investment requirement ·
+                    1 Mar 2026" made Shaftesbury's two rows identical; a
+                    repeat title also gets its ref (Woody, 2026-09-28). */}
+                {inv.requirements.length > 0 && <div className="space-y-1">{(() => {
+                  const rows = inv.requirements.slice(0, 6).map((r: any) => {
+                    const detail = [list(r.use_types), list(r.requirement_types), list(r.size_range), list(r.requirement_locations) || r.locations].filter((s: any) => s && String(s).trim()).join(" · ");
+                    const when = [r.requirement_date, r.updated_at].find((v: any) => v && !isNaN(Date.parse(v)));
+                    const title = !r.ownName ? r.name : detail || (r.comments ? String(r.comments).slice(0, 80) : `${r.name || "Investment requirement"}${when ? ` · ${fmtDate(when)}` : ""}`);
+                    return { r, detail, title: String(title || "") };
+                  });
+                  return rows.map(({ r, detail, title }: any) => {
+                    const repeat = rows.filter((o: any) => o.title === title).length > 1;
+                    const sub = [!r.ownName && detail, r.ownName && detail && r.comments && String(r.comments).slice(0, 80), r.updated_at && `updated ${fmtMonth(r.updated_at)}`].filter(Boolean).join(" · ");
+                    return <Row key={r.id} href="/requirements?type=investment" title={repeat ? `${title} · ref ${String(r.id).slice(-4)}` : title} sub={sub} right={r.status && <Badge variant="outline" className="text-[9px]">{statusLabel(r.status)}</Badge>} />;
+                  });
+                })()}</div>}
                 {(f.mandate_asset_class || f.mandate_lot_size_min || f.mandate_lot_size_max) && (
                   <p className="text-[11px] text-muted-foreground">Mandate: {[f.mandate_asset_class, (f.mandate_lot_size_min || f.mandate_lot_size_max) && `${money(f.mandate_lot_size_min) || "—"}–${money(f.mandate_lot_size_max) || "—"} lots`, (f.mandate_geographies || []).join?.(", ")].filter(Boolean).join(" · ")}</p>
                 )}

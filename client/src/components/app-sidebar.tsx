@@ -84,6 +84,24 @@ import { isEquityUser } from "@/lib/utils";
 import type { User } from "@shared/schema";
 import { useRecentItems, type RecentItem } from "@/hooks/use-recent-items";
 import { History, ClipboardCheck } from "lucide-react";
+import { stripPropertyFromTitle } from "@/lib/format";
+
+// One deal title for the deal page header, breadcrumb, side panel and Quick
+// Access. The property is always shown beside it, so it's stripped — but a
+// bare "Unit 3" never identifies the deal: a unit takes its tenant
+// ("Nando's · Unit 3"), else the full deal name stays (Woody, 2026-09-28).
+export function dealDisplayTitle(d: { name?: string | null; propertyName?: string | null; propertyAddress?: string | null; tenantName?: string | null; unitName?: string | null; isInvestment?: boolean }): string {
+  const full = d.name || d.propertyName || "Untitled Deal";
+  if (d.isInvestment) return d.propertyName || full;
+  const tenant = (d.tenantName || "").trim();
+  const unit = (d.unitName || "").trim();
+  if (unit && tenant) return `${tenant} · ${unit}`;
+  const stripped = d.name && d.propertyName ? stripPropertyFromTitle(d.name, d.propertyName, d.propertyAddress, tenant || null) : full;
+  const bare = /^(?:(?:unit|shop|suite|kiosk|store|lot|pitch)\s*)?[a-z]{0,2}\s*\d+[a-z]?$/i.test(stripped.trim())
+    || (!!unit && stripped.trim().toLowerCase() === unit.toLowerCase());
+  if (bare) return tenant ? `${tenant} · ${stripped}` : full;
+  return stripped;
+}
 
 const coreNavBase = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
@@ -252,6 +270,27 @@ const TYPE_CONFIG: Record<RecentItem["type"], { icon: any; path: string; color: 
 
 function QuickAccessSection() {
   const recentItems = useRecentItems(5);
+  // Entries saved before the shared deal title still carry the raw deal
+  // name ("South Molton - unit 3") — re-title from the cached deal when the
+  // deal page's queries are in the cache (Woody, 2026-09-28).
+  const withDealTitle = (item: RecentItem): RecentItem => {
+    const deal = queryClient.getQueryData<any>(["/api/crm/deals", item.id]);
+    if (!deal || item.name !== (deal.name || deal.propertyName || "Untitled Deal")) return item;
+    const props = queryClient.getQueryData<any[]>(["/api/crm/properties"]) || [];
+    const cos = queryClient.getQueryData<any[]>(["/api/crm/companies"]) || [];
+    const units = queryClient.getQueryData<any[]>(["/api/property-units"]) || [];
+    const prop = deal.propertyId ? props.find((p) => p.id === deal.propertyId) : null;
+    const unit = deal.unitId ? units.find((u) => u.id === deal.unitId && u.propertyId === deal.propertyId) : null;
+    const name = dealDisplayTitle({
+      name: deal.name,
+      propertyName: prop?.name || deal.propertyName,
+      propertyAddress: typeof prop?.address === "string" ? prop.address : prop?.address?.formatted,
+      tenantName: deal.tenantId ? cos.find((c) => c.id === deal.tenantId)?.name : null,
+      unitName: unit?.unitName,
+      isInvestment: deal.dealType === "Sale" || deal.dealType === "Purchase",
+    });
+    return { ...item, name, subtitle: item.subtitle && item.subtitle !== name ? item.subtitle : deal.status || undefined };
+  };
 
   if (recentItems.length === 0) return null;
 
@@ -263,7 +302,8 @@ function QuickAccessSection() {
       </SidebarGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
-          {recentItems.map((item) => {
+          {recentItems.map((raw) => {
+            const item = raw.type === "deal" ? withDealTitle(raw) : raw;
             const config = TYPE_CONFIG[item.type];
             const Icon = config.icon;
             return (

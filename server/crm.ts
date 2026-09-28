@@ -4996,7 +4996,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
       const codeRe = /^(?:(?:unit|units|u|su|msu|kiosk|k|shop|suite|lsu|store|pod|restaurant|cafe|space)\s*[a-z]{0,2}\s*[\d/]+[a-z]{0,3}\b.*|[a-z]{0,3}\d{1,4}[a-z]{0,3}(?:\/\d+[a-z]?)?)$/i;
       const codeInRe = /\b(?:unit|kiosk|shop|su|msu|suite)\s*[a-z]?\s*\d+[a-z]{0,3}\b/i;
       const floorRe = /^(?:(?:lower|upper|ground|first|second|third|fourth|mezzanine|basement|lower ground|upper ground|top)\s+(?:floor|level|mall)|(?:level|floor)\s+-?\d+|lg|ug|gf)$/i;
-      const placeRe = /\b(?:walk|street|st|road|rd|lane|way|place|court|parade|row|arcade|square|yard|gardens?|market|avenue|terrace|precinct|plaza|mall)\b/i;
+      const placeRe = /\b(?:walk|street|st|road|rd|lane|way|place|court|parade|row|arcade|square|yard|gardens?|market|avenue|terrace|precinct|plaza|mall|passage)\b/i;
       const esc = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const cleanUnit = (raw: any, propertyName: any): string | null => {
         const text = String(raw || "").trim();
@@ -5017,8 +5017,12 @@ Return a JSON object with these fields (use null for any field you cannot find):
         const floor = parts.find((p: string) => floorRe.test(p));
         const isCore = (p: string) => p.split(/\s+/).some((w: string) => core.some((c: string) => c.toLowerCase() === w.toLowerCase()));
         const place = parts.find((p: string) => p !== floor && placeRe.test(p) && !codeInRe.test(p) && !isCore(p));
-        const code = parts.find((p: string) => codeRe.test(p)) || parts.find((p: string) => codeInRe.test(p) && p.length <= 40);
-        if (code) { const extra = floor || place; return extra && extra !== code ? `${code} · ${extra}` : code; }
+        // A code with its street address run on ("SU43/SU44 22 Upper
+        // Cheapside Passage") keeps just the code (Woody, 2026-09-28).
+        const trimAddress = (p: string) => { const m = p.match(/^(.*\d.*?)\s+(\d+[a-z]?(?:[-–]\d+[a-z]?)?\s+[a-z].*)$/i); return m && placeRe.test(m[2]) ? m[1] : p; };
+        const codeRaw = parts.find((p: string) => codeRe.test(p)) || parts.find((p: string) => codeInRe.test(p) && p.length <= 40);
+        const code = codeRaw && trimAddress(codeRaw);
+        if (code) { const extra = floor || place; return extra && extra !== code && extra !== codeRaw ? `${code} · ${extra}` : code; }
         if (place) return `Unit at ${place}`;
         if (floor) return floor;
         return parts.length === 1 && /\d/.test(parts[0]) && parts[0].length <= 40 ? parts[0] : null;

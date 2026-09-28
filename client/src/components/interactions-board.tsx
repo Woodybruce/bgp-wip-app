@@ -417,10 +417,12 @@ export function InteractionsBoard({ scope, contextId }: Props) {
                       {(() => {
                         const names = (row.bgpUsers.length ? row.bgpUsers : [row.bgpUser]).map((u) => bgpUserDisplay(u, emailToName)).filter(Boolean);
                         // Two names still cut to "Will P.,…" — one name plus
-                        // a count ("Will P. +3") (Woody, 2026-09-28).
+                        // a count ("Will P. +3") (Woody, 2026-09-28). On a
+                        // phone the name keeps its width and the "then …"
+                        // dates give way — "Ruper…" (Woody, 2026-09-28).
                         const short = names.slice(0, 1).map((n) => { const [f, ...rest] = n.split(/\s+/); return rest.length ? `${f} ${rest[rest.length - 1][0]}.` : f; }).join("") + (names.length > 1 ? ` +${names.length - 1}` : "");
                         return (
-                          <span className="text-sm font-semibold text-primary truncate min-w-0" title={names.join(", ")}>
+                          <span className="text-sm font-semibold text-primary truncate min-w-0 max-md:shrink-0" title={names.join(", ")}>
                             <span className="hidden md:inline">{names.join(", ")}</span>
                             <span className="md:hidden">{short}</span>
                           </span>
@@ -428,12 +430,12 @@ export function InteractionsBoard({ scope, contextId }: Props) {
                       })()}
                       <span className="shrink-0">· {relDate(row.interactionDate)}</span>
                       {row.laterDates && row.laterDates.length > 0 && (
-                        <span className="shrink-0 opacity-70" title={row.laterDates.map((d) => gbDate(d, { day: "numeric", month: "short", year: "numeric" })).join(", ")}>
+                        <span className="shrink-0 max-md:shrink max-md:min-w-0 max-md:truncate opacity-70" title={row.laterDates.map((d) => gbDate(d, { day: "numeric", month: "short", year: "numeric" })).join(", ")}>
                           · then {row.laterDates.slice(0, 2).map((d) => gbDate(d, { day: "numeric", month: "short" })).join(", ")}{row.laterDates.length > 2 ? ` +${row.laterDates.length - 2}` : ""}
                         </span>
                       )}
                       {row.earlierDates && row.earlierDates.length > 0 && (
-                        <span className="shrink-0 opacity-70" title={row.earlierDates.map((d) => gbDate(d, { day: "numeric", month: "short", year: "numeric" })).join(", ")}>
+                        <span className="shrink-0 max-md:shrink max-md:min-w-0 max-md:truncate opacity-70" title={row.earlierDates.map((d) => gbDate(d, { day: "numeric", month: "short", year: "numeric" })).join(", ")}>
                           · also {row.earlierDates.slice(0, 2).map((d) => gbDate(d, { day: "numeric", month: "short" })).join(", ")}{row.earlierDates.length > 2 ? ` +${row.earlierDates.length - 2}` : ""}
                         </span>
                       )}

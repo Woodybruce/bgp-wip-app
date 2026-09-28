@@ -63,13 +63,28 @@ export function toDateInputValue(v: string | Date | null | undefined): string {
 // "Starbucks Hays"). Then by the property's leading words at either end with
 // no separator ("10 Piccadilly Time Out Market" under "10 Piccadilly"). Never
 // strips to empty (Woody, 2026-09-27). A leading centre code ("XYRK -
-// Nandos") goes when the rest is the tenant (Woody, 2026-09-28).
+// Nandos") goes when the rest is the tenant (Woody, 2026-09-28). A title that
+// is nothing but the property ("35 Dover St" under "35 Dover St") shows the
+// tenant instead, and misspelt long words still match the property
+// ("Pultney" ≈ "Pulteney") (Woody, 2026-09-28).
 const TITLE_STOPWORDS = new Set(["the", "and", "of", "at", "on", "in"]);
 const STREET_ABBR: Record<string, string> = { st: "street", rd: "road", ave: "avenue", av: "avenue", sq: "square", pl: "place", ln: "lane", tce: "terrace", cres: "crescent", gdns: "gardens", ct: "court", dr: "drive" };
 const STREET_WORDS = new Set([...Object.values(STREET_ABBR), "row", "hill", "mews", "yard", "walk", "way", "parade", "grove"]);
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
 export function stripPropertyFromTitle(title: string, propName: string, propAddress?: string | null, tenantName?: string | null): string {
-  // The title is itself a short form of the property ("Brent Cross") — keep it.
-  if (propName.trim().toLowerCase().startsWith(title.trim().toLowerCase())) return title;
+  const tenantLabel = (tenantName || "").trim();
+  const useTenant = /[a-z]{2,}/i.test(tenantLabel) && !/^(n\/?a|none|tbc|unknown)$/i.test(tenantLabel);
+  // The title is itself a short form of the property ("Brent Cross") — keep
+  // it, unless there's a tenant to name the deal by.
+  if (propName.trim().toLowerCase().startsWith(title.trim().toLowerCase())) return useTenant ? tenantLabel : title;
   const norm = (v: string) => v.toLowerCase().replace(/[’']/g, "").replace(/&/g, "and").replace(/[^a-z0-9]+/g, " ").trim().replace(/^the /, "")
     .split(" ").map(w => STREET_ABBR[w] || w).join(" ");
   const significant = (n: string) => n.split(" ").some(w => /[a-z]{3,}/.test(w) && !TITLE_STOPWORDS.has(w));
@@ -79,8 +94,12 @@ export function stripPropertyFromTitle(title: string, propName: string, propAddr
   const prop = norm(propName);
   const propStreet = dropNumbers(prop);
   const addr = ` ${norm(propAddress || "")} `;
+  // Long title words within two edits of a property word read as that word
+  // ("Charring" → "charing", "Pultney" → "pulteney").
+  const propWords = [...new Set(`${prop} ${addr}`.split(" ").filter(w => w.length >= 6))];
+  const fuzz = (n: string) => n.split(" ").map(w => w.length < 6 || propWords.includes(w) ? w : (propWords.find(p => editDistance(w, p) <= 2) || w)).join(" ");
   const isProp = (seg: string) => {
-    const n = norm(seg);
+    const n = fuzz(norm(seg));
     if (!n || !prop || !significant(n)) return false;
     if (n === prop || prop.startsWith(`${n} `) || n.startsWith(`${prop} `)) return true;
     const s = dropNumbers(n);
@@ -94,7 +113,7 @@ export function stripPropertyFromTitle(title: string, propName: string, propAddr
   // A segment that repeats part of the property ("London E14" after
   // "Canary Wharf Estate") goes with it.
   const inProp = (seg: string) => {
-    const n = norm(seg);
+    const n = fuzz(norm(seg));
     return !!n && ` ${prop} `.includes(` ${n} `);
   };
   const isPlace = (seg: string) => {
@@ -109,6 +128,8 @@ export function stripPropertyFromTitle(title: string, propName: string, propAddr
     let comma = false;
     // No split inside a number list ("62, 64 & 66/66A").
     for (const m of t.matchAll(/\s*[–—|·]\s*|\s+-\s*|\s*-\s+|\s*(?:(?<!\d)[,:]\s+|[,:]\s+(?![\s\d]))/g)) {
+      // Nor inside a number range ("25 - 26 St Christophers Place").
+      if (m[0].includes("-") && /\d$/.test(t.slice(0, m.index)) && /^\d/.test(t.slice(m.index! + m[0].length))) continue;
       out.push({ text: t.slice(last, m.index), start: last, end: m.index!, comma });
       last = m.index! + m[0].length;
       comma = m[0].trim() === ",";
@@ -159,5 +180,12 @@ export function stripPropertyFromTitle(title: string, propName: string, propAddr
   const code = result.match(/^([A-Z]{2,5})\s*[–—\-|:·]\s*(.+)$/);
   const tenant = norm(tenantName || "");
   if (code && tenant && norm(code[2]).startsWith(tenant)) return code[2].trim();
+  // Nothing left but the property ("62, 64 & 66/66A Pimlico Road – 62, 64 &
+  // 66/66A Pimlico Road") — the tenant names the deal.
+  // Different building numbers are a different address ("10-12 Chiltern
+  // Street" under "23-25 Chiltern Street") — keep those.
+  const nums = (v: string) => norm(v).split(" ").filter(w => /^\d+[a-z]?$/.test(w));
+  const clash = (v: string) => { const a = nums(v), b = nums(propName); return a.length > 0 && b.length > 0 && !a.some(x => b.includes(x)); };
+  if (useTenant && !clash(title) && split(result).every(sg => !trimSep(sg.text).trim() || isProp(sg.text) || inProp(sg.text) || isPlace(sg.text))) return tenantLabel;
   return result;
 }

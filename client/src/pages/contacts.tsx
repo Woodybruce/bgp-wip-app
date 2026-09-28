@@ -803,7 +803,16 @@ function ContactDetail({ id }: { id: string }) {
       const local = String(c.email || "").split("@")[0].toLowerCase();
       return /^[!#]/.test(n) || n.includes("@") || /\b(distribution|mailing)?\s*list\b/i.test(n) || (!!local && n.toLowerCase() === local);
     };
-    return allContacts.filter(c => c.companyId === contact.companyId && c.id !== id && !isList(c));
+    // "Cool Wharf" (an org) and "Sarah Ltcl" (junk from an email) also
+    // listed as co-workers — a person has two name-shaped words, no company
+    // word, and no long vowel-less "word" (Woody, 2026-09-28).
+    const ORG_WORD = /\b(ltd|limited|plc|llp|llc|inc|wharf|centre|center|group|holdings|estates?|properties|property|partners|capital|management|reception|office|admin|accounts|enquiries|team|leasing|retail|services|investments?|trust|fund|council|agency)\b/i;
+    const notPerson = (c: any) => {
+      const words = String(c.name || "").trim().split(/\s+/);
+      const alpha = words.filter(w => /^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’.-]*$/.test(w));
+      return alpha.length < 2 || ORG_WORD.test(c.name || "") || alpha.some(w => w.length >= 4 && !/[aeiouyà-ÿ]/i.test(w));
+    };
+    return allContacts.filter(c => c.companyId === contact.companyId && c.id !== id && !isList(c) && !notPerson(c));
   }, [allContacts, contact?.companyId, id]);
 
   const deleteMutation = useMutation({

@@ -526,7 +526,9 @@ export function isSocialNews(a: { source_name?: string | null; url?: string | nu
   return SOCIAL_CHANNEL_RE.test(a.source_name || "") || SOCIAL_HOST_RE.test(host) || /\/(?:careers|jobs)\b/i.test(String(a.url || ""));
 }
 export function splitNewsTitle(title: string | null | undefined): { title: string; publisher: string | null } {
-  let t = String(title || "").trim();
+  // Section-label prefixes ("News | …", "Press release: …") aren't part of
+  // the headline (Woody, 2026-09-28).
+  let t = String(title || "").trim().replace(/^(?:news|latest news|press release|press|breaking(?: news)?|exclusive|opinion|update)\s*[|:–—-]\s*/i, "");
   const parts: string[] = [];
   let domain: string | null = null;
   // Up to three tails: " - campaignlive.co.uk", " - Hits Radio", " | Win".
@@ -564,9 +566,16 @@ const newsWords = (t: string) => new Set(splitNewsTitle(t).title.toLowerCase().r
 // "Bournemouth gets its first Wingstop") share their distinctive names and
 // an event verb family, not 60% of their words (Woody, 2026-09-28).
 const NEWS_EVENT_FAMILIES: RegExp[] = [
-  /\b(?:open(?:s|ing|ed)?|launch(?:es|ed|ing)?|arriv(?:e|es|ed|ing|al)|debut(?:s|ed)?|unveil(?:s|ed)?|brings?|coming|comes?|enters?|expands?|expansion|first)\b/i,
+  /\b(?:open(?:s|ing|ed)?|launch(?:es|ed|ing)?|arriv(?:e|es|ed|ing|al)|debut(?:s|ed)?|unveil(?:s|ed)?|brings?|coming|comes?|enters?|expands?|expansion|first|lands?|landed|struts?)\b/i,
   /\b(?:sales|profits?|results|revenues?|earnings|turnover|trading update|half-year|full-year)\b/i,
+  // Appointments: "announces new Head of Flexible Offices" / "Senior WeWork
+  // figure to lead … flexible offices team" (Woody, 2026-09-28).
+  /\b(?:appoint(?:s|ed|ment)?|hires?|hired|joins?|joined|to lead|leads?|head of|new head|co-head)\b/i,
 ];
+const OPEN_FAMILY = 0, APPOINT_FAMILY = 2;
+// More distinct figures, then more words, is the richer retelling: "… as UK
+// estate passes 100 sites" was collapsed behind a shorter one (Woody, 2026-09-28).
+const headlineInfo = (t: string) => new Set(splitNewsTitle(t).title.match(/\d[\d.,]*/g) || []).size * 100 + newsWords(t).size;
 const HEADLINE_STOP = new Set(("the and for with from into over after amid its their this that new first next week weeks month year today date uk britain british london city town "
   + "restaurant restaurants store stores shop shops site sites opening openings open opens launch launches brand brands chain chains group owner boss "
   + "plans plan set sets confirmed revealed reveals announces announced record rise rises rising fall falls up down more than says said will could "
@@ -581,25 +590,40 @@ const properTokens = (title: string, brandName?: string | null) => {
 // Collapse the same story from several outlets: ≥60% of the shorter
 // headline's words shared, within 21 days — or, within 10 days, the same
 // event family with one headline's distinctive names all in the other's.
+// An opening's retellings run weeks apart (Zara's Lefties ×3), so that
+// family looks back 45 days; two appointment stories sharing two topic
+// words ("flexible offices") are one hire (Woody, 2026-09-28).
 export function dedupeNearNews<T extends { title?: string | null; published_at?: string | null }>(items: T[], brandName?: string | null): T[] {
-  const kept: { item: T; words: Set<string>; names: Set<string>; events: boolean[]; at: number }[] = [];
+  const kept: { item: T; words: Set<string>; names: Set<string>; events: boolean[]; at: number; info: number }[] = [];
+  const brandWords = new Set(String(brandName || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean));
+  const topicWords = (words: Set<string>) => new Set([...words].filter(w => !brandWords.has(w) && !HEADLINE_STOP.has(w) && !NEWS_EVENT_FAMILIES[APPOINT_FAMILY].test(w)
+    && !/^(?:announces?|senior|figure|team|head|heads|lead|leads|role|chief|director|boss)$/.test(w)));
   for (const item of items) {
     const title = item.title || "";
     const words = newsWords(title), at = item.published_at ? new Date(item.published_at).getTime() : NaN;
     const names = properTokens(title, brandName), events = NEWS_EVENT_FAMILIES.map(re => re.test(splitNewsTitle(title).title));
-    const dup = kept.some(k => {
+    const info = headlineInfo(title);
+    const dup = kept.find(k => {
       const gap = !isNaN(at) && !isNaN(k.at) ? Math.abs(at - k.at) : 0;
-      if (gap > 21 * 86400000) return false;
-      if (gap <= 10 * 86400000 && events.some((e, i) => e && k.events[i])) {
+      const sameFamily = (i: number) => events[i] && k.events[i];
+      if (gap > 45 * 86400000) return false;
+      if (gap <= (sameFamily(OPEN_FAMILY) ? 45 : 10) * 86400000 && events.some((e, i) => e && k.events[i])) {
         const [small, big] = names.size <= k.names.size ? [names, k.names] : [k.names, names];
         if (small.size > 0 && [...small].every(w => big.has(w))) return true;
+      }
+      if (gap > 21 * 86400000) return false;
+      if (gap <= 10 * 86400000 && sameFamily(APPOINT_FAMILY)) {
+        const mine = topicWords(words), theirs = topicWords(k.words);
+        let shared = 0; mine.forEach(w => { if (theirs.has(w)) shared++; });
+        if (shared >= 2) return true;
       }
       const smallWords = Math.min(words.size, k.words.size);
       if (smallWords < 3) return false;
       let shared = 0; words.forEach(w => { if (k.words.has(w)) shared++; });
       return shared / smallWords >= 0.6;
     });
-    if (!dup) kept.push({ item, words, names, events, at });
+    if (!dup) kept.push({ item, words, names, events, at, info });
+    else if (info > dup.info) Object.assign(dup, { item, words, names, events, at, info });
   }
   return kept.map(k => k.item);
 }
@@ -636,6 +660,46 @@ export function isSignalNoise(s: { source?: string | null; headline?: string | n
   return /^(?:[\w-]+\.)?(?:instagram|tiktok|facebook|twitter|x)\.com$/i.test(host) || /\b(?:instagram|tiktok|facebook|twitter)\b/i.test(src) || /\bdatabase\b/i.test(src) || /\bdatabase\b.*\bprofile\b/i.test(head)
     || /(?:^|\s)@[a-z0-9_.]{3,}\b/i.test(head) || (head.match(/(?:^|\s)#\w+/g) || []).length >= 2;
 }
+// A landlord's board reads the account workspace's contacts on desktop AND
+// phone — the phone read the profile's company-tagged touches, so one person
+// showed 447 emails on desktop and 363 on the phone (Woody, 2026-09-28).
+export const accountBoardContacts = (ws: NonNullable<ReturnType<typeof useAccountWorkspace>["data"]>) => ws.contacts.map(ct => ({
+  id: ct.contactId,
+  name: ct.name,
+  role: ct.role,
+  email: ct.email,
+  phone: ct.phone,
+  avatar_url: ct.avatarUrl,
+  linkedin_url: ct.linkedinUrl,
+  interaction_count: ct.interactionCount,
+  last_interaction_at: ct.lastInteractionAt,
+  via: ct.via,
+  employerName: ct.employerName,
+  propertyNames: ct.propertyNames,
+}));
+// One tile per picture: the same file saved twice (by source URL, or a
+// near-identical name like "logo.png" / "logo (2).png" / "logo-300x200.png")
+// showed the British Land logo twice (Woody, 2026-09-28).
+export function dedupeGalleryImages<T extends { id?: any; file_name?: string | null; source?: string | null; file_size?: number | null; width?: number | null; height?: number | null }>(images: T[]): T[] {
+  const seen = new Set<string>();
+  return images.filter(img => {
+    const src = /^https?:\/\//i.test(String(img.source || "")) ? `u:${String(img.source).split(/[?#]/)[0].toLowerCase()}` : null;
+    const stem = String(img.file_name || "").toLowerCase().replace(/\.[a-z0-9]{2,5}$/, "")
+      .replace(/(?:[\s._-]*(?:\(\d+\)|copy|\d{2,4}x\d{2,4}|scaled))+$/g, "").replace(/[^a-z0-9]/g, "");
+    const size = img.file_size && img.width && img.height ? `s:${img.file_size}:${img.width}x${img.height}` : null;
+    const keys = [src, stem.length >= 3 ? `n:${stem}` : null, size].filter(Boolean) as string[];
+    if (keys.some(k => seen.has(k))) return false;
+    keys.forEach(k => seen.add(k));
+    return true;
+  });
+}
+// A "hiring" signal that reports headcount down 12% is contracting, not
+// hiring (Woody, 2026-09-28).
+export function signalKind(s: { signal_type?: string | null; headline?: string | null }): string {
+  const type = String(s.signal_type || "news");
+  return type === "hiring" && /\b(?:down|fell|fall(?:s|en|ing)?|cut|cuts|cutting|declin(?:e|es|ed|ing)|drop(?:s|ped)?|shr(?:ank|unk|inks?)|reduc(?:e|es|ed|ing|tion)|lay-?offs?|redundanc(?:y|ies))\b/i.test(String(s.headline || ""))
+    ? "headcount_down" : type;
+}
 // A unit's own code, not the property the row already shows, its address
 // or the old tenant: "Unit R 11U Gunwharf Quays - First Floor" → "Unit R 11U
 // · First Floor", "L057 Bluewater - Lower Level" → "L057 · Lower Level",
@@ -644,7 +708,7 @@ export function isSignalNoise(s: { source?: string | null; headline?: string | n
 const UNIT_CODE_RE = /^(?:(?:unit|units|u|su|msu|kiosk|k|shop|suite|lsu|store|pod|restaurant|cafe|space)\s*[a-z]{0,2}\s*[\d/]+[a-z]{0,3}\b.*|[a-z]{0,3}\d{1,4}[a-z]{0,3}(?:\/\d+[a-z]?)?)$/i;
 const UNIT_CODE_IN_RE = /\b(?:unit|kiosk|shop|su|msu|suite)\s*[a-z]?\s*\d+[a-z]{0,3}\b/i;
 const UNIT_FLOOR_RE = /^(?:(?:lower|upper|ground|first|second|third|fourth|mezzanine|basement|lower ground|upper ground|top)\s+(?:floor|level|mall)|(?:level|floor)\s+-?\d+|lg|ug|gf)$/i;
-const UNIT_PLACE_RE = /\b(?:walk|street|st|road|rd|lane|way|place|court|parade|row|arcade|square|yard|gardens?|market|avenue|terrace|precinct|plaza|mall)\b/i;
+const UNIT_PLACE_RE = /\b(?:walk|street|st|road|rd|lane|way|place|court|parade|row|arcade|square|yard|gardens?|market|avenue|terrace|precinct|plaza|mall|passage)\b/i;
 const UNIT_POSTCODE_RE = /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i;
 const PROPERTY_GENERIC_RE = /^(?:the|shopping|centre|center|retail|park|village|outlet|quay|quays|mall|london|and)$/i;
 export function cleanUnitLabel(raw: string | null | undefined, propertyName: string | null | undefined): string | null {
@@ -672,7 +736,7 @@ export function cleanUnitLabel(raw: string | null | undefined, propertyName: str
   const trimAddress = (p: string) => { const m = p.match(/^(.*\d.*?)\s+(\d+[a-z]?(?:[-–]\d+[a-z]?)?\s+[a-z].*)$/i); return m && UNIT_PLACE_RE.test(m[2]) ? m[1] : p; };
   const codeRaw = parts.find(p => UNIT_CODE_RE.test(p)) || parts.find(p => UNIT_CODE_IN_RE.test(p) && p.length <= 40);
   const code = codeRaw && trimAddress(codeRaw);
-  if (code) { const extra = floor || place; return extra && extra !== code ? `${code} · ${extra}` : code; }
+  if (code) { const extra = floor || place; return extra && extra !== code && extra !== codeRaw ? `${code} · ${extra}` : code; }
   if (place) return `Unit at ${place}`;
   if (floor) return floor;
   return parts.length === 1 && /\d/.test(parts[0]) && parts[0].length <= 40 ? parts[0] : null;
@@ -1896,6 +1960,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                     const typeCls: Record<string, string> = {
                       opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
                       hiring:      "bg-teal-50 text-teal-700 border-teal-200",
+                      headcount_down: "bg-amber-50 text-amber-700 border-amber-200",
                       requirement: "bg-orange-50 text-orange-700 border-orange-200",
                       closure:     "bg-red-50 text-red-700 border-red-200",
                       funding:     "bg-violet-50 text-violet-700 border-violet-200",
@@ -1911,8 +1976,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                     };
                     return (
                       <div key={s.id} className={`text-xs flex items-start gap-2 border-l-2 pl-2 group ${sentCls[s.sentiment] || "border-l-muted"}`}>
-                        <Badge variant="outline" className={`text-[10px] shrink-0 ${typeCls[s.signal_type] || ""}`}>
-                          {s.signal_type.replace(/_/g, " ")}
+                        <Badge variant="outline" className={`text-[10px] shrink-0 ${typeCls[signalKind(s)] || ""}`}>
+                          {signalKind(s).replace(/_/g, " ")}
                           {s.magnitude === "large" && " ●●"}
                           {s.magnitude === "medium" && " ●"}
                         </Badge>
@@ -4997,7 +5062,8 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
   const coverImage = selectCompanyHeroImage(data.images, c.company_type);
   const [galleryAll, setGalleryAll] = useState(false);
   const stripIds = new Set(rankCompanyHeroImages(data.images || [], c.company_type).slice(0, 4).map((img: any) => img.id));
-  const galleryImages = galleryAll ? data.images : data.images.filter((img: any) => !stripIds.has(img.id));
+  const uniqueImages = dedupeGalleryImages(data.images || []);
+  const galleryImages = galleryAll ? uniqueImages : uniqueImages.filter((img: any) => !stripIds.has(img.id));
   const covenantReport = useCovenantReport((c as any)?.companies_house_number);
   const covenantRun = useMutation({
     mutationFn: async () => apiRequest("POST", `/api/kyc/run-all-checks`, { companyId }),
@@ -5061,22 +5127,7 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
   // profile contacts on the board, carrying employer/property provenance.
   // The same query also feeds the account team card in the BGP Team block.
   const { data: accountWorkspace } = useAccountWorkspace(isLandlord ? companyId : undefined);
-  const boardContacts = isLandlord && accountWorkspace
-    ? accountWorkspace.contacts.map(ct => ({
-        id: ct.contactId,
-        name: ct.name,
-        role: ct.role,
-        email: ct.email,
-        phone: ct.phone,
-        avatar_url: ct.avatarUrl,
-        linkedin_url: ct.linkedinUrl,
-        interaction_count: ct.interactionCount,
-        last_interaction_at: ct.lastInteractionAt,
-        via: ct.via,
-        employerName: ct.employerName,
-        propertyNames: ct.propertyNames,
-      }))
-    : data.contacts || [];
+  const boardContacts = isLandlord && accountWorkspace ? accountBoardContacts(accountWorkspace) : data.contacts || [];
   // On the full-width landlord/brand layout the sidebar cards render as
   // stacked full-width boards — pair the related ones half-width instead
   // (Compliance+Covenant, Key contacts+Files, News+Instagram; Woody,
@@ -5248,8 +5299,9 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
         // Press = the brand's OWN newsroom only (url on their domain). The
         // old source-name clause matched "<Brand> (Google News)" on every
         // article, making Press identical to Industry (Woody, 2026-08-19).
+        const pressNews = data.news.filter((a: any) => !isSocialNews(a) && ((brandDomain && a.url?.includes(brandDomain)) || ownPost(a) || /(?:\((?:website news|openings)\)|\s[—–-]\s+news)\s*$/i.test(a.source_name || "")));
         const tabFiltered = newsTab === "press"
-          ? data.news.filter((a: any) => !isSocialNews(a) && ((brandDomain && a.url?.includes(brandDomain)) || ownPost(a) || /(?:\((?:website news|openings)\)|\s[—–-]\s+news)\s*$/i.test(a.source_name || "")))
+          ? pressNews
           : (newsSourceFilter ? industryNews.filter((a: any) => srcOf(a) === newsSourceFilter) : industryNews);
         const filtered = newsTagFilter.size === 0
           ? tabFiltered
@@ -5276,7 +5328,9 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
                     onClick={() => { setNewsTab(t); setNewsShowAll(false); setNewsSourceFilter(null); }}
                     className={`text-[10px] font-medium px-2 py-0.5 rounded transition-colors ${newsTab === t ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
                   >
-                    {t === "industry" ? `Industry (${industryNews.length})` : "Press"}
+                    {/* Counts cover every story behind "Show more" — "Industry (4)" sat
+                        over four rows and "Show 1 more"; Press had none (Woody, 2026-09-28). */}
+                    {t === "industry" ? `Industry (${industryAll.length})` : `Press (${pressNews.length})`}
                   </button>
                 ))}
               </div>
@@ -5524,18 +5578,17 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
             {/* The header strip already shows the cover + up to three
                 photos; the grid skips those unless staff open the full set
                 to manage them (Woody, 2026-09-28). */}
-            {!isLandlord && galleryImages.length < data.images.length && (
+            {!isLandlord && galleryImages.length < uniqueImages.length && (
               <button type="button" onClick={() => setGalleryAll(v => !v)} className="mb-2 text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2">
-                {galleryAll ? "Hide the photos shown above" : `${data.images.length - galleryImages.length} shown above${sbIsClient ? "" : " · Show all to manage"}`}
+                {galleryAll ? "Hide the photos shown above" : `${uniqueImages.length - galleryImages.length} shown above${sbIsClient ? "" : " · Show all to manage"}`}
               </button>
             )}
             {!isLandlord && galleryImages.length > 0 && (
-              // Scrollable grid — show every image, capped at a sensible
-              // height so the gallery doesn't dominate the sidebar. 3-col
-              // gives bigger thumbnails than the previous 4-col.
+              // Whole rows, no inner scroll box — the capped height cut rows
+              // mid-image (Woody, 2026-09-28). 3-col gives bigger thumbnails.
               <div className={(isLandlord || isBrand)
-                ? "grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[640px] overflow-y-auto pr-1"
-                : "grid grid-cols-3 gap-1 max-h-[420px] overflow-y-auto pr-1"}>
+                ? "grid grid-cols-2 sm:grid-cols-3 auto-rows-auto gap-2"
+                : "grid grid-cols-3 auto-rows-auto gap-1"}>
                 {galleryImages.map((img: any) => {
                   const thumbSrc = img.thumbnail_data
                     ? (img.thumbnail_data.startsWith("data:")
