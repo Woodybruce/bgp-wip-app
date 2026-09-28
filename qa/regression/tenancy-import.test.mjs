@@ -97,3 +97,15 @@ test('an explicit replacement with conflicting duplicate source rows is rejected
   await assert.rejects(() => importTenancyRows(db, 'property', [incoming({ unit_number: 'D4', passing_rent_pa: 10 }), incoming({ unit_number: 'Unit D04', passing_rent_pa: 20 })],
     { clearExisting: true, allowedFields: ['unit_number', 'passing_rent_pa'] }), error => error.status === 400);
 });
+
+test('a grouping band separates the same unit number (Royal Exchange External vs Internal Unit 1)', () => {
+  const searle = saved('searle', { unit_number: 'Unit 1', grouping: 'EXTERNAL', tenant_name: 'ES & Co Jewellers' });
+  assert.deepEqual(classifyTenancyImportRow(incoming({ unit_number: 'Unit 1', grouping: 'INTERNAL', tenant_name: 'Omega' }), [searle]), { action: 'insert' });
+  assert.equal(classifyTenancyImportRow(incoming({ unit_number: 'Unit 1', grouping: 'EXTERNAL', tenant_name: 'Omega' }), [searle]).action, 'review');
+});
+
+test('a named area without a unit number holds one row per tenant, a numbered unit does not', () => {
+  const tiffany = saved('tiffany', { unit_number: 'Basement storage units', tenant_name: 'Tiffany and Co' });
+  assert.deepEqual(classifyTenancyImportRow(incoming({ unit_number: 'Basement storage units', tenant_name: 'Boodles' }), [tiffany]), { action: 'insert' });
+  assert.equal(classifyTenancyImportRow(incoming({ unit_number: 'Unit D4', tenant_name: 'New tenant' }), [saved('d4')]).action, 'review');
+});

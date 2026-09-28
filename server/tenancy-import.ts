@@ -26,7 +26,13 @@ export function normaliseTenancyImportRef(value: unknown): string {
 
 const text = (value: unknown) => String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
 const identity = (row: ScheduleRow) => normaliseTenancyImportRef(row.unit_number || row.premises);
-const scopeFields = ["floor_level", "premises"];
+// A grouping band (EXTERNAL / INTERNAL on the Royal Exchange master) makes
+// "Unit 1" two different shops (Woody, 2026-09-28: Omega and Boodles were
+// held back as duplicates of Searle and Tomoka).
+const scopeFields = ["floor_level", "premises", "grouping"];
+// A named area with no unit number ("Basement storage units", "Courtyard")
+// holds several lettings — there a different tenant is a different row.
+const namedArea = (key: string) => !!key && !/\d/.test(key);
 const dateFields = new Set(["lease_start", "lease_expiry", "break_date", "landlord_break_date", "next_review_date"]);
 function calendarDate(value: any): string | null {
   if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
@@ -58,7 +64,8 @@ export function classifyTenancyImportRow(incoming: ParsedTenancyImportRow, exist
   const sameRef = key ? existing.filter(saved => identity(saved) === key) : [];
   // An explicit different floor or demise reference can identify a different
   // tenancy. A missing value cannot choose between several possible rows.
-  const candidates = sameRef.filter(saved => !scopeFields.some(field => text(row[field]) && text(saved[field]) && text(row[field]) !== text(saved[field])));
+  const candidates = sameRef.filter(saved => !scopeFields.some(field => text(row[field]) && text(saved[field]) && text(row[field]) !== text(saved[field]))
+    && !(namedArea(key) && text(row.tenant_name) && text(saved.tenant_name) && text(row.tenant_name) !== text(saved.tenant_name)));
   const review = (reason: TenancyImportReview["reason"], rows: ScheduleRow[], differingFields: string[] = []) => ({
     action: "review" as const,
     review: { sourceRow: incoming.sourceRow, unitNumber: row.unit_number || null, floorLevel: row.floor_level || null,
