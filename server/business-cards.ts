@@ -289,12 +289,60 @@ async function recordShareBack(card: BusinessCard, body: any, ip: string): Promi
   await pool.query(
     `INSERT INTO business_card_leads (user_id, contact_id, name, email, phone, company, role, note, ip) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
     [card.userId, contactId, name, validEmail || null, phone || null, company || null, role || null, note || null, ip.slice(0, 64)]);
+  const auto = (await pool.query(`SELECT auto_outlook FROM business_cards WHERE user_id = $1`, [card.userId]).catch(() => ({ rows: [] as any[] }))).rows[0]?.auto_outlook;
+  if (auto && contactId) {
+    addLeadToOutlook(card.userId, contactId).catch((e: any) => console.warn("[card] auto Outlook add failed:", e?.message));
+  }
   const { sendPushNotification } = await import("./push-notifications");
   await sendPushNotification(card.userId, {
     title: `${name} shared their details`,
     body: [role, company].filter(Boolean).join(" · ") || validEmail || phone || "From your business card",
     tag: `card-${contactId}`, url: `/contacts/${contactId}`,
   }).catch(() => undefined);
+}
+
+
+// A share-back into the card owner's own Outlook contacts, via the app's
+// Graph access (Application permission Contacts.ReadWrite on the Azure app).
+// Without that permission the owner still gets a contact file to open.
+export async function addLeadToOutlook(ownerUserId: string, contactId: string): Promise<{ ok: boolean; needsPermission?: boolean; message?: string }> {
+  const owner = (await pool.query(`SELECT email FROM users WHERE id = $1`, [ownerUserId])).rows[0];
+  const ct = (await pool.query(
+    `SELECT ct.name, ct.email, COALESCE(ct.phone_mobile, ct.phone) AS mobile, ct.role, COALESCE(co.name, ct.company_name) AS company, ct.notes
+       FROM crm_contacts ct LEFT JOIN crm_companies co ON co.id = ct.company_id WHERE ct.id = $1`, [contactId])).rows[0];
+  if (!owner?.email || !ct) return { ok: false, message: "Contact not found" };
+  const { getAppGraphToken } = await import("./microsoft");
+  const token = await getAppGraphToken();
+  if (!token) return { ok: false, needsPermission: true, message: "Microsoft isn't connected for the app." };
+  const [givenName, ...rest] = String(ct.name || "").trim().split(/\s+/);
+  const base = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(owner.email)}/contacts`;
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  if (ct.email) {
+    // Don't add the same person twice.
+    const existing = await fetch(`${base}?$filter=${encodeURIComponent(`emailAddresses/any(a:a/address eq '${String(ct.email).replace(/'/g, "''")}')`)}&$top=1`, { headers });
+    if (existing.ok && ((await existing.json()).value || []).length) return { ok: true, message: "Already in your Outlook contacts" };
+  }
+  const res = await fetch(base, {
+    method: "POST", headers,
+    body: JSON.stringify({
+      givenName: givenName || ct.name, surname: rest.join(" ") || undefined, displayName: ct.name,
+      emailAddresses: ct.email ? [{ address: ct.email, name: ct.name }] : [],
+      mobilePhone: ct.mobile || undefined, companyName: ct.company || undefined, jobTitle: ct.role || undefined,
+      personalNotes: ct.notes || undefined,
+    }),
+  });
+  if (res.status === 403 || res.status === 401) return { ok: false, needsPermission: true, message: "The app needs the Contacts.ReadWrite permission in Azure." };
+  if (!res.ok) return { ok: false, message: `Outlook said ${res.status}: ${(await res.text()).slice(0, 200)}` };
+  return { ok: true };
+}
+
+export function leadVcard(ct: { name: string; email?: string | null; mobile?: string | null; role?: string | null; company?: string | null; notes?: string | null }): string {
+  const [first, ...rest] = String(ct.name || "").trim().split(/\s+/);
+  const v = (value: string) => value.replace(/\\/g, "\\\\").replace(/[,;]/g, m => `\\${m}`).replace(/\n/g, "\\n");
+  return ["BEGIN:VCARD", "VERSION:3.0", `N:${v(rest.join(" "))};${v(first || "")};;;`, `FN:${v(ct.name || "")}`,
+    ct.company ? `ORG:${v(ct.company)}` : "", ct.role ? `TITLE:${v(ct.role)}` : "",
+    ct.mobile ? `TEL;TYPE=CELL,VOICE:${ct.mobile}` : "", ct.email ? `EMAIL;TYPE=INTERNET:${ct.email}` : "",
+    ct.notes ? `NOTE:${v(ct.notes)}` : "", "END:VCARD"].filter(Boolean).join("\r\n") + "\r\n";
 }
 
 export function registerBusinessCardRoutes(app: Express, requireAuth: any) {
@@ -305,7 +353,8 @@ export function registerBusinessCardRoutes(app: Express, requireAuth: any) {
       if (!card) return res.status(404).json({ message: "Business cards are for BGP staff accounts." });
       const leads = await pool.query(
         `SELECT contact_id, name, company, role, created_at FROM business_card_leads WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20`, [userId]);
-      res.json({ card, signatureHtml: signatureHtml(card), leads: leads.rows });
+      const auto = (await pool.query(`SELECT auto_outlook FROM business_cards WHERE user_id = $1`, [userId])).rows[0]?.auto_outlook;
+      res.json({ card, signatureHtml: signatureHtml(card), leads: leads.rows, autoOutlook: !!auto });
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Could not load your card" });
     }
@@ -317,10 +366,40 @@ export function registerBusinessCardRoutes(app: Express, requireAuth: any) {
       const card = userId ? await cardForUser(userId) : null;
       if (!card) return res.status(404).json({ message: "Business cards are for BGP staff accounts." });
       if (typeof req.body?.enabled === "boolean") await pool.query(`UPDATE business_cards SET enabled = $2 WHERE user_id = $1`, [userId, req.body.enabled]);
+      if (typeof req.body?.autoOutlook === "boolean") await pool.query(`UPDATE business_cards SET auto_outlook = $2 WHERE user_id = $1`, [userId, req.body.autoOutlook]);
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Could not update your card" });
     }
+  });
+
+  // Only the card owner's own share-backs.
+  const ownLead = async (req: Request) => {
+    const userId = req.session.userId || (req as any).tokenUserId;
+    const contactId = String(req.params.contactId || "");
+    const ok = (await pool.query(`SELECT 1 FROM business_card_leads WHERE user_id = $1 AND contact_id = $2 LIMIT 1`, [userId, contactId])).rows.length > 0;
+    return ok ? { userId, contactId } : null;
+  };
+  app.post("/api/business-card/leads/:contactId/outlook", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const lead = await ownLead(req);
+      if (!lead) return res.status(404).json({ message: "Not one of your card contacts" });
+      const out = await addLeadToOutlook(lead.userId, lead.contactId);
+      res.status(out.ok ? 200 : out.needsPermission ? 409 : 502).json(out);
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+  app.get("/api/business-card/leads/:contactId/vcard", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const lead = await ownLead(req);
+      if (!lead) return res.status(404).end();
+      const ct = (await pool.query(
+        `SELECT ct.name, ct.email, COALESCE(ct.phone_mobile, ct.phone) AS mobile, ct.role, COALESCE(co.name, ct.company_name) AS company
+           FROM crm_contacts ct LEFT JOIN crm_companies co ON co.id = ct.company_id WHERE ct.id = $1`, [lead.contactId])).rows[0];
+      if (!ct) return res.status(404).end();
+      res.set("Content-Type", "text/vcard; charset=utf-8");
+      res.set("Content-Disposition", `attachment; filename="${String(ct.name || "contact").replace(/[^A-Za-z0-9 ]/g, "").trim() || "contact"}.vcf"`);
+      res.send(leadVcard(ct));
+    } catch { res.status(500).end(); }
   });
 
   const notFound = (res: Response) => res.status(404).type("html").send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Bruce Gillingham Pollard</title><body style="font:15px Helvetica,Arial,sans-serif;padding:40px 16px;text-align:center;color:${BRAND.ink};background:${BRAND.cream}">This card isn't available. Visit <a href="https://${OFFICE.web}" style="color:${BRAND.bordeaux}">${OFFICE.web}</a>.</body>`);

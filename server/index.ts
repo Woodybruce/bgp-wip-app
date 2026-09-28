@@ -1233,6 +1233,7 @@ installGoogleBudgetGuard();
        enabled BOOLEAN NOT NULL DEFAULT true,
        created_at TIMESTAMP DEFAULT now()
      )`,
+    `ALTER TABLE business_cards ADD COLUMN IF NOT EXISTS auto_outlook BOOLEAN NOT NULL DEFAULT false`,
     `CREATE TABLE IF NOT EXISTS business_card_leads (
        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
        user_id VARCHAR NOT NULL,

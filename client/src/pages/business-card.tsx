@@ -1,10 +1,11 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { ArrowLeft, Copy, ExternalLink, Share2, Download, Mail } from "lucide-react";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { AuthDownloadLink } from "@/components/chatbgp-markdown";
 
 interface CardResponse {
   card: {
@@ -13,6 +14,7 @@ interface CardResponse {
   };
   signatureHtml: string;
   leads: Array<{ contact_id: string | null; name: string; company: string | null; role: string | null; created_at: string }>;
+  autoOutlook?: boolean;
 }
 
 // Digital business card + email signature (Woody, 2026-09-28, "like blinq").
@@ -21,8 +23,20 @@ export default function BusinessCardPage() {
   const { toast } = useToast();
   const { data, isLoading, error } = useQuery<CardResponse>({ queryKey: ["/api/business-card/me"] });
   const toggle = useMutation({
-    mutationFn: (enabled: boolean) => apiRequest("PATCH", "/api/business-card/me", { enabled }),
+    mutationFn: (patch: { enabled?: boolean; autoOutlook?: boolean }) => apiRequest("PATCH", "/api/business-card/me", patch),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["/api/business-card/me"] }),
+  });
+  // A share-back into your own Outlook contacts.
+  const toOutlook = useMutation({
+    mutationFn: async (contactId: string) => {
+      const res = await fetch(`/api/business-card/leads/${contactId}/outlook`, { method: "POST", headers: getAuthHeaders(), credentials: "include" });
+      return { status: res.status, body: await res.json().catch(() => ({})) };
+    },
+    onSuccess: ({ status, body }) => {
+      if (status === 200) toast({ title: body.message || "Added to your Outlook contacts" });
+      else if (body.needsPermission) toast({ title: "Outlook needs one permission first", description: "Ask IT to add Contacts.ReadWrite (Application) to the ChatBGP app in Azure. Until then, use Contact file.", variant: "destructive" });
+      else toast({ title: "Couldn't add to Outlook", description: body.message, variant: "destructive" });
+    },
   });
 
   if (isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading your card…</div>;
@@ -83,7 +97,7 @@ export default function BusinessCardPage() {
             </div>
             <label className="flex items-center justify-between w-full mt-4 pt-4 border-t text-sm">
               <span className="text-left">Card is live<span className="block text-xs text-muted-foreground">Turn off to stop the link and QR working.</span></span>
-              <Switch checked={card.enabled} onCheckedChange={(v) => toggle.mutate(v)} data-testid="switch-card-enabled" />
+              <Switch checked={card.enabled} onCheckedChange={(v) => toggle.mutate({ enabled: v })} data-testid="switch-card-enabled" />
             </label>
           </section>
 
@@ -103,20 +117,32 @@ export default function BusinessCardPage() {
         </div>
 
         <section className="rounded-xl border bg-card p-5 mt-5">
-          <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Shared with you</p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Shared with you</p>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              Add each one to my Outlook contacts
+              <Switch checked={!!data.autoOutlook} onCheckedChange={(v) => toggle.mutate({ autoOutlook: v })} data-testid="switch-auto-outlook" />
+            </label>
+          </div>
           {leads.length === 0 ? (
             <p className="text-sm text-muted-foreground mt-2">Nobody has sent their details from your card yet. When they do, they're added to the CRM and appear here and in your notifications.</p>
           ) : (
             <div className="divide-y mt-2">
               {leads.map((lead, i) => (
-                <button key={`${lead.contact_id}-${i}`} type="button" onClick={() => lead.contact_id && navigate(`/contacts/${lead.contact_id}`)}
-                  className="w-full flex items-center justify-between gap-3 py-2.5 text-left hover:bg-muted/40 rounded">
-                  <span className="min-w-0">
+                <div key={`${lead.contact_id}-${i}`} className="flex items-center justify-between gap-2 py-2.5">
+                  <button type="button" onClick={() => lead.contact_id && navigate(`/contacts/${lead.contact_id}`)} className="min-w-0 flex-1 text-left hover:underline">
                     <span className="block text-sm font-medium truncate">{lead.name}</span>
-                    <span className="block text-xs text-muted-foreground truncate">{[lead.role, lead.company].filter(Boolean).join(" · ") || "—"}</span>
-                  </span>
-                  <span className="text-xs text-muted-foreground tabular-nums shrink-0">{new Date(lead.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
-                </button>
+                    <span className="block text-xs text-muted-foreground truncate">{[lead.role, lead.company].filter(Boolean).join(" · ") || "—"} · <span className="tabular-nums">{new Date(lead.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span></span>
+                  </button>
+                  {lead.contact_id && (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Button size="sm" variant="outline" className="rounded-full h-7 px-2.5 text-xs" disabled={toOutlook.isPending} onClick={() => toOutlook.mutate(lead.contact_id!)} data-testid={`button-lead-outlook-${lead.contact_id}`}>Outlook</Button>
+                      <AuthDownloadLink href={`/api/business-card/leads/${lead.contact_id}/vcard`}>
+                        <span className="inline-flex items-center rounded-full border h-7 px-2.5 text-xs font-medium hover:bg-muted">Contact file</span>
+                      </AuthDownloadLink>
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
           )}
