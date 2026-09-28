@@ -45,7 +45,7 @@ test('plan drawer, tenancy cells and edit values preserve the same written day i
       process.env.TZ = timezone;
       for (const [value, displayed] of [['2027-03-31', '31 Mar 2027'], ['2028-09-01', '1 Sep 2028'], ['2028-02-29', '29 Feb 2028']]) {
         assert.equal(planFormat(value), displayed, timezone);
-        assert.equal(scheduleFormat(value), displayed.replace(/^1 /, '01 '), timezone);
+        assert.equal(scheduleFormat(value), displayed, timezone);
         const tree = UnitRow({ unit: { id: 'unit-1', status: 'Occupied', lease_expiry: value }, columns: [{ field: 'lease_expiry', type: 'date' }], onUpdate() {}, onDelete() {} });
         const editor = descendants(tree).find(node => node.type === stub && node.props.field === 'lease_expiry');
         assert.equal(editor.props.value, value, `${timezone} date editor must not silently change the date`);

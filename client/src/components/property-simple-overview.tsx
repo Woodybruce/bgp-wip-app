@@ -13,7 +13,7 @@ const money = (value: number) => `£${Math.round(value).toLocaleString("en-GB")}
 // Lease events kinds → the Lease events board's event types.
 const TRACK_TYPE: Record<string, string> = { "Lease expiry": "Lease Expiry", "Break date": "Break Option", "Landlord break": "Break Option", "Rent review": "Rent Review" };
 // "Unit L033 Upper Thames Walk" → "L033": the code is what the team says.
-const unitCode = (ref: string) => (ref.match(/^(?:unit|shop|kiosk)?\s*([A-Z]{0,3}\s?\d[\w./-]*)/i)?.[1] || ref.split(/\s+[-–]\s+|,/)[0]).trim();
+const unitCode = (ref: string) => (ref.match(/^(?:unit|shop|kiosk)?\s*((?:[A-Z]{1,3}(?:\/[A-Z]{1,3})*\s?)?\d[\w./-]*)/i)?.[1] || ref.split(/\s+[-–]\s+|,/)[0]).trim();
 const trackKey = (unit: string | null | undefined, type: string, date: string) => `${String(unit || "").toLowerCase().replace(/\s+/g, "")}|${type}|${String(date).slice(0, 7)}`;
 
 // Next lease events with a Track button that adds the event to Lease events

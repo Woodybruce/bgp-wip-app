@@ -5002,10 +5002,14 @@ Return a JSON object with these fields (use null for any field you cannot find):
         const text = String(raw || "").trim();
         if (!text) return null;
         const prop = String(propertyName || "").split(",")[0].trim();
-        const core = prop.split(/\s+/).filter((w: string) => w.length >= 4 && !/^(?:the|shopping|centre|center|retail|park|village|outlet|quay|quays|mall|london|and)$/i.test(w));
+        // Only words (≥3 letters) or the whole name strip — a property named
+        // "99" cut "99-101 Pimlico Road" to "-101 Pimlico Road" (Woody, 2026-09-28).
+        const core = prop.split(/\s+/).filter((w: string) => w.length >= 4 && /[a-z]{3}/i.test(w) && !/^(?:the|shopping|centre|center|retail|park|village|outlet|quay|quays|mall|london|and)$/i.test(w));
         const tail = "(?:\\s+(?:shopping centre|centre|center|village|quays?|retail park|shopping park|outlet|mall))?";
         const strip = (part: string) => {
-          let out = prop ? part.replace(new RegExp(`\\b${esc(prop)}\\b`, "ig"), " ") : part;
+          let out = !prop ? part : /[a-z]{3}/i.test(prop)
+            ? part.replace(new RegExp(`(?<![\\w-])${esc(prop)}(?![\\w-])`, "ig"), " ")
+            : part.trim().toLowerCase() === prop.toLowerCase() ? "" : part;
           for (const w of core) out = out.replace(new RegExp(`(?:^|\\s)${esc(w)}${tail}(?=\\s*$)|^${esc(w)}${tail}\\b`, "i"), " ");
           return out.replace(/\s+/g, " ").trim();
         };

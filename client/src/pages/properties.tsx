@@ -5024,7 +5024,7 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
             <p className="text-xs">No news found for this property</p>
           </div>
         ) : (
-          <ScrollArea className="h-[360px] pr-2">
+          <ScrollArea className="md:h-[360px] pr-2">
             <div className="divide-y">
               {articles.map(article => {
                 // Derive a source domain for the favicon fallback. The URL

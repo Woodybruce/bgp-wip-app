@@ -652,10 +652,14 @@ export function cleanUnitLabel(raw: string | null | undefined, propertyName: str
   if (!text) return null;
   const esc = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const prop = String(propertyName || "").split(",")[0].trim();
-  const core = prop.split(/\s+/).filter(w => w.length >= 4 && !PROPERTY_GENERIC_RE.test(w));
+  // Only words (≥3 letters) or the whole name strip — a property named "99"
+  // cut "99-101 Pimlico Road" to "-101 Pimlico Road" (Woody, 2026-09-28).
+  const core = prop.split(/\s+/).filter(w => w.length >= 4 && /[a-z]{3}/i.test(w) && !PROPERTY_GENERIC_RE.test(w));
   const tail = "(?:\\s+(?:shopping centre|centre|center|village|quays?|retail park|shopping park|outlet|mall))?";
   const strip = (part: string) => {
-    let out = prop ? part.replace(new RegExp(`\\b${esc(prop)}\\b`, "ig"), " ") : part;
+    let out = !prop ? part : /[a-z]{3}/i.test(prop)
+      ? part.replace(new RegExp(`(?<![\\w-])${esc(prop)}(?![\\w-])`, "ig"), " ")
+      : part.trim().toLowerCase() === prop.toLowerCase() ? "" : part;
     for (const w of core) out = out.replace(new RegExp(`(?:^|\\s)${esc(w)}${tail}(?=\\s*$)|^${esc(w)}${tail}\\b`, "i"), " ");
     return out.replace(/\s+/g, " ").trim();
   };
@@ -663,7 +667,11 @@ export function cleanUnitLabel(raw: string | null | undefined, propertyName: str
   const floor = parts.find(p => UNIT_FLOOR_RE.test(p));
   const isCore = (p: string) => p.split(/\s+/).some(w => core.some(c => c.toLowerCase() === w.toLowerCase()));
   const place = parts.find(p => p !== floor && UNIT_PLACE_RE.test(p) && !UNIT_CODE_IN_RE.test(p) && !isCore(p));
-  const code = parts.find(p => UNIT_CODE_RE.test(p)) || parts.find(p => UNIT_CODE_IN_RE.test(p) && p.length <= 40);
+  // A code with its street address run on ("SU43/SU44 22 Upper Cheapside
+  // Passage") keeps just the code (Woody, 2026-09-28).
+  const trimAddress = (p: string) => { const m = p.match(/^(.*\d.*?)\s+(\d+[a-z]?(?:[-–]\d+[a-z]?)?\s+[a-z].*)$/i); return m && UNIT_PLACE_RE.test(m[2]) ? m[1] : p; };
+  const codeRaw = parts.find(p => UNIT_CODE_RE.test(p)) || parts.find(p => UNIT_CODE_IN_RE.test(p) && p.length <= 40);
+  const code = codeRaw && trimAddress(codeRaw);
   if (code) { const extra = floor || place; return extra && extra !== code ? `${code} · ${extra}` : code; }
   if (place) return `Unit at ${place}`;
   if (floor) return floor;
@@ -2396,7 +2404,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                       <Link key={le.id} href={`/properties/${le.property_id}`}>
                         <div className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5 cursor-pointer">
                           <Badge variant="outline" className="text-[10px] shrink-0 border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400 capitalize">{label}</Badge>
-                          <span className="truncate flex-1">{le.property_name}{le.unit_name ? ` · ${le.unit_name}` : ""}</span>
+                          <span className="truncate flex-1">{le.property_name}{le.unit_name ? ` · ${cleanUnitLabel(le.unit_name, le.property_name) || le.unit_name}` : ""}</span>
                           <span className="font-medium tabular-nums text-xs shrink-0">{nextEvent?.toLocaleDateString("en-GB", { month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep")}</span>
                         </div>
                       </Link>
@@ -4147,8 +4155,12 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
     if (p.via === "deal" && !row.dealId) { row.dealId = p.id; row.dealType = p.deal_type; }
   }
   for (const l of (liveTenancies || [])) tenantRow(l.id, l.name).liveUnits = Number(l.units) || 0;
-  const tenantAt: any[] = [...tenantByProp.values()].map(r => {
-    const n = Math.max(r.units.size, r.liveUnits);
+  // …but the Live tenancies card (richer lease data) already lists those, so
+  // Tenant at shows only the rest — every property was listed twice, Nando's
+  // 26 vs 25 (Woody, 2026-09-28). tenantByProp still keeps them out of Targeted.
+  const liveIds = new Set((liveTenancies || []).map(l => String(l.id)));
+  const tenantAt: any[] = [...tenantByProp.values()].filter(r => !liveIds.has(r.id)).map(r => {
+    const n = r.units.size;
     return { ...r, unit_name: n > 1 ? `${n} units` : [...r.units][0] || null };
   });
   // Inside About each list shows 2 (6 in its own card) until Show all —
@@ -4292,7 +4304,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
             {suggestions.slice(0, capFor("suggested", suggestions)).map((u: any) => (
               <Row key={`s-${u.id}`} propertyId={u.property_id} propertyName={u.property_name} unitName={u.unit_name}
                 title={u.reason} subline={u.reason}
-                right={u.sqft ? <span className="text-[10px] text-muted-foreground tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null} />
+                right={u.sqft ? <span className="text-[10px] text-muted-foreground tabular-nums">{Math.round(Number(u.sqft)).toLocaleString("en-GB")} sq ft</span> : null} />
             ))}
           </Tier>
         )}
@@ -4626,7 +4638,8 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
                   <span className="font-medium text-foreground/80">{cm.userName}</span>
                   {cm.at && <span>{ukDate(cm.at)}</span>}
                   <Link href={`/properties/${cm.propertyId}`} className="ml-auto hover:underline truncate max-w-[45%]">
-                    {cm.propertyName}{cm.unitName ? ` · ${cm.unitName}` : ""}
+                    {/* Raw tracker unit labels repeated the property ("U052B Bluewater…") (Woody, 2026-09-28). */}
+                    {cm.propertyName}{cm.unitName ? ` · ${cleanUnitLabel(cm.unitName, cm.propertyName) || cm.unitName}` : ""}
                   </Link>
                 </div>
                 <p className="whitespace-pre-wrap break-words">{cm.text}</p>

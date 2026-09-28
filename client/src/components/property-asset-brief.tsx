@@ -1100,7 +1100,7 @@ export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { prope
           <Sparkles className="w-3.5 h-3.5 text-muted-foreground" /> BGP Commentary
           {updatedAt && (
             <span className="text-[10px] text-muted-foreground font-normal ml-auto">
-              {new Date(updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+              {new Date(updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }).replace(/\bSept\b/, "Sep")}
             </span>
           )}
         </CardTitle>

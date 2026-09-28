@@ -5,6 +5,8 @@
 // the server slices to hospitality/F&B/wellness/café/leisure.
 import type { PropertyResearchContext } from "@shared/property-research";
 import { useState } from "react";
+import { formatSizeList } from "@/lib/format-size";
+import { useClassLabel } from "@/lib/format";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -459,11 +461,11 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
                   </span>
                   {r.use && r.use.length > 0 && (
                     <Badge variant="outline" className="text-[11px] shrink-0 bg-background">
-                      {r.use.slice(0, 2).join(", ")}{r.use.length > 2 ? "…" : ""}
+                      {[...new Set(r.use.slice(0, 2).map((u: string) => useClassLabel(u)))].join(", ")}{r.use.length > 2 ? "…" : ""}
                     </Badge>
                   )}
                   {r.size && (
-                    <span className="text-[11px] text-muted-foreground truncate max-w-[150px]" title={r.size}>{r.size}</span>
+                    <span className="text-[11px] text-muted-foreground truncate max-w-[150px]" title={r.size}>{formatSizeList(r.size)}</span>
                   )}
                 </Link>
               ))}

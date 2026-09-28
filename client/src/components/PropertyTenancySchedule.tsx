@@ -194,7 +194,7 @@ function fmtNum(v: number | string | null | undefined, dp = 0) {
 
 function fmtDate(v: string) {
   if (!v) return "—";
-  return formatCalendarDate(v, "2-digit") ?? v;
+  return formatCalendarDate(v) ?? v;
 }
 
 // Full set of data columns rendered in the table — mirrors the Landsec
@@ -504,7 +504,7 @@ function AiTargetChip({ target, onAdopt, onDismiss }: { target: AiTarget; onAdop
         </div>
         <p className="whitespace-pre-line">{why}</p>
         {evidence && <p className="text-muted-foreground"><span className="font-medium text-foreground">Evidence:</span> {evidence}</p>}
-        {target.internal_evidence && <p className="text-muted-foreground"><span className="font-medium text-foreground">BGP only:</span> {target.internal_evidence}</p>}
+        {target.internal_evidence && <p className="text-muted-foreground"><span className="font-medium text-foreground">BGP only:</span> {target.internal_evidence.replace(/\bSept\b/g, "Sep")}</p>}
         <div className="flex items-center gap-2 pt-1">
           <Button size="sm" className="h-7 text-xs" disabled={busy} onClick={() => run(onAdopt)}>Add as target</Button>
           <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => run(onDismiss)}>Dismiss</Button>
@@ -1541,12 +1541,12 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                 {/* The compact editor repeats the rent as an input below. */}
                 {!(compact && canEdit) && <span className="font-mono tabular-nums text-sm font-semibold shrink-0">{fmtCurrency(unit.passing_rent_pa)}</span>}
               </div>
-              <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
-                {[unit.floor_level, unit.permitted_use].filter(Boolean).join(" · ") || "—"}
-              </p>
+              {(unit.floor_level || unit.permitted_use) && <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                {[unit.floor_level, unit.permitted_use].filter(Boolean).join(" · ")}
+              </p>}
               {compact && (
                 <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground mt-1">
-                  <span>NIA {canEdit ? <InlineEdit value={String(unit.nia_sqft ?? "")} field="nia_sqft" unitId={unit.id} onSave={inlineUpdate} type="number" /> : fmtNum(unit.nia_sqft)} sq ft</span>
+                  {(canEdit || unit.nia_sqft != null) && <span>NIA {canEdit ? <InlineEdit value={String(unit.nia_sqft ?? "")} field="nia_sqft" unitId={unit.id} onSave={inlineUpdate} type="number" /> : fmtNum(unit.nia_sqft)} sq ft</span>}
                   {canEdit && <span>Rent <InlineEdit value={String(unit.passing_rent_pa ?? "")} field="passing_rent_pa" unitId={unit.id} onSave={inlineUpdate} type="number" /></span>}
                   {unit.next_review_date && <span>Review {fmtDate(unit.next_review_date)}</span>}
                 </div>

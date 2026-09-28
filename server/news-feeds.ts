@@ -2188,7 +2188,9 @@ export function setupNewsFeedRoutes(app: Express) {
       // Week and EdgeProp read as a double-up on the property page — clean
       // the title and keep the first of any near-duplicate headline, across
       // the database and web results alike (Woody, 2026-09-28).
-      const headlineWords = (t: string) => new Set(t.toLowerCase().replace(/[^a-z0-9£\s]/g, " ").split(/\s+/).filter(w => w.length > 2));
+      // "GBP450 mil" and "£450m" are the same figure.
+      const headlineWords = (t: string) => new Set(t.toLowerCase().replace(/\bgbp\s?/g, "£").replace(/(£?\d+(?:\.\d+)?)\s?(?:mil|million|mn|m)\b/g, "$1m")
+        .replace(/[^a-z0-9£\s]/g, " ").split(/\s+/).filter(w => w.length > 2 && !/^(?:the|and|for|with|from|its|has|after|into|over)$/.test(w)));
       const kept: { words: Set<string> }[] = [];
       const articles = combined.filter(article => !isNewsErrorTitle(article.title)).map(article => {
         let title = String(article.title || "").replace(/^\s*(?:news|press release|latest)\s*[|:]\s*/i, "");
@@ -2200,6 +2202,8 @@ export function setupNewsFeedRoutes(app: Express) {
         if (!dup) kept.push({ words });
         return !dup;
       });
+      // Newest first — database and web results were interleaved by source.
+      articles.sort((a, b) => (Date.parse(String(b.publishedAt || "")) || 0) - (Date.parse(String(a.publishedAt || "")) || 0));
       res.json({ articles, propertyName, searchQuery });
     } catch (err: any) {
       console.error("[Property News] Error:", err);

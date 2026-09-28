@@ -426,7 +426,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
       risks.push({
         kind: "vacant",
         severity: "med",
-        message: `${vacantNoDeal.length} unit${vacantNoDeal.length === 1 ? "" : "s"} vacant with no active deal (${names}${more})${withDeal > 0 ? ` — a further ${withDeal} vacant with live deals in play` : ""}`,
+        message: `${vacantNoDeal.length} unit${vacantNoDeal.length === 1 ? "" : "s"} vacant with no active deal (${names}${more})${withDeal > 0 ? `; ${withDeal} more vacant ${withDeal === 1 ? "unit has a" : "units have"} live deal${withDeal === 1 ? "" : "s"}` : ""}`,
       });
     }
     for (const u of lsuQ.rows) {

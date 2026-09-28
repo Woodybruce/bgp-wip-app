@@ -1,5 +1,5 @@
 import { formatSizeList } from "@/lib/format-size";
-import { isOwnChannelNews, newsSourceLabel, splitNewsTitle, isOwnBrandSource, dedupeNearNews, ukDate, sentenceCaseShouting, aboutParagraphs, isSocialNews, snippetPublisher, isSignalNoise } from "@/components/brand-profile-panel";
+import { isOwnChannelNews, newsSourceLabel, splitNewsTitle, isOwnBrandSource, dedupeNearNews, ukDate, sentenceCaseShouting, aboutParagraphs, isSocialNews, snippetPublisher, isSignalNoise, cleanUnitLabel } from "@/components/brand-profile-panel";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { BrandFeedCard } from "@/components/brand-feed-card";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
@@ -358,7 +358,7 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
                 </div>
                 <p className="whitespace-pre-wrap break-words">{cm.text}</p>
                 <Link href={`/properties/${cm.propertyId}`} className="text-[11px] text-primary hover:underline">
-                  {cm.propertyName}{cm.unitName ? ` · ${cm.unitName}` : ""}
+                  {cm.propertyName}{cm.unitName ? ` · ${cleanUnitLabel(cm.unitName, cm.propertyName) || cm.unitName}` : ""}
                 </Link>
               </div>
             ))}
