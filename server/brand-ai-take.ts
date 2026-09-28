@@ -165,8 +165,46 @@ async function loadUkSlice(companyId: string) {
 }
 
 async function loadActivitySlice(companyId: string) {
-  const company = await pool.query(`SELECT name, bgp_contact_crm, company_type FROM crm_companies WHERE id = $1`, [companyId]);
+  const company = await pool.query(`SELECT name, bgp_contact_crm, company_type, domain, domain_url FROM crm_companies WHERE id = $1`, [companyId]);
   if (!company.rows[0]) return null;
+  // What they're selling and buying through BGP, and the threads we've had
+  // with them lately — the read named neither the Royal Exchange sale nor
+  // Ardent's buying brief nor their Thanksgiving invitation (Woody,
+  // 2026-09-28). Subjects only, from threads with their own people: the
+  // Landsec dashboard shows this read to the client.
+  const investment = await (async () => {
+    try {
+      const { getAccountTeams } = await import("./account-teams");
+      const inv = (await getAccountTeams(companyId)).investment;
+      const CLOSED = /^(WIT|Withdrawn|Lost)$/i;
+      const live = (t: any) => !CLOSED.test(String(t.status || ""));
+      const lot = (t: any) => ({ asset: t.asset_name || t.property_name, status: t.status, guide_price: t.guide_price || null, niy: t.niy || null, bgp_client: t.client || null, buyer: t.buyer || null });
+      const f = inv.flags || {};
+      return {
+        selling_on_bgp_boards: inv.tracker.filter((t: any) => t.side === "selling" && live(t)).slice(0, 8).map(lot),
+        buying_on_bgp_boards: inv.tracker.filter((t: any) => t.side !== "selling" && live(t)).slice(0, 8).map(lot),
+        investment_requirements: inv.requirements.filter((r: any) => /active/i.test(String(r.status || ""))).slice(0, 5)
+          .map((r: any) => ({ name: r.name, since: r.requirement_date, uses: r.use_types, sizes: r.size_range, locations: r.requirement_locations || r.locations, notes: r.comments })),
+        buying_brief: [f.acquiring_now ? `acquiring now${f.acquiring_now_notes ? `: ${f.acquiring_now_notes}` : ""}` : null,
+          f.mandate_asset_class ? `asset class ${f.mandate_asset_class}` : null,
+          f.mandate_lot_size_min || f.mandate_lot_size_max ? `lot size ${f.mandate_lot_size_min || "?"}–${f.mandate_lot_size_max || "?"}` : null,
+          f.mandate_geographies ? `geographies ${f.mandate_geographies}` : null].filter(Boolean),
+        disposing_now: f.disposing_now ? (f.disposing_now_notes || true) : null,
+      };
+    } catch { return null; }
+  })();
+  const domain = String(company.rows[0].domain || company.rows[0].domain_url || "").replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").toLowerCase();
+  const recentThreads = domain ? await pool.query(
+    `SELECT DISTINCT ON (lower(regexp_replace(COALESCE(subject, ''), '^((re|fw|fwd):[[:space:]]*)+', '', 'i'))) subject, interaction_date
+       FROM crm_interactions
+      WHERE interaction_date > NOW() - interval '75 days' AND interaction_date <= NOW()
+        AND participants::text ILIKE ('%@' || $1::text || '%')
+        AND NULLIF(TRIM(subject), '') IS NOT NULL
+      ORDER BY lower(regexp_replace(COALESCE(subject, ''), '^((re|fw|fwd):[[:space:]]*)+', '', 'i')), interaction_date DESC`,
+    [domain]
+  ).then(r => r.rows.sort((a: any, b: any) => +new Date(b.interaction_date) - +new Date(a.interaction_date)).slice(0, 25)
+    .map((r: any) => ({ subject: String(r.subject).slice(0, 140), date: new Date(r.interaction_date).toISOString().slice(0, 10) })))
+    .catch(() => []) : [];
   // Who covers the account and what each does — the header chips.
   const team = await pool.query(
     `SELECT COALESCE(u.name, u.username) AS name, u.role AS title, r.role
@@ -207,6 +245,8 @@ async function loadActivitySlice(companyId: string) {
     account_type: /landlord|investor|owner/i.test(company.rows[0].company_type || "") ? "landlord" : "tenant",
     lead_broker: company.rows[0].bgp_contact_crm,
     bgp_team: team.rows.map((r: any) => ({ name: r.name, bgp_title: r.title, covers: r.role })),
+    investment,
+    recent_email_subjects: recentThreads,
     days_since_last_touch: lastAt ? Math.floor((Date.now() - new Date(lastAt).getTime()) / 86400000) : null,
     interactions_90d: interactions.rows[0]?.last_90d || 0,
     interactions_total: interactions.rows[0]?.total || 0,
@@ -334,9 +374,11 @@ ${BRAND_BRIEF_EVIDENCE_RULES}
 Data:
 ${JSON.stringify(d, null, 2)}
 
-Write a single 60-90 word paragraph covering:
+Cover, where the data supports it:
 - The current relationship temperature (warm / cooling / cold / new)
 - Who's the live contact and last touchpoint context
+- What they're selling and buying with BGP (investment: selling_on_bgp_boards, buying_on_bgp_boards, investment_requirements, buying_brief) — name the assets, prices and yields given
+- Relationship moments in recent_email_subjects — invitations, events, hospitality, introductions, new instructions — with their date. Use only what a subject line plainly says.
 - Who on the BGP team (bgp_team) owns which part of the relationship, when it helps
 - The next best action (who at BGP contacts whom, what about, why now)
 
@@ -344,10 +386,10 @@ Tone: direct, broker-to-broker.
 
 FORMAT (the app renders this as a styled card — follow it exactly):
 - Line 1: one bold headline sentence in **double asterisks** — the read in a nutshell.
-- Then 3 short bullets, each starting "- **Label:** " where Label is a 1-3 word lead-in (e.g. **Temperature:**, **Live contact:**, **Pattern:**, **Risk:**, **Next step:**). One sentence each, max ~25 words.
+- Then 4-6 short bullets, each starting "- **Label:** " where Label is a 1-3 word lead-in (e.g. **Temperature:**, **Live contact:**, **Selling:**, **Buying:**, **Moments:**, **Risk:**, **Next step:**). One sentence each, max ~28 words. Leave out a bullet when there's no evidence for it.
 - The last bullet MUST be "- **Next step:** …" — who does what, why now.
 - Name people, deals, properties and companies EXACTLY as they appear in the data (the app links them). No markdown headings, no numbered lists, no citations, nothing else.
-Total under 110 words.`;
+Total under 170 words.`;
 }
 
 function landlordPrompt(d: any): string {
@@ -377,10 +419,10 @@ Tone: direct, broker-to-broker, decisive. If a Data note is warranted, make it t
 
 FORMAT (the app renders this as a styled card — follow it exactly):
 - Line 1: one bold headline sentence in **double asterisks** — the read in a nutshell.
-- Then 3 short bullets, each starting "- **Label:** " where Label is a 1-3 word lead-in (e.g. **Temperature:**, **Live contact:**, **Pattern:**, **Risk:**, **Next step:**). One sentence each, max ~25 words.
+- Then 4-6 short bullets, each starting "- **Label:** " where Label is a 1-3 word lead-in (e.g. **Temperature:**, **Live contact:**, **Selling:**, **Buying:**, **Moments:**, **Risk:**, **Next step:**). One sentence each, max ~28 words. Leave out a bullet when there's no evidence for it.
 - The last bullet MUST be "- **Next step:** …" — who does what, why now.
 - Name people, deals, properties and companies EXACTLY as they appear in the data (the app links them). No markdown headings, no numbered lists, no citations, nothing else.
-Total under 110 words.`;
+Total under 170 words.`;
 }
 
 // ─── Core call ──────────────────────────────────────────────────────────
