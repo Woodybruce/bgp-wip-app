@@ -824,7 +824,13 @@ export function PropertyDetail({ id }: { id: string }) {
                     {/* Fifth field — sits alone on its row, so give it the
                         full width instead of cutting the URL mid-word. */}
                     <div className="min-w-0 col-span-2" data-testid="property-field-website">
-                      <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">Website</p>
+                      <p className="text-[11px] text-muted-foreground leading-tight mb-0.5 flex items-center gap-1">Website
+                        {property.website && (
+                          <a href={/^https?:\/\//i.test(property.website) ? property.website : `https://${property.website}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-0.5" title="Open website" data-testid="link-property-website">
+                            open <ExternalLink className="w-2.5 h-2.5" />
+                          </a>
+                        )}
+                      </p>
                       <InlineText value={property.website || ""} display={(property.website || "").replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "")} onSave={(val) => inlineUpdateAsync("website", val)} label="Website" placeholder="Set website" className="text-sm truncate block" />
                     </div>
                   </div>

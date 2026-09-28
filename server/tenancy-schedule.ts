@@ -891,8 +891,12 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
 
       if (!rec.grouping && currentGrouping) rec.grouping = currentGrouping;
       if (!rec.status) {
-        const tn = (rec.tenant_name || "").toString().toLowerCase();
-        rec.status = !tn || tn === "vacant" ? "Vacant" : "Occupied";
+        const tn = (rec.tenant_name || "").toString().toLowerCase().trim();
+        // "Vacant (In Legals - Inception)" / "Vacant (Prev Georg Jensen)" on
+        // the Royal Exchange master read as Occupied (Woody, 2026-09-28).
+        rec.status = !tn || /^vacant\b/.test(tn)
+          ? (/\b(in legals|under offer|solicitors|agreed|hots?)\b/.test(tn) ? "Under Offer" : "Vacant")
+          : "Occupied";
       }
       sortOrder++;
       rec.sort_order = sortOrder;
