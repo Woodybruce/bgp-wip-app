@@ -172,7 +172,7 @@ ${card.photoUrl ? `<meta property="og:image" content="${esc(card.photoUrl)}">` :
 <style>
 *{box-sizing:border-box}body{margin:0;background:${BRAND.cream};color:${BRAND.ink};font:15px/1.5 Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
 .wrap{max-width:440px;margin:0 auto;padding:0 16px 40px}
-.hero{background:${BRAND.bordeaux};color:#fff;margin:0 -16px;padding:28px 24px 64px;text-align:center}
+.hero{background:${BRAND.bordeaux};color:#fff;margin:0 -16px;padding:24px 24px 124px;text-align:center}
 .hero img.logo{height:40px;display:block;margin:0 auto}
 .card{background:#fff;border:1px solid ${BRAND.blush};border-radius:16px;margin-top:-44px;padding:0 20px 20px;text-align:center}
 .photo{width:112px;height:112px;border-radius:56px;object-fit:cover;border:4px solid #fff;margin-top:-56px;background:${BRAND.blush};display:inline-flex;align-items:center;justify-content:center;font:bold 34px Georgia,serif;color:${BRAND.bordeaux}}
