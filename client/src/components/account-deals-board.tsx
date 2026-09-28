@@ -231,7 +231,7 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
   const filtersActive = Object.entries(filters).some(([k, v]) => v && v !== "all");
 
   return (
-    <Card data-testid={`account-deals-board-${companyId}`}>
+    <Card data-testid={`account-deals-board-${companyId}`} className="[container-type:inline-size]">
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Briefcase className="w-3.5 h-3.5" /> Deals &amp; activity
@@ -310,8 +310,10 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
 
         {data && data.deals.length > 0 && (
           <>
-            {/* Desktop table */}
-            <div className="hidden md:block overflow-x-auto">
+            {/* Wide board: table. A narrow one (phone, or desktop with the
+                chat panel open) gets the card list, so no column is cut off
+                (Woody, 2026-09-28: "bleeds when the app is shrunk"). */}
+            <div className="hidden [@container(min-width:820px)]:block overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="text-left text-[10px] uppercase tracking-wide text-muted-foreground border-b border-border/40">
@@ -362,7 +364,7 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
             </div>
 
             {/* Phone: stacked cards, no wide table */}
-            <div className="md:hidden space-y-1.5">
+            <div className="[@container(min-width:820px)]:hidden space-y-1.5">
               {data.deals.map(d => {
                 const labels = rowLabels(d);
                 // The card title is the deal name — only list the property /

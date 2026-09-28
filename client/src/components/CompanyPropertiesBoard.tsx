@@ -832,7 +832,7 @@ export function CompanyPropertiesBoard({
                 >
                   {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
                   <span className="w-2 h-2 rounded-full bg-teal-500 shrink-0" />
-                  <Link href={`/properties/${p.id}`} className="text-sm font-medium truncate hover:underline" onClick={e => e.stopPropagation()}>
+                  <Link href={`/properties/${p.id}`} className="text-sm font-medium truncate min-w-0 hover:underline" onClick={e => e.stopPropagation()}>
                     {p.name}
                   </Link>
                   <div className="flex items-center gap-1 ml-auto shrink-0">
@@ -843,9 +843,13 @@ export function CompanyPropertiesBoard({
                     {p.deals.length > 0 && (
                       <Badge variant="secondary" className="text-[9px]">{p.deals.length} deal{p.deals.length !== 1 ? "s" : ""}</Badge>
                     )}
-                    {p.agentNames.map(name => (
+                    {/* Two names, then +N — a row of chips ran off the card. */}
+                    {p.agentNames.slice(0, 2).map(name => (
                       <Badge key={name} className={`text-[9px] px-1 py-0 text-white ${userColorMap[name] || "bg-zinc-500"}`}>{name.split(" ")[0]}</Badge>
                     ))}
+                    {p.agentNames.length > 2 && (
+                      <Badge variant="outline" className="text-[9px] px-1 py-0" title={p.agentNames.slice(2).join(", ")}>+{p.agentNames.length - 2}</Badge>
+                    )}
                   </div>
                 </button>
 
