@@ -64,6 +64,7 @@ export const CRM_OPTIONS = {
     "Development Finance",
     "Building Society",
     // ── Other ──
+    "Asset Manager",
     "Billing Entity",
   ],
   companyTypeColors: {

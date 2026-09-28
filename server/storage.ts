@@ -828,6 +828,7 @@ export class DatabaseStorage implements IStorage {
       await tx.update(crmProperties).set({ longLeaseholderId: null }).where(eq(crmProperties.longLeaseholderId, id));
       await tx.update(crmProperties).set({ seniorLenderId: null }).where(eq(crmProperties.seniorLenderId, id));
       await tx.update(crmProperties).set({ juniorLenderId: null }).where(eq(crmProperties.juniorLenderId, id));
+      await tx.update(crmProperties).set({ assetManagerId: null }).where(eq(crmProperties.assetManagerId, id));
       await tx.update(crmContacts).set({ companyId: null }).where(eq(crmContacts.companyId, id));
       await tx.update(crmRequirementsLeasing).set({ companyId: null }).where(eq(crmRequirementsLeasing.companyId, id));
       await tx.delete(crmCompanyProperties).where(eq(crmCompanyProperties.companyId, id));

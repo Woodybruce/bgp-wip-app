@@ -37,6 +37,7 @@ export const COMPANY_REFS: Array<{ table: string; column: string }> = [
   { table: "crm_properties",           column: "long_leaseholder_id" },
   { table: "crm_properties",           column: "senior_lender_id" },
   { table: "crm_properties",           column: "junior_lender_id" },
+  { table: "crm_properties",           column: "asset_manager_id" },
   { table: "crm_company_properties",   column: "company_id" },
   { table: "crm_company_deals",        column: "company_id" },
   { table: "crm_property_tenants",     column: "company_id" },

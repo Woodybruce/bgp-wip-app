@@ -813,6 +813,7 @@ export const crmProperties = pgTable("crm_properties", {
   longLeaseholderId: varchar("long_leaseholder_id"), // → crm_companies
   seniorLenderId: varchar("senior_lender_id"),  // → crm_companies
   juniorLenderId: varchar("junior_lender_id"),  // → crm_companies
+  assetManagerId: varchar("asset_manager_id"),  // → crm_companies (Pave on the Royal Exchange)
   // ── Country + geocode provenance (migration 0043) ────────────────────────
   // NULL on pre-existing rows; written by country-aware discovery and the
   // reviewed per-row repair script, never by bulk reinterpretation.

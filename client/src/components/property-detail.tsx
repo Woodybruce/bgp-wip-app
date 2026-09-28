@@ -853,6 +853,7 @@ export function PropertyDetail({ id }: { id: string }) {
                     { label: "Long Leaseholder",  field: "longLeaseholderId", id: (property as any).longLeaseholderId },
                     { label: "Senior Lender",     field: "seniorLenderId",    id: (property as any).seniorLenderId },
                     { label: "Junior Lender",     field: "juniorLenderId",    id: (property as any).juniorLenderId },
+                    { label: "Asset Manager",     field: "assetManagerId",    id: (property as any).assetManagerId },
                   ];
                   // A link to a deleted company (REX's freeholder) reads as an
                   // empty role, not a filled row showing "+ Add".

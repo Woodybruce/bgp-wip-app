@@ -5425,6 +5425,7 @@ const LIST_OWNER_ROLES = [
   { field: "longLeaseholderId", label: "Long Leaseholder", short: "Long leaseholder" },
   { field: "seniorLenderId", label: "Senior Lender", short: "Sr Lender" },
   { field: "juniorLenderId", label: "Junior Lender", short: "Jr Lender" },
+  { field: "assetManagerId", label: "Asset Manager", short: "Asset mgr" },
 ] as const;
 
 function PropertyOwnershipCell({ item, allCompanies, readOnly }: { item: CrmProperty; allCompanies: CrmCompany[]; readOnly?: boolean }) {
