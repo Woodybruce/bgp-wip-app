@@ -143,13 +143,42 @@ export async function backfillOpeningStores(limit = 150) {
   console.log(`[openings-map] ${added} planned openings from ${rows.length} brands' signals`);
 }
 
+type VenueAddress = { url: string; street: string | null; town: string; postcode: string | null };
+/** schema.org PostalAddress blocks on sites the brand's homepage links to on
+ *  its own domain (subdomains). Read-only fetches, capped. */
+export async function officialVenueAddresses(company: any): Promise<VenueAddress[]> {
+  const { getBrandIdentity } = await import("./brand-identity");
+  const identity = getBrandIdentity(company);
+  if (identity.status !== "verified" || !identity.domain) return [];
+  const get = async (url: string) => {
+    const r = await fetch(url, { signal: AbortSignal.timeout(10_000), headers: { "user-agent": "Mozilla/5.0 (BGP brand research)" } });
+    return r.ok ? await r.text() : "";
+  };
+  const home = await get(`https://${identity.domain}/`).catch(() => "");
+  const hosts = new Set<string>();
+  for (const m of home.matchAll(/href=["'](https?:\/\/[^"'\/]+)/gi)) {
+    const host = m[1].replace(/^https?:\/\//i, "").toLowerCase().replace(/^www\./, "");
+    if (host !== identity.domain && host.endsWith(`.${identity.domain}`)) hosts.add(host);
+  }
+  const out: VenueAddress[] = [];
+  for (const host of [...hosts].slice(0, 10)) {
+    const html = await get(`https://${host}/`).catch(() => "");
+    for (const m of html.matchAll(/"PostalAddress"[^}]*}/g)) {
+      const field = (k: string) => m[0].match(new RegExp(`"${k}"\\s*:\\s*"([^"]+)"`))?.[1] || null;
+      const town = field("addressLocality");
+      if (town) { out.push({ url: `https://${host}/`, street: field("streetAddress"), town, postcode: field("postalCode") }); break; }
+    }
+  }
+  return out;
+}
+
 /** Website-listed stores saved with only a town (no pin) — find each on
  *  Google Places; a match that is a store already mapped is removed as a
  *  duplicate. Each row is tried once (remembered in system_settings); runs
  *  in the background when the brand is viewed. */
-export async function locateWebsiteStoresFor(companyId: string, deps: { pool?: Querier; findPlace?: (company: any, items: Array<{ name: string; city: string; country: string }>) => Promise<Array<{ placeId: string; address: string; lat: number; lng: number } | null>> } = {}): Promise<{ located: number; merged: number }> {
+export async function locateWebsiteStoresFor(companyId: string, deps: { pool?: Querier; venueAddresses?: typeof officialVenueAddresses; geocode?: (q: string) => Promise<{ lat: number | null; lng: number | null; formattedAddress: string | null }>; findPlace?: (company: any, items: Array<{ name: string; city: string; country: string }>) => Promise<Array<{ placeId: string; address: string; lat: number; lng: number } | null>> } = {}): Promise<{ located: number; merged: number }> {
   const pool = deps.pool ?? await dbPool();
-  const KEY = `website-stores-located:${companyId}`;
+  const KEY = `website-stores-located-v2:${companyId}`;
   const tried = new Set<string>(((await pool.query(`SELECT value FROM system_settings WHERE key = $1`, [KEY])).rows[0]?.value?.tried) || []);
   const list = (await pool.query(
     `SELECT id, name, address FROM brand_stores WHERE brand_company_id = $1 AND source_type = 'official_website' AND lat IS NULL AND COALESCE(country, 'GB') = 'GB' LIMIT 40`,
@@ -169,10 +198,28 @@ export async function locateWebsiteStoresFor(companyId: string, deps: { pool?: Q
     merged += (await pool.query(`DELETE FROM brand_stores WHERE id = $1`, [r.id])).rowCount || 0;
     list.splice(list.indexOf(r), 1);
   }
+  // Venue sites the brand links on its own domain (bristol.wakethetiger.com)
+  // publish their address for search engines — use it before Places.
+  const venueSites = await (deps.venueAddresses || officialVenueAddresses)(company).catch(() => [] as VenueAddress[]);
+  const geocode = deps.geocode || (async (query: string) => (await import("./geocode")).geocodeOne(query, { countryHint: "GB" }));
+  const mappedPoints = (await pool.query(`SELECT lat, lng FROM brand_stores WHERE brand_company_id = $1 AND source_type <> 'official_website' AND lat IS NOT NULL`, [companyId])).rows;
+  let locatedFromSite = 0;
+  for (const r of [...list]) {
+    const town = String(r.address || "").split(",").pop()!.trim().toLowerCase();
+    const sites = venueSites.filter(v => v.town.toLowerCase() === town);
+    if (sites.length !== 1 || !sites[0].street) continue;
+    const v = sites[0];
+    const point = await geocode([v.street, v.town, v.postcode].filter(Boolean).join(", ")).catch(() => null);
+    if (point?.lat == null || point?.lng == null) continue;
+    if (mappedPoints.some((m: any) => metresApart(m, point as any) < NEAR_METRES)) merged += (await pool.query(`DELETE FROM brand_stores WHERE id = $1`, [r.id])).rowCount || 0;
+    else locatedFromSite += (await pool.query(`UPDATE brand_stores SET address = $2, lat = $3, lng = $4, updated_at = now() WHERE id = $1 AND lat IS NULL`,
+      [r.id, point.formattedAddress || [v.street, v.town, v.postcode].filter(Boolean).join(", "), point.lat, point.lng])).rowCount || 0;
+    list.splice(list.indexOf(r), 1);
+  }
   const findPlace = deps.findPlace || (await import("./brand-stores-website")).findOfficialPlace;
   const found = await findPlace(company, list.map((r: any) => ({ name: r.name, city: String(r.address || "").split(",").pop()!.trim(), country: "GB" })));
   const mapped = new Set((await pool.query(`SELECT place_id FROM brand_stores WHERE brand_company_id = $1 AND source_type <> 'official_website'`, [companyId])).rows.map((x: any) => x.place_id));
-  let located = 0;
+  let located = locatedFromSite;
   for (let i = 0; i < list.length; i++) {
     const f = found[i];
     if (!f) continue;

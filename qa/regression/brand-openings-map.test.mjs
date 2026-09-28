@@ -67,3 +67,30 @@ test('a website venue named after the brand in a town with one mapped store is t
   assert.equal(out.located, 1);
   assert.equal(updated[0][0], 'w3');
 });
+
+test('a venue site on the brand domain places its store; one at a mapped store is a duplicate', async () => {
+  const deleted = [], updated = [];
+  const pool = {
+    async query(sql, params = []) {
+      if (/SELECT value FROM system_settings/.test(sql)) return { rows: [] };
+      if (/source_type = 'official_website' AND lat IS NULL/.test(sql)) return { rows: [
+        { id: 'w2', name: 'Dream Factory', address: 'Bristol' }, { id: 'w3', name: 'Absurd City', address: 'London' }] };
+      if (/FROM crm_companies/.test(sql)) return { rows: [{ id: 'b', name: 'Wake the Tiger' }] };
+      if (/SELECT address FROM brand_stores/.test(sql)) return { rows: [] };
+      if (/SELECT lat, lng FROM brand_stores/.test(sql)) return { rows: [{ lat: 51.4456, lng: -2.5662 }] };
+      if (/SELECT place_id/.test(sql)) return { rows: [] };
+      if (/^DELETE/.test(sql.trim())) { deleted.push(params[0]); return { rowCount: 1 }; }
+      if (/^UPDATE/.test(sql.trim())) { updated.push(params[0]); return { rowCount: 1 }; }
+      if (/INSERT INTO system_settings/.test(sql)) return { rowCount: 1 };
+      throw new Error(sql);
+    },
+  };
+  const { locateWebsiteStoresFor } = await import('../../server/brand-openings-map.ts');
+  const out = await locateWebsiteStoresFor('b', { pool,
+    venueAddresses: async () => [{ url: 'https://bristol.x/', street: '127 Albert Road', town: 'Bristol', postcode: 'BS2 0YA' }, { url: 'https://london.x/', street: null, town: 'London', postcode: null }],
+    geocode: async () => ({ lat: 51.4457, lng: -2.5663, formattedAddress: '127 Albert Rd, Bristol BS2 0YA, UK' }),
+    findPlace: async (_c, items) => items.map(() => null) });
+  assert.deepEqual(deleted, ['w2']);
+  assert.deepEqual(updated, []);
+  assert.equal(out.merged, 1);
+});
