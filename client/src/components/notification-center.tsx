@@ -156,7 +156,7 @@ export function NotificationCenter() {
             <>
               {forYou.length > 0 && section("For you", forYou, unread.map(n => n.id), "Mark all read")}
               {deals.length > 0 && section("Your deals", deals, deals.map(n => n.id), "Clear all")}
-              {firm.length > 0 && section("Firm-wide · KYC under offer or exchanged", firm, firm.map(n => n.id), "Clear all")}
+              {firm.length > 0 && section("Firm-wide", firm, [], "")}
             </>
           )}
         </div>
