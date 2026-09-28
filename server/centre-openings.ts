@@ -8,8 +8,9 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
-import { UK_CENTRES, TOP_25_CENTRES, centreAt, type UkCentre } from "../shared/uk-centres";
+import { UK_CENTRES, benchmarkCentresFor, centreAt, type UkCentre } from "../shared/uk-centres";
 import { namesElsewhere, postcodeAnchors, type PlaceContext } from "./property-news-place";
+import { POSITIONING_PROFILES } from "../shared/scheme-positioning";
 
 const router = Router();
 const OPENING = /\b(opens?|opening|opened|to open|coming (?:soon )?to|set to (?:open|launch|arrive)|launch(?:es|ed|ing)?|signs?|signed|joins?|joining|debuts?|arriv(?:es|ing)|new (?:store|restaurant|shop|site|unit|flagship|venue|outlet)|takes? (?:space|a unit|units?)|secures?|lets? to|unveil(?:s|ed)?|expan(?:ds?|sion) (?:in|into|at|to))\b/i;
@@ -175,7 +176,7 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 }
 
 // GET /api/property/:propertyId/centre-openings — this centre first, then
-// the top-25 UK centres.
+// the top-25 UK centres (the luxury destinations for a luxury scheme).
 router.get("/api/property/:propertyId/centre-openings", requireAuth, async (req: Request, res: Response) => {
   try {
     const propertyId = String(req.params.propertyId);
@@ -191,7 +192,11 @@ router.get("/api/property/:propertyId/centre-openings", requireAuth, async (req:
       || UK_CENTRES.find(centre => [centre.name, ...centre.aliases].some(alias => plain(property.name).includes(plain(alias)))) || null;
     // A centre we don't list is searched by its own name.
     const here: UkCentre = listed || { name: property.name, lat, lng, aliases: [String(property.name).replace(/\s*(shopping cent(?:re|er)|retail park)\s*$/i, "").trim() || property.name] };
-    const peers = TOP_25_CENTRES.filter(centre => centre.name !== here.name);
+    // The same peer set as the Brand gap benchmark: the luxury destinations
+    // for a luxury scheme, else the top 25.
+    const { readPropertyResearchContext } = await import("./property-gap-analysis");
+    const positioning = (await readPropertyResearchContext(propertyId).catch(() => null))?.positioning || "mainstream";
+    const peers = benchmarkCentresFor(positioning).filter(centre => centre.name !== here.name);
     const list = await brands();
     const addr = property.address && typeof property.address === "object" ? property.address : {};
     const hereAnchors = listed ? [] : [addr.city, addr.town, ...String(addr.formatted || "").split(",").slice(1), ...postcodeAnchors(property.postcode || addr.postcode)]
@@ -202,6 +207,7 @@ router.get("/api/property/:propertyId/centre-openings", requireAuth, async (req:
       here: hereItems,
       peers: peerItems.flat().sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 60),
       peerCount: peers.length,
+      peerLabel: POSITIONING_PROFILES[positioning].peersShort,
     });
   } catch (error: any) {
     console.error("[centre-openings]", error?.message);

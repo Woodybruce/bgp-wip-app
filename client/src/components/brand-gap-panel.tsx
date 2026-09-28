@@ -1,8 +1,9 @@
 // Brand gap analysis — the hospitality & leisure gap board (Woody,
 // 2026-08-04 rework: full width; competing centres + national peers +
 // local market lenses; sector coverage with missing-sector callouts;
-// AI gap read; international watchlist). Retail is excluded throughout —
-// the server slices to hospitality/F&B/wellness/café/leisure.
+// AI gap read; international watchlist). The server slices by the scheme's
+// positioning: hospitality/F&B/wellness/café/leisure for a mainstream scheme,
+// plus luxury & premium retail (and no quick-service chains) for a luxury one.
 import type { PropertyResearchContext } from "@shared/property-research";
 import { useState } from "react";
 import { formatSizeList } from "@/lib/format-size";
@@ -69,6 +70,7 @@ interface BrandGapResult {
     company_name: string | null; domain: string | null;
   }>;
   stats: { totalBrands: number; hospitalityBrands?: number; brandsWithStores: number };
+  positioning?: { key: "luxury" | "mainstream" | "value"; source: "tag" | "tenant_mix" | "default"; label: string; categories: string; peers: string; peersShort: string; brandsNoun: string };
   liveIntel?: { byBrand: Record<string, LiveIntelBrand>; generatedAt: string } | null;
 }
 
@@ -403,6 +405,8 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
   // minimise after the commentary so can reduce if need to").
   const [detailsOpen, setDetailsOpen] = useState(false);
   const centre = data.researchContext?.mode !== "local";
+  const positioning = data.positioning;
+  const peers = positioning?.peers || "the top UK centres";
 
   return (
     <Card data-testid="brand-gap-panel">
@@ -410,7 +414,12 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
           <Target className="w-4 h-4 text-muted-foreground" />
           {centre ? "Brand gap analysis" : "Local occupier opportunities"}
-          <span className="text-[11px] font-normal text-muted-foreground">hospitality, F&B, wellness &amp; leisure</span>
+          <span className="text-[11px] font-normal text-muted-foreground">{positioning?.categories || "hospitality, F&B, wellness & leisure"}</span>
+          {positioning && positioning.key !== "mainstream" && (
+            <span className="text-[11px] font-normal text-muted-foreground" title={positioning.source === "tag" ? "From the property's tags — change it with Positioning at the top of the page" : "From the current tenants' brands — set it with Positioning at the top of the page"}>
+              · {positioning.label} positioning
+            </span>
+          )}
           {competing.length > 0 && (
             <span className="text-[11px] text-muted-foreground">
               vs {competing.map(c => `${c.name} (${c.distance_km}km)`).join(" · ")}
@@ -427,7 +436,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
         {/* Live web sweep — who is actively taking sites right now */}
         <LiveExpansionIntel propertyId={propertyId} />
 
-        {centre && data.benchmark && <CentreBenchmark benchmark={data.benchmark} name={data.property.name} />}
+        {centre && data.benchmark && <CentreBenchmark benchmark={data.benchmark} name={data.property.name} peers={peers} brandsNoun={positioning?.brandsNoun || "F&B & leisure brands"} />}
         {centre && <CentreOpenings propertyId={propertyId} />}
 
         {/* Minimise everything below the read */}
@@ -488,7 +497,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
           <GapColumn
             icon={AlertCircle}
             tint="text-muted-foreground"
-            title="At the top UK centres, not here"
+            title={`At ${peers}, not here`}
             sub={data.peerSchemesConsidered ? `Across the ${data.peerSchemesConsidered} benchmark centres` : undefined}
             brands={data.peerGaps || []}
             contextFor={(b) => {
@@ -537,7 +546,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
                   </div>
                   <div className="text-[11px] text-muted-foreground mt-0.5">
                     {s.missing
-                      ? `0 on scheme · ${s.at_peers} brand${s.at_peers === 1 ? "" : "s"} at the top centres${s.at_competing ? ` · ${s.at_competing} at competitors` : ""}`
+                      ? `0 on scheme · ${s.at_peers} brand${s.at_peers === 1 ? "" : "s"} at ${peers}${s.at_competing ? ` · ${s.at_competing} at competitors` : ""}`
                       : s.on_scheme_names.slice(0, 3).join(", ") + (s.on_scheme > 3 ? ` +${s.on_scheme - 3}` : "")}
                   </div>
                   {s.examples.length > 0 && (
@@ -547,7 +556,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
                           <Badge
                             variant="outline"
                             className={`text-[11px] cursor-pointer hover:bg-muted ${e.live_req ? "border-border text-foreground" : ""}`}
-                            title={`At ${e.peers} of the top centres${e.live_req ? " · live requirement" : ""}`}
+                            title={`At ${e.peers} of ${peers}${e.live_req ? " · live requirement" : ""}`}
                           >
                             {e.name}
                           </Badge>
@@ -613,7 +622,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
 
 // This centre against each benchmark centre on the same hospitality /
 // leisure slice (Woody, 2026-09-27: "compare the top 25 shopping centres").
-function CentreBenchmark({ benchmark, name }: { benchmark: NonNullable<BrandGapResult["benchmark"]>; name: string }) {
+function CentreBenchmark({ benchmark, name, peers, brandsNoun }: { benchmark: NonNullable<BrandGapResult["benchmark"]>; name: string; peers: string; brandsNoun: string }) {
   const [all, setAll] = useState(false);
   const rows = benchmark.centres;
   if (!rows.length) return null;
@@ -632,10 +641,10 @@ function CentreBenchmark({ benchmark, name }: { benchmark: NonNullable<BrandGapR
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1.5">
         <div className="text-[11px] font-semibold flex items-center gap-1.5">
           <TrendingUp className="w-3.5 h-3.5 text-muted-foreground" />
-          Against the top UK centres
+          Against {peers}
         </div>
         <span className="text-[11px] text-muted-foreground">
-          {name}: <span className="tabular-nums font-medium text-foreground">{benchmark.here.brands}</span> F&amp;B &amp; leisure brands · {benchmark.here.sectors} sectors · ranks {rank} of {rows.length + 1}
+          {name}: <span className="tabular-nums font-medium text-foreground">{benchmark.here.brands}</span> {brandsNoun} · {benchmark.here.sectors} sectors · ranks {rank} of {rows.length + 1}
         </span>
       </div>
       <div className="rounded-lg border divide-y">
@@ -683,7 +692,7 @@ type CentreOpening = { centre: string; title: string; url: string; source: strin
 function CentreOpenings({ propertyId }: { propertyId: string }) {
   const [tab, setTab] = useState<"here" | "peers">("here");
   const [more, setMore] = useState(false);
-  const { data, isLoading, error } = useQuery<{ centre: string; here: CentreOpening[]; peers: CentreOpening[]; peerCount: number }>({
+  const { data, isLoading, error } = useQuery<{ centre: string; here: CentreOpening[]; peers: CentreOpening[]; peerCount: number; peerLabel?: string }>({
     queryKey: ["/api/property", propertyId, "centre-openings"],
     queryFn: async () => {
       const r = await fetch(`/api/property/${propertyId}/centre-openings`, { credentials: "include", headers: getAuthHeaders() });
@@ -707,14 +716,14 @@ function CentreOpenings({ propertyId }: { propertyId: string }) {
           {(["here", "peers"] as const).map(key => (
             <button key={key} onClick={() => { setTab(key); setMore(false); }}
               className={`rounded-full border px-2.5 py-0.5 text-[11px] ${tab === key ? "bg-foreground text-background border-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-              {key === "here" ? `Here${data ? ` · ${data.here.length}` : ""}` : `Top centres${data ? ` · ${data.peers.length}` : ""}`}
+              {key === "here" ? `Here${data ? ` · ${data.here.length}` : ""}` : `${data?.peerLabel || "Top centres"}${data ? ` · ${data.peers.length}` : ""}`}
             </button>
           ))}
         </div>
       </div>
       {isLoading && <p className="text-xs text-muted-foreground italic flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Reading opening news across the centres…</p>}
       {error && <p className="text-xs text-muted-foreground">{(error as Error).message}</p>}
-      {data && !items.length && <p className="text-xs text-muted-foreground">{tab === "here" ? `No opening news for ${data.centre} in the last 12 months.` : "No opening news at the top centres in the last 12 months."}</p>}
+      {data && !items.length && <p className="text-xs text-muted-foreground">{tab === "here" ? `No opening news for ${data.centre} in the last 12 months.` : `No opening news at the ${(data.peerLabel || "Top centres").toLowerCase()} in the last 12 months.`}</p>}
       {shown.length > 0 && (
         <div className="rounded-lg border divide-y">
           {shown.map((item, i) => (

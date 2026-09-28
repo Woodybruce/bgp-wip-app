@@ -44,6 +44,7 @@ import { PropertyUnifiedSchedule } from "@/components/PropertyUnifiedSchedule";
 import { PropertyPlansPanel } from "@/components/property-plans-panel";
 import { PropertySimpleOverview, NextLeaseEvents } from "@/components/property-simple-overview";
 import { PROPERTY_VIEW_LABELS, suggestPropertyView, type PropertyOverviewUnit } from "@shared/property-view";
+import { POSITIONING_PROFILES, exactPositioningTag, withPositioningTag, type SchemePositioning } from "@shared/scheme-positioning";
 import { BrandGapPanel } from "@/components/brand-gap-panel";
 import { NotesPanel } from "@/components/notes-panel";
 import { TrackerSummary } from "@/components/tracker-summary";
@@ -722,6 +723,20 @@ export function PropertyDetail({ id }: { id: string }) {
                   {Object.entries(PROPERTY_VIEW_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                 </select>
               </label>
+              {/* Positioning drives the Brand gap peers and brand fit (a luxury
+                  arcade is read against the luxury destinations). Stored as a
+                  property tag; Automatic reads the tags and tenant mix. */}
+              {propertyView === "centre" && !isClientViewer && (
+                <label className="flex items-center gap-2 min-w-0" title="Who the Brand gap compares this scheme with and which brands count as a fit. Automatic reads the property's tags and its tenants' brands.">Positioning
+                  <select aria-label="Scheme positioning" data-testid="property-positioning" value={exactPositioningTag(property.tags) || "auto"} disabled={updateMutation.isPending} className="rounded border bg-background px-2 py-1 text-xs text-foreground min-w-0 w-full sm:w-auto" onChange={event => {
+                    const value = event.target.value;
+                    updateMutation.mutate({ tags: withPositioningTag(property.tags, value === "auto" ? null : value as SchemePositioning) }, { onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/property", property.id] }) });
+                  }}>
+                    <option value="auto">Automatic</option>
+                    {(Object.keys(POSITIONING_PROFILES) as SchemePositioning[]).map(key => <option key={key} value={key}>{POSITIONING_PROFILES[key].label}</option>)}
+                  </select>
+                </label>
+              )}
               {(propertyView === "building" || propertyView === "multi_let") && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setShowFullPage(previous => !previous); setPhoneSection("overview"); }} data-testid="property-toggle-full-page">{showFullPage ? "Return to simple view" : "Show full page"}</Button>}
               {!isClientViewer && <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5" onClick={() => setStreetViewExpanded(value => !value)} data-testid="button-expand-street-view"><ImageIcon className="w-3.5 h-3.5" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</Button>}
             </div>
