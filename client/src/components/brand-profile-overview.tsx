@@ -188,13 +188,14 @@ export type OverviewStore = {
   id: string; name: string; address: unknown; lat: number | null; lng: number | null;
   country?: string | null; researched_at?: string | null; source_type?: string | null; status?: string | null; notes?: string | null;
 };
+const DEAL_STAGE: Record<string, string> = { NEG: "Negotiating", HOT: "Heads of terms", SOL: "Solicitors", EXC: "Exchanged" };
 // Where a planned opening came from — shown under the store so the team can
 // weigh it (a live BGP deal beats a news report).
 const plannedSource = (store: OverviewStore): string | null => {
   if (store.status !== "coming_soon") return null;
   let notes: any = {};
   try { notes = JSON.parse(store.notes || "{}"); } catch { /* not JSON */ }
-  if (store.source_type === "bgp_deal") return `BGP deal${notes.bgpDeal?.name ? ` · ${notes.bgpDeal.name}` : ""}`;
+  if (store.source_type === "bgp_deal") return `BGP deal${notes.bgpDeal?.status ? ` · ${DEAL_STAGE[notes.bgpDeal.status] || notes.bgpDeal.status}` : ""}${notes.bgpDeal?.name ? ` · ${notes.bgpDeal.name}` : ""}`;
   if (notes.openingSignal?.headline) return `News · ${notes.openingSignal.headline}`;
   if (store.source_type === "official_website") return "Brand website";
   return null;
@@ -238,7 +239,7 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
               // read as Gail's total.
               // "4 UK stores mapped" when one had a pin — count the pins, and
               // planned openings apart from trading stores (Woody, 2026-09-28).
-              trading.length ? `${trading.length} UK store${trading.length === 1 ? "" : "s"}${pinned < trading.length ? ` · ${pinned} on the map` : " mapped"}` : planned.length || reportedTotal ? null : "UK stores not mapped yet",
+              trading.length ? `${trading.length} UK store${trading.length === 1 ? "" : "s"}${pinned < trading.length ? ` · ${pinned} on the map` : " mapped"}` : "UK stores not mapped yet",
               planned.length ? `${planned.length} opening soon` : null,
               abroadCountries ? `${abroadCountries} other countr${abroadCountries === 1 ? "y" : "ies"}` : null,
               reportedTotal != null && reportedTotal > trading.length ? `${reportedTotal.toLocaleString("en-GB")} reported in total` : null,
