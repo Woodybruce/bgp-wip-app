@@ -46,6 +46,8 @@ import { parseRequirementBrochure } from "./requirement-vision-parser";
 import { randomUUID } from "crypto";
 import type { Pool, PoolClient } from "pg";
 import { FIRM_ONLY_DEAL_TYPES, isFirmOnlyDealType } from "../shared/fee-policy";
+import { dealPoCheck, poMissingMessage, poRequiredSql } from "./deal-po";
+import { resolveEstateUnit, estateUnitMessage } from "./estate-units";
 
 // Firm-only deal types (Secondment) carry no agent split: the whole fee is
 // BGP House. Collapses any other allocation shape on those deals to a single
@@ -982,8 +984,14 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
       let propertyId: string | null = null;
       if (deal.project?.trim()) {
         const matched = wipFuzzyMatch(deal.project, propMap);
+        // "Unit 48 Jubilee Place" goes on the Canary Wharf estate, not a
+        // property of its own.
+        const estateUnit = matched ? null : await resolveEstateUnit(client, deal.project);
         if (matched) {
           propertyId = matched;
+        } else if (estateUnit) {
+          propertyId = estateUnit.propertyId;
+          propMap.set(deal.project.trim().toLowerCase(), propertyId);
         } else {
           // Create a bare property record — user will add address later
           propertyId = randomUUID();
@@ -1983,6 +1991,8 @@ export function setupCrmRoutes(app: Express) {
           && !(await isClientVisibleBrand(req.params.id, updateScope))) {
         return res.status(403).json({ error: "Access denied" });
       }
+      // Whether invoices need a PO is BGP's billing setting, not the client's.
+      if (updateScope && req.body) delete req.body.requiresPo;
       const coverersEdited = req.body && "bgpContactUserIds" in req.body;
       const before: string[] = coverersEdited
         ? ((await pool.query(`SELECT bgp_contact_user_ids FROM crm_companies WHERE id = $1`, [req.params.id])).rows[0]?.bgp_contact_user_ids || [])
@@ -1994,6 +2004,18 @@ export function setupCrmRoutes(app: Express) {
       }
       res.json(company);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Move this company's contacts to a new email domain (canarywharf.com →
+  // cwg.com): { from, to, apply } — apply:false previews. Staff only.
+  app.post("/api/crm/companies/:id/contacts/move-email-domain", requireAuth, async (req, res) => {
+    try {
+      if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const { moveCompanyEmailDomain } = await import("./contact-email-domain");
+      res.json(await moveCompanyEmailDomain(pool, String(req.params.id), req.body?.from, req.body?.to, req.body?.apply === true));
+    } catch (e: any) {
+      res.status(e?.status || 500).json({ error: e.message });
+    }
   });
 
   app.post("/api/crm/companies/ai-description", async (req, res) => {
@@ -2520,6 +2542,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.post("/api/crm/properties", async (req, res) => {
     try {
+      // "Unit 48 Jubilee Place" is a unit of Canary Wharf, not a property:
+      // hand back the estate with the unit on its schedule.
+      const estateUnit = (await isClientRequestUser(req)) ? null : await resolveEstateUnit(pool, req.body?.name);
+      if (estateUnit) {
+        const estate = await storage.getCrmProperty(estateUnit.propertyId);
+        if (estate) return res.status(200).json({ ...estate, estateUnit: { ...estateUnit, message: estateUnitMessage(estateUnit) } });
+      }
       const parsed = insertCrmPropertySchema.parse(req.body);
       const property = await storage.createCrmProperty(parsed);
       res.status(201).json(property);
@@ -3427,6 +3456,19 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     }
   });
 
+  // Does this deal's client need a PO number on invoices, and is it there?
+  // Staff only — the invoicing section and the Send to Xero form read it.
+  app.get("/api/crm/deals/:id/po-check", requireAuth, async (req, res) => {
+    try {
+      if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const check = await dealPoCheck(pool, String(req.params.id));
+      if (!check) return res.status(404).json({ error: "Deal not found" });
+      res.json({ ...check, message: check.missing ? poMissingMessage(check) : null });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // MUST be registered before the /:id route below — Express matches routes
   // in order and "wip-badges" would otherwise be captured as an :id param.
   app.get("/api/crm/deals/wip-badges", requireAuth, async (req: any, res) => {
@@ -3518,6 +3560,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         if (canonical) req.body.status = canonical;
       }
       const parsed = insertCrmDealSchema.parse(req.body);
+      // On an estate with schemes, the scheme decides who invoices go to:
+      // its landlord entity and inbox fill whatever the deal left blank.
+      if (!dealScope) Object.assign(parsed, await (await import("./property-schemes")).schemeDealDefaults(pool, parsed));
       const deal = await storage.createCrmDeal(parsed);
 
       const ra = calculateRentAnalysis(deal);
@@ -3696,6 +3741,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // the response so the client can surface a sync warning instead of
       // the drift staying invisible in server logs.
       let mirrorWarning: string | null = null;
+      let poWarning: string | null = null;
 
       // Normalise status to a canonical code before anything reads or
       // writes it — clients still send legacy labels ("HOTs", "Under
@@ -3848,7 +3894,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         "comments", "amlCheckCompleted", "totalAreaSqft", "basementAreaSqft",
         "gfAreaSqft", "ffAreaSqft", "itzaAreaSqft", "areaBasis", "propertyId", "landlordId",
         "tenantId", "vendorId", "purchaserId", "xeroContactId", "xeroContactName", "kycApproved",
-        "feePercentage", "invoicingNotes", "poNumber",
+        "feePercentage", "invoicingNotes", "poNumber", "scheme",
         "amlRiskLevel", "amlSourceOfFunds", "amlSourceOfWealth", "amlPepStatus",
         "amlEddRequired", "amlIdVerified", "amlAddressVerified", "amlSarFiled",
       ];
@@ -4220,8 +4266,17 @@ Only return the JSON object. If uncertain, return {"role": null}.`
             if (kycBlocked) {
               console.log(`Skipped auto-invoice for deal ${deal.id}: KYC not yet approved`);
             }
+            // A "No PO No Pay" client won't pay a PO-less invoice — hold the
+            // draft and tell the user instead.
+            const poCheck = existingInvoices.length === 0 && (deal.fee || 0) > 0 && !kycBlocked
+              ? await dealPoCheck(pool, deal.id).catch(() => null)
+              : null;
+            if (poCheck?.missing) {
+              poWarning = `${poMissingMessage(poCheck)} The draft invoice wasn't raised.`;
+              console.log(`Skipped auto-invoice for deal ${deal.id}: PO number required`);
+            }
 
-            if (existingInvoices.length === 0 && (deal.fee || 0) > 0 && !kycBlocked) {
+            if (existingInvoices.length === 0 && (deal.fee || 0) > 0 && !kycBlocked && !poCheck?.missing) {
               let contactName = deal.xeroContactName || "";
               let contactEmail = deal.invoicingEmail || "";
               let xeroContactId: string | undefined = deal.xeroContactId || undefined;
@@ -4317,7 +4372,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // via POST /api/kyc/run-all-checks { dealId, bothSides: true } from
       // deals.tsx inline-edit handler — see commit ee7f9e5. No server-side
       // trigger here to avoid double-running the orchestrator on every save.
-      res.json(mirrorWarning ? { ...deal, mirrorWarning } : deal);
+      res.json(mirrorWarning || poWarning ? { ...deal, ...(mirrorWarning ? { mirrorWarning } : {}), ...(poWarning ? { poWarning } : {}) } : deal);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
   // Audit fields whose change history must stay invisible to scoped
@@ -10316,7 +10371,8 @@ export async function computeWipHealth(): Promise<any> {
            d.completed_at AS "completedAt", d.invoiced_at AS "invoicedAt",
            (SELECT COUNT(*) FROM deal_fee_allocations a WHERE a.deal_id = d.id)::int AS "allocCount",
            (SELECT COUNT(*) FROM xero_invoices xi WHERE xi.deal_id = d.id AND COALESCE(xi.status,'') <> 'ERROR')::int AS "invoiceCount",
-           (SELECT p.landlord_id FROM crm_properties p WHERE p.id = d.property_id) AS "propLandlordId"
+           (SELECT p.landlord_id FROM crm_properties p WHERE p.id = d.property_id) AS "propLandlordId",
+           d.po_number AS "poNumber", ${poRequiredSql("d")} AS "poRequired"
       FROM crm_deals d
   `);
   const wipDeals = rows.filter((r: any) => {
@@ -10342,6 +10398,9 @@ export async function computeWipHealth(): Promise<any> {
   const noProperty = feeBearing.filter((r: any) => !r.propertyId);
   const noDate = feeBearing.filter((r: any) => !hasDate(r));
   const invNoXero = feeBearing.filter((r: any) => legacyToCode(r.status) === "INV" && r.invoiceCount === 0);
+  // Heading for an invoice to a "No PO No Pay" client with no PO number.
+  const noPo = feeBearing.filter((r: any) => r.poRequired && !String(r.poNumber || "").trim()
+    && ["EXC", "COM", "INV"].includes(legacyToCode(r.status) as string));
   // Live pipeline deals with NO fee at all — they're excluded from the WIP
   // report entirely, so this is invisible money rather than a broken row.
   const noFee = wipDeals.filter((r: any) => {
@@ -10373,6 +10432,7 @@ export async function computeWipHealth(): Promise<any> {
       noDate: bucket(noDate),
       invNoXero: bucket(invNoXero),
       noFee: bucket(noFee),
+      noPo: bucket(noPo),
     },
     affected: { count: affectedIds.size, fee: affectedFee },
     totalWipDeals: wipDeals.length,

@@ -65,8 +65,11 @@ export async function createTrackerAsset(input: Record<string, any>) {
   const base = insertInvestmentTrackerSchema.omit({ propertyId: true }).parse(body);
   if (!body.propertyId && base.assetName) {
     const [existing] = await db.select().from(crmProperties).where(eq(crmProperties.name, base.assetName)).limit(1);
+    const estateUnit = existing ? null : await (await import("./estate-units")).resolveEstateUnit(pool, base.assetName);
     if (existing) {
       body.propertyId = existing.id;
+    } else if (estateUnit) {
+      body.propertyId = estateUnit.propertyId;
     } else {
       const [newProp] = await db.insert(crmProperties).values({
         name: base.assetName,

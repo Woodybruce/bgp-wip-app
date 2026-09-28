@@ -238,7 +238,7 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
     const allowedFields = [
-      "zone", "positioning", "unit_name", "tenant_name", "agent_initials",
+      "zone", "unit_code", "positioning", "unit_name", "tenant_name", "agent_initials",
       "lease_expiry", "lease_break", "rent_review", "landlord_break",
       "rent_pa", "sqft", "mat_psqft", "lfl_percent", "occ_cost_percent",
       "financial_notes", "target_brands", "optimum_target", "priority", "status", "updates",
@@ -918,6 +918,60 @@ router.post("/api/leasing-schedule/import-multi", requireAuth, async (req, res) 
     res.json({ success: true, totalImported: grandTotal, results });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// Landlord leasing-meeting minutes (CWG's weekly "Units to let" workbook):
+// the latest visible week updates this estate's schedule — see
+// server/leasing-minutes.ts. dryRun (the default) previews without writing.
+// Staff only; upload or straight from SharePoint.
+async function minutesImportGuard(pool: any, req: Request, res: Response): Promise<{ user: any } | null> {
+  const { isClientRequestUser } = await import("./company-scope");
+  if (await isClientRequestUser(req as any)) { res.status(403).json({ error: "Not available for client accounts" }); return null; }
+  const { allowed, user } = await checkPropertyAccess(pool, req, String(req.params.propertyId));
+  if (!allowed) { res.status(403).json({ error: "Access denied" }); return null; }
+  return { user };
+}
+
+router.post("/api/leasing-schedule/property/:propertyId/minutes/import-excel", requireAuth, xlsxUpload.single("file"), async (req: any, res) => {
+  try {
+    const pool = await getPool();
+    const guard = await minutesImportGuard(pool, req, res);
+    if (!guard) return;
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+    const { importLeasingMinutes } = await import("./leasing-minutes");
+    res.json(await importLeasingMinutes(pool, String(req.params.propertyId), req.file.buffer, {
+      dryRun: String(req.body?.dryRun ?? "true") !== "false", user: guard.user, fileName: req.file.originalname || null,
+    }));
+  } catch (e: any) {
+    console.error("[leasing-minutes] upload import failed:", e?.message);
+    res.status(e?.status || 500).json({ error: e.message });
+  }
+});
+
+router.post("/api/leasing-schedule/property/:propertyId/minutes/import-excel-from-sharepoint", requireAuth, async (req: any, res) => {
+  try {
+    const pool = await getPool();
+    const guard = await minutesImportGuard(pool, req, res);
+    if (!guard) return;
+    const sp = await import("./sharepoint-property-files");
+    let buffer: Buffer, name: string;
+    try {
+      const meta = await sp.resolveFileRef(req.body || {});
+      if (!sp.isSpreadsheet(meta.name)) return res.status(400).json({ error: "Pick an Excel file (.xlsx, .xlsm or .xls)." });
+      if (meta.size > 50 * 1024 * 1024) return res.status(413).json({ error: "That workbook is over 50MB — too large to import." });
+      buffer = await sp.downloadFile(meta);
+      name = meta.name;
+    } catch (e: any) {
+      return res.status(e?.status || 502).json({ error: e?.status ? e.message : sp.plainGraphError(e) });
+    }
+    const { importLeasingMinutes } = await import("./leasing-minutes");
+    res.json(await importLeasingMinutes(pool, String(req.params.propertyId), buffer, {
+      dryRun: req.body?.dryRun !== false, user: guard.user, fileName: name,
+    }));
+  } catch (e: any) {
+    console.error("[leasing-minutes] SharePoint import failed:", e?.message);
+    res.status(e?.status || 500).json({ error: e.message });
   }
 });
 

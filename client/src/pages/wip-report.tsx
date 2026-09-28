@@ -257,6 +257,7 @@ function HealthTab() {
     { key: "noClient", title: "No client linked", why: "Shows as \"Unknown\" in the Client column — set the landlord / tenant / vendor / purchaser on the deal.", data: b.noClient },
     { key: "noAgent", title: "No BGP agent", why: "Invisible in the Agent Summary and earns nobody commission — add the agent or a fee allocation.", data: b.noAgent },
     { key: "noDate", title: "No date at all", why: "No target, exchange or completion date — the deal lands in no month and skews the year view.", data: b.noDate },
+    ...(b.noPo ? [{ key: "noPo", title: "Needs a PO number", why: "The client only pays invoices quoting a PO (Canary Wharf Group: No PO No Pay) — add the PO number to the deal before the invoice goes out.", data: b.noPo }] : []),
     { key: "invNoXero", title: "Invoiced with no Xero invoice", why: "Status says Invoiced but no Xero invoice is linked — raise or link the invoice so cash tracking works.", data: b.invNoXero },
     { key: "noFee", title: "Live deal with no fee", why: "In the pipeline but fee is blank — it's excluded from the WIP report entirely (invisible money).", data: b.noFee },
     { key: "noProperty", title: "No property linked", why: "Fine for consultancy mandates; worth linking for everything else.", data: b.noProperty },

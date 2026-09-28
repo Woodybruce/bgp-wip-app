@@ -37,7 +37,9 @@ import {
   Map as MapIcon,
   AlertTriangle,
   Plus,
+  Layers,
 } from "lucide-react";
+import { PropertySchemesPanel, usePropertySchemeList } from "@/components/property-schemes-panel";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
 import { PropertyUnifiedSchedule } from "@/components/PropertyUnifiedSchedule";
@@ -343,6 +345,7 @@ export function PropertyDetail({ id }: { id: string }) {
   // role === "Client" alone let mis-provisioned external users see the
   // full internal shell with every panel in a 403 error state.
   const isClientViewer = !pdViewer || pdViewer.role === "Client" || !!pdViewer.companyScopeId;
+  const schemeList = usePropertySchemeList(!isClientViewer ? id : null);
   const { data: property, isLoading } = useQuery<CrmProperty>({
     queryKey: ["/api/crm/properties", id],
     refetchInterval: (query) => {
@@ -415,6 +418,7 @@ export function PropertyDetail({ id }: { id: string }) {
     contacts: true,
     deals: true,
     availableUnits: true,
+    schemes: true,
     investmentComps: true,
     investment: true,
     spaceFits: true,
@@ -1268,6 +1272,25 @@ export function PropertyDetail({ id }: { id: string }) {
                 {!isClientViewer && <PropertySpaceFitsPanel propertyId={property.id} />}
               </ReferenceSection>
               </PropertySection>
+
+              {/* Estate schemes (Canary Wharf: Jubilee Place, Cabot Place…) —
+                  each with the landlord entity its invoices go to. Staff only. */}
+              {!isClientViewer && (
+              <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
+              <ReferenceSection
+                title="Schemes"
+                icon={Layers}
+                badge={schemeList.data?.schemes?.length ? String(schemeList.data.schemes.length) : undefined}
+                open={sidebarSections.schemes}
+                onToggle={() => toggleSection("schemes")}
+                testId="toggle-schemes-section"
+              >
+                <ErrorBoundary compact name="Property schemes">
+                  <PropertySchemesPanel propertyId={property.id} />
+                </ErrorBoundary>
+              </ReferenceSection>
+              </PropertySection>
+              )}
 
               {/* Only when there's a date coming up — a card saying "No
                   upcoming lease dates recorded" was an empty box (the Risk

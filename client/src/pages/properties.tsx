@@ -3238,7 +3238,7 @@ function CreatePropertyDialog({
       return res.json();
     },
     onSuccess: (data: any) => {
-      toast({
+      toast(data?.estateUnit ? { title: `Unit of ${data.name}`, description: data.estateUnit.message } : {
         title: data?._existingId ? "Property Updated" : "Property Created",
         description: data?._existingId
           ? `${formData.name} already existed — your changes have been merged in.`

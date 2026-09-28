@@ -6,6 +6,7 @@ import { SourceEmailDialog, SourceEventDialog } from "@/components/tracker-sourc
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Pill } from "@/components/ui/pill";
+import { SchemePillRow, schemeFilterMatches, usePropertySchemeList } from "@/components/property-schemes-panel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import {
@@ -528,6 +529,11 @@ export default function AvailableUnitsPage() {
     return n;
   });
   const [propertyFilter, setPropertyFilter] = useState(() => urlParam("propertyId"));
+  // One estate open (Canary Wharf): filter by its schemes.
+  const { data: schemeData } = usePropertySchemeList(propertyFilter && propertyFilter !== "all" ? propertyFilter : null);
+  const schemes = propertyFilter && propertyFilter !== "all" ? schemeData?.schemes || [] : [];
+  const [schemeFilter, setSchemeFilter] = useState("");
+  useEffect(() => { setSchemeFilter(""); }, [propertyFilter]);
   const [assetClassFilter, setAssetClassFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("all");
   const [bgpTeamFilter, setBgpTeamFilter] = useState("all");
@@ -1400,6 +1406,7 @@ export default function AvailableUnitsPage() {
   const toolbarFiltered = useMemo(() => {
     let result = focusedTrackerUnitId ? units.filter(u => u.id === focusedTrackerUnitId) : teamUnits;
     if (propertyFilter !== "all") result = result.filter(u => u.propertyId === propertyFilter);
+    if (schemeFilter) result = result.filter(u => schemeFilterMatches(schemes, u.scheme, schemeFilter, u.unitName));
     if (assetClassFilter !== "all") result = result.filter(u => u.useClass === assetClassFilter);
     if (locationFilter !== "all") result = result.filter(u => u.location === locationFilter);
     if (bgpTeamFilter !== "all") {
@@ -1436,7 +1443,7 @@ export default function AvailableUnitsPage() {
       });
     }
     return result;
-  }, [units, focusedTrackerUnitId, teamUnits, targetStatusFilter, briefByUnit, propertyFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap, dealMap, crmCompanies, activityFilter, viewingsCounts, offersCounts, interestCounts]);
+  }, [units, focusedTrackerUnitId, teamUnits, targetStatusFilter, briefByUnit, propertyFilter, schemes, schemeFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap, dealMap, crmCompanies, activityFilter, viewingsCounts, offersCounts, interestCounts]);
 
   const filtered = useMemo(() => {
     if (focusedTrackerUnitId) return toolbarFiltered;
@@ -1891,6 +1898,8 @@ export default function AvailableUnitsPage() {
         </div>
         </>)}
       </div>
+
+      <SchemePillRow schemes={schemes} items={teamUnits.filter(u => u.propertyId === propertyFilter).map(u => ({ label: u.scheme, name: u.unitName }))} value={schemeFilter} onChange={setSchemeFilter} testId="tracker-scheme-pills" />
 
       {/* KPI stat cards — matching Investment Tracker style. Compact mode
           renders the thin chip row (same filters, ~1/3 the height). */}

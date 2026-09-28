@@ -13,6 +13,7 @@ import { Link, useLocation } from "wouter";
 import { PropertyFoldersPanel, ClientPropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
 import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon, UserPlus, ClipboardList } from "lucide-react";
 import { ContactFormDialog } from "@/pages/contacts";
+import { CompanyInvoicingControls } from "@/components/company-invoicing-controls";
 import { TagChip, TAG_TOKEN_SOURCE, buildTagToken, type TagType } from "@/components/chat-tags";
 import { CompanyContactsBoard } from "@/components/company-contacts-board";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -1566,6 +1567,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 <Button variant="outline" size="sm" onClick={runContactDiscovery} disabled={contactsFinding} data-testid="button-refresh-contacts"><RefreshCw className={contactsFinding ? "animate-spin" : ""} />{contactsFinding ? "Finding…" : "Refresh contacts"}</Button>
                 <Button variant="outline" size="sm" onClick={() => setAddContactOpen(true)} data-testid="button-add-contact-brand"><Plus />Add contact</Button>
                 <ContactFormDialog open={addContactOpen} onOpenChange={setAddContactOpen} defaultCompanyId={c.id} />
+                <CompanyInvoicingControls companyId={c.id} />
               </>}
               {currentUser?.role !== "Client" && <>
                 <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)}><Plus />Add to deal</Button>

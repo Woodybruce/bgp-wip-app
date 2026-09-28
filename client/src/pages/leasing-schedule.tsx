@@ -29,6 +29,10 @@ import {
   Sparkles, Circle, ThumbsUp, ThumbsDown, UserPlus, RefreshCw, Pencil,
 } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
+import { Pill } from "@/components/ui/pill";
+import { SchemePillRow, schemeFilterMatches, usePropertySchemeList } from "@/components/property-schemes-panel";
+import { LeasingMinutesImportDialog, type MinutesSource } from "@/components/leasing-minutes-import-dialog";
+import { unitScheme } from "@shared/property-schemes";
 
 interface LeasingProperty {
   id: string;
@@ -1417,6 +1421,13 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
   const [landsecImporting, setLandsecImporting] = useState(false);
   const landsecFileRef = useRef<HTMLInputElement>(null);
   const [showPullVacant, setShowPullVacant] = useState(false);
+  // Landlord leasing minutes (CWG weekly workbook) — preview then apply.
+  const minutesFileRef = useRef<HTMLInputElement>(null);
+  const [minutesSource, setMinutesSource] = useState<MinutesSource | null>(null);
+  // An estate's schemes (Canary Wharf): the zone is the scheme label.
+  const { data: schemeData } = usePropertySchemeList(propertyId);
+  const schemes = schemeData?.schemes || [];
+  const [schemeFilter, setSchemeFilter] = useState("");
 
   const handleImportExcel = async (file: File) => {
     setImportParsing(true);
@@ -1646,19 +1657,24 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
       if (statFilter === "expiring" && !isExpiringSoon(u.lease_expiry)) return false;
       if (statFilter === "expired" && !isExpired(u.lease_expiry)) return false;
       if (positioningGroupFilter && (u as any).positioning_group !== positioningGroupFilter) return false;
+      if (!schemeFilterMatches(schemes, u.zone, schemeFilter, u.unit_name)) return false;
       return true;
     });
-  }, [units, debouncedSearch, statusFilter, statFilter, includeArchived, positioningGroupFilter]);
+  }, [units, debouncedSearch, statusFilter, statFilter, includeArchived, positioningGroupFilter, schemes, schemeFilter]);
 
+  // Grouped by zone; on an estate the groups are its schemes, in order.
   const zoneGroups = useMemo(() => {
     const groups: Record<string, LeasingUnit[]> = {};
     for (const u of filteredUnits) {
-      const zone = u.zone || "Unzoned";
+      const zone = (schemes.length ? unitScheme(schemes, u.zone, u.unit_name)?.name : null) || u.zone || "Unzoned";
       if (!groups[zone]) groups[zone] = [];
       groups[zone].push(u);
     }
-    return Object.entries(groups);
-  }, [filteredUnits]);
+    const entries = Object.entries(groups);
+    if (!schemes.length) return entries;
+    const rank = (z: string) => { const i = schemes.findIndex(s => s.name === z); return i < 0 ? schemes.length : i; };
+    return entries.sort((a, b) => rank(a[0]) - rank(b[0]));
+  }, [filteredUnits, schemes]);
 
   const allZones = useMemo(() => new Set(zoneGroups.map(([z]) => z)), [zoneGroups]);
   const allExpanded = expandedZones.size === 0 || allZones.size === expandedZones.size;
@@ -1816,6 +1832,27 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
           >
             {landsecImporting ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Upload className="w-3.5 h-3.5 mr-1" />}Landsec xlsx
           </Button>
+          <Button
+            variant="outline" size="sm"
+            onClick={() => minutesFileRef.current?.click()}
+            disabled={!propertyId}
+            data-testid="btn-import-minutes"
+            title="Import the landlord's weekly leasing minutes (Canary Wharf's Units to let workbook) — previewed before anything changes"
+          >
+            <Upload className="w-3.5 h-3.5 mr-1" />Minutes xlsx
+          </Button>
+          <input
+            ref={minutesFileRef}
+            type="file"
+            accept=".xlsx,.xls,.xlsm"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) setMinutesSource({ kind: "file", file: f });
+              e.target.value = "";
+            }}
+          />
+          <LeasingMinutesImportDialog propertyId={propertyId} source={minutesSource} onClose={() => { setMinutesSource(null); refetchUnits(); }} />
           <input
             ref={landsecFileRef}
             type="file"
@@ -1972,30 +2009,18 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
         </div>
       )}
 
-      <div className="flex gap-3 flex-wrap">
-        <button onClick={() => { setStatFilter(null); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${!statFilter ? "ring-2 ring-ring bg-muted" : "bg-muted/50 hover:bg-muted"}`} data-testid="stat-total">
-          <p className="text-lg font-bold">{stats.total}</p>
-          <p className="text-[11px] text-muted-foreground">Total Units</p>
-        </button>
-        <button onClick={() => { setStatFilter(statFilter === "occupied" ? null : "occupied"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "occupied" ? "ring-2 ring-emerald-400 bg-emerald-100 dark:bg-emerald-900/40" : "bg-emerald-50 dark:bg-emerald-950/20 hover:bg-emerald-100"}`} data-testid="stat-occupied">
-          <p className="text-lg font-bold text-emerald-700">{stats.occupied}</p>
-          <p className="text-[11px] text-emerald-600">Occupied</p>
-        </button>
-        <button onClick={() => { setStatFilter(statFilter === "vacant" ? null : "vacant"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "vacant" ? "ring-2 ring-ring bg-muted" : "bg-muted/50 hover:bg-muted"}`} data-testid="stat-vacant">
-          <p className="text-lg font-bold text-muted-foreground">{stats.vacant}</p>
-          <p className="text-[11px] text-muted-foreground">Vacant</p>
-        </button>
+      {/* Scheme + status filters as pill rows (DESIGN §3/§5) — on an estate
+          (Canary Wharf) the scheme row leads. */}
+      <SchemePillRow schemes={schemes} items={units.filter(u => includeArchived || u.status !== "Archived").map(u => ({ label: u.zone, name: u.unit_name }))} value={schemeFilter} onChange={setSchemeFilter} testId="leasing-scheme-pills" />
+      <div className="flex flex-wrap items-center gap-1.5" aria-label="Leasing status filters">
+        <Pill active={!statFilter} onClick={() => { setStatFilter(null); setStatusFilter("all"); }} data-testid="stat-total">All units <span className="font-mono tabular-nums">{stats.total}</span></Pill>
+        <Pill active={statFilter === "occupied"} onClick={() => { setStatFilter(statFilter === "occupied" ? null : "occupied"); setStatusFilter("all"); }} data-testid="stat-occupied">Occupied <span className="font-mono tabular-nums">{stats.occupied}</span></Pill>
+        <Pill active={statFilter === "vacant"} onClick={() => { setStatFilter(statFilter === "vacant" ? null : "vacant"); setStatusFilter("all"); }} data-testid="stat-vacant">Vacant <span className="font-mono tabular-nums">{stats.vacant}</span></Pill>
         {stats.expiringSoon > 0 && (
-          <button onClick={() => { setStatFilter(statFilter === "expiring" ? null : "expiring"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "expiring" ? "ring-2 ring-amber-400 bg-amber-100 dark:bg-amber-900/40" : "bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100"}`} data-testid="stat-expiring">
-            <p className="text-lg font-bold text-amber-700">{stats.expiringSoon}</p>
-            <p className="text-[11px] text-amber-600">Expiring &lt;12m</p>
-          </button>
+          <Pill active={statFilter === "expiring"} onClick={() => { setStatFilter(statFilter === "expiring" ? null : "expiring"); setStatusFilter("all"); }} data-testid="stat-expiring">Expiring &lt;12m <span className="font-mono tabular-nums">{stats.expiringSoon}</span></Pill>
         )}
         {stats.expired > 0 && (
-          <button onClick={() => { setStatFilter(statFilter === "expired" ? null : "expired"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "expired" ? "ring-2 ring-red-400 bg-red-100 dark:bg-red-900/40" : "bg-red-50 dark:bg-red-950/20 hover:bg-red-100"}`} data-testid="stat-expired">
-            <p className="text-lg font-bold text-red-700">{stats.expired}</p>
-            <p className="text-[11px] text-red-600">Expired</p>
-          </button>
+          <Pill active={statFilter === "expired"} onClick={() => { setStatFilter(statFilter === "expired" ? null : "expired"); setStatusFilter("all"); }} data-testid="stat-expired">Expired <span className="font-mono tabular-nums">{stats.expired}</span></Pill>
         )}
       </div>
 

@@ -47,6 +47,8 @@ function fixture({ presentation = 'compact', readOnly = false, saved = {}, width
     useToast: () => ({ toast: noop }),
     useQueryClient: () => ({ invalidateQueries: noop }),
     useQuery({ queryKey }) { return { data: queryKey[0] === '/api/auth/me' ? user : queryKey.at(-1) === 'links' ? links : units, isLoading: false }; },
+    // A property without estate schemes: every row passes the scheme filter.
+    usePropertySchemeList: () => ({ data: { schemes: [] } }), schemeFilterMatches: () => true, unitScheme: () => undefined,
     useMutation(options) { return { isPending: false, mutate(value) { pending.push(Promise.resolve().then(() => options.mutationFn(value)).then(result => options.onSuccess?.(result))); } }; },
     apiRequest: async (method, url, body) => { calls.push({ method, url, body }); return { json: async () => ({}) }; },
   });

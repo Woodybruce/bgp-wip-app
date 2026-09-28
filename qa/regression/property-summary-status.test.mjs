@@ -18,7 +18,9 @@ function fixture(kind, { units = [], deals = [], failed = false, loading = false
   const wrap = ({ children }) => React.createElement('span', {}, children), empty = () => null;
   vm.runInNewContext(code, {
     exports, React, URLSearchParams, LETTING_STATUSES, WIP_STATUSES, DEAL_STATUS_LABELS, legacyToCode, withoutPropertyName,
-    DEAL_STATUS_BADGE_COLORS: {}, DEAL_STATUS_DOT_COLORS: {}, useMemo: fn => fn(),
+    DEAL_STATUS_BADGE_COLORS: {}, DEAL_STATUS_DOT_COLORS: {}, useMemo: fn => fn(), useState: initial => [initial, () => {}],
+    // A property without schemes (the estate scheme row renders nothing).
+    usePropertySchemeList: () => ({ data: { schemes: [] } }), SchemePillRow: () => null, schemeFilterMatches: () => true, unitScheme: () => undefined,
     Link: ({ children, href }) => React.createElement('a', { href }, children), Badge: wrap, Button: wrap, Store: empty, Handshake: empty, ChevronRight: empty,
     getAuthHeaders: () => ({ Authorization: 'Bearer fixture' }),
     fetch: async (url, options) => { fetches.push({ url, options }); return { ok: status === 200, status, json: async () => [] }; },

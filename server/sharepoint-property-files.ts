@@ -15,6 +15,7 @@
 
 import { sharesId } from "./sharepoint-graph";
 import { folderLinkLabel, linkedFolderUrls, normaliseFolderLinks } from "../shared/property-labels";
+import { estateCoreName } from "../shared/property-schemes";
 
 export type SpKind = "brochure" | "schedule";
 export type BrochureType = "leasing" | "investment";
@@ -31,6 +32,9 @@ export type SpCandidate = {
   type?: BrochureType;
   tier?: number;
   imported?: boolean;
+  // A landlord's weekly leasing-meeting minutes (CWG "Retail Leasing
+  // Minutes") — imported through the minutes importer, not as a schedule.
+  minutes?: boolean;
 };
 
 const words = (s: string) => ` ${String(s || "").replace(/[_\-.+]+/g, " ").replace(/\s+/g, " ").trim()} `;
@@ -66,6 +70,7 @@ export function brochureTier(name: string, path: string): number {
  *  tenancy or rent sheet (not a service charge budget); 0 = anything else. */
 export function scheduleTier(name: string, path: string): number {
   const n = words(String(name || "").replace(/\.[a-z0-9]+$/i, ""));
+  if (isLeasingMinutes(name)) return 2;
   if (/\b(tenancy schedule|tenancy schedules|rent roll|leasing schedule|schedule of tenancies|tenancy)\b/i.test(n) || /(^|[^A-Za-z])TS([^A-Za-z]|$)/.test(n)) return 2;
   if (/\b(service charge|budget|cash ?flow|invoice)\b/i.test(n)) return 0;
   if (/\b(schedule|tenants?|leases?|rent)\b/i.test(n)) return 1;
@@ -187,12 +192,18 @@ export function rankBrochureCandidates(list: SpCandidate[], wanted: BrochureType
     .filter(c => { const k = sameFile(c); if (seen.has(k)) return false; seen.add(k); return true; });
 }
 
+/** "Retail Leasing Minutes Canary Wharf – 22.04.2026.xlsx". */
+export function isLeasingMinutes(name: string): boolean {
+  return isSpreadsheet(name) && /\b(leasing|letting)\b.*\bminutes\b|\bminutes\b.*\b(leasing|letting)\b/i.test(words(name));
+}
+
 /** Schedules: tenancy-schedule-like names first, newest first. */
 export function rankScheduleCandidates(list: SpCandidate[]): SpCandidate[] {
   return list.filter(c => isSpreadsheet(c.name)).map(c => ({
     ...c,
     tier: scheduleTier(c.name, c.path),
     docDate: documentDate(c.name, c.path, c.lastModified),
+    ...(isLeasingMinutes(c.name) ? { minutes: true } : {}),
   })).sort((a, b) => (b.tier! - a.tier!) || String(b.docDate || "").localeCompare(String(a.docDate || "")));
 }
 
@@ -259,7 +270,7 @@ export async function searchPropertyFiles(propertyName: string, kind: SpKind, de
   const graph = deps.graph || await defaultGraph();
   const filter = kind === "brochure"
     ? `filetype:pdf AND (brochure OR particulars OR details OR memorandum OR marketing OR "to let" OR "for sale" OR investment)`
-    : `(filetype:xlsx OR filetype:xlsm OR filetype:xls) AND (tenancy OR schedule OR "rent roll" OR tenant OR TS)`;
+    : `(filetype:xlsx OR filetype:xlsm OR filetype:xls) AND (tenancy OR schedule OR "rent roll" OR tenant OR TS OR minutes)`;
   const want = kind === "brochure" ? isPdf : isSpreadsheet;
   try {
     const res = await graph("/search/query", {
@@ -317,9 +328,14 @@ export async function findPropertyFiles(pool: any, propertyId: string, kind: SpK
   if (!property) throw Object.assign(new Error("Property not found"), { status: 404 });
   const folderUrls = linkedFolderUrls(property.sharepoint_folder_url, property.sharepoint_team_folders);
   const want = kind === "brochure" ? isPdf : isSpreadsheet;
-  const [search, index, ...folders] = await Promise.allSettled([
+  // An estate's files often use its short name ("Canary Wharf" for "Canary
+  // Wharf Estate, London E14, UK"), so that is searched too.
+  const shortName = estateCoreName(property.name);
+  const shortSearch = searchName(shortName) !== searchName(property.name) && searchName(shortName).length >= 3;
+  const [search, index, short, ...folders] = await Promise.allSettled([
     searchPropertyFiles(property.name, kind, deps),
     indexedPropertyFiles(pool, property.name, kind),
+    shortSearch ? searchPropertyFiles(shortName, kind, deps) : Promise.resolve([] as SpCandidate[]),
     ...folderUrls.map(url => walkLinkedFolder(url, want, deps)),
   ]);
   const warnings: string[] = [];
@@ -331,6 +347,7 @@ export async function findPropertyFiles(pool: any, propertyId: string, kind: SpK
   const merged = mergeCandidates([
     ...folders.map(folder => folder.status === "fulfilled" ? folder.value : []),
     search.status === "fulfilled" ? search.value : [],
+    short.status === "fulfilled" ? short.value : [],
     index.status === "fulfilled" ? index.value : [],
   ]);
   const ranked = kind === "brochure" ? rankBrochureCandidates(merged, wanted) : rankScheduleCandidates(merged);
