@@ -127,6 +127,16 @@ function BrandRetainedFactsReview({ companyId, identityVerified }: { companyId: 
   </div>;
 }
 
+
+// The website opens in a new tab (Woody, 2026-09-28: "the website link needs
+// to be clickable").
+function SiteLink({ host }: { host: string }) {
+  const clean = String(host || "").trim();
+  if (!clean) return null;
+  const href = /^https?:\/\//i.test(clean) ? clean : `https://${clean}`;
+  return <a href={href} target="_blank" rel="noopener noreferrer" className="text-foreground hover:text-primary hover:underline underline-offset-2" data-testid="brand-website-link">{clean.replace(/^https?:\/\//i, "")}</a>;
+}
+
 export function BrandIdentityControl({ companyId, domain, identity, savedAliases = [], previousFactsNeedReview, canConfirm, suggestedDomain }: {
   companyId: string; domain: string | null; identity?: BrandIdentity | null; savedAliases?: string[]; previousFactsNeedReview?: boolean; canConfirm: boolean;
   suggestedDomain?: string | null;
@@ -159,11 +169,11 @@ export function BrandIdentityControl({ companyId, domain, identity, savedAliases
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
         {verified ? <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-primary" /> : <Globe className="w-3.5 h-3.5 shrink-0" />}
         <span data-testid={suggestion && !verified ? "brand-website-suggestion" : undefined}>
-          {verified ? <>Website <span className="text-foreground">{domainHost(domain)}</span></>
-            : suggestion ? <>Likely website <span className="text-foreground">{suggestion}</span></>
+          {verified ? <>Website <SiteLink host={domainHost(domain)} /></>
+            : suggestion ? <>Likely website <SiteLink host={suggestion} /></>
             // A saved but unconfirmed domain is still the website — "not
             // found yet" beside a working Website button read as nonsense.
-            : domainHost(domain) ? <>Website <span className="text-foreground">{domainHost(domain)}</span></>
+            : domainHost(domain) ? <>Website <SiteLink host={domainHost(domain)} /></>
             : "Website not found yet"}
         </span>
         {canConfirm && <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => setOpen(value => !value)} aria-expanded={open}>
