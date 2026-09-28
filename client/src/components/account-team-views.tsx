@@ -115,7 +115,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
   const spaceWithFits = (tr?.space || []).filter((u: any) => u.fits.length > 0);
   const events: any[] = la?.events || [];
   const forSale = new Set<string>(data?.forSalePropertyIds || []);
-  const saleBadge = (propertyId: string) => forSale.has(propertyId) ? <Badge className="text-[9px] bg-amber-50 text-amber-800 border-amber-200" title="On BGP's Sales board">for sale</Badge> : null;
+  const saleBadge = (propertyId: string) => forSale.has(propertyId) ? <Badge className="text-[11px] bg-amber-50 text-amber-800 border-amber-200" title="On BGP's Sales board">for sale</Badge> : null;
   const shownEvents = showAllEvents ? events : events.slice(0, 10);
 
   return (
@@ -287,8 +287,8 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                     title={<span className="flex items-center gap-1.5"><CalendarClock className="w-3 h-3 text-amber-600 shrink-0" />{e.type} · {fmtMonth(e.date)}</span>}
                     sub={[e.propertyName, e.unit, e.tenant].filter(Boolean).join(" · ")}
                     right={<>{saleBadge(e.propertyId)}{e.trackedId
-                      ? <Link href="/lease-events" className="text-[10px] text-emerald-700 hover:underline">{e.trackedStatus || "Tracked"}</Link>
-                      : <Button variant="outline" size="sm" className="h-6 px-2 text-[10px]" disabled={track.isPending} onClick={(ev) => { ev.preventDefault(); track.mutate(e); }} data-testid="button-track-lease-event"><Plus className="w-3 h-3" />Track</Button>}</>} />
+                      ? <Link href="/lease-events" className="text-[11px] text-emerald-700 hover:underline">{e.trackedStatus || "Tracked"}</Link>
+                      : <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" disabled={track.isPending} onClick={(ev) => { ev.preventDefault(); track.mutate(e); }} data-testid="button-track-lease-event"><Plus className="w-3 h-3" />Track</Button>}</>} />
                 ))}
                 {events.length > 10 && <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setShowAllEvents(v => !v)}>{showAllEvents ? "Show fewer" : `Show all ${events.length}`}</Button>}
               </div>}

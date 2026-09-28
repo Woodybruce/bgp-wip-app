@@ -139,24 +139,24 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead, c
 
   return (
     <div className={`flex items-center gap-2 text-sm hover:bg-muted/50 rounded px-1 py-1 [@container(min-width:560px)]:py-0.5 -mx-1 transition-colors ${muted ? "opacity-60" : ""}`} data-testid={`key-contact-row-${contact.id}`}>
-      <Link href={`/contacts/${contact.id}`} className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[9px] font-medium shrink-0 overflow-hidden">
+      <Link href={`/contacts/${contact.id}`} className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[11px] font-medium shrink-0 overflow-hidden">
         <ContactAvatar url={contact.avatar_url} name={contact.name} />
       </Link>
       <div className="min-w-0 flex-1 [@container(min-width:560px)]:flex [@container(min-width:560px)]:items-center [@container(min-width:560px)]:gap-2">
         <div className="flex items-center gap-1 min-w-0 [@container(min-width:560px)]:max-w-[45%] [@container(min-width:560px)]:shrink-0">
           <Link href={`/contacts/${contact.id}`} className={`hover:underline truncate ${placeholderName ? "font-normal text-muted-foreground" : "font-semibold"}`}>{contactDisplayName(contact.name)}</Link>
-          {placeholderName && <span className="text-[10px] text-muted-foreground/70 shrink-0 whitespace-nowrap" title="Saved from an inbox — the real name replaces it once BGP sees their signature">name from email</span>}
-          {isLead && <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 bg-foreground text-background border-transparent" title="The AI check's read of BGP's main property contact here">Lead</Badge>}
+          {placeholderName && <span className="text-[11px] text-muted-foreground/70 shrink-0 whitespace-nowrap" title="Saved from an inbox — the real name replaces it once BGP sees their signature">name from email</span>}
+          {isLead && <Badge variant="outline" className="text-[11px] px-1 py-0 shrink-0 bg-foreground text-background border-transparent" title="The AI check's read of BGP's main property contact here">Lead</Badge>}
           {/* A "Title?" / "Left?" badge on every row was noise — a small dot
               with the note on hover; the full list sits in the AI check
               notes (Woody, 2026-09-27). */}
           {aiFlag && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" title={`${AI_FLAG_LABELS[aiFlag.issue] || "Check"} ${aiFlag.note}`} aria-label={`AI check: ${AI_FLAG_LABELS[aiFlag.issue] || "Check"}`} data-testid="key-contact-ai-flag" />}
           {!touches && discovery?.bgp?.threadCount ? (
-            <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 tabular-nums bg-primary/10 text-primary border-primary/30" title="BGP has real email history with this person">
+            <Badge variant="outline" className="text-[11px] px-1 py-0 shrink-0 tabular-nums bg-primary/10 text-primary border-primary/30" title="BGP has real email history with this person">
               known · {discovery.bgp.threadCount} threads
             </Badge>
           ) : !touches && discovery?.ai?.confidence != null ? (
-            <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 tabular-nums bg-primary/10 text-primary border-primary/30" title={discovery.ai?.reason || "AI-verified against RocketReach/Apollo"}>
+            <Badge variant="outline" className="text-[11px] px-1 py-0 shrink-0 tabular-nums bg-primary/10 text-primary border-primary/30" title={discovery.ai?.reason || "AI-verified against RocketReach/Apollo"}>
               AI {discovery.ai.confidence}
             </Badge>
           ) : null}
@@ -165,9 +165,9 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead, c
           {roleOrStatus}
           {/* Phone: status / count end the role line (line two). */}
           {leftLabel ? (
-            <span className="[@container(min-width:560px)]:hidden shrink-0 text-[10px] text-muted-foreground" title={contact.left_note || undefined}>· {leftLabel}</span>
+            <span className="[@container(min-width:560px)]:hidden shrink-0 text-[11px] text-muted-foreground" title={contact.left_note || undefined}>· {leftLabel}</span>
           ) : touches > 0 && (
-            <span className="[@container(min-width:560px)]:hidden shrink-0 text-[10px] text-muted-foreground font-mono tabular-nums" title={touchTitle}>· {touchText}</span>
+            <span className="[@container(min-width:560px)]:hidden shrink-0 text-[11px] text-muted-foreground font-mono tabular-nums" title={touchTitle}>· {touchText}</span>
           )}
         </div>
         {/* Account-mode provenance (Delivery 3): where this contact enters
@@ -176,15 +176,15 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead, c
         {(contact.employerName || (contact.via && contact.via.length > 0) || (contact.propertyNames && contact.propertyNames.length > 0)) && (
           <div className="hidden [@container(min-width:560px)]:flex items-center gap-1 shrink-0 max-w-[40%] overflow-hidden">
             {contact.employerName && (
-              <Badge variant="outline" className="text-[9px] px-1 py-0 text-muted-foreground truncate">{contact.employerName}</Badge>
+              <Badge variant="outline" className="text-[11px] px-1 py-0 text-muted-foreground truncate">{contact.employerName}</Badge>
             )}
             {(contact.via || []).filter((v: string) => v !== "employer").map((v: string) => (
-              <Badge key={v} variant="outline" className="text-[9px] px-1 py-0 text-muted-foreground whitespace-nowrap">
+              <Badge key={v} variant="outline" className="text-[11px] px-1 py-0 text-muted-foreground whitespace-nowrap">
                 {v === "property" ? "property link" : v === "property_client" ? "property client" : v}
               </Badge>
             ))}
             {(contact.propertyNames || []).map((p: string) => (
-              <Badge key={p} variant="outline" className="text-[9px] px-1 py-0 bg-primary/10 text-primary border-primary/30 whitespace-nowrap">{p}</Badge>
+              <Badge key={p} variant="outline" className="text-[11px] px-1 py-0 bg-primary/10 text-primary border-primary/30 whitespace-nowrap">{p}</Badge>
             ))}
           </div>
         )}
@@ -544,7 +544,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
     const src = provenance(k);
     return (
       <div key={`found-${rowKey}`} className={`flex items-center gap-2 text-sm rounded px-1 py-1 md:py-0.5 -mx-1 hover:bg-muted/50 transition-colors ${item.hidden ? "opacity-60" : ""}`}>
-        <span className="w-5 h-5 rounded-full bg-muted/70 border border-dashed flex items-center justify-center text-[9px] font-medium shrink-0">
+        <span className="w-5 h-5 rounded-full bg-muted/70 border border-dashed flex items-center justify-center text-[11px] font-medium shrink-0">
           {(k.name || k.email || "?").split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase()}
         </span>
         <div className="min-w-0 flex-1 [@container(min-width:560px)]:flex [@container(min-width:560px)]:items-center [@container(min-width:560px)]:gap-2">
@@ -554,9 +554,9 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
           </p>
         </div>
         {conf != null && (
-          <Badge variant="outline" className={`hidden md:inline-flex text-[9px] px-1 py-0 shrink-0 tabular-nums ${confCls}`} title={k.ai?.reason || ""}>{conf}</Badge>
+          <Badge variant="outline" className={`hidden md:inline-flex text-[11px] px-1 py-0 shrink-0 tabular-nums ${confCls}`} title={k.ai?.reason || ""}>{conf}</Badge>
         )}
-        <Badge variant="outline" className={`hidden md:inline-flex text-[9px] px-1 py-0 shrink-0 ${src.cls}`}>{src.label}</Badge>
+        <Badge variant="outline" className={`hidden md:inline-flex text-[11px] px-1 py-0 shrink-0 ${src.cls}`}>{src.label}</Badge>
         {added ? (
           <Link href={`/contacts/${added.id}`} className="inline-flex min-h-11 md:min-h-0 items-center text-xs underline shrink-0" data-testid={`contact-cascade-open-${rowKey}`}>In CRM · open</Link>
         ) : !kcIsClient ? (

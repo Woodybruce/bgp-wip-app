@@ -354,7 +354,7 @@ function Sparkline({ values, width = 60, height = 16 }: { values: number[]; widt
 
 function AiChip() {
   return (
-    <span title="AI-generated — any edit makes it ground truth" className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground ml-1">
+    <span title="AI-generated — any edit makes it ground truth" className="inline-flex items-center gap-0.5 text-[11px] text-muted-foreground ml-1">
       <Sparkles className="w-2.5 h-2.5" /> ai
     </span>
   );
@@ -1484,8 +1484,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             if (isLandlord) return "Landlord Profile";
             return "Brand Profile";
           })()}
-          {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-transparent text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
-          {c.agent_type && <Badge variant="secondary" className="text-[10px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
+          {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-transparent text-[11px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
+          {c.agent_type && <Badge variant="secondary" className="text-[11px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
           {!isLandlord && !isAgentFirm && c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
         </CardTitle>
         <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
@@ -1548,7 +1548,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               const fmtRevenue = (v: number) => v >= 1_000_000_000 ? `$${(v / 1_000_000_000).toFixed(1)}B` : `$${(v / 1_000_000).toFixed(0)}M`;
               return (
                 <div className="rounded-md border border-border/40 bg-muted/20 p-2 mb-2 order-0 flex flex-wrap gap-x-3 gap-y-0.5 items-center">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1">
                     <Building2 className="w-3 h-3" /> Details
                   </span>
                   {c.industry && <span className="text-xs text-foreground">{c.industry}</span>}
@@ -1683,14 +1683,14 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                                         type="button"
                                         onClick={() => createBackerMutation.mutate({ name: b.name, type: b.type, description: b.description })}
                                         disabled={createBackerMutation.isPending}
-                                        className="ml-1.5 text-[10px] text-primary hover:underline underline decoration-dotted disabled:opacity-50"
+                                        className="ml-1.5 text-[11px] text-primary hover:underline underline decoration-dotted disabled:opacity-50"
                                       >
                                         {createBackerMutation.isPending && createBackerMutation.variables?.name === b.name ? "Creating…" : "+ Create"}
                                       </button>
                                       )}
                                     </>
                                   )}
-                                  {b.type && <Badge variant="outline" className="ml-1.5 text-[10px] py-0">{b.type.replace(/_/g, " ")}</Badge>}
+                                  {b.type && <Badge variant="outline" className="ml-1.5 text-[11px] py-0">{b.type.replace(/_/g, " ")}</Badge>}
                                   {b.description && <p className="text-xs text-muted-foreground leading-snug">{linkifyText(b.description)}</p>}
                                 </div>
                               </div>
@@ -1720,7 +1720,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                     >
                       <Instagram className="w-3 h-3" /> {c.instagram_handle}
                       {ig?.followers != null && (
-                        <span className="text-[10px] text-muted-foreground ml-0.5">· {fmtFollowers(ig.followers)}</span>
+                        <span className="text-[11px] text-muted-foreground ml-0.5">· {fmtFollowers(ig.followers)}</span>
                       )}
                     </a>
                   </div>
@@ -1739,7 +1739,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.33 6.33 0 00-.79-.05 6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.27 8.27 0 004.84 1.55V6.79a4.86 4.86 0 01-1.07-.1z" /></svg>
                       {c.tiktok_handle}
                       {tk?.followers != null && (
-                        <span className="text-[10px] text-muted-foreground ml-0.5">· {fmtFollowers(tk.followers)}</span>
+                        <span className="text-[11px] text-muted-foreground ml-0.5">· {fmtFollowers(tk.followers)}</span>
                       )}
                     </a>
                   </div>
@@ -1865,7 +1865,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                     </span>
                   ))}
                   {data.representing.length === 0 && <span className="text-xs text-muted-foreground italic">No brands currently represented.</span>}
-                  {data.representing.length > 12 && <span className="text-[10px] text-muted-foreground">+{data.representing.length - 12} more</span>}
+                  {data.representing.length > 12 && <span className="text-[11px] text-muted-foreground">+{data.representing.length - 12} more</span>}
                 </div>
               </div>
             )}
@@ -1990,7 +1990,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 {!isClientViewer && (
                 <button
                   onClick={() => setAddSignalOpen(v => !v)}
-                  className="text-[10px] text-primary hover:underline flex items-center gap-0.5"
+                  className="text-[11px] text-primary hover:underline flex items-center gap-0.5"
                 >
                   <Plus className="w-2.5 h-2.5" /> Log intel
                 </button>
@@ -2039,13 +2039,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   <div className="flex gap-1.5">
                     <Button
                       size="sm"
-                      className="h-6 text-[10px] px-2"
+                      className="h-6 text-[11px] px-2"
                       onClick={() => addSignalMutation.mutate()}
                       disabled={!newSignal.headline || addSignalMutation.isPending}
                     >
                       {addSignalMutation.isPending ? "Saving…" : "Save signal"}
                     </Button>
-                    <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={() => setAddSignalOpen(false)}>Cancel</Button>
+                    <Button size="sm" variant="ghost" className="h-6 text-[11px] px-2" onClick={() => setAddSignalOpen(false)}>Cancel</Button>
                   </div>
                 </div>
               )}
@@ -2071,7 +2071,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                     };
                     return (
                       <div key={s.id} className={`text-xs flex items-start gap-2 border-l-2 pl-2 group ${sentCls[s.sentiment] || "border-l-muted"}`}>
-                        <Badge variant="outline" className={`text-[10px] shrink-0 ${typeCls[signalKind(s)] || ""}`}>
+                        <Badge variant="outline" className={`text-[11px] shrink-0 ${typeCls[signalKind(s)] || ""}`}>
                           {signalKind(s).replace(/_/g, " ")}
                           {s.magnitude === "large" && " ●●"}
                           {s.magnitude === "medium" && " ●"}
@@ -2087,7 +2087,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                           ) : (
                             <p className="font-medium line-clamp-2 break-words" title={s.headline}>{sentenceCaseShouting(s.headline)}</p>
                           )}
-                          {s.signal_date && <span className="text-[10px] text-muted-foreground">{ukDate(s.signal_date)}</span>}
+                          {s.signal_date && <span className="text-[11px] text-muted-foreground">{ukDate(s.signal_date)}</span>}
                         </div>
                         {!isClientViewer && (
                         <button
@@ -2106,7 +2106,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               {dedupedSignals.length > 6 && (
                 <button
                   onClick={() => setSignalsShowAll(v => !v)}
-                  className="mt-1.5 text-[10px] text-primary hover:underline"
+                  className="mt-1.5 text-[11px] text-primary hover:underline"
                 >
                   {signalsShowAll ? "Show less" : `Show ${dedupedSignals.length - 6} more signal${dedupedSignals.length - 6 === 1 ? "" : "s"}`}
                 </button>
@@ -2187,7 +2187,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 onChange={(e) => setForm({ ...form, uk_entity_name: e.target.value })}
                 placeholder="e.g. AFH Stores UK Limited, Next Retail Ltd"
               />
-              <p className="text-[10px] text-muted-foreground mt-0.5">
+              <p className="text-[11px] text-muted-foreground mt-0.5">
                 The legal entity that signs UK leases — often differs from the brand name.
                 Used to search Companies House correctly.
               </p>
@@ -2199,7 +2199,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 onChange={(e) => setForm({ ...form, stock_ticker: e.target.value.toUpperCase() })}
                 placeholder="e.g. JD.L, NXT.L, NKE, LULU"
               />
-              <p className="text-[10px] text-muted-foreground mt-0.5">
+              <p className="text-[11px] text-muted-foreground mt-0.5">
                 Yahoo Finance ticker — LSE suffix with .L (JD.L, MKS.L), US no suffix (NKE, LULU), Paris .PA (MC.PA).
               </p>
             </div>
@@ -2558,7 +2558,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                         <span className="text-sm font-medium truncate">{p.name}</span>
                       </Link>
                       <span className="flex items-center gap-1.5 shrink-0">
-                        {forSaleIds.has(p.id) && <Badge className="text-[9px] bg-amber-50 text-amber-800 border-amber-200" title="BGP is selling this building — worth talking to them about their lease">building for sale</Badge>}
+                        {forSaleIds.has(p.id) && <Badge className="text-[11px] bg-amber-50 text-amber-800 border-amber-200" title="BGP is selling this building — worth talking to them about their lease">building for sale</Badge>}
                         <span className="text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{p.units}</span> unit{Number(p.units) === 1 ? "" : "s"}</span>
                         {Number(p.total_rent_pa) > 0 && (
                           <span className="text-xs font-mono tabular-nums">
@@ -2592,14 +2592,14 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                     return (
                       <Link key={le.id} href={`/properties/${le.property_id}`}>
                         <div className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5 cursor-pointer">
-                          <Badge variant="outline" className="text-[10px] shrink-0 border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400 capitalize">{label}</Badge>
+                          <Badge variant="outline" className="text-[11px] shrink-0 border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400 capitalize">{label}</Badge>
                           <span className="truncate flex-1">{le.unit_name ? propertyUnitText(le.property_name, cleanUnitLabel(le.unit_name, le.property_name) || le.unit_name) : le.property_name}</span>
                           <span className="font-medium tabular-nums text-xs shrink-0">{nextEvent?.toLocaleDateString("en-GB", { month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep")}</span>
                         </div>
                       </Link>
                     );
                   })}
-                  {leaseEvents.length > 5 && <p className="text-[10px] text-muted-foreground pl-1">+{leaseEvents.length - 5} more events</p>}
+                  {leaseEvents.length > 5 && <p className="text-[11px] text-muted-foreground pl-1">+{leaseEvents.length - 5} more events</p>}
                 </div>
               </div>
             )}
@@ -2643,9 +2643,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 {parentGroup && (
                   <Link href={`/companies/${parentGroup.id}`}>
                     <div className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5 cursor-pointer">
-                      <Badge variant="outline" className="text-[10px] shrink-0">parent</Badge>
+                      <Badge variant="outline" className="text-[11px] shrink-0">parent</Badge>
                       <span className="font-medium truncate flex-1">{parentGroup.name}</span>
-                      {parentGroup.store_count && <span className="text-[10px] text-muted-foreground tabular-nums">{parentGroup.store_count} stores</span>}
+                      {parentGroup.store_count && <span className="text-[11px] text-muted-foreground tabular-nums">{parentGroup.store_count} stores</span>}
                     </div>
                   </Link>
                 )}
@@ -2653,14 +2653,14 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   <div className="flex flex-wrap gap-1 mt-1">
                     {siblingBrands.slice(0, 10).map((s: any) => (
                       <Link key={s.id} href={`/companies/${s.id}`}>
-                        <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer">
+                        <Badge variant="outline" className="text-[11px] hover:bg-muted cursor-pointer">
                           {s.name}
                           {s.store_count && <span className="ml-1 text-muted-foreground">· {s.store_count}</span>}
                         </Badge>
                       </Link>
                     ))}
                     {siblingBrands.length > 10 && (
-                      <span className="text-[10px] text-muted-foreground">+{siblingBrands.length - 10} more</span>
+                      <span className="text-[11px] text-muted-foreground">+{siblingBrands.length - 10} more</span>
                     )}
                   </div>
                 )}
@@ -2697,7 +2697,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               <div className="border-t pt-2">
                 <div className="text-xs font-medium text-foreground/70 mb-1 flex items-center gap-1">
                   <Building2 className="w-3 h-3 text-emerald-600" />
-                  <span>BGP portfolio — potential pitches ({suggestedUnits.length}) <span className="text-[9px] text-amber-600">· admin</span></span>
+                  <span>BGP portfolio — potential pitches ({suggestedUnits.length}) <span className="text-[11px] text-amber-600">· admin</span></span>
                 </div>
                 <div className="space-y-1">
                   {suggestedUnits.map((u) => (
@@ -2705,8 +2705,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-medium truncate">{u.property_name}</span>
-                          {u.unit_name && <span className="text-[10px] text-muted-foreground shrink-0">{u.unit_name}</span>}
-                          {u.zone && <Badge variant="outline" className="text-[10px] shrink-0">{u.zone}</Badge>}
+                          {u.unit_name && <span className="text-[11px] text-muted-foreground shrink-0">{u.unit_name}</span>}
+                          {u.zone && <Badge variant="outline" className="text-[11px] shrink-0">{u.zone}</Badge>}
                         </div>
                         {(() => {
                           // property_address comes from the jsonb
@@ -2720,12 +2720,12 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                             : a && typeof a === "object"
                               ? (a.formatted || a.line1 || [a.street, a.city, a.postcode, a.country].filter(Boolean).join(", "))
                               : "";
-                          return txt ? <div className="text-[10px] text-muted-foreground truncate">{txt}</div> : null;
+                          return txt ? <div className="text-[11px] text-muted-foreground truncate">{txt}</div> : null;
                         })()}
                       </div>
                       <div className="text-right shrink-0">
                         {u.rent_pa != null && <div className="font-semibold text-xs">{rentPa(u.rent_pa)}</div>}
-                        {u.sqft != null && <div className="text-[10px] text-muted-foreground">{Math.round(u.sqft).toLocaleString()} sqft</div>}
+                        {u.sqft != null && <div className="text-[11px] text-muted-foreground">{Math.round(u.sqft).toLocaleString()} sqft</div>}
                       </div>
                       <ExternalLink className="w-2.5 h-2.5 text-muted-foreground opacity-0 group-hover:opacity-100 shrink-0" />
                     </Link>
@@ -2758,7 +2758,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   {hunter && hunter.expansionScore != null && (
                     <Badge
                       variant="outline"
-                      className={`text-[10px] ${
+                      className={`text-[11px] ${
                         hunter.expansionScore >= 30 ? "bg-orange-50 text-orange-700 border-orange-200" :
                         hunter.expansionScore >= 20 ? "bg-amber-50 text-amber-700 border-amber-200" :
                         hunter.expansionScore >= 10 ? "bg-zinc-50 text-zinc-700 border-zinc-200" :
@@ -2769,11 +2769,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                       Score {hunter.expansionScore}/100
                     </Badge>
                   )}
-                  {c.hunter_flag && <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">Watch</Badge>}
+                  {c.hunter_flag && <Badge variant="outline" className="text-[11px] bg-amber-50 text-amber-700 border-amber-200">Watch</Badge>}
                   {!isClientViewer && (
                   <Link
                     href={`/hunter?companyId=${companyId}`}
-                    className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+                    className="text-[11px] text-primary hover:underline inline-flex items-center gap-0.5"
                     title="Open in Hunter"
                   >
                     Open in Hunter <ExternalLink className="w-2.5 h-2.5" />
@@ -2834,7 +2834,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                         const v = (hunter.subScores as any)[key] ?? 0;
                         return (
                           <div key={key}>
-                            <div className="flex items-center justify-between text-[10px] mb-0.5">
+                            <div className="flex items-center justify-between text-[11px] mb-0.5">
                               <span className="text-muted-foreground">{label}</span>
                               <span className="font-semibold tabular-nums">{v}/25</span>
                             </div>
@@ -2850,7 +2850,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                     </div>
                     {(hunter.lines?.length ?? 0) > 0 && (
                       <details className="pt-0.5">
-                        <summary className="text-[10px] text-primary cursor-pointer hover:underline">Why this score</summary>
+                        <summary className="text-[11px] text-primary cursor-pointer hover:underline">Why this score</summary>
                         <div className="mt-1 space-y-0.5">
                           {hunter.lines!.map((l: any, i: number) => (
                             <div key={i} className="flex items-start gap-1.5 text-[11px]">
@@ -2885,7 +2885,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   </span>
                   <Link
                     href={`/requirements?companyId=${c.id}`}
-                    className="text-[10px] text-primary hover:underline"
+                    className="text-[11px] text-primary hover:underline"
                   >
                     manage →
                   </Link>
@@ -2902,7 +2902,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                         href={`/requirements?companyId=${c.id}`}
                         className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5"
                       >
-                        {useClass && <Badge variant="outline" className="text-[10px] shrink-0">{useClass}</Badge>}
+                        {useClass && <Badge variant="outline" className="text-[11px] shrink-0">{useClass}</Badge>}
                         {size && <span className="font-medium shrink-0">{size}</span>}
                         {locations && <span className="truncate text-muted-foreground">{locations}</span>}
                       </Link>
@@ -2989,7 +2989,7 @@ export function PipnetRequirementsRow({ companyId, brandName, isClient }: { comp
         <button
           onClick={() => fetch(`/api/brand/${companyId}/pipnet-requirements?refresh=1`, { credentials: "include", headers: getAuthHeaders() }).then(() => refetch())}
           disabled={isFetching}
-          className="text-[10px] text-primary hover:underline disabled:opacity-50"
+          className="text-[11px] text-primary hover:underline disabled:opacity-50"
         >
           {isFetching ? "Searching…" : "Refresh"}
         </button>
@@ -3003,14 +3003,14 @@ export function PipnetRequirementsRow({ companyId, brandName, isClient }: { comp
         <div className="space-y-0.5">
           {rows.slice(0, 6).map((r, i) => (
             <div key={i} className="text-xs flex items-center gap-1.5 px-1 py-0.5">
-              {r.location && <Badge variant="outline" className="text-[10px] shrink-0">{r.location}</Badge>}
+              {r.location && <Badge variant="outline" className="text-[11px] shrink-0">{r.location}</Badge>}
               {r.size && <span className="font-medium shrink-0">{r.size}</span>}
               {r.agent && <span className="text-muted-foreground truncate">via {r.agent}</span>}
-              {r.date && <span className="text-[10px] text-muted-foreground ml-auto shrink-0">{r.date}</span>}
+              {r.date && <span className="text-[11px] text-muted-foreground ml-auto shrink-0">{r.date}</span>}
             </div>
           ))}
           {rows.length > 6 && (
-            <p className="text-[10px] text-muted-foreground">+{rows.length - 6} more</p>
+            <p className="text-[11px] text-muted-foreground">+{rows.length - 6} more</p>
           )}
         </div>
       )}
@@ -3114,13 +3114,13 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
       <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1">
         <Sparkles className="w-3 h-3 text-primary" /> Similar tenants &amp; competitor set
         {generatedAt && (
-          <span className="text-[10px] ml-1">· {ukDate(generatedAt, { day: "numeric", month: "short" })}</span>
+          <span className="text-[11px] ml-1">· {ukDate(generatedAt, { day: "numeric", month: "short" })}</span>
         )}
         {!cpIsClient && (
         <button
           onClick={() => research.mutate()}
           disabled={research.isPending}
-          className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
+          className="ml-auto text-[11px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
         >
           {research.isPending ? "Researching…" : competitors.length > 0 ? "Refresh" : "Research"}
         </button>
@@ -3172,7 +3172,7 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-sm">{comp.name}</span>
                   {comp.segment && (
-                    <Badge variant="outline" className={`text-[10px] ${segmentBadge(comp.segment)}`}>
+                    <Badge variant="outline" className={`text-[11px] ${segmentBadge(comp.segment)}`}>
                       {comp.segment}
                     </Badge>
                   )}
@@ -3183,21 +3183,21 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
                 <div className="flex flex-wrap gap-1.5 pt-1">
                   {crmRow && (
                     <Link href={`/companies/${crmRow.id}`}>
-                      <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer flex items-center gap-1">
+                      <Badge variant="outline" className="text-[11px] hover:bg-muted cursor-pointer flex items-center gap-1">
                         <Building2 className="w-2.5 h-2.5" /> Open in BGP
                       </Badge>
                     </Link>
                   )}
                   {websiteHref && (
                     <a href={websiteHref} target="_blank" rel="noopener noreferrer">
-                      <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer flex items-center gap-1">
+                      <Badge variant="outline" className="text-[11px] hover:bg-muted cursor-pointer flex items-center gap-1">
                         <Globe className="w-2.5 h-2.5" /> Website
                       </Badge>
                     </a>
                   )}
                   {!websiteHref && (
                     <a href={googleHref} target="_blank" rel="noopener noreferrer">
-                      <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer flex items-center gap-1">
+                      <Badge variant="outline" className="text-[11px] hover:bg-muted cursor-pointer flex items-center gap-1">
                         <Search className="w-2.5 h-2.5" /> Search Google
                       </Badge>
                     </a>
@@ -3318,7 +3318,7 @@ export function MenuIntelCard({
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Store className="w-3.5 h-3.5" /> {labelKind}
           {refreshedAt && (
-            <span className="text-[10px] normal-case text-muted-foreground ml-1">
+            <span className="text-[11px] normal-case text-muted-foreground ml-1">
               · {ukDate(refreshedAt, { day: "numeric", month: "short" })}
             </span>
           )}
@@ -3327,7 +3327,7 @@ export function MenuIntelCard({
         <button
           onClick={() => refresh.mutate()}
           disabled={refresh.isPending}
-          className="text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
+          className="text-[11px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
           title={`Ask Perplexity for ${companyName}'s ${expectedKind === "menu" ? "menu" : "best sellers"}`}
         >
           {refresh.isPending ? "Fetching…" : items.length > 0 ? "Refresh" : "Fetch"}
@@ -3345,7 +3345,7 @@ export function MenuIntelCard({
               <div key={i} className="text-xs border-b border-border/40 last:border-0 pb-1.5 last:pb-0">
                 <div className="flex items-baseline gap-2">
                   <span className="font-medium text-foreground flex-1 truncate">{it.name}</span>
-                  {it.price && <span className="text-[10px] tabular-nums text-muted-foreground shrink-0">{it.price}</span>}
+                  {it.price && <span className="text-[11px] tabular-nums text-muted-foreground shrink-0">{it.price}</span>}
                 </div>
                 {it.image && (
                   <img
@@ -3360,7 +3360,7 @@ export function MenuIntelCard({
                   <div className="text-[11px] text-muted-foreground leading-snug mt-0.5">{it.description}</div>
                 )}
                 {it.category && !it.description && (
-                  <div className="text-[10px] text-muted-foreground italic">{it.category}</div>
+                  <div className="text-[11px] text-muted-foreground italic">{it.category}</div>
                 )}
               </div>
             ))}
@@ -3371,7 +3371,7 @@ export function MenuIntelCard({
             href={intel.source_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-2 inline-flex items-center gap-1 text-[10px] text-primary hover:underline"
+            className="mt-2 inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
           >
             <ExternalLink className="w-2.5 h-2.5" /> Source
           </a>
@@ -3419,7 +3419,7 @@ function CreateCompetitorInCrmButton({ name, onCreated }: { name: string; onCrea
     <button
       onClick={(e) => { e.stopPropagation(); create.mutate(); }}
       disabled={create.isPending}
-      className="text-[10px] px-2 py-0.5 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 flex items-center gap-1 dark:bg-emerald-950 dark:border-emerald-800 dark:text-emerald-300"
+      className="text-[11px] px-2 py-0.5 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 flex items-center gap-1 dark:bg-emerald-950 dark:border-emerald-800 dark:text-emerald-300"
       title={`Create a CRM record for ${name}`}
     >
       <Building2 className="w-2.5 h-2.5" />
@@ -3474,15 +3474,15 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
     <div className="border-t border-border/40 mt-3 pt-2 order-3">
       <div className="flex items-center gap-1.5 mb-2">
         <BadgeInfo className="w-3.5 h-3.5 text-muted-foreground" />
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Brand intel</span>
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Brand intel</span>
         {data?.fetched_at && (
-          <span className="text-[10px] text-muted-foreground ml-1">· {ukDate(data.fetched_at)}</span>
+          <span className="text-[11px] text-muted-foreground ml-1">· {ukDate(data.fetched_at)}</span>
         )}
         {!rrIsClient && (
         <button
           onClick={() => refresh.mutate()}
           disabled={refresh.isPending || !configured}
-          className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
+          className="ml-auto text-[11px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
         >
           {refresh.isPending ? "Fetching…" : p ? "Refresh" : "Fetch"}
         </button>
@@ -3590,13 +3590,13 @@ function ContactRow({ dm }: { dm: { id: string; name: string; role: string | nul
         {dm.avatar_url ? (
           <img src={dm.avatar_url} alt={dm.name} className="w-6 h-6 rounded-full bg-muted shrink-0 object-cover" />
         ) : (
-          <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-semibold text-muted-foreground shrink-0">
+          <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[11px] font-semibold text-muted-foreground shrink-0">
             {dm.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
           </div>
         )}
         <div className="flex-1 min-w-0">
           <div className="font-medium truncate group-hover:text-primary transition-colors">{dm.name}</div>
-          {dm.role && <div className="text-[10px] text-muted-foreground truncate">{dm.role}</div>}
+          {dm.role && <div className="text-[11px] text-muted-foreground truncate">{dm.role}</div>}
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {dm.phone && (
@@ -3674,7 +3674,7 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
         <TrendingUp className="w-3 h-3" /> {displaySymbol} — price unavailable, provider error
         <button
           type="button"
-          className="ml-auto text-[10px] text-primary hover:underline disabled:opacity-50"
+          className="ml-auto text-[11px] text-primary hover:underline disabled:opacity-50"
           onClick={() => refetch()}
           disabled={isFetching}
         >
@@ -3711,12 +3711,12 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
         <div className="flex items-center gap-1.5 min-w-0">
           <TrendingUp className="w-3 h-3 text-muted-foreground shrink-0" />
           <span className="font-mono font-semibold">{s.ticker}</span>
-          {s.exchange && <span className="text-[10px] text-muted-foreground truncate">· {s.exchange}</span>}
-          {data?.provider === "stooq" && <span className="text-[10px] text-muted-foreground shrink-0" title="Yahoo Finance is unreachable from the server — showing Stooq's delayed daily close">· via Stooq (delayed)</span>}
-          {data?.provider === "cnbc" && <span className="text-[10px] text-muted-foreground shrink-0" title="Yahoo Finance is unreachable from the server — showing CNBC's quote feed">· via CNBC</span>}
+          {s.exchange && <span className="text-[11px] text-muted-foreground truncate">· {s.exchange}</span>}
+          {data?.provider === "stooq" && <span className="text-[11px] text-muted-foreground shrink-0" title="Yahoo Finance is unreachable from the server — showing Stooq's delayed daily close">· via Stooq (delayed)</span>}
+          {data?.provider === "cnbc" && <span className="text-[11px] text-muted-foreground shrink-0" title="Yahoo Finance is unreachable from the server — showing CNBC's quote feed">· via CNBC</span>}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {fetchedLabel && <span className="text-[10px] text-muted-foreground" title={quoteTs}>as of {fetchedLabel}</span>}
+          {fetchedLabel && <span className="text-[11px] text-muted-foreground" title={quoteTs}>as of {fetchedLabel}</span>}
           <span className="font-semibold tabular-nums">{priceLabel}</span>
         </div>
       </div>
@@ -3739,7 +3739,7 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
         )}
         {s.fiftyTwoWeekHigh != null && s.fiftyTwoWeekLow != null && (
           <span
-            className="text-muted-foreground ml-auto text-[10px]"
+            className="text-muted-foreground ml-auto text-[11px]"
             title={`52-week range${s.fiftyTwoWeekLowDate ? ` · low ${s.fiftyTwoWeekLowDate}` : ""}${s.fiftyTwoWeekHighDate ? ` · high ${s.fiftyTwoWeekHighDate}` : ""}`}
           >
             {currencySymbol}{s.fiftyTwoWeekLow.toFixed(0)}–{currencySymbol}{s.fiftyTwoWeekHigh.toFixed(0)} 52w
@@ -3748,7 +3748,7 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
       </div>
       {/* Day detail row — only when the provider supplies intraday stats */}
       {(s.previousClose != null || s.dayOpen != null || (s.dayHigh != null && s.dayLow != null) || s.volume != null) && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-2.5 pb-1.5 text-[10px] text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-2.5 pb-1.5 text-[11px] text-muted-foreground">
           {s.previousClose != null && <span>Prev {currencySymbol}{s.previousClose.toFixed(2)}</span>}
           {s.dayOpen != null && <span>Open {currencySymbol}{s.dayOpen.toFixed(2)}</span>}
           {s.dayHigh != null && s.dayLow != null && <span>Day {currencySymbol}{s.dayLow.toFixed(2)}–{currencySymbol}{s.dayHigh.toFixed(2)}</span>}
@@ -3761,7 +3761,7 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
       {history.length >= 5 && (
         <div className="px-1 pb-1">
           <MiniPriceChart points={history} height={52} />
-          <div className="flex justify-between text-[10px] text-muted-foreground px-1 mt-0.5">
+          <div className="flex justify-between text-[11px] text-muted-foreground px-1 mt-0.5">
             <span>{history[0]?.date?.slice(5)}</span>
             <span>3 months</span>
             <span>{history[history.length - 1]?.date?.slice(5)}</span>
@@ -3791,7 +3791,7 @@ function TickerSuggestPicker({ companyId, onSelect }: { companyId: string; onSel
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-1 underline-offset-2 hover:underline"
+        className="text-[11px] text-muted-foreground hover:text-primary flex items-center gap-1 underline-offset-2 hover:underline"
       >
         <Search className="w-2.5 h-2.5" /> Find stock ticker
       </button>
@@ -3800,7 +3800,7 @@ function TickerSuggestPicker({ companyId, onSelect }: { companyId: string; onSel
 
   return (
     <div className="rounded border bg-background shadow-sm p-1.5 space-y-0.5">
-      <div className="text-[10px] text-muted-foreground px-1 pb-0.5">Select the correct listing:</div>
+      <div className="text-[11px] text-muted-foreground px-1 pb-0.5">Select the correct listing:</div>
       {isLoading && <div className="text-xs text-muted-foreground px-1 py-0.5 animate-pulse">Searching Yahoo Finance…</div>}
       {!isLoading && data?.suggestions?.length === 0 && (
         <div className="text-xs text-muted-foreground px-1 italic">No public listings found</div>
@@ -3814,13 +3814,13 @@ function TickerSuggestPicker({ companyId, onSelect }: { companyId: string; onSel
         >
           <span className="font-mono font-semibold text-primary">{s.symbol}</span>
           <span className="truncate text-muted-foreground flex-1">{s.shortName}</span>
-          {s.exchange && <span className="text-[10px] text-muted-foreground shrink-0">{s.exchange}</span>}
+          {s.exchange && <span className="text-[11px] text-muted-foreground shrink-0">{s.exchange}</span>}
         </button>
       ))}
       <button
         type="button"
         onClick={() => setOpen(false)}
-        className="text-[10px] text-muted-foreground hover:text-foreground px-1 pt-0.5"
+        className="text-[11px] text-muted-foreground hover:text-foreground px-1 pt-0.5"
       >
         Cancel
       </button>
@@ -3884,7 +3884,7 @@ function BgpTeamMenu({ companyId, coverers }: { companyId: string; coverers: Arr
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type="button" className="text-[10px] text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-0.5" data-testid={`bgp-team-edit-${companyId}`}>
+        <button type="button" className="text-[11px] text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-0.5" data-testid={`bgp-team-edit-${companyId}`}>
           <Plus className="w-3 h-3" />
           {currentIds.length > 0 ? "Edit team" : "Set BGP team"}
         </button>
@@ -4308,7 +4308,7 @@ export function BrandComplianceCard({
           {!bcIsClient && (
           <Link
             href={`/kyc-clouseau?company=${companyId}`}
-            className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+            className="text-[11px] text-primary hover:underline inline-flex items-center gap-0.5"
             title="Open in KYC Hub"
           >
             KYC Hub <ChevronRight className="w-2.5 h-2.5" />
@@ -4821,7 +4821,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="text-[10px] px-1.5 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
+                className="text-[11px] px-1.5 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
                 title="Add a team member to this conversation"
                 data-testid="button-minichat-add-member"
               >
@@ -4842,7 +4842,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
           {threadId && (
             <button
               type="button"
-              className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted"
+              className="text-[11px] px-2 py-1 rounded border bg-card hover:bg-muted"
               onClick={() => navigate(`/chatbgp?thread=${threadId}`)}
               data-testid="button-minichat-open-full"
             >
@@ -4856,7 +4856,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
           <div className={`${fill ? "flex-1" : "max-h-[280px]"} overflow-y-auto space-y-1.5 pr-1`} data-testid="minichat-tracker">
             {trackerComments.map((cm: any, i: number) => (
               <div key={i} className="text-xs rounded-lg border border-border/50 px-2.5 py-1.5">
-                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mb-0.5">
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-0.5">
                   <span className="font-medium text-foreground/80">{cm.userName}</span>
                   {cm.at && <span>{ukDate(cm.at)}</span>}
                   <Link href={`/properties/${cm.propertyId}`} className="ml-auto hover:underline truncate max-w-[45%]">
@@ -4889,7 +4889,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
               }`}>
                 {/* Every message carries its author — a shared brand chat is
                     useless if you can't tell who said what (Woody, 2026-08-04). */}
-                <span className="font-semibold text-[10px] block text-muted-foreground">
+                <span className="font-semibold text-[11px] block text-muted-foreground">
                   {m.role === "assistant" ? "ChatBGP" : (isOwn ? "You" : (m.userName || "Team"))}
                   {(() => {
                     const ts = m.createdAt || m.created_at;
@@ -4917,8 +4917,8 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
                       }}
                       data-testid={`input-minichat-edit-${m.id}`}
                     />
-                    <button className="text-[10px] px-1.5 py-1 rounded border bg-card hover:bg-muted" onClick={() => saveEdit(m.id)}>Save</button>
-                    <button className="text-[10px] px-1 text-muted-foreground" onClick={() => setEditingMsgId(null)}>✕</button>
+                    <button className="text-[11px] px-1.5 py-1 rounded border bg-card hover:bg-muted" onClick={() => saveEdit(m.id)}>Save</button>
+                    <button className="text-[11px] px-1 text-muted-foreground" onClick={() => setEditingMsgId(null)}>✕</button>
                   </div>
                 ) : (
                   renderContent(m.content)
@@ -4935,7 +4935,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
                     </button>
                     {confirmDeleteId === m.id ? (
                       <button
-                        className="text-[9px] font-semibold text-red-600 hover:text-red-700"
+                        className="text-[11px] font-semibold text-red-600 hover:text-red-700"
                         onClick={() => deleteMsg(m.id)}
                         onMouseLeave={() => setConfirmDeleteId(null)}
                         data-testid={`button-minichat-delete-confirm-${m.id}`}
@@ -4979,7 +4979,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
                   data-testid={`minichat-mention-${r.type}-${r.id}`}
                 >
                   <span className="font-medium truncate">{r.name}</span>
-                  <span className="text-[10px] text-muted-foreground ml-auto shrink-0">{r.type}{r.subtitle ? ` · ${r.subtitle}` : ""}</span>
+                  <span className="text-[11px] text-muted-foreground ml-auto shrink-0">{r.type}{r.subtitle ? ` · ${r.subtitle}` : ""}</span>
                 </button>
               ))}
             </div>
@@ -5119,7 +5119,7 @@ function LandlordSidebarBlock({
               type="button"
               onClick={setUpClientFolders}
               disabled={clientFoldersBusy}
-              className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1 disabled:opacity-60"
+              className="text-[11px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1 disabled:opacity-60"
               title={`Create a ${companyName} folder tree for every property`}
               data-testid="button-setup-client-property-folders"
             >
@@ -5131,7 +5131,7 @@ function LandlordSidebarBlock({
             <button
               type="button"
               onClick={() => setFolderDialogOpen(true)}
-              className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
+              className="text-[11px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
               data-testid="button-setup-landlord-folders"
             >
               <FolderTree className="w-3 h-3" /> Set Up Folders
@@ -5487,7 +5487,7 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
                   </Pill>
                 ))}
               </div>
-              <NewsTagFilterChips selected={newsTagFilter} onChange={setNewsTagFilter} className="text-[10px]" hideEmpty
+              <NewsTagFilterChips selected={newsTagFilter} onChange={setNewsTagFilter} className="text-[11px]" hideEmpty
                 counts={tabFiltered.reduce((acc: Record<string, number>, a: any) => { for (const t of (a.ai_tags || a.aiTags || [])) acc[String(t).toLowerCase()] = (acc[String(t).toLowerCase()] || 0) + 1; return acc; }, {})} />
               {newsTab === "industry" && allSources.length > 1 && (
                 <div className="flex items-center gap-1 flex-wrap">

@@ -84,7 +84,7 @@ function StatusChip({ status }: { status: string | null }) {
   const code = legacyToCode(status);
   if (!code) return <span className="text-muted-foreground">—</span>;
   return (
-    <Badge variant="outline" className={`text-[10px] border-transparent ${DEAL_STATUS_COLORS[code]}`}>
+    <Badge variant="outline" className={`text-[11px] border-transparent ${DEAL_STATUS_COLORS[code]}`}>
       {DEAL_STATUS_LABELS[code]}
     </Badge>
   );
@@ -94,13 +94,13 @@ function DealBadges({ d }: { d: AccountDealRow }) {
   return (
     <span className="inline-flex items-center gap-1 flex-wrap">
       {d.bucket === "related" ? (
-        <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
+        <Badge variant="outline" className="text-[11px] bg-amber-50 text-amber-700 border-amber-200">
           Related activity{d.activityKind === "tenant_rep" ? " · tenant rep" : d.activityKind === "investment" ? " · investment" : ""}
         </Badge>
       ) : (
-        <Badge variant="outline" className="text-[10px]">Instruction</Badge>
+        <Badge variant="outline" className="text-[11px]">Instruction</Badge>
       )}
-      {d.service && <span className="text-[10px] text-muted-foreground">{d.service}</span>}
+      {d.service && <span className="text-[11px] text-muted-foreground">{d.service}</span>}
     </span>
   );
 }
@@ -201,7 +201,7 @@ function NextActionCell({ d }: { d: AccountDealRow }) {
   return (
     <span className="block min-w-0">
       <span className="block truncate" title={na.title}>{tidyActionTitle(na.title, [d.propertyName])}</span>
-      <span className="block text-[10px] text-muted-foreground truncate">
+      <span className="block text-[11px] text-muted-foreground truncate">
         {[na.ownerName, na.dueDate ? `due ${gbDate(na.dueDate, { day: "numeric", month: "short" })}` : null].filter(Boolean).join(" · ")}
       </span>
     </span>
@@ -347,8 +347,8 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                         {d.propertyName ? (d.propertyId ? (
                           <Link href={`/properties/${d.propertyId}`} className="font-medium hover:underline block truncate">{d.propertyName}</Link>
                         ) : <span className="font-medium block truncate">{d.propertyName}</span>) : null}
-                        {labels.unit && dealLink !== labels.unit && <span className="block text-[10px] text-muted-foreground truncate">{labels.unit}</span>}
-                        <Link href={`/deals?id=${d.dealId}`} className="block text-[10px] text-primary hover:underline truncate" title={d.name}>{dealLink}</Link>
+                        {labels.unit && dealLink !== labels.unit && <span className="block text-[11px] text-muted-foreground truncate">{labels.unit}</span>}
+                        <Link href={`/deals?id=${d.dealId}`} className="block text-[11px] text-primary hover:underline truncate" title={d.name}>{dealLink}</Link>
                       </td>
                       <td className="py-1.5 pr-2 max-w-[10rem] truncate">{d.counterparty || "—"}</td>
                       <td className="py-1.5 pr-2"><DealBadges d={d} /></td>
@@ -385,7 +385,7 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <DealBadges d={d} />
                     {d.propertyId && place && (
-                      <Link href={`/properties/${d.propertyId}`} className="text-[10px] text-muted-foreground hover:underline">
+                      <Link href={`/properties/${d.propertyId}`} className="text-[11px] text-muted-foreground hover:underline">
                         {place}
                       </Link>
                     )}
@@ -412,14 +412,14 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
             {/* Pagination — totals come from the server over the filtered
                 set, so they're stable regardless of page size. */}
             <div className="flex items-center justify-between gap-2 pt-1">
-              <span className="text-[10px] text-muted-foreground tabular-nums">
+              <span className="text-[11px] text-muted-foreground tabular-nums">
                 {data.total === 0 ? "" : `Showing ${from}–${to} of ${data.total}`}
               </span>
               <div className="flex items-center gap-1">
                 <Button variant="outline" size="sm" className="h-7 px-2" disabled={page <= 1} onClick={() => setPage(p => p - 1)} data-testid="account-deals-prev">
                   <ChevronLeft className="w-3.5 h-3.5" />
                 </Button>
-                <span className="text-[10px] text-muted-foreground tabular-nums">{page} / {totalPages}</span>
+                <span className="text-[11px] text-muted-foreground tabular-nums">{page} / {totalPages}</span>
                 <Button variant="outline" size="sm" className="h-7 px-2" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)} data-testid="account-deals-next">
                   <ChevronRight className="w-3.5 h-3.5" />
                 </Button>

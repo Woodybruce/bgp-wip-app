@@ -125,19 +125,19 @@ export function AccountTeamCard({ companyId }: { companyId: string }) {
         <div key={m.userId} className="flex items-start gap-2 py-1" data-testid={`account-team-member-${m.userId}`}>
           <Avatar className="h-6 w-6 mt-0.5">
             <AvatarImage src={undefined} />
-            <AvatarFallback className="text-[9px]">{initials(m.name)}</AvatarFallback>
+            <AvatarFallback className="text-[11px]">{initials(m.name)}</AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium truncate">{m.name || m.email || "—"}</span>
               {m.isLead && (
-                <Badge variant="outline" className="text-[9px] px-1 py-0 bg-primary/10 text-primary border-primary/30">Lead</Badge>
+                <Badge variant="outline" className="text-[11px] px-1 py-0 bg-primary/10 text-primary border-primary/30">Lead</Badge>
               )}
-              {m.role && <span className="text-[10px] text-muted-foreground truncate">{m.role}</span>}
+              {m.role && <span className="text-[11px] text-muted-foreground truncate">{m.role}</span>}
             </div>
             <div className="flex items-center gap-1 flex-wrap mt-0.5">
               {sourcePills(m).map(p => (
-                <span key={p} className="text-[9px] text-muted-foreground bg-muted/60 rounded px-1 py-px">{p}</span>
+                <span key={p} className="text-[11px] text-muted-foreground bg-muted/60 rounded px-1 py-px">{p}</span>
               ))}
             </div>
           </div>
@@ -235,9 +235,9 @@ export function AccountNextActionsCard({ companyId }: { companyId: string }) {
                 {chipRepeats
                   ? <Link href={actionLink(a)} className="truncate hover:underline">{a.title}</Link>
                   : <span className="truncate">{a.title}</span>}
-                {count > 1 && <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">×{count}</span>}
+                {count > 1 && <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">×{count}</span>}
               </span>
-              <span className="block text-[10px] text-muted-foreground truncate">
+              <span className="block text-[11px] text-muted-foreground truncate">
                 {a.ownerName}
                 {a.ownerName && due && " · "}
                 {due && (overdue
@@ -247,7 +247,7 @@ export function AccountNextActionsCard({ companyId }: { companyId: string }) {
             </div>
             {a.linkLabel && !chipRepeats && (
               <Link href={actionLink(a)} className="shrink-0">
-                <Badge variant="outline" className="text-[9px] hover:bg-muted max-w-[10rem] truncate">{a.linkLabel}</Badge>
+                <Badge variant="outline" className="text-[11px] hover:bg-muted max-w-[10rem] truncate">{a.linkLabel}</Badge>
               </Link>
             )}
           </div>
@@ -275,9 +275,9 @@ export function InvestmentRequirementsCard({ companyId }: { companyId: string })
           <div key={r.id} className="space-y-0.5" data-testid={`account-investment-req-${r.id}`}>
             <div className="flex items-center gap-1.5">
               <span className="text-xs font-medium truncate">{r.name}</span>
-              {r.status && <Badge variant="outline" className="text-[9px] px-1 py-0">{r.status}</Badge>}
+              {r.status && <Badge variant="outline" className="text-[11px] px-1 py-0">{r.status}</Badge>}
             </div>
-            <div className="text-[10px] text-muted-foreground space-y-px">
+            <div className="text-[11px] text-muted-foreground space-y-px">
               {r.use && r.use.length > 0 && <span className="block truncate">Use: {r.use.join(", ")}</span>}
               {r.size && r.size.length > 0 && <span className="block truncate">Size: {r.size.join(", ")}</span>}
               {r.locations && r.locations.length > 0 && <span className="block truncate">Locations: {r.locations.join(", ")}</span>}
@@ -349,36 +349,36 @@ export function AccountFolderTreeCard({ companyId }: { companyId: string }) {
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground flex-wrap">
           <FolderTree className="w-3.5 h-3.5" /> Folder tree
-          <Badge className="text-[9px] px-1.5 bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0">{data.summary.bound} bound</Badge>
-          <Badge className="text-[9px] px-1.5 bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300 border-0">{data.summary.matched} matched</Badge>
-          <Badge className="text-[9px] px-1.5 bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border-0">{data.summary.missing} missing</Badge>
+          <Badge className="text-[11px] px-1.5 bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0">{data.summary.bound} bound</Badge>
+          <Badge className="text-[11px] px-1.5 bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300 border-0">{data.summary.matched} matched</Badge>
+          <Badge className="text-[11px] px-1.5 bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border-0">{data.summary.missing} missing</Badge>
           {data.summary.conflicts > 0 && (
-            <Badge className="text-[9px] px-1.5 bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300 border-0">{data.summary.conflicts} conflict{data.summary.conflicts === 1 ? "" : "s"}</Badge>
+            <Badge className="text-[11px] px-1.5 bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300 border-0">{data.summary.conflicts} conflict{data.summary.conflicts === 1 ? "" : "s"}</Badge>
           )}
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-1">
         {data.enumeration.warnings.map((w, i) => (
-          <p key={i} className="text-[10px] text-amber-600 flex items-center gap-1">
+          <p key={i} className="text-[11px] text-amber-600 flex items-center gap-1">
             <AlertTriangle className="w-3 h-3 shrink-0" /> {w}
           </p>
         ))}
         <div className="max-h-72 overflow-y-auto space-y-px">
           {shown.map((r, i) => (
             <div key={`${r.ownerKind}-${r.ownerId}-${r.logicalKey}-${i}`} className="flex items-center gap-1.5 py-0.5" data-testid={`folder-tree-row-${r.logicalKey}`}>
-              <Badge className={`text-[9px] px-1.5 shrink-0 ${INV_STATUS_STYLE[r.status]}`}>{r.status}</Badge>
+              <Badge className={`text-[11px] px-1.5 shrink-0 ${INV_STATUS_STYLE[r.status]}`}>{r.status}</Badge>
               <span className="text-[11px] truncate flex-1" title={r.physicalName || r.displayName}>
                 {r.displayName}
                 {r.ownerKind !== "company" && <span className="text-muted-foreground"> · {r.ownerLabel}</span>}
               </span>
               {r.physicalName && r.physicalName !== r.displayName && (
-                <span className="text-[9px] text-muted-foreground truncate max-w-[8rem]" title={r.physicalName}>→ {r.physicalName}</span>
+                <span className="text-[11px] text-muted-foreground truncate max-w-[8rem]" title={r.physicalName}>→ {r.physicalName}</span>
               )}
             </div>
           ))}
         </div>
         {conflicts.length > 0 && (
-          <p className="text-[10px] text-red-600 pt-1 border-t">
+          <p className="text-[11px] text-red-600 pt-1 border-t">
             {conflicts.length} folder{conflicts.length === 1 ? "" : "s"} match more than one physical folder — resolve the duplicates in SharePoint before running folder setup.
           </p>
         )}

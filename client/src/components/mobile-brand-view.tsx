@@ -412,14 +412,14 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
             <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
               <TrendingUp className="w-3.5 h-3.5" /> Expansion
               {hunter?.expansionScore != null && (
-                <Badge variant="outline" className={`text-[10px] font-mono tabular-nums ${
+                <Badge variant="outline" className={`text-[11px] font-mono tabular-nums ${
                   hunter.expansionScore >= 30 ? "bg-orange-50 text-orange-700 border-orange-200" :
                   hunter.expansionScore >= 20 ? "bg-amber-50 text-amber-700 border-amber-200" :
                   "bg-zinc-50 text-zinc-600 border-zinc-200"}`}>
                   {hunter.expansionScore}/100
                 </Badge>
               )}
-              {!isLandlord && !isAgentFirm && c.rollout_status && <Badge variant="outline" className="text-[10px]">{String(c.rollout_status).replace(/_/g, " ")}</Badge>}
+              {!isLandlord && !isAgentFirm && c.rollout_status && <Badge variant="outline" className="text-[11px]">{String(c.rollout_status).replace(/_/g, " ")}</Badge>}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-2">
@@ -428,7 +428,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
                 {[["UK momentum", hunter.subScores.ukMomentum], ["Capacity", hunter.subScores.capacity], ["Intent", hunter.subScores.intent], ["Engagement", hunter.subScores.engagement]].map(([label, v]: any) => (
                   <div key={label} className="rounded border border-border/60 px-1 py-1">
                     <div className="text-sm font-mono tabular-nums">{v ?? "—"}</div>
-                    <div className="text-[9px] uppercase tracking-wider text-muted-foreground leading-tight">{label}</div>
+                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground leading-tight">{label}</div>
                   </div>
                 ))}
               </div>
@@ -439,7 +439,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
                 {(data.requirements || []).slice(0, 5).map((r: any) => (
                   <div key={r.id} className={`text-xs border-l-2 pl-2 ${String(r.status || "").toLowerCase() === "active" ? "border-l-emerald-400" : "border-l-muted"}`}>
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      {r.status && <Badge variant="outline" className="text-[10px]">{r.status}</Badge>}
+                      {r.status && <Badge variant="outline" className="text-[11px]">{r.status}</Badge>}
                       {(r.size || []).length > 0 && <span className="font-mono tabular-nums text-[11px]">{formatSizeList(r.size)}</span>}
                     </div>
                     {(r.requirement_locations || []).length > 0 && (
@@ -509,7 +509,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
               const body = (
                 <>
                   <div className="flex items-center gap-2 mb-0.5">
-                    <Badge variant="outline" className={`text-[10px] shrink-0 ${typeCls[signalKind(s)] || typeCls.news}`}>
+                    <Badge variant="outline" className={`text-[11px] shrink-0 ${typeCls[signalKind(s)] || typeCls.news}`}>
                       {signalKind(s).replace(/_/g, " ")}
                     </Badge>
                     {s.signal_date && (
@@ -681,7 +681,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
             {data.liveLocations.map((p: any) => (
               <Link key={p.id} href={`/properties/${p.id}`} className="flex items-center justify-between gap-2 p-1.5 rounded border bg-card min-w-0">
                 <span className="text-xs font-medium truncate">{p.name}</span>
-                <Badge variant="outline" className="text-[10px] shrink-0">{p.units} unit{Number(p.units) === 1 ? "" : "s"}</Badge>
+                <Badge variant="outline" className="text-[11px] shrink-0">{p.units} unit{Number(p.units) === 1 ? "" : "s"}</Badge>
               </Link>
             ))}
           </CardContent>

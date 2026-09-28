@@ -163,7 +163,7 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
                       ))}{differs(p) && (
                         // The why lives on hover — "recorded as Leasing — their work
                         // is Tenant Rep" under every name read as working notes.
-                        <Button variant="outline" size="sm" className={`h-5 px-1.5 text-[10px] ${toFix.length > 1 ? "hidden group-hover:inline-flex" : ""}`} disabled={setTeam.isPending}
+                        <Button variant="outline" size="sm" className={`h-5 px-1.5 text-[11px] ${toFix.length > 1 ? "hidden group-hover:inline-flex" : ""}`} disabled={setTeam.isPending}
                           title={p.recordedTeam ? `Recorded as ${p.recordedTeam}; their deals are ${g.team}` : `Their deals are ${g.team}`}
                           onClick={(e) => { e.preventDefault(); e.stopPropagation(); setTeam.mutate([{ id: p.id, team: g.team }]); }} data-testid="button-agent-team-fix">Set team</Button>
                       )}</>} />

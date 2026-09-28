@@ -40,9 +40,9 @@ function InstagramGrid({ companyId }: { companyId: string }) {
       <div className="grid grid-cols-3 gap-1 max-h-[520px] overflow-y-auto pb-1">
         {data.posts.map((p: any, i: number) => (
           <a key={p.url || i} href={p.url} target="_blank" rel="noreferrer" title={p.title || ""} className="aspect-square w-full rounded border border-border/60 overflow-hidden bg-muted relative group block">
-            <div className="absolute inset-0 p-1.5 text-[9px] leading-tight text-muted-foreground overflow-hidden">{(p.title || "").slice(0, 90)}</div>
+            <div className="absolute inset-0 p-1.5 text-[11px] leading-tight text-muted-foreground overflow-hidden">{(p.title || "").slice(0, 90)}</div>
             {p.imageUrl && <img src={`/api/ig-image?u=${encodeURIComponent(p.imageUrl)}`} alt="" className="absolute inset-0 w-full h-full object-cover" loading="lazy" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
-            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-colors flex items-end p-1.5 opacity-0 group-hover:opacity-100"><span className="text-white text-[9px] leading-tight line-clamp-3">{p.title}</span></div>
+            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-colors flex items-end p-1.5 opacity-0 group-hover:opacity-100"><span className="text-white text-[11px] leading-tight line-clamp-3">{p.title}</span></div>
           </a>
         ))}
       </div>
@@ -65,7 +65,7 @@ function ItemList({ items }: { items: FeedItem[] }) {
           <div className="min-w-0 flex-1">
             <a href={item.url} target="_blank" rel="noreferrer" className="text-sm font-medium hover:underline break-words">{item.title}</a>
             <div className="text-[11px] text-muted-foreground tabular-nums flex items-center gap-1.5">
-              {followed && !item.baseline && <span className="rounded-full bg-foreground text-background px-1.5 py-px text-[10px] font-semibold">New</span>}
+              {followed && !item.baseline && <span className="rounded-full bg-foreground text-background px-1.5 py-px text-[11px] font-semibold">New</span>}
               {!item.baseline && day(item.at)}
             </div>
             {item.summary && <p className="text-xs text-muted-foreground line-clamp-2">{item.summary}</p>}
@@ -127,7 +127,7 @@ export function BrandFeedCard({ companyId, canSetUp = false }: { companyId: stri
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Rss className="w-3.5 h-3.5" /> Brand feed
-          {current?.sourceUrl && <a href={current.sourceUrl} target="_blank" rel="noreferrer" className="ml-auto text-[10px] normal-case font-normal hover:text-foreground inline-flex items-center gap-1">Open page <ExternalLink className="w-3 h-3" /></a>}
+          {current?.sourceUrl && <a href={current.sourceUrl} target="_blank" rel="noreferrer" className="ml-auto text-[11px] normal-case font-normal hover:text-foreground inline-flex items-center gap-1">Open page <ExternalLink className="w-3 h-3" /></a>}
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-3">
