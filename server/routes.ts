@@ -2818,6 +2818,18 @@ export async function registerRoutes(
       res.status(500).json({ message: e?.message || "schema drift check failed" });
     }
   });
+  // Which Microsoft Graph application permissions the app's token carries
+  // (roles claim only — nothing secret), to confirm an Azure change landed.
+  app.get("/api/admin/graph-permissions", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { getAppGraphToken } = await import("./microsoft");
+      const token = await getAppGraphToken();
+      if (!token) return res.json({ ok: false, message: "No app token" });
+      const claims = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+      res.json({ ok: true, appId: claims.appid, tenant: claims.tid, roles: (claims.roles || []).sort() });
+    } catch (e: any) { res.status(500).json({ message: e?.message }); }
+  });
+
   // What the database is doing right now and who is waiting on whom — for
   // pages that hang on one query (Ardent's page, 2026-09-28). Read-only.
   app.get("/api/admin/db-activity", requireAuth, requireAdmin, async (_req, res) => {
