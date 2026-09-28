@@ -5168,6 +5168,15 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
           await runCompaniesHouseFixes();
         } catch (e: any) { console.error("[record-fixes] failed:", e?.message); }
       }, 50000);
+      // Diary viewings captured before brand-from-subject, property aliases
+      // and the inspection skip — rematched from stored invitation details
+      // once, flagged (Woody, 2026-09-28).
+      setTimeout(async () => {
+        try {
+          const { runViewingRematch } = await import("./viewing-rematch");
+          await runViewingRematch();
+        } catch (e: any) { console.error("[viewing-rematch] failed:", e?.message); }
+      }, 60000);
       // Planned openings from brands' opening signals onto their store maps
       // — once for the backlog; new signals are read when a brand is viewed.
       setTimeout(async () => {

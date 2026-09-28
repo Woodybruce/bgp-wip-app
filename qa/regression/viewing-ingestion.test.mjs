@@ -79,7 +79,7 @@ test('inspections, contractor visits and unclassified tours never automatically 
   for (const subject of ['Site inspection', 'Contractor viewing', 'Fire safety viewing', 'Site tour']) assert.equal(matching.isLeasingViewing(subject), false);
 });
 
-function ingestionHarness({ rows = [], tracker = units, contacts = [agent], links = [link()], failWrite = false } = {}) {
+function ingestionHarness({ rows = [], tracker = units, contacts = [agent], links = [link()], failWrite = false, properties = [], brands = [] } = {}) {
   let stored = structuredClone(rows);
   let next = 1;
   let snapshot;
@@ -89,7 +89,9 @@ function ingestionHarness({ rows = [], tracker = units, contacts = [agent], link
   const pool = {
     async query(sql, args) {
       calls.push(sql);
-      if (sql.includes('FROM available_units')) return { rows: tracker.map(unit => ({ id: unit.id, unit_name: unit.unitName, property_id: unit.propertyId, property_name: unit.propertyName })) };
+      if (sql.includes('FROM available_units')) return { rows: tracker.map(unit => ({ id: unit.id, unit_name: unit.unitName, property_id: unit.propertyId, property_name: unit.propertyName, property_aliases: unit.propertyAliases || null })) };
+      if (sql.includes('FROM crm_properties WHERE')) return { rows: properties };
+      if (sql.includes('FROM crm_companies') && sql.includes("company_type ILIKE 'tenant%'")) return { rows: brands };
       if (sql.includes('SELECT booking_id, calendar_event_id')) return { rows: stored.filter(row => args[0].includes(row.booking_id || row.calendar_event_id)) };
       if (sql.includes('FROM users')) return { rows: owners };
       if (sql.includes('FROM crm_contacts')) return { rows: contacts.filter(person => args[0].includes(person.email)) };
@@ -114,6 +116,10 @@ function ingestionHarness({ rows = [], tracker = units, contacts = [agent], link
           if (sql.startsWith('SELECT * FROM unit_viewings')) return { rows: stored.filter(row => row.booking_id === args[0] || row.calendar_event_id === args[0]) };
           if (sql.includes("status = 'cancelled'")) {
             stored.filter(row => (row.booking_id === args[0] || row.calendar_event_id === args[0]) && !row.deleted_at).forEach(row => { row.booking_id = args[0]; row.status = 'cancelled'; });
+            return { rows: [] };
+          }
+          if (sql.includes("SET status='not_leasing'")) {
+            stored.filter(row => args[0].includes(row.id)).forEach(row => { row.status = 'not_leasing'; row.source_details = { ...(row.source_details || {}), autoNotLeasing: true }; });
             return { rows: [] };
           }
           if (failWrite) throw new Error('Synthetic write failure');
@@ -210,15 +216,83 @@ test('manually confirmed ambiguous events stay resolved and tombstones stop cale
   assert.ok(h.rows[0].deleted_at);
 });
 
-test('legacy unconfirmed employer-as-brand entries are reevaluated while inspections await leasing classification', async () => {
+test('legacy unconfirmed employer-as-brand entries are reevaluated; inspections are not saved as viewings', async () => {
   const h = ingestionHarness({ rows: [{ id: 'old', calendar_event_id: 'booking-1', unit_id: 'u1', company_id: 'agency', status: 'scheduled', source_details: {} }] });
   await h.run();
   assert.equal(h.rows[0].company_id, 'brand');
   assert.equal(h.rows[0].booking_id, 'booking-1');
   const inspection = ingestionHarness();
-  await inspection.run(invitation({ subject: 'Inspection Brent Cross Unit 1' }));
-  assert.equal(inspection.rows[0].details_confirmed_at, null);
+  assert.equal(await inspection.run(invitation({ subject: 'Roehampton Sports Ground Estate Inspection' })), 0);
+  assert.equal(inspection.rows.length, 0);
   assert.ok(inspection.module.looksLikeViewing('Inspection'), 'historical broad calendar classification remains supported');
+});
+
+test('an untouched diary capture of an inspection closes as not_leasing; confirmed rows are never closed', async () => {
+  const base = { calendar_event_id: 'booking-1', source: 'diary', unit_id: null, company_id: null, outcome: null, source_details: {} };
+  const h = ingestionHarness({ rows: [{ ...base, id: 'open', status: 'scheduled', details_confirmed_at: null }] });
+  await h.run(invitation({ subject: 'Roehampton Sports Ground Estate Inspection' }));
+  assert.equal(h.rows[0].status, 'not_leasing');
+  assert.equal(h.rows[0].source_details.autoNotLeasing, true);
+  const confirmed = ingestionHarness({ rows: [{ ...base, id: 'kept', status: 'scheduled', details_confirmed_at: new Date(), unit_id: 'u1', company_id: 'brand' }] });
+  await confirmed.run(invitation({ subject: 'Roehampton Sports Ground Estate Inspection' }));
+  assert.equal(confirmed.rows[0].status, 'scheduled');
+  const reverted = ingestionHarness({ rows: [{ ...base, id: 'back', status: 'scheduled', details_confirmed_at: null, source_details: { autoNotLeasing: true } }] });
+  await reverted.run(invitation({ subject: 'Roehampton Sports Ground Estate Inspection' }));
+  assert.equal(reverted.rows[0].status, 'scheduled', 'a row moved back from not_leasing by hand is not closed again');
+});
+
+const brixton = [
+  { id: 'bv1', unitName: 'Unit 12', propertyId: 'bv', propertyName: 'Brixton Village', propertyAliases: ['Brixton Market'] },
+  { id: 'bv2', unitName: 'Unit 40', propertyId: 'bv', propertyName: 'Brixton Village', propertyAliases: ['Brixton Market'] },
+  { id: 'bh1', unitName: 'Studio 3', propertyId: 'bh', propertyName: 'Brixton Hill Studios' },
+  { id: 'bs1', unitName: 'Unit A', propertyId: 'bs', propertyName: 'Brixton Station Road' },
+  { id: 'mr1', unitName: 'Unit 7', propertyId: 'mr', propertyName: 'Market Row' },
+];
+
+test('property aliases and multi-word names match anywhere; the subject outranks the location', () => {
+  const market = matching.matchViewingUnits('Brixton market viewing Bourne', brixton);
+  assert.deepEqual(market.property, { id: 'bv', name: 'Brixton Village' });
+  assert.deepEqual(market.units, []);
+  assert.deepEqual(market.issues, ['Choose which tracker units are being viewed']);
+  const gp = matching.matchViewingUnits('GP x Brixton Village Viewing', brixton, { location: 'Meet outside the Market Row entrance on Electric Road' });
+  assert.equal(gp.property?.id, 'bv');
+  assert.equal(matching.matchViewingUnits('Viewing', brixton, { location: 'Market Row entrance' }).property?.id, 'mr', 'location is used when the subject names no property');
+  assert.deepEqual(matching.matchViewingUnits('Brixton Village Unit 12 viewing', brixton).units.map(unit => unit.id), ['bv1']);
+  const other = matching.matchViewingUnits('Viewing at Coldharbour Works', brixton, { properties: [{ id: 'cw', name: 'Coldharbour Works' }, { id: 'lone', name: 'Works' }] });
+  assert.deepEqual(other.property, { id: 'cw', name: 'Coldharbour Works' }, 'a property without tracker units is still named');
+  assert.deepEqual(matching.propertyAliasList(['A', 1, ' ']), ['A']);
+  assert.deepEqual(matching.propertyAliasList('Brixton Market'), ['Brixton Market']);
+});
+
+test('the brand named in the invitation is used only when attendees give none, and only when exactly one matches', () => {
+  const index = matching.buildViewingBrandIndex([
+    { id: 'goyard', name: 'Goyard' }, { id: 'market', name: 'Market' }, { id: 'bv-brand', name: 'Brixton Village' },
+    { id: 'gp', name: 'General Projects', domains: ['https://www.generalprojects.com/'] }, { id: 'bgp', name: 'Bruce Gillingham Pollard' },
+    { id: 'pret', name: 'Pret A Manger' }, { id: 'pret-short', name: 'Pret' },
+  ], ['Brixton Village', 'Brixton Market']);
+  assert.deepEqual(matching.inferViewingBrand('Goyard viewing', [], index), { brandId: 'goyard', brandName: 'Goyard', reason: 'brand_from_invitation' });
+  assert.equal(matching.inferViewingBrand('Brixton market viewing', [], index), null, 'common words and property names are not brands');
+  assert.equal(matching.inferViewingBrand('Goyardine viewing', [], index), null, 'whole words only');
+  assert.equal(matching.inferViewingBrand('Goyard and Pret A Manger viewing', [], index), null, 'two brands named is a guess');
+  assert.equal(matching.inferViewingBrand('Pret A Manger viewing', [], index)?.brandId, 'pret', 'the longer name wins over one it contains');
+  assert.equal(matching.inferViewingBrand('Bruce Gillingham Pollard viewing', [], index), null);
+  assert.deepEqual(matching.inferViewingBrand('GP x Brixton Village Viewing', ['a@generalprojects.com', 'b@reedwatts.com'], index), { brandId: 'gp', brandName: 'General Projects', reason: 'brand_from_domain' });
+  assert.equal(matching.inferViewingBrand('Goyard viewing', [], index, ['other']), null, 'attendee candidates restrict the choice');
+});
+
+test('calendar capture takes the brand from the subject and records the named property', async () => {
+  const h = ingestionHarness({ tracker: brixton, brands: [{ id: 'goyard', name: 'Goyard', domain: null, domain_url: null, website: null }] });
+  await h.run(invitation({ subject: 'Goyard viewing', location: null, organizer: { emailAddress: { address: 'woody@brucegillinghampollard.com' } }, attendees: [] }));
+  assert.equal(h.rows[0].company_id, 'goyard');
+  assert.equal(h.rows[0].company_name, 'Goyard');
+  assert.equal(h.rows[0].source_details.brandReason, 'brand named in the invitation');
+  assert.equal(h.rows[0].details_confirmed_at, null);
+  assert.ok(h.rows[0].source_details.issues.some(issue => /named in the invitation/.test(issue)));
+  const bv = ingestionHarness({ tracker: brixton });
+  await bv.run(invitation({ iCalUId: 'booking-2', subject: 'Brixton market viewing Bourne', location: null }));
+  assert.equal(bv.rows[0].unit_id, null);
+  assert.equal(bv.rows[0].source_details.sourcePropertyId, 'bv');
+  assert.equal(bv.rows[0].source_details.sourcePropertyName, 'Brixton Village');
 });
 
 test('captured events remain reviewable if renamed away from viewing; save failures roll back and surface', async () => {

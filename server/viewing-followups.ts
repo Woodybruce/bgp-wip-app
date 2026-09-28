@@ -1,5 +1,5 @@
 import { calendarDateValue } from "../shared/calendar-date";
-import { viewingMissingDetails, viewingNeedsOutcome, type ViewingStatus } from "../shared/viewing-workflow";
+import { viewingMissingDetails, viewingNeedsOutcome, viewingWhy, type ViewingStatus } from "../shared/viewing-workflow";
 import { VIEWING_FOLLOWUP_SCHEMA_SQL } from "./viewing-followups-schema";
 
 interface Queryable { query(text: string, values?: any[]): Promise<{ rows: any[]; rowCount?: number | null }> }
@@ -14,10 +14,11 @@ export interface FollowupViewing {
   createdAt?: string | Date | null; deletedAt?: string | Date | null;
   companyName?: string | null; unitName?: string | null; propertyName?: string | null;
   propertyId?: string | null; ownerName?: string | null; ownerEmail?: string | null; ownerActive?: boolean | null;
+  sourceDetails?: { subject?: string; issues?: string[]; sourcePropertyName?: string | null; [key: string]: unknown } | null;
 }
 export interface ViewingFollowupDecision {
   needed: boolean; kind: "details" | "outcome" | "action" | null;
-  dueDate: string | null; title: string; reasons: string[]; emailOverdue: boolean;
+  dueDate: string | null; title: string; reasons: string[]; emailOverdue: boolean; why?: string;
 }
 const SOURCE = "viewing_followup";
 const REF_PREFIX = "viewing_followup:";
@@ -59,6 +60,23 @@ export function placeContext(parts: Array<string | null | undefined>): string {
   }).join(" · ");
 }
 
+// "Confirm viewing details" alone told Woody nothing (2026-09-28): with no
+// tracker unit linked, the task names the calendar invitation he'd recognise
+// ("Goyard viewing", "GP x Brixton Village") and its date. A trailing
+// "viewing" is dropped only when enough of the subject is left to read.
+export function viewingSubjectLabel(subject: string | null | undefined): string {
+  let label = (subject || "").replace(/\s+/g, " ").trim();
+  while (/^(re|fw|fwd|accepted|tentative|declined|updated|canceled|cancelled|updated invitation|invitation)\s*:\s*/i.test(label)) label = label.replace(/^[^:]*:\s*/, "");
+  label = label.replace(/^[\s\-–—:|·]+|[\s\-–—:|·]+$/g, "");
+  const stripped = label.replace(/[\s\-–—:|·]+viewing$/i, "");
+  if (stripped !== label && stripped.split(" ").length >= 2) label = stripped;
+  return label.length > 60 ? `${label.slice(0, 59).trimEnd()}…` : label;
+}
+const shortDate = (date: string | null) => date ? new Date(`${date}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }) : "";
+// Detail prompts for viewings this old with no unit or brand are noise; they
+// stay in the Viewings board's needs-review list (Woody, 2026-09-28).
+const STALE_DETAILS_DAYS = 45;
+
 export function viewingFollowupDecision(viewing: FollowupViewing, now = new Date()): ViewingFollowupDecision {
   const empty: ViewingFollowupDecision = { needed: false, kind: null, dueDate: null, title: "", reasons: [], emailOverdue: false };
   if (viewing.deletedAt || ["cancelled", "no_show", "not_leasing"].includes(viewing.status)) return empty;
@@ -66,10 +84,13 @@ export function viewingFollowupDecision(viewing: FollowupViewing, now = new Date
   const date = calendarDateValue(viewing.viewingDate);
   const missing = viewingMissingDetails(viewing);
   if (!viewing.detailsConfirmedAt) missing.push("Review and confirm the booking details");
-  const context = placeContext([viewing.companyName, viewing.unitName, viewing.propertyName]);
+  const propertyName = viewing.propertyName || viewing.sourceDetails?.sourcePropertyName || null;
+  let context = placeContext([viewing.companyName, viewing.unitName, propertyName]);
+  if (!viewing.unitId) context = [viewingSubjectLabel(viewing.sourceDetails?.subject) || context, shortDate(date)].filter(Boolean).join(" · ");
   let kind: ViewingFollowupDecision["kind"] = null, dueDate: string | null = null;
   let reasons: string[] = [];
   if (missing.length) {
+    if (date && (!viewing.unitId || !viewing.companyId) && date < addDays(today, -STALE_DETAILS_DAYS)) return empty;
     kind = "details"; reasons = missing;
     const created = viewing.createdAt ? new Date(viewing.createdAt) : now;
     dueDate = Number.isFinite(created.getTime()) ? londonDay(created) : today;
@@ -81,19 +102,23 @@ export function viewingFollowupDecision(viewing: FollowupViewing, now = new Date
     reasons = [viewing.nextAction.trim(), "Complete the action, then clear or move its follow-up date"];
   }
   if (!kind || !dueDate) return empty;
+  const why = kind === "details" ? viewingWhy([...(viewing.sourceDetails?.issues || []), ...missing], { ...viewing, propertyName }).join(" · ")
+    : kind === "outcome" ? "the viewing date has passed and no outcome is recorded" : "its follow-up date has arrived";
   const reminderFrom = kind === "outcome" && date ? londonInstant(date, viewing.viewingTime || "12:00") : londonInstant(dueDate, "09:00");
-  return { needed: true, kind, dueDate, reasons,
+  return { needed: true, kind, dueDate, reasons, why: why ? why[0].toUpperCase() + why.slice(1) : "",
     title: `${kind === "details" ? "Confirm viewing details" : kind === "outcome" ? "Log viewing outcome" : "Follow up viewing"}${context ? ` — ${context}` : ""}`.slice(0, 300),
     emailOverdue: now.getTime() - reminderFrom >= 2 * DAY_MS,
   };
 }
 
+// source_details via to_jsonb so a table without that column reads NULL.
 const VIEWING_SQL = `SELECT v.id, v.unit_id AS "unitId", v.company_id AS "companyId", v.contact_id AS "contactId",
  v.agent_contact_id AS "agentContactId", v.owner_user_id AS "ownerUserId", v.viewing_date AS "viewingDate",
  v.viewing_time AS "viewingTime", v.status, v.outcome, v.details_confirmed_at AS "detailsConfirmedAt",
  v.next_action AS "nextAction", v.follow_up_date AS "followUpDate", v.created_at AS "createdAt", v.deleted_at AS "deletedAt",
  v.company_name AS "companyName", au.unit_name AS "unitName", p.id AS "propertyId", p.name AS "propertyName",
- u.name AS "ownerName", u.email AS "ownerEmail", u.is_active AS "ownerActive"
+ u.name AS "ownerName", u.email AS "ownerEmail", u.is_active AS "ownerActive",
+ to_jsonb(v) -> 'source_details' AS "sourceDetails"
  FROM unit_viewings v LEFT JOIN available_units au ON au.id = v.unit_id
  LEFT JOIN crm_properties p ON p.id = au.property_id LEFT JOIN users u ON u.id = v.owner_user_id`;
 
@@ -130,7 +155,7 @@ export async function reconcileViewingFollowup(viewingId: string, options: { db?
       result.resolved += closed.rows.length;
     } else {
       const activeDecision = decision as ViewingFollowupDecision;
-      const description = [...activeDecision.reasons, "", `Open the viewing: /available?tab=viewings&viewingId=${encodeURIComponent(viewingId)}`].join("\n");
+      const description = [...(activeDecision.why ? [`Why: ${activeDecision.why}`, ""] : []), ...activeDecision.reasons, "", `Open the viewing: /available?tab=viewings&viewingId=${encodeURIComponent(viewingId)}`].join("\n");
       const dueDate = `${activeDecision.dueDate}T12:00:00.000Z`;
       if (tasks[0]) {
         result.taskId = tasks[0].id;

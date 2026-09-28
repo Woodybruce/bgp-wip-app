@@ -49,3 +49,23 @@ test('48-hour threshold uses the UK viewing time, including summer time', () => 
   assert.equal(decision(row, '2026-09-16T12:59:00Z').emailOverdue, false);
   assert.equal(decision(row, '2026-09-16T13:00:00Z').emailOverdue, true);
 });
+
+test('details tasks with nothing linked are titled from the calendar subject and date, with one plain Why line', () => {
+  const bare = { unitId: null, companyId: null, contactId: null, detailsConfirmedAt: null, unitName: null, propertyName: null, companyName: null };
+  const goyard = decision({ ...bare, viewingDate: '2026-06-09', createdAt: '2026-06-01T09:00:00Z', sourceDetails: { subject: 'Goyard viewing', issues: ['Choose which tracker units are being viewed', 'Confirm the brand being represented'] } }, '2026-06-10T10:00:00Z');
+  assert.equal(goyard.title, 'Confirm viewing details — Goyard viewing · 9 Jun');
+  assert.equal(goyard.why, 'No property or tracker unit identified · no brand identified · no brand contact or agent');
+  const gp = decision({ ...bare, viewingDate: '2026-05-22', createdAt: '2026-05-20T09:00:00Z', sourceDetails: { subject: 'RE: GP x Brixton Village Viewing', sourcePropertyName: 'Brixton Village', issues: ['Choose which tracker units are being viewed'] } }, '2026-05-23T10:00:00Z');
+  assert.equal(gp.title, 'Confirm viewing details — GP x Brixton Village · 22 May');
+  assert.ok(gp.why.startsWith('No tracker unit chosen at Brixton Village'));
+  const named = decision({ unitId: null, unitName: null, companyId: 'brand-1', companyName: 'Goyard', detailsConfirmedAt: null, viewingDate: '2026-09-18', sourceDetails: { issues: ['Confirm the brand being represented'] } }, '2026-09-19T10:00:00Z');
+  assert.equal(named.title, 'Confirm viewing details — Goyard · 18 Sept');
+  assert.ok(!named.why.includes('brand'), 'a gap the record has since filled is not listed');
+});
+
+test('details tasks for viewings over 45 days old with no unit or brand are resolved, not kept', () => {
+  const stale = { unitId: null, companyId: null, detailsConfirmedAt: null, viewingDate: '2026-06-09', sourceDetails: { subject: 'Goyard viewing' } };
+  assert.equal(decision(stale, '2026-09-28T10:00:00Z').needed, false);
+  assert.equal(decision({ ...stale, viewingDate: '2026-08-20' }, '2026-09-28T10:00:00Z').kind, 'details');
+  assert.equal(decision({ detailsConfirmedAt: null, viewingDate: '2026-06-09' }, '2026-09-28T10:00:00Z').kind, 'details', 'linked but unconfirmed viewings still ask');
+});

@@ -3,8 +3,8 @@
 import { pool } from "./db";
 import { createHash } from "node:crypto";
 import { viewingMissingDetails } from "@shared/viewing-workflow";
-import { isLeasingViewing, londonViewingDateTime, matchViewingBrand, matchViewingUnits, normalizeViewingEmail, parseGraphDateTime,
-  type ViewingBrandLink, type ViewingBrandMatch, type ViewingContact } from "./viewing-matching";
+import { buildViewingBrandIndex, inferViewingBrand, isLeasingViewing, londonViewingDateTime, matchViewingBrand, matchViewingUnits, normalizeViewingEmail, parseGraphDateTime,
+  propertyAliasList, type ViewingBrandIndex, type ViewingBrandLink, type ViewingBrandMatch, type ViewingContact, type ViewingProperty } from "./viewing-matching";
 
 export interface DiaryEvent {
   id: string;
@@ -35,17 +35,37 @@ function norm(s: string | null | undefined): string {
 
 const londonDateTime = londonViewingDateTime;
 
-interface TrackerUnit { id: string; unitName: string; propertyId: string; propertyName: string }
+interface TrackerUnit { id: string; unitName: string; propertyId: string; propertyName: string; propertyAliases?: string[] }
 
 async function loadTrackerUnits(): Promise<TrackerUnit[]> {
   const r = await pool.query(
-    `SELECT au.id, COALESCE(au.unit_name, '') AS unit_name, au.property_id, p.name AS property_name
+    `SELECT au.id, COALESCE(au.unit_name, '') AS unit_name, au.property_id, p.name AS property_name, p.aliases AS property_aliases
        FROM available_units au
        JOIN crm_properties p ON p.id = au.property_id`
   );
   return r.rows.map((row: any) => ({
     id: row.id, unitName: row.unit_name, propertyId: row.property_id, propertyName: row.property_name || "",
+    propertyAliases: propertyAliasList(row.property_aliases),
   }));
+}
+
+export interface ViewingMatchContext { units: TrackerUnit[]; properties: ViewingProperty[]; brands: ViewingBrandIndex }
+
+// Everything diary matching needs, loaded once per sweep: tracker units, every
+// CRM property (named properties without tracker units, and names a brand must
+// not be mistaken for) and the tenant-brand directory (Woody, 2026-09-28).
+export async function loadViewingMatchContext(): Promise<ViewingMatchContext> {
+  const units = await loadTrackerUnits();
+  const props = await pool.query(`SELECT id, name, aliases FROM crm_properties WHERE COALESCE(TRIM(name), '') <> ''`);
+  const properties: ViewingProperty[] = props.rows.map((row: any) => ({ id: row.id, name: row.name, aliases: propertyAliasList(row.aliases) }));
+  const brands = await pool.query(
+    `SELECT id, name, domain, domain_url, website FROM crm_companies
+      WHERE company_type ILIKE 'tenant%' AND merged_into_id IS NULL AND LENGTH(TRIM(name)) >= 4`);
+  return {
+    units, properties,
+    brands: buildViewingBrandIndex(brands.rows.map((row: any) => ({ id: row.id, name: row.name, domains: [row.domain, row.domain_url, row.website].filter(Boolean) })),
+      properties.flatMap(property => [property.name, ...(property.aliases || [])])),
+  };
 }
 
 function escapeRe(s: string): string {
@@ -168,9 +188,9 @@ function resolveUnitByNameOnly(hay: string, units: TrackerUnit[]): TrackerUnit |
   return matchCount === 1 ? match : null;
 }
 
-async function loadViewingPeople(emails: string[], db: Pick<import("pg").PoolClient, "query"> = pool): Promise<ViewingBrandMatch> {
+async function loadViewingPeople(emails: string[], db: Pick<import("pg").PoolClient, "query"> = pool): Promise<ViewingBrandMatch & { knownEmails: string[] }> {
   const normalized = [...new Set(emails.map(normalizeViewingEmail))];
-  if (!normalized.length) return matchViewingBrand([], [], []);
+  if (!normalized.length) return { ...matchViewingBrand([], [], []), knownEmails: [] };
   const contacts = await db.query<ViewingContact>(
     `SELECT ct.id, ct.name, ct.email, ct.company_id AS "companyId",
             co.name AS "companyName", co.company_type AS "companyType"
@@ -194,17 +214,44 @@ async function loadViewingPeople(emails: string[], db: Pick<import("pg").PoolCli
        FROM crm_requirements_leasing q JOIN crm_companies b ON b.id = q.company_id
       WHERE q.principal_contact_id = ANY($1) AND LOWER(TRIM(COALESCE(q.status, ''))) IN ('', 'active')
         AND b.merged_into_id IS NULL AND b.company_type ILIKE 'Tenant%'`, [contactIds]);
-  return matchViewingBrand(normalized, contacts.rows, links.rows);
+  return { ...matchViewingBrand(normalized, contacts.rows, links.rows), knownEmails: contacts.rows.map(contact => normalizeViewingEmail(contact.email || "")) };
 }
 
-const brandIssueLabels: Record<string, string> = {
+export const brandIssueLabels: Record<string, string> = {
   duplicate_contact_email: "Resolve duplicate CRM contacts using this attendee email",
   unmatched_attendee: "Identify the external attendees not found in the CRM",
   unconfirmed_attendee_role: "Confirm which attendee represents the viewing brand",
   missing_external_contact: "Add a brand contact or representing agent",
   ambiguous_brand: "Confirm the brand: attendee links identify more than one possibility",
   missing_brand: "Confirm the brand being represented",
+  brand_from_invitation: "Check the brand: it was named in the invitation, not matched from an attendee",
+  brand_from_domain: "Check the brand: it was matched from an attendee's email domain",
 };
+
+export const NOT_LEASING_ISSUE = "Confirm that this is a leasing viewing, not an inspection or contractor visit";
+
+// Attendee links first; when they give no brand, the invitation's own words
+// and unknown attendees' email domains (Woody, 2026-09-28). Shared with the
+// one-off rematch so old rows are judged by the same rules.
+export async function matchViewingEvent<P extends { email: string }>(
+  event: { subject: string; location: string; participants: P[] },
+  context: ViewingMatchContext, db: Pick<import("pg").PoolClient, "query"> = pool,
+) {
+  const external = event.participants.filter(person => !person.email.endsWith(BGP_DOMAIN));
+  let brand = await loadViewingPeople(external.map(person => person.email), db);
+  const unitMatch = matchViewingUnits(event.subject, context.units, { location: event.location, properties: context.properties });
+  let brandReason: string | null = null;
+  if (!brand.brandId) {
+    const unknown = external.map(person => person.email).filter(email => !brand.knownEmails.includes(email));
+    const inferred = inferViewingBrand(`${event.subject} ${event.location}`, unknown, context.brands, brand.candidateBrandIds);
+    if (inferred) {
+      brandReason = inferred.reason === "brand_from_invitation" ? "brand named in the invitation" : "brand matched from an attendee's email domain";
+      brand = { ...brand, brandId: inferred.brandId, brandName: inferred.brandName,
+        reasons: [...brand.reasons.filter(reason => reason !== "missing_brand" && reason !== "ambiguous_brand"), inferred.reason] };
+    }
+  }
+  return { external, brand, brandReason, unitMatch };
+}
 
 export async function syncDiaryViewings(events: DiaryEvent[], mailboxEmail: string, window?: { complete: boolean; start: string; end: string }): Promise<number> {
   // Include cancellations even after the title has changed, so old bookings
@@ -214,7 +261,7 @@ export async function syncDiaryViewings(events: DiaryEvent[], mailboxEmail: stri
     `SELECT booking_id, calendar_event_id FROM unit_viewings WHERE booking_id = ANY($1) OR calendar_event_id = ANY($1)`, [eventKeys]);
   const capturedKeys = new Set(captured.rows.map(row => row.booking_id || row.calendar_event_id));
   const candidates = events.filter(event => event.isCancelled || looksLikeViewing(event.subject, event.categories) || capturedKeys.has(event.iCalUId || `cal_${event.id}`));
-  const units = await loadTrackerUnits();
+  const context = await loadViewingMatchContext();
   const owners = await pool.query<{ id: string; email: string }>(
     `SELECT id, email FROM users WHERE LOWER(email) LIKE '%@brucegillinghampollard.com'
       AND COALESCE(is_active, true) = true AND COALESCE(client_view_mode, false) = false`);
@@ -241,19 +288,37 @@ export async function syncDiaryViewings(events: DiaryEvent[], mailboxEmail: stri
         await client.query("COMMIT");
         continue;
       }
+      // Inspections and contractor visits are not saved as viewings; an
+      // untouched diary capture of one is closed as not_leasing so it stops
+      // asking for details. Confirmed or reviewed rows, and ones someone
+      // moved back from not_leasing, keep the usual review path
+      // (Woody, 2026-09-28).
+      const leasing = isLeasingViewing(event.subject, event.categories);
+      if (!leasing) {
+        const live = existing.rows.filter(row => !row.deleted_at);
+        const untouched = live.every(row => row.source === "diary" && !row.details_confirmed_at && !row.outcome_recorded_at
+          && !String(row.outcome || "").trim() && (row.status === "not_leasing" || (row.status === "scheduled" && !row.source_details?.autoNotLeasing)));
+        if (untouched) {
+          const open = live.filter(row => row.status === "scheduled").map(row => row.id);
+          if (open.length) await client.query(`UPDATE unit_viewings SET status='not_leasing', updated_at=NOW(),
+            source_details=COALESCE(source_details,'{}'::jsonb) || '{"autoNotLeasing":true}'::jsonb
+            WHERE id = ANY($1::varchar[]) AND deleted_at IS NULL AND details_confirmed_at IS NULL`, [open]);
+          await client.query("COMMIT");
+          continue;
+        }
+      }
       const participants = [event.organizer?.emailAddress, ...(event.attendees || []).map(attendee => attendee.emailAddress)]
         .filter((person): person is { name?: string; address: string } => !!person?.address)
         .map(person => ({ name: person.name || "", email: normalizeViewingEmail(person.address) }));
-      const external = participants.filter(person => !person.email.endsWith(BGP_DOMAIN));
-      const brand = await loadViewingPeople(external.map(person => person.email), client);
-      const unitMatch = matchViewingUnits(`${event.subject || ""} ${event.location?.displayName || ""}`, units);
+      const { external, brand, brandReason, unitMatch } = await matchViewingEvent(
+        { subject: event.subject || "", location: event.location?.displayName || "", participants }, context, client);
       const organizer = normalizeViewingEmail(event.organizer?.emailAddress?.address || "");
       const owner = owners.rows.find(user => normalizeViewingEmail(user.email) === organizer)
         || owners.rows.find(user => normalizeViewingEmail(user.email) === normalizeViewingEmail(mailboxEmail));
       let date = "", time: string | null = null;
       let sourceStartAt: string | null = null;
       const issues = [...unitMatch.issues, ...brand.reasons.map(reason => brandIssueLabels[reason] || reason)];
-      if (!isLeasingViewing(event.subject, event.categories)) issues.push("Confirm that this is a leasing viewing, not an inspection or contractor visit");
+      if (!leasing) issues.push(NOT_LEASING_ISSUE);
       try {
         if (event.start) {
           ({ date, time } = londonViewingDateTime(event.start));
@@ -269,6 +334,7 @@ export async function syncDiaryViewings(events: DiaryEvent[], mailboxEmail: stri
         mailbox: mailboxEmail, participants, issues, sourceStartAt,
         sourceUnitIds: unitMatch.units.map(unit => unit.id), sourceCompanyId: brand.brandId,
         candidateBrandIds: brand.candidateBrandIds, sourceFingerprint,
+        sourcePropertyId: unitMatch.property?.id || null, sourcePropertyName: unitMatch.property?.name || null, brandReason,
       };
       const changeIssue = "Calendar invitation changed: review the unit, brand and time";
       const sourceChanged = existing.rows.some(row => (row.source_details?.sourceFingerprint && row.source_details.sourceFingerprint !== sourceFingerprint)
@@ -307,7 +373,7 @@ export async function syncDiaryViewings(events: DiaryEvent[], mailboxEmail: stri
         const rowIssues = row?.details_confirmed_at && !sourceChanged ? []
           : [...new Set([...issues, ...viewingMissingDetails(values), ...(sourceChanged ? [changeIssue] : [])])];
         const confirmed = row?.details_confirmed_at && !sourceChanged ? row.details_confirmed_at : (!preserve && !rowIssues.length ? new Date() : null);
-        const details = { ...sourceDetails, ownerMailbox: owners.rows.find(user => user.id === values.ownerUserId)?.email?.toLowerCase() || null, issues: rowIssues };
+        const details = { ...sourceDetails, ...(row?.source_details?.autoNotLeasing ? { autoNotLeasing: true } : {}), ownerMailbox: owners.rows.find(user => user.id === values.ownerUserId)?.email?.toLowerCase() || null, issues: rowIssues };
         const args = [values.unitId, values.companyName, values.contactName, values.contactId, values.companyId,
           values.viewingDate, values.viewingTime, external.map(person => person.name ? `${person.name} <${person.email}>` : person.email).join(", ") || null,
           values.agentContactId, values.ownerUserId, values.requirementId, confirmed, JSON.stringify(details), bookingId];
