@@ -37,6 +37,7 @@ import {
   Map as MapIcon,
   AlertTriangle,
   Plus,
+  MoreHorizontal,
 } from "lucide-react";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
@@ -73,6 +74,7 @@ import { InlineText, InlineLabelSelect, InlineNumber } from "@/components/inline
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { AddressAutocomplete, buildGoogleMapsUrl } from "@/components/address-autocomplete";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import type { CrmProperty, CrmCompany, User, PropertyView } from "@shared/schema";
 import {
@@ -661,6 +663,22 @@ export function PropertyDetail({ id }: { id: string }) {
                   <MessageSquare className="w-3.5 h-3.5" /><span className="hidden sm:inline">Ask ChatBGP</span>
                 </Button>
                 {!isClientViewer && (<>
+                {/* Phones: one ⋯ menu instead of a row of five 44px icon
+                    squares (plus the Street View button) above the address. */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-7 sm:hidden" aria-label="More actions" data-testid="button-property-more"><MoreHorizontal className="w-4 h-4" /></Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuItem onClick={() => setStreetViewExpanded(value => !value)}><ImageIcon className="w-3.5 h-3.5 mr-2" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => navigate(`/image-studio?property=${encodeURIComponent(property.name)}&address=${encodeURIComponent(formatAddress(property.address) || property.name)}&propertyId=${encodeURIComponent(property.id)}`)}><ImageIcon className="w-3.5 h-3.5 mr-2" />Image Studio</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => navigate(`/document-briefs?propertyId=${encodeURIComponent(property.id)}&propertyName=${encodeURIComponent(property.name)}&postcode=${encodeURIComponent(property.postcode || "")}`)}><FileText className="w-3.5 h-3.5 mr-2" />Create document</DropdownMenuItem>
+                    {linkedEvidencePlan && <DropdownMenuItem onClick={() => navigate(`/evidence-plans/${linkedEvidencePlan.id}`)}><MapIcon className="w-3.5 h-3.5 mr-2" />Evidence plan</DropdownMenuItem>}
+                    <DropdownMenuItem onClick={() => setFolderDialogOpen(true)}><FolderTree className="w-3.5 h-3.5 mr-2" />Set Up Folders</DropdownMenuItem>
+                    <DropdownMenuItem className="text-destructive" disabled={deleteMutation.isPending} onClick={() => { if (confirm("Are you sure you want to delete this property?")) deleteMutation.mutate(); }}><Trash2 className="w-3.5 h-3.5 mr-2" />Delete property</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <div className="hidden sm:contents">
                 <Link href={`/image-studio?property=${encodeURIComponent(property.name)}&address=${encodeURIComponent(formatAddress(property.address) || property.name)}&propertyId=${encodeURIComponent(property.id)}`}>
                   <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" data-testid="button-image-studio" title="Image Studio" aria-label="Image Studio">
                     <ImageIcon className="w-3.5 h-3.5" />
@@ -695,6 +713,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </Button>
+                </div>
                 </>)}
               </div>
             </div>
@@ -718,7 +737,9 @@ export function PropertyDetail({ id }: { id: string }) {
             )}
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="property-view-controls"
               title={property.propertyView ? "Saved for this property. Layout changes keep the same records and editing permissions." : suggestedView ? "Suggested from the recorded property use and tenancy information. Choose a layout to keep it fixed." : "No reliable layout suggestion yet — choose one."}>
-              <label className="flex items-center gap-2 min-w-0">Layout
+              {/* Phones: the words go (the selects carry aria-labels) so Layout
+                  and Positioning share one row. */}
+              <label className="flex items-center gap-2 min-w-0 max-sm:flex-1"><span className="max-sm:sr-only">Layout</span>
                 <select aria-label="Property layout" value={property.propertyView || "auto"} disabled={updateMutation.isPending || !pdViewer} className="rounded border bg-background px-2 py-1 text-xs text-foreground min-w-0 w-full sm:w-auto" onChange={event => {
                   const value = event.target.value;
                   updateMutation.mutate({ propertyView: value === "auto" ? null : value as PropertyView }, { onSuccess: () => { setShowFullPage(false); setPhoneSection("overview"); } });
@@ -731,7 +752,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   arcade is read against the luxury destinations). Stored as a
                   property tag; Automatic reads the tags and tenant mix. */}
               {propertyView === "centre" && !isClientViewer && (
-                <label className="flex items-center gap-2 min-w-0" title="Who the Brand gap compares this scheme with and which brands count as a fit. Automatic reads the property's tags and its tenants' brands.">Positioning
+                <label className="flex items-center gap-2 min-w-0 max-sm:flex-1" title="Who the Brand gap compares this scheme with and which brands count as a fit. Automatic reads the property's tags and its tenants' brands."><span className="max-sm:sr-only">Positioning</span>
                   <select aria-label="Scheme positioning" data-testid="property-positioning" value={exactPositioningTag(property.tags) || "auto"} disabled={updateMutation.isPending} className="rounded border bg-background px-2 py-1 text-xs text-foreground min-w-0 w-full sm:w-auto" onChange={event => {
                     const value = event.target.value;
                     updateMutation.mutate({ tags: withPositioningTag(property.tags, value === "auto" ? null : value as SchemePositioning) }, { onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/property", property.id] }) });
@@ -742,7 +763,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 </label>
               )}
               {(propertyView === "building" || propertyView === "multi_let") && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setShowFullPage(previous => !previous); setPhoneSection("overview"); }} data-testid="property-toggle-full-page">{showFullPage ? "Return to simple view" : "Show full page"}</Button>}
-              {!isClientViewer && <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5" onClick={() => setStreetViewExpanded(value => !value)} data-testid="button-expand-street-view"><ImageIcon className="w-3.5 h-3.5" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</Button>}
+              {!isClientViewer && <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 max-sm:hidden" onClick={() => setStreetViewExpanded(value => !value)} data-testid="button-expand-street-view"><ImageIcon className="w-3.5 h-3.5" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</Button>}
             </div>
 
             <div className={`flex flex-wrap gap-1.5 ${simpleLayout ? "" : "lg:hidden"}`} data-testid="property-phone-sections">

@@ -162,7 +162,8 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
       {/* The owner is in the card's Ownership rows just below — not repeated here. */}
       {data.asset_lead && (
         <>
-          <span className="text-muted-foreground/40">·</span>
+          {/* No separator: nothing sits before the lead since the owner moved
+              to the Ownership rows (Canary Wharf read "· Lead Rupert"). */}
           <div className="flex items-center gap-1.5 min-w-0">
             <div className="w-5 h-5 rounded-full bg-muted overflow-hidden flex items-center justify-center text-[9px] font-semibold shrink-0">
               {data.asset_lead.avatar_url ? (

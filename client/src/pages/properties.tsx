@@ -304,7 +304,7 @@ export function InlineEngagement({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type="button" className="flex items-center gap-1 flex-wrap min-h-[20px] max-w-full" data-testid="inline-engagement-trigger">
+        <button type="button" data-no-min-touch className="flex items-center gap-1 flex-wrap min-h-[20px] max-w-full" data-testid="inline-engagement-trigger">
           {current.length === 0 ? (
             <span className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
               <Plus className="w-3 h-3" />
@@ -5114,16 +5114,16 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
                         <p className="text-[11px] text-muted-foreground line-clamp-2 mt-0.5">{article.summary}</p>
                       )}
                       <div className="flex items-center gap-1.5 mt-1">
-                        {article.sourceName && <span className="text-[10px] text-muted-foreground">{article.sourceName}</span>}
+                        {article.sourceName && <span className="text-[11px] text-muted-foreground">{article.sourceName}</span>}
                         {article.publishedAt && (
                           <>
-                            <span className="text-[10px] text-muted-foreground">·</span>
-                            <span className="text-[10px] text-muted-foreground">{newsTimeAgo(article.publishedAt)}</span>
+                            <span className="text-[11px] text-muted-foreground">·</span>
+                            <span className="text-[11px] text-muted-foreground">{newsTimeAgo(article.publishedAt)}</span>
                           </>
                         )}
                         {article.source === "web" && (
                           <>
-                            <span className="text-[10px] text-muted-foreground">·</span>
+                            <span className="text-[11px] text-muted-foreground">·</span>
                             <Globe className="w-2.5 h-2.5 text-muted-foreground" />
                           </>
                         )}

@@ -149,9 +149,9 @@ export function TrackerSummary({ propertyId, propertyIds, variant, tall, propert
     <div className="space-y-2" data-testid="tracker-summary-card">
       <div className="flex items-center justify-between gap-2">
         <div className="text-xs">
-          <span className="font-semibold tabular-nums">{live.length}</span>
+          <span className="font-semibold font-mono tabular-nums">{live.length}</span>
           <span className="text-muted-foreground"> live letting{live.length === 1 ? "" : "s"}</span>
-          {totalSqft > 0 && <span className="text-muted-foreground"> · {totalSqft.toLocaleString()} sq ft</span>}
+          {totalSqft > 0 && <span className="text-muted-foreground"> · <span className="font-mono tabular-nums">{Math.round(totalSqft).toLocaleString("en-GB")}</span> sq ft</span>}
         </div>
         <Link href={trackerHref(propertyId)} className="text-[11px] text-primary hover:underline inline-flex items-center shrink-0">
           Letting Tracker <ChevronRight className="w-3 h-3" />
