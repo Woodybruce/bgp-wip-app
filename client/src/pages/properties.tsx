@@ -968,7 +968,7 @@ export function InlineOwnerLink({
               "Own…" (Woody, 2026-09-28). The name wraps to two lines — a
               single-line truncate cut "335 Ramsbury Oxford…" and "The Office
               Group (TO…" (Woody, 2026-09-28). */}
-          <Badge variant="outline" className="text-[11px] px-2 py-0.5 cursor-pointer hover:bg-muted max-w-full inline-flex flex-wrap items-center" title={`${label}: ${company.name}`}>
+          <Badge variant="outline" className="text-[11px] font-medium text-foreground rounded-full border-border px-2 py-[3px] cursor-pointer hover:bg-muted max-w-full inline-flex flex-wrap items-center" title={`${label}: ${company.name}`}>
             <Building2 className="w-3 h-3 mr-1 text-muted-foreground shrink-0" />
             {roleOnChip && <span className="text-muted-foreground mr-1 whitespace-nowrap shrink-0">{chipLabel || label} ·</span>}
             <span className="min-w-0 max-w-full line-clamp-2 break-words">{company.name}</span>
