@@ -785,10 +785,14 @@ export function trackerUnitLabel(cm: { unitName?: string | null; propertyName?: 
 const LOWERCASE_STYLED_BRANDS = /^(?:wagamama|itsu)$/i;
 // A store named just the brand ("ZARA" on every card) reads as its centre or
 // town from the address instead (Woody, 2026-09-28).
-function storeLocationName(address: unknown): string | null {
+function storeLocationName(address: unknown, brandName?: string | null): string | null {
   const a = address && typeof address === "object" ? address as Record<string, unknown> : null;
+  const flat = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, "");
+  // "Wake The Tiger, 127 Albert Rd, Bristol BS2 0YA" read as "Albert Rd,
+  // Wake The Tiger": the brand segment and the town's postcode tail go.
   const parts = (typeof address === "string" ? address.split(/,\s*/) : a ? [a.street, a.city] : [])
-    .map(p => String(p || "").trim()).filter(p => p && !UNIT_POSTCODE_RE.test(p) && !/^(?:uk|united kingdom|england|scotland|wales|gb)$/i.test(p) && /[a-z]{3}/i.test(p));
+    .map(p => String(p || "").trim().replace(/\s+[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i, "")).filter(p => p && !UNIT_POSTCODE_RE.test(p) && !/^(?:uk|united kingdom|england|scotland|wales|gb)$/i.test(p) && /[a-z]{3}/i.test(p)
+      && !(brandName && flat(p) === flat(String(brandName))));
   const centre = parts.find(p => /\b(?:centre|center|westfield|shopping|mall|retail park|arcade|quays?|outlet|village)\b/i.test(p) && !/^\d/.test(p));
   const town = (a?.city ? String(a.city).trim() : null) || [...parts].reverse().find(p => !/\d/.test(p));
   const street = parts.map(p => p.replace(/^(?:unit\s+)?[\d/-]+[a-z]?\s+/i, "")).find(p => p !== town && UNIT_PLACE_RE.test(p));
@@ -797,7 +801,7 @@ function storeLocationName(address: unknown): string | null {
 export function displayStoreName(name: string | null | undefined, brandName: string | null | undefined, address?: unknown): string {
   const text = String(name || "");
   const flat = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (brandName && flat(text) && flat(text) === flat(String(brandName))) return storeLocationName(address) || String(brandName).trim();
+  if (brandName && flat(text) && flat(text) === flat(String(brandName))) return storeLocationName(address, brandName) || String(brandName).trim();
   if (!/[a-z]/.test(text) || text !== text.toLowerCase()) return text;
   const brand = String(brandName || "").trim().toLowerCase();
   const keepBrand = !!brand && (String(brandName).trim() === brand || LOWERCASE_STYLED_BRANDS.test(brand));

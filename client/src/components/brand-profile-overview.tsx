@@ -186,7 +186,18 @@ export function BrandIdentityControl({ companyId, domain, identity, savedAliases
 
 export type OverviewStore = {
   id: string; name: string; address: unknown; lat: number | null; lng: number | null;
-  country?: string | null; researched_at?: string | null; source_type?: string | null; status?: string | null;
+  country?: string | null; researched_at?: string | null; source_type?: string | null; status?: string | null; notes?: string | null;
+};
+// Where a planned opening came from — shown under the store so the team can
+// weigh it (a live BGP deal beats a news report).
+const plannedSource = (store: OverviewStore): string | null => {
+  if (store.status !== "coming_soon") return null;
+  let notes: any = {};
+  try { notes = JSON.parse(store.notes || "{}"); } catch { /* not JSON */ }
+  if (store.source_type === "bgp_deal") return `BGP deal${notes.bgpDeal?.name ? ` · ${notes.bgpDeal.name}` : ""}`;
+  if (notes.openingSignal?.headline) return `News · ${notes.openingSignal.headline}`;
+  if (store.source_type === "official_website") return "Brand website";
+  return null;
 };
 const storeAddress = (value: unknown) => {
   if (typeof value === "string") return value;
@@ -208,6 +219,9 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
   const maxPage = Math.max(0, Math.ceil(filtered.length / pageSize) - 1);
   const currentPage = Math.min(page, maxPage);
   const visible = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+  const planned = locations.filter(store => store.status === "coming_soon");
+  const trading = locations.filter(store => store.status !== "coming_soon");
+  const pinned = trading.filter(store => store.lat != null && store.lng != null).length;
   const abroadCountries = new Set(stores.filter(store => store.country && store.country !== "GB" && store.status !== "closed").map(store => store.country)).size;
   return (
     <section className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-3" data-testid="brand-stores-board">
@@ -222,9 +236,12 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
               // means the stores haven't been mapped yet.
               // It's the stores mapped so far, not the estate — "40 in the UK"
               // read as Gail's total.
-              locations.length ? `${locations.length} UK store${locations.length === 1 ? "" : "s"} mapped` : reportedTotal ? null : "UK stores not mapped yet",
+              // "4 UK stores mapped" when one had a pin — count the pins, and
+              // planned openings apart from trading stores (Woody, 2026-09-28).
+              trading.length ? `${trading.length} UK store${trading.length === 1 ? "" : "s"}${pinned < trading.length ? ` · ${pinned} on the map` : " mapped"}` : planned.length || reportedTotal ? null : "UK stores not mapped yet",
+              planned.length ? `${planned.length} opening soon` : null,
               abroadCountries ? `${abroadCountries} other countr${abroadCountries === 1 ? "y" : "ies"}` : null,
-              reportedTotal != null && reportedTotal !== locations.length ? `${reportedTotal.toLocaleString()} reported in total` : null,
+              reportedTotal != null && reportedTotal > trading.length ? `${reportedTotal.toLocaleString("en-GB")} reported in total` : null,
             ].filter(Boolean).join(" · ")}
             {velocity && velocity !== 0 ? <span className={`ml-2 text-[11px] ${velocity > 0 ? "text-emerald-700" : "text-red-700"}`}>{velocity > 0 ? "+" : ""}{velocity} in 12m</span> : null}
           </p>
@@ -239,6 +256,7 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
             {visible.map(store => <div key={store.id} className="rounded-lg border border-border p-2.5 text-sm">
               <p className="font-medium break-words">{store.name}</p>
               {store.status === "closed" && <p className="text-xs text-muted-foreground">Closed</p>}
+              {store.status === "coming_soon" && <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-0.5 line-clamp-2" title={plannedSource(store) || undefined}><span className="font-medium">Opening soon</span>{plannedSource(store) ? ` · ${plannedSource(store)}` : ""}</p>}
               <p className="text-[11px] text-muted-foreground mt-1 break-words">{storeAddress(store.address) || "Address not recorded"}</p>
               {store.lat != null && store.lng != null && <a className="inline-flex items-center gap-1 text-[11px] text-primary mt-1" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${store.lat},${store.lng}`)}`} target="_blank" rel="noreferrer"><MapPin className="w-3 h-3" />Open location</a>}
             </div>)}

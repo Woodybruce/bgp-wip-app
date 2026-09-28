@@ -5157,6 +5157,15 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
           await runCompaniesHouseFixes();
         } catch (e: any) { console.error("[record-fixes] failed:", e?.message); }
       }, 50000);
+      // Planned openings from brands' opening signals onto their store maps
+      // — once for the backlog; new signals are read when a brand is viewed.
+      setTimeout(async () => {
+        try {
+          const { backfillOpeningStores, locateWebsiteOnlyStores } = await import("./brand-openings-map");
+          await locateWebsiteOnlyStores();
+          await backfillOpeningStores();
+        } catch (e: any) { console.error("[openings-map] backfill failed:", e?.message); }
+      }, 90000);
       setTimeout(async () => {
         const KEY = "rssapp_curated_ig_feeds_last_run";
         try {

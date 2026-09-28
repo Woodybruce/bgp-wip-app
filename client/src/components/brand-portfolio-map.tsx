@@ -98,6 +98,7 @@ export function BrandPortfolioMap({
       else if (s.tone === "unlinked") colour = "#94a3b8";
       else if (s.status === "closed") colour = "#ef4444";
       else if (s.status === "open")   colour = "#10b981";
+      else if (s.status === "coming_soon") colour = "#3b82f6"; // planned opening
       else                            colour = "#6b7280";
 
       const marker = L.circleMarker([s.lat!, s.lng!], {

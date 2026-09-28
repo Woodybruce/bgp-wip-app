@@ -1126,7 +1126,12 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         // Tag each brand store with the nearest BGP-instructed property
         // within 150m. Lets the brand map render gold dots where BGP is
         // active rather than the generic open/closed colouring.
-        const raw = stores.rows;
+        // Planned openings: BGP's live deals for the brand (staff only), and
+        // opening signals read into sites in the background for next view.
+        const { bgpDealStores, withoutOpenedPlans, syncOpeningStores } = await import("./brand-openings-map");
+        void syncOpeningStores(String(req.params.companyId)).catch((e: any) => console.warn("[openings-map]", e?.message));
+        const dealStores = bpScope ? [] : await bgpDealStores(String(req.params.companyId));
+        const raw = withoutOpenedPlans([...stores.rows, ...dealStores]);
         const withCoords = raw.filter((s: any) => typeof s.lat === "number" && typeof s.lng === "number");
         if (withCoords.length === 0) return raw;
         try {
@@ -1543,7 +1548,14 @@ router.get("/api/brand/:companyId/stores", requireAuth, async (req: Request, res
     );
     const company = (await pool.query("SELECT * FROM crm_companies WHERE id = $1", [req.params.companyId])).rows[0];
     if (!company) return res.status(404).json({ error: "Company not found" });
-    res.json({ stores: rows.filter((store: any) => publishableBrandStore(company, store)) });
+    // Planned openings: BGP's live deals for the brand (staff only), and
+    // opening signals read into sites in the background for the next view.
+    const { bgpDealStores, withoutOpenedPlans, syncOpeningStores } = await import("./brand-openings-map");
+    const { resolveCompanyScope } = await import("./company-scope");
+    const isClient = !!(await resolveCompanyScope(req as any));
+    const deals = isClient ? [] : await bgpDealStores(company.id);
+    void syncOpeningStores(company.id).catch((e: any) => console.warn("[openings-map]", e?.message));
+    res.json({ stores: withoutOpenedPlans([...rows.filter((store: any) => publishableBrandStore(company, store)), ...deals]) });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

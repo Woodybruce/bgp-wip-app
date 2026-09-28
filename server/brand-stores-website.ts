@@ -48,7 +48,34 @@ ${pages.map((p, i) => `[${i + 1}] ${p.url}\n${p.text.slice(0, 18000)}`).join("\n
   return safeParseJSON(result.content.map((b: any) => (b.type === "text" ? b.text : "")).join(""));
 }
 
-export async function storesFromOfficialWebsite(companyId: string, deps: { pages?: (domain: string) => Promise<Array<{ url: string; text: string }>>; ask?: typeof askForStores; geocode?: (items: Array<{ query: string; countryHint: string }>) => Promise<Array<{ lat: number | null; lng: number | null; formattedAddress: string | null }>> } = {}): Promise<{ added: number; uk: number; countries: string[]; reason?: string }> {
+type OfficialPlace = { placeId: string; address: string; lat: number; lng: number };
+
+/** Google Places lookup for website-listed venues with no street address:
+ *  the top match for "name, town" counts only when its listing links to the
+ *  brand's official website. */
+export async function findOfficialPlace(company: any, items: Array<{ name: string; city: string; country: string }>): Promise<Array<OfficialPlace | null>> {
+  const key = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
+  if (!key) return items.map(() => null);
+  const { isOfficialBrandWebsite } = await import("./brand-publishing");
+  const out: Array<OfficialPlace | null> = [];
+  for (const item of items.slice(0, 40)) {
+    try {
+      const brand = String(company.name || "");
+      const query = [item.name.toLowerCase().includes(brand.toLowerCase()) ? "" : brand, item.name, item.city].filter(Boolean).join(" ");
+      const r = await fetch(`https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&region=${item.country.toLowerCase()}&key=${key}`, { signal: AbortSignal.timeout(10_000) });
+      const top = ((await r.json())?.results || [])[0];
+      const loc = top?.geometry?.location;
+      if (!top?.place_id || typeof loc?.lat !== "number") { out.push(null); continue; }
+      const d = await fetch(`https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(top.place_id)}&fields=website&key=${encodeURIComponent(key)}`, { signal: AbortSignal.timeout(10_000) });
+      const website = (await d.json())?.result?.website;
+      out.push(isOfficialBrandWebsite(company, website) ? { placeId: top.place_id, address: top.formatted_address || "", lat: loc.lat, lng: loc.lng } : null);
+    } catch { out.push(null); }
+  }
+  while (out.length < items.length) out.push(null);
+  return out;
+}
+
+export async function storesFromOfficialWebsite(companyId: string, deps: { pages?: (domain: string) => Promise<Array<{ url: string; text: string }>>; ask?: typeof askForStores; geocode?: (items: Array<{ query: string; countryHint: string }>) => Promise<Array<{ lat: number | null; lng: number | null; formattedAddress: string | null }>>; findPlace?: typeof findOfficialPlace } = {}): Promise<{ added: number; uk: number; countries: string[]; reason?: string }> {
   const company = (await pool.query(`SELECT * FROM crm_companies WHERE id=$1`, [companyId])).rows[0];
   if (!company) return { added: 0, uk: 0, countries: [], reason: "Company not found" };
   const identity = getBrandIdentity(company);
@@ -62,10 +89,21 @@ export async function storesFromOfficialWebsite(companyId: string, deps: { pages
   const located = withAddress.length ? await (deps.geocode || (async (items: Array<{ query: string; countryHint: string }>) => (await import("./geocode")).geocodeBatch(items)))(
     withAddress.map(s => ({ query: `${s.address}, ${s.city}`, countryHint: s.country })),
   ).catch(() => [] as Array<{ lat: number | null; lng: number | null; formattedAddress: string | null }>) : [];
+  // No street address on the page ("Dream Factory, Bristol"): find the venue
+  // on Google Places by name + town, and keep it only when the listing links
+  // to the brand's own website. One that is a store already mapped (same
+  // Google place) isn't listed twice (Woody, 2026-09-28: Wake the Tiger's
+  // venues had no address and weren't on the map).
+  const withoutAddress = stores.filter(s => !s.address);
+  const places = withoutAddress.length ? await (deps.findPlace || findOfficialPlace)(company, withoutAddress.map(s => ({ name: s.name, city: s.city, country: s.country }))).catch(() => []) : [];
+  const mappedPlaceIds = new Set((await pool.query(`SELECT place_id FROM brand_stores WHERE brand_company_id=$1 AND source_type <> 'official_website'`, [companyId])).rows.map((r: any) => r.place_id));
   let added = 0;
   const writtenIds: string[] = [];
   for (const s of stores) {
-    const point = s.address ? located[withAddress.indexOf(s)] : null;
+    const place = s.address ? null : places[withoutAddress.indexOf(s)] || null;
+    if (place && mappedPlaceIds.has(place.placeId)) continue;
+    if (place) s.address = place.address;
+    const point = place ? { lat: place.lat, lng: place.lng } : s.address ? located[withAddress.indexOf(s)] : null;
     const placeId = `web:${s.country}:${`${s.name}-${s.city}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 80)}`;
     const written = await pool.query(
       `INSERT INTO brand_stores (brand_company_id, name, address, lat, lng, place_id, status, country, source_type, notes, researched_at, updated_at)
@@ -73,7 +111,7 @@ export async function storesFromOfficialWebsite(companyId: string, deps: { pages
        ON CONFLICT (brand_company_id, place_id) DO UPDATE SET status = EXCLUDED.status, notes = EXCLUDED.notes, address = EXCLUDED.address,
          lat = COALESCE(EXCLUDED.lat, brand_stores.lat), lng = COALESCE(EXCLUDED.lng, brand_stores.lng), researched_at = now(), updated_at = now()
        WHERE brand_stores.source_type = 'official_website'`,
-      [companyId, s.name, [s.address, s.city].filter(Boolean).join(", "), placeId, s.status === "open" ? "open" : "unconfirmed", s.country,
+      [companyId, s.name, s.address && s.address.toLowerCase().includes(s.city.toLowerCase()) ? s.address : [s.address, s.city].filter(Boolean).join(", "), placeId, s.status === "open" ? "open" : "unconfirmed", s.country,
         JSON.stringify({ officialWebsite: { url: s.url, quote: s.quote, status: s.status, fingerprint: identity.fingerprint, checkedAt: new Date().toISOString() } }),
         point?.lat ?? null, point?.lng ?? null]);
     added += written.rowCount || 0;
