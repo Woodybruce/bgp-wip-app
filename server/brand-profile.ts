@@ -222,25 +222,45 @@ export function brandNewsQuery(companyId: string, co: any) {
   return { sql, params };
 }
 
-// Trigram indexes so brand-news name matching doesn't scan every article.
-// Built CONCURRENTLY in the background after boot (the table is large).
+// Trigram indexes so brand-news name matching doesn't scan every article,
+// plus the lookup indexes crm_interactions (1 GB) never had — every brand
+// page scanned the whole email log (Ardent's page took 34s, 2026-09-28).
+// Built CONCURRENTLY on a dedicated connection with no statement timeout:
+// under the pool's 30s limit each build died half-way, was dropped as
+// INVALID next boot and started again, so none past the first ever landed.
+const BACKGROUND_INDEXES: Array<[string, string]> = [
+  ["idx_crm_interactions_company_id", "ON crm_interactions (company_id)"],
+  ["idx_crm_interactions_contact_id", "ON crm_interactions (contact_id)"],
+  ["idx_news_articles_url", "ON news_articles (url)"],
+  ["idx_crm_interactions_participants", "ON crm_interactions USING gin (participants)"],
+  ["idx_news_articles_title_trgm", "ON news_articles USING gin (title gin_trgm_ops)"],
+  ["idx_news_articles_summary_trgm", "ON news_articles USING gin (summary gin_trgm_ops)"],
+  ["idx_news_articles_url_trgm", "ON news_articles USING gin (url gin_trgm_ops)"],
+];
+
 export async function ensureNewsSearchIndexes() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
-  // A deploy mid-build leaves an INVALID index that IF NOT EXISTS would
-  // then skip forever — drop those and build again.
-  const invalid = await pool.query(`SELECT c.relname FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
-    WHERE (c.relname LIKE 'idx_news_articles_%_trgm' OR c.relname = 'idx_crm_interactions_participants') AND NOT i.indisvalid`);
-  for (const row of invalid.rows) await pool.query(`DROP INDEX CONCURRENTLY IF EXISTS "${row.relname}"`);
-  for (const col of ["title", "summary", "url"]) {
-    const t0 = Date.now();
-    await pool.query(`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_news_articles_${col}_trgm ON news_articles USING gin (${col} gin_trgm_ops)`);
-    console.log(`[news-search] ${col} trigram index ready (${Math.round((Date.now() - t0) / 1000)}s)`);
+  const client = await pool.connect();
+  try {
+    await client.query(`SET statement_timeout = 0`);
+    // A deploy mid-build leaves an INVALID index that IF NOT EXISTS would
+    // then skip forever — drop those and build again.
+    const invalid = await client.query(`SELECT c.relname FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+      WHERE c.relname = ANY($1) AND NOT i.indisvalid`, [BACKGROUND_INDEXES.map(([name]) => name)]);
+    for (const row of invalid.rows) await client.query(`DROP INDEX CONCURRENTLY IF EXISTS "${row.relname}"`);
+    for (const [name, definition] of BACKGROUND_INDEXES) {
+      const t0 = Date.now();
+      try {
+        await client.query(`CREATE INDEX CONCURRENTLY IF NOT EXISTS ${name} ${definition}`);
+        console.log(`[indexes] ${name} ready (${Math.round((Date.now() - t0) / 1000)}s)`);
+      } catch (e: any) {
+        console.error(`[indexes] ${name} failed:`, e?.message);
+      }
+    }
+  } finally {
+    await client.query(`RESET statement_timeout`).catch(() => {});
+    client.release();
   }
-  // A contact's email history is looked up by their address in the
-  // participants list (the sync files each email under one contact only).
-  const t0 = Date.now();
-  await pool.query(`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_crm_interactions_participants ON crm_interactions USING gin (participants)`);
-  console.log(`[news-search] interactions participants index ready (${Math.round((Date.now() - t0) / 1000)}s)`);
 }
 
 // Exactly one saved contact at the brand with no email, whose letters-only

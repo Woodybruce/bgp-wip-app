@@ -2823,12 +2823,18 @@ export async function registerRoutes(
         `SELECT pid, state, wait_event_type, wait_event, pg_blocking_pids(pid) AS blocked_by,
                 EXTRACT(EPOCH FROM (NOW() - xact_start))::int AS xact_secs,
                 EXTRACT(EPOCH FROM (NOW() - query_start))::int AS query_secs,
-                LEFT(regexp_replace(query, '\s+', ' ', 'g'), 300) AS query
+                LEFT(regexp_replace(query, '[[:space:]]+', ' ', 'g'), 300) AS query
            FROM pg_stat_activity
           WHERE datname = current_database() AND pid <> pg_backend_pid()
             AND (state <> 'idle' OR xact_start IS NOT NULL)
           ORDER BY xact_start NULLS LAST LIMIT 60`);
-      res.json(r.rows);
+      const table = typeof _req.query.table === "string" && /^[a-z_]{1,63}$/.test(_req.query.table) ? _req.query.table : null;
+      if (!table) return res.json(r.rows);
+      const indexes = await pool.query(
+        `SELECT c.relname AS index, i.indisvalid AS valid, pg_get_indexdef(i.indexrelid) AS def, pg_size_pretty(pg_relation_size(i.indexrelid)) AS size
+           FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE i.indrelid = $1::regclass`, [table]);
+      const size = await pool.query(`SELECT pg_size_pretty(pg_total_relation_size($1::regclass)) AS total, (SELECT reltuples::bigint FROM pg_class WHERE oid = $1::regclass) AS rows`, [table]);
+      res.json({ activity: r.rows, table, ...size.rows[0], indexes: indexes.rows });
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "db activity failed" });
     }
