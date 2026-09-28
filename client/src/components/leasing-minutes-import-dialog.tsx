@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { SharePointCandidate } from "@/components/sharepoint-file-picker";
 
 export type MinutesSource = { kind: "file"; file: File } | { kind: "sharepoint"; candidate: SharePointCandidate };
@@ -28,19 +29,20 @@ const FIELD_LABELS: Record<string, string> = {
   updates: "updates", financial_notes: "figures", lease_expiry: "expiry", lease_break: "break",
 };
 
-async function runImport(propertyId: string, source: MinutesSource, dryRun: boolean): Promise<MinutesResult> {
+async function runImport(propertyId: string, source: MinutesSource, dryRun: boolean, keepStatus: boolean): Promise<MinutesResult> {
   let r: Response;
   if (source.kind === "file") {
     const fd = new FormData();
     fd.append("file", source.file);
     fd.append("dryRun", String(dryRun));
+    fd.append("keepStatus", String(keepStatus));
     r = await fetch(`/api/leasing-schedule/property/${propertyId}/minutes/import-excel`, { method: "POST", headers: getAuthHeaders(), body: fd, credentials: "include" });
   } else {
     const c = source.candidate;
     r = await fetch(`/api/leasing-schedule/property/${propertyId}/minutes/import-excel-from-sharepoint`, {
       method: "POST", credentials: "include",
       headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-      body: JSON.stringify({ driveId: c.driveId, itemId: c.itemId, webUrl: c.webUrl, dryRun }),
+      body: JSON.stringify({ driveId: c.driveId, itemId: c.itemId, webUrl: c.webUrl, dryRun, keepStatus }),
     });
   }
   const body = await r.json().catch(() => ({}));
@@ -52,9 +54,11 @@ export function LeasingMinutesImportDialog({ propertyId, source, onClose }: { pr
   const { toast } = useToast();
   const [preview, setPreview] = useState<MinutesResult | null>(null);
   const [showAll, setShowAll] = useState(false);
-  const previewRun = useMutation({ mutationFn: (s: MinutesSource) => runImport(propertyId, s, true), onSuccess: setPreview });
+  // An older week's minutes can lag the deals; untick to leave statuses alone.
+  const [moveStatus, setMoveStatus] = useState(true);
+  const previewRun = useMutation({ mutationFn: (s: MinutesSource) => runImport(propertyId, s, true, !moveStatus), onSuccess: setPreview });
   const apply = useMutation({
-    mutationFn: (s: MinutesSource) => runImport(propertyId, s, false),
+    mutationFn: (s: MinutesSource) => runImport(propertyId, s, false, !moveStatus),
     onSuccess: (out) => {
       for (const key of [["/api/leasing-schedule/property", propertyId], ["/api/leasing-schedule"], ["/api/properties", propertyId, "schemes"], ["/api/tenancy-schedule/property", propertyId], ["/api/available-units"]]) {
         queryClient.invalidateQueries({ queryKey: key });
@@ -67,7 +71,8 @@ export function LeasingMinutesImportDialog({ propertyId, source, onClose }: { pr
   useEffect(() => {
     setPreview(null); setShowAll(false);
     if (source) previewRun.mutate(source);
-  }, [source]);
+  }, [source, moveStatus]);
+  useEffect(() => { setMoveStatus(true); }, [source]);
 
   const changed = (preview?.rows || []).filter(r => r.action !== "unchanged");
   const listed = showAll ? changed : changed.slice(0, 40);
@@ -89,6 +94,13 @@ export function LeasingMinutesImportDialog({ propertyId, source, onClose }: { pr
             <p className="text-sm" data-testid="minutes-counts">
               <span className="font-mono tabular-nums">{preview.counts.create}</span> new units · <span className="font-mono tabular-nums">{preview.counts.update}</span> updated · <span className="font-mono tabular-nums">{preview.counts.unchanged}</span> unchanged · <span className="font-mono tabular-nums">{preview.counts.statusChanges}</span> status moves
             </p>
+            {(preview.counts.statusChanges > 0 || !moveStatus) && (
+              <label className="flex items-center gap-2 text-sm" data-testid="minutes-move-status">
+                <Checkbox checked={moveStatus} onCheckedChange={(v) => setMoveStatus(v === true)} />
+                Move statuses to what these minutes say
+                <span className="text-[11px] text-muted-foreground">— untick if the week is older than the deals</span>
+              </label>
+            )}
             <div>
               <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Schemes</div>
               <p className="text-sm">{preview.schemes.map(s => `${s.name}${s.code ? ` (${s.code})` : ""}${s.exists ? "" : " — new"}`).join(" · ") || "None found"}</p>

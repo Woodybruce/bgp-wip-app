@@ -332,7 +332,7 @@ const dayOf = (v: unknown) => (v instanceof Date ? v.toISOString().slice(0, 10) 
 /** Match each minutes unit to a leasing row — landlord unit code first, then
  *  the name (with or without the scheme), within the scheme where the row
  *  carries one. Each row is matched at most once. */
-export function planMinutesImport(parsed: Pick<ParsedMinutes, "units" | "weekLabel">, existing: LeasingRow[]): { rows: PlannedRow[]; warnings: string[] } {
+export function planMinutesImport(parsed: Pick<ParsedMinutes, "units" | "weekLabel">, existing: LeasingRow[], opts: { keepStatus?: boolean } = {}): { rows: PlannedRow[]; warnings: string[] } {
   const warnings: string[] = [];
   const used = new Set<string>();
   const out: PlannedRow[] = [];
@@ -382,7 +382,9 @@ export function planMinutesImport(parsed: Pick<ParsedMinutes, "units" | "weekLab
     set("updates", values.updates, hit.updates);
     set("financial_notes", values.financial_notes, hit.financial_notes);
     // Status only moves on what the week's text says, never from a guess.
-    if (u.statusFromText) set("status", values.status, hit.status);
+    // An older week's minutes can lag the deals, so the importer can leave
+    // statuses as they are.
+    if (u.statusFromText && !opts.keepStatus) set("status", values.status, hit.status);
     out.push({ action: changes.length ? "update" : "unchanged", unitId: hit.id, unitName: hit.unit_name || u.unitName, scheme: u.scheme, sourceRow: u.sourceRow, changes, values });
   }
   return { rows: out, warnings };
@@ -406,7 +408,7 @@ export type MinutesImportResult = {
   message: string;
 };
 
-export async function importLeasingMinutes(pool: Queryable & { connect?: () => Promise<any> }, propertyId: string, buffer: Buffer, opts: { dryRun: boolean; user?: { id: string; username: string } | null; fileName?: string | null }): Promise<MinutesImportResult> {
+export async function importLeasingMinutes(pool: Queryable & { connect?: () => Promise<any> }, propertyId: string, buffer: Buffer, opts: { dryRun: boolean; keepStatus?: boolean; user?: { id: string; username: string } | null; fileName?: string | null }): Promise<MinutesImportResult> {
   const { listSchemes, ensureScheme } = await import("./property-schemes");
   const property = (await pool.query(`SELECT id, name FROM crm_properties WHERE id = $1`, [propertyId])).rows[0];
   if (!property) throw Object.assign(new Error("Property not found"), { status: 404 });
@@ -417,7 +419,7 @@ export async function importLeasingMinutes(pool: Queryable & { connect?: () => P
        FROM leasing_schedule_units WHERE property_id = $1 AND coalesce(status, '') <> 'Archived' ORDER BY sort_order, id`,
     [propertyId],
   )).rows as LeasingRow[];
-  const plan = planMinutesImport(parsed, existing);
+  const plan = planMinutesImport(parsed, existing, { keepStatus: opts.keepStatus });
   const schemes = parsed.schemes.map(s => ({ ...s, exists: !!findScheme(existingSchemes, s.name) }));
   const counts = {
     create: plan.rows.filter(r => r.action === "create").length,

@@ -941,7 +941,8 @@ router.post("/api/leasing-schedule/property/:propertyId/minutes/import-excel", r
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
     const { importLeasingMinutes } = await import("./leasing-minutes");
     res.json(await importLeasingMinutes(pool, String(req.params.propertyId), req.file.buffer, {
-      dryRun: String(req.body?.dryRun ?? "true") !== "false", user: guard.user, fileName: req.file.originalname || null,
+      dryRun: String(req.body?.dryRun ?? "true") !== "false", keepStatus: String(req.body?.keepStatus ?? "false") === "true",
+      user: guard.user, fileName: req.file.originalname || null,
     }));
   } catch (e: any) {
     console.error("[leasing-minutes] upload import failed:", e?.message);
@@ -967,7 +968,7 @@ router.post("/api/leasing-schedule/property/:propertyId/minutes/import-excel-fro
     }
     const { importLeasingMinutes } = await import("./leasing-minutes");
     res.json(await importLeasingMinutes(pool, String(req.params.propertyId), buffer, {
-      dryRun: req.body?.dryRun !== false, user: guard.user, fileName: name,
+      dryRun: req.body?.dryRun !== false, keepStatus: req.body?.keepStatus === true, user: guard.user, fileName: name,
     }));
   } catch (e: any) {
     console.error("[leasing-minutes] SharePoint import failed:", e?.message);
