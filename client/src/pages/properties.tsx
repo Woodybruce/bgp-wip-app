@@ -311,10 +311,14 @@ export function InlineEngagement({
               {placeholder}
             </span>
           ) : (
+            // Identity colours as a dot on a quiet outline chip, not a full
+            // fill (docs/DESIGN.md §14) — four saturated blocks per card read
+            // as the loudest thing on the property page.
             current.map(v => (
-              <Badge key={v} className={`text-[10px] px-1.5 py-0 text-white whitespace-nowrap max-w-full truncate ${colorMap[v] || "bg-gray-500"}`} title={v}>
+              <span key={v} className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-[3px] text-[11px] font-medium leading-none text-foreground whitespace-nowrap max-w-full truncate" title={v}>
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${colorMap[v] || "bg-muted-foreground"}`} />
                 {v}
-              </Badge>
+              </span>
             ))
           )}
         </button>
@@ -613,12 +617,14 @@ export function InlineAgents({
           <Popover key={user.id}>
             <PopoverTrigger asChild>
               <button
-                className={`inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded text-white hover:opacity-90 max-w-full min-w-0 ${bg}`}
+                className="inline-flex items-center gap-1.5 text-xs leading-none px-2 py-[5px] rounded-full border border-border bg-background text-foreground hover:bg-muted max-w-full min-w-0"
                 data-testid={`agent-badge-${propertyId}-${user.id}`}
                 title={role ? `${user.name} — ${role}` : user.name}
               >
+                {/* Person colour as a dot, not a full fill (docs/DESIGN.md §14). */}
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${bg}`} />
                 <span className="font-semibold shrink-0">{user.name.split(" ")[0]}</span>
-                {role && <span className="text-[11px] opacity-90 border-l border-white/40 pl-1.5 truncate">{role}</span>}
+                {role && <span className="text-[11px] text-muted-foreground border-l border-border pl-1.5 truncate">{role}</span>}
               </button>
             </PopoverTrigger>
             <PopoverContent className="w-72 p-3" align="start">
@@ -5021,22 +5027,20 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
 
   return (
     <Card data-testid="property-news-panel" className="overflow-hidden">
-      <CardContent className="p-4 pt-3">
-        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap -mx-4 -mt-3 px-4 pt-3 pb-2 bg-muted/40">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="w-6 h-6 rounded-full bg-muted flex items-center justify-center shrink-0">
-              <Newspaper className="h-3.5 w-3.5 text-primary" />
-            </span>
-            <span className="text-sm font-semibold shrink-0">News Feed</span>
-            {/* Property name in the badge is redundant with the page
-                header — only render it when there's plenty of room
-                (xl+) so narrow viewports don't truncate it to "Bluewa…". */}
-            <Badge variant="secondary" className="hidden xl:inline-flex text-[10px] px-1.5 py-0 truncate max-w-[180px]" title={propertyName}>{propertyName}</Badge>
+      <CardContent className="p-3 pt-2.5">
+        {/* Same board header as the rest of the property page — the tinted
+            band, icon bubble and 14px title made it the odd one out, and the
+            property-name badge repeated the page title. */}
+        <div className="flex items-center justify-between gap-2 mb-2 -mx-1 -mt-0.5">
+          <div className="flex items-center gap-2 min-w-0" title={propertyName}>
+            <Newspaper className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground shrink-0">News</span>
+            {articles.length > 0 && <span className="text-[11px] font-mono tabular-nums text-muted-foreground">{articles.length}</span>}
           </div>
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs gap-1 shrink-0"
+            className="h-6 px-1.5 text-[11px] gap-1 shrink-0"
             onClick={() => refetch()}
             disabled={isFetching}
             data-testid="button-refresh-news"

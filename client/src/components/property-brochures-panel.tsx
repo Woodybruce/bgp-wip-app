@@ -295,7 +295,9 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
           // Full-width row placement: give the hero preview real depth so
           // the brochure is actually readable on the property page
           // (Woody, 2026-08-04: "make the brochure depth larger").
-          <div className="flex-1 min-h-[460px]">
+          // A fixed depth, not a floor: at full board width the cover grew
+          // to ~1,000px — taller than the screen (docs/DESIGN.md §9).
+          <div className="h-[480px]">
             <BrochureTile
               brochure={active[0]}
               hero
@@ -485,7 +487,7 @@ function ingestBadge(brochure: Brochure) {
   if (a?.propertyFieldsUpdated?.length) parts.push(`${a.propertyFieldsUpdated.length} fields`);
   return (
     <span
-      className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] bg-emerald-600 text-white"
+      className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-border text-[11px] bg-background/90 text-muted-foreground"
       title={`Extracted: ${parts.join(", ")}${a?.geocoded ? " · geocoded" : ""}${a?.agentLinked ? " · agent linked" : ""}`}
     >
       <CheckCircle2 className="w-2.5 h-2.5" />
@@ -553,9 +555,9 @@ function BrochureTile({
         </button>
       </div>
       <div className="p-1.5">
-        <p className="text-[10px] font-medium truncate" title={brochure.name}>{brochure.name}</p>
+        <p className={`${hero ? "text-xs" : "text-[11px]"} font-medium truncate`} title={brochure.name}>{brochure.name}</p>
         <div className="flex items-center justify-between mt-0.5">
-          <span className="text-[9px] text-muted-foreground">
+          <span className="text-[11px] text-muted-foreground">
             {fmtDate(brochure.uploadedAt)} · {fmtSize(brochure.size)}
             {brochure.pageCount ? ` · ${brochure.pageCount}p` : ""}
           </span>

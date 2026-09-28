@@ -256,13 +256,15 @@ function CollapsibleCard({
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="w-full flex items-center justify-between px-3 py-2 hover:bg-muted/50 transition-colors text-left"
+        className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-muted/50 transition-colors text-left"
         data-testid={testId}
       >
-        <div className="flex items-center gap-2">
-          <Icon className="w-3.5 h-3.5 text-muted-foreground" />
-          <span className="text-xs font-semibold">{title}</span>
-          {badge && <Badge variant="secondary" className="text-[10px] h-4 px-1">{badge}</Badge>}
+        {/* One board-header style across the page (docs/DESIGN.md §2/§9):
+            the boards mixed title-case, uppercase and 14px headers. */}
+        <div className="flex items-center gap-2 min-w-0">
+          <Icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground truncate">{title}</span>
+          {badge && <span className="text-[11px] font-mono tabular-nums text-muted-foreground">{badge}</span>}
         </div>
         {open ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
       </button>
@@ -660,33 +662,33 @@ export function PropertyDetail({ id }: { id: string }) {
                 </Button>
                 {!isClientViewer && (<>
                 <Link href={`/image-studio?property=${encodeURIComponent(property.name)}&address=${encodeURIComponent(formatAddress(property.address) || property.name)}&propertyId=${encodeURIComponent(property.id)}`}>
-                  <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-image-studio" title="Image Studio" aria-label="Image Studio">
+                  <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" data-testid="button-image-studio" title="Image Studio" aria-label="Image Studio">
                     <ImageIcon className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Image Studio</span>
+                    <span className="hidden [@container(min-width:1000px)]:inline">Image Studio</span>
                   </Button>
                 </Link>
                 <Link href={`/document-briefs?propertyId=${encodeURIComponent(property.id)}&propertyName=${encodeURIComponent(property.name)}&postcode=${encodeURIComponent(property.postcode || "")}`}>
-                  <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-create-document" title="Create document" aria-label="Create document">
+                  <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" data-testid="button-create-document" title="Create document" aria-label="Create document">
                     <FileText className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Create document</span>
+                    <span className="hidden [@container(min-width:1000px)]:inline">Create document</span>
                   </Button>
                 </Link>
                 {linkedEvidencePlan && (
                   <Link href={`/evidence-plans/${linkedEvidencePlan.id}`}>
-                    <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-evidence-plan" title="Evidence plan" aria-label="Evidence plan">
+                    <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" data-testid="button-evidence-plan" title="Evidence plan" aria-label="Evidence plan">
                       <MapIcon className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Evidence plan</span>
+                      <span className="hidden [@container(min-width:1000px)]:inline">Evidence plan</span>
                     </Button>
                   </Link>
                 )}
-                <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setFolderDialogOpen(true)} data-testid="button-setup-folders" title="Set Up Folders" aria-label="Set Up Folders">
+                <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => setFolderDialogOpen(true)} data-testid="button-setup-folders" title="Set Up Folders" aria-label="Set Up Folders">
                   <FolderTree className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Set Up Folders</span>
+                  <span className="hidden [@container(min-width:1000px)]:inline">Set Up Folders</span>
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
-                  className="text-xs"
+                  className="h-7 text-xs" title="Delete property" aria-label="Delete property"
                   onClick={() => { if (confirm("Are you sure you want to delete this property?")) deleteMutation.mutate(); }}
                   disabled={deleteMutation.isPending}
                   data-testid="button-delete-property"
@@ -862,9 +864,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   const empty = allRows.filter(r => !linked(r));
                   return (
                     <div className="border-t pt-2">
-                      <p className="text-[10px] text-muted-foreground leading-tight mb-1.5 flex items-center gap-1">
-                        <Landmark className="w-3 h-3" /> Ownership
-                      </p>
+                      <p className="text-[11px] text-muted-foreground leading-tight mb-1.5">Ownership</p>
                       {filled.length === 0 && empty.length > 0 ? (
                         // No ownership recorded yet — show one inline
                         // row to start with (Freeholder) so the team
@@ -939,7 +939,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   {!isClientViewer && (
                   <div>
                     <div className="flex items-center gap-1 mb-0.5">
-                      <p className="text-[10px] text-muted-foreground leading-tight">Competitor Agent</p>
+                      <p className="text-[11px] text-muted-foreground leading-tight">Competitor agent</p>
                       {property.competitorAgentStatus === "active" && property.competitorAgentInstructedAt && (
                         Date.now() - new Date(property.competitorAgentInstructedAt).getTime() > 365 * 864e5 ? (
                           <Badge variant="outline" className="text-[10px] px-1 py-0 border-orange-300 text-orange-600">stale</Badge>
@@ -1017,7 +1017,7 @@ export function PropertyDetail({ id }: { id: string }) {
               <ErrorBoundary compact name="Risk register"><RiskRegisterCard propertyId={property.id} /></ErrorBoundary>
             </>}
             <ErrorBoundary compact name="Brand gap">
-              <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
+              <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand gap" testId="toggle-brands">
                 <BrandGapPanel propertyId={property.id} />
               </CollapsibleCard>
             </ErrorBoundary>
@@ -1086,7 +1086,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 sync — so the lens toggle is purely a column-visibility
                 preset, not a data switch. */}
             <ErrorBoundary compact name="Schedule">
-              <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Tenancy Schedule" testId="toggle-schedule">
+              <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Tenancy schedule" testId="toggle-schedule">
                 <div className="max-h-[640px] overflow-y-auto pr-1">
                   <PropertyUnifiedSchedule propertyId={property.id} presentation={simpleLayout ? "compact" : "full"} />
                 </div>
@@ -1099,7 +1099,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 2026-09-28: "Pathway can be removed too"). */}
             {!isClientViewer && propertyView !== "centre" && (
             <ErrorBoundary compact name="Pathway intel strip">
-              <CollapsibleCard open={mainSections.pathway} onToggle={() => toggleMain("pathway")} icon={TrendingUp} title="Pathway Intel" testId="toggle-pathway">
+              <CollapsibleCard open={mainSections.pathway} onToggle={() => toggleMain("pathway")} icon={TrendingUp} title="Pathway intel" testId="toggle-pathway">
                 <PathwayIntelStrip
                   propertyId={property.id}
                   address={typeof property.address === "string" ? property.address : (property.address as any)?.line1 || property.name}
@@ -1120,7 +1120,7 @@ export function PropertyDetail({ id }: { id: string }) {
                  the page focuses on the operational view. */}
             {!/instruction/i.test(property.status || "") && (
               <ErrorBoundary compact name="Property intelligence (Land Registry / planning)">
-                <CollapsibleCard open={mainSections.intel} onToggle={() => toggleMain("intel")} icon={Landmark} title="Property Intelligence" testId="toggle-intel">
+                <CollapsibleCard open={mainSections.intel} onToggle={() => toggleMain("intel")} icon={Landmark} title="Property intelligence" testId="toggle-intel">
                   <PropertyIntelligencePanel property={property} />
                 </CollapsibleCard>
               </ErrorBoundary>
@@ -1403,22 +1403,22 @@ function PropertyReviewPanel({ propertyId, onOpenPlans }: { propertyId: string; 
   const KIND: Record<string, string> = { plan_scan: "Plan scan", plan_links: "Plan links", tracker_unit: "Leasing tracker", data_difference: "Data difference", trading_name: "Trading name" };
   return (
     <Card className="border-amber-300" data-testid="property-review-panel">
-      <div className="px-3 py-2 flex items-center gap-2 border-b">
+      <div className="px-3 py-2.5 flex items-center gap-2 border-b">
         <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-        <span className="text-xs font-semibold">Needs review</span>
-        <Badge variant="secondary" className="text-[10px] h-4 px-1">{items.length}</Badge>
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Needs review</span>
+        <span className="text-[11px] font-mono tabular-nums text-muted-foreground">{items.length}</span>
       </div>
       <div className="max-h-[420px] overflow-y-auto divide-y">
         {(showAll ? items : items.slice(0, 4)).map(item => (
           <div key={item.id} className="px-3 py-2 text-xs space-y-1" data-testid={`review-item-${item.kind}`}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{KIND[item.kind] || item.kind}</div>
+                <div className="text-[11px] text-muted-foreground">{KIND[item.kind] || item.kind}</div>
                 <div className="font-medium">{item.title}</div>
               </div>
               {item.live
-                ? <Button variant="outline" size="sm" className="h-6 px-2 text-[10px] shrink-0" onClick={onOpenPlans}>Open plans</Button>
-                : <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] shrink-0" onClick={() => setOpenItem(openItem === item.id ? null : item.id)}>{openItem === item.id ? "Hide" : "Choose"}</Button>}
+                ? <Button variant="outline" size="sm" className="h-6 px-2 text-[11px] shrink-0" onClick={onOpenPlans}>Open plans</Button>
+                : <Button variant="outline" size="sm" className="h-6 px-2 text-[11px] shrink-0" onClick={() => setOpenItem(openItem === item.id ? null : item.id)}>{openItem === item.id ? "Hide" : "Choose"}</Button>}
             </div>
             {/* Detail shows when the item is opened — the card read as a wall
                 of working notes (Woody, 2026-09-27). */}
@@ -1429,7 +1429,7 @@ function PropertyReviewPanel({ propertyId, onOpenPlans }: { propertyId: string; 
                   <div key={o.key} className="rounded border p-2 space-y-1">
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-medium">{o.label}</span>
-                      <Button size="sm" className="h-6 px-2 text-[10px]" disabled={resolve.isPending} onClick={() => resolve.mutate({ id: item.id, option: o.key })} data-testid={`review-apply-${o.key}`}>Apply</Button>
+                      <Button size="sm" className="h-6 px-2 text-[11px]" disabled={resolve.isPending} onClick={() => resolve.mutate({ id: item.id, option: o.key })} data-testid={`review-apply-${o.key}`}>Apply</Button>
                     </div>
                     {o.detail && <p className="text-[11px] text-muted-foreground whitespace-pre-line">{o.detail}</p>}
                   </div>
