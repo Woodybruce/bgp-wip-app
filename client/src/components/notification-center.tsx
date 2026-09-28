@@ -7,7 +7,7 @@ import { useState } from "react";
 
 interface Notification {
   id: string;
-  kind: "for_you" | "deal";
+  kind: "for_you" | "deal" | "firm";
   type: string;
   title: string;
   description: string;
@@ -62,9 +62,10 @@ export function NotificationCenter() {
 
   const forYou = notifications.filter(n => n.kind === "for_you");
   const deals = notifications.filter(n => n.kind === "deal");
+  const firm = notifications.filter(n => n.kind === "firm");
   const unread = forYou.filter(n => !n.read);
-  const count = unread.length + deals.length;
-  const urgent = deals.some(n => n.severity === "urgent");
+  const count = unread.length + deals.length + firm.length;
+  const urgent = [...deals, ...firm].some(n => n.severity === "urgent");
 
   const handleClick = (notification: Notification) => {
     if (notification.kind === "for_you" && !notification.read) markRead.mutate([notification.id]);
@@ -92,7 +93,7 @@ export function NotificationCenter() {
           {notification.description && <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">{notification.description}</p>}
           {notification.kind === "for_you" && <p className="text-[10px] text-muted-foreground/70 mt-0.5 tabular-nums">{ago(notification.createdAt)}</p>}
         </div>
-        {notification.kind === "deal" ? (
+        {notification.kind !== "for_you" ? (
           <button
             type="button"
             title="Clear for 2 weeks"
@@ -155,6 +156,7 @@ export function NotificationCenter() {
             <>
               {forYou.length > 0 && section("For you", forYou, unread.map(n => n.id), "Mark all read")}
               {deals.length > 0 && section("Your deals", deals, deals.map(n => n.id), "Clear all")}
+              {firm.length > 0 && section("Firm-wide · KYC under offer or exchanged", firm, firm.map(n => n.id), "Clear all")}
             </>
           )}
         </div>

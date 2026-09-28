@@ -11,7 +11,7 @@ const STUCK_DAYS = 30;
 
 export interface BellItem {
   id: string;
-  kind: "for_you" | "deal";
+  kind: "for_you" | "deal" | "firm";
   type: string;
   title: string;
   description: string;
@@ -45,7 +45,7 @@ export async function bellFor(userId: string): Promise<BellItem[]> {
     createdAt: new Date(row.created_at).toISOString(), read: !!row.read_at, url: row.url,
   }));
 
-  const me = (await pool.query(`SELECT name FROM users WHERE id = $1`, [userId])).rows[0];
+  const me = (await pool.query(`SELECT name, is_admin FROM users WHERE id = $1`, [userId])).rows[0];
   const dismissed = new Set((await pool.query(
     `SELECT notification_key FROM notification_dismissals
       WHERE user_id = $1 AND dismissed_at > NOW() - make_interval(days => $2)`, [userId, DISMISS_DAYS])).rows.map((row: any) => row.notification_key));
@@ -87,7 +87,25 @@ export async function bellFor(userId: string): Promise<BellItem[]> {
   }
   const order: Record<string, number> = { urgent: 0, warning: 1, info: 2 };
   dealItems.sort((a, b) => order[a.severity] - order[b.severity] || b.createdAt.localeCompare(a.createdAt));
-  return [...forYou, ...dealItems];
+  // Admins also see the firm's compliance exposure: deals under offer or
+  // exchanged without KYC, whoever runs them. Nothing else firm-wide.
+  const firmItems: BellItem[] = [];
+  if (me?.is_admin) {
+    const mine = new Set(deals.rows.map((deal: any) => deal.id));
+    const kyc = await pool.query(
+      `SELECT id, name, status, internal_agent FROM crm_deals
+        WHERE COALESCE(kyc_approved, false) = false AND status IN ('SOL', 'EXC')
+        ORDER BY updated_at DESC LIMIT 60`);
+    for (const deal of kyc.rows) {
+      const id = `firm-kyc-${deal.id}`;
+      if (mine.has(deal.id) || dismissed.has(id)) continue;
+      const agents = (deal.internal_agent || []).filter((name: string) => name && !/^(bgp house|team bgp)$/i.test(name));
+      firmItems.push({ id, kind: "firm", type: "kyc_gap", read: false, dealId: deal.id, url: `/deals/${deal.id}`,
+        title: `KYC not approved: ${deal.name}`, description: `In ${deal.status}${agents.length ? ` · ${agents.join(", ")}` : ""}`,
+        severity: "urgent", createdAt: new Date().toISOString() });
+    }
+  }
+  return [...forYou, ...dealItems, ...firmItems];
 }
 
 // Inbox rows are marked read; deal alerts are cleared for DISMISS_DAYS.
