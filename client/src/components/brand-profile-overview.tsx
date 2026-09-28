@@ -195,7 +195,13 @@ const plannedSource = (store: OverviewStore): string | null => {
   if (store.status !== "coming_soon") return null;
   let notes: any = {};
   try { notes = JSON.parse(store.notes || "{}"); } catch { /* not JSON */ }
-  if (store.source_type === "bgp_deal") return `BGP deal${notes.bgpDeal?.status ? ` · ${DEAL_STAGE[notes.bgpDeal.status] || notes.bgpDeal.status}` : ""}${notes.bgpDeal?.name ? ` · ${notes.bgpDeal.name}` : ""}`;
+  if (store.source_type === "bgp_deal") {
+    // "Nando's – Bluewater Shopping Centre" under the Bluewater card repeated
+    // the property; keep only what the deal name adds.
+    const place = store.name.toLowerCase();
+    const rest = String(notes.bgpDeal?.name || "").split(/\s+[-–:]\s+|,\s*/).filter(p => p.trim() && !place.includes(p.trim().toLowerCase()) && !p.trim().toLowerCase().includes(place)).join(" · ");
+    return `BGP deal${notes.bgpDeal?.status ? ` · ${DEAL_STAGE[notes.bgpDeal.status] || notes.bgpDeal.status}` : ""}${rest ? ` · ${rest}` : ""}`;
+  }
   if (notes.openingSignal?.headline) return `News · ${notes.openingSignal.headline}`;
   if (store.source_type === "official_website") return "Brand website";
   return null;
@@ -214,7 +220,8 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
   const [page, setPage] = useState(0);
   useEffect(() => { setSearch(""); setPage(0); }, [companyId]);
   const locations = useMemo(() => stores.filter(store => !store.country || store.country === "GB")
-    .sort((a, b) => storeAddress(a.address).localeCompare(storeAddress(b.address)) || a.name.localeCompare(b.name)), [stores]);
+    // Planned openings first — among 40 trading stores they were on page 5.
+    .sort((a, b) => Number(b.status === "coming_soon") - Number(a.status === "coming_soon") || storeAddress(a.address).localeCompare(storeAddress(b.address)) || a.name.localeCompare(b.name)), [stores]);
   const filtered = useMemo(() => locations.filter(store => `${store.name} ${storeAddress(store.address)}`.toLowerCase().includes(search.trim().toLowerCase())), [locations, search]);
   const pageSize = 8;
   const maxPage = Math.max(0, Math.ceil(filtered.length / pageSize) - 1);
