@@ -695,6 +695,8 @@ export const accountBoardContacts = (ws: NonNullable<ReturnType<typeof useAccoun
   via: ct.via,
   employerName: ct.employerName,
   propertyNames: ct.propertyNames,
+  left_at: (ct as any).leftAt ?? null,
+  left_note: (ct as any).leftNote ?? null,
 }));
 // Gallery dedupe (id / exact URL) lives with the strip in
 // company-profile-image.tsx so both count the same pictures.

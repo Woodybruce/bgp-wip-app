@@ -178,3 +178,15 @@ export async function runCompaniesHouseFixes(deps: { pool?: Querier } = {}) {
   await q.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING`, [KEY, JSON.stringify({ out, at: new Date().toISOString() })]);
   console.log(`[record-fixes] companies house:`, JSON.stringify(out));
 }
+
+// People Woody has said have left (2026-09-28: "Richard Benson has left").
+export async function runContactLeftFixes(deps: { pool?: Querier } = {}) {
+  const q: Querier = deps.pool ?? (await import("./db")).pool;
+  const KEY = "migration:contacts_left_2026_09_28_v1";
+  if ((await q.query(`SELECT 1 FROM system_settings WHERE key = $1`, [KEY])).rows.length) return;
+  const r = await q.query(`INSERT INTO contact_left_companies (contact_id, company_id, noted_by, note)
+    SELECT id, company_id, 'Woody Bruce', 'Has left Ardent' FROM crm_contacts
+     WHERE id = 'e831993f-5072-4913-838c-d7bcdb45a302' AND company_id = '02d1070e-49c8-4798-96df-5777702ff70a'
+    ON CONFLICT (contact_id, company_id) DO NOTHING`);
+  await q.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING`, [KEY, JSON.stringify({ marked: r.rowCount, at: new Date().toISOString() })]);
+}

@@ -108,7 +108,8 @@ export async function getCachedSignatures(emails: string[]): Promise<Map<string,
 // emails Leisure Parks). Hardcoding one mailbox misses 90% of the
 // signatures. We resolve the right mailbox from crm_interactions:
 // the bgp_user on the most recent interaction touching this address.
-async function fetchLatestInboundFrom(fromEmail: string): Promise<{ body: string; id: string; receivedAt: string } | null> {
+async function fetchLatestInboundFrom(fromEmail: string): Promise<{ body: string; id: string; receivedAt: string; fromName: string | null } | null> {
+  let headerName: { name: string; id: string; receivedAt: string } | null = null;
   // Find the BGP user(s) who've corresponded with this external address
   // most often — try each mailbox until Graph returns an inbound match.
   const { rows: bgpUsers } = await pool.query<{ bgp_user: string }>(
@@ -164,12 +165,18 @@ async function fetchLatestInboundFrom(fromEmail: string): Promise<{ body: string
         .filter((m) => String(m.body?.content || "").length > 300)
         .sort((a, b) => Date.parse(b.receivedDateTime || 0) - Date.parse(a.receivedDateTime || 0));
 
+      // The name they send under ("Mat Shulman <mshulman@…>") — kept even
+      // when no message carries a usable signature (Woody, 2026-09-28).
+      const named = msgs.find((m) => (m.from?.emailAddress?.address || "").toLowerCase() === fromEmail.toLowerCase()
+        && realSenderName(m.from?.emailAddress?.name, fromEmail));
+      if (named && !headerName) headerName = { name: realSenderName(named.from.emailAddress.name, fromEmail)!, id: named.id, receivedAt: named.receivedDateTime };
       const msg = personal[0];
       if (msg && msg.body?.content) {
         return {
           body: msg.body.content || "",
           id: msg.id,
           receivedAt: msg.receivedDateTime,
+          fromName: realSenderName(msg.from?.emailAddress?.name, fromEmail) || headerName?.name || null,
         };
       }
     } catch (e: any) {
@@ -177,7 +184,20 @@ async function fetchLatestInboundFrom(fromEmail: string): Promise<{ body: string
       continue;
     }
   }
-  return null;
+  return headerName ? { body: "", id: headerName.id, receivedAt: headerName.receivedAt, fromName: headerName.name } : null;
+}
+
+/** A display name that is a person's name — not the address, not a shared
+ *  mailbox label, "Surname, First" turned round. */
+export function realSenderName(raw: unknown, email: string): string | null {
+  let name = String(raw || "").replace(/["']/g, "").replace(/\s*\(.*?\)\s*/g, " ").replace(/\s+/g, " ").trim();
+  if (!name || name.includes("@")) return null;
+  const comma = name.match(/^([^,]+),\s*([^,]+)$/);
+  if (comma) name = `${comma[2]} ${comma[1]}`;
+  if (name.split(" ").length < 2 || name.split(" ").length > 4) return null;
+  if (/\b(team|office|info|admin|reception|accounts|property|properties|lettings|leasing|marketing|group|ltd|limited|plc)\b/i.test(name)) return null;
+  if (name.replace(/\s/g, "").toLowerCase() === email.split("@")[0].replace(/[._-]/g, "").toLowerCase()) return null;
+  return name.split(" ").map(w => w === w.toUpperCase() || w === w.toLowerCase() ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w).join(" ");
 }
 
 // Strip HTML, isolate the signature block. The hard part is real-world
@@ -357,14 +377,14 @@ export async function enrichSignaturesForDomain(domain: string, emails: string[]
         console.log(`[email-signature] no inbound found for ${email}`);
         continue;
       }
-      const sigText = isolateSignatureText(msg.body);
-      if (sigText.length < 30) {
-        console.log(`[email-signature] signature too short for ${email} (${sigText.length} chars)`);
-        continue;
-      }
-      const fields = await extractFieldsFromSignature(sigText, email);
+      const sigText = msg.body ? isolateSignatureText(msg.body) : "";
+      const extracted = sigText.length >= 30 ? await extractFieldsFromSignature(sigText, email) : null;
+      // No signature to read: the sender's display name still names them.
+      const fields = extracted
+        ? { ...extracted, fullName: extracted.fullName || msg.fromName }
+        : msg.fromName ? { fullName: msg.fromName, title: null, phone: null, mobile: null, address: null, linkedin: null } : null;
       if (!fields) {
-        console.log(`[email-signature] Haiku extract failed for ${email}`);
+        console.log(`[email-signature] nothing usable for ${email} (signature ${sigText.length} chars, no sender name)`);
         continue;
       }
       console.log(`[email-signature] enriched ${email} → ${fields.title || "no title"} · ${fields.phone || fields.mobile || "no phone"}`);

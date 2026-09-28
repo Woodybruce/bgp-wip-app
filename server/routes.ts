@@ -3050,6 +3050,30 @@ export async function registerRoutes(
 
   // Save an inbox/discovery candidate without treating the source brand as
   // their employer. Both contact-discovery entry points use this path.
+  // Mark (or unmark) a contact as having left a company. Staff only; the
+  // contact keeps their history, the company's board stops leading with them.
+  app.post("/api/crm/contacts/:id/left-company", requireAuth, async (req, res) => {
+    try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Staff only." });
+      const contactId = String(req.params.id);
+      const companyId = typeof req.body?.companyId === "string" ? req.body.companyId : "";
+      if (!companyId) return res.status(400).json({ error: "companyId is required." });
+      const contact = (await pool.query(`SELECT id FROM crm_contacts WHERE id = $1`, [contactId])).rows[0];
+      if (!contact) return res.status(404).json({ error: "Contact not found." });
+      if (req.body?.left === false) {
+        await pool.query(`DELETE FROM contact_left_companies WHERE contact_id = $1 AND company_id = $2`, [contactId, companyId]);
+        return res.json({ ok: true, left: false });
+      }
+      const by = (req as any).user?.name || (req as any).user?.email || null;
+      const note = typeof req.body?.note === "string" ? req.body.note.slice(0, 300) : null;
+      await pool.query(`INSERT INTO contact_left_companies (contact_id, company_id, noted_by, note) VALUES ($1, $2, $3, $4)
+        ON CONFLICT (contact_id, company_id) DO UPDATE SET noted_by = EXCLUDED.noted_by, note = COALESCE(EXCLUDED.note, contact_left_companies.note)`, [contactId, companyId, by, note]);
+      res.json({ ok: true, left: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "save failed" });
+    }
+  });
+
   app.post("/api/brand/:companyId/promote-sender", requireAuth, async (req, res) => {
     try {
       if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Contact discovery is available to staff only." });
@@ -3075,7 +3099,12 @@ export async function registerRoutes(
       const linkedIn = identityLinkedIn(req.body?.linkedin);
       const namedEmail = identityEmail(email);
       if (!namedEmail && !linkedIn) return res.status(400).json({ error: "An individual email address or LinkedIn profile is needed to identify this person safely." });
-      const suppliedName = clean(req.body?.name);
+      // A name read from their emails beats one built from the address
+      // ("mshulman@" → "Mshulman"; Woody, 2026-09-28).
+      const signedName = !clean(req.body?.name) && namedEmail
+        ? (await pool.query(`SELECT full_name FROM email_signatures WHERE lower(email) = $1 AND full_name IS NOT NULL LIMIT 1`, [namedEmail]).catch(() => ({ rows: [] as any[] }))).rows[0]?.full_name || ""
+        : "";
+      const suppliedName = clean(req.body?.name) || clean(signedName);
       const name = suppliedName || email.split("@")[0].replace(/[._-]+/g, " ")
         .split(/\s+/).filter(Boolean).map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
       if (!name) return res.status(400).json({ error: "A contact name is required." });
@@ -3133,6 +3162,10 @@ export async function registerRoutes(
           VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL, $7, 'promoted-from-email') RETURNING id`,
             [...values, `Discovered from the ${company.name} profile; employer unconfirmed.`]);
         await connection.query("COMMIT");
+        // Still named from the address: read their name/title in the background.
+        if (!suppliedName && namedEmail) {
+          void import("./email-signature-enrich").then(m => m.enrichSignaturesForDomain(namedEmail.split("@")[1], [namedEmail])).catch(() => {});
+        }
         res.json({ id: result.rows[0].id, name, email: email || null, created: true,
           companyId: employer?.id || null, companyName: employer?.name || null, employerConfirmed: !!employer });
       } catch (error) {

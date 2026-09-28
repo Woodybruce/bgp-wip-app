@@ -44,6 +44,8 @@ export interface WorkspaceTeamMember extends AccountTeamMember {
 export interface WorkspaceContact extends AccountContact {
   employerName: string | null;
   propertyNames: string[];
+  leftAt?: string | null;
+  leftNote?: string | null;
 }
 
 export interface WorkspaceNextAction {
@@ -228,10 +230,21 @@ export async function getAccountWorkspace(
     ).catch(() => ({ rows: [] as any[] }));
     for (const r of employerRows as any[]) employerNames.set(r.id, r.name);
   }
+  // People marked as having left this account (any of its entities).
+  const leftByContact = new Map<string, { at: string | null; note: string | null }>();
+  if (view.contacts.length > 0) {
+    const { rows: leftRows } = await q.query(
+      `SELECT contact_id, left_at, note FROM contact_left_companies WHERE contact_id = ANY($1::text[]) AND company_id = ANY($2::text[])`,
+      [view.contacts.map(c => c.contactId), [...new Set([...employerIds, ...entityNames.keys()])]]
+    ).catch(() => ({ rows: [] as any[] }));
+    for (const r of leftRows as any[]) leftByContact.set(r.contact_id, { at: r.left_at ? new Date(r.left_at).toISOString() : null, note: r.note || null });
+  }
   const contacts: WorkspaceContact[] = view.contacts.map(c => ({
     ...c,
     employerName: c.employerCompanyId ? employerNames.get(c.employerCompanyId) ?? null : null,
     propertyNames: contactPropertyNames.get(c.contactId) ?? [],
+    leftAt: leftByContact.get(c.contactId)?.at ?? null,
+    leftNote: leftByContact.get(c.contactId)?.note ?? null,
   }));
 
   // ── Next actions — open user_tasks touching the account (staff only) ────

@@ -467,21 +467,30 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // last-touch date back into each contact row so the key-contacts
     // panel can show 'Charlotte · 18 touches · 3d ago' instead of just
     // a name. Cheaper than joining in JS later.
+    // Emails count per person by contact link OR by their address in the
+    // participants — people saved from the inbox ("Mshulman") read "0
+    // emails" and sank to the bottom though they email BGP weekly.
     const contactInteractionStatsQ = pool.query(
-      `SELECT contact_id,
-              COUNT(*)::int AS touches,
-              MAX(interaction_date) AS last_touch
-         FROM crm_interactions
-        WHERE company_id = $1
-          AND interaction_date <= NOW()
-        GROUP BY contact_id`,
+      `WITH cts AS (SELECT id, lower(email) AS e FROM crm_contacts WHERE company_id = $1),
+            hits AS (
+              SELECT i.id AS iid, i.interaction_date AS d, i.contact_id AS cid, NULL::text AS e
+                FROM crm_interactions i WHERE i.company_id = $1 AND i.interaction_date <= NOW()
+              UNION ALL
+              SELECT i.id, i.interaction_date, NULL, lower(p)
+                FROM crm_interactions i CROSS JOIN LATERAL jsonb_array_elements_text(i.participants) AS p
+               WHERE jsonb_typeof(i.participants) = 'array' AND i.interaction_date <= NOW()
+                 AND lower(p) IN (SELECT e FROM cts WHERE e IS NOT NULL AND e <> ''))
+       SELECT c.id AS contact_id, COUNT(DISTINCT h.iid)::int AS touches, MAX(h.d) AS last_touch
+         FROM cts c JOIN hits h ON h.cid = c.id OR (h.e IS NOT NULL AND h.e = c.e)
+        GROUP BY c.id`,
       [companyId]
     );
 
     const contactsQ = pool.query(
       `SELECT ct.id, ct.name, ct.role, ct.email, ct.phone, ct.linkedin_url, ct.avatar_url,
-              ct.enrichment_source, ct.last_enriched_at
+              ct.enrichment_source, ct.last_enriched_at, lc.left_at, lc.note AS left_note
          FROM crm_contacts ct
+         LEFT JOIN contact_left_companies lc ON lc.contact_id = ct.id AND lc.company_id = ct.company_id
         WHERE ct.company_id = $1
         ORDER BY ct.name ASC
         LIMIT 100`,
@@ -908,6 +917,19 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         console.warn('[brand-profile] contact suggestions failed:', e?.message);
       }
       marks.suggestions = Date.now() - profileStart;
+      // People saved from the inbox under their address ("Mshulman"): read
+      // their name and title from their emails in the background — 15 per
+      // view, each address cached for 30 days (Woody, 2026-09-28).
+      try {
+        const { placeholderNamesFor, isAutoCreated } = await import("./signature-contact-sync");
+        const unnamed = (contacts.rows as any[]).filter((ct: any) => ct.email && isAutoCreated(ct.enrichment_source)
+          && placeholderNamesFor(ct.email).some(p => p.toLowerCase() === String(ct.name || "").trim().toLowerCase()))
+          .map((ct: any) => String(ct.email).toLowerCase()).slice(0, 15);
+        if (unnamed.length) {
+          const { enrichSignaturesForDomain } = await import("./email-signature-enrich");
+          void enrichSignaturesForDomain(unnamed[0].split("@")[1], unnamed).catch((e: any) => console.warn("[contacts] name fill:", e?.message));
+        }
+      } catch (e: any) { console.warn("[contacts] name fill failed to start:", e?.message); }
       try {
         relationshipStats = (await statsQ).rows[0] || null;
       } catch (e: any) { console.warn('[brand-profile] relationship stats failed:', e?.message); }

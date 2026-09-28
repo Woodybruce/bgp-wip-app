@@ -597,12 +597,21 @@ export async function resolveAccountView(
   const contactIds = contactRows.map((r: any) => r.id);
   const statsByContact = new Map<string, { touches: number; last_touch: string | null }>();
   if (!scopeCompanyId && contactIds.length > 0) {
+    // By contact link OR address in the participants — inbox-saved people
+    // ("Mshulman") read 0 emails and sank (Woody, 2026-09-28).
     const { rows: statRows } = await q.query(
-      `SELECT contact_id, COUNT(*)::int AS touches, MAX(interaction_date) AS last_touch
-         FROM crm_interactions
-        WHERE contact_id = ANY($1::text[])
-          AND interaction_date <= NOW()
-        GROUP BY contact_id`,
+      `WITH cts AS (SELECT id, lower(email) AS e FROM crm_contacts WHERE id = ANY($1::text[])),
+            hits AS (
+              SELECT i.id AS iid, i.interaction_date AS d, i.contact_id AS cid, NULL::text AS e
+                FROM crm_interactions i WHERE i.contact_id = ANY($1::text[]) AND i.interaction_date <= NOW()
+              UNION ALL
+              SELECT i.id, i.interaction_date, NULL, lower(p)
+                FROM crm_interactions i CROSS JOIN LATERAL jsonb_array_elements_text(i.participants) AS p
+               WHERE jsonb_typeof(i.participants) = 'array' AND i.interaction_date <= NOW()
+                 AND lower(p) IN (SELECT e FROM cts WHERE e IS NOT NULL AND e <> ''))
+       SELECT c.id AS contact_id, COUNT(DISTINCT h.iid)::int AS touches, MAX(h.d) AS last_touch
+         FROM cts c JOIN hits h ON h.cid = c.id OR (h.e IS NOT NULL AND h.e = c.e)
+        GROUP BY c.id`,
       [contactIds]
     ).catch(() => ({ rows: [] as any[] }));
     for (const r of statRows) statsByContact.set(r.contact_id, { touches: r.touches, last_touch: r.last_touch });

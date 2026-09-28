@@ -1169,6 +1169,16 @@ installGoogleBudgetGuard();
     `CREATE INDEX IF NOT EXISTS idx_brand_agent_rep_active ON brand_agent_representations(brand_company_id) WHERE end_date IS NULL`,
 
     // brand_signals (time-series of openings / closures / funding / news)
+    // A contact who has left a company (Woody, 2026-09-28: "Richard Benson
+    // has left") — kept as history, hidden from that company's key contacts.
+    `CREATE TABLE IF NOT EXISTS contact_left_companies (
+       contact_id VARCHAR NOT NULL,
+       company_id VARCHAR NOT NULL,
+       left_at TIMESTAMP DEFAULT now(),
+       noted_by TEXT,
+       note TEXT,
+       PRIMARY KEY (contact_id, company_id)
+     )`,
     `CREATE TABLE IF NOT EXISTS brand_signals (
        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
        brand_company_id VARCHAR NOT NULL,
@@ -5151,9 +5161,10 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
       // entities, typos, Landsec floor codes) — once, flagged.
       setTimeout(async () => {
         try {
-          const { runRecordFixes, runUnitNameFixes, runCompaniesHouseFixes } = await import("./record-fixes");
+          const { runRecordFixes, runUnitNameFixes, runCompaniesHouseFixes, runContactLeftFixes } = await import("./record-fixes");
           await runRecordFixes();
           await runUnitNameFixes();
+          await runContactLeftFixes();
           await runCompaniesHouseFixes();
         } catch (e: any) { console.error("[record-fixes] failed:", e?.message); }
       }, 50000);
