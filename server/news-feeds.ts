@@ -7,6 +7,7 @@ import { isNewsErrorTitle, NEWS_ERROR_TITLES } from "@shared/news-title";
 import { authHeadersForUrl, authCookieStatus, loadPaywallCookies, setPaywallCookie, clearPaywallCookie } from "./auth-cookies";
 import { eq, desc, sql, and, inArray, notInArray, gte, isNull } from "drizzle-orm";
 import { rssappHealth, createRssAppFeed, deleteRssAppFeed } from "./rssapp";
+import { isAboutPlace, isReferencePage, isSharedName, postcodeAnchors, coreName, type PlaceContext } from "./property-news-place";
 import { ensureBrandGoogleNewsFeeds, linkRecentArticlesToBrands, backfillSignalClassifications, previewBrandSocialFeeds, ensureBrandSocialFeeds, previewCuratedInstagramFeeds, ensureCuratedInstagramFeeds, type SocialPlatform } from "./news-brand-linking";
 import { users } from "@shared/schema";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
@@ -2048,12 +2049,16 @@ export function setupNewsFeedRoutes(app: Express) {
       ].filter((w: string) => w.length > 3 && !GENERIC_PROP_WORDS.has(w))));
       // The owner's name is a legitimate second hook (a sale or refinancing
       // is reported under the landlord, not the building).
-      const ownerId = (property as any).freeholderId || (property as any).longLeaseholderId || property.landlordId || null;
+      const ownerIds = [(property as any).freeholderId, (property as any).longLeaseholderId, property.landlordId].filter(Boolean) as string[];
+      const ownerId = ownerIds[0] || null;
       let ownerName = "";
+      const ownerNames: string[] = [];
       if (ownerId) {
-        const [{ crmCompanies }, { eq: eqOp }] = await Promise.all([import("@shared/schema"), import("drizzle-orm")]);
-        const [owner] = await db.select({ name: crmCompanies.name }).from(crmCompanies).where(eqOp(crmCompanies.id, ownerId)).limit(1);
-        ownerName = (owner?.name || "").toLowerCase().replace(/\b(ltd|limited|plc|llp|holdings|group|properties|property|investments|estates)\b\.?/g, "").trim();
+        const [{ crmCompanies }, { inArray: inArrayOp }] = await Promise.all([import("@shared/schema"), import("drizzle-orm")]);
+        const owners = await db.select({ id: crmCompanies.id, name: crmCompanies.name }).from(crmCompanies).where(inArrayOp(crmCompanies.id, ownerIds));
+        const clean = (name: string) => name.toLowerCase().replace(/\b(ltd|limited|plc|llp|holdings|group|properties|property|investments|estates)\b\.?/g, "").trim();
+        ownerName = clean(owners.find(o => o.id === ownerId)?.name || "");
+        for (const o of owners) if (clean(o.name || "").length > 3) ownerNames.push(clean(o.name || ""));
       }
       const hasWord = (text: string, w: string) => new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text);
       // One distinctive word on its own is how "Hudson Yard" matched a
@@ -2073,14 +2078,36 @@ export function setupNewsFeedRoutes(app: Express) {
           && !/^(pkwy|parkway|avenue|lane|close|drive|crescent|terrace|walk|mews)$/.test(w))));
       const aliasNames: string[] = (Array.isArray((property as any).aliases) ? (property as any).aliases : [])
         .map((a: any) => String(a || "").toLowerCase().trim()).filter((a: string) => a.length > 4 && a !== nameLower);
+      // "Royal Exchange" is the City arcade and Manchester's theatre: a
+      // story about the name only counts when it's about this place —
+      // tied to its town / street / postcode district / owner, and not
+      // placed in another town ("Manchester's Royal Exchange", "Royal
+      // Exchange Theatre"). Reference pages (Britannica) aren't news
+      // (Woody, 2026-09-28).
+      const ownCore = new Set([propertyName, ...aliasNames].map(coreName));
+      const placeCtx: PlaceContext = {
+        names: [propertyName, ...aliasNames],
+        anchors: [
+          ...locationTokens,
+          ...[addr?.city, addr?.town, addr?.area, addr?.locality, addr?.district].filter(Boolean).map(String),
+          ...`${streetLine || ""},${addr?.formatted || ""}`.split(",").map((s: string) => s.replace(/^\s*\d+[a-z]?(?:\s*[-–/]\s*\d+[a-z]?)?\s+/i, "").trim())
+            .filter((s: string) => s.length > 2 && !ownCore.has(coreName(s)) && !/^(?:uk|united kingdom|england)$/i.test(s)),
+          ...postcodeAnchors(property.postcode || addr?.postcode),
+          ...ownerNames,
+        ],
+        lat: parseFloat(String(property.latitude ?? "")),
+        lng: parseFloat(String(property.longitude ?? "")),
+      };
       const matchedArticles = dbArticles.filter(a => {
+        if (isReferencePage(a)) return false;
         const text = `${a.title} ${a.summary || ""} ${a.aiSummary || ""}`.toLowerCase();
-        if (aliasNames.some(alias => text.includes(alias))) return true;
-        if (singleWord) return hasWord(text, nameLower) && placeWords.some((w: string) => hasWord(text, w));
-        if (text.includes(nameLower)) return true;
+        const about = () => isAboutPlace(text, placeCtx);
+        if (aliasNames.some(alias => text.includes(alias))) return about();
+        if (singleWord) return hasWord(text, nameLower) && placeWords.some((w: string) => hasWord(text, w)) && about();
+        if (text.includes(nameLower)) return about();
         const hits = distinctiveWords.filter((w: string) => hasWord(text, w)).length;
-        if (hits >= 2) return true;
-        if (hits === 1 && locationTokens.some((t: string) => hasWord(text, t))) return true;
+        if (hits >= 2) return about();
+        if (hits === 1 && locationTokens.some((t: string) => hasWord(text, t))) return about();
         if (ownerName.length > 5 && text.includes(ownerName)) return true;
         return false;
       }).slice(0, 10);
@@ -2114,7 +2141,8 @@ export function setupNewsFeedRoutes(app: Express) {
       // so Google News anchors on the building rather than any Hudson.
       const searchQuery = propertyName.includes(",")
         ? `"${propertyName.slice(0, propertyName.indexOf(",")).trim()}" ${propertyName.slice(propertyName.indexOf(",") + 1).trim()}`
-        : `"${propertyName}"${singleWord && placeWords.length ? " " + placeWords[0] : locationTokens.length ? " " + locationTokens[0] : ""}`;
+        : `"${propertyName}"${singleWord && placeWords.length ? " " + placeWords[0] : locationTokens.length ? " " + locationTokens[0]
+          : isSharedName(propertyName) && (addr?.city || addr?.town) ? " " + String(addr.city || addr.town) : ""}`;
 
       // Live search via Google News RSS — a stable XML feed, unlike the old
       // DuckDuckGo HTML scrape which silently returned 0 when DDG changed
@@ -2157,7 +2185,8 @@ export function setupNewsFeedRoutes(app: Express) {
       }
 
       const existingUrls = new Set(matchedArticles.map(a => a.url));
-      const dedupedWeb = webResults.filter(r => r.url && !existingUrls.has(r.url)
+      const dedupedWeb = webResults.filter(r => r.url && !existingUrls.has(r.url) && !isReferencePage(r)
+        && isAboutPlace(`${r.title} ${r.snippet}`, placeCtx)
         && (!singleWord || placeWords.some((w: string) => hasWord(`${r.title} ${r.snippet}`.toLowerCase(), w))
           || aliasNames.some(alias => `${r.title} ${r.snippet}`.toLowerCase().includes(alias))));
 

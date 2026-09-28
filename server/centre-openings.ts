@@ -9,6 +9,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { UK_CENTRES, TOP_25_CENTRES, centreAt, type UkCentre } from "../shared/uk-centres";
+import { namesElsewhere, postcodeAnchors, type PlaceContext } from "./property-news-place";
 
 const router = Router();
 const OPENING = /\b(opens?|opening|opened|to open|coming (?:soon )?to|set to (?:open|launch|arrive)|launch(?:es|ed|ing)?|signs?|signed|joins?|joining|debuts?|arriv(?:es|ing)|new (?:store|restaurant|shop|site|unit|flagship|venue|outlet)|takes? (?:space|a unit|units?)|secures?|lets? to|unveil(?:s|ed)?|expan(?:ds?|sion) (?:in|into|at|to))\b/i;
@@ -66,12 +67,16 @@ async function googleNews(centre: UkCentre): Promise<Array<{ title: string; url:
   });
 }
 
-async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpening[]> {
-  const key = `centre-openings:v8:${centre.name}`;
+async function centreFeed(centre: UkCentre, list: BrandIndex, anchors: string[] = []): Promise<CentreOpening[]> {
+  const key = `centre-openings:v9:${centre.name}`;
   const cached = (await pool.query("SELECT value, updated_at FROM system_settings WHERE key = $1", [key])).rows[0];
   if (cached && Date.now() - new Date(cached.updated_at).getTime() < DAY_MS && Array.isArray(cached.value?.items)) return cached.value.items;
 
   const since = new Date(Date.now() - 365 * DAY_MS);
+  // "Anthropologie … in Manchester's Royal Exchange" names the centre but
+  // another town's building of the same name (Woody, 2026-09-28).
+  const place: PlaceContext = { names: [centre.name, ...centre.aliases], anchors, lat: centre.lat, lng: centre.lng };
+  const elsewhere = (text: string) => namesElsewhere(text, place);
   const aliases = [centre.name, ...centre.aliases].map(alias => `%${alias}%`);
   const items: CentreOpening[] = [];
   const signals = await pool.query(
@@ -84,7 +89,7 @@ async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpe
   for (const s of signals) {
     // The headline must name the centre — a detail line mentioning it is
     // often "…also trades at Bluewater".
-    if (!namesCentre(s.headline, centre) || !isOpeningHeadline(s.headline)) continue;
+    if (!namesCentre(s.headline, centre) || !isOpeningHeadline(s.headline) || elsewhere(s.headline)) continue;
     items.push({ centre: centre.name, title: s.headline, url: /^https?:/i.test(s.source || "") ? s.source : "", source: /^https?:/i.test(s.source || "") ? null : s.source,
       date: (s.signal_date || s.created_at)?.toISOString?.() || null, brand: { id: s.brand_id, name: s.brand_name }, origin: "signal" });
   }
@@ -98,7 +103,7 @@ async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpe
       ORDER BY a.published_at DESC LIMIT 40`, [since, aliases]
   ).then(r => r.rows).catch(() => [] as any[]);
   for (const a of news) {
-    if (!namesCentre(`${a.title} ${a.summary || ""}`, centre) || !isOpeningHeadline(a.title)) continue;
+    if (!namesCentre(`${a.title} ${a.summary || ""}`, centre) || !isOpeningHeadline(a.title) || elsewhere(`${a.title} ${a.summary || ""}`)) continue;
     items.push({ centre: centre.name, title: a.title, url: a.url, source: a.source_name, date: a.published_at?.toISOString?.() || null, brand: brandNamed(a.title, list), origin: "news" });
   }
   // The centre's own "what's new" page, followed through RSS.app (market
@@ -118,7 +123,7 @@ async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpe
   const web = await googleNews(centre).catch(() => []);
   for (const a of web) {
     if (a.date && new Date(a.date) < since) continue;
-    if (!namesCentre(a.title, centre) || !isOpeningHeadline(a.title)) continue;
+    if (!namesCentre(a.title, centre) || !isOpeningHeadline(a.title) || elsewhere(a.title)) continue;
     items.push({ centre: centre.name, title: a.title, url: a.url, source: a.source, date: a.date ? new Date(a.date).toISOString() : null, brand: brandNamed(a.title, list), origin: "web" });
   }
   // One story, one row: the brand signal wins, then feed news, the centre's
@@ -177,7 +182,7 @@ router.get("/api/property/:propertyId/centre-openings", requireAuth, async (req:
     const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
     const scope = await resolveCompanyScope(req as any);
     if (scope && !(await isPropertyInScope(scope, propertyId))) return res.status(403).json({ error: "Access denied" });
-    const property = (await pool.query("SELECT name, latitude, longitude FROM crm_properties WHERE id = $1", [propertyId])).rows[0];
+    const property = (await pool.query("SELECT name, latitude, longitude, postcode, address FROM crm_properties WHERE id = $1", [propertyId])).rows[0];
     if (!property) return res.status(404).json({ error: "Property not found" });
     const lat = parseFloat(property.latitude), lng = parseFloat(property.longitude);
     // Coordinates first, else the name ("Bluewater Shopping Centre").
@@ -188,7 +193,10 @@ router.get("/api/property/:propertyId/centre-openings", requireAuth, async (req:
     const here: UkCentre = listed || { name: property.name, lat, lng, aliases: [String(property.name).replace(/\s*(shopping cent(?:re|er)|retail park)\s*$/i, "").trim() || property.name] };
     const peers = TOP_25_CENTRES.filter(centre => centre.name !== here.name);
     const list = await brands();
-    const [hereItems, ...peerItems] = await mapLimit([here, ...peers], 6, centre => centreFeed(centre, list).catch(() => [] as CentreOpening[]));
+    const addr = property.address && typeof property.address === "object" ? property.address : {};
+    const hereAnchors = listed ? [] : [addr.city, addr.town, ...String(addr.formatted || "").split(",").slice(1), ...postcodeAnchors(property.postcode || addr.postcode)]
+      .map(v => String(v || "").trim()).filter(v => v.length > 2);
+    const [hereItems, ...peerItems] = await mapLimit([here, ...peers], 6, centre => centreFeed(centre, list, centre === here ? hereAnchors : []).catch(() => [] as CentreOpening[]));
     res.json({
       centre: here.name,
       here: hereItems,
