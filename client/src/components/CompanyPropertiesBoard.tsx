@@ -658,6 +658,7 @@ export function CompanyPropertiesBoard({
     return stores;
   }, [boardProperties, discovered]);
 
+  const mappedCount = boardProperties.filter(p => p.lat != null && p.lng != null).length;
   const totalUnits = boardProperties.reduce((n, p) => n + p.units.length, 0);
   const totalDeals = boardProperties.reduce((n, p) => n + p.deals.length, 0);
   const scrapedCount = brand?.landlordWebsiteFindings?.properties?.length || 0;
@@ -774,6 +775,7 @@ export function CompanyPropertiesBoard({
             Properties
             <span className="font-normal text-muted-foreground">
               {boardProperties.length} in CRM{discovered.length > 0 ? ` · ${discovered.length} discovered` : ""}
+              {mappedCount < boardProperties.length ? ` · ${mappedCount} of ${boardProperties.length} on the map` : ""}
             </span>
           </h3>
           {/* Source tally beside the title repeated the CRM count — only

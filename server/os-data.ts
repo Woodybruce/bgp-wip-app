@@ -131,7 +131,7 @@ const NOMINATIM_HEADERS = {
 // Nominatim usage policy caps us at 1 request/second — serialise calls
 // through a promise chain with spacing; cached() keeps repeats local.
 let nominatimChain: Promise<unknown> = Promise.resolve();
-function nominatimFetch(url: string): Promise<any | null> {
+export function nominatimFetch(url: string): Promise<any | null> {
   const run = async () => {
     const resp = await fetch(url, { headers: NOMINATIM_HEADERS });
     if (!resp.ok) return null;
