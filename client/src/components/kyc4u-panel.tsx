@@ -75,7 +75,7 @@ export default function Kyc4uPanel() {
             {status.connected ? (
               <p className="text-sm mt-1">Connected as <strong>{status.username}</strong> · last sync {when(status.lastSyncAt)} · <span className="tabular-nums">{status.requests}</span> requests, <span className="tabular-nums">{status.matched}</span> matched to CRM</p>
             ) : (
-              <p className="text-sm mt-1 text-muted-foreground">Not connected. A BGP systems account signs in once as a guest on KYC4U's SharePoint; the grid then syncs every six hours.</p>
+              <p className="text-sm mt-1 text-muted-foreground">Not connected. Sign in once with your BGP email (your guest access to KYC4U's SharePoint); the grid then syncs every six hours.</p>
             )}
             {status.lastError && <p className="text-xs text-destructive mt-1 break-words">Last sync error: {status.lastError}</p>}
             <a href={status.site} target="_blank" rel="noopener" className="text-xs text-primary inline-flex items-center gap-1 mt-1">KYC4U site <ExternalLink className="w-3 h-3" /></a>
@@ -89,7 +89,7 @@ export default function Kyc4uPanel() {
           )}
         </div>
         {!status.connected && isAdmin && (
-          <p className="text-xs text-muted-foreground mt-3">Press Connect and sign in with the BGP systems account (not your own login). Microsoft asks it to accept KYC4U's guest access the first time.</p>
+          <p className="text-xs text-muted-foreground mt-3">Press Connect and sign in with your BGP email. If Microsoft says "Need admin approval", KYC4U's IT admin has to approve BGP Dashboard once for their organisation first.</p>
         )}
       </section>
 

@@ -2571,7 +2571,7 @@ function AddinExcel() {
     <div className="flex flex-col h-screen bg-background text-foreground" style={{ maxWidth: 450 }}>
       <AddinHeader
         title="ChatBGP"
-        subtitle={linkedModelRunName ? `Model: ${linkedModelRunName}` : "Claude Fable 5 · Hardcore Builder"}
+        subtitle={linkedModelRunName ? `Model: ${linkedModelRunName}` : "Fable 5"}
         onNewChat={clearChat}
       >
         {linkedModelRunId && (
@@ -2591,7 +2591,7 @@ function AddinExcel() {
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7 rounded-full hover:bg-muted/80"
+          className="h-7 w-7 rounded-full hover:bg-muted/80 shrink-0"
           onClick={handleLogout}
           title={`Sign out (${userName})`}
           data-testid="button-logout"

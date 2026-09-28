@@ -1,7 +1,7 @@
 // KYC4U — BGP's outsourced KYC provider keeps each request's status on a
 // SharePoint site in THEIR Microsoft tenant (kyc4ultd, customer CST1092).
 // BGP accounts are guests there (Woody, 2026-09-28: "anyone with our email
-// can access the Sharepoint"). A BGP systems account signs in once, as a
+// can access the Sharepoint"). A BGP user (Woody's own email) signs in once, as a
 // guest in KYC4U's tenant, through this app; its token cache is kept on the
 // server and the request grid is pulled every six hours into kyc4u_requests.
 // No password is ever typed into the app or a chat.
@@ -153,7 +153,10 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
     try {
       const state = crypto.randomBytes(24).toString("hex");
       pendingStates.set(state, { userId: req.session.userId || (req as any).tokenUserId || null, at: Date.now() });
-      const authUrl = await msal().getAuthCodeUrl({ scopes: SCOPES, redirectUri: redirectUri(req), prompt: "select_account", state });
+      // Signs in as the person pressing Connect — their BGP email, which
+      // already has guest access to KYC4U's site (Woody, 2026-09-28).
+      const me = (await pool.query(`SELECT email FROM users WHERE id = $1`, [req.session.userId || (req as any).tokenUserId])).rows[0];
+      const authUrl = await msal().getAuthCodeUrl({ scopes: SCOPES, redirectUri: redirectUri(req), state, ...(me?.email ? { loginHint: me.email } : { prompt: "select_account" }) });
       res.json({ authUrl, redirectUri: redirectUri(req) });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
