@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { toDateInputValue, stripPropertyFromTitle } from "@/lib/format";
+import { toDateInputValue, stripPropertyFromTitle, dealDisplayTitle } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
@@ -137,10 +137,11 @@ function formatCurrency(value: number): string {
 // the filter values); toLocaleDateString's en-GB "Sept 26" disagreed with the
 // chart axis (Woody, 2026-09-27).
 // The Property (and Tenant) columns sit beside the deal name, so
-// "Bluewater - Shake Shack" reads "Shake Shack" (Woody, 2026-09-28).
+// "Bluewater - Shake Shack" reads "Shake Shack"; a bare "Unit C10" takes its
+// tenant, same as the deal page (Woody, 2026-09-28).
 function wipDealTitle(e: { ref?: string | null; project?: string | null; tenant?: string | null }): string {
   if (!e.ref) return "—";
-  return e.project ? stripPropertyFromTitle(e.ref, e.project, null, e.tenant) : e.ref;
+  return dealDisplayTitle({ name: e.ref, propertyName: e.project, tenantName: e.tenant });
 }
 
 const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

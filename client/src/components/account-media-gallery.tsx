@@ -41,6 +41,18 @@ interface AccountMediaResponse {
   total: number;
 }
 
+// The same logo uploaded twice showed twice (British Land) — one tile per
+// identical thumbnail or same file name + size (Woody, 2026-09-28).
+function uniqueMedia(images: AccountMediaRow[]): AccountMediaRow[] {
+  const seen = new Set<string>();
+  return images.filter(img => {
+    const keys = [img.thumbnail_data ? `t:${img.thumbnail_data.length}:${img.thumbnail_data.slice(-64)}` : "", img.file_name ? `f:${img.file_name.toLowerCase().replace(/\s*(?:\(\d+\)|copy|-\d+x\d+)(?=\.\w+$)/g, "")}:${img.width}x${img.height}` : ""].filter(Boolean);
+    if (keys.some(k => seen.has(k))) return false;
+    keys.forEach(k => seen.add(k));
+    return true;
+  });
+}
+
 export function accountMediaThumbSrc(img: Pick<AccountMediaRow, "id" | "thumbnail_data" | "mime_type">): string {
   return img.thumbnail_data
     ? (img.thumbnail_data.startsWith("data:")
@@ -64,15 +76,7 @@ function MediaSection({
   onDelete: (id: string) => void;
   testPrefix: string;
 }) {
-  // The same logo uploaded twice showed twice (British Land) — one tile per
-  // identical thumbnail or same file name + size (Woody, 2026-09-28).
-  const seen = new Set<string>();
-  images = images.filter(img => {
-    const keys = [img.thumbnail_data ? `t:${img.thumbnail_data.length}:${img.thumbnail_data.slice(-64)}` : "", img.file_name ? `f:${img.file_name.toLowerCase().replace(/\s*(?:\(\d+\)|copy|-\d+x\d+)(?=\.\w+$)/g, "")}:${img.width}x${img.height}` : ""].filter(Boolean);
-    if (keys.some(k => seen.has(k))) return false;
-    keys.forEach(k => seen.add(k));
-    return true;
-  });
+  images = uniqueMedia(images);
   if (images.length === 0) {
     return (
       <div className="text-[11px] text-muted-foreground/70" data-testid={`${testPrefix}-empty`}>
@@ -227,7 +231,8 @@ export function LandlordAccountGallery({
     <div className="space-y-3" data-testid="account-media-gallery">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-[11px] text-muted-foreground">
-          <span className="font-mono tabular-nums">{data.total}</span> saved image{data.total === 1 ? "" : "s"}
+          {/* Count what's shown — duplicates are dropped per group below. */}
+          {(() => { const shown = Object.values(data.groups).reduce((n, g) => n + uniqueMedia(g).length, 0); return <><span className="font-mono tabular-nums">{shown}</span> saved image{shown === 1 ? "" : "s"}</>; })()}
         </div>
         {data.properties.length > 0 && (
           <select

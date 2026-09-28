@@ -408,7 +408,7 @@ export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
         {data.risks.length === 0 ? (
           complete ? <p className="text-xs text-muted-foreground italic">No risks flagged in the recorded lease and covenant data.</p> : null
         ) : (
-          <div className="space-y-1 max-h-[420px] overflow-y-auto pr-1">
+          <div className="space-y-1 md:max-h-[420px] md:overflow-y-auto pr-1">
             {[...high, ...med].map((r, i) => (
               <div
                 key={i}

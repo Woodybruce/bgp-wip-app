@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { stripPropertyFromTitle } from "../../client/src/lib/format.ts";
+import { stripPropertyFromTitle, dealDisplayTitle } from "../../client/src/lib/format.ts";
 
 // Run with: node --import tsx --test qa/regression/strip-property-title.test.mjs
 // Real WIP titles (ref | property | tenant) from the live WIP report. A title
@@ -37,5 +37,27 @@ const cases = [
 for (const [title, property, tenant, expected] of cases) {
   test(`${title} under ${property}`, () => {
     assert.equal(stripPropertyFromTitle(title, property, null, tenant), expected);
+  });
+}
+
+// dealDisplayTitle — WIP report, property WIP chips and phone Deals cards: a
+// bare unit takes its tenant, a title that is only the property shows the
+// tenant (Woody, 2026-09-28).
+const displayCases = [
+  [{ name: "Unit C10", propertyName: null, tenantName: "MINISO UK" }, "MINISO UK · Unit C10"],
+  [{ name: "Unit 10 (split)", propertyName: "Brent Cross Shopping Centre", tenantName: "Dream Nails" }, "Dream Nails · Unit 10 (split)"],
+  [{ name: "Unit 3", propertyName: "180 Borough High St", tenantName: "Nando's" }, "Nando's · Unit 3"],
+  [{ name: "Unit 5", propertyName: "Grand Central", tenantName: "Leon" }, "Leon · Unit 5"],
+  [{ name: "South Molton - unit 3", propertyName: "South Molton - unit 3", tenantName: "Kinraden" }, "Kinraden · Unit 3"],
+  [{ name: "Newsons Yard", propertyName: "Newsons Yard", tenantName: "Matilda Goad" }, "Matilda Goad"],
+  [{ name: "1 Wood Street", propertyName: "1 Wood Street", tenantName: "Gail's" }, "Gail's"],
+  [{ name: "12 George Street", propertyName: "12 George Street", tenantName: "Pret A Manger" }, "Pret A Manger"],
+  [{ name: "Unit 7a", propertyName: "Southbank", tenantName: null }, "Unit 7a"],
+  [{ name: "Time Out Market T1", propertyName: "10 Piccadilly", tenantName: "Time Out Market" }, "Time Out Market T1"],
+];
+
+for (const [deal, expected] of displayCases) {
+  test(`display ${deal.name} under ${deal.propertyName}`, () => {
+    assert.equal(dealDisplayTitle(deal), expected);
   });
 }

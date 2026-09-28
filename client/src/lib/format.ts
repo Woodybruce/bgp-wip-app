@@ -189,3 +189,27 @@ export function stripPropertyFromTitle(title: string, propName: string, propAddr
   if (useTenant && !clash(title) && split(result).every(sg => !trimSep(sg.text).trim() || isProp(sg.text) || inProp(sg.text) || isPlace(sg.text))) return tenantLabel;
   return result;
 }
+
+// One deal title for the deal page header, breadcrumb, side panel and Quick
+// Access. The property is always shown beside it, so it's stripped — but a
+// bare "Unit 3" never identifies the deal: a unit takes its tenant
+// ("Nando's · Unit 3"), else the full deal name stays (Woody, 2026-09-28).
+export function dealDisplayTitle(d: { name?: string | null; propertyName?: string | null; propertyAddress?: string | null; tenantName?: string | null; unitName?: string | null; isInvestment?: boolean }): string {
+  const full = d.name || d.propertyName || "Untitled Deal";
+  if (d.isInvestment) return d.propertyName || full;
+  const tenant = (d.tenantName || "").trim();
+  const unit = (d.unitName || "").trim();
+  if (unit && tenant) return `${tenant} · ${unit}`;
+  const stripped = d.name && d.propertyName ? stripPropertyFromTitle(d.name, d.propertyName, d.propertyAddress, tenant || null) : full;
+  // "Unit 10 (split)" is still bare; "unit 3" reads "Unit 3" beside the
+  // tenant (Woody, 2026-09-28).
+  const bare = /^(?:(?:unit|shop|suite|kiosk|store|lot|pitch)\s*)?[a-z]{0,2}\s*\d+[a-z]?(?:\s*\([^)]*\))?$/i.test(stripped.trim())
+    || (!!unit && stripped.trim().toLowerCase() === unit.toLowerCase());
+  const cap = (v: string) => v.trim().replace(/^[a-z]/, c => c.toUpperCase());
+  if (bare) return tenant ? `${tenant} · ${cap(stripped)}` : full;
+  // The property itself carries the unit ("South Molton - unit 3") and the
+  // title is just the property — keep the unit beside the tenant.
+  const unitTail = (d.propertyName || "").match(/[\s–—\-|,:·]+((?:unit|shop|suite|kiosk|store|lot|pitch)\s*[a-z]{0,2}\s*\d+[a-z]?)\s*$/i);
+  if (tenant && stripped === tenant && unitTail && (d.name || "").toLowerCase().includes(unitTail[1].toLowerCase())) return `${tenant} · ${cap(unitTail[1])}`;
+  return stripped;
+}

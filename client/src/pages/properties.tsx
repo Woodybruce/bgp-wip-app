@@ -4,7 +4,7 @@ import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import { DEAL_STATUS_BADGE_COLORS } from "@/lib/deal-status-colors";
-import { gbDate, stripPropertyFromTitle, useClassLabel } from "@/lib/format";
+import { gbDate, useClassLabel, dealDisplayTitle } from "@/lib/format";
 import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import { useTeam } from "@/lib/team-context";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -1268,7 +1268,7 @@ export function InlineBillingEntity({
   );
 }
 
-export type DealLink = { id: string; name: string; propertyId: string | null; status: string | null; groupName: string | null };
+export type DealLink = { id: string; name: string; propertyId: string | null; status: string | null; groupName: string | null; tenantName?: string | null };
 
 export function InlineDeals({
   propertyId,
@@ -1301,8 +1301,13 @@ export function InlineDeals({
     if (propWord.length < 4 || !/^[A-Za-z'’]+$/.test(propWord) || /^(north|south|east|west|great|little|upper|lower|royal|unit|saint)$/i.test(propWord)) return v;
     return v.replace(new RegExp(`\\s+${propWord}(?=\\s)`, "ig"), "").trim() || v;
   };
+  // The tenant comes from the full deals list: a chip that is only the
+  // property ("1 Wood Street") or a bare unit ("Unit 3") names the tenant,
+  // as on the deal page (Woody, 2026-09-28).
+  const tenantByDeal = new Map(allDeals.map(d => [d.id, d.tenantName || null]));
   for (const d of linkedDeals) {
-    const label = propertyName ? dropPropWord(stripPropertyFromTitle(d.name, propertyName, propertyAddress)) : d.name;
+    const tenantName = d.tenantName ?? tenantByDeal.get(d.id) ?? null;
+    const label = propertyName ? dropPropWord(dealDisplayTitle({ name: d.name, propertyName, propertyAddress, tenantName })) : d.name;
     const g = dealGroups.find(x => x.label === label);
     if (g) g.deals.push(d); else dealGroups.push({ label, deals: [d] });
   }
@@ -5602,10 +5607,14 @@ function PropertiesList({
     queryKey: ["/api/crm/property-deal-links"],
   });
 
-  const { data: allDealsRaw = [] } = useQuery<{ id: string; name: string; propertyId: string | null; status: string | null; groupName: string | null }[]>({
+  const { data: allDealsRaw = [] } = useQuery<{ id: string; name: string; propertyId: string | null; status: string | null; groupName: string | null; tenantId: string | null }[]>({
     queryKey: ["/api/crm/deals"],
-    select: (data: any[]) => data.map((d: any) => ({ id: d.id, name: d.name, propertyId: d.propertyId, status: d.status, groupName: d.groupName })),
+    select: (data: any[]) => data.map((d: any) => ({ id: d.id, name: d.name, propertyId: d.propertyId, status: d.status, groupName: d.groupName, tenantId: d.tenantId ?? null })),
   });
+  const allDealsWithTenant = useMemo(() => {
+    const names = new Map(allCompanies.map(c => [c.id, c.name]));
+    return allDealsRaw.map(d => ({ ...d, tenantName: d.tenantId ? names.get(d.tenantId) ?? null : null }));
+  }, [allDealsRaw, allCompanies]);
 
   const inlineUpdateMutation = useMutation({
     mutationFn: async ({ id, field, value }: { id: string; field: string; value: any }) => {
@@ -6450,7 +6459,7 @@ function PropertiesList({
                           <InlineDeals
                             propertyId={item.id}
                             dealLinks={dealLinks}
-                            allDeals={allDealsRaw}
+                            allDeals={allDealsWithTenant}
                             readOnly={isClientViewer}
                             propertyName={item.name}
                             propertyAddress={formatAddress(item.address)}

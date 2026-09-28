@@ -399,20 +399,7 @@ export function ClientTeamOrgChart({ clientCompanyId, quietWhenEmpty = false }: 
   if (quietWhenEmpty && members.length === 0) {
     return (
       <div className="text-xs text-muted-foreground" data-testid="client-team-orgchart">
-        {derivedCount > 0 ? "Not pinned yet — showing BGP people from deals" : "No team pinned yet"} · <button type="button" className="text-primary hover:underline" onClick={() => setShowAdd(true)} data-testid="btn-add-team-member">Add to team</button>
-        {/* "Showing BGP people from deals" listed nobody — the people were
-            only header chips. List them here (Woody, 2026-09-28). */}
-        {derivedCount > 0 && (
-          <ul className="mt-2 space-y-1" data-testid="client-team-derived">
-            {derived.map(m => (
-              <li key={m.userId} className="flex items-baseline gap-1.5 text-xs">
-                <span className="font-medium text-foreground">{m.name}</span>
-                {m.isLead && <Star className="w-3 h-3 text-amber-500 self-center" fill="currentColor" />}
-                {(m.role || m.teamGroup) && <span className="text-muted-foreground truncate">{m.role || m.teamGroup}</span>}
-              </li>
-            ))}
-          </ul>
-        )}
+        {derivedCount > 0 ? "Not pinned yet — the BGP people above come from deals" : "No team pinned yet"} · <button type="button" className="text-primary hover:underline" onClick={() => setShowAdd(true)} data-testid="btn-add-team-member">Add to team</button>
         {addDialog}
       </div>
     );

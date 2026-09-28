@@ -110,7 +110,7 @@ import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineLinkSe
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass, teamLabel } from "@/lib/crm-options";
-import { toDateInputValue, stripPropertyFromTitle, gbDate } from "@/lib/format";
+import { toDateInputValue, stripPropertyFromTitle, gbDate, dealDisplayTitle } from "@/lib/format";
 import { cleanUnit } from "@/components/account-deals-board";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -6560,10 +6560,15 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   const customDealName = deal.name && deal.name !== propName ? deal.name : null;
                   // The subtitle already shows the property, so "Nando's –
                   // Bluewater Shopping Centre" over "Bluewater Shopping Centre"
-                  // becomes "Nando's" (Woody, 2026-09-27).
-                  const cardTitle = customDealName && propName
-                    ? stripPropertyFromTitle(customDealName, propName, typeof cardProp?.address === "string" ? cardProp.address : (cardProp?.address as any)?.formatted, companyMap.get(deal.tenantId as string))
+                  // becomes "Nando's" (Woody, 2026-09-27). Same helper as the
+                  // deal page: a bare "unit 3" reads "Kinraden · Unit 3" and a
+                  // name that is only the property ("Newsons Yard") shows the
+                  // tenant (Woody, 2026-09-28).
+                  const cardTenant = deal.tenantId ? companyMap.get(deal.tenantId as string) || null : null;
+                  const cardTitle = deal.name && propName
+                    ? dealDisplayTitle({ name: deal.name, propertyName: propName, propertyAddress: typeof cardProp?.address === "string" ? cardProp.address : (cardProp?.address as any)?.formatted, tenantName: cardTenant })
                     : customDealName;
+                  const titleIsProp = !!cardTitle && cardTitle.trim().toLowerCase() === propName.trim().toLowerCase();
                   // Phone triage needs dates without opening each deal:
                   // Target Date drives the WIP bucket, and time-in-status
                   // shows which deals have stalled.
@@ -6578,7 +6583,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   return {
                     id: deal.id,
                     title: cardTitle || propName || deal.name,
-                    subtitle: customDealName && propName ? propName : undefined,
+                    subtitle: propName && cardTitle && !titleIsProp ? propName : undefined,
                     href: `/deals/${deal.id}`,
                     status: (statusCode && DEAL_STATUS_LABELS[statusCode]) || deal.status || undefined,
                     statusColor: (statusCode && DEAL_STATUS_DOT_COLORS[statusCode]) || "bg-muted-foreground",
@@ -6587,7 +6592,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       // Whole pounds — bare toLocaleString gave "£5,127.5" (Woody, 2026-09-27).
                       { label: "Fee", value: deal.fee ? `\u00A3${Math.round(Number(deal.fee)).toLocaleString("en-GB")}` : null },
                       { label: "Rent p.a.", value: deal.rentPa ? `\u00A3${Math.round(Number(deal.rentPa)).toLocaleString("en-GB")}` : null },
-                      { label: "Target", value: deal.targetDate ? formatMonthYear(deal.targetDate) : null },
+                      // Same date the WIP report's Target column shows: none
+                      // once invoiced, the actual once exchanged/completed,
+                      // else the target — an invoiced deal read "Target Sep
+                      // 26" here and "—" in WIP (Woody, 2026-09-28).
+                      ...(statusCode === "INV" || deal.invoicedAt ? []
+                        : deal.completedAt ? [{ label: "Completed", value: formatMonthYear(deal.completedAt) }]
+                        : deal.exchangedAt ? [{ label: "Exchanged", value: formatMonthYear(deal.exchangedAt) }]
+                        : [{ label: "Target", value: deal.targetDate ? formatMonthYear(deal.targetDate) : null }]),
                       { label: "In status", value: statusAge },
                       { label: "Type", value: deal.dealType, badge: true },
                       { label: "Agent", value: agents },

@@ -84,24 +84,9 @@ import { isEquityUser } from "@/lib/utils";
 import type { User } from "@shared/schema";
 import { useRecentItems, type RecentItem } from "@/hooks/use-recent-items";
 import { History, ClipboardCheck } from "lucide-react";
-import { stripPropertyFromTitle } from "@/lib/format";
+import { dealDisplayTitle } from "@/lib/format";
 
-// One deal title for the deal page header, breadcrumb, side panel and Quick
-// Access. The property is always shown beside it, so it's stripped — but a
-// bare "Unit 3" never identifies the deal: a unit takes its tenant
-// ("Nando's · Unit 3"), else the full deal name stays (Woody, 2026-09-28).
-export function dealDisplayTitle(d: { name?: string | null; propertyName?: string | null; propertyAddress?: string | null; tenantName?: string | null; unitName?: string | null; isInvestment?: boolean }): string {
-  const full = d.name || d.propertyName || "Untitled Deal";
-  if (d.isInvestment) return d.propertyName || full;
-  const tenant = (d.tenantName || "").trim();
-  const unit = (d.unitName || "").trim();
-  if (unit && tenant) return `${tenant} · ${unit}`;
-  const stripped = d.name && d.propertyName ? stripPropertyFromTitle(d.name, d.propertyName, d.propertyAddress, tenant || null) : full;
-  const bare = /^(?:(?:unit|shop|suite|kiosk|store|lot|pitch)\s*)?[a-z]{0,2}\s*\d+[a-z]?$/i.test(stripped.trim())
-    || (!!unit && stripped.trim().toLowerCase() === unit.toLowerCase());
-  if (bare) return tenant ? `${tenant} · ${stripped}` : full;
-  return stripped;
-}
+export { dealDisplayTitle };
 
 const coreNavBase = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },

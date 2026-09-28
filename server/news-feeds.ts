@@ -2191,19 +2191,30 @@ export function setupNewsFeedRoutes(app: Express) {
       // "GBP450 mil" and "£450m" are the same figure.
       const headlineWords = (t: string) => new Set(t.toLowerCase().replace(/\bgbp\s?/g, "£").replace(/(£?\d+(?:\.\d+)?)\s?(?:mil|million|mn|m)\b/g, "$1m")
         .replace(/[^a-z0-9£\s]/g, " ").split(/\s+/).filter(w => w.length > 2 && !/^(?:the|and|for|with|from|its|has|after|into|over)$/.test(w)));
-      const kept: { words: Set<string> }[] = [];
-      const articles = combined.filter(article => !isNewsErrorTitle(article.title)).map(article => {
+      // Crime and incident reports ("Bluewater arrests after 'chaos'",
+      // "shoppers evacuated") aren't property intel.
+      const INCIDENT = /\b(?:arrest(?:s|ed)?|stabb(?:ed|ing)|murder|police|evacuated|emergency services|robbery|shoplift\w*|assault|jailed|sentenced|fire crews?|missing (?:boy|girl|man|woman))\b/i;
+      const cleaned = combined.filter(article => !isNewsErrorTitle(article.title) && !INCIDENT.test(String(article.title || ""))).map(article => {
         let title = String(article.title || "").replace(/^\s*(?:news|press release|latest)\s*[|:]\s*/i, "");
         for (let i = 0; i < 3; i++) title = title.replace(/\s+[-–|]\s+(?:[A-Z][^-–|?!]{1,39}|[\w.-]+\.(?:co\.uk|com|net|org|uk|io|news))\s*$/, "");
         return { ...article, title };
-      }).filter(article => {
-        const words = headlineWords(article.title);
-        const dup = kept.some(k => Array.from(words).filter(w => k.words.has(w)).length / Math.max(1, Math.min(words.size, k.words.size)) >= 0.6);
-        if (!dup) kept.push({ words });
-        return !dup;
       });
       // Newest first — database and web results were interleaved by source.
-      articles.sort((a, b) => (Date.parse(String(b.publishedAt || "")) || 0) - (Date.parse(String(a.publishedAt || "")) || 0));
+      cleaned.sort((a, b) => (Date.parse(String(b.publishedAt || "")) || 0) - (Date.parse(String(a.publishedAt || "")) || 0));
+      // Reworded retellings share a money figure ("£450m") plus a couple of
+      // names even when most words differ; keep the copy with a summary.
+      const kept: { words: Set<string>; article: typeof cleaned[number] }[] = [];
+      for (const article of cleaned) {
+        const words = headlineWords(article.title);
+        const match = kept.find(k => {
+          const shared = Array.from(words).filter(w => k.words.has(w));
+          return shared.length / Math.max(1, Math.min(words.size, k.words.size)) >= 0.6
+            || (shared.some(w => /^£\d/.test(w)) && shared.length >= 2);
+        });
+        if (!match) kept.push({ words, article });
+        else if (!match.article.summary && article.summary) match.article = article;
+      }
+      const articles = kept.map(k => k.article);
       res.json({ articles, propertyName, searchQuery });
     } catch (err: any) {
       console.error("[Property News] Error:", err);

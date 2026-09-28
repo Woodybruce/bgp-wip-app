@@ -503,7 +503,7 @@ function AiTargetChip({ target, onAdopt, onDismiss }: { target: AiTarget; onAdop
           <span className="text-[11px] text-muted-foreground shrink-0">AI plan · {AI_TIER[target.quality_rating] || "B"}-tier</span>
         </div>
         <p className="whitespace-pre-line">{why}</p>
-        {evidence && <p className="text-muted-foreground"><span className="font-medium text-foreground">Evidence:</span> {evidence}</p>}
+        {evidence && !(why || "").toLowerCase().includes(evidence.toLowerCase().replace(/[.\s]+$/, "").slice(0, 60)) && <p className="text-muted-foreground"><span className="font-medium text-foreground">Evidence:</span> {evidence}</p>}
         {target.internal_evidence && <p className="text-muted-foreground"><span className="font-medium text-foreground">BGP only:</span> {target.internal_evidence.replace(/\bSept\b/g, "Sep")}</p>}
         <div className="flex items-center gap-2 pt-1">
           <Button size="sm" className="h-7 text-xs" disabled={busy} onClick={() => run(onAdopt)}>Add as target</Button>
@@ -1546,7 +1546,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
               </p>}
               {compact && (
                 <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground mt-1">
-                  {(canEdit || unit.nia_sqft != null) && <span>NIA {canEdit ? <InlineEdit value={String(unit.nia_sqft ?? "")} field="nia_sqft" unitId={unit.id} onSave={inlineUpdate} type="number" /> : fmtNum(unit.nia_sqft)} sq ft</span>}
+                  {(canEdit || unit.nia_sqft != null) && <span>NIA {canEdit ? <InlineEdit value={String(unit.nia_sqft ?? "")} field="nia_sqft" unitId={unit.id} onSave={inlineUpdate} type="number" /> : fmtNum(unit.nia_sqft)}{unit.nia_sqft != null ? " sq ft" : ""}</span>}
                   {canEdit && <span>Rent <InlineEdit value={String(unit.passing_rent_pa ?? "")} field="passing_rent_pa" unitId={unit.id} onSave={inlineUpdate} type="number" /></span>}
                   {unit.next_review_date && <span>Review {fmtDate(unit.next_review_date)}</span>}
                 </div>
@@ -1905,7 +1905,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
       <tr className="border-b hover:bg-amber-100/40 dark:hover:bg-amber-900/20 bg-amber-50/40 dark:bg-amber-900/10" data-testid={`tenancy-row-${unit.id}`}>
         <td className="p-1 font-medium text-amber-700 dark:text-amber-400" colSpan={Math.min(columns.length, 6)}>
           VACANT — {unit.unit_number || unit.premises || "—"}
-          {unit.nia_sqft ? ` · ${unit.nia_sqft.toLocaleString()} sqft` : ""}
+          {unit.nia_sqft ? ` · ${Math.round(unit.nia_sqft).toLocaleString("en-GB")} sq ft` : ""}
           {unit.erv_pa ? ` · £${unit.erv_pa.toLocaleString()} pa asking` : ""}
         </td>
         <td className="p-1 text-muted-foreground text-center" colSpan={Math.max(0, columns.length - 6)}>—</td>

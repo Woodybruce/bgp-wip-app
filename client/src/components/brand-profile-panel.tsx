@@ -593,7 +593,16 @@ const properTokens = (title: string, brandName?: string | null) => {
 // An opening's retellings run weeks apart (Zara's Lefties ×3), so that
 // family looks back 45 days; two appointment stories sharing two topic
 // words ("flexible offices") are one hire (Woody, 2026-09-28).
-export function dedupeNearNews<T extends { title?: string | null; published_at?: string | null }>(items: T[], brandName?: string | null): T[] {
+// A real snippet (more than the headline + publisher) counts as a fact when
+// choosing the retelling to keep — Cushman kept a bare CoStar headline over
+// the one naming Arron Browne (Woody, 2026-09-28).
+const snippetFact = (title: string, summary: string | null | undefined) => {
+  const plain = String(summary || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+  const head = splitNewsTitle(title).title.trim().toLowerCase();
+  const rest = head && plain.toLowerCase().startsWith(head) ? plain.slice(head.length) : plain;
+  return rest.replace(/[^A-Za-z\s]/g, " ").split(/\s+/).filter(w => w.length > 2).length > 6 ? 100 : 0;
+};
+export function dedupeNearNews<T extends { title?: string | null; published_at?: string | null; summary?: string | null }>(items: T[], brandName?: string | null): T[] {
   const kept: { item: T; words: Set<string>; names: Set<string>; events: boolean[]; at: number; info: number }[] = [];
   const brandWords = new Set(String(brandName || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean));
   const topicWords = (words: Set<string>) => new Set([...words].filter(w => !brandWords.has(w) && !HEADLINE_STOP.has(w) && !NEWS_EVENT_FAMILIES[APPOINT_FAMILY].test(w)
@@ -602,7 +611,7 @@ export function dedupeNearNews<T extends { title?: string | null; published_at?:
     const title = item.title || "";
     const words = newsWords(title), at = item.published_at ? new Date(item.published_at).getTime() : NaN;
     const names = properTokens(title, brandName), events = NEWS_EVENT_FAMILIES.map(re => re.test(splitNewsTitle(title).title));
-    const info = headlineInfo(title);
+    const info = headlineInfo(title) + snippetFact(title, item.summary);
     const dup = kept.find(k => {
       const gap = !isNaN(at) && !isNaN(k.at) ? Math.abs(at - k.at) : 0;
       const sameFamily = (i: number) => events[i] && k.events[i];
@@ -625,7 +634,10 @@ export function dedupeNearNews<T extends { title?: string | null; published_at?:
     if (!dup) kept.push({ item, words, names, events, at, info });
     else if (info > dup.info) Object.assign(dup, { item, words, names, events, at, info });
   }
-  return kept.map(k => k.item);
+  // A merged winner kept the earlier story's slot, so re-sort newest first
+  // (undated last) when anything merged (Woody, 2026-09-28).
+  if (kept.length === items.length) return kept.map(k => k.item);
+  return kept.map((k, i) => ({ k, i })).sort((a, b) => (isNaN(b.k.at) ? -Infinity : b.k.at) - (isNaN(a.k.at) ? -Infinity : a.k.at) || a.i - b.i).map(({ k }) => k.item);
 }
 // Shouting = ≥70% of the letters upper case, so a lone "x" in
 // "OFF-LICENCE SESSIONS x …" doesn't keep it shouting (Woody, 2026-09-28).
@@ -680,14 +692,18 @@ export const accountBoardContacts = (ws: NonNullable<ReturnType<typeof useAccoun
 // One tile per picture: the same file saved twice (by source URL, or a
 // near-identical name like "logo.png" / "logo (2).png" / "logo-300x200.png")
 // showed the British Land logo twice (Woody, 2026-09-28).
+// Exact URL (query kept) and a name only with matching dimensions — CDN
+// photos differing only in ?query collapsed Zara's three photos to one
+// (Woody, 2026-09-28).
 export function dedupeGalleryImages<T extends { id?: any; file_name?: string | null; source?: string | null; file_size?: number | null; width?: number | null; height?: number | null }>(images: T[]): T[] {
   const seen = new Set<string>();
   return images.filter(img => {
-    const src = /^https?:\/\//i.test(String(img.source || "")) ? `u:${String(img.source).split(/[?#]/)[0].toLowerCase()}` : null;
+    const src = /^https?:\/\//i.test(String(img.source || "")) ? `u:${String(img.source).trim()}` : null;
     const stem = String(img.file_name || "").toLowerCase().replace(/\.[a-z0-9]{2,5}$/, "")
       .replace(/(?:[\s._-]*(?:\(\d+\)|copy|\d{2,4}x\d{2,4}|scaled))+$/g, "").replace(/[^a-z0-9]/g, "");
-    const size = img.file_size && img.width && img.height ? `s:${img.file_size}:${img.width}x${img.height}` : null;
-    const keys = [src, stem.length >= 3 ? `n:${stem}` : null, size].filter(Boolean) as string[];
+    const dims = img.width && img.height ? `${img.width}x${img.height}` : null;
+    const size = img.file_size && dims ? `s:${img.file_size}:${dims}` : null;
+    const keys = [img.id != null ? `i:${img.id}` : null, src, stem.length >= 3 && dims ? `n:${stem}:${dims}` : null, size].filter(Boolean) as string[];
     if (keys.some(k => seen.has(k))) return false;
     keys.forEach(k => seen.add(k));
     return true;
@@ -2218,12 +2234,15 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         {profileTopRow}
         {refreshStatus}
         {!isClientViewer && <AgentRelationshipCard companyId={companyId} />}
-        <MasonryGrid className={masonryCls}>
+        {/* No news → one column: two columns left a blank half beside Key
+            contacts (CBRE; Woody, 2026-09-28). */}
+        <MasonryGrid className={data.news?.length ? masonryCls : "space-y-3"}>
           {(data.representing.length > 0 || !isClientViewer) && <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-2" data-testid="agent-represents">{representsBlock}</div>}
           <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
           <BrandProfileSidebar data={data} companyId={companyId} only={["news"]} />
         </MasonryGrid>
-        <BrandProfileSidebar data={data} companyId={companyId} only={["gallery"]} />
+        {/* The agent page has no photo strip, so nothing is "shown above". */}
+        <BrandProfileSidebar data={data} companyId={companyId} only={["gallery"]} heroStrip={false} />
         {viewerDialogs}
       </div>
     );
@@ -5041,7 +5060,7 @@ function TenantRepsBlock({ companyId, reps }: { companyId: string; reps: any[] }
 
 type SidebarPart = "contacts" | "menu" | "compliance" | "covenant" | "files" | "news" | "feed" | "team" | "gallery";
 const SIDEBAR_BOTTOM: SidebarPart[] = ["team", "gallery"];
-function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandProfile; companyId: string; column?: "grid" | "bottom"; only?: SidebarPart[] }) {
+function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }: { data: BrandProfile; companyId: string; column?: "grid" | "bottom"; only?: SidebarPart[]; heroStrip?: boolean }) {
   const { toast } = useToast();
   const c = data.company;
   const cov = data.covenant;
@@ -5061,9 +5080,15 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
   const sbIsClient = !sbViewer || sbViewer.role === "Client" || !!sbViewer.companyScopeId;
   const coverImage = selectCompanyHeroImage(data.images, c.company_type);
   const [galleryAll, setGalleryAll] = useState(false);
-  const stripIds = new Set(rankCompanyHeroImages(data.images || [], c.company_type).slice(0, 4).map((img: any) => img.id));
-  const uniqueImages = dedupeGalleryImages(data.images || []);
+  // "Shown above" = what the header strip actually renders: the cover + up
+  // to three more on a brand page, nothing on agent / landlord pages. The
+  // strip's photos go first so a duplicate of one never tiles below
+  // (Woody, 2026-09-28).
+  const stripImages = heroStrip ? rankCompanyHeroImages(data.images || [], c.company_type).slice(0, 4) : [];
+  const stripIds = new Set(stripImages.map((img: any) => img.id));
+  const uniqueImages = dedupeGalleryImages([...stripImages, ...(data.images || []).filter((img: any) => !stripIds.has(img.id))]);
   const galleryImages = galleryAll ? uniqueImages : uniqueImages.filter((img: any) => !stripIds.has(img.id));
+  const shownAbove = uniqueImages.length - uniqueImages.filter((img: any) => !stripIds.has(img.id)).length;
   const covenantReport = useCovenantReport((c as any)?.companies_house_number);
   const covenantRun = useMutation({
     mutationFn: async () => apiRequest("POST", `/api/kyc/run-all-checks`, { companyId }),
@@ -5300,7 +5325,7 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
         // old source-name clause matched "<Brand> (Google News)" on every
         // article, making Press identical to Industry (Woody, 2026-08-19).
         const pressNews = data.news.filter((a: any) => !isSocialNews(a) && ((brandDomain && a.url?.includes(brandDomain)) || ownPost(a) || /(?:\((?:website news|openings)\)|\s[—–-]\s+news)\s*$/i.test(a.source_name || "")));
-        const tabFiltered = newsTab === "press"
+        const tabFiltered = newsTab === "press" && pressNews.length
           ? pressNews
           : (newsSourceFilter ? industryNews.filter((a: any) => srcOf(a) === newsSourceFilter) : industryNews);
         const filtered = newsTagFilter.size === 0
@@ -5322,7 +5347,9 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
               <div className="flex flex-wrap items-center gap-1">
                 {/* LinkedIn tab removed — nothing ingests LinkedIn posts, so
                     it was a permanently-empty tab (Woody, 2026-08-19). */}
-                {(["industry", "press"] as const).map(t => (
+                {/* No Press stories → no Press tab; "Press (0)" was a
+                    clickable empty tab (Woody, 2026-09-28). */}
+                {(pressNews.length ? ["industry", "press"] as const : ["industry"] as const).map(t => (
                   <button
                     key={t}
                     onClick={() => { setNewsTab(t); setNewsShowAll(false); setNewsSourceFilter(null); }}
@@ -5547,7 +5574,7 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
             <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
               {!isLandlord && (
               <div className="text-[11px] text-muted-foreground">
-                <span className="font-mono tabular-nums">{data.images.length}</span> saved image{data.images.length === 1 ? "" : "s"}
+                <span className="font-mono tabular-nums">{uniqueImages.length}</span> saved image{uniqueImages.length === 1 ? "" : "s"}
               </div>
               )}
               {!sbIsClient && <BrandImageRefreshButton companyId={companyId} />}
@@ -5578,11 +5605,15 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
             {/* The header strip already shows the cover + up to three
                 photos; the grid skips those unless staff open the full set
                 to manage them (Woody, 2026-09-28). */}
-            {!isLandlord && galleryImages.length < uniqueImages.length && (
+            {!isLandlord && shownAbove > 0 && (galleryAll || !sbIsClient ? (
               <button type="button" onClick={() => setGalleryAll(v => !v)} className="mb-2 text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2">
-                {galleryAll ? "Hide the photos shown above" : `${uniqueImages.length - galleryImages.length} shown above${sbIsClient ? "" : " · Show all to manage"}`}
+                {galleryAll ? "Hide the photos shown above" : `${shownAbove === uniqueImages.length ? `All ${shownAbove} saved image${shownAbove === 1 ? " is" : "s are"}` : shownAbove} shown above · Show all to manage`}
               </button>
-            )}
+            ) : (
+              <p className="mb-2 text-[11px] text-muted-foreground">
+                {shownAbove === uniqueImages.length ? `All ${shownAbove} saved image${shownAbove === 1 ? " is" : "s are"} shown above` : `${shownAbove} shown above`}
+              </p>
+            ))}
             {!isLandlord && galleryImages.length > 0 && (
               // Whole rows, no inner scroll box — the capped height cut rows
               // mid-image (Woody, 2026-09-28). 3-col gives bigger thumbnails.
