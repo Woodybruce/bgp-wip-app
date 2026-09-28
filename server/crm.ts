@@ -7498,8 +7498,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         // the landlord:
         //   Sale              → vendor    (we act for the vendor)
         //   Purchase          → purchaser (we act for the purchaser)
-        //   Lease Acquisition → tenant    (tenant rep)
-        //   Lease Disposal    → tenant    (tenant rep)
+        //   Lease Acquisition  → tenant   (tenant rep)
+        //   Tenant Acquisition → tenant   (tenant rep)
+        //   Lease Disposal     → tenant   (tenant rep)
         //   New Letting       → landlord  (landlord rep — default)
         //   anything else, OR Tenant Rep team set → tenant first
         // After the role pick, fall through the other counterparties +
@@ -7519,6 +7520,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           dt === "Sale"              ? lookup((deal as any).vendorId) :
           dt === "Purchase"          ? lookup((deal as any).purchaserId) :
           dt === "Lease Acquisition" ? lookup(deal.tenantId) :
+          dt === "Tenant Acquisition" ? lookup(deal.tenantId) :
           dt === "Lease Disposal"    ? lookup(deal.tenantId) :
           isTenantRepTeam            ? lookup(deal.tenantId) :
           dt === "New Letting"       ? lookup(deal.landlordId) :
@@ -7538,6 +7540,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           dt === "Sale"              ? (deal as any).vendorId :
           dt === "Purchase"          ? (deal as any).purchaserId :
           dt === "Lease Acquisition" ? deal.tenantId :
+          dt === "Tenant Acquisition" ? deal.tenantId :
           dt === "Lease Disposal"    ? deal.tenantId :
           isTenantRepTeam            ? deal.tenantId :
                                        deal.landlordId;

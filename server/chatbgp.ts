@@ -1420,7 +1420,7 @@ crm_deals IS the WIP source of truth. Status determines WIP stage automatically.
 When the user asks to log a deal, follow this checklist BEFORE calling create_deal:
 
 1. **Pick the right "client" side based on the team / deal type.** The WIP report's Client column reads from whichever counterparty matches the role — get this wrong and the deal shows "Unknown".
-   - Tenant Rep team, Lease Acquisition, or Lease Disposal → set **tenantId** (the tenant is the client).
+   - Tenant Rep team, Lease Acquisition, Tenant Acquisition, or Lease Disposal → set **tenantId** (the tenant is the client).
    - New Letting → set **landlordId**.
    - Sale → set **vendorId**. Purchase → set **purchaserId**.
    - When in doubt, ASK the user "is this a landlord rep or tenant rep instruction?" — don't default to landlord.
@@ -2611,14 +2611,14 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "create_deal",
-      description: "Create a new deal in the BGP CRM. Use when the user asks to add a deal, log a transaction, or start tracking a new piece of work.\n\nIMPORTANT — client side picks the right counterparty:\n  • Tenant Rep / Lease Acquisition / Lease Disposal → tenantId is the client.\n  • New Letting → landlordId is the client.\n  • Sale → vendorId is the client. Purchase → purchaserId is the client.\nAlways set whichever of landlordId / tenantId / vendorId / purchaserId is the client BEFORE creating, otherwise the WIP report will show 'Unknown' for client. If the user names a client company that doesn't exist yet in the CRM, call create_company first, then pass the new id here.\n\nIMPORTANT — property linking + disambiguation: if the user gives an address, ALWAYS call search_crm({entityType:'properties'}) first. If it returns more than one property at that address, STOP and ask the user which one — show the candidates with their id, name, status, and any postcode/area. Do not pick the first one yourself. Once the user has picked, pass propertyId here.",
+      description: "Create a new deal in the BGP CRM. Use when the user asks to add a deal, log a transaction, or start tracking a new piece of work.\n\nIMPORTANT — client side picks the right counterparty:\n  • Tenant Rep / Lease Acquisition / Tenant Acquisition / Lease Disposal → tenantId is the client.\n  • New Letting → landlordId is the client.\n  • Sale → vendorId is the client. Purchase → purchaserId is the client.\nAlways set whichever of landlordId / tenantId / vendorId / purchaserId is the client BEFORE creating, otherwise the WIP report will show 'Unknown' for client. If the user names a client company that doesn't exist yet in the CRM, call create_company first, then pass the new id here.\n\nIMPORTANT — property linking + disambiguation: if the user gives an address, ALWAYS call search_crm({entityType:'properties'}) first. If it returns more than one property at that address, STOP and ask the user which one — show the candidates with their id, name, status, and any postcode/area. Do not pick the first one yourself. Once the user has picked, pass propertyId here.",
       parameters: {
         type: "object",
         properties: {
           name: { type: "string", description: "Deal name (usually the property address)" },
           propertyId: { type: "string", description: "CRM property UUID. Set after the user has confirmed which property when multiple share the address." },
           landlordId: { type: "string", description: "CRM company UUID of the landlord. The client on New Letting deals." },
-          tenantId: { type: "string", description: "CRM company UUID of the tenant. The client on Tenant Rep / Lease Acquisition / Lease Disposal deals." },
+          tenantId: { type: "string", description: "CRM company UUID of the tenant. The client on Tenant Rep / Lease Acquisition / Tenant Acquisition / Lease Disposal deals." },
           vendorId: { type: "string", description: "CRM company UUID of the vendor. The client on Sale deals." },
           purchaserId: { type: "string", description: "CRM company UUID of the purchaser. The client on Purchase deals." },
           team: { type: "array", items: { type: "string" }, description: "Team(s): London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },

@@ -1322,20 +1322,28 @@ function PricingCell({
 // over the linked Xero billing contact. Click opens a popover with
 // the landlord picker (inline-create wired) and the Xero contact
 // picker (which writes id + cached name/account/address in one go).
+// Deal types where BGP acts for the tenant, so the tenant is the client
+// and the party billed. Mirrors the WIP report's client pick in server/crm.ts.
+const TENANT_CLIENT_DEAL_TYPES = new Set(["Lease Acquisition", "Tenant Acquisition", "Lease Disposal"]);
+
 function ClientXeroCell({
-  deal, companies, onLandlordSave, onLandlordCreate, onXeroChange,
+  deal, companies, onClientSave, onClientCreate, onXeroChange,
 }: {
   deal: any;
   companies: CrmCompany[];
-  onLandlordSave: (v: string | null) => void;
-  onLandlordCreate: (name: string) => Promise<void> | void;
+  onClientSave: (field: "landlordId" | "tenantId", v: string | null) => void;
+  onClientCreate: (field: "landlordId" | "tenantId", name: string) => Promise<void> | void;
   onXeroChange: (c: { ContactID: string; Name: string; AccountNumber: string | null; BillingAddress: any } | null) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Tenant-rep deal types bill the tenant, so the tenant is the client
+  // here — everything else stays on the landlord (Carly, 2026-09-28).
+  const clientField: "landlordId" | "tenantId" = TENANT_CLIENT_DEAL_TYPES.has(deal.dealType) ? "tenantId" : "landlordId";
+  const clientId = deal[clientField] || null;
   // No "Linked client" stand-in — it read as a real client name. An
   // unresolved link shows "—" like an empty one (Woody, 2026-09-27).
-  const clientName = deal.landlordId
-    ? (companies.find(c => c.id === deal.landlordId)?.name || null)
+  const clientName = clientId
+    ? (companies.find(c => c.id === clientId)?.name || null)
     : null;
   const xeroName = (deal as any).xeroContactName || null;
   const xeroAcct = (deal as any).xeroAccountNumber || null;
@@ -1373,12 +1381,14 @@ function ClientXeroCell({
         <div className="grid grid-cols-[80px_1fr] items-center gap-2">
           <Label className="text-xs text-muted-foreground">Client</Label>
           <InlineLinkSelect
-            value={deal.landlordId}
-            options={companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name }))}
-            href={deal.landlordId ? `/companies/${deal.landlordId}` : undefined}
-            onSave={onLandlordSave}
-            onCreate={(name) => onLandlordCreate(name)}
-            placeholder="Link client"
+            value={clientId}
+            options={companies.filter(c => (clientField === "tenantId"
+              ? (c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser")
+              : (c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client")) || c.id === clientId).map(c => ({ id: c.id, name: c.name }))}
+            href={clientId ? `/companies/${clientId}` : undefined}
+            onSave={(v) => onClientSave(clientField, v)}
+            onCreate={(name) => onClientCreate(clientField, name)}
+            placeholder={clientField === "tenantId" ? "Link tenant (client)" : "Link client"}
           />
         </div>
         <div className="grid grid-cols-[80px_1fr] items-start gap-2">
@@ -1610,11 +1620,13 @@ function SimplifiedCreateBody({
   //   New Letting → landlord
   //   Lease Renewal / Rent Review / Regear → either (ambiguous, user picks)
   //   Secondment → landlord (we second staff to the landlord)
-  //   Tenant Acquisition / Sub-Letting / Consultancy → either
+  //   Tenant Acquisition → tenant (tenant-rep)
+  //   Sub-Letting / Consultancy → either
   const clientRole: "landlord" | "tenant" | "vendor" | "purchaser" | null =
     dt === "Sale" ? "vendor"
     : dt === "Purchase" ? "purchaser"
     : dt === "Lease Acquisition" ? "tenant"
+    : dt === "Tenant Acquisition" ? "tenant"
     : dt === "Lease Disposal" ? "tenant"
     : dt === "New Letting" ? "landlord"
     : dt === "Secondment" ? "landlord"
@@ -6830,21 +6842,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           <ClientXeroCell
                             deal={deal}
                             companies={companies}
-                            onLandlordSave={(v) => handleInlineSave(deal.id, "landlordId", v)}
-                            onLandlordCreate={async (name) => {
-                              try {
-                                const r = await apiRequest("POST", "/api/crm/companies", {
-                                  name: name.trim(),
-                                  companyType: "Landlord / Client",
-                                });
-                                const created = await r.json();
-                                queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-                                handleInlineSave(deal.id, "landlordId", String(created.id));
-                                toast({ title: "Client created", description: `${created.name || name} added.` });
-                              } catch (e: any) {
-                                toast({ title: "Create failed", description: e?.message || "Try again", variant: "destructive" });
-                              }
-                            }}
+                            onClientSave={(field, v) => handleInlineSave(deal.id, field, v)}
+                            onClientCreate={(field, name) => createCompanyForDeal(deal.id, field, field === "tenantId" ? "Tenant" : "Landlord / Client", name)}
                             onXeroChange={(c) => {
                               // One Xero pick = four deal fields to keep
                               // the cached billing snapshot in sync.
