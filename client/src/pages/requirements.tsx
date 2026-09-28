@@ -3385,7 +3385,7 @@ function LeasingFormDialog({
   );
 }
 
-function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | null; autoCreate?: boolean }) {
+export function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | null; autoCreate?: boolean }) {
   const [, navigate] = useLocation();
   const isMobile = useIsMobile();
   const [search, setSearch] = useState("");

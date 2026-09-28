@@ -110,10 +110,11 @@ const coreNavBase = [
   // Lease Advisory is Pete's toolset (Woody, 2026-09-02): jobs, evidence
   // plans and leasing comps linked by pill row across the three pages.
   // Comps has no standalone entry for staff — it's reached through here
-  // (clients still get a direct Comps entry below). Investment comps split
-  // out of the comps page for the investment team.
+  // (clients still get a direct Comps entry below).
   { title: "Lease Advisory", url: "/pla/matters", icon: Scale },
-  { title: "Investment Comps", url: "/investment-comps", icon: TrendingUp },
+  // Investment's own entry (Woody, 2026-09-28): one hub with Tracker /
+  // Requirements / Comps pills. Replaces the standalone Investment Comps.
+  { title: "Investment", url: "/investment", icon: TrendingUp },
 ];
 
 const aiNav = [
@@ -186,7 +187,8 @@ function NavSection({
     const path = url.split("?")[0];
     if (path === "/contacts") return location.startsWith("/contacts") || location.startsWith("/companies");
     if (path === "/properties") return location.startsWith("/properties") || location.startsWith("/map") || location.startsWith("/edozo");
-    if (path === "/deals") return location.startsWith("/deals") || location.startsWith("/investment-tracker") || location.startsWith("/wip-report");
+    if (path === "/deals") return location.startsWith("/deals") || location.startsWith("/wip-report");
+    if (path === "/investment") return location === "/investment" || location.startsWith("/investment/") || location.startsWith("/investment-tracker") || location.startsWith("/investment-comps");
     if (path === "/property-intelligence") return location.startsWith("/property-intelligence");
     if (path === "/kyc-clouseau") return location.startsWith("/kyc-clouseau") || location.startsWith("/aml-compliance") || location.startsWith("/compliance-board") || location.startsWith("/aml-training");
     return location.startsWith(path);
@@ -384,7 +386,7 @@ export function AppSidebar() {
   const isRealClientLogin = user?.role === "Client";
   const isViewingAsClient = !isRealClientLogin && !!(user as any)?.companyScopeId;
   const viewingAsName = (user as any)?.companyScopeName || activeTeam;
-  const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/team-expenses", "/reporting", "/wip-report", "/pla/matters", "/investment-comps", "/evidence-plans"];
+  const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/team-expenses", "/reporting", "/wip-report", "/pla/matters", "/investment", "/investment-comps", "/evidence-plans"];
   const coreNavStaff = isClientUser
     ? [
         ...coreWithTeamExpenses.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url)),
@@ -634,7 +636,7 @@ export const mobileOverlayItems = [
   // Leasing Schedule retired (archived) — route stays live for old links.
   { title: "Comps", url: "/comps", icon: Scale },
   { title: "Lease Advisory", url: "/pla/matters", icon: Scale },
-  { title: "Investment Comps", url: "/investment-comps", icon: TrendingUp },
+  { title: "Investment", url: "/investment", icon: TrendingUp },
   { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, adminOnly: true, badge: "BD" },
   // Studio tools admin-only on mobile too (parity with desktop Admin section) — WIP.
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet, adminOnly: true },
@@ -669,7 +671,7 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
   // Parity with desktop: Reporting hidden everywhere now, and client logins
   // also lose the BGP-internal items (People & HR, My Card, WIP).
   const filteredByAdmin = user?.isAdmin ? mobileOverlayItems : mobileOverlayItems.filter((i: any) => !i.adminOnly);
-  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/mail", "/cad-measure"];
+  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/mail", "/cad-measure", "/investment"];
   const items = (user?.role === "Client" || !!(user as any)?.companyScopeId)
     ? filteredByAdmin.filter(i => !clientHidden.includes(i.url))
     : filteredByAdmin.filter(i => i.url !== "/reporting" || isLandsec);

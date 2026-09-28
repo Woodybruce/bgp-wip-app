@@ -65,6 +65,7 @@ const SettingsPage = lazy(() => import("@/pages/settings"));
 const ProfileSettingsPage = lazy(() => import("@/components/profile-photo-card").then(module => ({ default: module.ProfileSettingsPage })));
 const Comps = lazy(() => import("@/pages/comps"));
 const InvestmentComps = lazy(() => import("@/pages/investment-comps"));
+const InvestmentHub = lazy(() => import("@/pages/investment-hub"));
 const HuntersLetting = lazy(() => import("@/pages/hunters-letting"));
 const HuntersInvestment = lazy(() => import("@/pages/hunters-investment"));
 const Leads = lazy(() => import("@/pages/leads"));
@@ -351,6 +352,10 @@ function Router() {
       <Route path="/comps/:id" component={Comps} />
       <Route path="/admin/comps-leads">{() => <AdminRoute><CompsLeadsRedirect /></AdminRoute>}</Route>
       <Route path="/investment-comps">{() => <InvestmentComps />}</Route>
+      {/* Investment hub — Tracker / Requirements / Comps pills. Staff only:
+          not on CLIENT_ALLOWED_ROUTES, so client logins bounce home. */}
+      <Route path="/investment" component={InvestmentHub} />
+      <Route path="/investment/:tab" component={InvestmentHub} />
       <Route path="/leads" component={Leads} />
       <Route path="/subscriptions" component={Subscriptions} />
       <Route path="/chatbgp" component={ChatBGP} />
