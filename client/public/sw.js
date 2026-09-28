@@ -1,4 +1,4 @@
-var CACHE_NAME = 'bgp-v24';
+var CACHE_NAME = 'bgp-v25';
 var SHARE_CACHE = 'bgp-share-target';
 var PRECACHE_URLS = [
   '/',
@@ -91,16 +91,25 @@ self.addEventListener('push', function(event) {
 self.addEventListener('notificationclick', function(event) {
   event.notification.close();
   var url = event.notification.data && event.notification.data.url ? event.notification.data.url : '/';
+  var target = new URL(url, self.location.origin).href;
+  // Wake the app first, then move it to the page. A message posted to an
+  // app still asleep in the background was lost on iPhone, so the tap just
+  // opened wherever the app was (Woody, 2026-09-28).
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clients) {
+      var client = null;
       for (var i = 0; i < clients.length; i++) {
-        if (clients[i].url.includes(self.location.origin)) {
-          clients[i].postMessage({ type: 'navigate', url: url });
-          clients[i].focus();
-          return;
-        }
+        if (clients[i].url.indexOf(self.location.origin) === 0) { client = clients[i]; break; }
       }
-      return self.clients.openWindow(url);
+      if (!client) return self.clients.openWindow(target);
+      return client.focus().then(function(focused) {
+        var c = focused || client;
+        if (c.url === target) return;
+        if ('navigate' in c) {
+          return c.navigate(target).catch(function() { c.postMessage({ type: 'navigate', url: url }); });
+        }
+        c.postMessage({ type: 'navigate', url: url });
+      }).catch(function() { return self.clients.openWindow(target); });
     })
   );
 });
