@@ -15783,6 +15783,24 @@ export function setupChatBGPRoutes(app: Express) {
     }
   });
 
+  // Pane status line for each live Excel step.
+  const excelToolLabel = (name: string, a: any): string => {
+    const where = a?.sheet ? `${a.sheet}${a.range ? `!${a.range}` : a.cell ? `!${a.cell}` : ""}` : "";
+    switch (name) {
+      case "excel_workbook_overview": return "Looking over the workbook…";
+      case "excel_read_range": return `Reading ${where || "the sheet"}…`;
+      case "excel_write_range": return `Writing ${where}…`;
+      case "excel_format_range": return `Formatting ${where}…`;
+      case "excel_sheet": return `${a?.op === "create" ? "Adding" : a?.op === "delete" ? "Deleting" : "Updating"} sheet ${a?.sheet || ""}…`;
+      case "excel_find": return `Searching for "${String(a?.query || "").slice(0, 40)}"…`;
+      case "excel_trace": return `Tracing ${where}…`;
+      case "excel_check_errors": return "Checking for formula errors…";
+      case "excel_create_chart": return "Adding a chart…";
+      case "excel_create_table": return "Making a table…";
+      default: return "Working in Excel…";
+    }
+  };
+
   app.post("/api/chatbgp/excel-chat", requireAuth, chatUpload.array("files", 20), async (req: Request, res: Response) => {
     if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
       return res.status(503).json({ message: "AI API key not configured" });
@@ -15922,10 +15940,18 @@ export function setupChatBGPRoutes(app: Express) {
         }
       }
 
-      // Truncate excel context to leave room for other contexts + tools
+      // Agent mode: the pane runs excel_* tool calls live (server/excel-agent.ts).
+      // Older cached panes don't send the flag and keep the JSON-block flow.
+      const agentMode = String(req.body.clientTools || "") === "1" || req.body.clientTools === true;
+      const workbookName = typeof req.body.workbookName === "string" ? req.body.workbookName.slice(0, 300) : "";
+      // Truncate excel context to leave room for other contexts + tools. The
+      // agent reads what it needs, so it only gets a snapshot.
       let safeExcelContext = excelContext || "";
-      if (safeExcelContext.length > 60000) {
-        safeExcelContext = safeExcelContext.substring(0, 60000) + "\n... (spreadsheet data truncated for size — full workbook metadata above is complete)\n";
+      const contextCap = agentMode ? 25000 : 60000;
+      if (safeExcelContext.length > contextCap) {
+        safeExcelContext = safeExcelContext.substring(0, contextCap) + (agentMode
+          ? "\n... (snapshot truncated — use excel_read_range for the rest)\n"
+          : "\n... (spreadsheet data truncated for size — full workbook metadata above is complete)\n");
       }
 
       // Lean mode: skip the firm-wide context builders (fetched on demand via
@@ -15983,7 +16009,15 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
 `;
 
       // Lean context — keep the task-relevant Excel supplement; fetch the rest on demand.
-      const dynamicContext = excelSupplement;
+      let dynamicContext = excelSupplement;
+      if (agentMode) {
+        const { EXCEL_AGENT_PROMPT, workbookHistoryContext } = await import("./excel-agent");
+        const memory = excelScopeCompanyId ? "" : await getMemoryContext(userId).catch(() => "");
+        const history = messages.length <= 2 && workbookName ? await workbookHistoryContext(userId, workbookName).catch(() => "") : "";
+        dynamicContext = EXCEL_AGENT_PROMPT + memory + history
+          + (workbookName ? `\n**Open workbook:** ${workbookName}\n` : "")
+          + (safeExcelContext ? `\n**Snapshot of the open workbook (may be stale mid-task — read ranges before relying on them):**\n${safeExcelContext}\n` : "");
+      }
       const systemContent = baseSystemPrompt + dynamicContext;
 
       // Load all the tools the main ChatBGP has
@@ -15991,6 +16025,12 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
       if ((await clientChatGuard(req)).isClient) {
         tools = excelScopeCompanyId ? filterToolsForClientScope(tools) : [];
       }
+      const excelAgent = agentMode ? await import("./excel-agent") : null;
+      if (excelAgent) tools = [...tools, ...excelAgent.EXCEL_TOOL_DEFS];
+      const excelRunId = excelAgent ? excelAgent.openExcelRun(userId) : null;
+      const sseSend = (payload: any) => { try { if (!clientClosed) res.write(`data: ${JSON.stringify(payload)}\n\n`); } catch {} };
+      if (excelRunId) sseSend({ runId: excelRunId });
+      req.on("close", () => { if (excelRunId) excelAgent!.closeExcelRun(excelRunId); });
       let msToken: string | null = null;
       try { msToken = await getValidMsToken(req); } catch {}
 
@@ -16017,14 +16057,27 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
         const loopOpts: any = {
           model: excelResolved.model,
           messages: convMessages,
-          max_completion_tokens: 8192,
+          max_completion_tokens: agentMode ? 16384 : 8192,
+          ...(agentMode ? {
+            systemArray: [
+              { type: "text" as const, text: baseSystemPrompt, cache_control: { type: "ephemeral" as const } },
+              { type: "text" as const, text: dynamicContext },
+            ],
+            thinking: true,
+            effort: "medium",
+          } : {}),
         };
         if (!isLastLoop && tools.length > 0) {
           loopOpts.tools = tools;
           loopOpts.tool_choice = "auto";
         }
 
-        const completion = await callClaude(loopOpts);
+        // Agent mode streams its words as they come (a new round's text
+        // replaces the last on the pane).
+        if (agentMode) sseSend({ roundStart: loopCount });
+        const completion = agentMode
+          ? await callClaudeStreaming(loopOpts, (token) => sseSend({ delta: token }), () => clientClosed)
+          : await callClaude(loopOpts);
         const message = completion.choices[0]?.message;
         if (!message) break;
 
@@ -16043,6 +16096,17 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
             const tcName = tc.function.name;
             let tcArgs: any;
             try { tcArgs = JSON.parse(tc.function.arguments); } catch { tcArgs = {}; }
+            if (excelAgent && excelRunId && excelAgent.EXCEL_TOOL_NAMES.has(tcName)) {
+              sendProgress(excelToolLabel(tcName, tcArgs));
+              const result = await excelAgent.callExcelTool(excelRunId, sseSend, tcName, tcArgs);
+              const resultStr = JSON.stringify(result);
+              convMessages.push({
+                role: "tool" as const,
+                tool_call_id: tc.id,
+                content: resultStr.length > 60000 ? resultStr.slice(0, 60000) + "\n...[truncated — read a smaller range]" : resultStr,
+              });
+              continue;
+            }
             try {
               // No artificial per-tool timeout. Normal Claude tool use
               // doesn't impose one — the tool either succeeds or fails
@@ -16081,6 +16145,18 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
             res.write(`data: ${JSON.stringify({ reply, ...(lastAction ? { action: lastAction } : {}) })}\n\n`);
             res.end();
           } catch {}
+          if (agentMode) {
+            if (excelRunId) excelAgent!.closeExcelRun(excelRunId);
+            // Memory: this workbook's conversation, plus the user's long-term
+            // ChatBGP memories from what was said.
+            const lastUser = [...messages].reverse().find((m: any) => m.role === "user");
+            const lastUserText = typeof lastUser?.content === "string" ? lastUser.content : Array.isArray(lastUser?.content) ? String(lastUser.content.find((p: any) => p.type === "text")?.text || "") : "";
+            if (workbookName) {
+              excelAgent!.saveExcelSession(userId, workbookName, [...messages.map((m: any) => ({ role: m.role, content: typeof m.content === "string" ? m.content : lastUserText })), { role: "assistant", content: reply }])
+                .catch((e: any) => console.warn("[ChatBGP Excel] session save failed:", e?.message));
+            }
+            if (lastUserText && !excelScopeCompanyId) extractAndSaveMemories(userId, lastUserText, reply).catch(() => {});
+          }
           return;
         }
       }

@@ -18,6 +18,7 @@ import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
 import { AddinHeader } from "@/components/addin-header";
 import { Pill } from "@/components/ui/pill";
 import { useToast } from "@/hooks/use-toast";
+import { runExcelTool, undoSteps, cellRefs, selectRange, workbookName as readWorkbookName, type UndoStep } from "@/lib/excel-agent-tools";
 
 interface Message {
   id: string;
@@ -29,6 +30,10 @@ interface Message {
   hidden?: boolean;
   // Set when auto-apply wrote this message's actions into the workbook.
   autoApplied?: { ok: number; fail: number };
+  // Agent mode: the Excel steps this reply took, and how to undo them.
+  steps?: string[];
+  undo?: UndoStep[];
+  undone?: boolean;
 }
 
 interface SPItem {
@@ -47,10 +52,10 @@ const TOKEN_KEY = "bgp_addin_token";
 const USER_KEY = "bgp_addin_user";
 
 const QUICK_ACTIONS = [
-  { label: "Write a formula", prompt: "Help me write an Excel formula to ", icon: FileSpreadsheet, color: "text-muted-foreground" },
-  { label: "Property data", prompt: "Look up CRM data for property ", icon: Building2, color: "text-muted-foreground" },
-  { label: "Financial model", prompt: "Help me build a financial model for ", icon: BarChart3, color: "text-muted-foreground" },
-  { label: "Contact lookup", prompt: "Find contact details for ", icon: Users, color: "text-muted-foreground" },
+  { label: "Explain this model", prompt: "Walk me through how this workbook works — inputs, key calculations and outputs.", icon: FileSpreadsheet, color: "text-muted-foreground" },
+  { label: "Check for errors", prompt: "Audit this workbook: find formula errors, broken links, hard-coded numbers in formulas and anything that doesn't tie, then fix what's safe to fix.", icon: BarChart3, color: "text-muted-foreground" },
+  { label: "Build a model", prompt: "Build me a model for ", icon: Building2, color: "text-muted-foreground" },
+  { label: "Pull BGP data", prompt: "Pull BGP comps / deal data for ", icon: Users, color: "text-muted-foreground" },
 ];
 
 function CodeBlock({ code, language }: { code: string; language: string }) {
@@ -1175,6 +1180,32 @@ const SUPPORTED_EXCEL_ACTIONS = new Set(["writeValue", "writeFormula"]);
 // covers virtually every real-world export without breaking the cache.
 const EXCEL_MAX_COLS = 100;
 
+// One line per Excel step, shown under the reply ("Wrote Summary!B4:F20").
+function stepLabel(name: string, a: any, result: any): string {
+  const where = a?.sheet ? `${a.sheet}${a.range ? `!${a.range}` : a.cell ? `!${a.cell}` : ""}` : "";
+  const failed = result?.error ? ` — failed: ${String(result.error).slice(0, 80)}` : "";
+  const errs = Array.isArray(result?.errors) && result.errors.length ? ` (${result.errors.length} error cell${result.errors.length === 1 ? "" : "s"})` : "";
+  switch (name) {
+    case "excel_workbook_overview": return `Looked over the workbook${failed}`;
+    case "excel_read_range": return `Read ${where || "a range"}${failed}`;
+    case "excel_write_range": return `Wrote ${result?.written ? String(result.written) : where}${errs}${failed}`;
+    case "excel_format_range": return `Formatted ${where}${failed}`;
+    case "excel_sheet": return `${a?.op === "create" ? "Added" : a?.op === "delete" ? "Deleted" : a?.op === "rename" ? "Renamed" : "Opened"} sheet ${a?.sheet || ""}${failed}`;
+    case "excel_rows_columns": return `${a?.op === "insert" ? "Inserted" : "Deleted"} ${where}${failed}`;
+    case "excel_clear_range": return `Cleared ${where}${failed}`;
+    case "excel_find": return `Searched for "${String(a?.query || "").slice(0, 40)}" — ${result?.count ?? 0} found${failed}`;
+    case "excel_trace": return `Traced ${where} ${a?.direction || ""}${failed}`;
+    case "excel_check_errors": return `Checked for errors — ${result?.count ?? 0} found${failed}`;
+    case "excel_create_table": return `Made a table from ${where}${failed}`;
+    case "excel_create_chart": return `Added a ${a?.type || ""} chart${failed}`;
+    case "excel_conditional_format": return `Conditional formatting on ${where}${failed}`;
+    case "excel_named_range": return `Named ${a?.name || "a range"}${failed}`;
+    case "excel_freeze_panes": return `Froze panes on ${a?.sheet || ""}${failed}`;
+    case "excel_select": return `Showed ${where}${failed}`;
+    default: return name;
+  }
+}
+
 function parseExcelActions(content: string): ExcelAction[] {
   const actions: ExcelAction[] = [];
   // Parse JSON action blocks — a block may hold one action object OR an
@@ -2084,6 +2115,10 @@ function AddinExcel() {
   // Live status from the server's SSE progress events ("Searching CRM…",
   // "Reading 2 files…") so long tool runs never look like a dead spinner.
   const [chatProgress, setChatProgress] = useState<string | null>(null);
+  // Agent mode: the reply as it streams, and the Excel steps taken so far.
+  const [liveText, setLiveText] = useState("");
+  const [liveSteps, setLiveSteps] = useState<string[]>([]);
+  const [bookName, setBookName] = useState("");
   // Auto-apply (Claude add-in parity): write actions land in the workbook as
   // they arrive, no clicking. Only explicitly-targeted cells — never the
   // current selection. Off switch persists per machine.
@@ -2149,6 +2184,25 @@ function AddinExcel() {
               content: welcomeContent,
               timestamp: new Date(),
             }]);
+            // Pick up this workbook's last conversation (memory per file).
+            readWorkbookName().then(async (name) => {
+              const fileName = name || wb.fileName || "";
+              if (cancelled || !fileName) return;
+              setBookName(fileName);
+              try {
+                const t = localStorage.getItem(TOKEN_KEY);
+                const r = await fetch(`/api/chatbgp/excel-session?workbook=${encodeURIComponent(fileName)}`, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
+                if (!r.ok) return;
+                const saved = await r.json();
+                const prior = (saved?.messages || []).filter((m: any) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string");
+                if (!cancelled && prior.length) {
+                  setMessages([
+                    ...prior.map((m: any) => ({ id: crypto.randomUUID(), role: m.role, content: m.content, timestamp: new Date(saved.updatedAt || Date.now()) })),
+                    { id: crypto.randomUUID(), role: "assistant", content: `Picked up where we left off on **${fileName}**. Carry on, or press Clear to start fresh.`, timestamp: new Date(), hidden: false },
+                  ]);
+                }
+              } catch {}
+            });
           });
         }
       });
@@ -2288,6 +2342,8 @@ function AddinExcel() {
         const form = new FormData();
         form.append("messages", JSON.stringify(apiMessages));
         if (ctx) form.append("excelContext", ctx);
+        form.append("clientTools", "1");
+        if (bookName) form.append("workbookName", bookName);
         for (const f of filesForThisSend) form.append("files", f);
         const authHeaders = getHeaders() as Record<string, string>;
         // Drop Content-Type so browser sets multipart boundary
@@ -2304,6 +2360,8 @@ function AddinExcel() {
           body: JSON.stringify({
             messages: apiMessages,
             excelContext: ctx || undefined,
+            clientTools: "1",
+            workbookName: bookName || workbookInfo?.fileName || undefined,
           }),
         });
       }
@@ -2330,6 +2388,27 @@ function AddinExcel() {
       const decoder = new TextDecoder();
       let fullReply = "";
       let buffer = "";
+      // Agent mode: carry out each Excel tool call as it arrives and send
+      // the result back so the model can continue.
+      const turnUndo: UndoStep[] = [];
+      const turnSteps: string[] = [];
+      let streamed = "";
+      setLiveText("");
+      setLiveSteps([]);
+      const handleEvent = async (data: any) => {
+        if (data.progress) setChatProgress(String(data.progress));
+        if (data.roundStart) { streamed = ""; setLiveText(""); }
+        if (typeof data.delta === "string") { streamed += data.delta; setLiveText(streamed); }
+        if (data.reply) fullReply = data.reply;
+        if (data.excelTool) {
+          const { runId, callId, name, args } = data.excelTool;
+          const result = await runExcelTool(name, args || {}, turnUndo);
+          const label = stepLabel(name, args || {}, result);
+          turnSteps.push(label);
+          setLiveSteps([...turnSteps]);
+          await fetch("/api/chatbgp/excel-tool-result", { method: "POST", headers: getHeaders(), body: JSON.stringify({ runId, callId, result }) }).catch(() => {});
+        }
+      };
 
       if (reader) {
         while (true) {
@@ -2340,23 +2419,18 @@ function AddinExcel() {
           buffer = lines.pop() || "";
           for (const line of lines) {
             if (line.startsWith("data: ")) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                if (data.progress) setChatProgress(String(data.progress));
-                if (data.reply) {
-                  fullReply = data.reply;
-                }
-              } catch {}
+              let data: any = null;
+              try { data = JSON.parse(line.slice(6)); } catch {}
+              if (data) await handleEvent(data);
             }
           }
         }
         if (buffer.startsWith("data: ")) {
-          try {
-            const data = JSON.parse(buffer.slice(6));
-            if (data.reply) fullReply = data.reply;
-          } catch {}
+          try { await handleEvent(JSON.parse(buffer.slice(6))); } catch {}
         }
       }
+      setLiveText("");
+      setLiveSteps([]);
 
       if (fullReply) {
         const assistantMsg: Message = {
@@ -2364,6 +2438,8 @@ function AddinExcel() {
           role: "assistant",
           content: fullReply,
           timestamp: new Date(),
+          ...(turnSteps.length ? { steps: turnSteps } : {}),
+          ...(turnUndo.length ? { undo: turnUndo } : {}),
         };
         setMessages(prev => [...prev, assistantMsg]);
 
@@ -2433,6 +2509,14 @@ function AddinExcel() {
   const clearChat = () => {
     setMessages([]);
     setExcelContext("");
+    if (bookName) fetch(`/api/chatbgp/excel-session?workbook=${encodeURIComponent(bookName)}`, { method: "DELETE", headers: getHeaders() }).catch(() => {});
+  };
+
+  const undoMessage = async (msg: Message) => {
+    if (!msg.undo?.length) return;
+    const { restored, failed } = await undoSteps(msg.undo);
+    setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, undone: true } : m));
+    toast({ title: failed ? `Undid ${restored} of ${restored + failed} changes` : `Undid ${restored} change${restored === 1 ? "" : "s"}`, variant: failed && !restored ? "destructive" : undefined });
   };
 
   // Fetch linked model run name once we have an id + token
@@ -2575,7 +2659,7 @@ function AddinExcel() {
                 </div>
                 <h3 className="text-[15px] font-semibold tracking-tight mb-1">ChatBGP for Excel</h3>
                 <p className="text-[12px] text-muted-foreground mb-6 max-w-[220px] leading-relaxed">
-                  Formulas, models, CRM lookups, and data analysis — powered by your spreadsheet.
+                  Works in your workbook directly — reads, builds, formats and checks models — with BGP's CRM, comps and memory behind it.
                 </p>
                 <div className="grid grid-cols-2 gap-2 w-full">
                   {QUICK_ACTIONS.map((action) => (
@@ -2606,7 +2690,31 @@ function AddinExcel() {
                       </div>
                     ) : (
                       <div className="text-[13px] text-foreground leading-relaxed">
-                        <ChatBGPMarkdown content={stripExcelActionBlocks(msg.content)} />
+                        {msg.steps && msg.steps.length > 0 && (
+                          <details className="mb-1.5 text-[11px] text-muted-foreground">
+                            <summary className="cursor-pointer select-none">{msg.steps.length} step{msg.steps.length === 1 ? "" : "s"} in Excel</summary>
+                            <ul className="mt-1 space-y-0.5 pl-3">{msg.steps.map((st, i) => <li key={i}>{st}</li>)}</ul>
+                          </details>
+                        )}
+                        <ChatBGPMarkdown content={stripExcelActionBlocks(msg.content).replace(/\[\[([^\]]+)\]\]/g, "$1")} />
+                        {(() => {
+                          const refs = cellRefs(msg.content);
+                          if (!refs.length && !msg.undo?.length) return null;
+                          return (
+                            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                              {refs.slice(0, 12).map(ref => (
+                                <button key={ref.label} type="button" onClick={() => selectRange(ref.sheet, ref.range).catch(() => toast({ title: "Couldn't find that range", description: ref.label, variant: "destructive" }))}
+                                  className="px-2 py-0.5 rounded-full border border-border/60 text-[11px] font-mono hover:bg-muted" title="Show in the workbook">{ref.label}</button>
+                              ))}
+                              {msg.undo && msg.undo.length > 0 && (
+                                <button type="button" disabled={msg.undone} onClick={() => undoMessage(msg)}
+                                  className="ml-auto px-2 py-0.5 rounded-full border border-border/60 text-[11px] hover:bg-muted disabled:opacity-50" data-testid="button-undo-turn">
+                                  {msg.undone ? "Undone" : `Undo these changes`}
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
                         {(() => {
                           const actions = parseExcelActions(msg.content);
                           if (actions.length === 0) return null;
@@ -2683,6 +2791,14 @@ function AddinExcel() {
                     )}
                   </div>
                 ))}
+                {loading && (liveSteps.length > 0 || liveText) && (
+                  <div className="text-[13px] text-foreground leading-relaxed">
+                    {liveSteps.length > 0 && (
+                      <ul className="mb-1.5 space-y-0.5 text-[11px] text-muted-foreground">{liveSteps.map((st, i) => <li key={i}>✓ {st}</li>)}</ul>
+                    )}
+                    {liveText && <ChatBGPMarkdown content={liveText.replace(/\[\[([^\]]+)\]\]/g, "$1")} />}
+                  </div>
+                )}
                 {loading && (
                   <div className="flex items-center gap-2 py-1">
                     <div className="flex gap-1">

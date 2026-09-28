@@ -17,6 +17,7 @@ import { escapeLike } from "./utils/escape-like";
 import { emitNewMessage, emitMessageUpdated, emitMessageDeleted, emitThreadUpdated, emitMemberAdded, emitMemberRemoved, emitNotification, getIO } from "./websocket";
 import { saveSubscription, removeSubscription, removeSubscriptionForUser, sendPushNotification, getVapidPublicKey } from "./push-notifications";
 import { registerBusinessCardRoutes } from "./business-cards";
+import { registerExcelAgentRoutes } from "./excel-agent";
 import { registerKyc4uRoutes } from "./kyc4u";
 import {
   insertProjectSchema,
@@ -4217,6 +4218,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   };
 
   registerBusinessCardRoutes(app, requireAuth);
+  registerExcelAgentRoutes(app, requireAuth);
   registerKyc4uRoutes(app, requireAuth, requireAdmin);
 
   app.get("/api/public/team-photos", async (_req, res) => {

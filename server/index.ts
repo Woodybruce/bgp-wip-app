@@ -1205,6 +1205,15 @@ installGoogleBudgetGuard();
        added_at TIMESTAMP DEFAULT now()
      )`,
     `CREATE INDEX IF NOT EXISTS investment_tracker_clients_tracker_idx ON investment_tracker_clients (tracker_id)`,
+    // ChatBGP-in-Excel conversation per user + workbook (server/excel-agent.ts).
+    `CREATE TABLE IF NOT EXISTS excel_sessions (
+       user_id VARCHAR NOT NULL,
+       workbook_key TEXT NOT NULL,
+       workbook_name TEXT,
+       messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+       updated_at TIMESTAMP DEFAULT now(),
+       PRIMARY KEY (user_id, workbook_key)
+     )`,
     // KYC4U request grid, pulled from their SharePoint (server/kyc4u.ts).
     `CREATE TABLE IF NOT EXISTS kyc4u_requests (
        list_id VARCHAR NOT NULL,
