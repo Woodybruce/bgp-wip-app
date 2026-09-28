@@ -217,7 +217,7 @@ export function AccountNextActionsCard({ companyId }: { companyId: string }) {
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <CheckSquare className="w-3.5 h-3.5" /> Next actions
-          <Badge variant="outline" className="text-[11px] font-mono tabular-nums">{data.nextActions.length}</Badge>
+          <span className="font-mono tabular-nums normal-case tracking-normal">{data.nextActions.length}</span>
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-1.5">
@@ -267,7 +267,7 @@ export function InvestmentRequirementsCard({ companyId }: { companyId: string })
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <TrendingUp className="w-3.5 h-3.5" /> Investment requirements
-          <Badge variant="outline" className="text-[11px] font-mono tabular-nums">{data.investmentRequirements.length}</Badge>
+          <span className="font-mono tabular-nums normal-case tracking-normal">{data.investmentRequirements.length}</span>
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-2">

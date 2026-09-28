@@ -728,7 +728,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
               >
                 {isOpen ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
                 <span className="text-left flex-1">{s.title}</span>
-                <Badge variant="outline" className="text-[11px] tabular-nums">{s.rows.length}</Badge>
+                <span className="text-[11px] font-mono tabular-nums">{s.rows.length}</span>
               </button>
               {isOpen && (
                 <div className="space-y-0.5 max-h-[220px] overflow-y-auto pr-1 mt-1">

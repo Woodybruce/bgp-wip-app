@@ -145,7 +145,12 @@ function LoansBoard({ securedProperties, debtEvents, lrCharges }: { securedPrope
   // refinance that names this lender) and the next maturity still ahead.
   const facilityFor = (propertyId: string) => {
     const rows = debtEvents.filter(e => e.propertyId === propertyId);
-    const sized = rows.find(e => e.amount && /refinance|fundraise|acquisition/i.test(e.eventType)) || rows.find(e => e.amount);
+    // An event naming two lenders ("Barclays (senior) / Vahid (junior)")
+    // carries the senior amount — prefer this lender's own events, so the
+    // junior notes read £5m, not the £30m senior facility.
+    const own = rows.filter(e => !/\s\/\s/.test(e.lender || ""));
+    const drawdown = (e: DebtEvent) => !!e.amount && /refinance|fundraise|acquisition/i.test(e.eventType);
+    const sized = own.find(drawdown) || own.find(e => e.amount) || rows.find(drawdown) || rows.find(e => e.amount);
     const next = rows
       .filter(e => /maturity/i.test(e.eventType) && e.eventDate && new Date(e.eventDate).getTime() >= now)
       .sort((a, b) => new Date(a.eventDate!).getTime() - new Date(b.eventDate!).getTime())[0];
