@@ -5151,8 +5151,9 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
       // entities, typos, Landsec floor codes) — once, flagged.
       setTimeout(async () => {
         try {
-          const { runRecordFixes } = await import("./record-fixes");
+          const { runRecordFixes, runCompaniesHouseFixes } = await import("./record-fixes");
           await runRecordFixes();
+          await runCompaniesHouseFixes();
         } catch (e: any) { console.error("[record-fixes] failed:", e?.message); }
       }, 50000);
       setTimeout(async () => {

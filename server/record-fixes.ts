@@ -55,27 +55,6 @@ export async function runRecordFixes(deps: { pool?: Querier } = {}) {
     return { soderberg: a.rowCount, savillsIndustry: b.rowCount };
   });
 
-  // Covenant grades were read off small subsidiaries: Zara's UK stores trade
-  // through Inditex's ITX UK Limited (not Zara Retail Limited, £43k net
-  // assets); Hammerson is Hammerson plc (not Hammerson Operations Limited).
-  // Re-run the Companies House check with the right number so the stored
-  // profile, officers and KYC record follow.
-  await step("companiesHouse", async () => {
-    const { performAutoKyc } = await import("./companies-house");
-    const fixes = [
-      { id: "488d5558-3fbc-41b9-a88c-3381ff3d864a", from: "08822115", to: "02245999" },
-      { id: "290d7451-3cff-4f6f-ab78-7712eea90800", from: "04125216", to: "00360632" },
-    ];
-    const out: string[] = [];
-    for (const f of fixes) {
-      const { rows } = await q.query(`SELECT companies_house_number FROM crm_companies WHERE id = $1`, [f.id]);
-      if (rows[0]?.companies_house_number !== f.from) { out.push(`${f.to}: skipped (now ${rows[0]?.companies_house_number ?? "none"})`); continue; }
-      const r: any = await performAutoKyc(f.id, { manualChNumber: f.to });
-      out.push(`${f.to}: ${r?.success ? "ok" : `not confirmed — ${r?.error || r?.message || "unknown"}`}`);
-    }
-    return out;
-  });
-
   // Typos in stored names, whole words only.
   await step("spelling", async () => {
     const pairs: Array<[string, string]> = [["Chicwick", "Chiswick"], ["Pultney", "Pulteney"], ["Charring", "Charing"], ["Whiole", "Whole"], ["Nandos", "Nando's"]];
@@ -151,4 +130,37 @@ export async function runRecordFixes(deps: { pool?: Querier } = {}) {
 
   await q.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING`, [KEY, JSON.stringify({ ...log, at: new Date().toISOString() })]);
   console.log(`[record-fixes]`, JSON.stringify(log));
+}
+
+// Covenant grades were read off small subsidiaries: Zara's UK stores trade
+// through Inditex's ITX UK Limited (not Zara Retail Limited, £43k net
+// assets); Hammerson is Hammerson plc (not Hammerson Operations Limited).
+// performAutoKyc keeps a stored number over a manual one, so the old number
+// is cleared first; the check then verifies the new one on Companies House
+// and refreshes the stored profile, officers and KYC record.
+export async function runCompaniesHouseFixes(deps: { pool?: Querier } = {}) {
+  const q: Querier = deps.pool ?? (await import("./db")).pool;
+  const KEY = "migration:record_fixes_ch_entities_v2";
+  if ((await q.query(`SELECT 1 FROM system_settings WHERE key = $1`, [KEY])).rows.length) return;
+  const { performAutoKyc } = await import("./companies-house");
+  const fixes = [
+    { id: "488d5558-3fbc-41b9-a88c-3381ff3d864a", from: "08822115", to: "02245999" },
+    { id: "290d7451-3cff-4f6f-ab78-7712eea90800", from: "04125216", to: "00360632" },
+  ];
+  const out: string[] = [];
+  for (const f of fixes) {
+    try {
+      const { rows } = await q.query(`SELECT companies_house_number, uk_entity_name FROM crm_companies WHERE id = $1`, [f.id]);
+      if (rows[0]?.companies_house_number !== f.from) { out.push(`${f.to}: skipped (now ${rows[0]?.companies_house_number ?? "none"})`); continue; }
+      await q.query(`UPDATE crm_companies SET companies_house_number = NULL, uk_entity_name = NULL WHERE id = $1`, [f.id]);
+      const r: any = await performAutoKyc(f.id, { manualChNumber: f.to });
+      if (r?.success && r?.companyNumber === f.to) { out.push(`${f.to}: ok`); continue; }
+      // Didn't verify — put the old values back rather than leave it blank.
+      await q.query(`UPDATE crm_companies SET companies_house_number = COALESCE(companies_house_number, $2), uk_entity_name = COALESCE(uk_entity_name, $3) WHERE id = $1`,
+        [f.id, f.from, rows[0]?.uk_entity_name ?? null]);
+      out.push(`${f.to}: not confirmed — ${r?.message || "unknown"}`);
+    } catch (e: any) { out.push(`${f.to}: failed — ${e?.message}`); }
+  }
+  await q.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING`, [KEY, JSON.stringify({ out, at: new Date().toISOString() })]);
+  console.log(`[record-fixes] companies house:`, JSON.stringify(out));
 }
