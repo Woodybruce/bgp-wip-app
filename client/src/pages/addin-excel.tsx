@@ -2571,7 +2571,7 @@ function AddinExcel() {
     <div className="flex flex-col h-screen bg-background text-foreground" style={{ maxWidth: 450 }}>
       <AddinHeader
         title="ChatBGP"
-        subtitle={linkedModelRunName ? `Model: ${linkedModelRunName}` : "Fable 5"}
+        subtitle={linkedModelRunName ? `Model: ${linkedModelRunName}` : undefined}
         onNewChat={clearChat}
       >
         {linkedModelRunId && (
