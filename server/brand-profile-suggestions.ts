@@ -41,6 +41,9 @@ export const PENDING_CONTACT_SUGGESTIONS_SQL = `
       FROM crm_interactions
       CROSS JOIN LATERAL jsonb_array_elements_text(participants) AS p
      WHERE participants IS NOT NULL
+       -- Trigram pre-filter (idx_crm_interactions_participants_trgm): only
+       -- emails whose participants mention the domain get unpacked.
+       AND participants::text ILIKE ($1 || '%')
        AND jsonb_typeof(participants) = 'array'
        AND interaction_date <= NOW()
        AND p ILIKE $1
@@ -69,6 +72,7 @@ export const RELATIONSHIP_STATS_SQL = `
       LEFT JOIN LATERAL jsonb_array_elements_text(
         CASE WHEN jsonb_typeof(i.participants) = 'array' THEN i.participants ELSE '[]'::jsonb END) AS p ON true
      WHERE i.interaction_date <= NOW()
+       AND (i.company_id = $2 OR i.participants::text ILIKE ($1 || '%'))
        AND (i.company_id = $2 OR (p ILIKE $1 AND p NOT ILIKE '%@brucegillinghampollard.com'))
   )
   SELECT COUNT(DISTINCT id)::int AS threads,

@@ -91,7 +91,7 @@ async function relationshipEvidence(company: any) {
         SELECT LOWER(p) AS email, COUNT(*)::int AS threads, MAX(i.interaction_date) AS last_at
           FROM crm_interactions i CROSS JOIN LATERAL jsonb_array_elements_text(
             CASE WHEN jsonb_typeof(i.participants) = 'array' THEN i.participants ELSE '[]'::jsonb END) AS p
-         WHERE i.interaction_date <= NOW() AND p ILIKE $1
+         WHERE i.interaction_date <= NOW() AND i.participants::text ILIKE ($1 || '%') AND p ILIKE $1
          GROUP BY LOWER(p) ORDER BY threads DESC LIMIT 3)
       SELECT people.*, c.name, c.role FROM people
         LEFT JOIN LATERAL (SELECT name, role FROM crm_contacts WHERE LOWER(email) = people.email LIMIT 1) c ON true

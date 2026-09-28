@@ -1193,6 +1193,21 @@ installGoogleBudgetGuard();
        read_at TIMESTAMP
      )`,
     `CREATE INDEX IF NOT EXISTS user_notifications_user_idx ON user_notifications (user_id, created_at DESC)`,
+    // Digital business cards (Woody, 2026-09-28, "like blinq"): one public
+    // slug per staff member, and everyone who shares their details back.
+    `CREATE TABLE IF NOT EXISTS business_cards (
+       user_id VARCHAR PRIMARY KEY,
+       slug TEXT NOT NULL UNIQUE,
+       enabled BOOLEAN NOT NULL DEFAULT true,
+       created_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE TABLE IF NOT EXISTS business_card_leads (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       user_id VARCHAR NOT NULL,
+       contact_id VARCHAR,
+       name TEXT, email TEXT, phone TEXT, company TEXT, role TEXT, note TEXT, ip TEXT,
+       created_at TIMESTAMP DEFAULT now()
+     )`,
     `CREATE TABLE IF NOT EXISTS notification_dismissals (
        user_id VARCHAR NOT NULL,
        notification_key TEXT NOT NULL,
