@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,11 +12,16 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
 import {
   FileText, ChevronRight, ExternalLink, Copy,
-  CheckCircle2, AlertCircle, Sparkles
+  Sparkles, LogOut
 } from "lucide-react";
 import { AddinHeader } from "@/components/addin-header";
+import { Switch } from "@/components/ui/switch";
+import { Pill } from "@/components/ui/pill";
+import { AddinSignIn, useAddinAuth } from "@/components/addin-signin";
+import { AddinAgentChat, type AgentDoc } from "@/components/addin-agent-chat";
+import { readDocument, documentName, runWordTool } from "@/lib/word-agent-tools";
 
-function AddinWord() {
+function WordTemplates() {
   const { toast } = useToast();
   const [selectedTemplate, setSelectedTemplate] = useState<any>(null);
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
@@ -82,8 +87,7 @@ function AddinWord() {
 
   if (generatedContent) {
     return (
-      <div className="min-h-screen bg-background text-foreground" style={{ maxWidth: 400 }}>
-        <AddinHeader title="Generated Document" subtitle="Word" />
+      <div className="text-foreground">
         <div className="p-3 space-y-3">
           <div className="flex gap-2">
             <Button
@@ -105,7 +109,7 @@ function AddinWord() {
             </Button>
           </div>
 
-          <ScrollArea className="h-[calc(100vh-160px)]">
+          <ScrollArea className="h-[calc(100vh-210px)]">
             <div className="bg-muted rounded-md p-3">
               <pre className="text-xs whitespace-pre-wrap font-sans">{generatedContent}</pre>
             </div>
@@ -126,8 +130,7 @@ function AddinWord() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground" style={{ maxWidth: 400 }}>
-      <AddinHeader title="BGP Document Studio" subtitle="Word" />
+    <div className="text-foreground">
       <div className="p-3">
 
       {selectedTemplate ? (
@@ -193,7 +196,7 @@ function AddinWord() {
           </Card>
         </div>
       ) : (
-        <ScrollArea className="h-[calc(100vh-100px)]">
+        <ScrollArea className="h-[calc(100vh-150px)]">
           {isLoading ? (
             <div className="space-y-2">
               <Skeleton className="h-16 w-full" />
@@ -242,7 +245,7 @@ function AddinWord() {
 
       <div className="fixed bottom-0 left-0 right-0 p-2 bg-background border-t" style={{ maxWidth: 400 }}>
         <a
-          href="https://bgp-wip-app-production-efac.up.railway.app/templates"
+          href="https://chatbgp.app/templates"
           target="_blank"
           rel="noopener noreferrer"
           className="flex items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -251,6 +254,82 @@ function AddinWord() {
           Open full templates page <ExternalLink className="h-3 w-3" />
         </a>
       </div>
+    </div>
+  );
+}
+
+const WORD_PROMPTS = [
+  { label: "Review this", prompt: "Read this document and review it — structure, tone, weak arguments and anything missing — as comments where they apply." },
+  { label: "Check the facts", prompt: "Check every name, figure, date and deal term in this document against BGP's records and correct anything wrong." },
+  { label: "Tighten it", prompt: "Tighten the writing throughout in BGP house style, keeping the meaning." },
+  { label: "Fill the gaps", prompt: "Find placeholders, blanks and [TBC]s in this document and fill them from BGP's CRM, deals and comps." },
+];
+
+async function readWordDoc(): Promise<AgentDoc | null> {
+  if (!(window as any).Office?.context?.document) return null;
+  const name = await documentName();
+  let context = "";
+  try {
+    const d = await readDocument(1, 120);
+    context = `The open Word document${name ? ` "${name}"` : ""} has ${d.paragraphs} paragraphs and ${d.tables} tables.` +
+      (d.selection ? `\nThe user has selected:\n${d.selection}` : "") +
+      `\nOpening paragraphs (call word_read_document for the rest):\n${d.text.slice(0, 12000)}`;
+  } catch {}
+  return { key: `word:${name || "untitled document"}`, context, label: name ? `Working on: ${name}` : "Working on this document" };
+}
+
+function WordChat({ token, onUnauthorised }: { token: string; onUnauthorised: () => void }) {
+  const [suggest, setSuggest] = useState(() => { try { return localStorage.getItem("bgp-word-suggest") !== "off"; } catch { return true; } });
+  const suggestRef = useRef(suggest);
+  useEffect(() => {
+    suggestRef.current = suggest;
+    try { localStorage.setItem("bgp-word-suggest", suggest ? "on" : "off"); } catch {}
+  }, [suggest]);
+  const runTool = useCallback((name: string, args: any) => runWordTool(name, args, { suggest: suggestRef.current }), []);
+  return (
+    <AddinAgentChat
+      host="word" token={token} onUnauthorised={onUnauthorised}
+      readDoc={readWordDoc} runTool={runTool}
+      prompts={WORD_PROMPTS}
+      intro="ChatBGP reads and edits this document with BGP's CRM, deals, comps and your memory behind it."
+      placeholder="Ask ChatBGP about this document…"
+      heightOffset={100}
+      toolbar={
+        <label className="flex items-center justify-between gap-2 px-3 py-1.5 border-b text-[11px] text-muted-foreground">
+          <span>Suggest edits as tracked changes</span>
+          <Switch checked={suggest} onCheckedChange={setSuggest} data-testid="switch-word-suggest" />
+        </label>
+      }
+    />
+  );
+}
+
+function AddinWord() {
+  const { token, login, logout } = useAddinAuth();
+  const [tab, setTab] = useState<"chat" | "templates">(() => { try { return (localStorage.getItem("bgp-word-tab") as any) || "chat"; } catch { return "chat"; } });
+  useEffect(() => { try { localStorage.setItem("bgp-word-tab", tab); } catch {} }, [tab]);
+
+  if (!token) {
+    return (
+      <div className="min-h-screen bg-background text-foreground" style={{ maxWidth: 400 }}>
+        <AddinHeader title="ChatBGP" />
+        <AddinSignIn onLogin={login} purpose="Sign in to use ChatBGP on this document with the BGP CRM behind it." />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-background text-foreground" style={{ maxWidth: 400 }}>
+      <AddinHeader title="ChatBGP">
+        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={logout} title="Sign out" data-testid="button-word-logout">
+          <LogOut className="h-3.5 w-3.5" />
+        </Button>
+      </AddinHeader>
+      <div className="flex items-center gap-1.5 px-3 py-2 border-b">
+        <Pill active={tab === "chat"} onClick={() => setTab("chat")} data-testid="tab-word-chat">ChatBGP</Pill>
+        <Pill active={tab === "templates"} onClick={() => setTab("templates")} data-testid="tab-word-templates">Templates</Pill>
+      </div>
+      {tab === "chat" ? <WordChat token={token} onUnauthorised={logout} /> : <WordTemplates />}
     </div>
   );
 }

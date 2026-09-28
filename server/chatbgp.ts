@@ -15944,7 +15944,7 @@ export function setupChatBGPRoutes(app: Express) {
       // Agent mode: the pane runs excel_* tool calls live (server/excel-agent.ts).
       // Older cached panes don't send the flag and keep the JSON-block flow.
       const agentMode = String(req.body.clientTools || "") === "1" || req.body.clientTools === true;
-      const host: "excel" | "outlook" = req.body.host === "outlook" ? "outlook" : "excel";
+      const host: "excel" | "outlook" | "word" | "powerpoint" = ["outlook", "word", "powerpoint"].includes(req.body.host) ? req.body.host : "excel";
       const workbookName = typeof req.body.workbookName === "string" ? req.body.workbookName.slice(0, 300) : "";
       // Truncate excel context to leave room for other contexts + tools. The
       // agent reads what it needs, so it only gets a snapshot.
@@ -16015,11 +16015,15 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
       if (agentMode) {
         const { EXCEL_AGENT_PROMPT, workbookHistoryContext } = await import("./excel-agent");
         const { OUTLOOK_AGENT_PROMPT } = await import("./outlook-agent");
+        const { WORD_AGENT_PROMPT, PPT_AGENT_PROMPT } = await import("./office-agents");
         const memory = excelScopeCompanyId ? "" : await getMemoryContext(userId).catch(() => "");
         const history = messages.length <= 2 && workbookName ? await workbookHistoryContext(userId, workbookName).catch(() => "") : "";
-        dynamicContext = host === "outlook"
-          ? OUTLOOK_AGENT_PROMPT + memory + history
-            + (safeExcelContext ? `\n**The open email:**\n${safeExcelContext}\n` : "")
+        const docPrompt = host === "outlook" ? OUTLOOK_AGENT_PROMPT : host === "word" ? WORD_AGENT_PROMPT : host === "powerpoint" ? PPT_AGENT_PROMPT : "";
+        const docLabel = host === "outlook" ? "The open email" : host === "word" ? "The open document (snapshot — read it for the rest)" : "The open deck (snapshot — read it for the rest)";
+        dynamicContext = host !== "excel"
+          ? docPrompt + memory + history
+            + (workbookName && host !== "outlook" ? `\n**Open file:** ${workbookName.replace(/^(word|ppt):/, "")}\n` : "")
+            + (safeExcelContext ? `\n**${docLabel}:**\n${safeExcelContext}\n` : "")
           : EXCEL_AGENT_PROMPT + memory + history
             + (workbookName ? `\n**Open workbook:** ${workbookName}\n` : "")
             + (safeExcelContext ? `\n**Snapshot of the open workbook (may be stale mid-task — read ranges before relying on them):**\n${safeExcelContext}\n` : "");
@@ -16033,8 +16037,13 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
       }
       const excelAgent = agentMode ? await import("./excel-agent") : null;
       const outlookAgent = agentMode && host === "outlook" ? await import("./outlook-agent") : null;
-      const hostToolNames: Set<string> = outlookAgent ? outlookAgent.OUTLOOK_TOOL_NAMES : excelAgent ? excelAgent.EXCEL_TOOL_NAMES : new Set();
-      if (excelAgent) tools = [...tools, ...(outlookAgent ? outlookAgent.OUTLOOK_TOOL_DEFS : excelAgent.EXCEL_TOOL_DEFS)];
+      const officeAgents = agentMode && (host === "word" || host === "powerpoint") ? await import("./office-agents") : null;
+      const hostToolNames: Set<string> = outlookAgent ? outlookAgent.OUTLOOK_TOOL_NAMES
+        : officeAgents ? (host === "word" ? officeAgents.WORD_TOOL_NAMES : officeAgents.PPT_TOOL_NAMES)
+        : excelAgent ? excelAgent.EXCEL_TOOL_NAMES : new Set();
+      if (excelAgent) tools = [...tools, ...(outlookAgent ? outlookAgent.OUTLOOK_TOOL_DEFS
+        : officeAgents ? (host === "word" ? officeAgents.WORD_TOOL_DEFS : officeAgents.PPT_TOOL_DEFS)
+        : excelAgent.EXCEL_TOOL_DEFS)];
       const excelRunId = excelAgent ? excelAgent.openExcelRun(userId) : null;
       const sseSend = (payload: any) => { try { if (!clientClosed) res.write(`data: ${JSON.stringify(payload)}\n\n`); } catch {} };
       if (excelRunId) sseSend({ runId: excelRunId });
@@ -16105,7 +16114,7 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
             let tcArgs: any;
             try { tcArgs = JSON.parse(tc.function.arguments); } catch { tcArgs = {}; }
             if (excelAgent && excelRunId && hostToolNames.has(tcName)) {
-              sendProgress(outlookAgent ? outlookAgent.outlookToolLabel(tcName, tcArgs) : excelToolLabel(tcName, tcArgs));
+              sendProgress(outlookAgent ? outlookAgent.outlookToolLabel(tcName, tcArgs) : officeAgents ? officeAgents.officeToolLabel(tcName, tcArgs) : excelToolLabel(tcName, tcArgs));
               const result = await excelAgent.callExcelTool(excelRunId, sseSend, tcName, tcArgs);
               const resultStr = JSON.stringify(result);
               convMessages.push({

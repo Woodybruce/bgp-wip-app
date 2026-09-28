@@ -24,7 +24,7 @@ const addins = [
   {
     name: "Word",
     icon: FileText,
-    description: "Generate documents from BGP templates and insert content directly into your Word document.",
+    description: "ChatBGP inside Word — reads and edits your document: drafts, reviews, fact-checks against the CRM and fills gaps, with edits suggested as tracked changes and questions left as comments. Plus the BGP templates tab. Remembers each document.",
     manifest: "/manifests/word-addin.xml",
     preview: "/addin/word",
     adminSteps: "Microsoft 365 Admin Centre → Settings → Integrated Apps → Upload custom apps",
@@ -33,7 +33,7 @@ const addins = [
   {
     name: "PowerPoint",
     icon: Presentation,
-    description: "ChatBGP inside PowerPoint — ask the AI to pull CRM, deal and comp data and draft slide content you can insert with one click. Plus the CRM data browser.",
+    description: "ChatBGP inside PowerPoint — builds and edits your deck on its own layouts: adds slides, writes titles and bullets, pulls comps and deal data, fact-checks. Plus the CRM data browser. Remembers each deck.",
     manifest: "/manifests/powerpoint-addin.xml",
     preview: "/addin/powerpoint",
     adminSteps: "Microsoft 365 Admin Centre → Settings → Integrated Apps → Upload custom apps",
