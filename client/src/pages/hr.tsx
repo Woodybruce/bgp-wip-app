@@ -6504,16 +6504,18 @@ export default function HRPage() {
     <div className="h-full overflow-y-auto">
       <div className="max-w-[1600px] mx-auto">
       <div className="p-4 border-b sticky top-0 bg-background z-10">
-        <div className="flex items-center gap-2 mb-3">
-          <div>
+        {/* Wraps on a phone — the one-line header pushed the whole page
+            sideways (Woody, 2026-09-28: "not set up for phone"). */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-2 mb-3">
+          <div className="min-w-0">
             <h1 className="text-2xl font-bold tracking-tight">
               People & HR
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">Team directory, benefits, holidays and policies</p>
           </div>
-          <Badge variant="secondary" className="ml-2">{allStaff.length} staff</Badge>
+          <Badge variant="secondary" className="sm:ml-2">{allStaff.length} staff</Badge>
           {isAdmin && (
-            <div className="ml-auto flex items-center gap-2">
+            <div className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-center gap-2">
               <Button size="sm" variant="outline" className="h-8" onClick={() => setImportSalariesOpen(true)} data-testid="button-import-salaries">
                 <Upload className="w-3.5 h-3.5 mr-1.5" /> Import salaries
               </Button>
