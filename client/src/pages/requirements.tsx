@@ -946,8 +946,9 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
       <div className={`flex items-center gap-3 flex-wrap ${isMobile ? "order-first" : ""}`}>
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          {/* Phone: "Search requirement" was cut at 390px (Woody, 2026-09-28). */}
           <Input
-            placeholder="Search requirements…"
+            placeholder={isMobile ? "Search…" : "Search requirements…"}
             className={isMobile ? "pl-9 pr-10" : "pl-9"}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -2494,7 +2495,9 @@ function LeasingSection({
                         testId={`select-type-${item.id}`}
                       />
                     </TableCell>
-                    <TableCell className="px-1.5 py-1">
+                    {/* One line — the chevron wrapped under "3,500–10,000 sq m"
+                        (Woody, 2026-09-28). */}
+                    <TableCell className="px-1.5 py-1 [&_button]:flex-nowrap [&_button>div]:whitespace-nowrap">
                       <InlineMultiSelect
                         value={item.size}
                         options={sizeOptionsFor(item.size)}
@@ -2506,9 +2509,12 @@ function LeasingSection({
                     </TableCell>
                     {/* Capped so the chips wrap inside the column. Three chips
                         then "+N" (the rest in the tooltip) — a fourth ran off
-                        the table edge as "Chest"/"Nor" (Woody, 2026-09-28). */}
-                    <TableCell className="px-1.5 py-1 max-w-[260px]">
-                      <div className="flex items-center gap-0.5 min-w-0 [&>button>div:nth-child(n+4)]:hidden">
+                        the table edge as "Chest"/"Nor" (Woody, 2026-09-28).
+                        The cell follows the column and two chips + "+N" fit
+                        it; a 260px cap in a 240px column hid the "+N"
+                        (Woody, 2026-09-28). */}
+                    <TableCell className="px-1.5 py-1">
+                      <div className="flex items-center gap-0.5 w-full min-w-0 [&>button]:min-w-0 [&>button>div:nth-child(n+3)]:hidden">
                         <InlineMultiSelect
                           value={item.requirementLocations}
                           options={LOCATION_OPTIONS}
@@ -2517,9 +2523,9 @@ function LeasingSection({
                           placeholder="Set locations"
                           testId={`select-locations-${item.id}`}
                         />
-                        {(item.requirementLocations?.length || 0) > 3 && (
-                          <span className="text-[10px] font-mono tabular-nums text-muted-foreground shrink-0" title={item.requirementLocations!.slice(3).join(", ")} data-testid={`locations-more-${item.id}`}>
-                            +{item.requirementLocations!.length - 3}
+                        {(item.requirementLocations?.length || 0) > 2 && (
+                          <span className="text-[10px] font-mono tabular-nums text-muted-foreground shrink-0" title={item.requirementLocations!.slice(2).join(", ")} data-testid={`locations-more-${item.id}`}>
+                            +{item.requirementLocations!.length - 2}
                           </span>
                         )}
                       </div>
@@ -3621,7 +3627,7 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Search investment requirements..."
+            placeholder={isMobile ? "Search…" : "Search investment requirements…"}
             className="pl-9"
             value={search}
             onChange={(e) => setSearch(e.target.value)}

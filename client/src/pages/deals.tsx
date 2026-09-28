@@ -6712,11 +6712,11 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         />
                       </TableHead>
                     )}
-                    {effectiveColumns.tenant && <SortableTableHead sortKey="tenant" sort={dealsSort} className="min-w-[170px]">Tenant</SortableTableHead>}
+                    {effectiveColumns.tenant && <SortableTableHead sortKey="tenant" sort={dealsSort} className="min-w-[140px]">Tenant</SortableTableHead>}
                     {effectiveColumns.parties && <TableHead className="min-w-[180px]">Parties</TableHead>}
                     {effectiveColumns.feeCombined && <TableHead className="min-w-[110px]">Fee</TableHead>}
                     {effectiveColumns.fee && <SortableTableHead sortKey="fee" sort={dealsSort} align="right" className="min-w-[80px]">Fee</SortableTableHead>}
-                    {effectiveColumns.feeAlloc && !isClientDeals && <TableHead className="min-w-[120px] whitespace-nowrap">Fee Split</TableHead>}
+                    {effectiveColumns.feeAlloc && !isClientDeals && <TableHead className="min-w-[112px] whitespace-nowrap">Fee Split</TableHead>}
                     {effectiveColumns.agent && <SortableTableHead sortKey="agent" sort={dealsSort} className="min-w-[80px]">BGP Contact</SortableTableHead>}
                     {effectiveColumns.assetClass && (
                       <TableHead className="min-w-[80px]">
@@ -6803,7 +6803,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           ) : "—"}
                         </div>
                       </TableCell>
-                      <TableCell className="px-1.5 py-1 w-[220px] max-w-[220px] overflow-hidden">
+                      {/* 220 → 200 and Client/Billing 200 → 176 so the default
+                          columns end with Fee Split in view at 1440 (Woody,
+                          2026-09-28). */}
+                      <TableCell className="px-1.5 py-1 w-[200px] max-w-[200px] overflow-hidden">
                         <PropertyUnitCell
                           deal={deal}
                           properties={properties}
@@ -6820,7 +6823,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         </TableCell>
                       )}
                       {effectiveColumns.clientXero && (
-                        <TableCell className="px-1.5 py-1 w-[200px] max-w-[200px] overflow-hidden">
+                        <TableCell className="px-1.5 py-1 w-[176px] max-w-[176px] overflow-hidden">
                           <ClientXeroCell
                             deal={deal}
                             companies={companies}
@@ -6900,8 +6903,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       {effectiveColumns.tenant && (
                         <TableCell className="px-1.5 py-1">
                           {/* 110px cut "Time Out Market" to "Time Out Mar…" beside
-                              free space (Woody, 2026-09-28). */}
-                          <div className="w-[160px] overflow-hidden">
+                              free space; 160px then pushed Fee Split off the
+                              right edge at 1440 ("Fee S") — 128px, truncating
+                              with the full name as tooltip (Woody, 2026-09-28). */}
+                          <div className="w-[128px] overflow-hidden truncate" title={deal.tenantId ? companyMap.get(deal.tenantId as string) || undefined : undefined}>
                             <InlineLinkSelect
                               value={deal.tenantId}
                               options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.id === deal.tenantId).map(c => ({ id: c.id, name: c.name }))}
@@ -6951,7 +6956,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       {/* Fee Split is the internal per-BGP-agent breakdown —
                           staff-only, never shown to a client/client-view. */}
                       {effectiveColumns.feeAlloc && !isClientDeals && (
-                        <TableCell className="px-1.5 py-1 min-w-[120px] max-w-[150px]">
+                        <TableCell className="px-1.5 py-1 min-w-[112px] max-w-[150px]">
                           <FeeAllocCell dealId={deal.id} dealFee={deal.fee} allAllocations={allFeeAllocations} colorMap={userColorMap2} teams={deal.team} onClick={() => setFeeAllocEditDeal(deal)} />
                         </TableCell>
                       )}

@@ -1493,8 +1493,10 @@ export function InlineTenants({
 
   return (
     // Chips truncate inside the column — long tenant names ran the table
-    // past its right edge (Woody, 2026-09-28).
-    <div className="flex items-center gap-1 flex-wrap min-w-0">
+    // past its right edge (Woody, 2026-09-28). A fixed width, since a table
+    // cell's max-width doesn't bind its content — Bluewater's chips still
+    // widened the column past the edge (Woody, 2026-09-28).
+    <div className="flex items-center gap-1 flex-wrap min-w-0 w-[98px] max-w-[98px]">
       {visibleCompanies.map(company => (
         <span key={company.id} className="inline-flex items-center gap-0.5 min-w-0 max-w-full">
           <Link href={`/companies/${company.id}`} className="min-w-0 max-w-full">
@@ -6253,8 +6255,11 @@ function PropertiesList({
               <Table>
                 <TableHeader>
                   {/* §6 header spec — 11px semibold uppercase muted; the
-                      sorted/filtered column reads foreground, not terracotta. */}
-                  <TableRow className="[&_th]:text-[11px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground [&_th_button]:font-semibold [&_th_.text-primary]:text-foreground">
+                      sorted/filtered column reads foreground, not terracotta.
+                      Buttons reset text-transform (preflight), so the sort /
+                      filter headers read "Property"/"Status" beside
+                      "OWNERSHIP" — uppercase them too (Woody, 2026-09-28). */}
+                  <TableRow className="[&_th]:text-[11px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground [&_th_button]:font-semibold [&_th_button]:uppercase [&_th_.text-primary]:text-foreground">
                     <TableHead className="w-[40px] px-2">
                       <Checkbox
                         data-testid="checkbox-select-all-properties"

@@ -4881,7 +4881,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
         : "";
       const params: any[] = scope ? [brandId, brandName, scope] : [brandId, brandName];
       const targets = await pool.query(
-        `SELECT t.comments, t.status, au.unit_name, p.id AS property_id, p.name AS property_name
+        `SELECT t.comments, t.status, au.unit_name, au.floor, p.id AS property_id, p.name AS property_name
            FROM unit_target_operators t
            JOIN unit_briefs b ON b.id = t.brief_id
            JOIN available_units au ON au.id = b.unit_id
@@ -4900,6 +4900,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
             at: cm.at || null,
             status: t.status || null,
             unitName: t.unit_name || null,
+            floor: t.floor || null,
             propertyId: t.property_id,
             propertyName: t.property_name,
           });
@@ -5048,6 +5049,13 @@ Return a JSON object with these fields (use null for any field you cannot find):
         if (brandIsCafe && unitIsRestaurant && !unitIsCafe) continue;
         const sq = u.sqft != null ? Number(u.sqft) : null;
         const row = { ...u, unit_name: unitLabel(u), property_name: String(u.property_name || "").split(",")[0].trim() || u.property_name };
+        // A property named just "99", or already inside the unit label, isn't
+        // a prefix: "99 · Unit at 99-101 Pimlico Road" → "99-101 Pimlico Road"
+        // (Woody, 2026-09-28). Same rule as propertyUnitParts on the client.
+        if (row.unit_name) {
+          const prop = String(row.property_name || "").trim(), bare = String(row.unit_name).replace(/^Unit at\s+/i, "");
+          if (!prop || !/[a-z]/i.test(prop) || new RegExp(`(?<![A-Za-z0-9])${esc(prop)}(?![A-Za-z0-9])`, "i").test(bare)) { row.property_name = bare; row.unit_name = null; }
+        }
         const peers = peersAt.get(u.property_id) || 0;
         delete row.master_unit_name; delete row.schedule_unit_name;
         // A live requirement's size range is binding: Nando's (2,500–4,500)

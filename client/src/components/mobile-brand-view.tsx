@@ -1,5 +1,5 @@
 import { formatSizeList } from "@/lib/format-size";
-import { isOwnChannelNews, newsSourceLabel, splitNewsTitle, isOwnBrandSource, dedupeNearNews, ukDate, sentenceCaseShouting, aboutParagraphs, isSocialNews, snippetPublisher, isSignalNoise, cleanUnitLabel, signalKind, accountBoardContacts } from "@/components/brand-profile-panel";
+import { isOwnChannelNews, newsSourceLabel, splitNewsTitle, isOwnBrandSource, dedupeNearNews, ukDate, sentenceCaseShouting, aboutParagraphs, isSocialNews, snippetPublisher, isSignalNoise, signalKind, accountBoardContacts, propertyUnitText, trackerUnitLabel, displayStoreName } from "@/components/brand-profile-panel";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { BrandFeedCard } from "@/components/brand-feed-card";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
@@ -361,7 +361,7 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
                 </div>
                 <p className="whitespace-pre-wrap break-words">{cm.text}</p>
                 <Link href={`/properties/${cm.propertyId}`} className="text-[11px] text-primary hover:underline">
-                  {cm.propertyName}{cm.unitName ? ` · ${cleanUnitLabel(cm.unitName, cm.propertyName) || cm.unitName}` : ""}
+                  {propertyUnitText(cm.propertyName, trackerUnitLabel(cm))}
                 </Link>
               </div>
             ))}
@@ -604,7 +604,7 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
 
       <div className={sec("stores")}>
       {!isLandlord && ((data.stores || []).length > 0 || !isClientViewer) && <BrandStoresBoard
-        companyId={companyId} stores={data.stores || []} reportedTotal={c.store_count} canRefresh={!isClientViewer}
+        companyId={companyId} stores={(data.stores || []).map((st: any) => ({ ...st, name: displayStoreName(st.name, c.name) }))} reportedTotal={c.store_count} canRefresh={!isClientViewer}
         refreshing={storeScan.isPending} diagnostic={storeScan.error instanceof Error ? storeScan.error.message : null}
         onRefresh={() => storeScan.mutate({})}
       />}

@@ -422,9 +422,11 @@ export default function BrandsHub() {
         </Card>
 
         {/* Super Brands — luxury/flagship intel, staff only (server sends
-            [] for clients, so the card would sit permanently empty). */}
+            [] for clients, so the card would sit permanently empty).
+            Sized to its chips, not stretched to the row — two chips in a
+            full-height box read as empty (Woody, 2026-09-28). */}
         {!isClientHub && (
-        <Card>
+        <Card className="self-start">
           <CardHeader className="flex flex-row items-center justify-between pb-3 pt-4 px-5">
             <div className="flex items-center gap-2">
               <Star className="w-4 h-4 text-muted-foreground" />

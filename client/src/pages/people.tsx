@@ -28,7 +28,7 @@ import { CrmMeetingsTab } from "@/components/crm-meetings-tab";
 import { Pill } from "@/components/ui/pill";
 import { countLabel } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { guessDomain, extractDomain, localBrandLogoUrl } from "@/lib/company-logos";
+import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import type { CrmCompany, CrmContact, CrmDeal, CrmProperty, CrmRequirementsLeasing, CrmRequirementsInvestment, InvestmentTracker } from "@shared/schema";
 
 const CompanyDetailPage = lazy(() => import("@/pages/companies"));
@@ -47,17 +47,29 @@ function PageLoader() {
   );
 }
 
+// Same source and retry as the /companies logo (CompanyLogoImg): the
+// domain is domainUrl → domain (a stored logoUrl is an image URL, not a
+// domain, and fetched the wrong logo), and a 404 — the server is preparing
+// the logo — retries twice before settling on initials. Landlord cards were
+// all initials while /companies showed logos (Woody, 2026-09-28).
 function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm" | "md" | "lg" }) {
   const [failCount, setFailCount] = useState(0);
   const [loaded, setLoaded] = useState(false);
+  const [retry, setRetry] = useState(0);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const sizeClass = size === "sm" ? "w-8 h-8" : size === "lg" ? "w-14 h-14" : "w-10 h-10";
   const textSize = size === "sm" ? "text-xs" : size === "lg" ? "text-lg" : "text-sm";
-  const px = size === "sm" ? 32 : size === "lg" ? 56 : 40;
 
-  const domain = company.domainUrl || (company as any).logoUrl || company.domain;
-  const d = extractDomain(domain || null);
+  const domain = company.domainUrl || company.domain;
   const guessed = guessDomain(company.name);
+
+  useEffect(() => {
+    setFailCount(0);
+    setRetry(0);
+    setLoaded(false);
+    return () => { if (retryTimer.current) clearTimeout(retryTimer.current); };
+  }, [company.name, domain]);
 
   // Only source: /api/brand-logo/... — server redirects to logo.dev when no
   // local image exists. Clearbit's DNS is dead (HubSpot killed it Mar 2025).
@@ -78,19 +90,30 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
 
   if (failCount >= logoSources.length) return initialsTile;
 
+  const base = logoSources[failCount];
+  const src = retry > 0 ? `${base}${base.includes("?") ? "&" : "?"}logoRetry=${retry}` : base;
+
   // Initials sit under the logo until it loads (and stay if it errors) — a
   // lazy logo was a blank white square with nothing in it.
   return (
     <div className={`${sizeClass} relative shrink-0`}>
       {!loaded && <div className="absolute inset-0">{initialsTile}</div>}
       <img
-        src={logoSources[failCount]}
+        src={src}
         alt={company.name}
-        loading="lazy"
+        loading={retry > 0 ? "eager" : "lazy"}
         decoding="async"
         className={`${sizeClass} relative rounded-lg object-contain border shrink-0 ${loaded ? "bg-white" : "opacity-0"}`}
         onLoad={() => setLoaded(true)}
-        onError={() => { setLoaded(false); setFailCount(c => c + 1); }}
+        onError={() => {
+          setLoaded(false);
+          if (retry < 2) {
+            retryTimer.current = setTimeout(() => setRetry(r => r + 1), retry === 0 ? 6000 : 15000);
+          } else {
+            setRetry(0);
+            setFailCount(c => c + 1);
+          }
+        }}
       />
     </div>
   );
@@ -140,6 +163,7 @@ function LandlordsTab({
   onScopeLandlord,
   onDeleteCompany,
   viewMode = "card",
+  countsLoading = false,
 }: {
   companies: CrmCompany[];
   contacts: CrmContact[];
@@ -148,6 +172,7 @@ function LandlordsTab({
   onScopeLandlord?: (id: string) => void;
   onDeleteCompany?: (id: string, name: string) => void;
   viewMode?: "table" | "card" | "board";
+  countsLoading?: boolean;
 }) {
   const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
@@ -199,9 +224,12 @@ function LandlordsTab({
   // Landlord properties = landlord_id on the property OR a
   // crm_company_properties link — the same set Landlord Intelligence counts,
   // which disagreed with these cards (0 vs 2) (Woody, 2026-09-27).
-  const { data: companyPropertyLinks = [] } = useQuery<{ companyId: string; propertyId: string }[]>({
+  const { data: companyPropertyLinks = [], isLoading: linksLoading } = useQuery<{ companyId: string; propertyId: string }[]>({
     queryKey: ["/api/crm/company-property-links"],
   });
+  // Property and deal counts are unknown until their queries land — every
+  // card read "0 properties" while loading (Woody, 2026-09-28).
+  const propsPending = countsLoading || linksLoading;
   const propertiesByLandlord = useMemo(() => {
     const byId = new Map(properties.map((p) => [p.id, p]));
     const map: Record<string, CrmProperty[]> = {};
@@ -309,8 +337,8 @@ function LandlordsTab({
                         </div>
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">{company.companyType || "Landlord"}</TableCell>
-                      <TableCell className="text-center text-sm">{compProps.length}</TableCell>
-                      <TableCell className="text-center text-sm">{compDeals.length}</TableCell>
+                      <TableCell className="text-center text-sm font-mono tabular-nums">{propsPending ? <Skeleton className="h-3 w-4 mx-auto" /> : compProps.length}</TableCell>
+                      <TableCell className="text-center text-sm font-mono tabular-nums">{countsLoading ? <Skeleton className="h-3 w-4 mx-auto" /> : compDeals.length}</TableCell>
                       <TableCell className="text-center text-sm">{compContacts.length}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center gap-1 justify-end">
@@ -377,11 +405,11 @@ function LandlordsTab({
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-auto pt-3 border-t text-xs text-muted-foreground">
                     <span className="flex items-center gap-1 shrink-0">
                       <Building className="w-3 h-3" />
-                      {compProps.length} {compProps.length === 1 ? "property" : "properties"}
+                      {propsPending ? <Skeleton className="h-3 w-16" /> : <>{compProps.length} {compProps.length === 1 ? "property" : "properties"}</>}
                     </span>
                     <span className="flex items-center gap-1 shrink-0">
                       <Handshake className="w-3 h-3" />
-                      {compDeals.length} {compDeals.length === 1 ? "deal" : "deals"}
+                      {countsLoading ? <Skeleton className="h-3 w-12" /> : <>{compDeals.length} {compDeals.length === 1 ? "deal" : "deals"}</>}
                     </span>
                     <span className="flex items-center gap-1 shrink-0">
                       <Users className="w-3 h-3" />
@@ -1759,11 +1787,11 @@ function PeopleHub() {
     queryKey: ["/api/crm/contacts"],
   });
 
-  const { data: properties = [] } = useQuery<CrmProperty[]>({
+  const { data: properties = [], isLoading: propertiesLoading } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
   });
 
-  const { data: deals = [] } = useQuery<CrmDeal[]>({
+  const { data: deals = [], isLoading: dealsLoading } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals"],
   });
 
@@ -1873,6 +1901,7 @@ function PeopleHub() {
               onScopeLandlord={handleScopeLandlord}
               onDeleteCompany={onDeleteCompany}
               viewMode={viewMode}
+              countsLoading={propertiesLoading || dealsLoading}
             />
           )}
           {tab === "agents" && (

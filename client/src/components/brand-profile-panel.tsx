@@ -757,6 +757,43 @@ export function cleanUnitLabel(raw: string | null | undefined, propertyName: str
   if (floor) return floor;
   return parts.length === 1 && /\d/.test(parts[0]) && parts[0].length <= 40 ? parts[0] : null;
 }
+// A property named just "99", or already inside the unit's label, isn't a
+// prefix: "99 · Unit at 99-101 Pimlico Road" → "99-101 Pimlico Road"
+// (Woody, 2026-09-28). Keep in step with suggested pitches in server/crm.ts.
+export function propertyUnitParts(propertyName: string | null | undefined, unitLabel: string | null | undefined): { property: string; unit: string | null } {
+  const property = String(propertyName || "").trim(), unit = String(unitLabel || "").trim();
+  if (!unit) return { property, unit: null };
+  const bare = unit.replace(/^Unit at\s+/i, "");
+  const inside = !!property && new RegExp(`(?<![A-Za-z0-9])${property.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9])`, "i").test(bare);
+  return !property || !/[a-z]/i.test(property) || inside ? { property: bare, unit: null } : { property, unit };
+}
+export const propertyUnitText = (propertyName: string | null | undefined, unitLabel: string | null | undefined) => {
+  const { property, unit } = propertyUnitParts(propertyName, unitLabel);
+  return unit ? `${property} · ${unit}` : property;
+};
+// A tracker unit that cleans to a bare code ("U052B") reads "Unit U052B ·
+// Upper Level" when the row carries its floor; otherwise it stays as is
+// (Woody, 2026-09-28).
+export function trackerUnitLabel(cm: { unitName?: string | null; propertyName?: string | null; floor?: string | null; level?: string | null }): string | null {
+  const label = cleanUnitLabel(cm.unitName, cm.propertyName) || cm.unitName || null;
+  const floor = String(cm.floor || cm.level || "").trim();
+  if (!label || !floor || !/^[a-z]{0,3}\d{1,4}[a-z]{0,3}$/i.test(label)) return label;
+  return `Unit ${label} · ${/\b(?:floor|level|mall)\b/i.test(floor) || /^(?:lg|ug|gf)$/i.test(floor) ? floor : `${floor} Level`}`;
+}
+// Store names scraped all lower case ("wagamama edinburgh lothian road")
+// read in title case; a brand styled lower case keeps its own token:
+// "wagamama Edinburgh Lothian Road" (Woody, 2026-09-28).
+const LOWERCASE_STYLED_BRANDS = /^(?:wagamama|itsu)$/i;
+export function displayStoreName(name: string | null | undefined, brandName: string | null | undefined): string {
+  const text = String(name || "");
+  if (!/[a-z]/.test(text) || text !== text.toLowerCase()) return text;
+  const brand = String(brandName || "").trim().toLowerCase();
+  const keepBrand = !!brand && (String(brandName).trim() === brand || LOWERCASE_STYLED_BRANDS.test(brand));
+  const lead = keepBrand && text.startsWith(brand) && !/[a-z0-9]/.test(text.charAt(brand.length)) ? brand : "";
+  const rest = text.slice(lead.length).replace(/(^|[\s(/-])([a-z])/g, (_m, pre: string, ch: string) => pre + ch.toUpperCase())
+    .replace(/(?<=\s)(And|Of|The|At|On|In|Upon)(?=\s)/g, w => w.toLowerCase());
+  return lead + rest;
+}
 // "£5.4m pa" from £1m up, "£385k pa" below (Woody, 2026-09-28).
 const rentPa = (n: number) => n >= 1e6 ? `£${(n / 1e6).toFixed(1)}m pa` : `£${Math.round(n / 1000).toLocaleString("en-GB")}k pa`;
 // en-GB "short" months give "Sept"; the house style is "Sep" (Woody, 2026-09-28).
@@ -1334,7 +1371,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
 
   const c = data.company;
   const aiFields = c.ai_generated_fields || {};
-  const stores = data.stores || [];
+  const stores = (data.stores || []).map((st: any) => ({ ...st, name: displayStoreName(st.name, c.name) }));
   const ownedProperties = data.ownedProperties || [];
   const landRegistryTitles = data.landRegistryTitles || [];
   // Landlord-shaped CRM rows render a different profile: the brand "UK
@@ -2488,7 +2525,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                       <Link key={le.id} href={`/properties/${le.property_id}`}>
                         <div className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5 cursor-pointer">
                           <Badge variant="outline" className="text-[10px] shrink-0 border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400 capitalize">{label}</Badge>
-                          <span className="truncate flex-1">{le.property_name}{le.unit_name ? ` · ${cleanUnitLabel(le.unit_name, le.property_name) || le.unit_name}` : ""}</span>
+                          <span className="truncate flex-1">{le.unit_name ? propertyUnitText(le.property_name, cleanUnitLabel(le.unit_name, le.property_name) || le.unit_name) : le.property_name}</span>
                           <span className="font-medium tabular-nums text-xs shrink-0">{nextEvent?.toLocaleDateString("en-GB", { month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep")}</span>
                         </div>
                       </Link>
@@ -4301,7 +4338,9 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
   // note, stackRight) drops to line 2 — side by side they squeezed to
   // "One…" / "Victoria S…" and a unit truncated to a stray "3"
   // (Woody, 2026-09-28).
-  const Row = ({ propertyId, propertyName, unitName, dealId, right, title, subline, stackRight }: any) => (
+  const Row = ({ propertyId, propertyName: rawProperty, unitName: rawUnit, dealId, right, title, subline, stackRight }: any) => {
+    const { property: propertyName, unit: unitName } = propertyUnitParts(rawProperty, rawUnit);
+    return (
     <div className="p-1.5 rounded border bg-card min-w-0" title={title || ""}>
       <div className="flex items-center justify-between gap-2 min-w-0">
         <Link href={`/properties/${propertyId}`} className="flex items-center gap-1.5 min-w-0 flex-1 hover:underline">
@@ -4327,7 +4366,8 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
       {/* Hover titles don't exist on touch — the reason gets its own line. */}
       {subline && <div className="text-[10px] text-muted-foreground mt-0.5 pl-5 line-clamp-2">{subline}</div>}
     </div>
-  );
+    );
+  };
 
   const Tier = ({ label, count, tone, children, tierKey }: any) => {
     const hiddenHere = count - capFor(tierKey, { length: count } as any[]);
@@ -4723,7 +4763,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
                   {cm.at && <span>{ukDate(cm.at)}</span>}
                   <Link href={`/properties/${cm.propertyId}`} className="ml-auto hover:underline truncate max-w-[45%]">
                     {/* Raw tracker unit labels repeated the property ("U052B Bluewater…") (Woody, 2026-09-28). */}
-                    {cm.propertyName}{cm.unitName ? ` · ${cleanUnitLabel(cm.unitName, cm.propertyName) || cm.unitName}` : ""}
+                    {propertyUnitText(cm.propertyName, trackerUnitLabel(cm))}
                   </Link>
                 </div>
                 <p className="whitespace-pre-wrap break-words">{cm.text}</p>

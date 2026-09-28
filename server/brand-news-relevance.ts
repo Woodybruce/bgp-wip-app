@@ -86,6 +86,18 @@ const CRIME_TABLOID = /\b(?:kidnap\w*|abduct\w*|murder\w*|stabb(?:ed|ing)|knife 
 // terms were landing on Nando's and Wingstop, Woody 2026-09-28).
 const TERMS_PAGE = /\b(?:terms (?:and|&) conditions|t ?& ?cs?|competition (?:terms|rules)|terms of (?:entry|use)|promotion terms|prize draw terms)\b/i;
 const TERMS_URL = /\/[\w-]*(?:terms|t-and-c|t-cs|tandcs?)[\w-]*(?:\/|\.html?|\?|$)/i;
+// Gambling stories naming an estate's namesake ("Rank Group grows Grosvenor
+// empire amid new UK casino rules") aren't the landlord's news unless they
+// are about property; brands and gambling companies keep theirs (Woody, 2026-09-28).
+const GAMBLING_CONTEXT = /\b(?:casinos?|gambling|gamblers?|betting|bookmakers?|igaming|rank group|bingo|slots|slot machines?)\b/i;
+const GAMBLING_COMPANY = /\b(?:casinos?|gambling|betting|gaming|bingo|bookmakers?|rank group)\b/i;
+const ESTATE_CONTEXT = /\b(?:mayfair|belgravia|estates?|landlords?|leases?|leasing|leasehold|freehold|property|properties)\b/i;
+// A story set at a US mall or state ("Zara doubles footprint at Los Cerritos
+// Center") isn't UK news unless it names UK places too (Woody, 2026-09-28).
+const US_STATES = "Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|Florida|Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|Kentucky|Louisiana|Maryland|Massachusetts|Michigan|Minnesota|Mississippi|Missouri|Montana|Nebraska|Nevada|New Hampshire|New Jersey|New Mexico|New York|North Carolina|North Dakota|Ohio|Oklahoma|Oregon|Pennsylvania|Rhode Island|South Carolina|South Dakota|Tennessee|Texas|Utah|Vermont|Virginia|West Virginia|Wisconsin|Wyoming|Washington State|Washington,? D\\.?C\\.?";
+const US_ABBREVIATIONS = "AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IA|KS|KY|LA|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY";
+const US_PLACE = new RegExp(`\\b(?:${US_STATES})\\b|,\\s(?:${US_ABBREVIATIONS})\\b|\\b[A-Z][a-z]+(?: [A-Z][a-z]+)* Center\\b(?! Parcs)|\\bmalls?\\b|\\b(?:Los Angeles|San Francisco|San Diego|Chicago|Houston|Dallas|Miami|Atlanta|Boston|Seattle|Las Vegas|Brooklyn|Manhattan)\\b`);
+const UK_CONTEXT = /\b(?:UK|U\.K\.|Britain|British|England|English|Scotland|Scottish|Wales|Welsh|Northern Ireland|London|Manchester|Birmingham|Leeds|Glasgow|Edinburgh|Liverpool|Bristol|Cardiff|Belfast|Newcastle|Sheffield|Nottingham|high street|shopping centre|retail park)\b|£/i;
 function isAgentFirm(company: any): boolean {
   return /^agent/i.test(String(company?.company_type ?? company?.companyType ?? "")) || !!(company?.agent_type ?? company?.agentType);
 }
@@ -183,6 +195,11 @@ export function isBrandNewsRelevant(company: any, article: NewsArticle): boolean
   if (!identity.names.length) return false;
   if (TERMS_PAGE.test(article.title || "") || TERMS_URL.test(String(article.url || "").replace(/^https?:\/\/[^/]+/i, ""))) return false;
   if (CRIME_TABLOID.test(plainText(article.title || ""))) return false;
+  const whole = plainText(`${article.title || ""} ${article.summary || ""}`);
+  const companyType = String(company?.company_type ?? company?.companyType ?? "");
+  if (!/^tenant/i.test(companyType) && GAMBLING_CONTEXT.test(whole) && !ESTATE_CONTEXT.test(whole)
+    && !GAMBLING_COMPANY.test(`${company?.name || ""} ${company?.industry || ""} ${companyType}`)) return false;
+  if (US_PLACE.test(whole) && !UK_CONTEXT.test(whole)) return false;
   // Ignore AI summaries: a generated mention cannot corroborate its own link.
   const rawTitle = article.title || "";
   const title = rawTitle.replace(/\s[-–—|·]\s[^-–—|·]{2,60}$/, "");

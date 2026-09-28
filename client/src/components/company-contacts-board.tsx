@@ -87,6 +87,8 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead }:
   const touches: number = contact.interaction_count || 0;
   const lastTouch: string | null = contact.last_interaction_at || null;
   const lastTouchLabel = lastTouch ? formatRelativeShort(lastTouch) : null;
+  const touchText = `${touches.toLocaleString("en-GB")} email${touches === 1 ? "" : "s"}${lastTouchLabel ? ` · ${lastTouchLabel === "today" ? "today" : `${lastTouchLabel} ago`}` : ""}`;
+  const touchTitle = lastTouch ? `${touches} touch${touches === 1 ? "" : "es"} · last ${new Date(lastTouch).toLocaleDateString("en-GB")}` : `${touches} touches`;
 
   return (
     <div className="flex items-start gap-2.5 md:gap-2 text-sm hover:bg-muted/50 rounded p-1.5 md:p-1 -mx-1 transition-colors">
@@ -113,14 +115,17 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead }:
           {touches > 0 && (
             <Badge
               variant="outline"
-              className="ml-auto text-[9px] px-1 py-0 shrink-0 tabular-nums text-muted-foreground"
-              title={lastTouch ? `${touches} touch${touches === 1 ? "" : "es"} · last ${new Date(lastTouch).toLocaleDateString("en-GB")}` : `${touches} touches`}
+              className="hidden md:inline-flex ml-auto text-[9px] px-1 py-0 shrink-0 tabular-nums text-muted-foreground"
+              title={touchTitle}
             >
               {/* "447 · 3d" had no unit (Woody, 2026-09-28). */}
-              {touches.toLocaleString("en-GB")} email{touches === 1 ? "" : "s"}{lastTouchLabel ? ` · ${lastTouchLabel === "today" ? "today" : `${lastTouchLabel} ago`}` : ""}
+              {touchText}
             </Badge>
           )}
         </div>
+        {/* Phone: the count gets its own line — beside the name it cut
+            "Michael …" / "James …" (Woody, 2026-09-28). */}
+        {touches > 0 && <div className="md:hidden text-[10px] text-muted-foreground tabular-nums" title={touchTitle}>{touchText}</div>}
         {editingRole ? (
           <input
             autoFocus
