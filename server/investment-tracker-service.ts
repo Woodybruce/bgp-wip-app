@@ -303,7 +303,7 @@ export async function addTrackerClient(trackerId: string, companyId: string, act
   } else if (tracker.client_id !== company.id) {
     await pool.query(
       `INSERT INTO investment_tracker_clients (tracker_id, company_id, added_by)
-       SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM investment_tracker_clients WHERE tracker_id = $1 AND company_id = $2)`,
+       SELECT $1::varchar, $2::varchar, $3::varchar WHERE NOT EXISTS (SELECT 1 FROM investment_tracker_clients WHERE tracker_id = $1::varchar AND company_id = $2::varchar)`,
       [trackerId, company.id, actorId]);
   }
   if (tracker.deal_id) {
@@ -329,8 +329,8 @@ export async function removeTrackerClient(trackerId: string, companyId: string) 
   if (tracker.deal_id) {
     // Leave the deal link when the company is still a party on the deal.
     await pool.query(
-      `DELETE FROM crm_company_deals cd WHERE cd.company_id = $1 AND cd.deal_id = $2
-          AND NOT EXISTS (SELECT 1 FROM crm_deals d WHERE d.id = $2 AND $1 IN (d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id))`,
+      `DELETE FROM crm_company_deals cd WHERE cd.company_id = $1::varchar AND cd.deal_id = $2::varchar
+          AND NOT EXISTS (SELECT 1 FROM crm_deals d WHERE d.id = $2::varchar AND $1::varchar IN (d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id))`,
       [companyId, tracker.deal_id]).catch(() => undefined);
   }
   return { status: 200, body: { ok: true, clients: await trackerClients(trackerId) } };
