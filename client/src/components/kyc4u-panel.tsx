@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 // opened after the reads would be blocked.
 function bookmarkletSource(app: string): string {
   const code = `(function(){var APP=${JSON.stringify(app)};var w=window.open(APP+'/kyc4u-import','chatbgp_kyc4u','width=520,height=560');if(!w){alert('ChatBGP: allow pop-ups for this site, then click again.');return;}
-var c=window._spPageContextInfo||{};var web=c.webAbsoluteUrl||(location.origin+location.pathname.split(/\/(SitePages|Lists|_layouts|Shared%20Documents)\//i)[0]);
+var c=window._spPageContextInfo||{};var web=c.webAbsoluteUrl||(location.origin+location.pathname.split(/\\/(SitePages|Lists|_layouts|Shared%20Documents)\\//i)[0]);
 var H={Accept:'application/json;odata=nometadata'};
 function get(u){return fetch(u,{headers:H,credentials:'include'}).then(function(r){if(!r.ok)throw new Error(r.status+' reading '+u);return r.json();});}
 function all(u,acc){return get(u).then(function(d){acc=acc.concat(d.value||[]);var n=d['odata.nextLink']||d['@odata.nextLink'];return n?all(n,acc):acc;});}
