@@ -429,7 +429,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-2">
             {hunter?.subScores && (
-              <div className="grid grid-cols-4 gap-1 text-center">
+              <div className="grid grid-cols-2 gap-1 text-center">
                 {[["UK momentum", hunter.subScores.ukMomentum], ["Capacity", hunter.subScores.capacity], ["Intent", hunter.subScores.intent], ["Engagement", hunter.subScores.engagement]].map(([label, v]: any) => (
                   <div key={label} className="rounded border border-border/60 px-1 py-1">
                     <div className="text-sm font-mono tabular-nums">{v ?? "—"}</div>
@@ -658,7 +658,9 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
           No social feed yet — no Instagram handle on file for {c.name}.
         </div>
       )}
-      <BrandFeedCard companyId={companyId} />
+      {/* Staff can follow the brand's channels from here, as on desktop —
+          without it the pill held a lone Instagram handle. */}
+      <BrandFeedCard companyId={companyId} canSetUp={!isClientViewer} />
       {c.instagram_handle && (
         <a
           href={`https://instagram.com/${c.instagram_handle}`}

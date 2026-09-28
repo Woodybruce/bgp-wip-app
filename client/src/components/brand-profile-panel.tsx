@@ -1847,7 +1847,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {data.representing.slice(0, 12).map((r: any) => (
-                    <span key={r.id} className="inline-flex items-center gap-1 group">
+                    <span key={r.id} className="relative inline-flex items-center group">
                       <Link href={`/companies/${r.brand_company_id}`} className={`${pillMetrics} ${pillInactive} normal-case tracking-normal text-foreground`}>
                         {r.brand_name}
                         {r.region && <span className="text-muted-foreground">· {r.region.replace(/_/g, " ")}</span>}
@@ -1856,7 +1856,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                       <button
                         type="button"
                         onClick={() => { if (confirm(`End representation of ${r.brand_name}?`)) endRepMutation.mutate(r.id); }}
-                        className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+                        className="absolute -top-1.5 -right-1.5 rounded-full border border-border bg-card p-px opacity-0 group-hover:opacity-100 focus:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
                         aria-label="End representation"
                       >
                         <X className="w-3 h-3" />
@@ -3330,14 +3330,14 @@ export function MenuIntelCard({
           className="text-[11px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
           title={`Ask Perplexity for ${companyName}'s ${expectedKind === "menu" ? "menu" : "best sellers"}`}
         >
-          {refresh.isPending ? "Fetching…" : items.length > 0 ? "Refresh" : "Fetch"}
+          {refresh.isPending ? "Refreshing…" : "Refresh"}
         </button>
         )}
       </CardHeader>
       <CardContent className="p-3 pt-0">
         {items.length === 0 ? (
           <p className="text-[11px] text-muted-foreground italic">
-            No {expectedKind === "menu" ? "menu items" : "best sellers"} yet — click Fetch.
+            No {expectedKind === "menu" ? "menu items" : "best sellers"} yet — Refresh looks them up.
           </p>
         ) : (
           <div className="space-y-1.5 max-h-[280px] overflow-y-auto pr-1">
