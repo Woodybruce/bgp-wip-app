@@ -2815,6 +2815,24 @@ export async function registerRoutes(
       res.status(500).json({ message: e?.message || "schema drift check failed" });
     }
   });
+  // What the database is doing right now and who is waiting on whom — for
+  // pages that hang on one query (Ardent's page, 2026-09-28). Read-only.
+  app.get("/api/admin/db-activity", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const r = await pool.query(
+        `SELECT pid, state, wait_event_type, wait_event, pg_blocking_pids(pid) AS blocked_by,
+                EXTRACT(EPOCH FROM (NOW() - xact_start))::int AS xact_secs,
+                EXTRACT(EPOCH FROM (NOW() - query_start))::int AS query_secs,
+                LEFT(regexp_replace(query, '\s+', ' ', 'g'), 300) AS query
+           FROM pg_stat_activity
+          WHERE datname = current_database() AND pid <> pg_backend_pid()
+            AND (state <> 'idle' OR xact_start IS NOT NULL)
+          ORDER BY xact_start NULLS LAST LIMIT 60`);
+      res.json(r.rows);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "db activity failed" });
+    }
+  });
   app.post("/api/admin/schema-drift/heal", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const { healSchemaDrift } = await import("./schema-drift");
