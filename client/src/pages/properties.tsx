@@ -1236,7 +1236,7 @@ export function InlineBillingEntity({
       )}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+          <button className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
             <Plus className="w-3 h-3" />
             Set billing entity
           </button>
