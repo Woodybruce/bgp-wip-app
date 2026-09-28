@@ -127,6 +127,7 @@ function isSocialDomain(d: string | null): boolean {
 
 function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string | null; size?: number }) {
   const [failCount, setFailCount] = useState(0);
+  const [loaded, setLoaded] = useState(false);
 
   const d = extractDomain(domain ?? null);
   const guessed = guessDomain(name);
@@ -139,26 +140,31 @@ function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string 
   const local = social ? null : localBrandLogoUrl(name, domain ?? guessed ?? null);
   if (local) sources.push(local);
 
-  if (failCount < sources.length) {
-    return (
-      <img
-        src={sources[failCount]}
-        alt={name}
-        loading="lazy"
-        decoding="async"
-        className="rounded object-contain bg-white"
-        style={{ width: size, height: size }}
-        onError={() => setFailCount(c => c + 1)}
-      />
-    );
-  }
-
   const initial = name.charAt(0).toUpperCase();
   const colours = ["bg-rose-800","bg-red-900","bg-violet-900","bg-orange-900","bg-amber-800","bg-teal-900","bg-slate-700","bg-emerald-900"];
   const colour = colours[name.charCodeAt(0) % colours.length];
+  // The initial sits under the logo, which only turns opaque once it has
+  // really loaded — a slow or blank (1px placeholder) logo left an empty
+  // white square in the Explorer (Woody, 2026-09-28).
+  const showImg = failCount < sources.length;
   return (
-    <div className={`${colour} rounded flex items-center justify-center text-white font-bold`} style={{ width: size, height: size, fontSize: size * 0.4 }}>
+    <div className={`${colour} relative rounded flex items-center justify-center text-white font-bold shrink-0 overflow-hidden`} style={{ width: size, height: size, fontSize: size * 0.4 }}>
       {initial}
+      {showImg && (
+        <img
+          key={sources[failCount]}
+          src={sources[failCount]}
+          alt={name}
+          loading="lazy"
+          decoding="async"
+          className={`absolute inset-0 w-full h-full rounded object-contain ${loaded ? "bg-white" : "opacity-0"}`}
+          onLoad={(e) => {
+            if (e.currentTarget.naturalWidth < 8) setFailCount(c => c + 1);
+            else setLoaded(true);
+          }}
+          onError={() => { setLoaded(false); setFailCount(c => c + 1); }}
+        />
+      )}
     </div>
   );
 }

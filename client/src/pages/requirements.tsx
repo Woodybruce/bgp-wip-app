@@ -948,13 +948,27 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             placeholder="Search requirements…"
-            className="pl-9"
+            className={isMobile ? "pl-9 pr-10" : "pl-9"}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             data-testid="input-search-leasing"
           />
+          {/* Phone: Clear sits inside the search box — as a button beside
+              it, it pushed New Brand / Add requirement onto a new row
+              (Woody, 2026-09-28). */}
+          {isMobile && (search || groupFilter !== "all" || hasColumnFilters || freshOnly || fitsOnly || recentViewingOnly) && (
+            <button
+              type="button"
+              aria-label="Clear search and filters"
+              className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-muted"
+              onClick={() => { setSearch(""); setGroupFilter("all"); setColumnFilters({}); setFreshOnly(false); setFitsOnly(false); setRecentViewingOnly(false); }}
+              data-testid="button-clear-leasing-filters"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
-        {(search || groupFilter !== "all" || hasColumnFilters || freshOnly || fitsOnly || recentViewingOnly) && (
+        {!isMobile && (search || groupFilter !== "all" || hasColumnFilters || freshOnly || fitsOnly || recentViewingOnly) && (
           <Button
             variant="outline"
             size="sm"
@@ -1014,11 +1028,13 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
       </div>
 
       {isMobile ? (<>
+        {/* Same icon and copy as the desktop empty table (Woody, 2026-09-28). */}
         <MobileCardView
           emptyMessage="No requirements found"
+          emptyIcon={Users}
           emptyDescription={search || groupFilter !== "all" || Object.keys(columnFilters).length > 0
-            ? "Try adjusting your filters"
-            : isClientView ? "No live requirements for your portfolio yet — BGP logs these on your behalf" : "No live requirements yet"}
+            ? undefined
+            : isClientView ? "No live requirements for your portfolio yet — BGP logs these on your behalf" : undefined}
           items={phoneItems.slice(0, phoneShown).map((item) => ({
             id: item.id,
             title: item.name,

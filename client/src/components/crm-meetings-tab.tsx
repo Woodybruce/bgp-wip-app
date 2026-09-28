@@ -94,7 +94,8 @@ function answeredCount(iv: CrmInterview): number {
 function initialsFor(iv: CrmInterview): string {
   const name = (iv.interviewee || "").trim();
   if (name) return name.split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
-  return iv.team.split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  // No interviewee yet: team initials ("L", "LA") read as a person.
+  return "?";
 }
 
 function formatMeetingDate(iso: string | null): string | null {

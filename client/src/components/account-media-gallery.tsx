@@ -64,6 +64,15 @@ function MediaSection({
   onDelete: (id: string) => void;
   testPrefix: string;
 }) {
+  // The same logo uploaded twice showed twice (British Land) — one tile per
+  // identical thumbnail or same file name + size (Woody, 2026-09-28).
+  const seen = new Set<string>();
+  images = images.filter(img => {
+    const keys = [img.thumbnail_data ? `t:${img.thumbnail_data.length}:${img.thumbnail_data.slice(-64)}` : "", img.file_name ? `f:${img.file_name.toLowerCase().replace(/\s*(?:\(\d+\)|copy|-\d+x\d+)(?=\.\w+$)/g, "")}:${img.width}x${img.height}` : ""].filter(Boolean);
+    if (keys.some(k => seen.has(k))) return false;
+    keys.forEach(k => seen.add(k));
+    return true;
+  });
   if (images.length === 0) {
     return (
       <div className="text-[11px] text-muted-foreground/70" data-testid={`${testPrefix}-empty`}>
@@ -76,7 +85,7 @@ function MediaSection({
       <div className="text-[11px] text-muted-foreground mb-1.5">
         {title} <span className="font-mono tabular-nums">({images.length})</span>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[420px] overflow-y-auto pr-1">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         {images.map(img => {
           const isHero = img.group === "approved";
           return (

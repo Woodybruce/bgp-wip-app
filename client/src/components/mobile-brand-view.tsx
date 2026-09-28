@@ -123,7 +123,7 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
   });
   const refreshProfile = useBrandProfileRefresh(companyId, !isClientViewer);
   // Same contact source as the desktop landlord board (Woody, 2026-09-28).
-  const { data: accountWorkspace } = useAccountWorkspace(data?.company && isLandlordCompany(data.company.company_type, data.isLandlord) ? companyId : undefined);
+  const accountWorkspace = useAccountWorkspace(data?.company && isLandlordCompany(data.company.company_type, data.isLandlord) ? companyId : undefined)?.data;
   const covenantReport = useCovenantReport(data?.company?.companies_house_number);
 
   if (isError) return <Card className="p-4 space-y-3"><p className="text-sm text-muted-foreground">The saved brand profile could not be loaded.</p><Button size="sm" variant="outline" onClick={() => reloadSavedProfile()}>Try again</Button></Card>;

@@ -6659,9 +6659,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {effectiveColumns.clientXero && <TableHead className="min-w-[160px]">Client / Billing</TableHead>}
                     {effectiveColumns.landlord && <SortableTableHead sortKey="landlord" sort={dealsSort} className="min-w-[120px] px-1.5">Client</SortableTableHead>}
                     {effectiveColumns.type && (
-                      {/* Two-word headers wrapped when Save View / Clear all
-                          narrowed the table (Woody, 2026-09-28). */}
                       <TableHead className="min-w-[120px] whitespace-nowrap">
+                        {/* Two-word headers wrapped when Save View / Clear all
+                            narrowed the table (Woody, 2026-09-28). */}
                         <div className="flex items-center gap-1">
                           <ColumnFilterPopover
                             label="Deal Type"

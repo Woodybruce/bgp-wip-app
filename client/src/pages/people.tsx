@@ -618,9 +618,10 @@ function AgentsTab({
         ] as const).filter(([label, , n]) => n > 0 || specialtyFilter === label).map(([label, testId, n]) => (
           <Pill key={label} active={specialtyFilter === label} onClick={() => setSpecialtyFilter(specialtyFilter === label ? null : label)} data-testid={testId}>
             {/* People counts, number last — "LEASING 171 AGENTS" put it
-                mid-label; the "individual agents" line says what they count
+                mid-label (Woody, 2026-09-28). "Leasing agents" says they're
+                people, not firms like the "Agent Firms" chip beside them
                 (Woody, 2026-09-28). */}
-            {label} · <span className="font-mono tabular-nums">{n.toLocaleString("en-GB")}</span>
+            {label} agents · <span className="font-mono tabular-nums">{n.toLocaleString("en-GB")}</span>
           </Pill>
         ))}
         <span className="text-xs text-muted-foreground ml-1" data-testid="stat-individual-agents">
@@ -710,11 +711,19 @@ function AgentsTab({
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     {(() => {
+                      // UK office first — global firms' head offices read
+                      // "Los Angeles" (CBRE) / "Toronto" (Colliers); the
+                      // Companies House registered office is the UK one, and
+                      // a non-UK head office alone shows nothing (Woody,
+                      // 2026-09-28).
                       const addr = company.headOfficeAddress as any;
-                      return addr?.city ? (
+                      const ch = (company.companiesHouseData as any)?.profile?.registeredOfficeAddress?.locality as string | undefined;
+                      const nonUk = !!addr?.country && !/^(uk|united kingdom|england|scotland|wales|northern ireland|gb|great britain)$/i.test(String(addr.country).trim());
+                      const city = ch ? ch.toLowerCase().replace(/\b[a-z]/g, (m) => m.toUpperCase()) : (!nonUk ? addr?.city : null);
+                      return city ? (
                         <span className="text-xs text-muted-foreground flex items-center gap-0.5">
                           <MapPin className="w-3 h-3" />
-                          {addr.city}
+                          {city}
                         </span>
                       ) : null;
                     })()}
