@@ -5,13 +5,13 @@
            xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
            xsi:type="TaskPaneApp">
   <Id>73f41e37-23c8-4a24-bb23-f72e7f7319e8</Id>
-  <Version>2.5.1</Version>
+  <Version>2.5.2</Version>
   <ProviderName>Bruce Gillingham Pollard</ProviderName>
   <DefaultLocale>en-GB</DefaultLocale>
   <DisplayName DefaultValue="ChatBGP for Excel"/>
   <Description DefaultValue="ChatBGP inside Excel: works your workbook directly — reads, builds, formats and checks models — with BGP's CRM, comps, SharePoint and memory."/>
-  <IconUrl DefaultValue="https://chatbgp.app/bgp-addin-icon-32.png?v=wordmark"/>
-  <HighResolutionIconUrl DefaultValue="https://chatbgp.app/bgp-addin-icon-64.png?v=wordmark"/>
+  <IconUrl DefaultValue="https://chatbgp.app/bgp-addin-icon-32.png?v=bgp2"/>
+  <HighResolutionIconUrl DefaultValue="https://chatbgp.app/bgp-addin-icon-64.png?v=bgp2"/>
   <SupportUrl DefaultValue="https://chatbgp.app"/>
   <AppDomains>
     <AppDomain>https://chatbgp.app</AppDomain>
@@ -76,9 +76,9 @@
     </Hosts>
     <Resources>
       <bt:Images>
-        <bt:Image id="Icon.16x16" DefaultValue="https://chatbgp.app/bgp-addin-icon-16.png?v=wordmark"/>
-        <bt:Image id="Icon.32x32" DefaultValue="https://chatbgp.app/bgp-addin-icon-32.png?v=wordmark"/>
-        <bt:Image id="Icon.80x80" DefaultValue="https://chatbgp.app/bgp-addin-icon-80.png?v=wordmark"/>
+        <bt:Image id="Icon.16x16" DefaultValue="https://chatbgp.app/bgp-addin-icon-16.png?v=bgp2"/>
+        <bt:Image id="Icon.32x32" DefaultValue="https://chatbgp.app/bgp-addin-icon-32.png?v=bgp2"/>
+        <bt:Image id="Icon.80x80" DefaultValue="https://chatbgp.app/bgp-addin-icon-80.png?v=bgp2"/>
       </bt:Images>
       <bt:Urls>
         <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://chatbgp.app"/>

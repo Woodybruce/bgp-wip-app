@@ -4,13 +4,13 @@
            xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
            xsi:type="MailApp">
   <Id>567f0fe3-79a5-48c2-bf29-287d3a4f9108</Id>
-  <Version>2.0.0</Version>
+  <Version>2.0.1</Version>
   <ProviderName>Bruce Gillingham Pollard</ProviderName>
   <DefaultLocale>en-GB</DefaultLocale>
   <DisplayName DefaultValue="ChatBGP for Outlook"/>
   <Description DefaultValue="ChatBGP inside Outlook: summarises threads and drafts replies into Outlook with BGP's CRM, deals and memory behind it; sender lookup and one-click CRM filing."/>
-  <IconUrl DefaultValue="https://chatbgp.app/bgp-addin-icon-32.png?v=wordmark"/>
-  <HighResolutionIconUrl DefaultValue="https://chatbgp.app/bgp-addin-icon-64.png?v=wordmark"/>
+  <IconUrl DefaultValue="https://chatbgp.app/bgp-addin-icon-32.png?v=bgp2"/>
+  <HighResolutionIconUrl DefaultValue="https://chatbgp.app/bgp-addin-icon-64.png?v=bgp2"/>
   <SupportUrl DefaultValue="https://chatbgp.app"/>
   <AppDomains>
     <AppDomain>https://chatbgp.app</AppDomain>
@@ -107,9 +107,9 @@
     </Hosts>
     <Resources>
       <bt:Images>
-        <bt:Image id="Icon.16x16" DefaultValue="https://chatbgp.app/bgp-addin-icon-16.png?v=wordmark"/>
-        <bt:Image id="Icon.32x32" DefaultValue="https://chatbgp.app/bgp-addin-icon-32.png?v=wordmark"/>
-        <bt:Image id="Icon.80x80" DefaultValue="https://chatbgp.app/bgp-addin-icon-80.png?v=wordmark"/>
+        <bt:Image id="Icon.16x16" DefaultValue="https://chatbgp.app/bgp-addin-icon-16.png?v=bgp2"/>
+        <bt:Image id="Icon.32x32" DefaultValue="https://chatbgp.app/bgp-addin-icon-32.png?v=bgp2"/>
+        <bt:Image id="Icon.80x80" DefaultValue="https://chatbgp.app/bgp-addin-icon-80.png?v=bgp2"/>
       </bt:Images>
       <bt:Urls>
         <bt:Url id="Taskpane.Url" DefaultValue="https://chatbgp.app/addin/outlook"/>
