@@ -141,7 +141,7 @@ export function OutlookChat({ token, onUnauthorised }: { token: string; onUnauth
   const prompts = email?.mode === "compose" || isCompose() ? COMPOSE_PROMPTS : READ_PROMPTS;
 
   return (
-    <div className="flex flex-col h-[calc(100vh-96px)]" data-testid="outlook-chat">
+    <div className="flex flex-col h-[calc(100vh-112px)]" data-testid="outlook-chat">
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
         {email && (
           <p className="text-[11px] text-muted-foreground truncate" title={email.subject}>
