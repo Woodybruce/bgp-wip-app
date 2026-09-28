@@ -1,4 +1,5 @@
 import propertyPlanScanningRouter from "./property-plan-scanning";
+import propertyPlanSourcesRouter from "./property-plan-sources";
 // Property plan outlines link to the canonical tenancy schedule by stable ID.
 // Original image bytes remain untouched; scanning/tracing only proposes geometry.
 import { Router, type Request, type Response } from "express";
@@ -13,6 +14,7 @@ import { PropertyPlanInputError, validatePropertyPlanPolygon, validatePlanUnitLi
 
 const router = Router();
 router.use(propertyPlanScanningRouter);
+router.use(propertyPlanSourcesRouter);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const STATUS_OVERRIDES = new Set(["occupied", "lease_event", "under_offer", "deal_in_progress", "vacant", "unlinked", "unknown"]);
 
@@ -76,41 +78,52 @@ router.post("/api/properties/:propertyId/plans", requireAuth, upload.single("fil
     if (file.mimetype === "application/pdf" || /\.pdf$/i.test(file.originalname || "") || file.buffer.subarray(0, 5).toString() === "%PDF-") {
       return res.json(await savePdfPlan(req, propertyId, file));
     }
-    let metadata;
-    try { metadata = await sharp(file.buffer, { limitInputPixels: 100_000_000, failOn: "error" }).metadata(); }
-    catch { return res.status(400).json({ error: "Use a valid PNG, JPEG or WebP image, up to 100 megapixels." }); }
-    const formats = { png: { ext: "png", mime: "image/png" }, jpeg: { ext: "jpg", mime: "image/jpeg" }, webp: { ext: "webp", mime: "image/webp" } };
-    const format = formats[metadata.format as keyof typeof formats];
-    if (!format || !metadata.width || !metadata.height || metadata.width * metadata.height > 100_000_000 || (metadata.pages || 1) > 1) return res.status(400).json({ error: "Use a single PNG, JPEG or WebP plan image, up to 100 megapixels. PDF pages are converted by the upload tool." });
-    try { await sharp(file.buffer, { limitInputPixels: 100_000_000, failOn: "error" }).stats(); }
-    catch { return res.status(400).json({ error: "This image is incomplete or damaged. Upload the original plan again." }); }
-    const rotated = metadata.orientation && metadata.orientation >= 5;
-    const width = rotated ? metadata.height : metadata.width;
-    const height = rotated ? metadata.width : metadata.height;
-    const floor = String(req.body?.floor || "Ground").trim().slice(0, 100) || "Ground";
-    const source = String(req.body?.source || "leasing-plan").trim().slice(0, 100);
-    const notes = req.body?.notes ? String(req.body.notes).trim() : null;
-    const planId = crypto.randomUUID();
-    const storageKey = `property-plans/${propertyId}/${planId}.${format.ext}`;
-    await saveFile(storageKey, file.buffer, format.mime, file.originalname);
-    const { rows } = await pool.query(`INSERT INTO property_plans (id, property_id, floor, source, notes, storage_key, width, height)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      RETURNING id, property_id, floor, display_order, storage_key, width, height, source, notes, created_at, updated_at`,
-      [planId, propertyId, floor, source, notes, storageKey, width, height]);
-    const scanning = await autoScanPlans(req, rows);
-    res.json({ ...rows[0], scanning });
+    res.json(await savePlanImage(req, propertyId, file));
   } catch (err) { errorResponse(res, err, "Could not upload the plan."); }
 });
+
+type PlanFile = { buffer: Buffer; originalname?: string };
+// Where a plan came from (a brochure page, a SharePoint file), so bringing
+// the same source in again adds nothing — see property-plan-sources.ts.
+type PlanOrigin = { floor?: string; source?: string; notes?: string | null; sourceRef?: string | null };
+
+// A plan image, stored byte for byte at its original resolution.
+export async function savePlanImage(req: Request, propertyId: string, file: PlanFile, origin: PlanOrigin = {}) {
+  let metadata;
+  try { metadata = await sharp(file.buffer, { limitInputPixels: 100_000_000, failOn: "error" }).metadata(); }
+  catch { throw new PropertyPlanInputError("Use a valid PNG, JPEG or WebP image, up to 100 megapixels."); }
+  const formats = { png: { ext: "png", mime: "image/png" }, jpeg: { ext: "jpg", mime: "image/jpeg" }, webp: { ext: "webp", mime: "image/webp" } };
+  const format = formats[metadata.format as keyof typeof formats];
+  if (!format || !metadata.width || !metadata.height || metadata.width * metadata.height > 100_000_000 || (metadata.pages || 1) > 1) throw new PropertyPlanInputError("Use a single PNG, JPEG or WebP plan image, up to 100 megapixels. PDF pages are converted by the upload tool.");
+  try { await sharp(file.buffer, { limitInputPixels: 100_000_000, failOn: "error" }).stats(); }
+  catch { throw new PropertyPlanInputError("This image is incomplete or damaged. Upload the original plan again."); }
+  const rotated = metadata.orientation && metadata.orientation >= 5;
+  const width = rotated ? metadata.height : metadata.width;
+  const height = rotated ? metadata.width : metadata.height;
+  const floor = String(origin.floor || req.body?.floor || "Ground").trim().slice(0, 100) || "Ground";
+  const source = String(origin.source || req.body?.source || "leasing-plan").trim().slice(0, 100);
+  const notes = origin.notes !== undefined ? origin.notes : req.body?.notes ? String(req.body.notes).trim() : null;
+  const planId = crypto.randomUUID();
+  const storageKey = `property-plans/${propertyId}/${planId}.${format.ext}`;
+  await saveFile(storageKey, file.buffer, format.mime, file.originalname);
+  const { rows } = await pool.query(`INSERT INTO property_plans (id, property_id, floor, source, notes, storage_key, width, height, source_ref)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    RETURNING id, property_id, floor, display_order, storage_key, width, height, source, notes, created_at, updated_at`,
+    [planId, propertyId, floor, source, notes, storageKey, width, height, origin.sourceRef || null]);
+  const scanning = await autoScanPlans(req, rows);
+  return { ...rows[0], scanning };
+}
 
 // A PDF plan: every page rendered on the server at print quality (300 dpi,
 // hairlines kept, lossless PNG — the lease advisory evidence-plan renderer),
 // one plan per page named from the page's own title ("Lower Level", "Upper
 // Mall"…) where it has one, and the original PDF kept for download. BGP
-// staff uploads start the unit scan straight away.
-async function savePdfPlan(req: Request, propertyId: string, file: Express.Multer.File) {
+// staff uploads start the unit scan straight away. `origin.pages` names and
+// tags each page when the PDF came from a brochure or SharePoint.
+export async function savePdfPlan(req: Request, propertyId: string, file: PlanFile, origin: { source?: string; pages?: PlanOrigin[] } = {}) {
   const { renderEvidencePlanPdf } = await import("./plan-image-render");
   const baseFloor = String(req.body?.floor || "").trim().slice(0, 100);
-  const source = String(req.body?.source || "leasing-plan").trim().slice(0, 100);
+  const source = String(origin.source || req.body?.source || "leasing-plan").trim().slice(0, 100);
   const notes = req.body?.notes ? String(req.body.notes).trim() : null;
   const pdfId = crypto.randomUUID();
   const pdfKey = `property-plans/${propertyId}/pdf-${pdfId}/original.pdf`;
@@ -130,11 +143,12 @@ async function savePdfPlan(req: Request, propertyId: string, file: Express.Multe
     const planId = crypto.randomUUID();
     const storageKey = `property-plans/${propertyId}/pdf-${pdfId}/page-${page.page}.png`;
     await saveFile(storageKey, page.buffer, "image/png", `${(file.originalname || "plan").replace(/\.pdf$/i, "")}-p${page.page}.png`);
-    const floor = (page.name || (pages.length === 1 ? baseFloor : baseFloor ? `${baseFloor} · page ${page.page}` : `Page ${page.page}`) || "Ground").slice(0, 100);
-    const { rows } = await pool.query(`INSERT INTO property_plans (id, property_id, floor, source, notes, storage_key, width, height, display_order, original_pdf_key, pdf_page)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    const pageOrigin = origin.pages?.[page.page - 1] || {};
+    const floor = (page.name || pageOrigin.floor || (pages.length === 1 ? baseFloor : baseFloor ? `${baseFloor} · page ${page.page}` : `Page ${page.page}`) || "Ground").slice(0, 100);
+    const { rows } = await pool.query(`INSERT INTO property_plans (id, property_id, floor, source, notes, storage_key, width, height, display_order, original_pdf_key, pdf_page, source_ref)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING id, property_id, floor, display_order, storage_key, width, height, source, notes, original_pdf_key, pdf_page, created_at, updated_at`,
-      [planId, propertyId, floor, source, notes, storageKey, page.width, page.height, order + page.page - 1, pdfKey, page.page]);
+      [planId, propertyId, floor, source, pageOrigin.notes !== undefined ? pageOrigin.notes : notes, storageKey, page.width, page.height, order + page.page - 1, pdfKey, page.page, pageOrigin.sourceRef || null]);
     created.push(rows[0]);
   }
   const scanned = await autoScanPlans(req, created);

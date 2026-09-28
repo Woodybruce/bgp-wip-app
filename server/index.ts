@@ -976,6 +976,10 @@ installGoogleBudgetGuard();
     // the original PDF is kept beside the page images (Woody, 2026-09-27).
     `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS original_pdf_key TEXT`,
     `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS pdf_page INT`,
+    // Plans made from a brochure page or a SharePoint file keep where they
+    // came from ("brochure:<id>:p<page>", "sharepoint:<drive>:<item>[:p<n>]")
+    // so importing the same source twice adds nothing (Woody, 2026-09-28).
+    `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS source_ref TEXT`,
 
     // Property brochures — leasing / investment / OM PDFs uploaded
     // directly to a property's brochure board. Same pattern as
