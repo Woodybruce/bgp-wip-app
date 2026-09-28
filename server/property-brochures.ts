@@ -1,8 +1,9 @@
 // Property brochures — BGP-native file storage for leasing /
 // investment / OM PDFs attached to a property. Same architecture as
 // property_plans: metadata row + storage_key into the file_storage
-// table. No SharePoint dependency — brochures live in our DB and are
-// served by us.
+// table. Brochures live in our DB and are served by us; staff can also
+// pull one in from SharePoint (the file is copied in, and its driveId /
+// itemId / webUrl kept on the row so the same file isn't imported twice).
 //
 // On upload, the file is hashed (sha256) for dedupe and then handed
 // off to `brochure-ingest` which extracts images, classifies them
@@ -14,6 +15,8 @@
 // Endpoints:
 //   GET    /api/properties/:id/brochures           list (grouped + archived split)
 //   POST   /api/properties/:id/brochures/upload    multipart upload (PDF) + auto-ingest
+//   GET    /api/properties/:id/brochures/sharepoint-candidates?type=  PDFs found in SharePoint (staff)
+//   POST   /api/properties/:id/brochures/from-sharepoint  copy one in + auto-ingest (staff)
 //   GET    /api/properties/:id/brochures/:bid/file serve bytes for preview/download
 //   POST   /api/properties/:id/brochures/:bid/edit pdf-lib edits (delete pages, cover logo)
 //   POST   /api/properties/:id/brochures/:bid/reingest  re-run the vision pipeline
@@ -58,6 +61,9 @@ type BrochureRow = {
   ingest_completed_at?: string | null;
   ingest_result?: any;
   ingest_error?: string | null;
+  source_drive_id?: string | null;
+  source_item_id?: string | null;
+  source_web_url?: string | null;
 };
 
 function actorId(req: Request): string | null {
@@ -83,6 +89,7 @@ function rowToJson(r: BrochureRow) {
     ingestCompletedAt: r.ingest_completed_at || null,
     ingestResult: r.ingest_result || null,
     ingestError: r.ingest_error || null,
+    sourceWebUrl: r.source_web_url || null,
   };
 }
 
@@ -143,6 +150,69 @@ function runIngestInBackground(brochureId: string, propertyId: string, pdfBuffer
       JSON.stringify(result.applied),
     );
   });
+}
+
+type BrochureSource = { driveId: string; itemId: string; webUrl: string | null };
+
+// The one ingest path for a brochure PDF, uploaded or pulled from
+// SharePoint: sha256 dedupe per property, page count, file_storage, row,
+// then the background vision ingest (cover images, fields, tenancy rows).
+async function storeBrochure(args: {
+  propertyId: string; buffer: Buffer; fileName: string; type: "leasing" | "investment";
+  userId: string | null; source?: BrochureSource;
+}): Promise<{ brochure: BrochureRow; duplicate: boolean }> {
+  const { propertyId, buffer, type, userId, source } = args;
+  // Dedupe: hash the bytes, see if the same brochure already exists
+  // on this property. Same PDF arriving twice (resends from agents)
+  // returns the existing row rather than creating a duplicate.
+  const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
+  const dupe = await pool.query<BrochureRow>(
+    `SELECT * FROM property_brochures WHERE property_id = $1 AND file_sha256 = $2 LIMIT 1`,
+    [propertyId, sha256],
+  );
+  if (dupe.rows[0]) {
+    if (source && !dupe.rows[0].source_item_id) {
+      const { rows } = await pool.query<BrochureRow>(
+        `UPDATE property_brochures SET source_drive_id = $1, source_item_id = $2, source_web_url = $3 WHERE id = $4 RETURNING *`,
+        [source.driveId, source.itemId, source.webUrl, dupe.rows[0].id],
+      );
+      return { brochure: rows[0] || dupe.rows[0], duplicate: true };
+    }
+    return { brochure: dupe.rows[0], duplicate: true };
+  }
+
+  // Try to read the page count via pdf-lib so the UI can show it.
+  // Failure is non-fatal — page_count stays NULL.
+  let pageCount: number | null = null;
+  try {
+    const { PDFDocument } = await import("pdf-lib");
+    const doc = await PDFDocument.load(buffer, { ignoreEncryption: true });
+    pageCount = doc.getPageCount();
+  } catch (e: any) {
+    console.warn("[property-brochures upload] couldn't read page count:", e?.message);
+  }
+
+  const storageKey = `property-brochures/${propertyId}/${Date.now()}-${crypto.randomBytes(8).toString("hex")}.pdf`;
+  const cleanName = (args.fileName || "Brochure.pdf").replace(/[\/\\:*?"<>|]/g, "-");
+  await saveFile(storageKey, buffer, "application/pdf", cleanName);
+
+  const { rows } = await pool.query<BrochureRow>(
+    `INSERT INTO property_brochures
+       (property_id, type, original_name, storage_key, mime_type, size_bytes, page_count, uploaded_by, file_sha256, ingest_status,
+        source_drive_id, source_item_id, source_web_url)
+     VALUES ($1, $2, $3, $4, 'application/pdf', $5, $6, $7, $8, 'pending', $9, $10, $11)
+     RETURNING *`,
+    [propertyId, type, cleanName, storageKey, buffer.length, pageCount, userId, sha256,
+      source?.driveId || null, source?.itemId || null, source?.webUrl || null],
+  );
+  const brochure = rows[0];
+
+  // Kick the ingestion in the background. The HTTP response returns
+  // straight away with ingest_status='pending'; the client polls the
+  // list endpoint (or refreshes) to see status become 'running' then
+  // 'done' once Claude finishes.
+  runIngestInBackground(brochure.id, propertyId, buffer, userId);
+  return { brochure, duplicate: false };
 }
 
 export function registerPropertyBrochureRoutes(app: Express) {
@@ -231,48 +301,10 @@ export function registerPropertyBrochureRoutes(app: Express) {
         const isPdf = sniff.startsWith("%PDF-") || file.mimetype === "application/pdf" || /\.pdf$/i.test(file.originalname || "");
         if (!isPdf) return res.status(400).json({ error: "Only PDFs are accepted as brochures." });
 
-        // Dedupe: hash the bytes, see if the same brochure already exists
-        // on this property. Same PDF arriving twice (resends from agents)
-        // returns the existing row rather than creating a duplicate.
-        const sha256 = crypto.createHash("sha256").update(file.buffer).digest("hex");
-        const dupe = await pool.query<BrochureRow>(
-          `SELECT * FROM property_brochures WHERE property_id = $1 AND file_sha256 = $2 LIMIT 1`,
-          [req.params.id, sha256],
-        );
-        if (dupe.rows[0]) {
-          return res.json({ ok: true, brochure: rowToJson(dupe.rows[0]), duplicate: true });
-        }
-
-        // Try to read the page count via pdf-lib so the UI can show it.
-        // Failure is non-fatal — page_count stays NULL.
-        let pageCount: number | null = null;
-        try {
-          const { PDFDocument } = await import("pdf-lib");
-          const doc = await PDFDocument.load(file.buffer, { ignoreEncryption: true });
-          pageCount = doc.getPageCount();
-        } catch (e: any) {
-          console.warn("[property-brochures upload] couldn't read page count:", e?.message);
-        }
-
-        const storageKey = `property-brochures/${req.params.id}/${Date.now()}-${crypto.randomBytes(8).toString("hex")}.pdf`;
-        const cleanName = (file.originalname || "Brochure.pdf").replace(/[\/\\:*?"<>|]/g, "-");
-        await saveFile(storageKey, file.buffer, "application/pdf", cleanName);
-
-        const { rows } = await pool.query<BrochureRow>(
-          `INSERT INTO property_brochures
-             (property_id, type, original_name, storage_key, mime_type, size_bytes, page_count, uploaded_by, file_sha256, ingest_status)
-           VALUES ($1, $2, $3, $4, 'application/pdf', $5, $6, $7, $8, 'pending')
-           RETURNING *`,
-          [req.params.id, type, cleanName, storageKey, file.size, pageCount, actorId(req), sha256],
-        );
-        const brochure = rows[0];
-
-        // Kick the ingestion in the background. The HTTP response returns
-        // straight away with ingest_status='pending'; the client polls the
-        // list endpoint (or refreshes) to see status become 'running' then
-        // 'done' once Claude finishes.
-        runIngestInBackground(brochure.id, String(req.params.id), file.buffer, actorId(req));
-
+        const { brochure, duplicate } = await storeBrochure({
+          propertyId: String(req.params.id), buffer: file.buffer, fileName: file.originalname, type, userId: actorId(req),
+        });
+        if (duplicate) return res.json({ ok: true, brochure: rowToJson(brochure), duplicate: true });
         res.json({ ok: true, brochure: rowToJson(brochure) });
       } catch (e: any) {
         console.error("[property-brochures upload]", e?.message);
@@ -280,6 +312,86 @@ export function registerPropertyBrochureRoutes(app: Express) {
       }
     },
   );
+
+  // PDFs for this property found in SharePoint — the linked folder, a
+  // Microsoft 365 search by name and the indexed files — ranked for the
+  // Leasing or Investment tab. Staff only.
+  app.get("/api/properties/:id/brochures/sharepoint-candidates", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { isClientRequestUser } = await import("./company-scope");
+      if (await isClientRequestUser(req as any)) return res.status(403).json({ error: "Not available for client accounts" });
+      const sp = await import("./sharepoint-property-files");
+      const wanted = req.query.type === "investment" ? "investment" : "leasing";
+      const result = await sp.findPropertyFiles(pool, String(req.params.id), "brochure", wanted);
+      const { rows } = await pool.query(
+        `SELECT source_drive_id, source_item_id, source_web_url FROM property_brochures
+          WHERE property_id = $1 AND (source_item_id IS NOT NULL OR source_web_url IS NOT NULL)`,
+        [req.params.id],
+      ).catch(() => ({ rows: [] as any[] }));
+      const items = new Set(rows.map((r: any) => `${r.source_drive_id}:${r.source_item_id}`));
+      const urls = new Set(rows.map((r: any) => sp.urlKey(r.source_web_url)).filter(Boolean));
+      for (const c of result.candidates) {
+        c.imported = items.has(`${c.driveId}:${c.itemId}`) || urls.has(sp.urlKey(c.webUrl));
+      }
+      res.json(result);
+    } catch (e: any) {
+      if (e?.status === 404) return res.status(404).json({ error: e.message });
+      console.error("[property-brochures sharepoint-candidates]", e?.message);
+      const { plainGraphError } = await import("./sharepoint-property-files");
+      res.status(502).json({ error: plainGraphError(e) });
+    }
+  });
+
+  // Copy one SharePoint PDF in as a brochure — same store + ingest as an
+  // upload, with the SharePoint source kept on the row. The same file
+  // picked again returns the existing brochure unless it changed since.
+  app.post("/api/properties/:id/brochures/from-sharepoint", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { isClientRequestUser } = await import("./company-scope");
+      if (await isClientRequestUser(req as any)) return res.status(403).json({ error: "Not available for client accounts" });
+      await ensureIngestColumns();
+      const sp = await import("./sharepoint-property-files");
+      const type: "leasing" | "investment" = req.body?.type === "investment" ? "investment" : "leasing";
+      const property = await pool.query(`SELECT 1 FROM crm_properties WHERE id = $1`, [req.params.id]);
+      if (!property.rows.length) return res.status(404).json({ error: "Property not found" });
+
+      let meta: Awaited<ReturnType<typeof sp.resolveFileRef>>;
+      try {
+        meta = await sp.resolveFileRef(req.body || {});
+      } catch (e: any) {
+        return res.status(e?.status || 502).json({ error: e?.status ? e.message : sp.plainGraphError(e) });
+      }
+      if (!sp.isPdf(meta.name)) return res.status(400).json({ error: "Only PDFs are accepted as brochures." });
+      if (meta.size > 100 * 1024 * 1024) return res.status(413).json({ error: "That PDF is over 100MB — too large to import." });
+
+      const existing = (await pool.query<BrochureRow>(
+        `SELECT * FROM property_brochures WHERE property_id = $1 AND source_drive_id = $2 AND source_item_id = $3
+          ORDER BY created_at DESC LIMIT 1`,
+        [req.params.id, meta.driveId, meta.itemId],
+      )).rows[0];
+      if (existing && (!meta.lastModified || new Date(meta.lastModified) <= new Date(existing.created_at))) {
+        return res.json({ ok: true, brochure: rowToJson(existing), duplicate: true });
+      }
+
+      let buffer: Buffer;
+      try {
+        buffer = await sp.downloadFile(meta);
+      } catch (e: any) {
+        return res.status(502).json({ error: sp.plainGraphError(e) });
+      }
+      if (!buffer.subarray(0, 5).toString("utf8").startsWith("%PDF-")) {
+        return res.status(400).json({ error: "That file isn't a readable PDF." });
+      }
+      const { brochure, duplicate } = await storeBrochure({
+        propertyId: String(req.params.id), buffer, fileName: meta.name, type, userId: actorId(req),
+        source: { driveId: meta.driveId, itemId: meta.itemId, webUrl: meta.webUrl },
+      });
+      res.json({ ok: true, brochure: rowToJson(brochure), duplicate });
+    } catch (e: any) {
+      console.error("[property-brochures from-sharepoint]", e?.message);
+      res.status(500).json({ error: e?.message });
+    }
+  });
 
   // Re-run the ingestion pipeline for an existing brochure. Useful when
   // we tune the vision prompt, or when an old upload predates this
