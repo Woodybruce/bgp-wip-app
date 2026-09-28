@@ -1094,7 +1094,9 @@ export function PropertyDetail({ id }: { id: string }) {
             </div>
 
             <PropertySection name={simpleLayout ? "research" : "boards"} active={phoneSection} simple={simpleLayout}>
-            {!isClientViewer && (
+            {/* Pathway is for single buildings — not shopping centres (Woody,
+                2026-09-28: "Pathway can be removed too"). */}
+            {!isClientViewer && propertyView !== "centre" && (
             <ErrorBoundary compact name="Pathway intel strip">
               <CollapsibleCard open={mainSections.pathway} onToggle={() => toggleMain("pathway")} icon={TrendingUp} title="Pathway Intel" testId="toggle-pathway">
                 <PathwayIntelStrip
