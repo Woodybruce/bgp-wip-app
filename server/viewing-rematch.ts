@@ -2,13 +2,16 @@
 // inspections were saved as viewings (Woody, 2026-09-28). Re-run the current
 // brand/property matching over unconfirmed diary rows from their stored
 // invitation details (no Graph calls), then retitle/resolve their tasks.
+// v3: "REX - Inspection" kept the Royal Exchange's only tracker unit and lost
+// its is-this-leasing question (Woody, 2026-09-28) — a unit the sync picked
+// that the rules no longer name is released, and inspections keep the question.
 import { pool } from "./db";
 import { viewingMissingDetails } from "@shared/viewing-workflow";
-import { isNonLeasingVisit } from "./viewing-matching";
+import { isLeasingViewing, isNonLeasingVisit } from "./viewing-matching";
 import { brandIssueLabels, loadViewingMatchContext, matchViewingEvent, NOT_LEASING_ISSUE } from "./viewing-sync";
 import { reconcileViewingFollowup } from "./viewing-followups";
 
-const KEY = "migration:viewing_rematch_v2";
+const KEY = "migration:viewing_rematch_v3";
 const UNIT_ISSUE = /tracker unit|units are being viewed|confirm the property/i;
 const BRAND_ISSUE = /brand|attendee/i;
 
@@ -21,7 +24,7 @@ export async function runViewingRematch(): Promise<void> {
       WHERE source = 'diary' AND deleted_at IS NULL AND status = 'scheduled' AND details_confirmed_at IS NULL
         AND outcome_recorded_at IS NULL AND NULLIF(TRIM(COALESCE(outcome, '')), '') IS NULL
       ORDER BY created_at`)).rows;
-  const counts = { scanned: rows.length, notLeasing: 0, units: 0, brands: 0, properties: 0, tasksResolved: 0, tasksUpdated: 0, failed: 0 };
+  const counts = { scanned: rows.length, notLeasing: 0, units: 0, unitsReleased: 0, brands: 0, properties: 0, tasksResolved: 0, tasksUpdated: 0, failed: 0 };
   for (const row of rows) {
     try {
       const details = row.source_details || {};
@@ -41,24 +44,35 @@ export async function runViewingRematch(): Promise<void> {
         const participants = (Array.isArray(details.participants) ? details.participants : [])
           .filter((person: any) => typeof person?.email === "string").map((person: any) => ({ email: person.email.trim().toLowerCase() }));
         const { brand, brandReason, unitMatch } = await matchViewingEvent({ subject, location, participants }, context);
-        let unitId = row.unit_id || (unitMatch.units.length === 1 ? unitMatch.units[0].id : null);
+        const matchedIds = unitMatch.units.map(unit => unit.id);
+        // Only a unit the sync itself picked is released; one a person chose
+        // instead is never in sourceUnitIds and stays.
+        const releaseUnit = !!row.unit_id && Array.isArray(details.sourceUnitIds)
+          && details.sourceUnitIds.includes(row.unit_id) && !matchedIds.includes(row.unit_id);
+        const keptUnit = releaseUnit ? null : row.unit_id;
+        let unitId = keptUnit || (unitMatch.units.length === 1 ? unitMatch.units[0].id : null);
         // A multi-unit booking already holding that unit on another row keeps it there.
         if (unitId && unitId !== row.unit_id && row.booking_id && (await pool.query(
           `SELECT 1 FROM unit_viewings WHERE booking_id = $1 AND unit_id = $2 AND id <> $3 AND deleted_at IS NULL LIMIT 1`,
-          [row.booking_id, unitId, row.id])).rows.length) unitId = row.unit_id;
+          [row.booking_id, unitId, row.id])).rows.length) unitId = keptUnit;
         const fillBrand = !row.company_id && !!brand.brandId;
         const property = unitMatch.property;
-        if (unitId !== row.unit_id || fillBrand || (property && property.id !== details.sourcePropertyId)) {
+        // Categories were not stored, so the question stays only where the
+        // subject itself rules out a plain leasing viewing (an inspection).
+        const askLeasing = !isLeasingViewing(subject, ["viewing"]);
+        const hadIssues: string[] = Array.isArray(details.issues) ? details.issues : [];
+        if (unitId !== row.unit_id || fillBrand || (property && property.id !== details.sourcePropertyId) || (askLeasing && !hadIssues.includes(NOT_LEASING_ISSUE))) {
           const values = {
             unitId, companyId: fillBrand ? brand.brandId : row.company_id,
             contactId: row.contact_id || (fillBrand ? brand.contactId : null),
             agentContactId: row.agent_contact_id || (fillBrand ? brand.agentContactId : null),
             ownerUserId: row.owner_user_id, viewingDate: row.viewing_date, viewingTime: row.viewing_time,
           };
-          const kept = (Array.isArray(details.issues) ? details.issues as string[] : [])
+          const kept = hadIssues
             .filter(issue => !(unitId && UNIT_ISSUE.test(issue)) && !(fillBrand && BRAND_ISSUE.test(issue)) && issue !== NOT_LEASING_ISSUE);
-          const issues = [...new Set([...kept, ...(fillBrand ? brand.reasons.map(reason => brandIssueLabels[reason] || reason) : []), ...viewingMissingDetails(values)])];
-          const patch = { issues, ...(property ? { sourcePropertyId: property.id, sourcePropertyName: property.name } : {}), ...(fillBrand ? { sourceCompanyId: brand.brandId, brandReason } : {}) };
+          const issues = [...new Set([...kept, ...(unitId ? [] : unitMatch.issues), ...(askLeasing ? [NOT_LEASING_ISSUE] : []),
+            ...(fillBrand ? brand.reasons.map(reason => brandIssueLabels[reason] || reason) : []), ...viewingMissingDetails(values)])];
+          const patch = { issues, sourceUnitIds: matchedIds, ...(property ? { sourcePropertyId: property.id, sourcePropertyName: property.name } : {}), ...(fillBrand ? { sourceCompanyId: brand.brandId, brandReason } : {}) };
           const r = await pool.query(`UPDATE unit_viewings SET unit_id = $4, company_id = $5, company_name = COALESCE($6, company_name),
               contact_id = $7, agent_contact_id = $8, contact_name = COALESCE(contact_name, $9), requirement_id = COALESCE(requirement_id, $10),
               source_details = COALESCE(source_details, '{}'::jsonb) || $11::jsonb, updated_at = NOW()
@@ -66,7 +80,7 @@ export async function runViewingRematch(): Promise<void> {
           [row.id, row.unit_id, row.company_id, unitId, values.companyId, fillBrand ? brand.brandName : null,
             values.contactId, values.agentContactId, fillBrand ? brand.contactName : null, fillBrand ? brand.requirementId : null, JSON.stringify(patch)]);
           if (r.rowCount) {
-            if (unitId !== row.unit_id) counts.units++;
+            if (unitId !== row.unit_id) counts[unitId ? "units" : "unitsReleased"]++;
             if (fillBrand) counts.brands++;
             if (property && property.id !== details.sourcePropertyId) counts.properties++;
           }

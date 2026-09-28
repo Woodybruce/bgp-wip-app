@@ -32,6 +32,7 @@ export interface ViewingTrackerUnit { id: string; unitName: string; propertyId: 
 export interface ViewingProperty { id: string; name: string; aliases?: string[] }
 const escapePattern = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const containsName = (text: string, name: string) => new RegExp(`(?:^|[^a-z0-9])${escapePattern(name)}(?:$|[^a-z0-9])`, "i").test(text);
+const BUILDING_VISIT = /\binspection\b|\bsite tour\b|\bwalk ?(a)?round\b/i;
 
 // crm_properties.aliases is free-form jsonb: an array of strings, or a string.
 export function propertyAliasList(value: unknown): string[] {
@@ -98,7 +99,10 @@ export function matchViewingUnits(text: string, units: ViewingTrackerUnit[], opt
   }
   if (!named.length && new Set(matched.map(unit => unit.propertyId)).size > 1) return { units: [], issues: ["Confirm the property for the named units"], property: null };
   if (matched.length) return { units: matched, issues: [], property: named.length ? property : { id: matched[0].propertyId, name: matched[0].propertyName } };
-  if (named.length === 1 && propertyUnits.length === 1) return { units: propertyUnits, issues: [], property };
+  // "REX - Inspection" at "The Royal Exchange" is a look round the building,
+  // not a viewing of the one unit it has on the tracker: an inspection, tour
+  // or walk-around gets a unit only when it names one (Woody, 2026-09-28).
+  if (named.length === 1 && propertyUnits.length === 1 && !BUILDING_VISIT.test(text)) return { units: propertyUnits, issues: [], property };
   return { units: [], issues: [property ? "Choose which tracker units are being viewed" : "Identify the property and tracker unit"], property };
 }
 

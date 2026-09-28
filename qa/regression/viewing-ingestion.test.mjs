@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import * as matching from '../../server/viewing-matching.ts';
 import { viewingMissingDetails } from '../../shared/viewing-workflow.ts';
+import { viewingFollowupDecision } from '../../server/viewing-followups.ts';
 const require = createRequire(import.meta.url);
 const { source, evaluate, find, ts } = require('./source-harness.cjs');
 const person = (id, companyId, companyType = 'Tenant - Retail') => ({ id, name: id, email: `${id}@example.test`, companyId, companyName: companyId, companyType });
@@ -304,6 +305,86 @@ test('calendar capture takes the brand from the subject and records the named pr
   assert.equal(bv.rows[0].unit_id, null);
   assert.equal(bv.rows[0].source_details.sourcePropertyId, 'bv');
   assert.equal(bv.rows[0].source_details.sourcePropertyName, 'Brixton Village');
+});
+
+// Live shape (Woody, 2026-09-28): the Royal Exchange has one tracker unit, and
+// Jack's "REX - Inspection" with the Appley team was filed against it.
+const rex = [{ id: 'rex1', unitName: 'Unit 16 & 17', propertyId: 'rex', propertyName: 'Royal Exchange', propertyAliases: ['The Royal Exchange'] }];
+const appley = person('tm', 'appley', 'Landlord');
+const rexInspection = invitation({ iCalUId: 'rex-booking', subject: 'REX - Inspection ', location: { displayName: 'The Royal Exchange' },
+  start: { dateTime: '2026-09-24T10:00:00Z', timeZone: 'UTC' }, organizer: { emailAddress: { address: 'carly@brucegillinghampollard.com' } },
+  attendees: [{ emailAddress: { address: appley.email } }] });
+
+test('an inspection, tour or walk-around of a building never takes its only tracker unit unless it names it', async () => {
+  const inspection = matching.matchViewingUnits('REX - Inspection ', rex, { location: 'The Royal Exchange' });
+  assert.deepEqual(inspection.units, []);
+  assert.deepEqual(inspection.property, { id: 'rex', name: 'Royal Exchange' });
+  assert.deepEqual(inspection.issues, ['Choose which tracker units are being viewed']);
+  assert.deepEqual(matching.matchViewingUnits('Walk around The Royal Exchange // CDP & BGP', rex).units, []);
+  assert.deepEqual(matching.matchViewingUnits('Site tour', rex, { location: 'The Royal Exchange' }).units, []);
+  assert.deepEqual(matching.matchViewingUnits('Royal Exchange inspection Unit 16 & 17', rex).units.map(unit => unit.id), ['rex1'], 'a named unit still matches');
+  assert.deepEqual(matching.matchViewingUnits('Cru viewing', rex, { location: 'The Royal Exchange' }).units.map(unit => unit.id), ['rex1'], 'a leasing viewing still takes the only unit');
+  const h = ingestionHarness({ tracker: rex, contacts: [appley], links: [] });
+  await h.run(rexInspection);
+  assert.equal(h.rows[0].unit_id, null);
+  assert.equal(h.rows[0].source_details.sourcePropertyId, 'rex');
+  assert.ok(h.rows[0].source_details.issues.includes(h.module.NOT_LEASING_ISSUE));
+});
+
+function rematchHarness(rows, { tracker = rex, contacts = [appley] } = {}) {
+  const sync = ingestionHarness({ tracker, contacts, links: [] }).module;
+  const stored = structuredClone(rows);
+  const settings = [], reconciled = [];
+  const pool = {
+    async query(sql, args) {
+      if (sql.includes('FROM system_settings')) { settings.push(args[0]); return { rows: [] }; }
+      if (sql.includes('INSERT INTO system_settings')) return { rows: [] };
+      if (sql.includes("WHERE source = 'diary'")) return { rows: stored.filter(row => row.status === 'scheduled') };
+      if (sql.includes('SELECT 1 FROM unit_viewings WHERE booking_id')) return { rows: stored.filter(row => row.booking_id === args[0] && row.unit_id === args[1] && row.id !== args[2]) };
+      if (sql.includes('SET unit_id = $4')) {
+        const row = stored.find(entry => entry.id === args[0] && entry.unit_id === args[1] && entry.company_id === args[2]);
+        if (!row) return { rows: [], rowCount: 0 };
+        Object.assign(row, { unit_id: args[3], company_id: args[4], source_details: { ...row.source_details, ...JSON.parse(args[10]) } });
+        return { rows: [], rowCount: 1 };
+      }
+      assert.fail(`Unexpected rematch query: ${sql}`);
+    },
+  };
+  const module = evaluate(source('server/viewing-rematch.ts'), { require(name) {
+    if (name === './db') return { pool };
+    if (name === '@shared/viewing-workflow') return { viewingMissingDetails };
+    if (name === './viewing-matching') return matching;
+    if (name === './viewing-sync') return sync;
+    if (name === './viewing-followups') return { async reconcileViewingFollowup(id) { reconciled.push(id); return { resolved: 0, updated: 1, created: 0 }; } };
+    throw new Error(`Unexpected import ${name}`);
+  } });
+  return { run: () => module.runViewingRematch(), rows: stored, settings, reconciled, NOT_LEASING_ISSUE: sync.NOT_LEASING_ISSUE };
+}
+
+test('the v3 re-match releases a unit the sync guessed for an inspection and restores the leasing question', async () => {
+  const details = { subject: 'REX - Inspection ', location: 'The Royal Exchange', participants: [{ email: appley.email }],
+    sourceUnitIds: ['rex1'], sourcePropertyId: 'rex', sourcePropertyName: 'Royal Exchange', issues: ['Confirm the brand being represented'] };
+  const base = { booking_id: null, company_id: null, contact_id: null, agent_contact_id: null, owner_user_id: 'jack', viewing_date: '2026-09-24', viewing_time: '11:00', status: 'scheduled' };
+  const h = rematchHarness([
+    { ...base, id: 'guessed', unit_id: 'rex1', source_details: details },
+    { ...base, id: 'chosen', unit_id: 'rex-other', source_details: details },
+    { ...base, id: 'leasing', unit_id: 'rex1', source_details: { ...details, subject: 'Cru viewing', issues: [] } },
+  ]);
+  await h.run();
+  assert.deepEqual(h.settings, ['migration:viewing_rematch_v3']);
+  const [guessed, chosen, leasing] = h.rows;
+  assert.equal(guessed.unit_id, null, 'the sole-unit guess is released');
+  assert.deepEqual(guessed.source_details.sourceUnitIds, []);
+  assert.ok(guessed.source_details.issues.includes(h.NOT_LEASING_ISSUE));
+  assert.ok(guessed.source_details.issues.includes('Choose which tracker units are being viewed'));
+  assert.equal(chosen.unit_id, 'rex-other', 'a unit a person chose is never released');
+  assert.equal(leasing.unit_id, 'rex1', 'a leasing viewing keeps the only unit');
+  assert.ok(!leasing.source_details.issues?.includes(h.NOT_LEASING_ISSUE));
+  assert.deepEqual(h.reconciled, ['guessed', 'chosen', 'leasing']);
+  const task = viewingFollowupDecision({ id: 'guessed', unitId: null, companyId: null, contactId: null, agentContactId: null, ownerUserId: 'jack',
+    viewingDate: '2026-09-24', viewingTime: '11:00', status: 'scheduled', outcome: null, detailsConfirmedAt: null, createdAt: '2026-09-23T20:04:31Z',
+    sourceDetails: guessed.source_details }, new Date('2026-09-28T10:00:00Z'));
+  assert.match(task.title, /^Confirm viewing details — REX - Inspection · 24 Sept?$/, 'the task names the invitation, not Unit 16 & 17');
 });
 
 test('captured events remain reviewable if renamed away from viewing; save failures roll back and surface', async () => {
