@@ -13,6 +13,8 @@
 import type { Express, Request, Response } from "express";
 import crypto from "crypto";
 import { ConfidentialClientApplication } from "@azure/msal-node";
+import * as XLSX from "xlsx";
+import multer from "multer";
 import { pool } from "./db";
 
 const TENANT = process.env.KYC4U_TENANT || "kyc4ultd.onmicrosoft.com";
@@ -83,6 +85,54 @@ const pick = (fields: Record<string, any>, patterns: RegExp[]) => {
   return null;
 };
 
+type Kyc4uItem = { id: string; fields: Record<string, any>; created?: string | null; modified?: string | null; url?: string | null };
+
+async function companyMatcher() {
+  const { buyerNameKey } = await import("./investment-buyers");
+  const companies = (await pool.query(`SELECT id, name FROM crm_companies WHERE merged_into_id IS NULL AND name IS NOT NULL`)).rows;
+  const byKey = new Map<string, string[]>();
+  for (const c of companies) { const k = buyerNameKey(c.name); if (k.length >= 3) byKey.set(k, [...(byKey.get(k) || []), c.id]); }
+  return (entity: string | null) => { const ids = entity ? byKey.get(buyerNameKey(entity)) : undefined; return ids?.length === 1 ? ids[0] : null; };
+}
+
+async function upsertItem(match: (e: string | null) => string | null, list: { id: string; name: string }, item: Kyc4uItem): Promise<boolean> {
+  const fields = item.fields || {};
+  const title = pick(fields, [/^title$/i, /client|entity|company|customer|subject/i]);
+  const status = pick(fields, [/^status$/i, /status|stage|progress|outcome/i]);
+  const entity = pick(fields, [/entity|client|company|customer|subject/i, /^title$/i]);
+  const companyId = match(entity);
+  await pool.query(
+    `INSERT INTO kyc4u_requests (list_id, item_id, list_name, title, status, entity_name, company_id, fields, created_at_source, modified_at_source, web_url, synced_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, NOW())
+     ON CONFLICT (list_id, item_id) DO UPDATE SET list_name = EXCLUDED.list_name, title = EXCLUDED.title, status = EXCLUDED.status,
+       entity_name = EXCLUDED.entity_name, company_id = COALESCE(kyc4u_requests.company_id_manual, EXCLUDED.company_id),
+       fields = EXCLUDED.fields, created_at_source = EXCLUDED.created_at_source, modified_at_source = EXCLUDED.modified_at_source,
+       web_url = EXCLUDED.web_url, synced_at = NOW()`,
+    [String(list.id).slice(0, 200), String(item.id).slice(0, 200), list.name, title, status, entity, companyId, JSON.stringify(fields),
+      validDate(item.created), validDate(item.modified), item.url || null]);
+  return !!companyId;
+}
+const validDate = (v: any) => { const d = v ? new Date(v) : null; return d && !isNaN(d.getTime()) ? d.toISOString() : null; };
+
+// Lists sent in from the user's own browser (the Send to ChatBGP bookmark on
+// KYC4U's site) or an uploaded export — no app sign-in to their tenant, so
+// their "admin approval" rule never comes into it (Woody, 2026-09-28).
+export async function ingestKyc4uLists(lists: Array<{ id: string; name: string; items: Kyc4uItem[] }>, source: string, userId: string | null) {
+  const match = await companyMatcher();
+  let items = 0, matched = 0;
+  for (const list of lists.slice(0, 50)) {
+    for (const item of (list.items || []).slice(0, 20000)) {
+      if (!item || item.id == null) continue;
+      if (await upsertItem(match, list, item)) matched++;
+      items++;
+    }
+  }
+  await pool.query(`INSERT INTO system_settings (key, value) VALUES ('kyc4u:last_import', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+    [JSON.stringify({ at: new Date().toISOString(), source, userId, lists: lists.length, items, matched })]);
+  console.log(`[kyc4u] imported ${items} requests from ${lists.length} lists via ${source} (${matched} matched)`);
+  return { lists: lists.length, items, matched };
+}
+
 // Pull every generic list on the site (the ViewRequestStatus grid reads one
 // of them; system lists are skipped), upsert the items, and match each to a
 // CRM company by its client / entity name when exactly one fits.
@@ -93,31 +143,14 @@ export async function syncKyc4u(): Promise<{ lists: number; items: number; match
     const site = await graph(`/sites/${SITE_HOST}:${SITE_PATH}`, auth.token);
     const lists = (await graph(`/sites/${site.id}/lists?$select=id,displayName,list,system&$top=200`, auth.token)).value || [];
     const wanted = lists.filter((l: any) => !l.system && !l.list?.hidden && ["genericList", "issueTracking", "tasks", "events"].includes(l.list?.template || "genericList"));
-    const { buyerNameKey } = await import("./investment-buyers");
-    const companies = (await pool.query(`SELECT id, name FROM crm_companies WHERE merged_into_id IS NULL AND name IS NOT NULL`)).rows;
-    const byKey = new Map<string, string[]>();
-    for (const c of companies) { const k = buyerNameKey(c.name); if (k.length >= 3) byKey.set(k, [...(byKey.get(k) || []), c.id]); }
+    const match = await companyMatcher();
     let items = 0, matched = 0;
     for (const list of wanted) {
       let next: string | null = `/sites/${site.id}/lists/${list.id}/items?$expand=fields&$top=200`;
       while (next) {
         const page: any = await graph(next, auth.token);
         for (const item of page.value || []) {
-          const fields = item.fields || {};
-          const title = pick(fields, [/^title$/i, /client|entity|company|customer|subject/i]);
-          const status = pick(fields, [/^status$/i, /status|stage|progress|outcome/i]);
-          const entity = pick(fields, [/entity|client|company|customer|subject/i, /^title$/i]);
-          const ids = entity ? byKey.get(buyerNameKey(entity)) : undefined;
-          const companyId = ids?.length === 1 ? ids[0] : null;
-          if (companyId) matched++;
-          await pool.query(
-            `INSERT INTO kyc4u_requests (list_id, item_id, list_name, title, status, entity_name, company_id, fields, created_at_source, modified_at_source, web_url, synced_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, NOW())
-             ON CONFLICT (list_id, item_id) DO UPDATE SET list_name = EXCLUDED.list_name, title = EXCLUDED.title, status = EXCLUDED.status,
-               entity_name = EXCLUDED.entity_name, company_id = COALESCE(kyc4u_requests.company_id_manual, EXCLUDED.company_id),
-               fields = EXCLUDED.fields, created_at_source = EXCLUDED.created_at_source, modified_at_source = EXCLUDED.modified_at_source,
-               web_url = EXCLUDED.web_url, synced_at = NOW()`,
-            [list.id, item.id, list.displayName, title, status, entity, companyId, JSON.stringify(fields), item.createdDateTime || null, item.lastModifiedDateTime || null, item.webUrl || null]);
+          if (await upsertItem(match, { id: list.id, name: list.displayName }, { id: item.id, fields: item.fields || {}, created: item.createdDateTime, modified: item.lastModifiedDateTime, url: item.webUrl })) matched++;
           items++;
         }
         next = page["@odata.nextLink"] || null;
@@ -132,6 +165,25 @@ export async function syncKyc4u(): Promise<{ lists: number; items: number; match
   }
 }
 
+// An uploaded export (CSV / Excel of the grid) → one list per sheet. Rows
+// keep a stable id: the sheet's ID / Reference column when it has one.
+export function rowsFromWorkbook(buffer: Buffer, fileName: string): Array<{ id: string; name: string; items: Kyc4uItem[] }> {
+  const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
+  return wb.SheetNames.map((sheetName: string) => {
+    const rows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: null, raw: false });
+    const idKey = rows.length ? Object.keys(rows[0]).find(k => /^(id|ref|reference|request ?(id|no|number|ref)|case ?(id|no|ref))$/i.test(k.trim())) : undefined;
+    return {
+      id: `file:${fileName}:${sheetName}`.slice(0, 200), name: `${fileName} · ${sheetName}`,
+      items: rows.filter(r => Object.values(r).some(v => v != null && String(v).trim())).map(r => ({
+        id: idKey && r[idKey] ? String(r[idKey]) : crypto.createHash("sha1").update(JSON.stringify(r)).digest("hex").slice(0, 24),
+        fields: r,
+        created: pick(r, [/created|date submitted|submitted|raised|opened/i]),
+        modified: pick(r, [/modified|updated|last change/i]),
+      })),
+    };
+  }).filter((l: any) => l.items.length);
+}
+
 // state → who pressed Connect; the Microsoft redirect comes back without
 // the app's bearer token, so the state is the proof.
 const pendingStates = new Map<string, { userId: string | null; at: number }>();
@@ -141,10 +193,11 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
     try {
       const conn = await loadConnection();
       const counts = (await pool.query(`SELECT COUNT(*)::int AS n, COUNT(company_id)::int AS matched FROM kyc4u_requests`)).rows[0];
+      const lastImport = (await pool.query(`SELECT value FROM system_settings WHERE key = 'kyc4u:last_import'`)).rows[0]?.value || null;
       res.json({
         connected: !!conn, username: conn?.username || null, connectedAt: conn?.connectedAt || null,
         lastSyncAt: conn?.lastSyncAt || null, lastError: conn?.lastError || null,
-        site: `https://${SITE_HOST}${SITE_PATH}`, requests: counts.n, matched: counts.matched,
+        site: `https://${SITE_HOST}${SITE_PATH}`, requests: counts.n, matched: counts.matched, lastImport,
       });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -192,6 +245,31 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
 
   app.post("/api/kyc4u/sync", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
     try { res.json(await syncKyc4u()); } catch (e: any) { res.status(502).json({ message: e.message }); }
+  });
+
+  // From the Send to ChatBGP bookmark (the user's own browser on KYC4U's site).
+  app.post("/api/kyc4u/import", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const lists = Array.isArray(req.body?.lists) ? req.body.lists : [];
+      if (!lists.length) return res.status(400).json({ message: "No lists came through from KYC4U" });
+      const clean = lists.map((l: any) => ({
+        id: String(l.id || l.name || "list"), name: String(l.name || l.id || "KYC4U list").slice(0, 200),
+        items: (Array.isArray(l.items) ? l.items : []).map((i: any) => ({ id: String(i.id ?? ""), fields: i.fields && typeof i.fields === "object" ? i.fields : {}, created: i.created || null, modified: i.modified || null, url: i.url || null })),
+      }));
+      res.json(await ingestKyc4uLists(clean, "bookmark", req.session.userId || (req as any).tokenUserId || null));
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // An exported CSV / Excel of the grid.
+  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+  app.post("/api/kyc4u/import-file", requireAuth, requireAdmin, upload.single("file"), async (req: Request, res: Response) => {
+    try {
+      const file = (req as any).file as { buffer: Buffer; originalname: string } | undefined;
+      if (!file) return res.status(400).json({ message: "Choose the exported file" });
+      const lists = rowsFromWorkbook(file.buffer, file.originalname.replace(/\.[^.]+$/, ""));
+      if (!lists.length) return res.status(400).json({ message: "That file has no rows" });
+      res.json(await ingestKyc4uLists(lists, "file", req.session.userId || (req as any).tokenUserId || null));
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
   app.post("/api/kyc4u/disconnect", requireAuth, requireAdmin, async (_req: Request, res: Response) => {

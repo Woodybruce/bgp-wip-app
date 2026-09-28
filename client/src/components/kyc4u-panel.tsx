@@ -1,13 +1,31 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Loader2, RefreshCw, ExternalLink, Plug, Unplug } from "lucide-react";
+import { Loader2, RefreshCw, ExternalLink, Plug, Unplug, Bookmark, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
-interface Kyc4uStatus { connected: boolean; username: string | null; connectedAt: string | null; lastSyncAt: string | null; lastError: string | null; site: string; requests: number; matched: number }
+// Runs on KYC4U's SharePoint in the user's own browser: reads the site's
+// lists through SharePoint's REST API with their guest session, then hands
+// them to ChatBGP's /kyc4u-import window. Opens the window first — a popup
+// opened after the reads would be blocked.
+function bookmarkletSource(app: string): string {
+  const code = `(function(){var APP=${JSON.stringify(app)};var w=window.open(APP+'/kyc4u-import','chatbgp_kyc4u','width=520,height=560');if(!w){alert('ChatBGP: allow pop-ups for this site, then click again.');return;}
+var c=window._spPageContextInfo||{};var web=c.webAbsoluteUrl||(location.origin+location.pathname.split(/\/(SitePages|Lists|_layouts|Shared%20Documents)\//i)[0]);
+var H={Accept:'application/json;odata=nometadata'};
+function get(u){return fetch(u,{headers:H,credentials:'include'}).then(function(r){if(!r.ok)throw new Error(r.status+' reading '+u);return r.json();});}
+function all(u,acc){return get(u).then(function(d){acc=acc.concat(d.value||[]);var n=d['odata.nextLink']||d['@odata.nextLink'];return n?all(n,acc):acc;});}
+get(web+"/_api/web/lists?$filter=Hidden eq false and BaseType eq 0&$select=Id,Title,ItemCount,DefaultViewUrl").then(function(d){
+var ls=(d.value||[]).filter(function(l){return l.ItemCount>0;});
+return Promise.all(ls.map(function(l){return all(web+"/_api/web/lists(guid'"+l.Id+"')/items?$top=500",[]).then(function(its){return{id:l.Id,name:l.Title,items:its.map(function(i){var f={};for(var k in i){if(k.indexOf('odata')<0&&(i[k]===null||typeof i[k]!=='object'))f[k]=i[k];}return{id:String(i.Id),fields:f,created:i.Created,modified:i.Modified,url:location.origin+(l.DefaultViewUrl||'')};})};});}));
+}).then(function(lists){var sent=false;window.addEventListener('message',function(e){if(e.origin===APP&&e.data&&e.data.type==='kyc4u-ready'&&!sent){sent=true;w.postMessage({type:'kyc4u-data',lists:lists,site:web},APP);}});
+}).catch(function(e){alert('ChatBGP could not read KYC4U: '+e.message);});})();`;
+  return `javascript:${encodeURIComponent(code.replace(/\n/g, ""))}`;
+}
+
+interface Kyc4uStatus { lastImport?: { at: string; source: string; items: number; matched: number } | null; connected: boolean; username: string | null; connectedAt: string | null; lastSyncAt: string | null; lastError: string | null; site: string; requests: number; matched: number }
 interface Kyc4uRequest { listId: string; itemId: string; listName: string | null; title: string | null; status: string | null; entityName: string | null; companyId: string | null; companyName: string | null; modifiedAt: string | null; webUrl: string | null }
 
 const when = (iso: string | null) => iso ? new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -20,6 +38,28 @@ export default function Kyc4uPanel() {
   const { data: status, isLoading } = useQuery<Kyc4uStatus>({ queryKey: ["/api/kyc4u/status"] });
   const { data: requests = [] } = useQuery<Kyc4uRequest[]>({ queryKey: ["/api/kyc4u/requests"], enabled: !!status?.requests });
   const [search, setSearch] = useState("");
+  const bookmarkRef = useRef<HTMLAnchorElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  // React won't render a javascript: href, so set it on the element.
+  useEffect(() => { bookmarkRef.current?.setAttribute("href", bookmarkletSource(window.location.origin)); });
+  const uploadExport = async (file: File) => {
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/kyc4u/import-file", { method: "POST", body: form, headers: getAuthHeaders(), credentials: "include" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.message || `Upload failed (${res.status})`);
+      refresh();
+      toast({ title: "KYC4U export imported", description: `${body.items} requests · ${body.matched} matched to CRM` });
+    } catch (e: any) {
+      toast({ title: "Import failed", description: e?.message, variant: "destructive" });
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
 
   useEffect(() => {
     const note = new URLSearchParams(window.location.search).get("kyc4u");
@@ -92,6 +132,24 @@ export default function Kyc4uPanel() {
           <p className="text-xs text-muted-foreground mt-3">Press Connect and sign in with your BGP email. If Microsoft says "Need admin approval", KYC4U's IT admin has to approve BGP Dashboard once for their organisation first.</p>
         )}
       </section>
+
+      {isAdmin && (
+        <section className="rounded-xl border bg-card p-4" data-testid="kyc4u-bookmark">
+          <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Send from KYC4U — no approval needed</p>
+          <p className="text-sm mt-1">Uses your own login to KYC4U's site, so their admin approval isn't needed.</p>
+          <ol className="text-sm mt-2 space-y-1 list-decimal pl-5">
+            <li>Drag this button to your browser's bookmarks bar: <a ref={bookmarkRef} className="inline-flex items-center gap-1 rounded-full bg-primary text-primary-foreground px-3 py-1 text-xs font-semibold cursor-grab no-underline" onClick={(e) => { e.preventDefault(); toast({ title: "Drag it to your bookmarks bar", description: "Then click it while you're on KYC4U's site." }); }} data-testid="link-kyc4u-bookmarklet"><Bookmark className="w-3 h-3" />Send to ChatBGP</a></li>
+            <li>Open the <a href={status.site} target="_blank" rel="noopener" className="text-primary underline-offset-2 hover:underline">KYC4U site</a> and sign in as usual.</li>
+            <li>Click <strong>Send to ChatBGP</strong> in your bookmarks bar. A small window confirms how many requests came across.</li>
+          </ol>
+          <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t">
+            <span className="text-xs text-muted-foreground">Or upload an export of the grid (CSV or Excel):</span>
+            <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadExport(f); }} />
+            <Button size="sm" variant="outline" className="rounded-full" onClick={() => fileRef.current?.click()} disabled={uploading}>{uploading ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Upload className="w-4 h-4 mr-1.5" />}Upload export</Button>
+            {status.lastImport && <span className="text-xs text-muted-foreground">Last import {when(status.lastImport.at)} · {status.lastImport.items} requests via {status.lastImport.source === "bookmark" ? "the bookmark" : "upload"}</span>}
+          </div>
+        </section>
+      )}
 
       {requests.length > 0 && (
         <section className="rounded-xl border bg-card p-4">

@@ -5,16 +5,18 @@
            xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
            xsi:type="TaskPaneApp">
   <Id>73f41e37-23c8-4a24-bb23-f72e7f7319e8</Id>
-  <Version>2.4.0</Version>
+  <Version>2.5.0</Version>
   <ProviderName>Bruce Gillingham Pollard</ProviderName>
   <DefaultLocale>en-GB</DefaultLocale>
   <DisplayName DefaultValue="ChatBGP for Excel"/>
-  <Description DefaultValue="AI-powered Excel assistant with CRM integration, financial model building, and SharePoint file management for BGP."/>
-  <IconUrl DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/bgp-addin-icon-32.png"/>
-  <HighResolutionIconUrl DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/bgp-addin-icon-64.png"/>
-  <SupportUrl DefaultValue="https://bgp-wip-app-production-efac.up.railway.app"/>
+  <Description DefaultValue="ChatBGP inside Excel: works your workbook directly — reads, builds, formats and checks models — with BGP's CRM, comps, SharePoint and memory."/>
+  <IconUrl DefaultValue="https://chatbgp.app/bgp-addin-icon-32.png"/>
+  <HighResolutionIconUrl DefaultValue="https://chatbgp.app/bgp-addin-icon-64.png"/>
+  <SupportUrl DefaultValue="https://chatbgp.app"/>
   <AppDomains>
+    <AppDomain>https://chatbgp.app</AppDomain>
     <AppDomain>https://bgp-wip-app-production-efac.up.railway.app</AppDomain>
+    <AppDomain>https://login.microsoftonline.com</AppDomain>
   </AppDomains>
   <Hosts>
     <Host Name="Workbook"/>
@@ -25,7 +27,7 @@
     </Sets>
   </Requirements>
   <DefaultSettings>
-    <SourceLocation DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/addin/excel"/>
+    <SourceLocation DefaultValue="https://chatbgp.app/addin/excel"/>
   </DefaultSettings>
   <Permissions>ReadWriteDocument</Permissions>
 
@@ -74,15 +76,15 @@
     </Hosts>
     <Resources>
       <bt:Images>
-        <bt:Image id="Icon.16x16" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/bgp-addin-icon-16.png"/>
-        <bt:Image id="Icon.32x32" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/bgp-addin-icon-32.png"/>
-        <bt:Image id="Icon.80x80" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/bgp-addin-icon-80.png"/>
+        <bt:Image id="Icon.16x16" DefaultValue="https://chatbgp.app/bgp-addin-icon-16.png"/>
+        <bt:Image id="Icon.32x32" DefaultValue="https://chatbgp.app/bgp-addin-icon-32.png"/>
+        <bt:Image id="Icon.80x80" DefaultValue="https://chatbgp.app/bgp-addin-icon-80.png"/>
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app"/>
-        <bt:Url id="LearnMoreUrl" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app"/>
-        <bt:Url id="Commands.Url" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/addin/excel"/>
-        <bt:Url id="Taskpane.Url" DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/addin/excel"/>
+        <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://chatbgp.app"/>
+        <bt:Url id="LearnMoreUrl" DefaultValue="https://chatbgp.app"/>
+        <bt:Url id="Commands.Url" DefaultValue="https://chatbgp.app/addin/excel"/>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://chatbgp.app/addin/excel"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GetStarted.Title" DefaultValue="ChatBGP is ready"/>
