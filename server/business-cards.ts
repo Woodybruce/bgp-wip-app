@@ -46,6 +46,20 @@ const CARD_SQL = `
     LEFT JOIN staff_profiles sp ON sp.user_id = u.id
     LEFT JOIN business_cards bc ON bc.user_id = u.id`;
 
+// Headshots in client/public are already public; uploaded photos are
+// behind login, so the card serves those itself.
+function photoUrlFor(pic: string | null | undefined, slug: string): string | null {
+  const value = String(pic || "").trim();
+  if (!value) return null;
+  if (/^https:\/\//i.test(value)) return value;
+  if (/^\/headshots\/[\w.-]+$/.test(value)) return `${CARD_BASE_URL}${value}`;
+  if (/^\/uploads\/profile-pics\/[^/?#]+$/.test(value)) return `${CARD_BASE_URL}/card/${slug}/photo`;
+  return null;
+}
+
+// The card page loads its own images from whichever host served it.
+const sameOrigin = (url: string) => url.startsWith(CARD_BASE_URL) ? url.slice(CARD_BASE_URL.length) : url;
+
 function toCard(row: any): BusinessCard {
   const slug = row.slug as string;
   return {
@@ -54,7 +68,7 @@ function toCard(row: any): BusinessCard {
     mobile: row.phone ? String(row.phone).trim() : null,
     email: row.email ? String(row.email).trim().toLowerCase() : null,
     linkedin: row.linkedin_url ? (/^https?:/i.test(row.linkedin_url) ? row.linkedin_url : `https://${row.linkedin_url}`) : null,
-    photoUrl: row.profile_pic_url ? `${CARD_BASE_URL}/card/${slug}/photo` : null,
+    photoUrl: photoUrlFor(row.profile_pic_url, slug),
     specialisms: (Array.isArray(row.cv_specialisms) ? row.cv_specialisms : []).filter(Boolean).slice(0, 4),
     url: `${CARD_BASE_URL}/card/${slug}`,
   };
@@ -177,9 +191,9 @@ form button{width:100%;font:inherit;font-weight:600;border:0;border-radius:10px;
 .qr{display:flex;justify-content:center}.qr svg{width:170px;height:170px}
 .ok{background:#fff;border:1px solid ${BRAND.blush};border-radius:16px;padding:16px 20px;margin-top:14px;text-align:center}
 </style></head><body><div class="wrap">
-<div class="hero"><img class="logo" src="${LOGO_LIGHT}" alt="Bruce Gillingham Pollard"></div>
+<div class="hero"><img class="logo" src="${sameOrigin(LOGO_LIGHT)}" alt="Bruce Gillingham Pollard"></div>
 <div class="card">
-${card.photoUrl ? `<img class="photo" src="${esc(card.photoUrl)}" alt="${esc(card.name)}">` : `<div class="photo">${esc(initials)}</div>`}
+${card.photoUrl ? `<img class="photo" src="${esc(sameOrigin(card.photoUrl))}" alt="" onerror="this.outerHTML='<div class=&quot;photo&quot;>${esc(initials)}</div>'">` : `<div class="photo">${esc(initials)}</div>`}
 <h1>${esc(card.name)}</h1>
 ${card.title ? `<p class="title">${esc(card.title)}</p>` : ""}
 <p class="org">Bruce Gillingham Pollard</p>
@@ -335,9 +349,16 @@ export function registerBusinessCardRoutes(app: Express, requireAuth: any) {
       if (!card) return res.status(404).end();
       let photo: { data: Buffer; contentType: string } | null = null;
       const filename = card.profilePic?.match(/\/uploads\/profile-pics\/([^/?#]+)$/)?.[1];
+      const headshot = card.profilePic?.match(/^\/headshots\/([\w.-]+)$/)?.[1];
       if (filename) {
         const { getFile } = await import("./file-storage");
         photo = await getFile(`profile-pics/${filename}`).catch(() => null);
+      } else if (headshot) {
+        const fs = await import("fs");
+        for (const dir of ["dist/public/headshots", "client/public/headshots"]) {
+          const file = `${process.cwd()}/${dir}/${headshot}`;
+          if (fs.existsSync(file)) { photo = { data: fs.readFileSync(file), contentType: /\.png$/i.test(headshot) ? "image/png" : "image/jpeg" }; break; }
+        }
       }
       res.set("Content-Type", "text/vcard; charset=utf-8");
       res.set("Content-Disposition", `attachment; filename="${card.slug}.vcf"`);
