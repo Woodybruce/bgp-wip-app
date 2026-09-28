@@ -6,6 +6,21 @@ export class PropertyPlanInputError extends Error {
   constructor(message?: string, status = 400) { super(message); this.status = status; }
 }
 
+const FLOOR_ACRONYMS = new Set(["GA", "OS", "LG", "UG", "GF", "FF", "SF", "UK"]);
+
+/** Floor names read off drawings come in any case ("FIRST FLOOR", "Second
+ *  floor") — show them one way. */
+export function tidyFloorName(name: unknown): string {
+  const raw = String(name || "")
+    .replace(/&amp;/gi, "&").replace(/&#0?39;|&apos;/gi, "'").replace(/&quot;/gi, '"')
+    .replace(/\s+/g, " ").trim();
+  if (!raw) return "";
+  return raw.replace(/[A-Za-z]+/g, (w: string, at: number) =>
+    w === w.toUpperCase() && (FLOOR_ACRONYMS.has(w) || w.length <= 2) ? w
+    : at > 0 && /^(and|of|the|to)$/i.test(w) ? w.toLowerCase()
+    : w[0].toUpperCase() + w.slice(1).toLowerCase());
+}
+
 export function validatePropertyPlanPolygon(value: unknown): { points: Array<[number, number]> } {
   const points = (value as any)?.points;
   if (!Array.isArray(points) || points.some(p => !Array.isArray(p) || p.length !== 2)

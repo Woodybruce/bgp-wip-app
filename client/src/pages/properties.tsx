@@ -1,6 +1,7 @@
 import { snippetAddsNothing } from "@shared/news-snippet";
 import { postcodeFromPropertyAddress, propertyLookupIdentity } from "@shared/property-lookup-identity";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
+import { BGP_TEAMS, folderWithin, propertyFolderTabs } from "@shared/property-labels";
 import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import { DEAL_STATUS_BADGE_COLORS } from "@/lib/deal-status-colors";
@@ -1837,7 +1838,7 @@ interface PropertyFolderItem {
   lastModified: string;
 }
 
-export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFolderUrl, entityType, entityId, entityName, bare = false }: { propertyName: string; folderTeams?: string[] | null; sharepointFolderUrl?: string | null; entityType?: "property" | "company" | "landlord" | "deal" | "contact"; entityId?: string; entityName?: string; bare?: boolean }) {
+export function PropertyFoldersPanel({ propertyName, propertyId, folderTeams, sharepointFolderUrl, entityType, entityId, entityName, bare = false }: { propertyName: string; propertyId?: string; folderTeams?: string[] | null; sharepointFolderUrl?: string | null; entityType?: "property" | "company" | "landlord" | "deal" | "contact"; entityId?: string; entityName?: string; bare?: boolean }) {
   const [, navigate] = useLocation();
   const [shareFor, setShareFor] = useState<{ id: string; name: string } | null>(null);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
@@ -1845,21 +1846,53 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
   const [inviteEmail, setInviteEmail] = useState("");
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const userTeam = currentUser?.team || "Investment";
-  const teamsToCheck = folderTeams && folderTeams.length > 0 ? folderTeams : [userTeam];
+  // On a property page each tab can have its own linked folder, and extra
+  // named folders (Leases) get their own tabs — see propertyFolderTabs.
+  const folderLinksKey = ["/api/crm/properties", propertyId, "sharepoint-folders"];
+  const { data: folderLinks } = useQuery<{ defaultUrl: string | null; folders: Record<string, string> }>({
+    queryKey: folderLinksKey,
+    enabled: !!propertyId,
+    retry: false,
+    queryFn: async () => {
+      const res = await fetch(`/api/crm/properties/${propertyId}/sharepoint-folders`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("Failed to load linked folders");
+      return res.json();
+    },
+  });
+  const tabs = propertyFolderTabs(folderTeams, folderLinks?.folders, sharepointFolderUrl, userTeam);
   const [activeTeamName, setActiveTeamName] = useState<string | null>(null);
-  const activeTeam = activeTeamName && teamsToCheck.includes(activeTeamName) ? activeTeamName : teamsToCheck[0] || userTeam;
-  const activeTeamIdx = teamsToCheck.indexOf(activeTeam);
+  const activeTab = tabs.find(t => t.label.toLowerCase() === String(activeTeamName || "").toLowerCase()) || tabs[0];
+  const activeTeam = activeTab?.label || userTeam;
   const [subPath, setSubPath] = useState<string>("");
   const [isDragging, setIsDragging] = useState(false);
+  const [linkEdit, setLinkEdit] = useState<{ label: string; url: string; isNew: boolean } | null>(null);
   const dragCounter = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // If the CRM record has a stored SharePoint folder URL, prefer that — it
-  // resolves to the real folder regardless of name mismatches between CRM
+  // The tab's own linked folder, else the property's linked folder — both
+  // resolve to the real folder regardless of name mismatches between CRM
   // and SharePoint. The team-based path synthesis is only used as a fallback.
-  const folderUrl = (sharepointFolderUrl || "").trim();
+  const folderUrl = (activeTab?.url || "").trim();
+  // Deleting a folder tree another tab also opens (or that holds another
+  // tab's folder) would take that tab's files too — not offered.
+  const folderSharedWithOtherTab = !!folderUrl && tabs.some(t => t !== activeTab && t.url && (folderWithin(t.url, folderUrl) || folderWithin(folderUrl, t.url)));
+
+  const linkMutation = useMutation({
+    mutationFn: async ({ label, url }: { label: string; url: string | null }) => {
+      const res = await apiRequest("PUT", `/api/crm/properties/${propertyId}/sharepoint-folders`, { label, url });
+      return res.json();
+    },
+    onSuccess: (data: { folders: Record<string, string> }, vars) => {
+      queryClient.setQueryData(folderLinksKey, (old: any) => ({ ...(old || {}), ...data }));
+      setLinkEdit(null);
+      setSubPath("");
+      if (vars.url) setActiveTeamName(vars.label.trim());
+      toast({ title: vars.url ? `${vars.label} folder linked` : `${vars.label} folder unlinked` });
+    },
+    onError: (e: any) => toast({ title: "Couldn't link the folder", description: String(e.message || "").replace(/^\d{3}: /, ""), variant: "destructive" }),
+  });
 
   const { data: folderData, isLoading } = useQuery<{ exists: boolean; folders: PropertyFolderItem[]; path?: string; webUrl?: string; source?: string; driveId?: string; currentItemId?: string | null }>({
     queryKey: ["/api/microsoft/property-folders", activeTeam, propertyName, folderUrl, subPath],
@@ -2046,17 +2079,15 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
           <div className="flex items-center gap-2 flex-wrap">
             {!bare && <FolderOpen className="w-4 h-4" />}
             {!bare && <h3 className="text-sm font-semibold">Documents</h3>}
-            {teamsToCheck.map((t, idx) => (
-              <button
-                key={t}
-                type="button"
-                data-no-min-touch
-                className={`inline-flex items-center rounded-full leading-none text-[11px] font-semibold uppercase tracking-wide px-2.5 py-[5px] whitespace-nowrap border transition-colors cursor-pointer ${idx === activeTeamIdx ? "bg-foreground text-background border-transparent" : "bg-transparent text-muted-foreground border-border hover:text-foreground"}`}
-                onClick={() => { setActiveTeamName(t); setSubPath(""); }}
-                data-testid={`folder-team-tab-${t}`}
+            {tabs.map((t) => (
+              <Pill
+                key={t.label}
+                active={t === activeTab}
+                onClick={() => { setActiveTeamName(t.label); setSubPath(""); setLinkEdit(null); }}
+                data-testid={`folder-team-tab-${t.label}`}
               >
-                {t}
-              </button>
+                {t.label}
+              </Pill>
             ))}
           </div>
           <div className="flex items-center gap-1 flex-wrap justify-end shrink min-w-0">
@@ -2080,7 +2111,7 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
                 </Button>
               </a>
             )}
-            {!subPath && folderData?.exists && folderData?.currentItemId && (
+            {!subPath && folderData?.exists && folderData?.currentItemId && !folderSharedWithOtherTab && (
               // Destructive, rarely needed — behind a menu, not a red button
               // in the everyday toolbar.
               <DropdownMenu>
@@ -2104,6 +2135,60 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
             />
           </div>
         </div>
+
+        {propertyId && activeTab && (
+          linkEdit ? (
+            <div className="flex items-center gap-2 mb-2 flex-wrap" data-testid="folder-link-form">
+              {linkEdit.isNew && (
+                <>
+                  <Input
+                    placeholder="Folder name, e.g. Leases"
+                    value={linkEdit.label}
+                    onChange={(e) => setLinkEdit({ ...linkEdit, label: e.target.value })}
+                    className="text-xs h-8 w-44"
+                    list="folder-link-teams"
+                    data-testid="input-folder-link-label"
+                  />
+                  <datalist id="folder-link-teams">{BGP_TEAMS.map(t => <option key={t} value={t} />)}</datalist>
+                </>
+              )}
+              <Input
+                placeholder="https://brucegillinghampollardlimited.sharepoint.com/..."
+                value={linkEdit.url}
+                onChange={(e) => setLinkEdit({ ...linkEdit, url: e.target.value })}
+                className="text-xs h-8 flex-1 min-w-[12rem]"
+                data-testid="input-folder-link-url"
+              />
+              <Button size="sm" className="h-8 text-xs" disabled={!linkEdit.label.trim() || !linkEdit.url.trim() || linkMutation.isPending} onClick={() => linkMutation.mutate({ label: linkEdit.label.trim(), url: linkEdit.url.trim() })} data-testid="button-save-folder-link">
+                {linkMutation.isPending && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}Save
+              </Button>
+              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setLinkEdit(null)}>Cancel</Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 mb-2 text-[11px] text-muted-foreground flex-wrap" data-testid="folder-link-line">
+              {activeTab.own ? (
+                <>
+                  <span>{activeTab.kind === "extra" ? "Linked folder" : `${activeTab.label}'s own folder`}</span>
+                  <span>·</span>
+                  <button className="text-primary hover:underline" onClick={() => setLinkEdit({ label: activeTab.label, url: activeTab.url || "", isNew: false })} data-testid="button-change-folder-link">Change</button>
+                  <span>·</span>
+                  <button className="text-primary hover:underline" disabled={linkMutation.isPending} onClick={() => { if (window.confirm(activeTab.kind === "extra" ? `Remove the ${activeTab.label} tab? The SharePoint folder itself is not touched.` : `Unlink ${activeTab.label}'s own folder? The tab goes back to the property's linked folder; nothing in SharePoint changes.`)) linkMutation.mutate({ label: activeTab.label, url: null }); }} data-testid="button-remove-folder-link">Remove</button>
+                </>
+              ) : (
+                <>
+                  {activeTab.url && <><span>Using the property's linked folder</span><span>·</span></>}
+                  <button className="text-primary hover:underline inline-flex items-center gap-1" onClick={() => setLinkEdit({ label: activeTab.label, url: "", isNew: false })} data-testid="button-link-team-folder">
+                    <Link2 className="w-3 h-3" />Link folder for {activeTab.label}
+                  </button>
+                </>
+              )}
+              <span>·</span>
+              <button className="text-primary hover:underline inline-flex items-center gap-1" onClick={() => setLinkEdit({ label: "", url: "", isNew: true })} data-testid="button-add-folder-link">
+                <Plus className="w-3 h-3" />Add folder
+              </button>
+            </div>
+          )
+        )}
 
         {/* Breadcrumb navigation when drilling into subfolders */}
         {(subPath || folderData?.exists) && (

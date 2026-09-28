@@ -7,7 +7,7 @@
 
 import { pool } from "./db";
 
-const REF_COLUMNS = ["property_id", "crm_property_id", "linked_property_id"];
+const REF_COLUMNS = ["property_id", "crm_property_id", "linked_property_id", "related_property_id", "subject_property_id"];
 
 export interface MergeResult {
   keptId: string;

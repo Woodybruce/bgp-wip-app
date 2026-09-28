@@ -2,19 +2,23 @@
 // 2026-09-28: "should be able to pull the leasing schedule and brochure from
 // the SharePoint too?"). Candidates come from three places, all on the app
 // Graph token:
-//   1. the property's linked folder (crm_properties.sharepoint_folder_url),
+//   1. every folder linked to the property (crm_properties.sharepoint_folder_url
+//      plus the per-team / extra folders in sharepoint_team_folders), each
 //      walked recursively — marketing / brochure / leasing folders first;
 //   2. a Microsoft 365 search for the property's name across SharePoint and
 //      OneDrive (falls back to a search of the BGP site drive);
 //   3. the indexed SharePoint files (knowledge_base) whose name or path names
 //      the property.
 // Then ranked: brochures by leasing vs investment, brochure-like name, newest
-// first; schedules by tenancy-schedule-like name, newest first. Staff only —
-// the routes refuse client logins.
+// first; schedules by tenancy-schedule-like name, newest first; plans
+// (PDFs and images) by plan-like names and Floor Plans / GA / Goad folders,
+// whole-building before single units. Staff only — the routes refuse client
+// logins.
 
 import { sharesId } from "./sharepoint-graph";
+import { folderLinkLabel, linkedFolderUrls, normaliseFolderLinks } from "../shared/property-labels";
 
-export type SpKind = "brochure" | "schedule";
+export type SpKind = "brochure" | "schedule" | "plan";
 export type BrochureType = "leasing" | "investment";
 export type SpCandidate = {
   name: string;
@@ -35,6 +39,7 @@ const words = (s: string) => ` ${String(s || "").replace(/[_\-.+]+/g, " ").repla
 
 export const isPdf = (name: string) => /\.pdf$/i.test(name || "");
 export const isSpreadsheet = (name: string) => /\.(xlsx|xlsm|xls)$/i.test(name || "") && !/^~\$/.test(name || "");
+export const isPlanFile = (name: string) => /\.(pdf|png|jpe?g|webp)$/i.test(name || "");
 
 const INVESTMENT_RE = /\b(investment|information memorandum|for sale|portfolios?|project [a-z]+|disposals?|acquisitions?|sales? (particulars|brochure|details))\b/i;
 const LEASING_RE = /\b(leasing|letting|to let|lettings)\b/i;
@@ -69,6 +74,31 @@ export function scheduleTier(name: string, path: string): number {
   if (/\b(schedule|tenants?|leases?|rent)\b/i.test(n)) return 1;
   if (/\b(tenancy|leasing schedule|rent roll)\b/i.test(words(path))) return 1;
   return 0;
+}
+
+const PLAN_NAME_RE = /\b(floor ?plans?|site ?plans?|goad|general arrangement|layouts?|plans?)\b/i;
+// Upper-case "GA" (general arrangement) as its own word.
+const GA_RE = /(^|[^A-Za-z])GA([^A-Za-z]|$)/;
+const PLAN_LEVEL_RE = /\b(basement|lower ground|upper ground|ground|mezzanine|mezz|first|second|third|fourth|fifth|roof|level \d+)\b/i;
+const PLAN_FOLDER_RE = /\b(floor ?plans?|plans?|goad|drawings?|layouts?|survey|cad)\b/i;
+const NOT_PLAN_RE = /\b(sections?|elevations?|rcp|reflected ceiling|index of drawings|specification|licen[cs]e|lease|invoice|brochure|particulars|schedule|minutes|letter|accounts?|valuation)\b/i;
+const planFolder = (folder: string) => PLAN_FOLDER_RE.test(words(folder)) || GA_RE.test(folder);
+
+/** How plan-like a file is: +3 a plan name (floor plan, site plan, Goad, GA,
+ *  layout), +1 a floor in the name, +2 it sits in a Floor Plans / GA /
+ *  drawings folder (+1 when such a folder is further up), -2 a section,
+ *  elevation, licence, lease, brochure or other non-plan document. */
+export function planTier(name: string, path: string): number {
+  const base = String(name || "").replace(/\.[a-z0-9]+$/i, "");
+  const n = words(base);
+  const folders = String(path || "").split("/").filter(Boolean);
+  let score = 0;
+  if (PLAN_NAME_RE.test(n) || GA_RE.test(base)) score += 3;
+  if (PLAN_LEVEL_RE.test(n)) score += 1;
+  if (folders.length && planFolder(folders[folders.length - 1])) score += 2;
+  else if (folders.some(planFolder)) score += 1;
+  if (NOT_PLAN_RE.test(n)) score -= 2;
+  return Math.max(0, score);
 }
 
 const MONTHS: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
@@ -194,6 +224,29 @@ export function rankScheduleCandidates(list: SpCandidate[]): SpCandidate[] {
   })).sort((a, b) => (b.tier! - a.tier!) || String(b.docDate || "").localeCompare(String(a.docDate || "")));
 }
 
+// A plan of one unit ("Unit 5 …", a "Unit 2-3" folder) sits below the
+// whole-building drawings — the Plans board is the building's.
+const UNIT_PLAN = /\b(units?|shop|suite|kiosk)\s*\d/i;
+const unitPlan = (c: SpCandidate) => UNIT_PLAN.test(c.name) || UNIT_PLAN.test(String(c.path || "").split("/").pop() || "");
+
+/** Plans: whole-building first, then plan-like tier, PDFs before an image of
+ *  the same drawing, newest, then drawing-number order; anything that isn't
+ *  plan-like (tier under 2) is left out, and copies of one file collapse. */
+export function rankPlanCandidates(list: SpCandidate[]): SpCandidate[] {
+  const seen = new Set<string>();
+  return list.filter(c => isPlanFile(c.name)).map(c => ({
+    ...c,
+    tier: planTier(c.name, c.path),
+    docDate: documentDate(c.name, c.path, c.lastModified),
+  })).filter(c => c.tier! >= 2).sort((a, b) =>
+    Number(unitPlan(a)) - Number(unitPlan(b))
+    || (b.tier! - a.tier!)
+    || Number(isPdf(b.name)) - Number(isPdf(a.name))
+    || String(b.docDate || "").localeCompare(String(a.docDate || ""))
+    || a.name.localeCompare(b.name, undefined, { numeric: true }))
+    .filter(c => { const k = sameFile(c); if (seen.has(k)) return false; seen.add(k); return true; });
+}
+
 /** A Graph failure in words the team can act on. */
 export function plainGraphError(error: any): string {
   const msg = String(error?.message || error || "");
@@ -214,11 +267,14 @@ async function defaultGraph(): Promise<Graph> {
 }
 
 const FOLDER_PRIORITY = /market|brochure|particular|detail|leas|letting|tenan|schedule|rent|investment|sale/i;
+const PLAN_FOLDER_PRIORITY = /plan|floor|goad|drawing|survey|cad|layout|(^|[^A-Za-z])GA([^A-Za-z]|$)/i;
 
 /** Every matching file under the linked folder, breadth first, marketing /
- *  leasing / tenancy folders first, bounded by folder count and time. */
-export async function walkLinkedFolder(folderUrl: string, want: (name: string) => boolean, deps: { graph?: Graph; maxFolders?: number; budgetMs?: number } = {}): Promise<SpCandidate[]> {
+ *  leasing / tenancy folders first (plan folders first for plans), bounded
+ *  by folder count and time. */
+export async function walkLinkedFolder(folderUrl: string, want: (name: string) => boolean, deps: { graph?: Graph; maxFolders?: number; budgetMs?: number; priority?: RegExp } = {}): Promise<SpCandidate[]> {
   const graph = deps.graph || await defaultGraph();
+  const priority = deps.priority || FOLDER_PRIORITY;
   const root = await graph(`/shares/${sharesId(folderUrl)}/driveItem?$select=id,name,webUrl,parentReference,folder`);
   const driveId = root?.parentReference?.driveId;
   if (!root?.id || !driveId) return [];
@@ -237,7 +293,7 @@ export async function walkLinkedFolder(folderUrl: string, want: (name: string) =
     ).then(items => ({ f, items })).catch(() => ({ f, items: [] as any[] }))));
     for (const { f, items } of pages) {
       const folders = items.filter((i: any) => i.folder && f.depth < 6)
-        .sort((a: any, b: any) => Number(FOLDER_PRIORITY.test(b.name)) - Number(FOLDER_PRIORITY.test(a.name)));
+        .sort((a: any, b: any) => Number(priority.test(b.name)) - Number(priority.test(a.name)));
       queue.push(...folders.map((i: any) => ({ id: i.id, depth: f.depth + 1 })));
       for (const i of items) if (i.file && want(i.name)) out.push(fromGraphItem({ ...i, parentReference: { ...i.parentReference, driveId: i.parentReference?.driveId || driveId } }, "folder"));
     }
@@ -246,6 +302,7 @@ export async function walkLinkedFolder(folderUrl: string, want: (name: string) =
   return out;
 }
 
+const wantFor = (kind: SpKind) => kind === "brochure" ? isPdf : kind === "plan" ? isPlanFile : isSpreadsheet;
 const searchName = (propertyName: string) => String(propertyName || "").replace(/["'*()]/g, " ").replace(/^\s*the\s+/i, "").replace(/\s+/g, " ").trim();
 
 /** Microsoft 365 search (all SharePoint sites and OneDrives) for files naming
@@ -257,8 +314,10 @@ export async function searchPropertyFiles(propertyName: string, kind: SpKind, de
   const graph = deps.graph || await defaultGraph();
   const filter = kind === "brochure"
     ? `filetype:pdf AND (brochure OR particulars OR details OR memorandum OR marketing OR "to let" OR "for sale" OR investment)`
-    : `(filetype:xlsx OR filetype:xlsm OR filetype:xls) AND (tenancy OR schedule OR "rent roll" OR tenant OR TS)`;
-  const want = kind === "brochure" ? isPdf : isSpreadsheet;
+    : kind === "plan"
+      ? `(filetype:pdf OR filetype:png OR filetype:jpg OR filetype:jpeg) AND (plan OR plans OR floorplan OR goad OR layout OR drawing OR GA)`
+      : `(filetype:xlsx OR filetype:xlsm OR filetype:xls) AND (tenancy OR schedule OR "rent roll" OR tenant OR TS)`;
+  const want = wantFor(kind);
   try {
     const res = await graph("/search/query", {
       method: "POST",
@@ -288,7 +347,7 @@ export async function indexedPropertyFiles(pool: any, propertyName: string, kind
   const parts = searchName(propertyName).toLowerCase().split(" ").filter(Boolean);
   if (!parts.join("").length || parts.join("").length < 3) return [];
   const like = `%${parts.map(p => p.replace(/[\\%_]/g, m => `\\${m}`)).join("%")}%`;
-  const ext = kind === "brochure" ? "\\.pdf$" : "\\.(xlsx|xlsm|xls)$";
+  const ext = kind === "brochure" ? "\\.pdf$" : kind === "plan" ? "\\.(pdf|png|jpe?g|webp)$" : "\\.(xlsx|xlsm|xls)$";
   const rows = (await pool.query(
     `SELECT file_name, file_path, file_url, last_modified, size_bytes FROM knowledge_base
       WHERE coalesce(source, 'sharepoint') = 'sharepoint' AND file_url IS NOT NULL
@@ -305,30 +364,59 @@ export async function indexedPropertyFiles(pool: any, propertyName: string, kind
   }));
 }
 
-export type CandidateResult = { candidates: SpCandidate[]; linkedFolder: string | null; propertyName: string; warnings: string[] };
+export type CandidateResult = { candidates: SpCandidate[]; linkedFolder: string | null; linkedFolders: string[]; propertyName: string; warnings: string[] };
+
+const folderName = (url: string) => decodeURIComponentSafe(String(url).split("?")[0].replace(/\/+$/, "").split("/").pop() || url);
 
 /** Everything the finder shows for one property, ranked. */
 export async function findPropertyFiles(pool: any, propertyId: string, kind: SpKind, wanted: BrochureType = "leasing", deps: { graph?: Graph } = {}): Promise<CandidateResult> {
-  const property = (await pool.query(`SELECT name, sharepoint_folder_url FROM crm_properties WHERE id = $1`, [propertyId])).rows[0];
+  const property = (await pool.query(`SELECT name, sharepoint_folder_url, sharepoint_team_folders FROM crm_properties WHERE id = $1`, [propertyId])).rows[0];
   if (!property) throw Object.assign(new Error("Property not found"), { status: 404 });
-  const folderUrl: string | null = property.sharepoint_folder_url || null;
-  const want = kind === "brochure" ? isPdf : isSpreadsheet;
-  const [folder, search, index] = await Promise.allSettled([
-    folderUrl ? walkLinkedFolder(folderUrl, want, deps) : Promise.resolve([]),
+  const folderUrls = linkedFolderUrls(property.sharepoint_folder_url, property.sharepoint_team_folders);
+  const want = wantFor(kind);
+  const walkDeps = kind === "plan" ? { ...deps, priority: PLAN_FOLDER_PRIORITY } : deps;
+  const [search, index, ...folders] = await Promise.allSettled([
     searchPropertyFiles(property.name, kind, deps),
     indexedPropertyFiles(pool, property.name, kind),
+    ...folderUrls.map(url => walkLinkedFolder(url, want, walkDeps)),
   ]);
   const warnings: string[] = [];
-  if (folder.status === "rejected") warnings.push(`Linked folder: ${plainGraphError(folder.reason)}`);
+  folders.forEach((folder, i) => {
+    if (folder.status === "rejected") warnings.push(`Linked folder${folderUrls.length > 1 ? ` “${folderName(folderUrls[i])}”` : ""}: ${plainGraphError(folder.reason)}`);
+  });
   if (search.status === "rejected") warnings.push(`Search: ${plainGraphError(search.reason)}`);
   if (index.status === "rejected") console.warn("[sharepoint-property-files] index lookup failed:", index.reason?.message);
   const merged = mergeCandidates([
-    folder.status === "fulfilled" ? folder.value : [],
+    ...folders.map(folder => folder.status === "fulfilled" ? folder.value : []),
     search.status === "fulfilled" ? search.value : [],
     index.status === "fulfilled" ? index.value : [],
   ]);
-  const ranked = kind === "brochure" ? rankBrochureCandidates(merged, wanted) : rankScheduleCandidates(merged);
-  return { candidates: ranked.slice(0, 40), linkedFolder: folderUrl, propertyName: property.name, warnings };
+  const ranked = kind === "brochure" ? rankBrochureCandidates(merged, wanted) : kind === "plan" ? rankPlanCandidates(merged) : rankScheduleCandidates(merged);
+  return { candidates: ranked.slice(0, kind === "plan" ? 60 : 40), linkedFolder: folderUrls[0] || null, linkedFolders: folderUrls, propertyName: property.name, warnings };
+}
+
+export type PropertyFolderLinks = { propertyName: string; defaultUrl: string | null; folders: Record<string, string> };
+
+/** The property's default linked folder and its per-team / extra folders. */
+export async function propertyFolderLinks(pool: any, propertyId: string): Promise<PropertyFolderLinks | null> {
+  const row = (await pool.query(`SELECT name, sharepoint_folder_url, sharepoint_team_folders FROM crm_properties WHERE id = $1`, [propertyId])).rows[0];
+  if (!row) return null;
+  return { propertyName: row.name, defaultUrl: row.sharepoint_folder_url || null, folders: normaliseFolderLinks(row.sharepoint_team_folders) };
+}
+
+/** Link one team's or extra folder, or unlink it when no url is given. Only
+ *  BGP tenant SharePoint / OneDrive links are stored. */
+export async function setPropertyFolderLink(pool: any, propertyId: string, rawLabel: unknown, rawUrl: unknown): Promise<PropertyFolderLinks> {
+  const label = folderLinkLabel(rawLabel);
+  if (!label) throw Object.assign(new Error("Give the folder a name (up to 60 characters)."), { status: 400 });
+  const url = typeof rawUrl === "string" ? rawUrl.trim() : "";
+  if (url && !SHAREPOINT_URL_RE.test(url)) throw Object.assign(new Error("Paste a link to a folder in the BGP SharePoint or OneDrive."), { status: 400 });
+  const current = await propertyFolderLinks(pool, propertyId);
+  if (!current) throw Object.assign(new Error("Property not found"), { status: 404 });
+  const folders = Object.fromEntries(Object.entries(current.folders).filter(([k]) => k.toLowerCase() !== label.toLowerCase()));
+  if (url) folders[label] = url;
+  await pool.query(`UPDATE crm_properties SET sharepoint_team_folders = $2::jsonb, updated_at = now() WHERE id = $1`, [propertyId, Object.keys(folders).length ? JSON.stringify(folders) : null]);
+  return { ...current, folders };
 }
 
 export type SpFileRef = { driveId?: string | null; itemId?: string | null; webUrl?: string | null };

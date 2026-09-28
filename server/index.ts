@@ -114,6 +114,9 @@ installGoogleBudgetGuard();
     )`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS leasing_privacy_enabled BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS sharepoint_folder_url TEXT`,
+    // Per-team and extra SharePoint folders ({"Investment": url, "Leases":
+    // url}); sharepoint_folder_url stays the default for the other tabs.
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS sharepoint_team_folders JSONB`,
     `ALTER TABLE lease_events ADD COLUMN IF NOT EXISTS landlord TEXT`,
     `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS source_url TEXT`,
     `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS source_title TEXT`,
@@ -976,6 +979,10 @@ installGoogleBudgetGuard();
     // the original PDF is kept beside the page images (Woody, 2026-09-27).
     `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS original_pdf_key TEXT`,
     `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS pdf_page INT`,
+    // Plans made from a brochure page or a SharePoint file keep where they
+    // came from ("brochure:<id>:p<page>", "sharepoint:<drive>:<item>[:p<n>]")
+    // so importing the same source twice adds nothing (Woody, 2026-09-28).
+    `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS source_ref TEXT`,
 
     // Property brochures — leasing / investment / OM PDFs uploaded
     // directly to a property's brochure board. Same pattern as
