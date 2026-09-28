@@ -1982,7 +1982,15 @@ export function setupCrmRoutes(app: Express) {
           && !(await isClientVisibleBrand(req.params.id, updateScope))) {
         return res.status(403).json({ error: "Access denied" });
       }
+      const coverersEdited = req.body && "bgpContactUserIds" in req.body;
+      const before: string[] = coverersEdited
+        ? ((await pool.query(`SELECT bgp_contact_user_ids FROM crm_companies WHERE id = $1`, [req.params.id])).rows[0]?.bgp_contact_user_ids || [])
+        : [];
       const company = await storage.updateCrmCompany(req.params.id, req.body);
+      if (coverersEdited) {
+        const { coverersChanged } = await import("./bgp-team-sync");
+        await coverersChanged(req.params.id, before, Array.isArray(req.body.bgpContactUserIds) ? req.body.bgpContactUserIds : []);
+      }
       res.json(company);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });

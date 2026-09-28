@@ -168,6 +168,8 @@ router.post("/api/client-teams/:clientCompanyId/member", requireAuth, async (req
       VALUES ($1, $2, $3, $4, $5, COALESCE($6, 0), COALESCE($7, false))
       RETURNING *
     `, [clientCompanyId, user_id, (team_group === "Unassigned" ? null : team_group) || null, role || null, reports_to_user_id || null, sort_order, is_lead === true]);
+    const { teamMemberAdded } = await import("./bgp-team-sync");
+    await teamMemberAdded(String(clientCompanyId), String(user_id), pool);
     res.json(ins.rows[0]);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -258,6 +260,8 @@ router.post("/api/client-teams/:clientCompanyId/reorder", requireAuth, async (re
             "INSERT INTO crm_client_team_members (client_company_id, user_id, team_group, sort_order) VALUES ($1, $2, $3, $4)",
             [req.params.clientCompanyId, userId, tg ?? "Property Team", it.sort_order]
           );
+          const { teamMemberAdded } = await import("./bgp-team-sync");
+          await teamMemberAdded(String(req.params.clientCompanyId), userId, pool);
         }
       } else if (tg === undefined) {
         await pool.query(
@@ -318,12 +322,14 @@ router.delete("/api/client-teams/member/:id", requireAuth, async (req, res) => {
       return res.json({ ok: true, removedPropertyAssignments: del.rowCount });
     }
 
-    const ownerRow = await pool.query("SELECT client_company_id FROM crm_client_team_members WHERE id = $1", [id]);
+    const ownerRow = await pool.query("SELECT client_company_id, user_id FROM crm_client_team_members WHERE id = $1", [id]);
     if (ownerRow.rows[0] && await forbidsClientScope(req, ownerRow.rows[0].client_company_id)) {
       return res.status(403).json({ error: "Not available for client accounts" });
     }
     const r = await pool.query("DELETE FROM crm_client_team_members WHERE id = $1", [id]);
     if (r.rowCount === 0) return res.status(404).json({ error: "Team member not found" });
+    const { teamMemberRemoved } = await import("./bgp-team-sync");
+    await teamMemberRemoved(ownerRow.rows[0].client_company_id, ownerRow.rows[0].user_id, pool);
     res.json({ ok: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });

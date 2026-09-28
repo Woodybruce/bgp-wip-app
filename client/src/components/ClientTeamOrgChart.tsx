@@ -36,6 +36,14 @@ interface TeamMember {
 // Headshot with two fallbacks: users.profile_pic_url (what HR shows) →
 // the uploaded-photo stream → initials. The old <img>-only version went
 // invisible whenever neither source had a photo.
+// The board and the brand header's BGP team chips are one team — a change
+// here refreshes the chips, the Team view and the workspace too.
+function invalidateTeam(queryClient: ReturnType<typeof useQueryClient>, companyId: string) {
+  queryClient.invalidateQueries({ queryKey: ["/api/client-teams", companyId] });
+  queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId] });
+}
+
 export function MemberAvatar({ member, className }: { member: Pick<TeamMember, "full_name" | "username" | "user_id" | "profile_pic_url">; className: string }) {
   const displayName = member.full_name || member.username || "?";
   const initials = displayName.split(/\s+/).map(w => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
@@ -284,7 +292,7 @@ export function ClientTeamOrgChart({ clientCompanyId, quietWhenEmpty = false }: 
     mutationFn: (items: Array<{ id: string; team_group: string | null; sort_order: number }>) =>
       apiRequest("POST", `/api/client-teams/${clientCompanyId}/reorder`, { items }),
     onError: (e: any) => toast({ title: "Move failed", description: e?.message || "Unknown error", variant: "destructive" }),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] }),
+    onSettled: () => invalidateTeam(queryClient, clientCompanyId),
   });
 
   // Compute the new in-column stack after a drag, then ship a single
@@ -348,7 +356,7 @@ export function ClientTeamOrgChart({ clientCompanyId, quietWhenEmpty = false }: 
     mutationFn: ({ oldName, name }: { oldName: string; name: string }) =>
       apiRequest("PATCH", `/api/client-teams/${clientCompanyId}/columns/${encodeURIComponent(oldName)}`, { name }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] });
+      invalidateTeam(queryClient, clientCompanyId);
       queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId, "columns"] });
     },
     onError: (e: any) => {
@@ -359,7 +367,7 @@ export function ClientTeamOrgChart({ clientCompanyId, quietWhenEmpty = false }: 
     mutationFn: (name: string) =>
       apiRequest("DELETE", `/api/client-teams/${clientCompanyId}/columns/${encodeURIComponent(name)}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] });
+      invalidateTeam(queryClient, clientCompanyId);
       queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId, "columns"] });
     },
     onError: (e: any) => {
@@ -392,7 +400,7 @@ export function ClientTeamOrgChart({ clientCompanyId, quietWhenEmpty = false }: 
       onClose={() => setShowAdd(false)}
       onAdded={() => {
         setShowAdd(false);
-        queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] });
+        invalidateTeam(queryClient, clientCompanyId);
       }}
     />
   );
@@ -588,7 +596,7 @@ export function ClientTeamOrgChart({ clientCompanyId, quietWhenEmpty = false }: 
           clientCompanyId={clientCompanyId}
           columnNames={columnList.map(c => c.name)}
           onClose={() => setSelected(null)}
-          onChange={() => queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] })}
+          onChange={() => invalidateTeam(queryClient, clientCompanyId)}
         />
       )}
 
@@ -681,7 +689,7 @@ function MemberSheet({ member, allMembers, clientCompanyId, columnNames, onClose
     try {
       const body = assigned ? { remove: [propertyId] } : { add: [propertyId] };
       await apiRequest("POST", `/api/client-teams/${clientCompanyId}/member/${member.user_id}/properties`, body);
-      queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] });
+      invalidateTeam(queryClient, clientCompanyId);
     } catch (e: any) {
       queryClient.setQueryData<PropertyAssignment[]>(
         ["/api/client-teams", clientCompanyId, "member", member.user_id, "properties"],

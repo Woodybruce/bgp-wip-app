@@ -3824,6 +3824,8 @@ function BgpTeamMenu({ companyId, coverers }: { companyId: string; coverers: Arr
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/client-teams", companyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId] });
     },
     onError: (e: any) => toast({ title: "Couldn't save BGP team", description: e?.message, variant: "destructive" }),
   });

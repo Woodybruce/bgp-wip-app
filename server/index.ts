@@ -5245,6 +5245,14 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
           await runViewingRematch();
         } catch (e: any) { console.error("[viewing-rematch] failed:", e?.message); }
       }, 60000);
+      // Header chips and the BGP Team board become one team — union what
+      // each held, once (Woody, 2026-09-28).
+      setTimeout(async () => {
+        try {
+          const { runBgpTeamUnion } = await import("./bgp-team-sync");
+          await runBgpTeamUnion();
+        } catch (e: any) { console.error("[bgp-team-union] failed:", e?.message); }
+      }, 65000);
       // Planned openings from brands' opening signals onto their store maps
       // — once for the backlog; new signals are read when a brand is viewed.
       setTimeout(async () => {
