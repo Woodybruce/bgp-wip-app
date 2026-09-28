@@ -237,6 +237,14 @@ export function londonViewingDateTime(start: { dateTime: string; timeZone: strin
   return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
 }
 
+/** Clearly not a leasing viewing — contractors, surveys, valuations, fire
+ *  safety. Inspections, site tours and walk-arounds are NOT in this list:
+ *  they are viewings (Woody, 2026-08-04) and are captured for a person to
+ *  classify. */
+export function isNonLeasingVisit(subject?: string | null): boolean {
+  return /\b(contractor|maintenance|repair|survey|valuation|fire|safety)\b/i.test(String(subject || ""));
+}
+
 export function isLeasingViewing(subject?: string | null, categories?: string[] | null): boolean {
   const text = `${subject || ""} ${(categories || []).join(" ")}`;
   if (/\b(contractor|maintenance|repair|survey|valuation|fire|safety|inspection)\b/i.test(text)) return false;

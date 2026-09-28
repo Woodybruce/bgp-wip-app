@@ -3,7 +3,7 @@
 import { pool } from "./db";
 import { createHash } from "node:crypto";
 import { viewingMissingDetails } from "@shared/viewing-workflow";
-import { buildViewingBrandIndex, inferViewingBrand, isLeasingViewing, londonViewingDateTime, matchViewingBrand, matchViewingUnits, normalizeViewingEmail, parseGraphDateTime,
+import { isNonLeasingVisit, buildViewingBrandIndex, inferViewingBrand, isLeasingViewing, londonViewingDateTime, matchViewingBrand, matchViewingUnits, normalizeViewingEmail, parseGraphDateTime,
   propertyAliasList, type ViewingBrandIndex, type ViewingBrandLink, type ViewingBrandMatch, type ViewingContact, type ViewingProperty } from "./viewing-matching";
 
 export interface DiaryEvent {
@@ -288,12 +288,12 @@ export async function syncDiaryViewings(events: DiaryEvent[], mailboxEmail: stri
         await client.query("COMMIT");
         continue;
       }
-      // Inspections and contractor visits are not saved as viewings; an
-      // untouched diary capture of one is closed as not_leasing so it stops
-      // asking for details. Confirmed or reviewed rows, and ones someone
-      // moved back from not_leasing, keep the usual review path
-      // (Woody, 2026-09-28).
-      const leasing = isLeasingViewing(event.subject, event.categories);
+      // Contractor visits, surveys and valuations are not saved as viewings;
+      // an untouched diary capture of one is closed as not_leasing so it
+      // stops asking for details. Inspections and tours ARE viewings
+      // (Woody, 2026-08-04) and keep the classify-me review. Confirmed or
+      // reviewed rows keep the usual review path (Woody, 2026-09-28).
+      const leasing = !isNonLeasingVisit(event.subject);
       if (!leasing) {
         const live = existing.rows.filter(row => !row.deleted_at);
         const untouched = live.every(row => row.source === "diary" && !row.details_confirmed_at && !row.outcome_recorded_at
@@ -318,7 +318,9 @@ export async function syncDiaryViewings(events: DiaryEvent[], mailboxEmail: stri
       let date = "", time: string | null = null;
       let sourceStartAt: string | null = null;
       const issues = [...unitMatch.issues, ...brand.reasons.map(reason => brandIssueLabels[reason] || reason)];
-      if (!leasing) issues.push(NOT_LEASING_ISSUE);
+      // An inspection or tour is kept, but a person confirms it's a leasing
+      // viewing (Woody, 2026-08-04).
+      if (!leasing || !isLeasingViewing(event.subject, event.categories)) issues.push(NOT_LEASING_ISSUE);
       try {
         if (event.start) {
           ({ date, time } = londonViewingDateTime(event.start));

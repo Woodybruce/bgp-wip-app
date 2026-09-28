@@ -58,8 +58,8 @@ test('details tasks with nothing linked are titled from the calendar subject and
   const gp = decision({ ...bare, viewingDate: '2026-05-22', createdAt: '2026-05-20T09:00:00Z', sourceDetails: { subject: 'RE: GP x Brixton Village Viewing', sourcePropertyName: 'Brixton Village', issues: ['Choose which tracker units are being viewed'] } }, '2026-05-23T10:00:00Z');
   assert.equal(gp.title, 'Confirm viewing details — GP x Brixton Village · 22 May');
   assert.ok(gp.why.startsWith('No tracker unit chosen at Brixton Village'));
-  const named = decision({ unitId: null, unitName: null, companyId: 'brand-1', companyName: 'Goyard', detailsConfirmedAt: null, viewingDate: '2026-09-18', sourceDetails: { issues: ['Confirm the brand being represented'] } }, '2026-09-19T10:00:00Z');
-  assert.equal(named.title, 'Confirm viewing details — Goyard · 18 Sept');
+  const named = decision({ unitId: null, unitName: null, propertyName: null, companyId: 'brand-1', companyName: 'Goyard', detailsConfirmedAt: null, viewingDate: '2026-06-18', sourceDetails: { issues: ['Confirm the brand being represented'] } }, '2026-06-19T10:00:00Z');
+  assert.equal(named.title, 'Confirm viewing details — Goyard · 18 Jun');
   assert.ok(!named.why.includes('brand'), 'a gap the record has since filled is not listed');
 });
 

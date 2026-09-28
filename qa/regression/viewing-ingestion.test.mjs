@@ -216,28 +216,33 @@ test('manually confirmed ambiguous events stay resolved and tombstones stop cale
   assert.ok(h.rows[0].deleted_at);
 });
 
-test('legacy unconfirmed employer-as-brand entries are reevaluated; inspections are not saved as viewings', async () => {
+test('legacy unconfirmed employer-as-brand entries are reevaluated; contractor visits are not saved, inspections are kept to classify', async () => {
   const h = ingestionHarness({ rows: [{ id: 'old', calendar_event_id: 'booking-1', unit_id: 'u1', company_id: 'agency', status: 'scheduled', source_details: {} }] });
   await h.run();
   assert.equal(h.rows[0].company_id, 'brand');
   assert.equal(h.rows[0].booking_id, 'booking-1');
+  const contractor = ingestionHarness();
+  assert.equal(await contractor.run(invitation({ subject: 'Roehampton Sports Ground contractor survey' })), 0);
+  assert.equal(contractor.rows.length, 0);
+  // Inspections are viewings (Woody, 2026-08-04): saved, flagged to classify.
   const inspection = ingestionHarness();
-  assert.equal(await inspection.run(invitation({ subject: 'Roehampton Sports Ground Estate Inspection' })), 0);
-  assert.equal(inspection.rows.length, 0);
+  await inspection.run(invitation({ subject: 'Roehampton Sports Ground Estate Inspection' }));
+  assert.equal(inspection.rows.length, 1);
+  assert.ok(inspection.rows[0].source_details.issues.some(i => /leasing viewing/i.test(i)));
   assert.ok(inspection.module.looksLikeViewing('Inspection'), 'historical broad calendar classification remains supported');
 });
 
-test('an untouched diary capture of an inspection closes as not_leasing; confirmed rows are never closed', async () => {
+test('an untouched diary capture of a contractor visit closes as not_leasing; confirmed rows are never closed', async () => {
   const base = { calendar_event_id: 'booking-1', source: 'diary', unit_id: null, company_id: null, outcome: null, source_details: {} };
   const h = ingestionHarness({ rows: [{ ...base, id: 'open', status: 'scheduled', details_confirmed_at: null }] });
-  await h.run(invitation({ subject: 'Roehampton Sports Ground Estate Inspection' }));
+  await h.run(invitation({ subject: 'Roehampton Sports Ground contractor survey' }));
   assert.equal(h.rows[0].status, 'not_leasing');
   assert.equal(h.rows[0].source_details.autoNotLeasing, true);
   const confirmed = ingestionHarness({ rows: [{ ...base, id: 'kept', status: 'scheduled', details_confirmed_at: new Date(), unit_id: 'u1', company_id: 'brand' }] });
-  await confirmed.run(invitation({ subject: 'Roehampton Sports Ground Estate Inspection' }));
+  await confirmed.run(invitation({ subject: 'Roehampton Sports Ground contractor survey' }));
   assert.equal(confirmed.rows[0].status, 'scheduled');
   const reverted = ingestionHarness({ rows: [{ ...base, id: 'back', status: 'scheduled', details_confirmed_at: null, source_details: { autoNotLeasing: true } }] });
-  await reverted.run(invitation({ subject: 'Roehampton Sports Ground Estate Inspection' }));
+  await reverted.run(invitation({ subject: 'Roehampton Sports Ground contractor survey' }));
   assert.equal(reverted.rows[0].status, 'scheduled', 'a row moved back from not_leasing by hand is not closed again');
 });
 

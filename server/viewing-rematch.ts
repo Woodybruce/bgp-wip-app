@@ -4,7 +4,7 @@
 // invitation details (no Graph calls), then retitle/resolve their tasks.
 import { pool } from "./db";
 import { viewingMissingDetails } from "@shared/viewing-workflow";
-import { isLeasingViewing } from "./viewing-matching";
+import { isNonLeasingVisit } from "./viewing-matching";
 import { brandIssueLabels, loadViewingMatchContext, matchViewingEvent, NOT_LEASING_ISSUE } from "./viewing-sync";
 import { reconcileViewingFollowup } from "./viewing-followups";
 
@@ -32,7 +32,7 @@ export async function runViewingRematch(): Promise<void> {
       // Categories were not stored, so only the exclusion words count here
       // (a "viewing" category is assumed); a subject lacking the word
       // "viewing" alone is left for the next diary sync to judge.
-      if (!isLeasingViewing(subject, ["viewing"]) && !details.autoNotLeasing) {
+      if (isNonLeasingVisit(subject) && !details.autoNotLeasing) {
         const r = await pool.query(`UPDATE unit_viewings SET status = 'not_leasing', updated_at = NOW(),
             source_details = COALESCE(source_details, '{}'::jsonb) || '{"autoNotLeasing":true}'::jsonb
           WHERE id = $1 ${guard}`, [row.id, row.unit_id, row.company_id]);
