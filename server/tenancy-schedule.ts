@@ -65,14 +65,14 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
          -- A unit BGP let with no tenant typed on the row shows the deal's
          -- tenant (display only; the row itself is unchanged).
          LEFT JOIN LATERAL (
-           SELECT dc.id, dc.name FROM available_units au
-             JOIN crm_deals d ON d.id = au.deal_id AND d.status IN ('EXC', 'COM', 'INV')
+           SELECT dc.id, dc.name FROM crm_deals d
              JOIN crm_companies dc ON dc.id = d.tenant_id
             WHERE coalesce(trim(t.tenant_name), '') = ''
-              AND au.property_id = t.property_id
-              AND (au.tenancy_unit_id::text = t.id::text OR t.letting_tracker_unit_id = au.id
-                   OR (au.tenancy_unit_id IS NULL AND ${normUnitSql("au.unit_name")} <> ''
-                       AND ${normUnitSql("au.unit_name")} = ${normUnitSql("coalesce(nullif(trim(t.unit_number), ''), t.premises)")}))
+              AND d.status IN ('EXC', 'COM', 'INV')
+              AND (d.tenancy_unit_id::text = t.id::text
+                   OR d.id IN (SELECT au.deal_id FROM available_units au
+                                WHERE au.property_id = t.property_id
+                                  AND (au.tenancy_unit_id::text = t.id::text OR t.letting_tracker_unit_id = au.id)))
             ORDER BY d.updated_at DESC NULLS LAST
             LIMIT 1
          ) dt ON TRUE
