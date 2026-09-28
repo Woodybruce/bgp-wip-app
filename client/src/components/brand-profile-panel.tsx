@@ -20,7 +20,6 @@ import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useChatBGPState } from "@/contexts/chatbgp-context";
 import { AIActivityCard, EmailViewerDialog, MeetingViewerDialog } from "@/components/ai-activity-card";
 import { InteractionsBoard } from "@/components/interactions-board";
-import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
 import { CompanyPropertiesBoard } from "@/components/CompanyPropertiesBoard";
 import { useToast } from "@/hooks/use-toast";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -5584,23 +5583,9 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
       {/* Menu / Best-sellers moved up — paired with Key contacts
           (Woody, 2026-08-03). */}
 
-      {/* BGP Team — lives in the sidebar next to the Gallery (landlords
-          only) so the right column fills and the page stays aligned. */}
-      {show("team") && isLandlord && (
-        <Card>
-          <CardContent className="p-3 pt-3 space-y-2">
-            <h3 className="font-semibold text-xs flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5 text-muted-foreground" />
-              BGP Team
-            </h3>
-            {/* The resolved team (with "From deals" provenance) already sits
-                in the profile's BGP team row — this card is just the pinned
-                org chart editor, so the team isn't listed three times
-                (Woody, 2026-09-27). */}
-            <ClientTeamOrgChart clientCompanyId={companyId} quietWhenEmpty />
-          </CardContent>
-        </Card>
-      )}
+      {/* No separate BGP Team board here — the BGP team chips (with their
+          roles) are the one team, synced with the Landsec-facing board
+          (Woody, 2026-09-28: "doesnt need all these boxes"). */}
 
       {/* Properties board removed — it duplicated Live tenancies (occupation
           off the tenancy schedule) and Portfolio activity (deal/pitch
