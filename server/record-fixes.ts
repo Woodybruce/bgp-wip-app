@@ -58,7 +58,7 @@ export async function runRecordFixes(deps: { pool?: Querier } = {}) {
   // Typos in stored names, whole words only.
   await step("spelling", async () => {
     const pairs: Array<[string, string]> = [["Chicwick", "Chiswick"], ["Pultney", "Pulteney"], ["Charring", "Charing"], ["Whiole", "Whole"], ["Nandos", "Nando's"]];
-    const targets: Array<[string, string]> = [["crm_properties", "name"], ["crm_deals", "name"], ["available_units", "unit_name"],
+    const targets: Array<[string, string]> = [["crm_properties", "name"], ["crm_deals", "name"], ["available_units", "unit_name"], ["property_units", "unit_name"],
       ["tenancy_schedule_units", "unit_number"], ["tenancy_schedule_units", "premises"], ["leasing_schedule_units", "unit_name"]];
     const out: Record<string, number> = {};
     for (const [table, col] of targets) {
@@ -132,6 +132,18 @@ export async function runRecordFixes(deps: { pool?: Querier } = {}) {
   console.log(`[record-fixes]`, JSON.stringify(log));
 }
 
+// The master unit record (property_units) holds the name the Letting Tracker
+// shows first — the first run fixed only the listing copy.
+export async function runUnitNameFixes(deps: { pool?: Querier } = {}) {
+  const q: Querier = deps.pool ?? (await import("./db")).pool;
+  const KEY = "migration:record_fixes_unit_names_v2";
+  if ((await q.query(`SELECT 1 FROM system_settings WHERE key = $1`, [KEY])).rows.length) return;
+  const r = await q.query(`UPDATE property_units SET unit_name = regexp_replace(unit_name, '\\mWhiole\\M', 'Whole', 'g') WHERE unit_name ~ '\\mWhiole\\M'`);
+  const k = await q.query(`UPDATE property_units SET sqft = NULL WHERE sqft < 5 AND id IN (SELECT unit_id FROM available_units WHERE id = '9dcdde62-cbc1-43e7-92be-3de7c20382a9')`);
+  await q.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING`, [KEY, JSON.stringify({ names: r.rowCount, sizes: k.rowCount, at: new Date().toISOString() })]);
+  console.log(`[record-fixes] unit names ${r.rowCount}, sizes ${k.rowCount}`);
+}
+
 // Covenant grades were read off small subsidiaries: Zara's UK stores trade
 // through Inditex's ITX UK Limited (not Zara Retail Limited, £43k net
 // assets); Hammerson is Hammerson plc (not Hammerson Operations Limited).
@@ -151,7 +163,9 @@ export async function runCompaniesHouseFixes(deps: { pool?: Querier } = {}) {
   for (const f of fixes) {
     try {
       const { rows } = await q.query(`SELECT companies_house_number, uk_entity_name FROM crm_companies WHERE id = $1`, [f.id]);
-      if (rows[0]?.companies_house_number !== f.from) { out.push(`${f.to}: skipped (now ${rows[0]?.companies_house_number ?? "none"})`); continue; }
+      // NULL too: a restart between clearing and re-checking leaves it blank.
+      const current = rows[0]?.companies_house_number ?? null;
+      if (current !== f.from && current !== null) { out.push(`${f.to}: skipped (now ${current})`); continue; }
       await q.query(`UPDATE crm_companies SET companies_house_number = NULL, uk_entity_name = NULL WHERE id = $1`, [f.id]);
       const r: any = await performAutoKyc(f.id, { manualChNumber: f.to });
       if (r?.success && r?.companyNumber === f.to) { out.push(`${f.to}: ok`); continue; }
