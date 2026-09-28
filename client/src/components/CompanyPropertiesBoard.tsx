@@ -543,6 +543,13 @@ export function CompanyPropertiesBoard({
         const bp = ensure(l.propertyId);
         if (bp) tag(bp, "Linked");
       }
+      // Ownership-stack roles on the property itself — an asset manager
+      // (Pave on the Royal Exchange) had an empty portfolio.
+      for (const p of propertyMap.values()) {
+        const own = p as any;
+        if (own.freeholderId === companyId || own.longLeaseholderId === companyId) { const bp = ensure(p.id); if (bp) tag(bp, "Owner"); }
+        if (own.assetManagerId === companyId) { const bp = ensure(p.id); if (bp) tag(bp, "Asset manager"); }
+      }
     } else {
       // lender: secured properties are the "ownership" equivalent
       for (const sp of securedProperties) {

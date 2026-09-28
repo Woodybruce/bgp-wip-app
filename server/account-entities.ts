@@ -159,11 +159,15 @@ export function mergeEntityMentions(mentions: EntityMention[]): GroupEntity[] {
     if (!e.companiesHouseNumber) continue;
     for (const k of [legalKey(e.name), legalKey(e.tradingAs)]) if (k && !numberedByKey.has(k)) numberedByKey.set(k, e);
   }
+  // Two unnumbered rows that differ only by the suffix ("Lemon Pepper
+  // Holdings Limited" / "… Ltd" on Nando's) are one entity too.
+  const unnumberedByKey = new Map<string, GroupEntity>();
   const shown = entities.filter(e => {
     if (e.relation !== "trading_entity" || e.companiesHouseNumber) return true;
-    const twin = numberedByKey.get(legalKey(e.name));
-    if (!twin || twin === e) return true;
-    twin.evidence = [...new Set([...twin.evidence, ...e.evidence, `also listed as "${e.name}" (no CH no.)`])];
+    const key = legalKey(e.name);
+    const twin = numberedByKey.get(key) || unnumberedByKey.get(key);
+    if (!twin || twin === e) { if (key) unnumberedByKey.set(key, e); return true; }
+    twin.evidence = [...new Set([...twin.evidence, ...e.evidence, `also listed as "${e.name}"${twin.companiesHouseNumber ? " (no CH no.)" : ""}`])];
     return false;
   });
 

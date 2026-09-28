@@ -168,7 +168,7 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
                           onClick={(e) => { e.preventDefault(); e.stopPropagation(); setTeam.mutate([{ id: p.id, team: g.team }]); }} data-testid="button-agent-team-fix">Set team</Button>
                       )}</>} />
                   ))}
-                  {quiet > 0 && <p className="text-[11px] text-muted-foreground">{busy.length ? `+${quiet} more with no recorded dealings` : `${quiet} people, no recorded dealings yet`}</p>}
+                  {quiet > 0 && <p className="text-[11px] text-muted-foreground">{busy.length ? `+${quiet} more with no recorded dealings` : "No recorded dealings yet"}</p>}
                 </div>
               );
             })}

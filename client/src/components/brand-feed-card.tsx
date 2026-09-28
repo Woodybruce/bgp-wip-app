@@ -131,7 +131,9 @@ export function BrandFeedCard({ companyId, canSetUp = false }: { companyId: stri
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-3">
-        {hasItems && (
+        {/* No read and none coming → no box; "The read isn't available right
+            now" sat on top of the feed as a dead panel. */}
+        {hasItems && (data.read || read.isPending) && (
           <section className="rounded-lg border border-border bg-muted/30 p-2.5 space-y-1" data-testid="brand-feed-read">
             <h4 className="text-[11px] font-medium text-muted-foreground flex items-center gap-1.5"><Sparkles className="w-3 h-3 text-primary" />What's new</h4>
             {data.read ? <AiCommentary text={data.read.text} />

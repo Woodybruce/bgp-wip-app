@@ -317,11 +317,13 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
             <div className="grid grid-cols-3 gap-2">
               <div>
                 <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Deals</div>
-                <div className="text-sm font-mono tabular-nums">{data.bgpSummary.totalDeals}{data.bgpSummary.completedDeals ? <span className="text-muted-foreground text-[11px]"> · {data.bgpSummary.completedDeals} done</span> : null}</div>
+                <div className="text-sm font-mono tabular-nums">{data.bgpSummary.totalDeals}</div>
+                {data.bgpSummary.completedDeals ? <div className="text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{data.bgpSummary.completedDeals}</span> done</div> : null}
               </div>
               <div>
                 <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Touches</div>
-                <div className="text-sm font-mono tabular-nums">{data.bgpSummary.interactionsTotal}<span className="text-muted-foreground text-[11px]"> · {data.bgpSummary.interactionsLast90d} in 90d</span></div>
+                <div className="text-sm font-mono tabular-nums">{data.bgpSummary.interactionsTotal}</div>
+                <div className="text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{data.bgpSummary.interactionsLast90d}</span> in 90 days</div>
               </div>
               <div>
                 <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Last touch</div>

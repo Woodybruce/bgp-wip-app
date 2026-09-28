@@ -3932,14 +3932,15 @@ function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role
       <MemberAvatar member={{ full_name: cov.name, username: cov.name, user_id: cov.id, profile_pic_url: cov.profile_pic_url || null }} className="w-9 h-9 text-[11px]" />
       <div className="min-w-0 flex-1">
       <div className="text-[12px] font-semibold leading-tight truncate" title={cov.name}>{cov.name}</div>
-      {cov.bgp_title && <div className="text-[10px] text-muted-foreground truncate" title={cov.bgp_title}>{cov.bgp_title}</div>}
-      <div className="flex items-center gap-1.5 min-w-0 text-[10px] mt-0.5">
+      {cov.bgp_title && <div className="text-[11px] text-muted-foreground truncate" title={cov.bgp_title}>{cov.bgp_title}</div>}
+      {/* Wraps rather than cutting the email count to "· 66 em…". */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0 text-[11px] mt-0.5">
       {ccIsClient ? (
         current ? <span className="text-muted-foreground">{current}</span> : null
       ) : (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button type="button" className="text-[10px] font-medium text-primary hover:underline decoration-dotted inline-flex items-center gap-0.5 shrink-0" title="Set this person's role on the account" data-testid={`bgp-role-${cov.id}`}>
+            <button type="button" className="text-[11px] font-medium text-primary hover:underline decoration-dotted inline-flex items-center gap-0.5 shrink-0" title="Set this person's role on the account" data-testid={`bgp-role-${cov.id}`}>
               {current || <span className="italic opacity-70">{fromDeals ? "from deals · set role" : "set role"}</span>}
               <ChevronDown className="w-2.5 h-2.5" />
             </button>
@@ -3956,8 +3957,8 @@ function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role
         </DropdownMenu>
       )}
       {!ccIsClient && (cov.threads || 0) > 0 && (
-        <span className="text-muted-foreground truncate" title={cov.last_touch ? `Last email ${new Date(cov.last_touch).toLocaleDateString("en-GB")}` : undefined}>
-          · <span className="font-mono tabular-nums">{cov.threads!.toLocaleString("en-GB")}</span> email{cov.threads === 1 ? "" : "s"}{touch ? ` · ${touch}` : ""}
+        <span className="text-muted-foreground whitespace-nowrap" title={cov.last_touch ? `Last email ${new Date(cov.last_touch).toLocaleDateString("en-GB")}` : undefined}>
+          <span className="font-mono tabular-nums">{cov.threads!.toLocaleString("en-GB")}</span> email{cov.threads === 1 ? "" : "s"}{touch ? ` · ${touch}` : ""}
         </span>
       )}
       </div>
@@ -4439,8 +4440,9 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
       <div className="flex items-center justify-between gap-2 min-w-0">
         <Link href={`/properties/${propertyId}`} className="flex items-center gap-1.5 min-w-0 flex-1 hover:underline">
           <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-          <span className="text-sm font-medium truncate">{propertyName}</span>
-          {unitName && <span className="hidden md:inline text-[11px] text-muted-foreground truncate">{unitName}</span>}
+          {/* The property keeps its name; the unit gives way ("Clarks Vill…"). */}
+          <span className="text-sm font-medium truncate shrink-0 max-w-[70%]">{propertyName}</span>
+          {unitName && <span className="hidden md:inline text-[11px] text-muted-foreground truncate min-w-0">{unitName}</span>}
         </Link>
         <span className="flex items-center gap-1 shrink-0 max-w-[55%] justify-end">{stackRight ? <span className="hidden md:contents">{right}</span> : right}
           {/* Same line as the property on desktop; the 44px tap target is phone-only. */}

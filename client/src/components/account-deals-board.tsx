@@ -211,6 +211,9 @@ function NextActionCell({ d }: { d: AccountDealRow }) {
 export function AccountDealsBoard({ companyId }: { companyId: string }) {
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  // Narrow board (phone): the six dropdowns sit behind a Filters pill — at
+  // 44px each they stacked five rows above the first deal.
+  const [showFilters, setShowFilters] = useState(false);
   const set = (patch: Partial<Filters>) => { setFilters(f => ({ ...f, ...patch })); setPage(1); };
 
   const params = new URLSearchParams({ page: String(page), pageSize: "10" });
@@ -246,13 +249,15 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
       <CardContent className="p-3 pt-0 space-y-2">
         {/* Filters — options arrive with the deals payload, so the row never
             needs a second round trip. */}
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className={`flex flex-wrap items-center gap-1.5 ${data && data.total === 0 && !filtersActive ? "hidden" : ""}`}>
           <Pill active={filters.bucket === "all"} onClick={() => set({ bucket: "all" })} data-testid="account-deals-bucket-all">All</Pill>
           <Pill active={filters.bucket === "instruction"} onClick={() => set({ bucket: "instruction" })} data-testid="account-deals-bucket-instruction">Instructions</Pill>
           <Pill active={filters.bucket === "related"} onClick={() => set({ bucket: "related" })} data-testid="account-deals-bucket-related">Related activity</Pill>
+          <Pill active={showFilters} onClick={() => setShowFilters(v => !v)} className="[@container(min-width:600px)]:hidden" data-testid="account-deals-filters-toggle">Filters</Pill>
         </div>
-        {data && (
-          <div className="flex flex-wrap items-center gap-1.5">
+        {/* No deals at all → no filter row over "No deals on this account yet". */}
+        {data && (data.total > 0 || filtersActive) && (
+          <div className={`${showFilters ? "flex" : "hidden [@container(min-width:600px)]:flex"} flex-wrap items-center gap-1.5`}>
             <Select value={filters.propertyId || "all"} onValueChange={v => set({ propertyId: v === "all" ? "" : v })}>
               <SelectTrigger className="h-7 w-auto min-w-[8rem] text-[11px]"><SelectValue placeholder="Property" /></SelectTrigger>
               <SelectContent>

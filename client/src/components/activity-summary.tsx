@@ -311,7 +311,7 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
               >
                 <Icon className="w-3 h-3 text-muted-foreground" />
                 <span className="font-semibold tabular-nums">{kindCounts[k]}</span>
-                <span className="text-muted-foreground">{KIND_LABEL[k]}</span>
+                <span className="text-muted-foreground">{kindCounts[k] === 1 ? KIND_LABEL[k].replace(/s$/, "").replace(/moves$/, "move") : KIND_LABEL[k]}</span>
               </button>
             );
           })}
