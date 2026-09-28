@@ -622,7 +622,7 @@ export function PropertyDetail({ id }: { id: string }) {
               ) : (
                 <div className="flex items-center gap-2 flex-wrap">
                   {/* Phones already say "Property" in the top bar and breadcrumb. */}
-                  <span className="hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="property-eyebrow">
+                  <span className="hidden [@container(min-width:720px)]:inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="property-eyebrow">
                     Property
                   </span>
                   <h1 className="text-2xl font-bold tracking-tight" data-testid="text-property-name">
@@ -660,7 +660,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   }}
                   data-testid="button-ask-ai-property" title="Ask ChatBGP" aria-label="Ask ChatBGP"
                 >
-                  <MessageSquare className="w-3.5 h-3.5" /><span className="hidden sm:inline">Ask ChatBGP</span>
+                  <MessageSquare className="w-3.5 h-3.5" /><span className="hidden [@container(min-width:720px)]:inline">Ask ChatBGP</span>
                 </Button>
                 {!isClientViewer && (<>
                 {/* Phones: one ⋯ menu instead of a row of five 44px icon

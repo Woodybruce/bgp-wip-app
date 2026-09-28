@@ -4629,9 +4629,9 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               {hasFreeholds && (
                 <IntelligenceSection icon={FileSearch} title="Land & Ownership" defaultOpen>
                   <div className="space-y-1">
-                    <p className="text-[10px] text-muted-foreground mb-1">{freeholds.length} freehold title{freeholds.length !== 1 ? "s" : ""} found for {postcode}</p>
+                    <p className="text-[11px] text-muted-foreground mb-1">{freeholds.length} freehold title{freeholds.length !== 1 ? "s" : ""} found for {postcode}</p>
                     {aiMatchLoading && (
-                      <div className="flex items-center gap-2 p-2 bg-muted/40 rounded text-[10px] text-muted-foreground">
+                      <div className="flex items-center gap-2 p-2 bg-muted/40 rounded text-[11px] text-muted-foreground">
                         <Loader2 className="w-3 h-3 animate-spin" />
                         AI is matching your property address to the correct title...
                       </div>
@@ -4640,12 +4640,12 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                       <div className="p-2 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded">
                         <div className="flex items-center gap-1.5 mb-0.5">
                           <Sparkles className="w-3 h-3 text-green-600" />
-                          <span className="text-[10px] font-semibold text-green-800 dark:text-green-200">AI Recommendation</span>
-                          <Badge variant="outline" className={`text-[10px] ${aiMatch.confidence === "high" ? "border-green-500 text-green-700" : aiMatch.confidence === "medium" ? "border-yellow-500 text-yellow-700" : "border-orange-500 text-orange-700"}`}>
+                          <span className="text-[11px] font-semibold text-green-800 dark:text-green-200">AI Recommendation</span>
+                          <Badge variant="outline" className={`text-[11px] ${aiMatch.confidence === "high" ? "border-green-500 text-green-700" : aiMatch.confidence === "medium" ? "border-yellow-500 text-yellow-700" : "border-orange-500 text-orange-700"}`}>
                             {aiMatch.confidence} confidence
                           </Badge>
                         </div>
-                        <p className="text-[10px] text-muted-foreground">{aiMatch.reason}</p>
+                        <p className="text-[11px] text-muted-foreground">{aiMatch.reason}</p>
                       </div>
                     )}
                     {(() => {
@@ -4668,12 +4668,12 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                             <div className={`flex items-center justify-between p-2 rounded ${isSelected ? "bg-muted/40 border border-border" : isAiRecommended ? "bg-green-50 dark:bg-green-950/20 border border-green-300 dark:border-green-800" : "bg-muted/30"}`}>
                               <div className="min-w-0 flex-1">
                                 <span className="font-mono font-medium text-[11px]">{tn}</span>
-                                {fh.address && <span className="text-[10px] text-muted-foreground ml-2">{fh.address}</span>}
-                                {fh.ownership_type && <Badge variant="outline" className="text-[10px] ml-1">{fh.ownership_type}</Badge>}
-                                {isSelected && <Badge className="text-[10px] ml-1 bg-foreground text-background">Selected</Badge>}
-                                {isAiRecommended && <Badge className="text-[10px] ml-1 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">AI Match</Badge>}
+                                {fh.address && <span className="text-[11px] text-muted-foreground ml-2">{fh.address}</span>}
+                                {fh.ownership_type && <Badge variant="outline" className="text-[11px] ml-1">{fh.ownership_type}</Badge>}
+                                {isSelected && <Badge className="text-[11px] ml-1 bg-foreground text-background">Selected</Badge>}
+                                {isAiRecommended && <Badge className="text-[11px] ml-1 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">AI Match</Badge>}
                                 {lhCount > 0 && (
-                                  <Badge variant="outline" className="text-[10px] ml-1 cursor-pointer hover:bg-muted" onClick={() => loadFreeholdLeaseholds(tn)}>
+                                  <Badge variant="outline" className="text-[11px] ml-1 cursor-pointer hover:bg-muted" onClick={() => loadFreeholdLeaseholds(tn)}>
                                     {lhCount} lease{lhCount !== 1 ? "s" : ""}
                                     {isExpanded ? " ▾" : " ▸"}
                                   </Badge>
@@ -4683,7 +4683,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  className="h-6 text-[10px] gap-1"
+                                  className="h-6 text-[11px] gap-1"
                                   onClick={() => downloadTitleDocument(tn, "register")}
                                   disabled={downloadingDoc === `${tn}-register`}
                                   data-testid={`button-download-register-${i}`}
@@ -4695,7 +4695,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                   <Button
                                     variant={isAiRecommended ? "default" : "ghost"}
                                     size="sm"
-                                    className={`h-6 text-[10px] gap-1 ${isAiRecommended ? "bg-green-600 hover:bg-green-700 text-white" : ""}`}
+                                    className={`h-6 text-[11px] gap-1 ${isAiRecommended ? "bg-green-600 hover:bg-green-700 text-white" : ""}`}
                                     onClick={() => fillTitleFromIntelligence(tn)}
                                     disabled={!!fetchingTitle}
                                     data-testid={`button-fill-title-${i}`}
@@ -4709,18 +4709,18 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                             {isExpanded && lhData && (
                               <div className="ml-4 border-l-2 border-muted pl-2 space-y-1">
                                 {lhData.loading && lhData.details.length === 0 && (
-                                  <div className="flex items-center gap-2 p-1.5 text-[10px] text-muted-foreground">
+                                  <div className="flex items-center gap-2 p-1.5 text-[11px] text-muted-foreground">
                                     <Loader2 className="w-3 h-3 animate-spin" />
                                     Loading leaseholds...
                                   </div>
                                 )}
                                 {!lhData.loading && lhData.titles.length === 0 && (
-                                  <div className="p-1.5 text-[10px] text-muted-foreground">
+                                  <div className="p-1.5 text-[11px] text-muted-foreground">
                                     {(lhData as any).error ? "Failed to load leaseholds" : "No leasehold titles found"}
                                   </div>
                                 )}
                                 {lhData.details.map((ld: any, li: number) => (
-                                  <div key={li} className="flex items-center justify-between p-1.5 rounded bg-muted/20 text-[10px]">
+                                  <div key={li} className="flex items-center justify-between p-1.5 rounded bg-muted/20 text-[11px]">
                                     <div className="min-w-0 flex-1">
                                       <span className="font-mono font-medium">{ld.titleNumber}</span>
                                       {ld.ownership?.details?.owner && (
@@ -4732,7 +4732,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="h-5 text-[10px] gap-0.5"
+                                        className="h-5 text-[11px] gap-0.5"
                                         onClick={() => downloadTitleDocument(ld.titleNumber, "register")}
                                         disabled={downloadingDoc === `${ld.titleNumber}-register`}
                                         data-testid={`button-download-leasehold-intel-${li}`}
@@ -4742,7 +4742,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="h-5 text-[10px] gap-0.5"
+                                        className="h-5 text-[11px] gap-0.5"
                                         onClick={() => fillTitleFromIntelligence(ld.titleNumber)}
                                         disabled={!!fetchingTitle}
                                         data-testid={`button-fill-leasehold-${li}`}
@@ -4757,7 +4757,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                   <Button
                                     variant="outline"
                                     size="sm"
-                                    className="w-full h-5 text-[10px]"
+                                    className="w-full h-5 text-[11px]"
                                     onClick={() => loadLeaseholdDetailBatch(tn, lhData.titles, lhData.page + 1)}
                                     data-testid={`button-more-leaseholds-${i}`}
                                   >
@@ -4765,7 +4765,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                   </Button>
                                 )}
                                 {lhData.loading && lhData.details.length > 0 && (
-                                  <div className="flex items-center gap-2 p-1 text-[10px] text-muted-foreground">
+                                  <div className="flex items-center gap-2 p-1 text-[11px] text-muted-foreground">
                                     <Loader2 className="w-2.5 h-2.5 animate-spin" />
                                     Loading more...
                                   </div>
@@ -4858,17 +4858,17 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                         <div key={i} className="p-2 bg-muted/30 rounded space-y-0.5" data-testid={`planning-app-${i}`}>
                           <div className="flex items-start justify-between gap-2">
                             <p className="font-medium text-sm flex-1">{pa.proposal || pa.description || "Planning Application"}</p>
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full whitespace-nowrap ${isApproved ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : isRefused ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" : isPending ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400" : "bg-muted text-muted-foreground"}`}>
+                            <span className={`text-[11px] px-1.5 py-0.5 rounded-full whitespace-nowrap ${isApproved ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : isRefused ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" : isPending ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400" : "bg-muted text-muted-foreground"}`}>
                               {pa.status || pa.decision || "Unknown"}
                             </span>
                           </div>
                           {pa.address && <p className="text-xs text-muted-foreground">{pa.address}</p>}
-                          <div className="flex gap-3 text-[10px] text-muted-foreground">
+                          <div className="flex gap-3 text-[11px] text-muted-foreground">
                             {(pa.dates?.received_at || pa.date) && <span>Received: {pa.dates?.received_at || pa.date}</span>}
                             {pa.dates?.decided_at && <span>Decided: {pa.dates.decided_at}</span>}
                             {pa.reference && <span>Ref: {pa.reference}</span>}
                           </div>
-                          {pa.type && <p className="text-[10px] text-muted-foreground">Type: {pa.type}</p>}
+                          {pa.type && <p className="text-[11px] text-muted-foreground">Type: {pa.type}</p>}
                         </div>
                       );
                     })}
@@ -4941,7 +4941,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                         </div>
                       </div>
                     )}
-                    <p className="text-[10px] text-muted-foreground">Source: PropertyData · {new Date(marketTone.generatedAt).toLocaleDateString("en-GB")}</p>
+                    <p className="text-[11px] text-muted-foreground">Source: PropertyData · {new Date(marketTone.generatedAt).toLocaleDateString("en-GB")}</p>
                   </div>
                 </IntelligenceSection>
               )}
@@ -4977,14 +4977,14 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               <div className={`p-2.5 rounded-lg space-y-0.5 ${aiMatch && aiMatch.confidence !== "none" && !property.titleNumber ? "bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800" : "bg-muted/30"}`} data-testid="intel-summary-ownership">
                 <div className="flex items-center gap-1.5">
                   {aiMatch && !property.titleNumber ? <Sparkles className="w-3 h-3 text-green-500" /> : <FileSearch className="w-3 h-3 text-muted-foreground" />}
-                  <span className="text-[10px] text-muted-foreground font-medium">Land Titles</span>
+                  <span className="text-[11px] text-muted-foreground font-medium">Land Titles</span>
                 </div>
                 <p className="text-sm font-bold">{freeholds.length} freehold{freeholds.length !== 1 ? "s" : ""}</p>
                 {(() => {
                   const totalLeaseholds = freeholds.reduce((sum: number, fh: any) => sum + (fh.polygons?.[0]?.leaseholds || 0), 0);
-                  return totalLeaseholds > 0 ? <p className="text-[10px] text-muted-foreground">{totalLeaseholds} leasehold{totalLeaseholds !== 1 ? "s" : ""}</p> : null;
+                  return totalLeaseholds > 0 ? <p className="text-[11px] text-muted-foreground">{totalLeaseholds} leasehold{totalLeaseholds !== 1 ? "s" : ""}</p> : null;
                 })()}
-                <p className="text-[10px] text-muted-foreground">
+                <p className="text-[11px] text-muted-foreground">
                   {property.titleNumber ? `Selected: ${property.titleNumber}` : aiMatch?.titleNumber ? `AI match: ${aiMatch.titleNumber}` : aiMatchLoading ? "AI matching..." : "Click Full Report to select"}
                 </p>
               </div>
@@ -4995,10 +4995,10 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                 <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-epc">
                   <div className="flex items-center gap-1.5">
                     <Zap className="w-3 h-3 text-muted-foreground" />
-                    <span className="text-[10px] text-muted-foreground font-medium">EPC Rating</span>
+                    <span className="text-[11px] text-muted-foreground font-medium">EPC Rating</span>
                   </div>
                   <p className="text-sm font-bold">{topEpc.ratingBand || topEpc.rating || "N/A"}</p>
-                  <p className="text-[10px] text-muted-foreground">{data.epc.length} certificate{data.epc.length !== 1 ? "s" : ""} found</p>
+                  <p className="text-[11px] text-muted-foreground">{data.epc.length} certificate{data.epc.length !== 1 ? "s" : ""} found</p>
                 </div>
               );
             })()}
@@ -5008,27 +5008,27 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                 <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-voa">
                   <div className="flex items-center gap-1.5">
                     <Landmark className="w-3 h-3 text-muted-foreground" />
-                    <span className="text-[10px] text-muted-foreground font-medium">Rateable Value</span>
+                    <span className="text-[11px] text-muted-foreground font-medium">Rateable Value</span>
                   </div>
                   <p className="text-sm font-bold">£{Number(topVoa.rateableValue || 0).toLocaleString()}</p>
-                  <p className="text-[10px] text-muted-foreground truncate">{topVoa.description || "VOA record"}</p>
+                  <p className="text-[11px] text-muted-foreground truncate">{topVoa.description || "VOA record"}</p>
                 </div>
               );
             })()}
             <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-flood">
               <div className="flex items-center gap-1.5">
                 <Droplets className="w-3 h-3 text-muted-foreground" />
-                <span className="text-[10px] text-muted-foreground font-medium">Flood Risk</span>
+                <span className="text-[11px] text-muted-foreground font-medium">Flood Risk</span>
               </div>
               {hasFlood && data.floodRisk.activeFloods > 0 ? (
                 <>
                   <p className="text-sm font-bold text-red-600">⚠ Active</p>
-                  <p className="text-[10px] text-red-500">{data.floodRisk.activeFloods} warning(s)</p>
+                  <p className="text-[11px] text-red-500">{data.floodRisk.activeFloods} warning(s)</p>
                 </>
               ) : (
                 <>
                   <p className="text-sm font-bold text-green-600">Low</p>
-                  <p className="text-[10px] text-muted-foreground">No active warnings</p>
+                  <p className="text-[11px] text-muted-foreground">No active warnings</p>
                 </>
               )}
             </div>
@@ -5038,10 +5038,10 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                 <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-tfl">
                   <div className="flex items-center gap-1.5">
                     <Train className="w-3 h-3 text-muted-foreground" />
-                    <span className="text-[10px] text-muted-foreground font-medium">Nearest Station</span>
+                    <span className="text-[11px] text-muted-foreground font-medium">Nearest Station</span>
                   </div>
                   <p className="text-sm font-bold truncate">{nearest.name}</p>
-                  <p className="text-[10px] text-muted-foreground">{nearest.distance ? `${nearest.distance}m away` : ""}</p>
+                  <p className="text-[11px] text-muted-foreground">{nearest.distance ? `${nearest.distance}m away` : ""}</p>
                 </div>
               );
             })()}
@@ -5049,40 +5049,40 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-planning-apps">
                 <div className="flex items-center gap-1.5">
                   <FileText className="w-3 h-3 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground font-medium">Planning Apps</span>
+                  <span className="text-[11px] text-muted-foreground font-medium">Planning Apps</span>
                 </div>
                 <p className="text-sm font-bold">{planningApps.length} application{planningApps.length !== 1 ? "s" : ""}</p>
-                <p className="text-[10px] text-muted-foreground">Last 10 years</p>
+                <p className="text-[11px] text-muted-foreground">Last 10 years</p>
               </div>
             )}
             {hasPlanning && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-planning">
                 <div className="flex items-center gap-1.5">
                   <ShieldAlert className="w-3 h-3 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground font-medium">Planning</span>
+                  <span className="text-[11px] text-muted-foreground font-medium">Planning</span>
                 </div>
                 <p className="text-sm font-bold">{Object.values(data.planningData).filter((v: any) => Array.isArray(v) && v.length > 0).length} designation(s)</p>
-                <p className="text-[10px] text-muted-foreground">Heritage & conservation</p>
+                <p className="text-[11px] text-muted-foreground">Heritage & conservation</p>
               </div>
             )}
             {hasListed && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-listed">
                 <div className="flex items-center gap-1.5">
                   <Landmark className="w-3 h-3 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground font-medium">Listed Buildings</span>
+                  <span className="text-[11px] text-muted-foreground font-medium">Listed Buildings</span>
                 </div>
                 <p className="text-sm font-bold">{data.listedBuilding.length} nearby</p>
-                <p className="text-[10px] text-muted-foreground">Grade {data.listedBuilding[0]?.grade}</p>
+                <p className="text-[11px] text-muted-foreground">Grade {data.listedBuilding[0]?.grade}</p>
               </div>
             )}
             {hasPdStats && data.propertyDataCoUk["postcode-key-stats"].data.average_yield && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-yield">
                 <div className="flex items-center gap-1.5">
                   <TrendingUp className="w-3 h-3 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground font-medium">Avg Yield</span>
+                  <span className="text-[11px] text-muted-foreground font-medium">Avg Yield</span>
                 </div>
                 <p className="text-sm font-bold">{data.propertyDataCoUk["postcode-key-stats"].data.average_yield}</p>
-                <p className="text-[10px] text-muted-foreground">Postcode average</p>
+                <p className="text-[11px] text-muted-foreground">Postcode average</p>
               </div>
             )}
           </div>

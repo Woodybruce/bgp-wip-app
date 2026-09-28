@@ -357,7 +357,7 @@ function HeaderFilter({ field, label, distinctValues, active, onChange }: {
           <span className="text-xs font-semibold">{label}</span>
           {isActive && (
             <button
-              className="text-[10px] text-primary hover:underline"
+              className="text-[11px] text-primary hover:underline"
               onClick={() => onChange(new Set())}
               data-testid={`tenancy-filter-clear-${field}`}
             >
@@ -461,13 +461,13 @@ function TargetTenantsCell({ unit, letting, onUpdate }: {
     <div className="flex items-center gap-1 flex-wrap min-w-0">
       {chips.map(c => c.companyId ? (
         <a key={c.key} href={`/companies/${c.companyId}`} className="inline-flex">
-          <Badge variant="outline" className="text-[10px] cursor-pointer hover:bg-muted max-w-[130px] truncate">{c.name}</Badge>
+          <Badge variant="outline" className="text-[11px] cursor-pointer hover:bg-muted max-w-[130px] truncate">{c.name}</Badge>
         </a>
       ) : (
-        <Badge key={c.key} variant="outline" className="text-[10px] max-w-[130px] truncate">{c.name}</Badge>
+        <Badge key={c.key} variant="outline" className="text-[11px] max-w-[130px] truncate">{c.name}</Badge>
       ))}
       {letting && (
-        <a href="/available" className="text-[10px] text-muted-foreground hover:text-foreground shrink-0" title="Targets live on the Letting Tracker brief for this unit">LT</a>
+        <a href="/available" className="text-[11px] text-muted-foreground hover:text-foreground shrink-0" title="Targets live on the Letting Tracker brief for this unit">LT</a>
       )}
       {aiChips.map(a => <AiTargetChip key={a.id} target={a} onAdopt={() => adopt(a)} onDismiss={() => settle(a, "rejected")} />)}
       <BrandSearchInput
@@ -501,7 +501,7 @@ function AiTargetChip({ target, onAdopt, onDismiss }: { target: AiTarget; onAdop
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <button type="button" className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-border px-1.5 py-[1px] text-[10px] text-muted-foreground hover:text-foreground hover:border-foreground/40 max-w-[140px]" title="AI-planned target — click for the reasoning" data-testid={`ai-target-${target.id}`}>
+        <button type="button" className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-border px-1.5 py-[1px] text-[11px] text-muted-foreground hover:text-foreground hover:border-foreground/40 max-w-[140px]" title="AI-planned target — click for the reasoning" data-testid={`ai-target-${target.id}`}>
           <span className="font-semibold tabular-nums">{AI_TIER[target.quality_rating] || "B"}</span>
           <span className="truncate">{target.brand_name}</span>
         </button>
@@ -575,7 +575,7 @@ function BreakTypeChip({ value, onChange }: { value: string; onChange: (v: strin
       value={value || ""}
       onChange={(e) => onChange(e.target.value)}
       onClick={(e) => e.stopPropagation()}
-      className={`text-[10px] rounded border-0 px-1 py-0 font-semibold cursor-pointer ${tint}`}
+      className={`text-[11px] rounded border-0 px-1 py-0 font-semibold cursor-pointer ${tint}`}
       title="Break party: Tenant / Landlord / Mutual"
     >
       <option value="">—</option>
@@ -1236,7 +1236,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
             )}
             {!onFullBoard && (
               <Link href={`/tenancy-schedule/${propertyId}`}>
-                <span className="text-[10px] text-primary hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-tenancy-full-board">
+                <span className="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-tenancy-full-board">
                   <ExternalLink className="w-3 h-3" />{compact ? "Full schedule" : "Full Board"}
                 </span>
               </Link>
@@ -1285,7 +1285,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                 typing gave no visible feedback (UX #45) — echo the match
                 count right under the box. Desktop sees the table move. */}
             {search && (
-              <div className="text-[10px] text-muted-foreground mt-0.5 sm:hidden" data-testid="tenancy-search-count">
+              <div className="text-[11px] text-muted-foreground mt-0.5 sm:hidden" data-testid="tenancy-search-count">
                 {filtered.length} of {showArchived ? units.length : currentUnits.length} rows match
               </div>
             )}
@@ -1372,7 +1372,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
               <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" data-testid="btn-tenancy-columns">
                 <Eye className="w-3 h-3 mr-1" />Columns
                 {hiddenFields.size > 0 && (
-                  <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">{hiddenFields.size} hidden</Badge>
+                  <Badge variant="secondary" className="ml-1 h-4 px-1 text-[11px]">{hiddenFields.size} hidden</Badge>
                 )}
               </Button>
             </PopoverTrigger>
@@ -1381,13 +1381,13 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                 <span className="text-xs font-semibold">Show / hide columns</span>
                 <span className="flex items-center gap-2">
                   {compact && (
-                    <button className="text-[10px] text-primary hover:underline" onClick={applyCompactColumns} data-testid="btn-tenancy-columns-compact">
+                    <button className="text-[11px] text-primary hover:underline" onClick={applyCompactColumns} data-testid="btn-tenancy-columns-compact">
                       Everyday
                     </button>
                   )}
                   {!keyColumnsActive && (
                     <button
-                      className="text-[10px] text-primary hover:underline"
+                      className="text-[11px] text-primary hover:underline"
                       onClick={applyKeyColumns}
                       data-testid="btn-tenancy-columns-key"
                     >
@@ -1396,7 +1396,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                   )}
                   {hiddenFields.size > 0 && (
                     <button
-                      className="text-[10px] text-primary hover:underline"
+                      className="text-[11px] text-primary hover:underline"
                       onClick={() => setHiddenFields(new Set())}
                       data-testid="btn-tenancy-columns-reset"
                     >
@@ -1413,7 +1413,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                 }
                 return [...byBand.entries()].map(([band, cols]) => (
                   <div key={band} className="mb-2">
-                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{band}</div>
+                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">{band}</div>
                     <div className="space-y-1 pl-1">
                       {cols.map(c => (
                         <label
@@ -1436,7 +1436,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
           </Popover>
           {!onFullBoard && (!readOnly || compact) && (
             <Link href={`/tenancy-schedule/${propertyId}`}>
-              <span className={`${compact ? "text-xs font-medium" : "text-[10px]"} text-primary hover:underline flex items-center gap-1 cursor-pointer ml-1`} data-testid="link-tenancy-full-board">
+              <span className={`${compact ? "text-xs font-medium" : "text-[11px]"} text-primary hover:underline flex items-center gap-1 cursor-pointer ml-1`} data-testid="link-tenancy-full-board">
                 <ExternalLink className="w-3 h-3" />{compact ? "Full schedule" : "Full Board"}
               </span>
             </Link>
@@ -1556,7 +1556,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                     <button
                       onClick={() => promoteMutation.mutate()}
                       disabled={promoteMutation.isPending}
-                      className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded border border-amber-400 text-amber-700 hover:bg-amber-100 disabled:opacity-50 whitespace-nowrap"
+                      className="inline-flex items-center gap-0.5 text-[11px] font-medium px-1.5 py-0.5 rounded border border-amber-400 text-amber-700 hover:bg-amber-100 disabled:opacity-50 whitespace-nowrap"
                       title="Add this unit to the schedule as an editable row"
                       data-testid={`promote-vacant-card-${unit.id}`}
                     >
@@ -1565,7 +1565,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                   )}
                   {unit.deal_id && (
                     <a href={`/deals/${unit.deal_id}`} className="inline-flex items-center" title={`Open deal${unit.deal_ref ? ` ${unit.deal_ref}` : ""}`}>
-                      <Badge variant="outline" className="text-[10px] gap-0.5 cursor-pointer hover:bg-muted whitespace-nowrap">
+                      <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer hover:bg-muted whitespace-nowrap">
                         <Link2 className="w-2.5 h-2.5" />
                         {unit.deal_ref ? `#${unit.deal_ref}` : "Deal"}
                       </Badge>
@@ -1622,14 +1622,14 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
               )}
               <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
                 {!canEdit ? (
-                  <span className={`text-[10px] font-semibold rounded px-1.5 py-0.5 whitespace-nowrap ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-muted text-foreground"}`}>
+                  <span className={`text-[11px] font-semibold rounded px-1.5 py-0.5 whitespace-nowrap ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-muted text-foreground"}`}>
                     {statusValue || "—"}
                   </span>
                 ) : (
                   <select
                     value={statusValue || ""}
                     onChange={(e) => inlineUpdate(unit.id, "status", e.target.value)}
-                    className={`text-[10px] font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer outline-none whitespace-nowrap ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-muted text-foreground"}`}
+                    className={`text-[11px] font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer outline-none whitespace-nowrap ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-muted text-foreground"}`}
                     data-testid={`tenancy-status-card-${unit.id}`}
                     aria-label="Status"
                   >
@@ -1642,13 +1642,13 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                   </select>
                 )}
                 {unit.lease_start && (
-                  <Badge variant="outline" className="text-[10px] whitespace-nowrap font-mono">Start {fmtDate(unit.lease_start)}</Badge>
+                  <Badge variant="outline" className="text-[11px] whitespace-nowrap font-mono">Start {fmtDate(unit.lease_start)}</Badge>
                 )}
                 {unit.lease_expiry && (
-                  <Badge variant="outline" className="text-[10px] whitespace-nowrap font-mono">Exp {fmtDate(unit.lease_expiry)}</Badge>
+                  <Badge variant="outline" className="text-[11px] whitespace-nowrap font-mono">Exp {fmtDate(unit.lease_expiry)}</Badge>
                 )}
                 {unit.break_date && (
-                  <Badge variant="outline" className="text-[10px] whitespace-nowrap font-mono">
+                  <Badge variant="outline" className="text-[11px] whitespace-nowrap font-mono">
                     Break {fmtDate(unit.break_date)}{unit.break_type ? ` (${unit.break_type})` : ""}
                   </Badge>
                 )}
@@ -1656,23 +1656,23 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
               <div className="flex items-center gap-1.5 mt-1.5">
                 {deal && (
                   <a href={`/deals?id=${deal.id}`} className="inline-flex items-center" title={`Deal: ${deal.name} (${deal.status})`} data-testid={`tenancy-deal-link-card-${unit.id}`}>
-                    <Badge variant="outline" className="text-[10px] gap-0.5 cursor-pointer hover:bg-muted whitespace-nowrap"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
+                    <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer hover:bg-muted whitespace-nowrap"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
                   </a>
                 )}
                 {matchMatter(unit) && (
                   <a href={`/pla/matters/${matchMatter(unit)!.id}`} className="inline-flex items-center" title={`Lease advisory job: ${matchMatter(unit)!.matter_type.replace(/_/g, " ")}`} data-testid={`tenancy-matter-link-card-${unit.id}`}>
-                    <Badge variant="outline" className="text-[10px] gap-0.5 cursor-pointer border-indigo-300 text-indigo-700 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 whitespace-nowrap">Job</Badge>
+                    <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer border-indigo-300 text-indigo-700 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 whitespace-nowrap">Job</Badge>
                   </a>
                 )}
                 {letting ? (
                   <a href="/deals/letting" title={`On the Letting Tracker (${letting.marketing_status || "listed"})`} data-testid={`tenancy-on-tracker-card-${unit.id}`}>
-                    <Badge variant="outline" className="text-[10px] gap-0.5 cursor-pointer border-emerald-300 text-emerald-700 hover:bg-emerald-50 whitespace-nowrap">LT</Badge>
+                    <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer border-emerald-300 text-emerald-700 hover:bg-emerald-50 whitespace-nowrap">LT</Badge>
                   </a>
                 ) : (canEdit && (
                   <button
                     onClick={() => sendToTrackerMutation.mutate(unit)}
                     disabled={sendToTrackerMutation.isPending}
-                    className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 whitespace-nowrap"
+                    className="inline-flex items-center gap-0.5 text-[11px] font-medium px-1.5 py-0.5 rounded-full border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 whitespace-nowrap"
                     title="Create a Letting Tracker listing for this unit"
                     data-testid={`tenancy-to-tracker-card-${unit.id}`}
                   >
@@ -1686,7 +1686,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                   title="Highlight this unit on the property plan"
                   data-testid={`tenancy-plan-link-card-${unit.id}`}
                 >
-                  <Badge variant="outline" className="text-[10px] gap-0.5 cursor-pointer hover:bg-muted whitespace-nowrap">
+                  <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer hover:bg-muted whitespace-nowrap">
                     <MapPinIcon className="w-2.5 h-2.5" />Plan
                   </Badge>
                 </button>
@@ -1984,7 +1984,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
               <button
                 onClick={onPromote}
                 disabled={promoting}
-                className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded border border-amber-400 text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+                className="inline-flex items-center gap-0.5 text-[11px] font-medium px-1.5 py-0.5 rounded border border-amber-400 text-amber-700 hover:bg-amber-100 disabled:opacity-50"
                 title="Add this unit to the schedule as an editable row"
                 data-testid={`promote-vacant-${unit.id}`}
               >
@@ -1993,7 +1993,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
             )}
             {unit.deal_id && (
               <a href={`/deals/${unit.deal_id}`} className="inline-flex items-center" title={`Open deal${unit.deal_ref ? ` ${unit.deal_ref}` : ""}`}>
-                <Badge variant="outline" className="text-[10px] gap-0.5 cursor-pointer hover:bg-muted">
+                <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer hover:bg-muted">
                   <Link2 className="w-2.5 h-2.5" />
                   {unit.deal_ref ? `#${unit.deal_ref}` : "Deal"}
                 </Badge>
@@ -2051,7 +2051,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
             const statusValue = unit.status === "Not Vacant" ? "Occupied" : unit.status;
             return (
               <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap${stickyCls}`}>
-                <span className={`text-[10px] font-semibold rounded px-1.5 py-0.5 ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-muted text-foreground"}`}>
+                <span className={`text-[11px] font-semibold rounded px-1.5 py-0.5 ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-muted text-foreground"}`}>
                   {statusValue || "—"}
                 </span>
               </td>
@@ -2095,7 +2095,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
               <select
                 value={statusValue || ""}
                 onChange={(e) => onUpdate(unit.id, "status", e.target.value)}
-                className={`text-[10px] font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer outline-none ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-muted text-foreground"}`}
+                className={`text-[11px] font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer outline-none ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-muted text-foreground"}`}
                 data-testid={`tenancy-status-${unit.id}`}
                 aria-label="Status"
               >
@@ -2211,7 +2211,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
                     unitId={unit.id}
                     onSave={onUpdate}
                     type={editType}
-                    className="opacity-0 group-hover:opacity-60 text-[10px]"
+                    className="opacity-0 group-hover:opacity-60 text-[11px]"
                   />
                 </div>
               </td>
@@ -2264,7 +2264,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
                   <button
                     onClick={onSendToTracker}
                     disabled={sendingToTracker}
-                    className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100"
+                    className="inline-flex items-center gap-0.5 text-[11px] font-medium px-1.5 py-0.5 rounded border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100"
                     title="Create a Letting Tracker listing for this unit"
                     data-testid={`tenancy-to-tracker-${unit.id}`}
                   >
@@ -2278,7 +2278,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
                     title={`On the Letting Tracker (${letting.marketing_status || "listed"})`}
                     data-testid={`tenancy-on-tracker-${unit.id}`}
                   >
-                    <Badge variant="outline" className="text-[10px] gap-0.5 cursor-pointer border-emerald-300 text-emerald-700 hover:bg-emerald-50">LT</Badge>
+                    <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer border-emerald-300 text-emerald-700 hover:bg-emerald-50">LT</Badge>
                   </a>
                 )}
               </div>
@@ -2301,12 +2301,12 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
         <div className="flex gap-1 justify-center">
           {deal && (
             <a href={`/deals?id=${deal.id}`} className="inline-flex items-center" title={`Deal: ${deal.name} (${deal.status})`} data-testid={`tenancy-deal-link-${unit.id}`}>
-              <Badge variant="outline" className="text-[10px] gap-0.5 cursor-pointer hover:bg-muted"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
+              <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer hover:bg-muted"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
             </a>
           )}
           {matter && (
             <a href={`/pla/matters/${matter.id}`} className="inline-flex items-center" title={`Lease advisory job: ${matter.matter_type.replace(/_/g, " ")} (${matter.status})`} data-testid={`tenancy-matter-link-${unit.id}`}>
-              <Badge variant="outline" className="text-[10px] gap-0.5 cursor-pointer border-indigo-300 text-indigo-700 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40">Job</Badge>
+              <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer border-indigo-300 text-indigo-700 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40">Job</Badge>
             </a>
           )}
           {/* View this unit on the plan — sets the URL hash so the
@@ -2319,7 +2319,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
             title="Highlight this unit on the property plan"
             data-testid={`tenancy-plan-link-${unit.id}`}
           >
-            <Badge variant="outline" className="text-[10px] gap-0.5 cursor-pointer hover:bg-muted">
+            <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer hover:bg-muted">
               <MapPinIcon className="w-2.5 h-2.5" />Plan
             </Badge>
           </button>
