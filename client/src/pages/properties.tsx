@@ -12,7 +12,7 @@ import { ScrollableTable } from "@/components/scrollable-table";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Pill } from "@/components/ui/pill";
+import { Pill, pillMetrics } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -2818,7 +2818,7 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
   // or tracker activity, tenants in occupation shown BRAND-FIRST, and
   // consultants. Collapsible headers so the panel reads as a map, not a
   // scroll. Never the raw company directory.
-  type LinkedContact = { id: string; name: string; role: string | null; email: string | null; company_id: string | null; company_name: string | null; last_interaction: string | null; via: string | null; side?: string };
+  type LinkedContact = { id: string; name: string; role: string | null; email: string | null; company_id: string | null; company_name: string | null; last_interaction: string | null; via: string | null; side?: string; context?: string | null };
   type OccupierRow = { company_id: string; company_name: string; contact: { id: string; name: string; role: string | null; email: string | null; last_interaction: string | null } | null };
   const { data } = useQuery<{ landlord: LinkedContact[]; tenants: OccupierRow[]; deals: LinkedContact[]; interest: LinkedContact[]; internal: LinkedContact[]; consultants: LinkedContact[]; trackerUnlinked: Array<{ unit_name: string; status: string | null }>; pinned: LinkedContact[]; hiddenCount: number }>({
     queryKey: ["/api/properties", propertyId, "linked-contacts"],
@@ -2865,7 +2865,9 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ internal: true, deals: true });
 
-  const personRow = (contact: LinkedContact, showVia: boolean, pinnedRow = false) => (
+  // A reason longer than a word or two goes on the second line instead of a
+  // chip, so the chip never squeezes the name or cuts off mid-word.
+  const personRow = (contact: LinkedContact, showVia: boolean, pinnedRow = false, chipVia = !!contact.via && contact.via.length <= 18) => (
     <div key={contact.id} className="group/lcrow relative">
       <Link href={contact.id.startsWith("u-") ? "/hr" : contact.id.startsWith("co-") ? `/companies/${contact.company_id}` : `/contacts/${contact.id}`} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted/50 min-w-0" data-testid={`contact-item-${contact.id}`}>
         <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-semibold shrink-0 ${contact.side === "bgp" ? "bg-foreground text-background" : contact.side === "client" ? "bg-blue-100 text-blue-700" : "bg-muted text-muted-foreground"}`}>
@@ -2873,13 +2875,15 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
         </span>
         <div className="flex-1 min-w-0">
           <span className="text-xs font-medium truncate block">{contact.name}</span>
-          <span className="text-[10px] text-muted-foreground truncate block">
-            {[contact.role, contact.side === "bgp" ? "BGP" : contact.company_name !== contact.name ? contact.company_name : null].filter(Boolean).join(" · ")}
+          <span className="text-[10px] text-muted-foreground truncate block" title={contact.context || undefined}>
+            {[contact.role, contact.side === "bgp" ? "BGP" : contact.company_name !== contact.name ? contact.company_name : null, contact.context, showVia && !chipVia && contact.side !== "client" ? contact.via : null].filter(Boolean).join(" · ")}
           </span>
         </div>
-        {contact.side === "client" && <Badge variant="outline" className="text-[9px] shrink-0 text-blue-700 border-blue-200">Client</Badge>}
-        {showVia && contact.via && contact.side !== "client" && (
-          <Badge variant="outline" className="text-[9px] shrink-0 max-w-[110px] truncate" title={contact.via}>{contact.via}</Badge>
+        {contact.side === "client" && <span className={`${pillMetrics} shrink-0 border border-border text-foreground`}>Client</span>}
+        {/* A word or two — the deal / unit itself is on the line under the
+            name, so the chip never cuts off mid-word. */}
+        {showVia && chipVia && contact.side !== "client" && (
+          <span className={`${pillMetrics} shrink-0 border border-border text-muted-foreground`}>{contact.via}</span>
         )}
         {contact.last_interaction && (
           <span className="text-[9px] text-muted-foreground shrink-0">{gbDate(contact.last_interaction, { day: "numeric", month: "short" })}</span>
@@ -5058,7 +5062,9 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
             <p className="text-xs">No news found for this property</p>
           </div>
         ) : (
-          <ScrollArea className="md:h-[360px] pr-2">
+          // Capped, not fixed: four headlines in a 360px box left a blank
+          // block under them (the Royal Exchange, 2026-09-28).
+          <ScrollArea className="md:[&>[data-radix-scroll-area-viewport]]:max-h-[360px] pr-2">
             <div className="divide-y">
               {articles.map(article => {
                 // Derive a source domain for the favicon fallback. The URL

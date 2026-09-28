@@ -211,6 +211,23 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
     // a small 3:4 thumbnail with empty space below. Multi-tile keeps
     // the grid + aspect-ratio pattern so 6 brochures stay legible.
     const isHero = active.length === 1;
+    const coarse = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches;
+
+    // Nothing on either side: one line with both adds in it, not two zero
+    // tabs over a 180px drop zone (Woody, 2026-09-28). Dropping a PDF on
+    // the card still works.
+    if (!data.leasing.length && !data.investment.length && !data.archived.leasing.length && !data.archived.investment.length) {
+      const pick = (type: "leasing" | "investment") => { setTab(type); requestAnimationFrame(() => fileInputRef.current?.click()); };
+      return (
+        <p className="text-xs text-muted-foreground" data-testid="brochures-empty">
+          No brochures yet{coarse ? "" : " — drop a PDF here"} — add a{" "}
+          <button type="button" className="text-primary hover:underline" onClick={() => pick("leasing")} disabled={uploadMutation.isPending}>leasing</button>
+          {" "}or{" "}
+          <button type="button" className="text-primary hover:underline" onClick={() => pick("investment")} disabled={uploadMutation.isPending}>investment</button>
+          {" "}brochure.
+        </p>
+      );
+    }
 
     return (
       <>
@@ -234,13 +251,13 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
         </div>
 
         {active.length === 0 ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-xs text-muted-foreground py-8 text-center border border-dashed rounded-md min-h-[180px]">
-            <Upload className="w-5 h-5 mb-1 opacity-40" />
+          <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground py-3 text-center border border-dashed rounded-md">
+            <Upload className="w-3.5 h-3.5 opacity-40" />
             {/* UX #136 — drag-and-drop doesn't exist on touch; keep the
                 drop-zone copy for pointer devices only. */}
-            {typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches
-              ? "No brochures yet — use Add."
-              : "No brochures yet — drop a PDF here or use Add."}
+            {coarse
+              ? `No ${tab} brochures yet — use Add.`
+              : `No ${tab} brochures yet — drop a PDF here or use Add.`}
           </div>
         ) : isHero ? (
           // Full-width row placement: give the hero preview real depth so

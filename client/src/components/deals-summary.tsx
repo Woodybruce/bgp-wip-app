@@ -18,9 +18,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Handshake, ChevronRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { WIP_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
+import { withoutPropertyName } from "@shared/property-labels";
 import { DEAL_STATUS_BADGE_COLORS, DEAL_STATUS_DOT_COLORS } from "@/lib/deal-status-colors";
 
 // The Deals schedule (/deals/list) shows WIP_STATUSES; "live" = still being
@@ -77,15 +78,10 @@ export function DealsSummary({ propertyId, propertyIds, variant }: {
 }) {
   const { live, counts, isLoading, isError, refetch } = useBoardDeals(propertyId, propertyIds);
   // On a property's own page the cached property record gives its name, so
-  // "Nando's – Bluewater Shopping Centre" reads "Nando's" (no extra fetch).
+  // "Nando's – Bluewater Shopping Centre" reads "Nando's" and "Royal
+  // Exchange - Inception T2" reads "Inception T2" (no extra fetch).
   const { data: ownProperty } = useQuery<any>({ queryKey: ["/api/crm/properties", propertyId], enabled: false });
-  const dealLabel = (name: string | null) => {
-    const own = String(ownProperty?.name || "").trim();
-    if (!name || !own) return name;
-    const at = name.toLowerCase().indexOf(own.toLowerCase().split(/[,(]/)[0].trim());
-    const cut = at > 2 ? name.slice(0, at).replace(/[\s,–—-]+$/, "") : name;
-    return cut || name;
-  };
+  const dealLabel = (name: string | null) => name ? withoutPropertyName(name, ownProperty?.name) : name;
   if (isError) return <div className="space-y-2" role="status"><p className="text-xs text-muted-foreground">Deals data could not be loaded.</p><Button variant="outline" size="sm" onClick={() => refetch()}>Retry deals</Button><Link href={boardHref(propertyId)} className="text-xs hover:underline">Open Deals board</Link></div>;
   if (isLoading) return <p className="text-xs text-muted-foreground">Loading deals…</p>;
 
@@ -131,12 +127,9 @@ export function DealsSummary({ propertyId, propertyIds, variant }: {
       {isLoading ? (
         <p className="text-xs text-muted-foreground italic">Loading deals…</p>
       ) : live.length === 0 ? (
-        <div className="text-center py-3">
-          <Handshake className="w-6 h-6 mx-auto mb-1 text-muted-foreground/30" />
-          {/* Sales / purchases run on the Investment board and are left out
-              here — "nothing live" read as wrong on a property that's for sale. */}
-          <p className="text-xs text-muted-foreground">No live leasing deals. Sales and purchases show under Investment.</p>
-        </div>
+        // Sales / purchases run on the Investment board and are left out
+        // here — "nothing live" read as wrong on a property that's for sale.
+        <p className="text-xs text-muted-foreground">No live leasing deals. Sales and purchases show under Investment.</p>
       ) : (
         <div className="space-y-1 max-h-[300px] overflow-y-auto pr-1">
           {live.map(d => (

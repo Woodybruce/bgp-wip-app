@@ -23,6 +23,8 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
+import { withoutPropertyName } from "@shared/property-labels";
 
 const router = Router();
 
@@ -46,13 +48,14 @@ export function summariseBriefSchedule(rows: any[], failed = false, now = Date.n
   const vacant = rows.filter(row => briefOccupancy(row.status) === "vacant");
   const unknown = rows.length - occupied.length - vacant.length;
   const legacy = rows.some(row => row.schedule_source !== "tenancy");
-  const missingExpiry = occupied.some(row => !row.lease_expiry || !Number.isFinite(new Date(row.lease_expiry).getTime()));
+  const noExpiry = occupied.filter(row => !row.lease_expiry || !Number.isFinite(new Date(row.lease_expiry).getTime())).length;
+  const missingExpiry = noExpiry > 0;
   const status: "ready" | "partial" | "missing" | "error" = failed ? "error" : !rows.length ? "missing" : legacy || unknown > 0 ? "partial" : "ready";
   const risksStatus = status === "ready" && missingExpiry ? "partial" : status;
   const message = failed ? null : !rows.length ? "No tenancy schedule is recorded. Vacancy and lease risk checks are unavailable."
     : legacy ? "Only a legacy leasing schedule is recorded. Confirm the full tenancy schedule before relying on property totals."
       : unknown ? `${unknown} unit${unknown === 1 ? " has" : "s have"} no confirmed occupancy status. Vacancy is unavailable.`
-        : missingExpiry ? "Some occupied units have no valid lease expiry. Lease risk checks are incomplete." : null;
+        : missingExpiry ? `${noExpiry === occupied.length ? (noExpiry === 1 ? "The occupied unit has" : `All ${noExpiry} occupied units have`) : `${noExpiry} of ${occupied.length} occupied units ${noExpiry === 1 ? "has" : "have"}`} no lease expiry recorded, so lease risk checks are incomplete.` : null;
   const rentComplete = occupied.length > 0 && occupied.every(row => row.rent_pa != null && Number.isFinite(Number(row.rent_pa)) && Number(row.rent_pa) > 0);
   const totalRent = rentComplete ? occupied.reduce((sum, row) => sum + Number(row.rent_pa), 0) : 0;
   const weightedTerm = status === "ready" && !missingExpiry && totalRent > 0
@@ -70,6 +73,41 @@ export function summariseBriefSchedule(rows: any[], failed = false, now = Date.n
       source: failed || !rows.length ? null : legacy ? "leasing" : "tenancy",
     },
   };
+}
+
+// The property's BGP team as people (Woody, 2026-09-28: the Royal Exchange's
+// Contacts card showed an empty BGP team while Lizzie, Jack, Pete and he all
+// work it). The property's own agents first; then BGP agents on its deals;
+// and, unless someone has set the property team, the owner's account team
+// with their account roles. One row per person.
+export function propertyBgpTeam(
+  explicit: Array<{ id: string; name: string; email?: string | null; agent_role?: string | null }>,
+  dealAgents: Array<{ id: string; name: string; email?: string | null; team?: string[] | string | null }>,
+  account: Array<{ id: string; name: string; email?: string | null; role?: string | null; company_name?: string | null }>,
+) {
+  const teamRole = (teams: string[]) => {
+    const t = teams.map(x => String(x || "").toLowerCase());
+    if (t.includes("investment")) return "Investment";
+    if (t.includes("lease advisory")) return "Lease advisory";
+    if (t.some(x => /retail|f&b|leasing|landsec/.test(x))) return "Leasing";
+    if (t.includes("development")) return "Development";
+    if (t.includes("tenant rep")) return "Tenant rep";
+    return "On deals";
+  };
+  const accountRole = new Map(account.map(a => [String(a.id), a.role || null]));
+  const out: Array<{ id: string; user_id: string; name: string; email: string | null; role: string; side: "bgp"; source: "property" | "deals" | "account"; via: string }> = [];
+  const seen = new Set<string>();
+  const add = (row: typeof out[number]) => { if (!seen.has(row.user_id)) { seen.add(row.user_id); out.push(row); } };
+  for (const r of explicit) add({ id: `u-${r.id}`, user_id: String(r.id), name: r.name, email: r.email || null, role: r.agent_role || "Agent", side: "bgp", source: "property", via: "property team" });
+  const teamsByAgent = new Map<string, { row: typeof dealAgents[number]; teams: string[] }>();
+  for (const r of dealAgents) {
+    const entry = teamsByAgent.get(String(r.id)) || { row: r, teams: [] };
+    entry.teams.push(...(Array.isArray(r.team) ? r.team : r.team ? [r.team] : []));
+    teamsByAgent.set(String(r.id), entry);
+  }
+  for (const [id, { row, teams }] of teamsByAgent) add({ id: `u-${id}`, user_id: id, name: row.name, email: row.email || null, role: accountRole.get(id) || teamRole(teams), side: "bgp", source: "deals", via: "on deals" });
+  if (!explicit.length) for (const r of account) add({ id: `u-${r.id}`, user_id: String(r.id), name: r.name, email: r.email || null, role: r.role || "Account team", side: "bgp", source: "account", via: r.company_name ? `${r.company_name} account team` : "account team" });
+  return out;
 }
 
 router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, res: Response) => {
@@ -1154,12 +1192,40 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
         ORDER BY rank, name`,
       [pid]
     );
+    // BGP agents on the property's deals — by id, or by name for the legacy
+    // name column ("Evie North (Landlord)" is Evie North).
+    const dealAgentsQ = pool.query(
+      `SELECT u.id, u.name, u.email, d.team
+         FROM crm_deals d
+         LEFT JOIN property_units pu ON pu.id = d.unit_id
+         LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
+         JOIN users u ON (u.id = ANY(COALESCE(d.internal_agent_ids, ARRAY[]::varchar[]))
+           OR lower(u.name) = ANY(ARRAY(SELECT lower(trim(regexp_replace(a, '\\s*\\(.*\\)\\s*$', ''))) FROM unnest(COALESCE(d.internal_agent, ARRAY[]::text[])) a)))
+        WHERE (d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1)
+          AND COALESCE(d.status,'') <> 'WIT' AND u.is_active IS DISTINCT FROM false
+        ORDER BY d.updated_at DESC NULLS LAST, u.name
+        LIMIT 40`,
+      [pid]
+    ).catch(() => ({ rows: [] as any[] }));
+    // The owner's account team (crm_companies.bgp_contact_user_ids) with the
+    // roles set on the landlord page (crm_company_bgp_roles).
+    const accountTeamQ = pool.query(
+      `SELECT u.id, u.name, u.email, r.role, c.name AS company_name
+         FROM crm_properties p
+         JOIN crm_companies c ON c.id = p.landlord_id
+         JOIN users u ON u.id = ANY(COALESCE(c.bgp_contact_user_ids, ARRAY[]::text[]))
+         LEFT JOIN crm_company_bgp_roles r ON r.user_id = u.id AND r.company_id = c.id
+        WHERE p.id = $1 AND u.is_active IS DISTINCT FROM false
+        ORDER BY u.name LIMIT 12`,
+      [pid]
+    ).catch(() => ({ rows: [] as any[] }));
     const clientLeadsQ = pool.query(
       `WITH owner_cos AS (
          SELECT landlord_id AS id FROM crm_properties WHERE id = $1 AND landlord_id IS NOT NULL
          UNION SELECT company_id FROM crm_company_properties WHERE property_id = $1
        )
-       SELECT c.* FROM crm_contacts c JOIN owner_cos o ON o.id = c.company_id
+       SELECT c.*, co.name AS owner_name FROM crm_contacts c JOIN owner_cos o ON o.id = c.company_id
+         LEFT JOIN crm_companies co ON co.id = c.company_id
         WHERE lower(COALESCE(c.role,'')) LIKE '%director%'
         ORDER BY c.name LIMIT 6`,
       [pid]
@@ -1199,7 +1265,7 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
           WHERE d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1
        ),
        fk AS (
-         SELECT DISTINCT ON (cid) cid AS contact_id, pd.name AS deal_name FROM pdeals pd
+         SELECT DISTINCT ON (cid) cid AS contact_id, pd.name AS deal_name, pd.status AS deal_status FROM pdeals pd
          CROSS JOIN LATERAL unnest(ARRAY[
            pd.client_contact_id, pd.tenant_contact_id, pd.landlord_contact_id,
            pd.vendor_contact_id, pd.purchaser_contact_id, pd.vendor_agent_contact_id,
@@ -1207,7 +1273,7 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
          ]) AS cid WHERE cid IS NOT NULL
        ),
        live AS (
-         SELECT DISTINCT ON (c.id) c.id AS contact_id, pd.name AS deal_name
+         SELECT DISTINCT ON (c.id) c.id AS contact_id, pd.name AS deal_name, pd.status AS deal_status
            FROM pdeals pd
            JOIN crm_companies co ON co.id IN (pd.tenant_id, pd.vendor_id, pd.purchaser_id)
            JOIN crm_contacts c ON c.company_id = co.id AND c.last_interaction IS NOT NULL
@@ -1215,10 +1281,10 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
           ORDER BY c.id, c.last_interaction DESC
        ),
        merged AS (
-         SELECT contact_id, deal_name FROM fk
-         UNION SELECT contact_id, deal_name FROM live
+         SELECT contact_id, deal_name, deal_status FROM fk
+         UNION SELECT contact_id, deal_name, deal_status FROM live
        )
-       SELECT DISTINCT ON (c.id) c.*, m.deal_name FROM crm_contacts c JOIN merged m ON m.contact_id = c.id
+       SELECT DISTINCT ON (c.id) c.*, m.deal_name, m.deal_status FROM crm_contacts c JOIN merged m ON m.contact_id = c.id
         ORDER BY c.id, c.last_interaction DESC NULLS LAST
         LIMIT 12`,
       [pid]
@@ -1255,6 +1321,7 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
        )
        SELECT DISTINCT ON (c.company_id) c.*, p.unit_name, p.marketing_status
          FROM parties p JOIN crm_contacts c ON c.company_id = p.company_id
+        WHERE NOT EXISTS (SELECT 1 FROM crm_properties op WHERE op.id = $1 AND p.company_id IN (op.landlord_id, op.freeholder_id, op.long_leaseholder_id))
         ORDER BY c.company_id, c.last_interaction DESC NULLS LAST
         LIMIT 12`,
       [pid]
@@ -1263,7 +1330,7 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
     // 3b-ii. Brands on live deals here with NO contactable person — shown
     //        as brand-only rows so the group still names who's in play.
     const dealBrandsPropQ = pool.query(
-      `SELECT DISTINCT ON (co.id) co.id AS brand_id, co.name AS brand_name, d.name AS deal_name
+      `SELECT DISTINCT ON (co.id) co.id AS brand_id, co.name AS brand_name, d.name AS deal_name, d.status AS deal_status
          FROM crm_deals d
          JOIN crm_companies co ON co.id = d.tenant_id
          LEFT JOIN property_units pu ON pu.id = d.unit_id
@@ -1289,22 +1356,26 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
     );
 
     // 4. Interest — people who actually viewed or offered on the
-    //    property's tracker units.
+    //    property's tracker units. Never the owner's own people: an offer
+    //    email BGP forwarded to Ardent was once logged against Ardent's
+    //    director, and he showed as "made an offer" on the Royal Exchange.
     const interestQ = pool.query(
       `WITH touches AS (
-         SELECT v.contact_id, v.viewing_date::timestamp AS at, 'viewed' AS kind
+         SELECT v.contact_id, v.viewing_date::timestamp AS at, 'viewed' AS kind, au.unit_name
            FROM unit_viewings v JOIN available_units au ON au.id = v.unit_id
           WHERE au.property_id = $1 AND v.contact_id IS NOT NULL
          UNION ALL
-         SELECT o.contact_id, o.offer_date::timestamp AS at, 'offered' AS kind
+         SELECT o.contact_id, o.offer_date::timestamp AS at, 'offered' AS kind, au.unit_name
            FROM unit_offers o JOIN available_units au ON au.id = o.unit_id
           WHERE au.property_id = $1 AND o.contact_id IS NOT NULL
        )
-       SELECT DISTINCT ON (c.id) c.*, t.kind, t.at FROM crm_contacts c JOIN touches t ON t.contact_id = c.id
+       SELECT DISTINCT ON (c.id) c.*, t.kind, t.at, t.unit_name FROM crm_contacts c JOIN touches t ON t.contact_id = c.id
+        WHERE NOT EXISTS (SELECT 1 FROM crm_properties op WHERE op.id = $1 AND c.company_id IN (op.landlord_id, op.freeholder_id, op.long_leaseholder_id))
         ORDER BY c.id, t.at DESC
         LIMIT 10`,
       [pid]
     );
+    const propertyNameQ = pool.query(`SELECT name FROM crm_properties WHERE id = $1`, [pid]);
 
     const overridesQ = pool.query(
       `SELECT contact_id, kind FROM property_contact_overrides WHERE property_id = $1`, [pid]
@@ -1317,13 +1388,23 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
         ORDER BY c.name`, [pid]
     );
 
-    const [landlord, tenants, deals, interest, bgpTeam, clientLeads, consultants, tracker, unlinked, overrides, pinned, dealBrandsProp] =
-      await Promise.all([landlordQ, tenantsQ, dealsQ, interestQ, bgpTeamQ, clientLeadsQ, consultantsQ, trackerQ, unlinkedQ, overridesQ, pinnedQ, dealBrandsPropQ]);
+    const [landlord, tenants, deals, interest, bgpTeam, clientLeads, consultants, tracker, unlinked, overrides, pinned, dealBrandsProp, dealAgents, accountTeam, propertyName] =
+      await Promise.all([landlordQ, tenantsQ, dealsQ, interestQ, bgpTeamQ, clientLeadsQ, consultantsQ, trackerQ, unlinkedQ, overridesQ, pinnedQ, dealBrandsPropQ, dealAgentsQ, accountTeamQ, propertyNameQ]);
     const hiddenIds = new Set(overrides.rows.filter((r: any) => r.kind === "hide").map((r: any) => r.contact_id));
     const pinnedIds = new Set(overrides.rows.filter((r: any) => r.kind === "pin").map((r: any) => r.contact_id));
     const notHidden = (rows: any[]) => rows.filter((r: any) => !hiddenIds.has(r.id) && !pinnedIds.has(r.id));
     const dealIds = new Set(deals.rows.map((r: any) => r.id));
     const trackerRows = tracker.rows.filter((r: any) => !dealIds.has(r.id));
+    // The chip says why someone is here in a word or two (the deal's stage,
+    // "Offer", "Viewed"); which deal or unit goes on the person's second line
+    // without the property's own name — "Royal Exchange - Inception T2" was
+    // cut to "Royal Exchange - Inc…" in the chip.
+    const pname = propertyName.rows[0]?.name || "";
+    const stage = (status: any) => DEAL_STATUS_LABELS[legacyToCode(status) as keyof typeof DEAL_STATUS_LABELS] || "On a deal";
+    const context = (label: any, ...skip: any[]) => {
+      const short = withoutPropertyName(label, pname);
+      return short && !skip.some(s => s && String(s).trim().toLowerCase() === short.toLowerCase()) ? short : null;
+    };
     res.json({
       landlord: notHidden(landlord.rows).map((r: any) => shape(r, "landlord team")),
       // Brand-first occupier rows: the company is the row, the freshest
@@ -1335,20 +1416,20 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
         contact: r.id && !hiddenIds.has(r.id) ? { id: r.id, name: r.name, role: r.role, email: r.email, last_interaction: r.last_interaction } : null,
       })),
       deals: [
-        ...notHidden(deals.rows).map((r: any) => shape(r, r.deal_name || "on a deal")),
-        ...notHidden(trackerRows).map((r: any) => shape(r, `${r.marketing_status || "negotiating"} · ${r.unit_name || "tracker"}`)),
+        ...notHidden(deals.rows).map((r: any) => ({ ...shape(r, stage(r.deal_status)), context: context(r.deal_name, r.name, r.company_name) })),
+        ...notHidden(trackerRows).map((r: any) => ({ ...shape(r, legacyToCode(r.marketing_status) ? stage(r.marketing_status) : r.marketing_status || "Negotiating"), context: context(r.unit_name) })),
         ...dealBrandsProp.rows
           .filter((r: any) => !deals.rows.some((d: any) => d.company_id === r.brand_id) && !trackerRows.some((t: any) => t.company_id === r.brand_id))
           .map((r: any) => ({
             id: `co-${r.brand_id}`, name: r.brand_name, role: "no contact on file",
             company_id: r.brand_id, company_name: r.brand_name, last_interaction: null,
-            via: r.deal_name || "on a deal",
+            via: stage(r.deal_status), context: context(r.deal_name, r.brand_name),
           })),
       ],
-      interest: notHidden(interest.rows).map((r: any) => shape(r, r.kind === "offered" ? "made an offer" : "viewed")),
+      interest: notHidden(interest.rows).map((r: any) => ({ ...shape(r, r.kind === "offered" ? "Offer" : "Viewed"), context: context(r.unit_name) })),
       internal: [
-        ...bgpTeam.rows.map((r: any) => ({ id: `u-${r.id}`, user_id: r.id, name: r.name, role: r.agent_role || "Agent", email: r.email, side: "bgp" })),
-        ...notHidden(clientLeads.rows).map((r: any) => ({ ...shape(r, "client"), side: "client" })),
+        ...propertyBgpTeam(bgpTeam.rows, dealAgents.rows, accountTeam.rows),
+        ...notHidden(clientLeads.rows).map((r: any) => ({ ...shape(r, "client"), company_name: r.company_name || r.owner_name || null, side: "client" })),
       ],
       consultants: notHidden(consultants.rows).map((r: any) => ({ ...shape(r, r.consultant_type || "consultant") })),
       trackerUnlinked: unlinked.rows.map((r: any) => ({ unit_name: r.unit_name, status: r.marketing_status })),

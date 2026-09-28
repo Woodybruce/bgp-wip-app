@@ -389,6 +389,18 @@ export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
   // No schedule recorded = nothing to check; the card only repeated the
   // missing-schedule warning shown on the overview.
   if (data.data_quality?.risks === "missing" && !data.risks.length) return null;
+  // Nothing flagged — clean, or the checks couldn't run in full (a data gap,
+  // not an alarm): one quiet line, not a red-tinted card (Woody, 2026-09-28).
+  if (!data.risks.length) {
+    return (
+      <Card data-testid="risk-register-note">
+        <CardContent className="px-3 py-2 flex items-start gap-2 text-xs text-muted-foreground" role="status">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <p><span className="font-semibold uppercase tracking-wider text-[11px] mr-1.5">Risk register</span>{complete ? "No risks flagged in the recorded lease and covenant data." : data.data_warnings?.find(w => w.section === "schedule")?.message || "Risk checks are incomplete. Confirm the tenancy schedule before relying on this summary."}</p>
+        </CardContent>
+      </Card>
+    );
+  }
   return (
     <Card className="overflow-hidden">
       <CardHeader className="p-3 pb-2 bg-gradient-to-r from-rose-500/[0.06] to-transparent">
@@ -412,33 +424,28 @@ export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-2">
-        {!complete && data.risks.length === 0 && <p className="text-xs text-muted-foreground mb-2" role="status">{data.data_warnings?.find(w => w.section === "schedule")?.message || "Risk checks are incomplete. Confirm the tenancy schedule before relying on this summary."}</p>}
-        {data.risks.length === 0 ? (
-          complete ? <p className="text-xs text-muted-foreground italic">No risks flagged in the recorded lease and covenant data.</p> : null
-        ) : (
-          <div className="space-y-1 pr-1">
-            {shownRisks.map((r, i) => (
-              <div
-                key={i}
-                className={`flex items-start gap-2 text-xs px-2 py-1.5 rounded-md border-l-2 leading-snug ${
-                  r.severity === "high"
-                    ? "border-l-rose-500 bg-rose-50/60 dark:bg-rose-950/20"
-                    : "border-l-amber-400 bg-amber-50/50 dark:bg-amber-950/15"
-                }`}
-              >
-                <div className="flex-1 min-w-0">{r.message}</div>
-                <span className={`text-[9px] font-semibold uppercase tracking-wide shrink-0 mt-0.5 ${
-                  r.severity === "high" ? "text-rose-600" : "text-amber-600"
-                }`}>{r.severity === "high" ? "Urgent" : "Watch"}</span>
-              </div>
-            ))}
-            {allRisks.length > 6 && (
-              <button type="button" className="text-[11px] text-primary hover:underline mt-1" onClick={() => setShowAllRisks(v => !v)} data-testid="risk-register-toggle">
-                {showAllRisks ? "Show fewer" : `Show all ${allRisks.length}`}
-              </button>
-            )}
-          </div>
-        )}
+        <div className="space-y-1 pr-1">
+          {shownRisks.map((r, i) => (
+            <div
+              key={i}
+              className={`flex items-start gap-2 text-xs px-2 py-1.5 rounded-md border-l-2 leading-snug ${
+                r.severity === "high"
+                  ? "border-l-rose-500 bg-rose-50/60 dark:bg-rose-950/20"
+                  : "border-l-amber-400 bg-amber-50/50 dark:bg-amber-950/15"
+              }`}
+            >
+              <div className="flex-1 min-w-0">{r.message}</div>
+              <span className={`text-[9px] font-semibold uppercase tracking-wide shrink-0 mt-0.5 ${
+                r.severity === "high" ? "text-rose-600" : "text-amber-600"
+              }`}>{r.severity === "high" ? "Urgent" : "Watch"}</span>
+            </div>
+          ))}
+          {allRisks.length > 6 && (
+            <button type="button" className="text-[11px] text-primary hover:underline mt-1" onClick={() => setShowAllRisks(v => !v)} data-testid="risk-register-toggle">
+              {showAllRisks ? "Show fewer" : `Show all ${allRisks.length}`}
+            </button>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
@@ -1106,6 +1113,23 @@ export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { prope
     onError: (e: any) => toast({ title: "Couldn't regenerate", description: e?.message, variant: "destructive" }),
   });
 
+  // No commentary yet: one line with the action in it, not a dashed box.
+  if (!commentary) {
+    return (
+      <Card data-testid="bgp-commentary-empty">
+        <CardContent className="px-3 py-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+          <Sparkles className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <span className="font-semibold shrink-0">BGP Commentary</span>
+          <span className="text-muted-foreground">No commentary yet —</span>
+          <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[11px] shrink-0 -ml-1" onClick={() => regenerate.mutate()} disabled={regenerate.isPending}
+            title="Written by Claude from the live deals, activity, risks and tenancy schedule">
+            {regenerate.isPending ? "Thinking…" : "Generate"}
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card>
       <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
@@ -1126,19 +1150,13 @@ export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { prope
           title="Re-run Claude over the latest deals / activity / risks"
         >
           <Sparkles className={`w-3 h-3 mr-1 ${regenerate.isPending ? "animate-spin" : ""}`} />
-          {regenerate.isPending ? "Thinking…" : (commentary ? "Refresh" : "Generate")}
+          {regenerate.isPending ? "Thinking…" : "Refresh"}
         </Button>
       </CardHeader>
       <CardContent className="p-3 pt-0">
-        {commentary ? (
-          <div className="rounded-md border border-border bg-muted/40 p-3">
-            {renderAiCommentary(commentary)}
-          </div>
-        ) : (
-          <div className="rounded-md border border-dashed border-border p-3 text-center">
-            <p className="text-xs text-muted-foreground">No commentary yet. Generate one based on the live deals, activity feed, risks, and leasing schedule for this property.</p>
-          </div>
-        )}
+        <div className="rounded-md border border-border bg-muted/40 p-3">
+          {renderAiCommentary(commentary)}
+        </div>
       </CardContent>
     </Card>
   );
@@ -1192,6 +1210,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
   // of ability?") — assign to a colleague and set priority inline.
   const [assigneeId, setAssigneeId] = useState("");
   const [priority, setPriority] = useState("medium");
+  const [composing, setComposing] = useState(false);
   const { data: allUsersRaw } = useQuery<{ id: string; name: string }[]>({ queryKey: ["/api/users"] });
   const allUsers = Array.isArray(allUsersRaw) ? allUsersRaw : [];
 
@@ -1257,10 +1276,17 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
       <CardContent className="p-3 pt-2 space-y-1.5">
         {tasksLoading && <p className="text-[11px] text-muted-foreground">Loading property tasks…</p>}
         {tasksError && <div role="status"><p className="text-[11px] text-muted-foreground">Property tasks could not be loaded.</p><Button variant="outline" size="sm" onClick={() => retryTasks()}>Retry tasks</Button></div>}
-        {!tasksLoading && !tasksError && tasks.length === 0 && (
-          <p className="text-[11px] text-muted-foreground">No open tasks — add one below.</p>
+        {/* Empty: one line with the action inline; the add form opens on
+            demand instead of sitting under an empty list. */}
+        {!tasksLoading && !tasksError && tasks.length === 0 && !composing && (
+          <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+            No open tasks yet —
+            <button type="button" className="text-primary hover:underline inline-flex items-center gap-0.5" onClick={() => setComposing(true)} data-testid="focus-task-open">
+              <Plus className="w-3 h-3" />Add task
+            </button>
+          </p>
         )}
-        <div className="space-y-0.5 max-h-[220px] overflow-y-auto pr-1">
+        {tasks.length > 0 && <div className="space-y-0.5 max-h-[220px] overflow-y-auto pr-1">
           {tasks.slice(0, 10).map(t => {
             const due = dueLabel(t.due_date);
             return (
@@ -1308,8 +1334,8 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
               + {tasks.length - 10} more — see them all on My Tasks.
             </div>
           )}
-        </div>
-        <div className="flex items-center gap-1.5 pt-1 border-t mt-1.5 flex-wrap">
+        </div>}
+        {(tasks.length > 0 || composing || tasksError) && <div className={`flex items-center gap-1.5 flex-wrap ${tasks.length > 0 ? "pt-1 border-t mt-1.5" : ""}`}>
           <Input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -1345,7 +1371,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
           >
             <Plus className="w-3 h-3 mr-1" /> Add
           </Button>
-        </div>
+        </div>}
       </CardContent>
     </Card>
   );

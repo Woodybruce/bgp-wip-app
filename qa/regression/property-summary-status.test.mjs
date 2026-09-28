@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { LETTING_STATUSES, WIP_STATUSES, DEAL_STATUS_LABELS, legacyToCode } from '../../shared/deal-status.ts';
+import { withoutPropertyName } from '../../shared/property-labels.ts';
 const require = createRequire(import.meta.url);
 const { source, ts } = require('./source-harness.cjs');
 
@@ -16,7 +17,7 @@ function fixture(kind, { units = [], deals = [], failed = false, loading = false
   const code = ts.transpileModule(input, { fileName: 'fixture.tsx', compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React } }).outputText;
   const wrap = ({ children }) => React.createElement('span', {}, children), empty = () => null;
   vm.runInNewContext(code, {
-    exports, React, URLSearchParams, LETTING_STATUSES, WIP_STATUSES, DEAL_STATUS_LABELS, legacyToCode,
+    exports, React, URLSearchParams, LETTING_STATUSES, WIP_STATUSES, DEAL_STATUS_LABELS, legacyToCode, withoutPropertyName,
     DEAL_STATUS_BADGE_COLORS: {}, DEAL_STATUS_DOT_COLORS: {}, useMemo: fn => fn(),
     Link: ({ children, href }) => React.createElement('a', { href }, children), Badge: wrap, Button: wrap, Store: empty, Handshake: empty, ChevronRight: empty,
     getAuthHeaders: () => ({ Authorization: 'Bearer fixture' }),
@@ -66,6 +67,15 @@ test('HOT deals appear live without changing the Deals board tracker-exclusion r
   await test.queries[0].queryFn();
   assert.equal(test.fetches[0].url, '/api/crm/deals?excludeTrackerDeals=true');
   assert.equal(test.fetches[0].options.headers.Authorization, 'Bearer fixture');
+});
+
+test('nothing live on a property is one line with the add inline; closed stages still show', () => {
+  const html = fixture('tracker', { units: [{ id: 'done', propertyId: 'property', marketingStatus: 'COM' }] }).render({ propertyId: 'property', variant: 'card' });
+  assert.match(html, /Nothing live — .*add a unit.*Letting Tracker/);
+  assert.match(html, /1.*Completed/);
+  assert.doesNotMatch(html, /live letting/, 'no "0 live lettings" headline over the same fact');
+  const deals = fixture('deals', { deals: [] }).render({ propertyId: 'property', variant: 'card' });
+  assert.match(deals, /No live leasing deals/);
 });
 
 test('summary query errors throw instead of returning an apparently empty board', async () => {

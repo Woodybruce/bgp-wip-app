@@ -33,6 +33,7 @@ import {
 } from "@shared/schema";
 import { isInvoicedStatus, legacyToCode, WIP_STATUSES, deriveStageFromStatus } from "@shared/deal-status";
 import { isClientCrmCategory } from "@shared/tenant-categories";
+import { bgpTeamsOnly } from "@shared/property-labels";
 import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { contentDispositionFor } from "./utils/http-headers";
@@ -4060,7 +4061,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       }
 
       if (req.body.team && deal.propertyId) {
-        const dealTeams: string[] = Array.isArray(deal.team) ? deal.team : [];
+        // Only BGP's own teams carry onto the property — a deal's "Landlord"
+        // (who BGP acts for) landed on the Royal Exchange as a team.
+        const dealTeams: string[] = bgpTeamsOnly(Array.isArray(deal.team) ? deal.team : []);
         if (dealTeams.length > 0) {
           const [prop] = await db.select().from(crmProperties).where(eq(crmProperties.id, deal.propertyId)).limit(1);
           if (prop) {

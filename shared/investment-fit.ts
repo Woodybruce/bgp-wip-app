@@ -69,12 +69,21 @@ export function assetIsLondon(address: string | null | undefined): boolean {
   return /\blondon\b/i.test(a) || /\b(E|EC|N|NW|SE|SW|W|WC)\d{1,2}[A-Z]?\s*\d[A-Z]{2}\b/i.test(a);
 }
 
+// Central London — the City, the West End and Belgravia/St James's (EC, WC,
+// W1, SW1). A City arcade compares with Bond Street shops, not a retail park
+// on the Old Kent Road, though both are "London".
+export function assetIsCentralLondon(address: string | null | undefined): boolean {
+  const a = String(address || "");
+  return /\b(?:EC\d[A-Z]?|WC\d[A-Z]?|W1[A-Z]?|SW1[A-Z]?)(?!\d)\s*\d/i.test(a)
+    || /\b(city of london|west end|mayfair|soho|covent garden|knightsbridge|st james'?s)\b/i.test(a);
+}
+
 // The detail of the use — what a thematic buyer actually targets.
 const USE_DETAILS: Array<[string, RegExp]> = [
   ["shopping centres", /\b(shopping cent(re|er)s?|malls?)\b/i],
   ["retail parks", /\b(retail parks?|retail warehous(e|ing))\b/i],
   ["supermarkets", /\b(supermarkets?|food ?stores?|grocery|grocers?)\b/i],
-  ["high street", /\b(high streets?|prime retail|parades?|shops)\b/i],
+  ["high street", /\b(high streets?|prime retail|parades?|shops|arcades?|luxury retail)\b/i],
   ["leisure parks", /\b(leisure parks?|leisure schemes?)\b/i],
   ["outlets", /\b(outlets?|outlet cent(re|er)s?)\b/i],
   ["F&B", /(\bf&b\b|\brestaurants?\b|\bfood (and|&) beverage\b|\bfood halls?\b|\bmarket halls?\b|\bstreet food\b|\bcovered markets?\b|\b(village|food) market\b)/i],
