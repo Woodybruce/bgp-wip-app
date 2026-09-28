@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-11T05:29:10.424Z",
+  "generatedAt": "2026-09-28T09:34:47.763Z",
   "site": "https://www.bgp.uk.com",
   "note": "Content of bgp.uk.com. Pages are rendered client-side; use this file rather than fetching HTML. Live availability comes from listingsFeed.",
   "heroStatement": "Great places are built through connected thinking.",
@@ -75,7 +75,7 @@
       "title": "Managing Director",
       "phone": "+44 (0)7980 313 675",
       "email": "woody@brucegillinghampollard.com",
-      "photo": null
+      "photo": "https://www.bgp.uk.com/images/team/woody-bruce.jpg"
     },
     {
       "name": "Tracey Pollard",
@@ -131,7 +131,7 @@
       "title": "Director, National Leasing",
       "phone": "+44 (0)7741 877 452",
       "email": "lucyg@brucegillinghampollard.com",
-      "photo": null
+      "photo": "https://www.bgp.uk.com/images/team/lucy-gardiner.jpg"
     },
     {
       "name": "Lizzie Knights",
@@ -194,7 +194,7 @@
       "title": "Leasing",
       "phone": "+44 (0)20 3551 5260",
       "email": "TBC",
-      "photo": null
+      "photo": "https://www.bgp.uk.com/images/team/millie-edwards.jpg"
     },
     {
       "name": "Emily Cann",
@@ -208,7 +208,7 @@
       "title": "Graduate Surveyor, London Leasing",
       "phone": "+44 (0)7760 881 270",
       "email": "willp@brucegillinghampollard.com",
-      "photo": null
+      "photo": "https://www.bgp.uk.com/images/team/will-penfold.jpg"
     },
     {
       "name": "Luke Donohoe",
