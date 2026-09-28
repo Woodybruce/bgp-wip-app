@@ -289,3 +289,66 @@ export async function linkTrackerNames(fields: Record<string, any>): Promise<Rec
   }
   return out;
 }
+
+// Extra clients on an asset (BGP acting for several buyers). Each is linked
+// to the backing deal too, so the deal and the company's page show it.
+export async function addTrackerClient(trackerId: string, companyId: string, actorId: string | null) {
+  const tracker = (await pool.query(`SELECT id, client_id, deal_id FROM investment_tracker WHERE id = $1`, [trackerId])).rows[0];
+  if (!tracker) return { status: 404, body: { message: "Asset not found" } };
+  const company = (await pool.query(`SELECT id, name FROM crm_companies WHERE id = $1 AND merged_into_id IS NULL`, [companyId])).rows[0];
+  if (!company) return { status: 404, body: { message: "Company not found" } };
+  if (!tracker.client_id) {
+    await pool.query(`UPDATE investment_tracker SET client_id = $2, client = $3, updated_at = NOW() WHERE id = $1`, [trackerId, company.id, company.name]);
+    if (tracker.deal_id) await syncPrimaryClientToDeal(trackerId);
+  } else if (tracker.client_id !== company.id) {
+    await pool.query(
+      `INSERT INTO investment_tracker_clients (tracker_id, company_id, added_by)
+       SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM investment_tracker_clients WHERE tracker_id = $1 AND company_id = $2)`,
+      [trackerId, company.id, actorId]);
+  }
+  if (tracker.deal_id) {
+    await pool.query(`INSERT INTO crm_company_deals (company_id, deal_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [company.id, tracker.deal_id])
+      .catch((e: any) => console.warn("[investment-tracker] client deal link failed:", e?.message));
+  }
+  return { status: 200, body: { ok: true, clients: await trackerClients(trackerId) } };
+}
+
+export async function removeTrackerClient(trackerId: string, companyId: string) {
+  const tracker = (await pool.query(`SELECT id, client_id, deal_id FROM investment_tracker WHERE id = $1`, [trackerId])).rows[0];
+  if (!tracker) return { status: 404, body: { message: "Asset not found" } };
+  await pool.query(`DELETE FROM investment_tracker_clients WHERE tracker_id = $1 AND company_id = $2`, [trackerId, companyId]);
+  if (tracker.client_id === companyId) {
+    // The next client steps up as the primary one.
+    const next = (await pool.query(
+      `SELECT tc.company_id, c.name FROM investment_tracker_clients tc JOIN crm_companies c ON c.id = tc.company_id
+        WHERE tc.tracker_id = $1 ORDER BY tc.added_at LIMIT 1`, [trackerId])).rows[0];
+    await pool.query(`UPDATE investment_tracker SET client_id = $2, client = $3, updated_at = NOW() WHERE id = $1`, [trackerId, next?.company_id || null, next?.name || null]);
+    if (next) await pool.query(`DELETE FROM investment_tracker_clients WHERE tracker_id = $1 AND company_id = $2`, [trackerId, next.company_id]);
+    if (tracker.deal_id) await syncPrimaryClientToDeal(trackerId);
+  }
+  if (tracker.deal_id) {
+    // Leave the deal link when the company is still a party on the deal.
+    await pool.query(
+      `DELETE FROM crm_company_deals cd WHERE cd.company_id = $1 AND cd.deal_id = $2
+          AND NOT EXISTS (SELECT 1 FROM crm_deals d WHERE d.id = $2 AND $1 IN (d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id))`,
+      [companyId, tracker.deal_id]).catch(() => undefined);
+  }
+  return { status: 200, body: { ok: true, clients: await trackerClients(trackerId) } };
+}
+
+export async function trackerClients(trackerId: string) {
+  return (await pool.query(
+    `SELECT c.id AS "companyId", c.name, MIN(tc.added_at) AS "addedAt"
+       FROM investment_tracker_clients tc JOIN crm_companies c ON c.id = tc.company_id
+      WHERE tc.tracker_id = $1 GROUP BY c.id, c.name ORDER BY 3`, [trackerId])).rows;
+}
+
+async function syncPrimaryClientToDeal(trackerId: string) {
+  const row = (await db.select().from(investmentTracker).where(eq(investmentTracker.id, trackerId)))[0];
+  if (!row?.dealId) return;
+  const parties = await trackerDealParties(row);
+  const patch: Record<string, any> = {};
+  if ((row.boardType || "Purchases") === "Sales") { patch.vendorId = parties.vendorId ?? null; patch.landlordId = parties.landlordId ?? null; }
+  else patch.purchaserId = parties.purchaserId ?? null;
+  await storage.updateCrmDeal(row.dealId, patch as any).catch((e: any) => console.warn("[investment-tracker] client deal sync failed:", e?.message));
+}

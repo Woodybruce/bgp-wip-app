@@ -1179,11 +1179,6 @@ export default function InvestmentTrackerPage() {
     for (const c of companies) m.set(c.id, c.name);
     return m;
   }, [companies]);
-  // Buyer = future landlord, so the picker offers Landlord-type companies
-  // (mirrors the landlord filter on the WIP page).
-  const landlordCompanyItems = useMemo(() => companies
-    .filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client")
-    .map(c => ({ id: c.id, name: c.name })), [companies]);
   const companyByName = useMemo(() => {
     const m = new Map<string, string>();
     for (const c of companies) m.set(c.name, c.id);
@@ -1268,6 +1263,29 @@ export default function InvestmentTrackerPage() {
     queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
     toast({ title: "Property created", description: `${created.name} added to CRM.` });
     return { id: String(created.id), name: created.name };
+  };
+
+  // Every company / contact picker can create the record it can't find, and
+  // the new one is linked straight away (Woody, 2026-09-28).
+  const createCompanyNamed = async (name: string, companyType: string) => {
+    const r = await apiRequest("POST", "/api/crm/companies", { name: name.trim(), companyType });
+    const created = await r.json();
+    await queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+    toast({ title: "Company created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: String(created.name) };
+  };
+  const createContactNamed = async (name: string, contactType?: string) => {
+    const r = await apiRequest("POST", "/api/crm/contacts", { name: name.trim(), ...(contactType ? { contactType } : {}) });
+    const created = await r.json();
+    await queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+    toast({ title: "Contact created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: String(created.name) };
+  };
+  const withToast = (fn: () => Promise<void>) => fn().catch((e: any) => toast({ title: "Couldn't save", description: e?.message, variant: "destructive" }));
+  // More than one client on an asset — acting for several buyers.
+  const changeClients = async (id: string, companyId: string, add: boolean) => {
+    await apiRequest(add ? "POST" : "DELETE", add ? `/api/investment-tracker/${id}/clients` : `/api/investment-tracker/${id}/clients/${companyId}`, add ? { companyId } : undefined);
+    await queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
   };
 
   const boardItems = useMemo(() => items.filter(u => (u.boardType || "Purchases") === boardType), [items, boardType]);
@@ -2019,14 +2037,12 @@ export default function InvestmentTrackerPage() {
                         href={item.propertyId ? `/properties/${item.propertyId}` : undefined}
                         onSave={(v) => {
                           const name = propertyMap.get(v || "") || "";
-                          inlineUpdate(item.id, "propertyId", v || null);
-                          if (name) inlineUpdate(item.id, "assetName", name);
+                          updateMutation.mutate({ id: item.id, data: { propertyId: v || null, ...(name ? { assetName: name } : {}) } });
                         }}
-                        onCreate={async (name) => {
+                        onCreate={(name) => withToast(async () => {
                           const c = await createProperty(name);
-                          inlineUpdate(item.id, "propertyId", c.id);
-                          inlineUpdate(item.id, "assetName", c.name);
-                        }}
+                          updateMutation.mutate({ id: item.id, data: { propertyId: c.id, assetName: c.name } });
+                        })}
                         placeholder={item.assetName || "Link property"}
                       />
                       {item.address && (
@@ -2091,12 +2107,39 @@ export default function InvestmentTrackerPage() {
                           href={item.clientId ? `/companies/${item.clientId}` : undefined}
                           onSave={(v) => {
                             const name = companyById.get(v || "") || "";
-                            inlineUpdate(item.id, "clientId", v || null);
-                            inlineUpdate(item.id, "client", name || null);
+                            // One save — two at once raced each other through the deal sync.
+                            updateMutation.mutate({ id: item.id, data: { clientId: v || null, client: name || null } });
                           }}
+                          onCreate={(name) => withToast(async () => {
+                            const created = await createCompanyNamed(name, "Investor");
+                            updateMutation.mutate({ id: item.id, data: { clientId: created.id, client: created.name } });
+                          })}
                           placeholder="Link client"
                           data-testid={`picker-client-${item.id}`}
                         />
+                        {((item as any).extraClients || []).map((extra: { companyId: string; name: string }) => (
+                          <div key={extra.companyId} className="flex items-center gap-1 pl-1.5 min-w-0" data-testid={`extra-client-${item.id}-${extra.companyId}`}>
+                            <Link href={`/companies/${extra.companyId}`} className="text-xs text-primary hover:underline truncate">{extra.name}</Link>
+                            <button type="button" title={`Remove ${extra.name}`} aria-label={`Remove ${extra.name}`}
+                              onClick={() => withToast(() => changeClients(item.id, extra.companyId, false))}
+                              className="text-muted-foreground hover:text-destructive shrink-0"><X className="h-3 w-3" /></button>
+                          </div>
+                        ))}
+                        {item.clientId && (
+                          <div className="pl-1.5">
+                            <InlineLinkSelect
+                              value=""
+                              options={companyItems.filter(c => c.id !== item.clientId && !((item as any).extraClients || []).some((e: any) => e.companyId === c.id))}
+                              onSave={(v) => { if (v) withToast(() => changeClients(item.id, v, true)); }}
+                              onCreate={(name) => withToast(async () => {
+                                const created = await createCompanyNamed(name, "Investor");
+                                await changeClients(item.id, created.id, true);
+                              })}
+                              placeholder="Add client"
+                              compact={false}
+                            />
+                          </div>
+                        )}
                         <div className="flex items-center gap-1.5 pl-1.5">
                           <InlineLinkSelect
                             value={item.clientContactId || ""}
@@ -2105,9 +2148,12 @@ export default function InvestmentTrackerPage() {
                             onSave={(v) => {
                               const ct = contactById.get(v || "");
                               const name = ct ? (ct.companyName ? `${ct.name} (${ct.companyName})` : ct.name) : "";
-                              inlineUpdate(item.id, "clientContactId", v || null);
-                              inlineUpdate(item.id, "clientContact", name || null);
+                              updateMutation.mutate({ id: item.id, data: { clientContactId: v || null, clientContact: name || null } });
                             }}
+                            onCreate={(name) => withToast(async () => {
+                              const created = await createContactNamed(name);
+                              updateMutation.mutate({ id: item.id, data: { clientContactId: created.id, clientContact: created.name } });
+                            })}
                             placeholder="Link contact"
                             data-testid={`picker-client-contact-${item.id}`}
                           />
@@ -2142,9 +2188,12 @@ export default function InvestmentTrackerPage() {
                               href={item.vendorId ? `/companies/${item.vendorId}` : undefined}
                               onSave={(v) => {
                                 const name = companyById.get(v || "") || "";
-                                inlineUpdate(item.id, "vendorId", v || null);
-                                inlineUpdate(item.id, "vendor", name || null);
+                                updateMutation.mutate({ id: item.id, data: { vendorId: v || null, vendor: name || null } });
                               }}
+                              onCreate={(name) => withToast(async () => {
+                                const created = await createCompanyNamed(name, "Landlord");
+                                updateMutation.mutate({ id: item.id, data: { vendorId: created.id, vendor: created.name } });
+                              })}
                               placeholder="Link vendor"
                               data-testid={`picker-vendor-${item.id}`}
                             />
@@ -2156,9 +2205,12 @@ export default function InvestmentTrackerPage() {
                                 onSave={(v) => {
                                   const ct = contactById.get(v || "");
                                   const name = ct ? (ct.companyName ? `${ct.name} (${ct.companyName})` : ct.name) : "";
-                                  inlineUpdate(item.id, "vendorAgentId", v || null);
-                                  inlineUpdate(item.id, "vendorAgent", name || null);
+                                  updateMutation.mutate({ id: item.id, data: { vendorAgentId: v || null, vendorAgent: name || null } });
                                 }}
+                                onCreate={(name) => withToast(async () => {
+                                  const created = await createContactNamed(name, "Agent");
+                                  updateMutation.mutate({ id: item.id, data: { vendorAgentId: created.id, vendorAgent: created.name } });
+                                })}
                                 placeholder="Link agent"
                                 data-testid={`picker-vendor-agent-${item.id}`}
                               />
@@ -2196,9 +2248,11 @@ export default function InvestmentTrackerPage() {
                         <TableCell className="px-2 py-1.5">
                           {(() => {
                             const currentId = (item as any).buyerId || (item.buyer ? (companyByName.get(item.buyer) || "") : "");
-                            const opts = currentId && !landlordCompanyItems.some(o => o.id === currentId)
-                              ? [...landlordCompanyItems, { id: currentId, name: item.buyer || "" }]
-                              : landlordCompanyItems;
+                            // Any company can be the buyer — investors weren't findable
+                            // when the list was landlords only.
+                            const opts = currentId && !companyItems.some(o => o.id === currentId)
+                              ? [...companyItems, { id: currentId, name: item.buyer || "" }]
+                              : companyItems;
                             return (
                               <InlineLinkSelect
                                 value={currentId}
@@ -2208,6 +2262,10 @@ export default function InvestmentTrackerPage() {
                                   const name = companyById.get(v || "") || "";
                                   updateMutation.mutate({ id: item.id, data: { buyer: name || null, buyerId: v || null } });
                                 }}
+                                onCreate={(name) => withToast(async () => {
+                                  const created = await createCompanyNamed(name, "Investor");
+                                  updateMutation.mutate({ id: item.id, data: { buyer: created.name, buyerId: created.id } });
+                                })}
                                 placeholder="Link buyer"
                                 data-testid={`picker-buyer-${item.id}`}
                               />
@@ -2337,6 +2395,8 @@ export default function InvestmentTrackerPage() {
                 onSelect={(id, name) => setForm({ ...form, propertyId: id, assetName: form.assetName || name })}
                 placeholder="Select or leave blank to auto-create"
                 testId="picker-property"
+                onCreate={createProperty}
+                createKind="property"
               />
               <p className="text-[10px] text-muted-foreground mt-0.5">Leave blank to auto-create from asset name</p>
             </div>
@@ -2407,6 +2467,8 @@ export default function InvestmentTrackerPage() {
                 onSelect={(id, name) => setForm({ ...form, client: name, clientId: id })}
                 placeholder="Select company"
                 testId="picker-client"
+                onCreate={(name) => createCompanyNamed(name, "Investor")}
+                createKind="company"
               />
             </div>
             <div>
@@ -2418,8 +2480,39 @@ export default function InvestmentTrackerPage() {
                 onSelect={(id, name) => setForm({ ...form, clientContact: name, clientContactId: id })}
                 placeholder="Select contact"
                 testId="picker-client-contact"
+                onCreate={(name) => createContactNamed(name)}
+                createKind="contact"
               />
             </div>
+            {editItem && form.clientId && (() => {
+              const live = items.find(i => i.id === editItem.id) as any;
+              const extras: { companyId: string; name: string }[] = live?.extraClients || [];
+              return (
+                <div className="col-span-2" data-testid="dialog-extra-clients">
+                  <Label className="text-xs">Other clients (acting for more than one buyer)</Label>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                    {extras.map(extra => (
+                      <span key={extra.companyId} className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs">
+                        {extra.name}
+                        <button type="button" aria-label={`Remove ${extra.name}`} onClick={() => withToast(() => changeClients(editItem.id, extra.companyId, false))} className="text-muted-foreground hover:text-destructive"><X className="h-3 w-3" /></button>
+                      </span>
+                    ))}
+                    <div className="min-w-[12rem]">
+                      <CrmPicker
+                        items={companyItems.filter(c => c.id !== form.clientId && !extras.some(e => e.companyId === c.id))}
+                        value=""
+                        valueName=""
+                        onSelect={(id) => { if (id) withToast(() => changeClients(editItem.id, id, true)); }}
+                        placeholder="Add client"
+                        testId="picker-extra-client"
+                        onCreate={async (name) => { const created = await createCompanyNamed(name, "Investor"); await changeClients(editItem.id, created.id, true); return created; }}
+                        createKind="company"
+                      />
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
             <div>
               <Label className="text-xs">Status</Label>
               <Select value={legacyToCode(form.status) || "REP"} onValueChange={v => setForm({ ...form, status: v })}>
@@ -2451,6 +2544,8 @@ export default function InvestmentTrackerPage() {
                     onSelect={(id, name) => setForm({ ...form, vendor: name, vendorId: id })}
                     placeholder="Select company"
                     testId="picker-vendor"
+                    onCreate={(name) => createCompanyNamed(name, "Landlord")}
+                    createKind="company"
                   />
                 </div>
                 <div>
@@ -2462,6 +2557,8 @@ export default function InvestmentTrackerPage() {
                     onSelect={(id, name) => setForm({ ...form, vendorAgent: name, vendorAgentId: id })}
                     placeholder="Select agent"
                     testId="picker-vendor-agent"
+                    onCreate={(name) => createContactNamed(name, "Agent")}
+                    createKind="agent"
                   />
                 </div>
                 <div>
@@ -2480,6 +2577,8 @@ export default function InvestmentTrackerPage() {
                     onSelect={(id, name) => setForm({ ...form, buyer: name, buyerId: id || "" })}
                     placeholder="Select company"
                     testId="picker-buyer"
+                    onCreate={(name) => createCompanyNamed(name, "Investor")}
+                    createKind="company"
                   />
                 </div>
                 <div>

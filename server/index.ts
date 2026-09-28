@@ -1193,6 +1193,18 @@ installGoogleBudgetGuard();
        read_at TIMESTAMP
      )`,
     `CREATE INDEX IF NOT EXISTS user_notifications_user_idx ON user_notifications (user_id, created_at DESC)`,
+    // More than one client on an investment tracker asset — BGP acting for
+    // several buyers (Woody, 2026-09-28). The first client stays on
+    // investment_tracker.client_id; these are the rest. No unique key so a
+    // company merge can repoint rows without colliding; reads de-duplicate.
+    `CREATE TABLE IF NOT EXISTS investment_tracker_clients (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       tracker_id VARCHAR NOT NULL,
+       company_id VARCHAR NOT NULL,
+       added_by VARCHAR,
+       added_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS investment_tracker_clients_tracker_idx ON investment_tracker_clients (tracker_id)`,
     // Digital business cards (Woody, 2026-09-28, "like blinq"): one public
     // slug per staff member, and everyone who shares their details back.
     `CREATE TABLE IF NOT EXISTS business_cards (

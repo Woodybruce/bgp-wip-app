@@ -7711,12 +7711,17 @@ These terms are indicative only and do not constitute a binding agreement.`;
         it.vendor_id AS "vendorId", it.vendor_agent_id AS "vendorAgentId",
         it.completion_date AS "completionDate",
         it.fee, it.fee_type AS "feeType", it.marketing_date AS "marketingDate", it.bid_deadline AS "bidDeadline",
-        it.created_at AS "createdAt", it.updated_at AS "updatedAt"
+        it.created_at AS "createdAt", it.updated_at AS "updatedAt",
+        COALESCE((SELECT json_agg(x ORDER BY x."addedAt") FROM (
+            SELECT DISTINCT ON (c.id) c.id AS "companyId", c.name, tc.added_at AS "addedAt"
+              FROM investment_tracker_clients tc JOIN crm_companies c ON c.id = tc.company_id
+             WHERE tc.tracker_id = it.id AND tc.company_id IS DISTINCT FROM it.client_id
+             ORDER BY c.id, tc.added_at) x), '[]'::json) AS "extraClients"
         FROM investment_tracker it
         LEFT JOIN crm_deals d ON d.id = it.deal_id`;
       const params: string[] = [];
       if (scopeCompanyId) {
-        queryText += ` WHERE it.client_id = $1 OR it.vendor_id = $1`;
+        queryText += ` WHERE it.client_id = $1 OR it.vendor_id = $1 OR EXISTS (SELECT 1 FROM investment_tracker_clients tc WHERE tc.tracker_id = it.id AND tc.company_id = $1)`;
         params.push(scopeCompanyId);
       }
       queryText += ` ORDER BY it.created_at DESC`;
@@ -7855,12 +7860,35 @@ These terms are indicative only and do not constitute a binding agreement.`;
   });
 
   app.patch("/api/investment-tracker/:id", requireAuth, async (req, res) => {
+    const started = Date.now();
     try {
       const out = await updateTrackerAsset(String(req.params.id), req.body, { id: (req as any).session?.userId || (req as any).tokenUserId || null });
       res.status(out.status).json(out.body);
     } catch (e: any) {
+      console.error(`[investment-tracker PATCH] ${req.params.id} failed (${Object.keys(req.body || {}).join(",")}):`, e?.message);
       res.status(400).json({ message: e.message });
+    } finally {
+      const ms = Date.now() - started;
+      if (ms > 5000) console.warn(`[investment-tracker PATCH] ${req.params.id} took ${ms}ms (${Object.keys(req.body || {}).join(",")})`);
     }
+  });
+
+  // Several clients on one asset (acting for more than one buyer).
+  app.post("/api/investment-tracker/:id/clients", requireAuth, async (req, res) => {
+    try {
+      const companyId = typeof req.body?.companyId === "string" ? req.body.companyId : "";
+      if (!companyId) return res.status(400).json({ message: "Choose a company" });
+      const { addTrackerClient } = await import("./investment-tracker-service");
+      const out = await addTrackerClient(String(req.params.id), companyId, (req as any).session?.userId || (req as any).tokenUserId || null);
+      res.status(out.status).json(out.body);
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+  app.delete("/api/investment-tracker/:id/clients/:companyId", requireAuth, async (req, res) => {
+    try {
+      const { removeTrackerClient } = await import("./investment-tracker-service");
+      const out = await removeTrackerClient(String(req.params.id), String(req.params.companyId));
+      res.status(out.status).json(out.body);
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
   app.delete("/api/investment-tracker/:id", requireAuth, async (req, res) => {
