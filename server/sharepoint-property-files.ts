@@ -161,8 +161,17 @@ export function mergeCandidates(lists: SpCandidate[][]): SpCandidate[] {
   return out;
 }
 
-/** Brochures: the wanted type first, then brochure-like names, newest first. */
+// A single unit's particulars ("Unit 7-8 … Particulars", "Mezzanine …") sit
+// below the whole-scheme brochure (Woody, 2026-09-28: the Royal Exchange's
+// 2023 unit particulars outranked the Dec 25 scheme brochure).
+const UNIT_LEVEL = /\b(units?\s*\d|shop\s*\d|mezzanine|kiosk|suite\s*\d)/i;
+// The same file copied into several drives shows once.
+const sameFile = (c: SpCandidate) => `${String(c.name || "").toLowerCase().replace(/\s*\(\d+\)(?=\.[a-z0-9]+$)/, "")}|${c.size ?? ""}`;
+
+/** Brochures: the wanted type first, then brochure-like names, whole-scheme
+ *  before single units, newest first; copies of one file collapse. */
 export function rankBrochureCandidates(list: SpCandidate[], wanted: BrochureType): SpCandidate[] {
+  const seen = new Set<string>();
   return list.filter(c => isPdf(c.name)).map(c => ({
     ...c,
     type: brochureType(c.name, c.path),
@@ -171,7 +180,9 @@ export function rankBrochureCandidates(list: SpCandidate[], wanted: BrochureType
   })).sort((a, b) =>
     Number(b.type === wanted) - Number(a.type === wanted)
     || (b.tier! - a.tier!)
-    || String(b.docDate || "").localeCompare(String(a.docDate || "")));
+    || Number(UNIT_LEVEL.test(a.name)) - Number(UNIT_LEVEL.test(b.name))
+    || String(b.docDate || "").localeCompare(String(a.docDate || "")))
+    .filter(c => { const k = sameFile(c); if (seen.has(k)) return false; seen.add(k); return true; });
 }
 
 /** Schedules: tenancy-schedule-like names first, newest first. */

@@ -219,3 +219,16 @@ test('the upload route and the SharePoint route both go through importTenancyWor
   const fromSp = br.slice(br.indexOf('"/api/properties/:id/brochures/from-sharepoint"'));
   assert.match(fromSp.slice(0, 800), /isClientRequestUser/);
 });
+
+test('Royal Exchange leasing: the Dec 25 scheme brochure beats 2023 unit particulars, and copies collapse', () => {
+  const c = (name, path, lastModified, size, driveId = 'd1') => ({ name, path, lastModified, size, driveId, itemId: name + driveId, webUrl: null, source: 'search' });
+  const ranked = rankBrochureCandidates([
+    c('Unit 7-8 The Royal Exchange Particulars 2023 FINAL.pdf', 'BGP share drive/London/The Royal Exchange/Brochures', '2026-09-08T10:00:00Z', 100),
+    c('Mezzanine The Royal Exchange Particulars 2023 FINAL.pdf', 'BGP share drive/London/The Royal Exchange/Brochures', '2026-09-08T10:00:00Z', 200),
+    c('Royal_Exchange_Brochure_Dec 25.pdf', 'Marketing/Marketing Details/The Royal Exchange/Brochure', '2025-12-03T15:45:31Z', 3341210),
+    c('Royal_Exchange_Brochure_Dec 25.pdf', 'Marketing/Marketing Details/The Royal Exchange/Brochure', '2025-12-03T15:45:31Z', 3341210, 'd2'),
+  ], 'leasing');
+  assert.equal(ranked[0].name, 'Royal_Exchange_Brochure_Dec 25.pdf');
+  assert.equal(ranked.filter(r => r.name === 'Royal_Exchange_Brochure_Dec 25.pdf').length, 1);
+  assert.equal(ranked.length, 3);
+});
