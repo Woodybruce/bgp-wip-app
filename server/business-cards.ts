@@ -190,7 +190,16 @@ form button{width:100%;font:inherit;font-weight:600;border:0;border-radius:10px;
 .hp{position:absolute;left:-9999px}.fine{font-size:11px;color:#6b6b66;margin:10px 0 0}
 .qr{display:flex;justify-content:center}.qr svg{width:170px;height:170px}
 .ok{background:#fff;border:1px solid ${BRAND.blush};border-radius:16px;padding:16px 20px;margin-top:14px;text-align:center}
+.appbar{display:none;position:sticky;top:0;z-index:5;background:${BRAND.cream};border-bottom:1px solid ${BRAND.blush};padding:calc(10px + env(safe-area-inset-top)) 16px 10px;margin:0 -16px}
+.appbar a{color:${BRAND.bordeaux};text-decoration:none;font-weight:600;font-size:15px}
+.in-app .appbar{display:block}
 </style></head><body><div class="wrap">
+<div class="appbar"><a href="/business-card">‹ Back to ChatBGP</a></div>
+<script>
+// Opened inside the installed app there's no browser back button — show
+// a way out. Visitors in a normal browser never see it.
+(function(){try{var inApp=(window.matchMedia&&window.matchMedia("(display-mode: standalone)").matches)||window.navigator.standalone===true;if(inApp)document.body.classList.add("in-app");}catch(e){}})();
+</script>
 <div class="hero"><img class="logo" src="${sameOrigin(LOGO_LIGHT)}" alt="Bruce Gillingham Pollard"></div>
 <div class="card">
 ${card.photoUrl ? `<img class="photo" src="${esc(sameOrigin(card.photoUrl))}" alt="" onerror="this.outerHTML='<div class=&quot;photo&quot;>${esc(initials)}</div>'">` : `<div class="photo">${esc(initials)}</div>`}
