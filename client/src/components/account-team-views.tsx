@@ -37,8 +37,8 @@ const MATTER_LABEL: Record<string, string> = { rent_review: "Rent review", lease
 function Section({ title, count, link, linkLabel, children, empty }: { title: string; count?: number; link?: string; linkLabel?: string; children?: React.ReactNode; empty?: string }) {
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
+      <div className="flex items-start justify-between gap-2 min-w-0">
+        <span className="text-[10px] uppercase tracking-widest text-muted-foreground flex flex-wrap items-center gap-1.5 min-w-0">
           {title}{count != null && <Badge variant="outline" className="text-[9px] tabular-nums">{count}</Badge>}
         </span>
         {link && <Link href={link} className="text-[11px] text-primary hover:underline inline-flex items-center gap-0.5 whitespace-nowrap shrink-0">{linkLabel || "Open"}<ArrowUpRight className="w-3 h-3" /></Link>}
@@ -103,7 +103,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
   const shownEvents = showAllEvents ? events : events.slice(0, 10);
 
   return (
-    <Card data-testid="account-team-views">
+    <Card data-testid="account-team-views" className="[container-type:inline-size]">
       <CardHeader className="p-3 pb-2 space-y-2">
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Users className="w-3.5 h-3.5" /> Team view
@@ -134,7 +134,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
         {error && <p className="text-sm text-muted-foreground italic">Couldn't load the team view — try again.</p>}
 
         {data && tab === "investment" && (
-          <div className="grid gap-4 md:grid-cols-2" data-testid="team-view-investment">
+          <div className="grid gap-4 [@container(min-width:720px)]:grid-cols-2" data-testid="team-view-investment">
             <div className="space-y-4">
               {(f.disposing_now || f.acquiring_now || f.distress_flag || f.investment_hunter_flag) && (
                 <div className="flex flex-wrap gap-1.5">
@@ -218,7 +218,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
         )}
 
         {data && tab === "tenantRep" && (
-          <div className="grid gap-4 md:grid-cols-2" data-testid="team-view-tenant-rep">
+          <div className="grid gap-4 [@container(min-width:720px)]:grid-cols-2" data-testid="team-view-tenant-rep">
             <Section title="Space on their schemes that fits a brand's requirement" count={spaceWithFits.length} link="/requirements?type=leasing" linkLabel={`Requirements · ${tr.liveRequirements} live`}
               empty={tr.space.length ? `${tr.space.length} vacant or marketing units — none fits a live requirement's size with a matching use or location.` : "No vacant or marketing units on their schemes."}>
               {spaceWithFits.length > 0 && <div className="space-y-1">{spaceWithFits.slice(0, 10).map((u: any) => (
@@ -248,7 +248,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
         {data && tab === "agents" && (
           <div data-testid="team-view-agents">
             <Section title="Agents across their estate" count={data.agents.length} link="/contacts" linkLabel="CRM · Agents tab" empty="No agents recorded against their properties, deals or account.">
-              {data.agents.length > 0 && <div className="grid gap-1 md:grid-cols-2">{data.agents.slice(0, 20).map((a: any) => (
+              {data.agents.length > 0 && <div className="grid gap-1 [@container(min-width:720px)]:grid-cols-2">{data.agents.slice(0, 20).map((a: any) => (
                 <Row key={a.firmId} href={`/companies/${a.firmId}`} title={a.name}
                   sub={[
                     a.represents.length ? `Acts for them: ${a.represents.join(", ")}` : null,
@@ -263,7 +263,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
         )}
 
         {data && tab === "leaseAdvisory" && (
-          <div className="grid gap-4 md:grid-cols-2" data-testid="team-view-lease-advisory">
+          <div className="grid gap-4 [@container(min-width:720px)]:grid-cols-2" data-testid="team-view-lease-advisory">
             <Section title={`Lease events — next ${18} months`} count={la?.eventsTotal ?? events.length} link="/lease-events" linkLabel="Lease events tracker" empty="No expiries, breaks or reviews on file for their schemes.">
               {events.length > 0 && <div className="space-y-1">
                 {shownEvents.map((e: any, i: number) => (

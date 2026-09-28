@@ -87,21 +87,20 @@ export async function bellFor(userId: string): Promise<BellItem[]> {
   }
   const order: Record<string, number> = { urgent: 0, warning: 1, info: 2 };
   dealItems.sort((a, b) => order[a.severity] - order[b.severity] || b.createdAt.localeCompare(a.createdAt));
-  // Admins also see the firm's compliance exposure: deals under offer or
-  // exchanged without KYC, whoever runs them. Nothing else firm-wide.
+  // Admins also see the firm's compliance exposure as ONE line — 60 rows of
+  // "KYC not approved" buried everything else (Woody, 2026-09-28).
   const firmItems: BellItem[] = [];
   if (me?.is_admin) {
     const mine = new Set(deals.rows.map((deal: any) => deal.id));
     const kyc = await pool.query(
-      `SELECT id, name, status, internal_agent FROM crm_deals
-        WHERE COALESCE(kyc_approved, false) = false AND status IN ('SOL', 'EXC')
-        ORDER BY updated_at DESC LIMIT 60`);
-    for (const deal of kyc.rows) {
-      const id = `firm-kyc-${deal.id}`;
-      if (mine.has(deal.id) || dismissed.has(id)) continue;
-      const agents = (deal.internal_agent || []).filter((name: string) => name && !/^(bgp house|team bgp)$/i.test(name));
-      firmItems.push({ id, kind: "firm", type: "kyc_gap", read: false, dealId: deal.id, url: `/deals/${deal.id}`,
-        title: `KYC not approved: ${deal.name}`, description: `In ${deal.status}${agents.length ? ` · ${agents.join(", ")}` : ""}`,
+      `SELECT id, status FROM crm_deals WHERE COALESCE(kyc_approved, false) = false AND status IN ('SOL', 'EXC')`);
+    const others = kyc.rows.filter((deal: any) => !mine.has(deal.id));
+    const exchanged = others.filter((deal: any) => deal.status === "EXC").length;
+    const id = `firm-kyc-${others.length}`;
+    if (others.length && !dismissed.has(id)) {
+      firmItems.push({ id, kind: "firm", type: "kyc_gap", read: false, url: "/kyc-clouseau?tab=board",
+        title: `${others.length} deal${others.length === 1 ? "" : "s"} at solicitors or exchanged without KYC`,
+        description: `${exchanged} exchanged · ${others.length - exchanged} with solicitors · open AML Compliance`,
         severity: "urgent", createdAt: new Date().toISOString() });
     }
   }
