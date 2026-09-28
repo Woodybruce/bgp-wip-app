@@ -293,7 +293,7 @@ function WordChat({ token, onUnauthorised }: { token: string; onUnauthorised: ()
       prompts={WORD_PROMPTS}
       intro="ChatBGP reads and edits this document with BGP's CRM, deals, comps and your memory behind it."
       placeholder="Ask ChatBGP about this document…"
-      heightOffset={100}
+      heightOffset={112}
       toolbar={
         <label className="flex items-center justify-between gap-2 px-3 py-1.5 border-b text-[11px] text-muted-foreground">
           <span>Suggest edits as tracked changes</span>

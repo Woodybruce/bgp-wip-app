@@ -149,7 +149,7 @@ function AddinPowerPoint() {
             prompts={PPT_PROMPTS}
             intro="ChatBGP builds and edits this deck with BGP's CRM, comps, deals and your memory behind it."
             placeholder="Ask ChatBGP, or describe the slides you want…"
-            heightOffset={150}
+            heightOffset={126}
           />
         </TabsContent>
 
