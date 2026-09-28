@@ -20,7 +20,7 @@ const HELPER_MODEL = "claude-haiku-4-5-20251001";
 
 // Every table+column that points at crm_companies.id. Merge rewrites
 // each of these to the primary id.
-const COMPANY_REFS: Array<{ table: string; column: string }> = [
+export const COMPANY_REFS: Array<{ table: string; column: string }> = [
   { table: "crm_companies",            column: "parent_company_id" },
   { table: "crm_companies",            column: "brand_group_id" },
   { table: "crm_contacts",             column: "company_id" },
@@ -365,54 +365,8 @@ router.post("/api/brand/dedupe/merge", requireAuth, async (req: Request, res: Re
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-
-    // Snapshot secondary for undo
-    const secSnap = await client.query("SELECT * FROM crm_companies WHERE id = $1 FOR UPDATE", [secondaryId]);
-    if (!secSnap.rows[0]) throw new Error("Secondary company not found");
-    const primCheck = await client.query("SELECT id FROM crm_companies WHERE id = $1 AND merged_into_id IS NULL FOR UPDATE", [primaryId]);
-    if (!primCheck.rows[0]) throw new Error("Primary company not found or already merged");
-
-    // Copy fields from secondary to primary where primary is null — prefer
-    // to keep primary's data but fill any gaps.
-    const FILLABLE = [
-      "companies_house_number", "domain", "domain_url", "description",
-      "head_office_address", "phone", "linkedin_url", "industry",
-      "employee_count", "annual_revenue", "founded_year",
-      "concept_pitch", "store_count", "rollout_status", "backers",
-      "instagram_handle",
-    ];
-    const fillSet: string[] = [];
-    const fillVals: any[] = [];
-    for (const col of FILLABLE) {
-      fillSet.push(`${col} = COALESCE(p.${col}, s.${col})`);
-    }
-    await client.query(
-      `UPDATE crm_companies p
-          SET ${fillSet.join(", ")},
-              updated_at = now()
-         FROM crm_companies s
-        WHERE p.id = $1 AND s.id = $2`,
-      [primaryId, secondaryId]
-    );
-
-    // Rewrite every FK reference
-    const referenceUpdates = await repointCompanyRefs(client, secondaryId, primaryId);
-
-    // Soft-delete the secondary — it stays in the table so old URLs and
-    // imports don't orphan, but it's hidden from queries that filter out
-    // merged_into_id.
-    await client.query(
-      `UPDATE crm_companies SET merged_into_id = $1, merged_at = now(), merged_by = $2 WHERE id = $3`,
-      [primaryId, (req as any).user?.email || (req as any).user?.name || "unknown", secondaryId]
-    );
-
-    // Record the merge for undo
-    const mergeRes = await client.query(
-      `INSERT INTO dedupe_merges (primary_id, secondary_id, merged_by, secondary_snapshot, reference_updates, notes)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id`,
-      [primaryId, secondaryId, (req as any).user?.email || (req as any).user?.name || "unknown", secSnap.rows[0], referenceUpdates, notes || null]
-    );
+    const by = (req as any).user?.email || (req as any).user?.name || "unknown";
+    const { mergeId, referenceUpdates } = await mergeCompanyInto(client, primaryId, secondaryId, by, notes || null);
 
     if (candidateId) {
       await client.query(
@@ -422,7 +376,7 @@ router.post("/api/brand/dedupe/merge", requireAuth, async (req: Request, res: Re
     }
 
     await client.query("COMMIT");
-    res.json({ ok: true, mergeId: mergeRes.rows[0].id, referenceUpdates });
+    res.json({ ok: true, mergeId, referenceUpdates });
   } catch (err: any) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: err.message });
@@ -430,6 +384,59 @@ router.post("/api/brand/dedupe/merge", requireAuth, async (req: Request, res: Re
     client.release();
   }
 });
+
+/**
+ * Merge secondary into primary inside the caller's transaction: fill the
+ * primary's gaps, repoint every reference, soft-delete the secondary and
+ * record it in dedupe_merges so it can be undone. Shared by the merge
+ * endpoint and one-off record fixes (server/record-fixes.ts).
+ */
+export async function mergeCompanyInto(client: { query: Function }, primaryId: string, secondaryId: string, by: string, notes: string | null) {
+  // Snapshot secondary for undo
+  const secSnap = await client.query("SELECT * FROM crm_companies WHERE id = $1 FOR UPDATE", [secondaryId]);
+  if (!secSnap.rows[0]) throw new Error("Secondary company not found");
+  const primCheck = await client.query("SELECT id FROM crm_companies WHERE id = $1 AND merged_into_id IS NULL FOR UPDATE", [primaryId]);
+  if (!primCheck.rows[0]) throw new Error("Primary company not found or already merged");
+
+  // Copy fields from secondary to primary where primary is null — prefer
+  // to keep primary's data but fill any gaps.
+  const FILLABLE = [
+    "companies_house_number", "domain", "domain_url", "description",
+    "head_office_address", "phone", "linkedin_url", "industry",
+    "employee_count", "annual_revenue", "founded_year",
+    "concept_pitch", "store_count", "rollout_status", "backers",
+    "instagram_handle",
+  ];
+  const fillSet = FILLABLE.map(col => `${col} = COALESCE(p.${col}, s.${col})`);
+  await client.query(
+    `UPDATE crm_companies p
+        SET ${fillSet.join(", ")},
+            updated_at = now()
+       FROM crm_companies s
+      WHERE p.id = $1 AND s.id = $2`,
+    [primaryId, secondaryId]
+  );
+
+  // Rewrite every FK reference
+  const referenceUpdates = await repointCompanyRefs(client, secondaryId, primaryId);
+
+  // Soft-delete the secondary — it stays in the table so old URLs and
+  // imports don't orphan, but it's hidden from queries that filter out
+  // merged_into_id.
+  await client.query(
+    `UPDATE crm_companies SET merged_into_id = $1, merged_at = now(), merged_by = $2 WHERE id = $3`,
+    [primaryId, by, secondaryId]
+  );
+
+  // Record the merge for undo
+  const mergeRes = await client.query(
+    `INSERT INTO dedupe_merges (primary_id, secondary_id, merged_by, secondary_snapshot, reference_updates, notes)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id`,
+    [primaryId, secondaryId, by, secSnap.rows[0], referenceUpdates, notes]
+  );
+  return { mergeId: mergeRes.rows[0].id as string, referenceUpdates };
+}
 
 // ─── Dismiss a candidate ("not a dupe") ─────────────────────────────────
 router.post("/api/brand/dedupe/candidates/:id/dismiss", requireAuth, async (req: Request, res: Response) => {

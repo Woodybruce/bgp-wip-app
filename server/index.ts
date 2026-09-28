@@ -5147,6 +5147,14 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
           await runInvestmentLinkBackfills();
         } catch (e: any) { console.error("[investment-links] backfill failed:", e?.message); }
       }, 45000);
+      // Wrong records found by the board sweeps (duplicates, wrong CH
+      // entities, typos, Landsec floor codes) — once, flagged.
+      setTimeout(async () => {
+        try {
+          const { runRecordFixes } = await import("./record-fixes");
+          await runRecordFixes();
+        } catch (e: any) { console.error("[record-fixes] failed:", e?.message); }
+      }, 50000);
       setTimeout(async () => {
         const KEY = "rssapp_curated_ig_feeds_last_run";
         try {

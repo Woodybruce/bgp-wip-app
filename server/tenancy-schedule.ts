@@ -6,6 +6,7 @@ import { fanOutTenancyStatus } from "./unit-mirror";
 import { importTenancyRows, TenancyImportError, type ParsedTenancyImportRow } from "./tenancy-import";
 import { tenancyCalendarDatesSql } from "./tenancy-calendar-dates";
 import { mergeTenancyUnits, TenancyMergeError } from "./tenancy-merge";
+import { landsecFloorLabel } from "@shared/landsec-floor";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -845,6 +846,8 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
         }
         rec[field] = normaliseFieldValue(field, raw);
       }
+
+      if (rec.floor_level != null) rec.floor_level = landsecFloorLabel(String(rec.floor_level), rec.unit_number);
 
       // Whole-portfolio file: drop rows that belong to a different asset.
       if (propMatcher && !propMatcher(rec.__property)) {
