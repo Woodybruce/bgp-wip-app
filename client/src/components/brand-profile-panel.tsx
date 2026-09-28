@@ -1574,7 +1574,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 <Button variant="outline" size="sm" onClick={runContactDiscovery} disabled={contactsFinding} data-testid="button-refresh-contacts"><RefreshCw className={contactsFinding ? "animate-spin" : ""} />{contactsFinding ? "Finding…" : "Refresh contacts"}</Button>
                 <Button variant="outline" size="sm" onClick={() => setAddContactOpen(true)} data-testid="button-add-contact-brand"><Plus />Add contact</Button>
                 <ContactFormDialog open={addContactOpen} onOpenChange={setAddContactOpen} defaultCompanyId={c.id} />
-                <CompanyInvoicingControls companyId={c.id} />
+                <CompanyInvoicingControls companyId={c.id} contactEmails={data.contacts.map(contact => contact.email)} />
               </>}
               {currentUser?.role !== "Client" && <>
                 <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)}><Plus />Add to deal</Button>

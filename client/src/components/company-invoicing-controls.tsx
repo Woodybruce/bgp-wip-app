@@ -17,7 +17,7 @@ import type { CrmCompany } from "@shared/schema";
 type MoveRow = { id: string; name: string; from: string; to: string; skipped: string | null };
 type MoveResult = { from: string; to: string; applied: boolean; changed: number; rows: MoveRow[] };
 
-export function CompanyInvoicingControls({ companyId }: { companyId: string }) {
+export function CompanyInvoicingControls({ companyId, contactEmails = [] }: { companyId: string; contactEmails?: Array<string | null | undefined> }) {
   const { toast } = useToast();
   const { data: company } = useQuery<CrmCompany>({ queryKey: ["/api/crm/companies", companyId] });
   const requiresPo = !!company?.requiresPo;
@@ -48,6 +48,9 @@ export function CompanyInvoicingControls({ companyId }: { companyId: string }) {
     onError: (e: any) => toast({ title: "Couldn't move the email domain", description: e?.message, variant: "destructive" }),
   });
   const movable = preview ? preview.rows.filter(r => !r.skipped).length : 0;
+  // Only worth offering when this company's contacts sit on more than one
+  // email domain (a rebrand like canarywharf.com → cwg.com).
+  const domains = new Set(contactEmails.map(e => String(e || "").split("@")[1]?.trim().toLowerCase()).filter(Boolean));
 
   return (
     <>
@@ -57,9 +60,11 @@ export function CompanyInvoicingControls({ companyId }: { companyId: string }) {
         {requiresPo ? <Check /> : <Receipt />}{requiresPo ? "PO on invoices" : "Needs PO?"}
       </Button>
       )}
+      {domains.size > 1 && (
       <Button variant="outline" size="sm" onClick={() => { setOpen(true); setPreview(null); }} data-testid="button-move-email-domain">
         <Mail />Move email domain
       </Button>
+      )}
       <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setPreview(null); }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
