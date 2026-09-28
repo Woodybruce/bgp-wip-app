@@ -52,7 +52,8 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
     const occupied = await pool.query(
       `SELECT t.*, ${tenancyCalendarDatesSql("t")},
               COALESCE(tc_fk.id, tc_soft.id) AS resolved_tenant_company_id,
-              COALESCE(tc_fk.name, tc_soft.name) AS resolved_tenant_company_name
+              COALESCE(tc_fk.name, tc_soft.name) AS resolved_tenant_company_name,
+              dt.id AS deal_tenant_id, dt.name AS deal_tenant_name
          FROM tenancy_schedule_units t
          LEFT JOIN crm_companies tc_fk ON tc_fk.id = t.tenant_company_id AND tc_fk.merged_into_id IS NULL
          LEFT JOIN LATERAL (
@@ -61,6 +62,20 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
               AND c.id = ${resolveBrandIdSubquery("coalesce(t.trading_name, t.tenant_name, '')")}
             LIMIT 1
          ) tc_soft ON TRUE
+         -- A unit BGP let with no tenant typed on the row shows the deal's
+         -- tenant (display only; the row itself is unchanged).
+         LEFT JOIN LATERAL (
+           SELECT dc.id, dc.name FROM crm_deals d
+             JOIN crm_companies dc ON dc.id = d.tenant_id
+            WHERE coalesce(trim(t.tenant_name), '') = ''
+              AND d.status IN ('EXC', 'COM', 'INV')
+              AND (d.tenancy_unit_id::text = t.id::text
+                   OR d.id IN (SELECT au.deal_id FROM available_units au
+                                WHERE au.property_id = t.property_id
+                                  AND (au.tenancy_unit_id::text = t.id::text OR t.letting_tracker_unit_id = au.id)))
+            ORDER BY d.updated_at DESC NULLS LAST
+            LIMIT 1
+         ) dt ON TRUE
         WHERE t.property_id = $1
         ORDER BY t.premises, t.sort_order, t.id`,
       [propertyId]
@@ -73,9 +88,10 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
     const vacant = await pool.query(
       `SELECT DISTINCT ON (${vacancyIdentity})
               au.id AS available_unit_id, au.unit_name, au.sqft, au.asking_rent,
-              au.marketing_status, au.deal_id, d.deal_ref
+              au.marketing_status, au.deal_id, d.deal_ref, d.status AS deal_status, dc.name AS deal_tenant_name
        FROM available_units au
        LEFT JOIN crm_deals d ON d.id = au.deal_id
+       LEFT JOIN crm_companies dc ON dc.id = d.tenant_id
        WHERE au.property_id = $1
          AND NOT EXISTS (
            SELECT 1 FROM tenancy_schedule_units ts
@@ -96,19 +112,24 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
 
     // Cast vacant rows into the tenancy shape so the existing client
     // renderer Just Works. is_vacant: true is the discriminator.
+    // A tracker unit whose deal is at solicitors or later isn't vacant: it
+    // reads as under offer / let, with the deal's tenant.
+    const dealStage = (status: string | null) => ["EXC", "COM", "INV"].includes(status || "") ? "let"
+      : ["HOT", "SOL"].includes(status || "") ? "under_offer" : null;
     const derivedVacant = vacant.rows.map((v: any) => ({
       id: `vacant-${v.available_unit_id}`,
       property_id: propertyId,
       premises: v.unit_name || "—",
       unit_number: v.unit_name || "",
-      tenant_name: "VACANT",
+      tenant_name: dealStage(v.deal_status) && v.deal_tenant_name ? v.deal_tenant_name : "VACANT",
+      deal_stage: dealStage(v.deal_status),
       trading_name: "",
       permitted_use: "",
       nia_sqft: v.sqft || null,
       gia_sqft: v.sqft || null,
       passing_rent_pa: null,
       erv_pa: v.asking_rent || null,
-      status: v.marketing_status || "AVA",
+      status: dealStage(v.deal_status) === "let" ? "Occupied" : dealStage(v.deal_status) === "under_offer" ? "Under Offer" : v.marketing_status || "AVA",
       is_vacant: true,
       available_unit_id: v.available_unit_id,
       deal_id: v.deal_id,
@@ -146,8 +167,9 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
       if (!a || !b || isNaN(a) || isNaN(b) || b < a) return null;
       return Math.round(((b - a) / (1000 * 60 * 60 * 24 * 365.25)) * 10) / 10;
     };
-    const withComputed = occupied.rows.map((r: any) => ({
+    const withComputed = occupied.rows.map(({ deal_tenant_id, deal_tenant_name, ...r }: any) => ({
       ...r,
+      ...(deal_tenant_name ? { tenant_name: deal_tenant_name, tenant_from_deal: true, resolved_tenant_company_id: r.resolved_tenant_company_id || deal_tenant_id, resolved_tenant_company_name: r.resolved_tenant_company_name || deal_tenant_name } : {}),
       // ALL unexpired terms are auto-calculated from their dates on every
       // render — stored/imported values no longer win, so the numbers can't
       // go stale (Woody, 2026-08-03). unexpired_term runs to expiry,
