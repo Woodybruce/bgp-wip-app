@@ -117,6 +117,19 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
         </div>
       </CardHeader>
       <CardContent className="p-3 pt-0">
+        {/* Who covers this line for the account — from the BGP team roles
+            set on the chips above (Woody, 2026-09-28). */}
+        {data?.bgpTeam?.length > 0 && (() => {
+          const lead = data.bgpTeam.filter((m: any) => m.role === "Relationship lead");
+          const onTab = data.bgpTeam.filter((m: any) => m.tab === tab);
+          const unset = data.bgpTeam.filter((m: any) => !m.role);
+          return <p className="text-[11px] text-muted-foreground mb-3" data-testid="team-view-coverage">
+            {lead.length > 0 && <>Lead <span className="text-foreground font-medium">{lead.map((m: any) => m.name).join(", ")}</span> · </>}
+            {onTab.length > 0
+              ? <>Covering this: <span className="text-foreground font-medium">{onTab.map((m: any) => `${m.name}${m.role && m.role !== "Relationship lead" ? ` (${m.role})` : ""}`).join(", ")}</span></>
+              : tab === "agents" ? null : <>Nobody on the BGP team has this role yet{unset.length ? ` — set roles on the team chips above` : ""}</>}
+          </p>;
+        })()}
         {isLoading && <p className="text-sm text-muted-foreground italic flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />Gathering the teams' view…</p>}
         {error && <p className="text-sm text-muted-foreground italic">Couldn't load the team view — try again.</p>}
 

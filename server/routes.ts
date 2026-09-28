@@ -3030,8 +3030,11 @@ export async function registerRoutes(
     try {
       const { companyId } = req.params;
       const userId = String(req.body?.userId || "").trim();
-      const role = String(req.body?.role || "").trim();
+      const raw = String(req.body?.role || "").trim();
       if (!userId) return res.status(400).json({ error: "userId required" });
+      const { canonicalBgpRole } = await import("@shared/bgp-account-roles");
+      const role = raw ? canonicalBgpRole(raw) : "";
+      if (raw && !role) return res.status(400).json({ error: "Choose a role from the list." });
       if (!role) {
         await pool.query(`DELETE FROM crm_company_bgp_roles WHERE company_id = $1 AND user_id = $2`, [companyId, userId]);
         return res.json({ ok: true, cleared: true });

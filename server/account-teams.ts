@@ -181,9 +181,13 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
   const ownTokens = new Set([view.root.name, ...view.entities.map(e => e.name)]
     .flatMap(n => String(n || "").toLowerCase().split(/[^a-z0-9]+/)).filter(w => w.length >= 4 && !GENERIC_NAME_WORDS.test(w)));
   const isUs = (id: any, name: any) => entitySet.has(id) || (!id && !!name && entityNames.has(nameKey(name)));
+  // No party of theirs named: the asset is here because it's one of their
+  // properties — they're the owner, so the selling side. Touchwood (Ardent's,
+  // on BGP's Purchases board with no parties) read as Ardent buying it
+  // (Woody, 2026-09-28).
   const side = (t: any) => isUs(t.buyer_id, t.buyer) ? "buying" : isUs(t.vendor_id, t.vendor) ? "selling"
     : isUs(t.client_id, t.client) ? (t.board_type === "Sales" ? "selling" : "buying")
-    : t.board_type === "Sales" ? "selling" : "buying";
+    : "selling";
 
   // ── Agents across their estate: who represents them, who is instructed
   // instead of BGP on their properties, and the agents on deals at their
@@ -274,6 +278,18 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
       events: leaseEvents,
       eventsTotal: allLeaseEvents.length,
     },
+    // The account's BGP team with their role and the Team view tab it
+    // covers — each tab names who's on it (Woody, 2026-09-28).
+    bgpTeam: await (async () => {
+      const { canonicalBgpRole, teamTabForRole } = await import("@shared/bgp-account-roles");
+      const members = await rows(q, `SELECT u.id, COALESCE(u.name, u.username, u.email) AS name, r.role
+          FROM crm_companies c
+          CROSS JOIN LATERAL unnest(COALESCE(c.bgp_contact_user_ids, ARRAY[]::text[])) AS m(user_id)
+          JOIN users u ON u.id = m.user_id
+          LEFT JOIN crm_company_bgp_roles r ON r.user_id = u.id AND r.company_id = c.id
+         WHERE c.id = $1 ORDER BY u.name`, [companyId]);
+      return members.map((m: any) => ({ userId: m.id, name: m.name, role: canonicalBgpRole(m.role) || m.role || null, tab: teamTabForRole(m.role) }));
+    })(),
   };
 }
 

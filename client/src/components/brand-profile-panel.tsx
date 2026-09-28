@@ -35,6 +35,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
+import { BGP_ACCOUNT_ROLES, canonicalBgpRole } from "@shared/bgp-account-roles";
 import { BrandEmailHistory } from "@/components/brand-email-history";
 import { BrandFeedCard } from "@/components/brand-feed-card";
 import { AiCommentary, type CommentaryEntity } from "@/components/ai-commentary";
@@ -43,7 +44,7 @@ import {
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
   Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper,
   MapPin, Activity, Target, Briefcase, Search, Flame,
-  Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail, ShieldCheck, ChevronRight, Loader2,
+  Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail, ShieldCheck, ChevronRight, ChevronDown, Loader2,
 } from "lucide-react";
 import { NewsTagFilterChips } from "@/components/news-tags-manager";
 import { brandComplianceStatus } from "@shared/brand-compliance-status";
@@ -3857,8 +3858,10 @@ function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role
   const { toast } = useToast();
   const { data: ccViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const ccIsClient = !ccViewer || ccViewer.role === "Client" || !!ccViewer.companyScopeId;
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(cov.role || "");
+  // A role from the fixed list (it was free text) — each maps onto a Team
+  // view tab, which lists the people covering it (Woody, 2026-09-28).
+  const fromDeals = cov.role === "From deals";
+  const current = fromDeals ? null : canonicalBgpRole(cov.role) || (cov.role || null);
 
   const save = useMutation({
     mutationFn: async (value: string) => {
@@ -3866,8 +3869,8 @@ function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role
       return res.json();
     },
     onSuccess: () => {
-      setEditing(false);
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "teams"] });
     },
     onError: (e: any) => toast({ title: "Couldn't save role", description: e?.message, variant: "destructive" }),
   });
@@ -3876,32 +3879,26 @@ function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role
     <span className="inline-flex items-center gap-1 rounded-full leading-none text-[11px] font-semibold uppercase tracking-wide px-2.5 py-[5px] border border-border bg-muted/40 text-muted-foreground">
       <Users className="w-2.5 h-2.5" />
       <span className="font-medium">{cov.name}</span>
-      {editing ? (
-        <input
-          autoFocus
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => {
-            if (draft.trim() !== (cov.role || "").trim()) save.mutate(draft.trim());
-            else setEditing(false);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") save.mutate(draft.trim());
-            if (e.key === "Escape") { setEditing(false); setDraft(cov.role || ""); }
-          }}
-          placeholder="role…"
-          className="text-[10px] w-24 border-0 bg-transparent focus:outline-none focus:bg-muted rounded px-1"
-        />
-      ) : ccIsClient ? (
-        cov.role ? <span className="text-[10px] text-muted-foreground">{cov.role}</span> : null
+      {ccIsClient ? (
+        current ? <span className="text-[10px] normal-case tracking-normal text-muted-foreground">{current}</span> : null
       ) : (
-        <button
-          onClick={() => setEditing(true)}
-          className="text-[10px] text-primary hover:underline decoration-dotted"
-          title="Click to edit role for this account"
-        >
-          {cov.role || <span className="italic opacity-70">add role…</span>}
-        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button" className="text-[10px] normal-case tracking-normal text-primary hover:underline decoration-dotted inline-flex items-center gap-0.5" title="Set this person's role on the account" data-testid={`bgp-role-${cov.id}`}>
+              {current || <span className="italic opacity-70">{fromDeals ? "from deals · set role" : "set role"}</span>}
+              <ChevronDown className="w-2.5 h-2.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-48">
+            {BGP_ACCOUNT_ROLES.map(r => (
+              <DropdownMenuItem key={r.role} onSelect={() => save.mutate(r.role)}>
+                <Check className={`w-3 h-3 mr-2 ${current === r.role ? "opacity-100" : "opacity-0"}`} />
+                {r.role}
+              </DropdownMenuItem>
+            ))}
+            {current && <DropdownMenuItem onSelect={() => save.mutate("")} className="text-muted-foreground">Clear role</DropdownMenuItem>}
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
     </span>
   );
