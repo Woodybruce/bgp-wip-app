@@ -6295,8 +6295,8 @@ function XeroPayrollPanel() {
             </div>
           )}
           {data?.xeroError && data?.connected && (
-            <div className="mt-2 text-xs flex items-center gap-1.5 text-amber-600">
-              <AlertCircle className="w-3.5 h-3.5" /> {data.xeroError}
+            <div className="mt-2 text-xs flex items-start gap-1.5 text-amber-600 break-words [overflow-wrap:anywhere]">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> <span className="min-w-0">{data.xeroError}</span>
             </div>
           )}
           {c && (

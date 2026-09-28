@@ -395,7 +395,13 @@ export async function xeroPayrollApi(session: any, path: string, opts: { binary?
     if (res.status === 403) {
       throw new Error(`Xero Payroll scope not granted (403). Reconnect to Xero — admin → /api/xero/connect — to authorise payroll.payslip + payroll.employees.`);
     }
-    throw new Error(`Xero Payroll error ${res.status}: ${txt}`);
+    // A raw JSON body ran off the phone screen; say what it means instead.
+    if (res.status === 401) {
+      let detail = "";
+      try { detail = String(JSON.parse(txt)?.Detail || ""); } catch {}
+      throw new Error(`Xero Payroll turned the request down (401${detail ? `: ${detail.slice(0, 160)}` : ""}). Reconnect Xero with payroll access — admin → /api/xero/connect.`);
+    }
+    throw new Error(`Xero Payroll error ${res.status}: ${txt.slice(0, 300)}`);
   }
   return opts.binary ? Buffer.from(await res.arrayBuffer()) : res.json();
 }
