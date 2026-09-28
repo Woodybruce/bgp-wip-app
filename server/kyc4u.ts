@@ -161,6 +161,13 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
   app.get("/api/kyc4u/callback", async (req: Request, res: Response) => {
     const back = (msg: string) => res.redirect(`/kyc-clouseau?tab=kyc4u&kyc4u=${encodeURIComponent(msg)}`);
     try {
+      // KYC4U's admin approving the app for their tenant (the admin-consent
+      // link) comes back here with no code — say so, then Connect works.
+      if (req.query.admin_consent !== undefined && !req.query.code) {
+        return back(String(req.query.admin_consent).toLowerCase() === "true"
+          ? "KYC4U's admin has approved ChatBGP — press Connect KYC4U now"
+          : String(req.query.error_description || "KYC4U's admin didn't approve the app"));
+      }
       if (req.query.error) return back(String(req.query.error_description || req.query.error));
       const pending = pendingStates.get(String(req.query.state || ""));
       pendingStates.delete(String(req.query.state || ""));

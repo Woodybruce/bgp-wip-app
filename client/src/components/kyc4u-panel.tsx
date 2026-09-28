@@ -26,7 +26,9 @@ export default function Kyc4uPanel() {
     if (!note) return;
     toast(note === "connected"
       ? { title: "KYC4U connected", description: "The first sync is running — requests appear here in a minute." }
-      : { title: "KYC4U sign-in didn't finish", description: note, variant: "destructive" });
+      : /has approved/.test(note)
+        ? { title: "Approved", description: note }
+        : { title: "KYC4U sign-in didn't finish", description: note, variant: "destructive" });
     const url = new URL(window.location.href);
     url.searchParams.delete("kyc4u");
     window.history.replaceState(null, "", url.pathname + url.search);
