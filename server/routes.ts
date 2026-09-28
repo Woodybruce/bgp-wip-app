@@ -9893,101 +9893,28 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   // ===== Notifications Center =====
   app.get("/api/notifications", requireAuth, async (req: Request, res: Response) => {
     try {
-    // External client logins get no org-wide feed — their world is the
-    // client-scoped briefing. (Landsec audit.)
-    if (await (await import("./company-scope")).isClientRequestUser(req)) return res.json([]);
-
-      const notifications: any[] = [];
-
-      // Deals stuck in same status > 30 days
-      const stuckDeals = await pool.query(`
-        SELECT id, name, status, updated_at FROM crm_deals
-        WHERE status NOT IN ('COM', 'INV', 'WIT')
-        AND updated_at < NOW() - INTERVAL '30 days'
-        ORDER BY updated_at ASC LIMIT 20
-      `);
-      for (const d of stuckDeals.rows) {
-        const ms = Date.now() - new Date(d.updated_at).getTime();
-        const days = isNaN(ms) ? 30 : Math.floor(ms / 86400000);
-        notifications.push({
-          id: `stuck-${d.id}`,
-          type: "stuck_deal",
-          title: `${d.name} stuck in ${d.status || "Unknown"}`,
-          description: `No update for ${days} days`,
-          severity: days > 60 ? "urgent" : "warning",
-          createdAt: d.updated_at,
-          dealId: d.id,
-        });
-      }
-
-      // Deals without fee allocated
-      const noFeeResult = await pool.query(`
-        SELECT COUNT(*)::int as count FROM crm_deals
-        WHERE (fee IS NULL OR fee = 0)
-        AND status NOT IN ('WIT', 'COM', 'INV')
-      `);
-      const noFeeCount = noFeeResult.rows[0]?.count || 0;
-      if (noFeeCount > 0) {
-        notifications.push({
-          id: "no-fee-deals",
-          type: "no_fee",
-          title: `${noFeeCount} deal${noFeeCount !== 1 ? "s" : ""} with no fee set`,
-          description: "Active deals without fee allocation need attention",
-          severity: noFeeCount > 10 ? "urgent" : "warning",
-          createdAt: new Date().toISOString(),
-        });
-      }
-
-      // KYC not approved on progressing deals
-      const kycGaps = await pool.query(`
-        SELECT id, name, status FROM crm_deals
-        WHERE kyc_approved = false
-        AND status IN ('SOL', 'EXC', 'COM', 'NEG')
-        LIMIT 10
-      `);
-      for (const d of kycGaps.rows) {
-        notifications.push({
-          id: `kyc-${d.id}`,
-          type: "kyc_gap",
-          title: `KYC not approved: ${d.name}`,
-          description: `Deal in ${d.status} without KYC clearance`,
-          severity: "urgent",
-          createdAt: new Date().toISOString(),
-          dealId: d.id,
-        });
-      }
-
-      // Deals with stale target dates (overdue)
-      const overdueDeals = await pool.query(`
-        SELECT id, name, target_date, status FROM crm_deals
-        WHERE target_date IS NOT NULL
-        AND target_date < CURRENT_DATE
-        AND status NOT IN ('COM', 'INV', 'WIT')
-        AND exchanged_at IS NULL
-        AND completed_at IS NULL
-        ORDER BY target_date ASC
-        LIMIT 10
-      `);
-      for (const d of overdueDeals.rows) {
-        const targetStr = d.target_date ? new Date(d.target_date).toLocaleDateString("en-GB") : "";
-        notifications.push({
-          id: `overdue-${d.id}`,
-          type: "overdue_completion",
-          title: `Overdue target: ${d.name}`,
-          description: `Target date ${targetStr} has passed`,
-          severity: "warning",
-          createdAt: d.target_date,
-          dealId: d.id,
-        });
-      }
-
-      // Sort: urgent first, then warning, then info
-      const severityOrder: Record<string, number> = { urgent: 0, warning: 1, info: 2 };
-      notifications.sort((a, b) => (severityOrder[a.severity] ?? 2) - (severityOrder[b.severity] ?? 2));
-
-      res.json(notifications);
+      // External client logins get no org-wide feed — their world is the
+      // client-scoped briefing. (Landsec audit.)
+      if (await (await import("./company-scope")).isClientRequestUser(req)) return res.json([]);
+      const userId = req.session.userId || (req as any).tokenUserId;
+      if (!userId) return res.json([]);
+      const { bellFor } = await import("./notification-inbox");
+      res.json(await bellFor(userId));
     } catch (e: any) {
       console.error("[notifications] Error:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/notifications/read", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session.userId || (req as any).tokenUserId;
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === "string").slice(0, 500) : [];
+      if (!userId || !ids.length) return res.json({ ok: true });
+      const { markBellRead } = await import("./notification-inbox");
+      await markBellRead(userId, ids);
+      res.json({ ok: true });
+    } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });

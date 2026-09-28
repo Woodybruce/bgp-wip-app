@@ -1179,6 +1179,26 @@ installGoogleBudgetGuard();
        note TEXT,
        PRIMARY KEY (contact_id, company_id)
      )`,
+    // The bell is a personal inbox (Woody, 2026-09-28: "this notification
+    // not working that well"): every push lands here too, and deal alerts
+    // can be cleared per person.
+    `CREATE TABLE IF NOT EXISTS user_notifications (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       user_id VARCHAR NOT NULL,
+       title TEXT NOT NULL,
+       body TEXT,
+       url TEXT,
+       tag TEXT,
+       created_at TIMESTAMP DEFAULT now(),
+       read_at TIMESTAMP
+     )`,
+    `CREATE INDEX IF NOT EXISTS user_notifications_user_idx ON user_notifications (user_id, created_at DESC)`,
+    `CREATE TABLE IF NOT EXISTS notification_dismissals (
+       user_id VARCHAR NOT NULL,
+       notification_key TEXT NOT NULL,
+       dismissed_at TIMESTAMP DEFAULT now(),
+       PRIMARY KEY (user_id, notification_key)
+     )`,
     `CREATE TABLE IF NOT EXISTS brand_signals (
        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
        brand_company_id VARCHAR NOT NULL,
