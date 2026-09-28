@@ -5342,6 +5342,25 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
           const result = await backfillDealsFromHots().catch(err => ({ status: "error", error: String(err?.message || err) }));
           await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ('deal-hots-backfill',$1::jsonb,now()) ON CONFLICT(key) DO UPDATE SET value=$1::jsonb,updated_at=now()`, [JSON.stringify({ status: "done", finishedAt: new Date().toISOString(), ...result })]).catch(() => {});
         }, 240000);
+        // Map pins (Woody, 2026-09-28 — Ardent's board listed 19 properties,
+        // plotted 1): geocode every CRM property with no coordinates from its
+        // postcode / address via postcodes.io + Nominatim (free, ≤1 req/s).
+        // Once after this deploy; then every 6h for rows created since, by
+        // whichever path (imports, ChatBGP, scraper) skipped the picker.
+        setTimeout(async () => {
+          const { backfillPropertyCoordinates } = await import("./property-geocode");
+          const marker = await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ('property-geocode-backfill:2026-09-28','{}'::jsonb,now()) ON CONFLICT(key) DO NOTHING`).catch(() => null);
+          if (marker?.rowCount) {
+            const result = await backfillPropertyCoordinates().catch(err => ({ error: String(err?.message || err) }));
+            console.log("[property-geocode] backfill:", JSON.stringify(result));
+            await pool.query(`UPDATE system_settings SET value = $1::jsonb, updated_at = now() WHERE key = 'property-geocode-backfill:2026-09-28'`, [JSON.stringify({ finishedAt: new Date().toISOString(), ...result })]).catch(() => {});
+          }
+          setInterval(() => {
+            backfillPropertyCoordinates({}, 200)
+              .then(r => { if (r.checked) console.log("[property-geocode] sweep:", JSON.stringify(r)); })
+              .catch(err => console.error("[property-geocode] sweep failed:", err?.message));
+          }, 6 * 60 * 60 * 1000);
+        }, 300000);
         import("./client-team-events-sync").then(m => m.startClientEventsSyncLoop()).catch(() => {});
         // Heavy crawls (image-sync + archivist) block the event loop and
         // were starving ChatBGP after every redeploy — a single chat turn

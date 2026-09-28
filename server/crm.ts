@@ -2556,6 +2556,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (!scopeCompanyId && ["freeholderId", "longLeaseholderId", "landlordId", "proprietorName", "proprietorCompanyNumber"].some(k => k in updates)) {
         enrichPropertyInBackground(String(req.params.id), { force: true });
       }
+      // An address typed without the picker carries no pin — place it.
+      if (("address" in updates || "postcode" in updates) && !property?.latitude) {
+        import("./property-geocode").then(m => m.geocodePropertyById(String(req.params.id), {}, { retryUnresolved: true })).catch(() => {});
+      }
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

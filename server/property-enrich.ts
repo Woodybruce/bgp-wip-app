@@ -398,6 +398,10 @@ export async function enrichPropertyBasics(propertyId: string): Promise<Property
   );
   const p = rows[0];
   if (!p) return out;
+  // No map pin yet → place it from the postcode / address (free geocoders).
+  await import("./property-geocode")
+    .then(m => m.geocodePropertyById(p.id))
+    .catch((e: any) => console.warn(`[property-enrich] geocode failed for ${p.name}: ${e?.message}`));
   await resolveOwnerCompaniesHouse(p, out);
   const units = await loadUnitRows(p.id);
   await inferAssetClass(p, out, units);

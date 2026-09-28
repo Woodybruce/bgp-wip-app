@@ -3233,6 +3233,7 @@ export async function registerRoutes(
       const { createPropertyFromScraped } = await import("./landlord-scraper");
       const out = await createPropertyFromScraped(companyId, { name: String(name).trim(), address, postcode, sector });
       res.json(out);
+      import("./property-geocode").then(m => m.geocodePropertyById(out.id)).catch(() => {});
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "create failed" });
     }
