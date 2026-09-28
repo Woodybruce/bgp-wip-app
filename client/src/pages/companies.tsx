@@ -1,8 +1,6 @@
 import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
-import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
-import { CompanyPropertiesBoard } from "@/components/CompanyPropertiesBoard";
 import { AccountEntitiesPanel } from "@/components/account-entities-panel";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -1329,9 +1327,10 @@ function CompanyDetail({ id }: { id: string }) {
   const hasGlobalHq = !!ukAddressText && !!globalAddressText && ukAddressText !== globalAddressText;
 
   // Phone widths get the stacked MobileBrandView — the desktop three-column
-  // brand profile renders effectively blank on a phone. Lenders keep the
-  // desktop panel (staff-only surface, no mobile equivalent yet).
-  if (isMobile && !isLenderCo) {
+  // brand profile renders effectively blank on a phone. Lenders get it too,
+  // with their lending boards as a section (the desktop panel squeezed to
+  // 390px doubled the shell's back button and kept a segmented tab box).
+  if (isMobile) {
     return (
       <div className="overflow-x-hidden" data-testid="company-detail-mobile">
         <div className="flex items-center gap-2 px-4 pt-3">
@@ -1353,7 +1352,7 @@ function CompanyDetail({ id }: { id: string }) {
           <CompanyLogoImg domain={company.domainUrl || company.domain} name={company.name} size={32} />
           <h1 className="text-base font-bold truncate min-w-0" data-testid="text-company-detail-name">{company.name}</h1>
         </div>
-        <MobileBrandView companyId={id} />
+        <MobileBrandView companyId={id} lenderSlot={isLenderCo ? <LenderPanel companyId={id} company={company} canEdit={!isClientViewer} /> : undefined} />
       </div>
     );
   }
@@ -1448,34 +1447,16 @@ function CompanyDetail({ id }: { id: string }) {
               scoped viewers. */}
           {/* Brands and landlords: Group entities sits in the profile's top
               row beside the Brand conversation. */}
-          {isLenderCo ? <>
-            <AccountEntitiesPanel companyId={id} hideSingleEntity={/^tenant/i.test(company.companyType || "")} />
-            <LenderPanel companyId={id} company={company} />
-          </> : <BrandProfilePanel companyId={id} showPropertiesBoard={usePropertiesBoard} flat
-            topSlot={<AccountEntitiesPanel companyId={id} hideSingleEntity={/^tenant/i.test(company.companyType || "")} />} />}
+          {/* Lenders get the shared profile (card, conversation, BGP team,
+              contacts, KYC, news) with their lending boards set in — the
+              old stand-alone panel hid their contacts and description and
+              showed a grid of "—" (boards pass 2026-09-28). The loans board
+              lists every secured property, so no separate map board. */}
+          <BrandProfilePanel companyId={id} showPropertiesBoard={usePropertiesBoard && !isLenderCo} flat
+            topSlot={<AccountEntitiesPanel companyId={id} hideSingleEntity={/^tenant/i.test(company.companyType || "")} />}
+            lenderSlot={isLenderCo ? <LenderPanel companyId={id} company={company} canEdit={!isClientViewer} /> : undefined} />
 
-          {/* BGP Team — landlords get it in the brand-profile sidebar (next
-              to the Gallery) so the right column fills and stays aligned.
-              Lenders have no sidebar, so they keep the page-level block. */}
-          {id && isLenderCo && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <Card className="md:col-span-2">
-                  <CardContent className="p-3 space-y-2">
-                    <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5 text-muted-foreground" />
-                      BGP Team
-                    </h3>
-                    <ClientTeamOrgChart clientCompanyId={id} />
-                  </CardContent>
-                </Card>
-              </div>
-          )}
-
-          {usePropertiesBoard ? (
-            /* Landlords now render the board inside BrandProfilePanel (between
-               Ask ChatBGP and BGP Relationship); only lenders keep it here. */
-            isLenderCo ? <CompanyPropertiesBoard companyId={id} kind="lender" /> : null
-          ) : (
+          {usePropertiesBoard ? null : (
             <>
               {linkedProperties.length > 0 && (() => {
                 const userIdToName = new Map<string, string>();

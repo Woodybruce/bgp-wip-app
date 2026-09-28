@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Pill } from "@/components/ui/pill";
+import { Pill, pillMetrics, pillInactive } from "@/components/ui/pill";
 import { ArrowUpRight, CalendarClock, Loader2, Plus, Users } from "lucide-react";
 import { AGENT_ROLES } from "@shared/agent-roles";
 import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
@@ -32,14 +32,25 @@ const money = (v: any) => {
   if (!n) return null;
   return n >= 1_000_000 ? `£${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}m` : `£${Math.round(n / 1000)}k`;
 };
+// landlord_debt_events.amount is stored in £m (30 = £30m) — money() read it
+// as pounds and every facility showed "£0k".
+export const moneyM = (v: any) => {
+  const n = Number(v);
+  if (!n) return null;
+  return `£${n >= 10 ? Math.round(n) : Number(n.toFixed(1))}m`;
+};
+export const debtEventLabel = (t: string | null | undefined) => {
+  const s = String(t || "").replace(/_/g, " ").trim();
+  return s ? s[0].toUpperCase() + s.slice(1) : "Event";
+};
 const MATTER_LABEL: Record<string, string> = { rent_review: "Rent review", lease_renewal: "Lease renewal", dilapidations: "Dilapidations", service_charge: "Service charge", general: "General" };
 
 function Section({ title, count, link, linkLabel, children, empty }: { title: string; count?: number; link?: string; linkLabel?: string; children?: React.ReactNode; empty?: string }) {
   return (
     <div className="space-y-1.5">
       <div className="flex items-start justify-between gap-2 min-w-0">
-        <span className="text-[10px] uppercase tracking-widest text-muted-foreground flex flex-wrap items-center gap-1.5 min-w-0">
-          {title}{count != null && <Badge variant="outline" className="text-[9px] tabular-nums">{count}</Badge>}
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex flex-wrap items-center gap-1.5 min-w-0">
+          {title}{count != null && <span className="font-mono tabular-nums normal-case">{count}</span>}
         </span>
         {link && <Link href={link} className="text-[11px] text-primary hover:underline inline-flex items-center gap-0.5 whitespace-nowrap shrink-0">{linkLabel || "Open"}<ArrowUpRight className="w-3 h-3" /></Link>}
       </div>
@@ -48,12 +59,17 @@ function Section({ title, count, link, linkLabel, children, empty }: { title: st
   );
 }
 
+// Status inside a row — the pill metrics, not a 9px badge (DESIGN §6).
+function RowPill({ children, title }: { children: React.ReactNode; title?: string }) {
+  return <span className={`${pillMetrics} ${pillInactive}`} title={title}>{children}</span>;
+}
+
 function Row({ href, title, sub, right }: { href?: string; title: React.ReactNode; sub?: React.ReactNode; right?: React.ReactNode }) {
   const body = (
     <div className="flex items-center justify-between gap-2 min-w-0 rounded border bg-card px-2 py-1.5 hover:bg-muted/40">
       <div className="min-w-0">
-        <div className="text-xs font-medium truncate">{title}</div>
-        {sub && <div className="text-[10px] text-muted-foreground truncate">{sub}</div>}
+        <div className="text-sm font-medium truncate">{title}</div>
+        {sub && <div className="text-[11px] text-muted-foreground truncate">{sub}</div>}
       </div>
       {right && <div className="flex items-center gap-1 shrink-0">{right}</div>}
     </div>
@@ -112,8 +128,8 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
         <div className="flex flex-wrap gap-1.5">
           <Pill active={tab === "investment"} onClick={() => setTab("investment")} data-testid="team-tab-investment">Investment</Pill>
           <Pill active={tab === "tenantRep"} onClick={() => setTab("tenantRep")} data-testid="team-tab-tenant-rep">Tenant rep</Pill>
-          <Pill active={tab === "agents"} onClick={() => setTab("agents")} data-testid="team-tab-agents">Agents{data?.agents?.length ? ` · ${data.agents.length}` : ""}</Pill>
-          <Pill active={tab === "leaseAdvisory"} onClick={() => setTab("leaseAdvisory")} data-testid="team-tab-lease-advisory">Lease advisory{events.length ? ` · ${la.eventsTotal > events.length ? `${events.length}+` : events.length}` : ""}</Pill>
+          <Pill active={tab === "agents"} onClick={() => setTab("agents")} data-testid="team-tab-agents">Agents{data?.agents?.length ? <span className="font-mono tabular-nums">{data.agents.length}</span> : null}</Pill>
+          <Pill active={tab === "leaseAdvisory"} onClick={() => setTab("leaseAdvisory")} data-testid="team-tab-lease-advisory">Lease advisory{events.length ? <span className="font-mono tabular-nums">{la.eventsTotal > events.length ? `${events.length}+` : events.length}</span> : null}</Pill>
         </div>
       </CardHeader>
       <CardContent className="p-3 pt-0">
@@ -147,7 +163,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
               <Section title="Selling — on BGP's investment boards" link="/investment-tracker" linkLabel="Investment tracker" empty="Nothing they're selling on BGP's investment boards.">
                 {sales.length > 0 && <div className="space-y-1">{sales.slice(0, 6).map((t: any) => (
                   <Row key={t.id} href={t.deal_id ? `/deals/${t.deal_id}` : "/investment-tracker"} title={<span className={CLOSED.test(t.status || "") ? "text-muted-foreground" : ""}>{t.asset_name}</span>} sub={[statusLabel(t.status), t.board_type === "Purchases" && t.client && `BGP buying for ${t.client}`, t.bid_deadline && `bids ${t.bid_deadline}`].filter(Boolean).join(" · ")}
-                    right={<>{money(t.guide_price) && <span className="text-[10px] tabular-nums">{money(t.guide_price)}</span>}{t.niy ? <span className="text-[10px] text-muted-foreground tabular-nums">{Number(t.niy).toFixed(2)}% NIY</span> : null}</>} />
+                    right={<>{money(t.guide_price) && <span className="text-xs font-mono tabular-nums">{money(t.guide_price)}</span>}{t.niy ? <span className="text-[11px] font-mono text-muted-foreground tabular-nums">{Number(t.niy).toFixed(2)}% NIY</span> : null}</>} />
                 ))}</div>}
               </Section>
               <Section title="Might sell — flagged in the portfolio" empty="No properties marked for sale or investment work.">
@@ -158,7 +174,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
               {inv.debtEvents.length > 0 && (
                 <Section title="Debt & capital events">
                   <div className="space-y-1">{inv.debtEvents.slice(0, 5).map((e: any) => (
-                    <Row key={e.id} href={e.property_id ? `/properties/${e.property_id}` : undefined} title={`${e.event_type}${e.property_name ? ` · ${e.property_name}` : ""}`} sub={[e.lender, money(e.amount), e.notes].filter(Boolean).join(" · ")} right={<span className="text-[10px] text-muted-foreground">{fmtDate(e.event_date)}</span>} />
+                    <Row key={e.id} href={e.property_id ? `/properties/${e.property_id}` : undefined} title={`${debtEventLabel(e.event_type)}${e.property_name ? ` · ${e.property_name}` : ""}`} sub={[e.lender, moneyM(e.amount), e.notes].filter(Boolean).join(" · ")} right={<span className="text-[11px] font-mono tabular-nums text-muted-foreground">{fmtDate(e.event_date)}</span>} />
                   ))}</div>
                 </Section>
               )}
@@ -181,7 +197,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                   return rows.map(({ r, detail, title }: any) => {
                     const repeat = rows.filter((o: any) => o.title === title).length > 1;
                     const sub = [!r.ownName && detail, r.ownName && detail && r.comments && String(r.comments).slice(0, 80), r.updated_at && `updated ${fmtMonth(r.updated_at)}`].filter(Boolean).join(" · ");
-                    return <Row key={r.id} href="/requirements?type=investment" title={repeat ? `${title} · ref ${String(r.id).slice(-4)}` : title} sub={sub} right={r.status && <Badge variant="outline" className="text-[9px]">{statusLabel(r.status)}</Badge>} />;
+                    return <Row key={r.id} href="/requirements?type=investment" title={repeat ? `${title} · ref ${String(r.id).slice(-4)}` : title} sub={sub} right={r.status && <RowPill>{statusLabel(r.status)}</RowPill>} />;
                   });
                 })()}</div>}
                 {(f.mandate_asset_class || f.mandate_lot_size_min || f.mandate_lot_size_max) && (
@@ -190,7 +206,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
               </Section>
               <Section title="Buying — on BGP's investment boards" link="/investment-tracker" linkLabel="Investment tracker" empty="Nothing they're buying on BGP's investment boards.">
                 {purchases.length > 0 && <div className="space-y-1">{purchases.slice(0, 5).map((t: any) => (
-                  <Row key={t.id} href={t.deal_id ? `/deals/${t.deal_id}` : "/investment-tracker"} title={<span className={CLOSED.test(t.status || "") ? "text-muted-foreground" : ""}>{t.asset_name}</span>} sub={[statusLabel(t.status), t.vendor && `vendor ${t.vendor}`].filter(Boolean).join(" · ")} right={money(t.guide_price) && <span className="text-[10px] tabular-nums">{money(t.guide_price)}</span>} />
+                  <Row key={t.id} href={t.deal_id ? `/deals/${t.deal_id}` : "/investment-tracker"} title={<span className={CLOSED.test(t.status || "") ? "text-muted-foreground" : ""}>{t.asset_name}</span>} sub={[statusLabel(t.status), t.vendor && `vendor ${t.vendor}`].filter(Boolean).join(" · ")} right={money(t.guide_price) && <span className="text-xs font-mono tabular-nums">{money(t.guide_price)}</span>} />
                 ))}</div>}
               </Section>
               {(inv.sentToThem?.length > 0 || inv.theirBids?.length > 0 || inv.theirViewings?.length > 0) && (
@@ -200,7 +216,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                       <Row key={`v-${v.id}`} href={v.deal_id ? `/deals/${v.deal_id}` : "/investment-tracker"} title={v.asset_name} sub={["Viewed", fmtDate(v.viewing_date), v.contact, v.outcome].filter(Boolean).join(" · ")} />
                     ))}
                     {inv.theirBids.slice(0, 5).map((o: any) => (
-                      <Row key={`b-${o.id}`} href={o.deal_id ? `/deals/${o.deal_id}` : "/investment-tracker"} title={o.asset_name} sub={["Bid", o.status && statusLabel(o.status), fmtDate(o.offer_date)].filter(Boolean).join(" · ")} right={money(o.offer_price) && <span className="text-[10px] tabular-nums">{money(o.offer_price)}</span>} />
+                      <Row key={`b-${o.id}`} href={o.deal_id ? `/deals/${o.deal_id}` : "/investment-tracker"} title={o.asset_name} sub={["Bid", o.status && statusLabel(o.status), fmtDate(o.offer_date)].filter(Boolean).join(" · ")} right={money(o.offer_price) && <span className="text-xs font-mono tabular-nums">{money(o.offer_price)}</span>} />
                     ))}
                     {inv.sentToThem.slice(0, 5).map((d: any) => (
                       <Row key={`s-${d.id}`} href={d.deal_id ? `/deals/${d.deal_id}` : "/investment-tracker"} title={d.asset_name} sub={["Sent particulars", fmtDate(d.sent_date), d.response].filter(Boolean).join(" · ")} />
@@ -210,7 +226,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
               )}
               <Section title="Investment comps" link="/investment-comps" linkLabel="Comps" empty="No recorded trades as buyer or seller.">
                 {inv.comps.length > 0 && <div className="space-y-1">{inv.comps.slice(0, 5).map((c: any) => (
-                  <Row key={c.id} href={c.property_id ? `/properties/${c.property_id}` : "/investment-comps"} title={c.property_name || "Trade"} sub={[c.side === "sold" ? "Sold" : "Bought", c.city, c.cap_rate && `${(Number(c.cap_rate) < 1 ? Number(c.cap_rate) * 100 : Number(c.cap_rate)).toFixed(2)}%`].filter(Boolean).join(" · ")} right={<><span className="text-[10px] tabular-nums">{money(c.price)}</span><span className="text-[10px] text-muted-foreground">{fmtMonth(c.transaction_date)}</span></>} />
+                  <Row key={c.id} href={c.property_id ? `/properties/${c.property_id}` : "/investment-comps"} title={c.property_name || "Trade"} sub={[c.side === "sold" ? "Sold" : "Bought", c.city, c.cap_rate && `${(Number(c.cap_rate) < 1 ? Number(c.cap_rate) * 100 : Number(c.cap_rate)).toFixed(2)}%`].filter(Boolean).join(" · ")} right={<><span className="text-xs font-mono tabular-nums">{money(c.price)}</span><span className="text-[11px] font-mono tabular-nums text-muted-foreground">{fmtMonth(c.transaction_date)}</span></>} />
                 ))}</div>}
               </Section>
             </div>
@@ -225,20 +241,20 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                 <Row key={`${u.kind}-${u.id}`} href={u.kind === "marketing" ? `/available?propertyId=${u.propertyId}&unitId=${u.id}` : `/leasing-schedule/${u.propertyId}`}
                   title={spaceTitle(u)}
                   sub={<>Fits: {u.fits.map((s: any, i: number) => <span key={s.requirementId}>{i > 0 && ", "}{s.bgpClient ? <strong className="text-foreground" title="BGP acts for this brand">{s.name} ★</strong> : s.name}</span>)}{u.fitCount > u.fits.length ? ` +${u.fitCount - u.fits.length}` : ""}</>}
-                  right={<>{saleBadge(u.propertyId)}{u.sqft ? <span className="text-[10px] tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null}{u.status && <Badge variant="outline" className="text-[9px]">{statusLabel(u.status)}</Badge>}</>} />
+                  right={<>{saleBadge(u.propertyId)}{u.sqft ? <span className="text-xs font-mono tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null}{u.status && <RowPill>{statusLabel(u.status)}</RowPill>}</>} />
               ))}</div>}
             </Section>
             <div className="space-y-4">
               <Section title="Other vacant / marketing space" count={tr.space.length - spaceWithFits.length} link="/available" linkLabel="Letting tracker">
                 {tr.space.length - spaceWithFits.length > 0 && <div className="space-y-1">{tr.space.filter((u: any) => !u.fits.length).slice(0, 6).map((u: any) => (
                   <Row key={`${u.kind}-${u.id}`} href={u.kind === "marketing" ? `/available?propertyId=${u.propertyId}&unitId=${u.id}` : `/leasing-schedule/${u.propertyId}`}
-                    title={spaceTitle(u)} right={<>{u.sqft ? <span className="text-[10px] tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null}{u.status && <Badge variant="outline" className="text-[9px]">{statusLabel(u.status)}</Badge>}</>} />
+                    title={spaceTitle(u)} right={<>{u.sqft ? <span className="text-xs font-mono tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null}{u.status && <RowPill>{statusLabel(u.status)}</RowPill>}</>} />
                 ))}</div>}
               </Section>
               <p className="text-[11px] text-muted-foreground">★ BGP acts for the brand (a live tenant rep deal or search) — <Link href="/tenant-rep" className="text-primary hover:underline">Tenant rep board</Link></p>
               <Section title="BGP acting for tenants here" count={tr.deals.length} link="/deals/list?team=Tenant%20Rep" linkLabel="Tenant rep deals" empty="No live tenant rep deals on their schemes.">
                 {tr.deals.length > 0 && <div className="space-y-1">{tr.deals.slice(0, 6).map((d: any) => (
-                  <Row key={d.id} href={`/deals/${d.id}`} title={d.tenant_name || d.name} sub={[d.property_name, d.deal_type].filter(Boolean).join(" · ")} right={d.status && <Badge variant="outline" className="text-[9px]">{statusLabel(d.status)}</Badge>} />
+                  <Row key={d.id} href={`/deals/${d.id}`} title={d.tenant_name || d.name} sub={[d.property_name, d.deal_type].filter(Boolean).join(" · ")} right={d.status && <RowPill>{statusLabel(d.status)}</RowPill>} />
                 ))}</div>}
               </Section>
             </div>
@@ -256,7 +272,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                     a.deals ? `${a.deals} deal${a.deals === 1 ? "" : "s"} here${a.openDeals ? `, ${a.openDeals} live` : ""}` : null,
                     a.viewings ? `brought ${a.viewings} viewing${a.viewings === 1 ? "" : "s"}` : null,
                   ].filter(Boolean).join(" · ")}
-                  right={<>{Object.keys(a.roles).slice(0, 2).map(r => <Badge key={r} variant="outline" className="text-[9px]">{AGENT_ROLES.find(x => x.role === r)?.short || r}</Badge>)}</>} />
+                  right={<>{Object.keys(a.roles).slice(0, 2).map(r => <RowPill key={r}>{AGENT_ROLES.find(x => x.role === r)?.short || r}</RowPill>)}</>} />
               ))}</div>}
             </Section>
           </div>
@@ -281,7 +297,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
               {la.matters.length > 0 && <div className="space-y-1">{la.matters.map((m: any) => (
                 <Row key={m.id} href={`/pla/matters/${m.id}`} title={`${MATTER_LABEL[m.matter_type] || m.matter_type}${m.property_name ? ` · ${m.property_name}` : ""}`}
                   sub={[m.acting_for && `acting for ${m.acting_for}`, m.lead_name, m.expiry_date && `expiry ${fmtMonth(m.expiry_date)}`].filter(Boolean).join(" · ")}
-                  right={<Badge variant="outline" className="text-[9px]">{m.status}</Badge>} />
+                  right={<RowPill>{m.status}</RowPill>} />
               ))}</div>}
             </Section>
           </div>

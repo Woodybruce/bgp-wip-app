@@ -1,4 +1,5 @@
 import { formatSizeList } from "@/lib/format-size";
+import { aboutText } from "@/lib/about-text";
 import { isOwnChannelNews, newsSourceLabel, splitNewsTitle, isOwnBrandSource, dedupeNearNews, ukDate, sentenceCaseShouting, aboutParagraphs, isSocialNews, snippetPublisher, urlPublisher, isSignalNoise, signalKind, accountBoardContacts, propertyUnitText, trackerUnitLabel, displayStoreName } from "@/components/brand-profile-panel";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { BrandFeedCard } from "@/components/brand-feed-card";
@@ -35,7 +36,7 @@ import { useAccountWorkspace } from "@/components/account-workspace-cards";
 
 // `embedded`: inside a deal's Brand tab, which has its own KYC tab — no
 // second Compliance pill there (Woody, 2026-09-28).
-export function MobileBrandView({ companyId, embedded = false }: { companyId: string; embedded?: boolean }) {
+export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { companyId: string; embedded?: boolean; lenderSlot?: React.ReactNode }) {
   const { data, isLoading, isError, refetch: reloadSavedProfile } = useQuery<any>({
     queryKey: ["/api/brand", companyId, "profile"],
     queryFn: async () => {
@@ -56,7 +57,7 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
 
   // Phone section switcher (docs/DESIGN.md §16) — this view is phone-only
   // and ran 8+ boards deep in one scroll. Hook sits above the early return.
-  const [section, setSection] = useState<"chat" | "contacts" | "intel" | "stores" | "social" | "compliance">("chat");
+  const [section, setSection] = useState<"chat" | "lending" | "contacts" | "intel" | "stores" | "social" | "compliance">("chat");
   const [signalsShowAll, setSignalsShowAll] = useState(false);
   const [newsShowAllM, setNewsShowAllM] = useState(false);
   const [conversationOpen, setConversationOpen] = useState(false);
@@ -166,6 +167,8 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
   // Agent firms get the brand shell but none of the brand-only parts (stores,
   // social, covenant chip) — Savills showed "43 reported stores".
   const isAgentFirm = !isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type);
+  // Lenders: the shell's sections plus a Lending one; no stores / social.
+  const isLender = !!lenderSlot;
   return (
     <div className="p-4 space-y-3 pb-6">
       {/* Hero + identity */}
@@ -176,7 +179,7 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
             twice (Woody, 2026-09-28). */}
         {c.company_type && <Pill className="max-w-full"><span className="truncate">{c.industry ? String(c.company_type).split(/\s*-\s*/)[0] : String(c.company_type).replace(/\s*-\s*/g, " · ")}</span></Pill>}
         {c.industry && <Pill className="max-w-full"><span className="truncate">{c.industry}</span></Pill>}
-        {!isLandlord && !isAgentFirm && c.store_count != null && <Pill><span className="font-mono tabular-nums">{c.store_count}</span> reported stores</Pill>}
+        {!isLandlord && !isAgentFirm && !isLender && c.store_count != null && <Pill><span className="font-mono tabular-nums">{c.store_count}</span> reported stores</Pill>}
         {!isAgentFirm && (c as any).companies_house_number && <CovenantBadge companyNumber={(c as any).companies_house_number} />}
       </div>
       {/* Status and refresh on one quiet line — a full-width button above the
@@ -189,10 +192,11 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
         {!isClientViewer && refreshProfile.message && !/^Profile (refreshed|checked)\./.test(refreshProfile.message) && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{refreshProfile.message}</p>}
       <div className="flex flex-wrap gap-1.5" data-testid="company-phone-sections">
         <Pill active={section === "chat"} onClick={() => setSection("chat")} data-testid="company-section-chat">Overview</Pill>
+        {isLender && <Pill active={section === "lending"} onClick={() => setSection("lending")} data-testid="company-section-lending">Lending</Pill>}
         <Pill active={section === "contacts"} onClick={() => setSection("contacts")} data-testid="company-section-contacts">Contacts</Pill>
         <Pill active={section === "intel"} onClick={() => setSection("intel")} data-testid="company-section-intel">Intel</Pill>
-        {!isLandlord && !isAgentFirm && <Pill active={section === "stores"} onClick={() => setSection("stores")} data-testid="company-section-stores">Stores</Pill>}
-        {!isLandlord && !isAgentFirm && <Pill active={section === "social"} onClick={() => setSection("social")} data-testid="company-section-social">Social</Pill>}
+        {!isLandlord && !isAgentFirm && !isLender && <Pill active={section === "stores"} onClick={() => setSection("stores")} data-testid="company-section-stores">Stores</Pill>}
+        {!isLandlord && !isAgentFirm && !isLender && <Pill active={section === "social"} onClick={() => setSection("social")} data-testid="company-section-social">Social</Pill>}
         {/* Agents have no KYC panel on desktop either; a deal's Brand tab has
             the deal's own KYC tab (Woody, 2026-09-28). */}
         {!isAgentFirm && !embedded && <Pill active={section === "compliance"} onClick={() => setSection("compliance")} data-testid="company-section-compliance">Compliance</Pill>}
@@ -213,13 +217,13 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
       </div>
       {/* Image search is a staff tool for brands — agent firms and
           landlords showed it too (Woody, 2026-09-27). */}
-      {!isClientViewer && !isAgentFirm && !isLandlord && <BrandImageRefreshButton companyId={companyId} />}
-      {c.description && <div className="rounded-lg border border-border bg-card p-3 space-y-2">
+      {!isClientViewer && !isAgentFirm && !isLandlord && !isLender && <BrandImageRefreshButton companyId={companyId} />}
+      {aboutText(c.description) && <div className="rounded-lg border border-border bg-card p-3 space-y-2">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
         {/* First paragraph clamped on its own; the rest only when expanded. */}
         {(() => {
           const { summary, notes } = aboutParagraphs(c.description, c.store_count);
-          const clamped = !aboutOpen && c.description.length > 220;
+          const clamped = !aboutOpen && aboutText(c.description).length > 220;
           return <>
             {(clamped ? summary.slice(0, 1) : summary).map((para, i) => (
               <p key={i} className={`text-sm leading-relaxed whitespace-pre-line ${clamped ? "line-clamp-5" : ""}`}>{para}</p>
@@ -229,15 +233,17 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
             ))}
           </>;
         })()}
-        {c.description.length > 220 && <button type="button" onClick={() => setAboutOpen(v => !v)} className="text-xs text-primary hover:underline">{aboutOpen ? "Show less" : "Read more"}</button>}
+        {aboutText(c.description).length > 220 && <button type="button" onClick={() => setAboutOpen(v => !v)} className="text-xs text-primary hover:underline">{aboutOpen ? "Show less" : "Read more"}</button>}
       </div>}
       {/* Landlords and agent firms have no BGP take on desktop either. */}
-      {!isLandlord && !isAgentFirm && <BgpTakeStrip companyId={companyId} tab="brand" hideWhenEmpty />}
+      {!isLandlord && !isAgentFirm && !isLender && <BgpTakeStrip companyId={companyId} tab="brand" hideWhenEmpty />}
       <div className="rounded-lg border border-border bg-card p-3 space-y-3">
         <Button variant="outline" size="sm" onClick={() => setConversationOpen(value => !value)} aria-expanded={conversationOpen} data-testid="button-brand-conversation">{conversationOpen ? "Close conversation" : "Open conversation"}</Button>
-        {conversationOpen && <div className="h-96"><CompanyMiniChat companyId={companyId} companyName={c.name} fill starters={askTopics(c.name, isLandlord, !isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type))} /></div>}
+        {conversationOpen && <div className="h-96"><CompanyMiniChat companyId={companyId} companyName={c.name} fill starters={askTopics(c.name, isLandlord, isAgentFirm, isLender)} /></div>}
       </div>
       </div>
+
+      {isLender && <div className={sec("lending")} data-testid="company-phone-lending">{lenderSlot}</div>}
 
       <div className={sec("contacts")}>
       {(data.representedBy || []).length > 0 && (

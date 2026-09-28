@@ -24,7 +24,7 @@ import { CompanyPropertiesBoard } from "@/components/CompanyPropertiesBoard";
 import { useToast } from "@/hooks/use-toast";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Pill } from "@/components/ui/pill";
+import { Pill, pillMetrics, pillInactive } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CovenantBadge, CovenantCommentary, useCovenantReport } from "@/components/covenant-badge";
@@ -838,7 +838,7 @@ export function aboutParagraphs(description: string | null | undefined, storeCou
   return { summary, notes };
 }
 
-export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat = false, topSlot }: { companyId: string; showPropertiesBoard?: boolean; flat?: boolean; topSlot?: React.ReactNode }) {
+export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat = false, topSlot, lenderSlot }: { companyId: string; showPropertiesBoard?: boolean; flat?: boolean; topSlot?: React.ReactNode; lenderSlot?: React.ReactNode }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const { setInput: setChatInput } = useChatBGPState();
@@ -1437,6 +1437,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   const isAgent = !!c.agent_type;
   // Agent firms get their own page layout (like landlords).
   const isAgentFirm = !isLandlord && (/^agent/i.test(c.company_type || "") || isAgent);
+  // Lenders arrive with their lending boards (companies.tsx decides the kind).
+  const isLender = !!lenderSlot;
   // Everything the AI commentary might name, so mentions become links.
   const commentaryEntities: CommentaryEntity[] = [
     ...data.contacts.filter((ct: any) => ct.name).map((ct: any) => ({ name: ct.name, href: `/contacts/${ct.id}`, kind: "contact" as const })),
@@ -1472,6 +1474,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
           <Sparkles className="w-4 h-4 text-primary shrink-0" />
           {(() => {
             const t = (c.company_type || "").toLowerCase();
+            if (isLender) return "Lender Profile";
             if (t === "agent" || t.includes("agent")) return "Agent Profile";
             if (isLandlord) return "Landlord Profile";
             return "Brand Profile";
@@ -1569,7 +1572,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               </>}
               {currentUser?.role !== "Client" && <>
                 <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)}><Plus />Add to deal</Button>
-                {!isLandlord && !isAgentFirm && <Button variant="outline" size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}><Building2 />Pitch property</Button>}
+                {!isLandlord && !isAgentFirm && !isLender && <Button variant="outline" size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}><Building2 />Pitch property</Button>}
               </>}
             </div>
     </>
@@ -1579,23 +1582,25 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             // brand's shared thread, not a second answer panel stacked on top
             // of it (Woody, 2026-09-26).
             <div className="h-96 md:h-auto md:min-h-[24rem] md:flex-1 md:min-w-0" data-testid="brand-conversation">
-              <CompanyMiniChat companyId={companyId} companyName={c.name} fill title={isLandlord ? "Landlord conversation" : isAgentFirm ? "Agent conversation" : "Brand conversation"} starters={askTopics(c.name, isLandlord, isAgentFirm)} />
+              <CompanyMiniChat companyId={companyId} companyName={c.name} fill title={isLender ? "Lender conversation" : isLandlord ? "Landlord conversation" : isAgentFirm ? "Agent conversation" : "Brand conversation"} starters={askTopics(c.name, isLandlord, isAgentFirm, isLender)} />
             </div>
   );
+  const aboutLen = aboutText(c.description).length;
   // About's content on its own, so the company page can put it inside the
   // one profile card (header, website, details, actions, About) — elsewhere
   // it keeps its own card.
   const aboutBody = (
             <div className="space-y-2" data-testid="brand-factual-summary">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
-              {/* No description yet = no line; "awaiting preparation" read as
-                  pipeline status, not a brand fact. */}
+              {/* No description yet = no heading and no line — an "About X"
+                  label over nothing read as a broken board; "awaiting
+                  preparation" read as pipeline status, not a brand fact. */}
+              {aboutLen > 0 && <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>}
               {/* Clamp the first paragraph only — clamping across aboutText's
                   paragraph break left the ellipsis after "(Putney)." — the
                   rest shows when expanded (Woody, 2026-09-27). */}
-              {c.description && (() => {
+              {aboutLen > 0 && (() => {
                 const { summary, notes } = aboutParagraphs(c.description, c.store_count);
-                const clamped = !aboutOpen && c.description.length > ABOUT_CLAMP_CHARS;
+                const clamped = !aboutOpen && aboutLen > ABOUT_CLAMP_CHARS;
                 return <>
                   {(clamped ? summary.slice(0, 1) : summary).map((para, i) => (
                     <p key={i} className={`text-sm leading-relaxed break-words whitespace-pre-line ${clamped ? "line-clamp-5" : ""}`}>{para}</p>
@@ -1605,7 +1610,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   ))}
                 </>;
               })()}
-              {(c.description || "").length > ABOUT_CLAMP_CHARS && (
+              {aboutLen > ABOUT_CLAMP_CHARS && (
                 <button type="button" onClick={() => setAboutOpen(open => !open)} className="text-xs text-primary hover:underline" data-testid="button-about-more">{aboutOpen ? "Show less" : "Read more"}</button>
               )}
             {/* Key facts row */}
@@ -1770,7 +1775,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             </div>
             {/* BGP team, last touch and portfolio activity sit with About
                 (Woody, 2026-09-24: "include this circled info in the about"). */}
-            <div className="space-y-2 pt-2 border-t border-border" data-testid="brand-relationship-summary">
+            {/* Its own rule only under About content — with no About the
+                profile card's rule sat right above this one (a double line). */}
+            <div className={`space-y-2 ${aboutLen > 0 || c.backers || c.tiktok_handle || c.dept_store_presence || c.franchise_activity || c.stock_ticker || (c.instagram_handle && !isLandlord) || (isBrand && !isClientViewer) ? "pt-2 border-t border-border" : ""}`} data-testid="brand-relationship-summary">
             {/* Coverage sits in the header row; when nobody is set by hand the
                 server falls back to the BGP agents on this brand's deals. */}
             <div className="space-y-1.5 [container-type:inline-size]">
@@ -1824,22 +1831,20 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             {/* Represents (brands this agent reps) */}
             {(data.representing.length > 0 || isAgentFirm) && (
               <div>
-                <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
-                  <span className="flex items-center gap-1"><Users className="w-3 h-3" /> Currently representing ({data.representing.length})</span>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> Currently representing <span className="font-mono tabular-nums normal-case tracking-normal">{data.representing.length}</span></span>
                   {!isClientViewer && (
-                  <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px]" onClick={() => { setAddRep("brand"); setRepForm({ ...EMPTY_REP_FORM, agent_type: c.agent_type || "tenant_rep" }); }} data-testid="button-add-brand">
+                  <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => { setAddRep("brand"); setRepForm({ ...EMPTY_REP_FORM, agent_type: c.agent_type || "tenant_rep" }); }} data-testid="button-add-brand">
                     <Plus className="w-3 h-3 mr-0.5" /> Add brand
                   </Button>
                   )}
                 </div>
-                <div className="flex flex-wrap gap-1">
+                <div className="flex flex-wrap gap-1.5">
                   {data.representing.slice(0, 12).map((r: any) => (
                     <span key={r.id} className="inline-flex items-center gap-1 group">
-                      <Link href={`/companies/${r.brand_company_id}`}>
-                        <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer">
-                          {r.brand_name}
-                          {r.region && <span className="ml-1 text-muted-foreground">· {r.region.replace(/_/g, " ")}</span>}
-                        </Badge>
+                      <Link href={`/companies/${r.brand_company_id}`} className={`${pillMetrics} ${pillInactive} normal-case tracking-normal text-foreground`}>
+                        {r.brand_name}
+                        {r.region && <span className="text-muted-foreground">· {r.region.replace(/_/g, " ")}</span>}
                       </Link>
                       {!isClientViewer && (
                       <button
@@ -2250,7 +2255,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // then Portfolio (properties + data check), Deals & instructions, and the
   // account boards balanced in two columns; Gallery last. Group entities
   // sit with Compliance & KYC instead of heading the page.
-  if (isLandlord && flat) {
+  if (isLandlord && flat && !isLender) {
     const masonryCls = "space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense";
     return (
       <div className="flex flex-col gap-3 w-full min-w-0 [container-type:inline-size]" data-testid="landlord-profile">
@@ -2293,6 +2298,28 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     );
   }
 
+  // Lender page — the landlord pattern: profile beside the conversation,
+  // then what they lend on and their terms, then people, KYC and news.
+  if (isLender && flat) {
+    const masonryCls = "space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense";
+    return (
+      <div className="flex flex-col gap-3 w-full min-w-0 [container-type:inline-size]" data-testid="lender-profile">
+        {profileTopRow}
+        {refreshStatus}
+        {lenderSlot}
+        <MasonryGrid className={masonryCls}>
+          <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
+          <div className="flex flex-col gap-3">
+            <BrandProfileSidebar data={data} companyId={companyId} only={["compliance"]} />
+            {topSlot}
+          </div>
+          <BrandProfileSidebar data={data} companyId={companyId} only={["news"]} />
+        </MasonryGrid>
+        {viewerDialogs}
+      </div>
+    );
+  }
+
   // Agent page — its own layout (Woody, 2026-09-26: "there are different
   // types of agents ... their different roles / relationships with the
   // business"). Profile beside the conversation, then their relationship
@@ -2310,7 +2337,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             gapped (space-y missed the display:contents cards), and an empty
             "Currently representing (0)" card becomes a slim Add link
             (Woody, 2026-09-28). */}
-        <MasonryGrid className={data.news?.length ? masonryCls : "flex flex-col gap-3 w-full max-w-3xl"}>
+        {/* Full width, not max-w-3xl: the capped column stopped 200px short
+            of the relationship and gallery boards above and below it. */}
+        <MasonryGrid className={data.news?.length ? masonryCls : "flex flex-col gap-3 w-full"}>
           {(data.representing.length > 0 || addRep) ? <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-2" data-testid="agent-represents">{representsBlock}</div>
             : !isClientViewer && <Button size="sm" variant="ghost" className="self-start h-7 px-2 text-xs text-muted-foreground" onClick={() => { setAddRep("brand"); setRepForm({ ...EMPTY_REP_FORM, agent_type: c.agent_type || "tenant_rep" }); }} data-testid="button-add-brand"><Plus className="w-3 h-3 mr-1" /> Add a brand they represent</Button>}
           <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
@@ -3192,7 +3221,14 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
 // Ask ChatBGP starters — one click posts the question into the brand's
 // shared conversation, where ChatBGP answers for the whole team.
 export type AskTopic = { label: string; question: string };
-export function askTopics(brandName: string, isLandlord = false, isAgentFirm = false): AskTopic[] {
+export function askTopics(brandName: string, isLandlord = false, isAgentFirm = false, isLender = false): AskTopic[] {
+  if (isLender) return [
+    { label: "Overview", question: `Tell me everything BGP needs to know about ${brandName} as a lender — what they lend on and our relationship with them` },
+    { label: "Loans", question: `Which properties does ${brandName} lend on, to which borrowers, and on what terms?` },
+    { label: "Maturities", question: `When do ${brandName}'s facilities mature or reach extension dates, and which create a refinancing or sale opportunity for BGP?` },
+    { label: "People", question: `Who at ${brandName} should BGP be talking to, and who knows them best at BGP?` },
+    { label: "Email", question: `Draft a short catch-up email from BGP to our main contact at ${brandName}` },
+  ];
   if (isAgentFirm) return [
     { label: "Overview", question: `Tell me everything BGP needs to know about ${brandName} as an agent — who they act for and our relationship with them` },
     { label: "Acts for", question: `Which brands, landlords and investors does ${brandName} act for, and in which roles?` },
@@ -4086,7 +4122,7 @@ export function BrandComplianceCard({
                   <div className="text-sm font-semibold leading-tight truncate" title={entity}>{entity}</div>
                 ) : (
                   <div className="text-xs italic text-muted-foreground">
-                    {rescrape.isPending ? "Checking the website and deal records…" : bcIsClient ? "Not confirmed yet — BGP is identifying the UK trading entity." : "Not found — enter manually or re-run scraper."}
+                    {rescrape.isPending ? "Checking the website and deal records…" : bcIsClient ? "Not confirmed yet — BGP is identifying the UK trading entity." : "Not found yet — enter it or refresh."}
                   </div>
                 )}
                 {company.companies_house_number && (
@@ -5374,19 +5410,6 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
       <div className={column || only ? "contents" : data.news && data.news.length > 0 ? pairCls : "space-y-3"}>
       {/* News & Media */}
       {show("news") && data.news && data.news.length > 0 && (() => {
-        const newsSourceColor = (name: string | null): string => {
-          if (!name) return "bg-zinc-100 text-zinc-600 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700";
-          const n = name.toLowerCase();
-          if (n.includes("drapers")) return "bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:border-violet-800";
-          if (n.includes("retail week")) return "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800";
-          if (n.includes("property week") || n.includes("estates gazette") || n.includes("eg ")) return "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800";
-          if (n.includes("financial times") || n === "ft") return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800";
-          if (n.includes("reuters")) return "bg-red-100 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800";
-          if (n.includes("vogue") || n.includes("business of fashion")) return "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800";
-          if (n.includes("bbc")) return "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800";
-          if (n.includes("guardian") || n.includes("times") || n.includes("telegraph")) return "bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-800";
-          return "bg-zinc-100 text-zinc-600 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700";
-        };
         const relDate = (d: string | null): string => {
           if (!d) return "";
           const days = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
@@ -5446,15 +5469,16 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
                 {/* No Press stories → no Press tab; "Press (0)" was a
                     clickable empty tab (Woody, 2026-09-28). */}
                 {(pressNews.length ? ["industry", "press"] as const : ["industry"] as const).map(t => (
-                  <button
+                  <Pill
                     key={t}
+                    active={newsTab === t}
                     onClick={() => { setNewsTab(t); setNewsShowAll(false); setNewsSourceFilter(null); }}
-                    className={`text-[10px] font-medium px-2 py-0.5 rounded transition-colors ${newsTab === t ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
                   >
                     {/* Counts cover every story behind "Show more" — "Industry (4)" sat
-                        over four rows and "Show 1 more"; Press had none (Woody, 2026-09-28). */}
-                    {t === "industry" ? `Industry (${industryAll.length})` : `Press (${pressNews.length})`}
-                  </button>
+                        over four rows and "Show 1 more"; Press had none (Woody, 2026-09-28).
+                        Bare mono count inside the pill (DESIGN §15). */}
+                    {t === "industry" ? "Industry" : "Press"} <span className="font-mono tabular-nums">{t === "industry" ? industryAll.length : pressNews.length}</span>
+                  </Pill>
                 ))}
               </div>
               <NewsTagFilterChips selected={newsTagFilter} onChange={setNewsTagFilter} className="text-[10px]" hideEmpty
@@ -5462,16 +5486,17 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
               {newsTab === "industry" && allSources.length > 1 && (
                 <div className="flex items-center gap-1 flex-wrap">
                   {newsSourceFilter && (
-                    <button onClick={() => setNewsSourceFilter(null)} className="text-[10px] text-muted-foreground hover:text-foreground underline">All</button>
+                    <Pill onClick={() => setNewsSourceFilter(null)}>All</Pill>
                   )}
                   {allSources.slice(0, 5).map(s => (
-                    <button
+                    <Pill
                       key={s}
+                      active={newsSourceFilter === s}
                       onClick={() => setNewsSourceFilter(s === newsSourceFilter ? null : s)}
-                      className={`text-[10px] font-medium px-1.5 py-0.5 rounded border transition-colors ${newsSourceFilter === s ? newsSourceColor(s) : "border-border text-muted-foreground hover:bg-muted"}`}
+                      className="normal-case tracking-normal"
                     >
                       {s}
-                    </button>
+                    </Pill>
                   ))}
                 </div>
               )}
@@ -5577,15 +5602,15 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
                               Guardian's blue read as a different kind of
                               thing (Woody, 2026-09-28). */}
                           {sourceLabel && (
-                            <span className="text-[9px] font-semibold px-1 py-0.5 rounded border bg-zinc-100 text-zinc-600 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700">
+                            <span className="text-[11px] font-semibold text-muted-foreground truncate">
                               {sourceLabel}
                             </span>
                           )}
-                          <span className="text-[9px] text-muted-foreground ml-auto shrink-0">{relDate(article.published_at)}</span>
+                          <span className="text-[11px] text-muted-foreground ml-auto shrink-0">{relDate(article.published_at)}</span>
                         </div>
-                        <p className="text-[11px] font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">{cleanTitle}</p>
+                        <p className="text-sm font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">{cleanTitle}</p>
                         {displayText && (
-                          <p className="text-[10px] text-muted-foreground leading-snug line-clamp-1 mt-0.5">{displayText}</p>
+                          <p className="text-[11px] text-muted-foreground leading-snug line-clamp-1 mt-0.5">{displayText}</p>
                         )}
                       </div>
                     </a>
@@ -5595,9 +5620,9 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
               {(filtered.length > 6 || newsShowAll || (newsTab === "industry" && olderHidden > 0)) && (
                 <button
                   onClick={() => setNewsShowAll(v => !v)}
-                  className="text-[10px] text-primary hover:underline"
+                  className="text-xs text-primary hover:underline"
                 >
-                  {newsShowAll ? "Show less" : `Show ${Math.max(0, filtered.length - 6) + (newsTab === "industry" ? olderHidden : 0)} more`}
+                  {newsShowAll ? "Show fewer" : `Show all ${filtered.length + (newsTab === "industry" ? olderHidden : 0)}`}
                 </button>
               )}
             </CardContent>

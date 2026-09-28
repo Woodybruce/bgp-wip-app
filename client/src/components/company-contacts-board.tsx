@@ -122,7 +122,7 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead, c
         if (e.key === "Enter") saveRole.mutate(roleDraft.trim());
         if (e.key === "Escape") { setEditingRole(false); setRoleDraft(contact.role || ""); }
       }}
-      className="text-[11px] w-full md:w-48 border rounded px-1 py-0.5 bg-background"
+      className="text-[11px] w-full [@container(min-width:560px)]:w-48 border rounded px-1 py-0.5 bg-background"
       placeholder="e.g. Head of Leasing"
     />
   ) : (
@@ -130,7 +130,7 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead, c
       type="button"
       data-no-min-touch
       onClick={() => setEditingRole(true)}
-      className="text-[11px] md:text-xs text-left truncate min-w-0 text-muted-foreground hover:text-foreground hover:underline decoration-dotted"
+      className="text-[11px] [@container(min-width:560px)]:text-xs text-left truncate min-w-0 text-muted-foreground hover:text-foreground hover:underline decoration-dotted"
       title={contact.role ? `${contact.role} — click to edit` : "Add role"}
     >
       {contact.role || <span className="italic text-muted-foreground/70">add role…</span>}
@@ -138,12 +138,12 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead, c
   );
 
   return (
-    <div className={`flex items-center gap-2 text-sm hover:bg-muted/50 rounded px-1 py-1 md:py-0.5 -mx-1 transition-colors ${muted ? "opacity-60" : ""}`} data-testid={`key-contact-row-${contact.id}`}>
+    <div className={`flex items-center gap-2 text-sm hover:bg-muted/50 rounded px-1 py-1 [@container(min-width:560px)]:py-0.5 -mx-1 transition-colors ${muted ? "opacity-60" : ""}`} data-testid={`key-contact-row-${contact.id}`}>
       <Link href={`/contacts/${contact.id}`} className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[9px] font-medium shrink-0 overflow-hidden">
         <ContactAvatar url={contact.avatar_url} name={contact.name} />
       </Link>
-      <div className="min-w-0 flex-1 md:flex md:items-center md:gap-2">
-        <div className="flex items-center gap-1 min-w-0 md:max-w-[45%] md:shrink-0">
+      <div className="min-w-0 flex-1 [@container(min-width:560px)]:flex [@container(min-width:560px)]:items-center [@container(min-width:560px)]:gap-2">
+        <div className="flex items-center gap-1 min-w-0 [@container(min-width:560px)]:max-w-[45%] [@container(min-width:560px)]:shrink-0">
           <Link href={`/contacts/${contact.id}`} className={`hover:underline truncate ${placeholderName ? "font-normal text-muted-foreground" : "font-semibold"}`}>{contactDisplayName(contact.name)}</Link>
           {placeholderName && <span className="text-[10px] text-muted-foreground/70 shrink-0 whitespace-nowrap" title="Saved from an inbox — the real name replaces it once BGP sees their signature">name from email</span>}
           {isLead && <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 bg-foreground text-background border-transparent" title="The AI check's read of BGP's main property contact here">Lead</Badge>}
@@ -161,20 +161,20 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead, c
             </Badge>
           ) : null}
         </div>
-        <div className="flex items-center gap-1.5 min-w-0 md:flex-1">
+        <div className="flex items-center gap-1.5 min-w-0 [@container(min-width:560px)]:flex-1">
           {roleOrStatus}
           {/* Phone: status / count end the role line (line two). */}
           {leftLabel ? (
-            <span className="md:hidden shrink-0 text-[10px] text-muted-foreground" title={contact.left_note || undefined}>· {leftLabel}</span>
+            <span className="[@container(min-width:560px)]:hidden shrink-0 text-[10px] text-muted-foreground" title={contact.left_note || undefined}>· {leftLabel}</span>
           ) : touches > 0 && (
-            <span className="md:hidden shrink-0 text-[10px] text-muted-foreground font-mono tabular-nums" title={touchTitle}>· {touchText}</span>
+            <span className="[@container(min-width:560px)]:hidden shrink-0 text-[10px] text-muted-foreground font-mono tabular-nums" title={touchTitle}>· {touchText}</span>
           )}
         </div>
         {/* Account-mode provenance (Delivery 3): where this contact enters
             the account — employer, property links, portfolio names. Only
             renders when the caller passes workspace-shaped contacts. */}
         {(contact.employerName || (contact.via && contact.via.length > 0) || (contact.propertyNames && contact.propertyNames.length > 0)) && (
-          <div className="hidden md:flex items-center gap-1 shrink-0 max-w-[40%] overflow-hidden">
+          <div className="hidden [@container(min-width:560px)]:flex items-center gap-1 shrink-0 max-w-[40%] overflow-hidden">
             {contact.employerName && (
               <Badge variant="outline" className="text-[9px] px-1 py-0 text-muted-foreground truncate">{contact.employerName}</Badge>
             )}
@@ -190,9 +190,9 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead, c
         )}
       </div>
       {leftLabel ? (
-        <span className="hidden md:inline shrink-0 text-[11px] text-muted-foreground" title={contact.left_note || undefined} data-testid="key-contact-left">{leftLabel}</span>
+        <span className="hidden [@container(min-width:560px)]:inline shrink-0 text-[11px] text-muted-foreground" title={contact.left_note || undefined} data-testid="key-contact-left">{leftLabel}</span>
       ) : touches > 0 && (
-        <span className="hidden md:inline shrink-0 text-[11px] text-muted-foreground font-mono tabular-nums" title={touchTitle}>{touchText}</span>
+        <span className="hidden [@container(min-width:560px)]:inline shrink-0 text-[11px] text-muted-foreground font-mono tabular-nums" title={touchTitle}>{touchText}</span>
       )}
       <div className="flex items-center shrink-0">
         {hasEmail && (
@@ -485,7 +485,9 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
     return !sender.in_crm && !isMachineMailbox(sender.email) && (!e || (!crmEmailSet.has(e) && !discovered.some((k: any) => normEmail(k.email) === e)));
   });
   const moreCount = rest.length + retired.length;
-  const hasMore = moreCount > 0 || inboxSenders.length > 0 || (!!summary && !kcIsClient);
+  // Nothing to expand but the discovery summary → the summary line shows on
+  // its own; a "Show 0 from BGP inboxes" toggle opened onto nothing.
+  const hasMore = moreCount > 0 || inboxSenders.length > 0;
 
   const addToCrm = async (k: any) => {
     const rowKey = normEmail(k.email) || normName(k.name);
@@ -545,9 +547,9 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
         <span className="w-5 h-5 rounded-full bg-muted/70 border border-dashed flex items-center justify-center text-[9px] font-medium shrink-0">
           {(k.name || k.email || "?").split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase()}
         </span>
-        <div className="min-w-0 flex-1 md:flex md:items-center md:gap-2">
-          <p className="font-semibold truncate md:max-w-[45%] md:shrink-0">{contactDisplayName(k.name) || k.email}</p>
-          <p className="text-[11px] md:text-xs text-muted-foreground truncate md:flex-1" title={[k.title, k.email, k.phone || k.mobile, k.ai?.reason].filter(Boolean).join(" · ")}>
+        <div className="min-w-0 flex-1 [@container(min-width:560px)]:flex [@container(min-width:560px)]:items-center [@container(min-width:560px)]:gap-2">
+          <p className="font-semibold truncate [@container(min-width:560px)]:max-w-[45%] [@container(min-width:560px)]:shrink-0">{contactDisplayName(k.name) || k.email}</p>
+          <p className="text-[11px] [@container(min-width:560px)]:text-xs text-muted-foreground truncate [@container(min-width:560px)]:flex-1" title={[k.title, k.email, k.phone || k.mobile, k.ai?.reason].filter(Boolean).join(" · ")}>
             {[k.title, k.email].filter(Boolean).join(" · ") || "—"}
           </p>
         </div>
@@ -596,7 +598,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
         </Button>
         )}
       </CardHeader>
-      <CardContent className="p-3 pt-0">
+      <CardContent className="p-3 pt-0 [container-type:inline-size]">
         {topSlot}
         {accountMode && (employerOptions.length > 0 || propertyOptions.length > 0) && (
           <div className="flex flex-wrap items-center gap-1.5 mb-2">
