@@ -143,35 +143,44 @@ export async function backfillOpeningStores(limit = 150) {
   console.log(`[openings-map] ${added} planned openings from ${rows.length} brands' signals`);
 }
 
-/** Once: website-listed stores saved before the Places lookup existed (town
- *  only, no pin) — find each on Google Places; a match that is a store
- *  already mapped is removed as a duplicate. */
-export async function locateWebsiteOnlyStores(limit = 200) {
-  const pool = await dbPool();
-  const KEY = "migration:website_stores_locate_v1";
-  if ((await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [KEY])).rows.length) return;
-  const { findOfficialPlace } = await import("./brand-stores-website");
-  const { rows } = await pool.query(
-    `SELECT s.id, s.brand_company_id, s.name, s.address, s.country FROM brand_stores s
-      WHERE s.source_type = 'official_website' AND s.lat IS NULL AND COALESCE(s.country, 'GB') = 'GB'
-      ORDER BY s.brand_company_id LIMIT $1`, [limit]);
-  let located = 0, merged = 0;
-  const byBrand = new Map<string, any[]>();
-  for (const r of rows) byBrand.set(r.brand_company_id, [...(byBrand.get(r.brand_company_id) || []), r]);
-  for (const [brandId, list] of byBrand) {
-    try {
-      const company = (await pool.query(`SELECT * FROM crm_companies WHERE id = $1`, [brandId])).rows[0];
-      if (!company) continue;
-      const found = await findOfficialPlace(company, list.map(r => ({ name: r.name, city: String(r.address || "").split(",").pop()!.trim(), country: "GB" })));
-      const mapped = new Set((await pool.query(`SELECT place_id FROM brand_stores WHERE brand_company_id = $1 AND source_type <> 'official_website'`, [brandId])).rows.map((x: any) => x.place_id));
-      for (let i = 0; i < list.length; i++) {
-        const f = found[i];
-        if (!f) continue;
-        if (mapped.has(f.placeId)) { merged += (await pool.query(`DELETE FROM brand_stores WHERE id = $1`, [list[i].id])).rowCount || 0; continue; }
-        located += (await pool.query(`UPDATE brand_stores SET address = $2, lat = $3, lng = $4, updated_at = now() WHERE id = $1 AND lat IS NULL`, [list[i].id, f.address, f.lat, f.lng])).rowCount || 0;
-      }
-    } catch (e: any) { console.warn("[website-stores] locate", brandId, e?.message); }
+/** Website-listed stores saved with only a town (no pin) — find each on
+ *  Google Places; a match that is a store already mapped is removed as a
+ *  duplicate. Each row is tried once (remembered in system_settings); runs
+ *  in the background when the brand is viewed. */
+export async function locateWebsiteStoresFor(companyId: string, deps: { pool?: Querier; findPlace?: (company: any, items: Array<{ name: string; city: string; country: string }>) => Promise<Array<{ placeId: string; address: string; lat: number; lng: number } | null>> } = {}): Promise<{ located: number; merged: number }> {
+  const pool = deps.pool ?? await dbPool();
+  const KEY = `website-stores-located:${companyId}`;
+  const tried = new Set<string>(((await pool.query(`SELECT value FROM system_settings WHERE key = $1`, [KEY])).rows[0]?.value?.tried) || []);
+  const list = (await pool.query(
+    `SELECT id, name, address FROM brand_stores WHERE brand_company_id = $1 AND source_type = 'official_website' AND lat IS NULL AND COALESCE(country, 'GB') = 'GB' LIMIT 40`,
+    [companyId])).rows.filter((r: any) => !tried.has(r.id));
+  if (!list.length) return { located: 0, merged: 0 };
+  const company = (await pool.query(`SELECT * FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+  if (!company) return { located: 0, merged: 0 };
+  // "Wake The Tiger Amazement Park, Bristol" beside the one mapped Wake The
+  // Tiger in Bristol is that venue under its long name.
+  const flat = (v: string) => String(v || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const mappedRows = (await pool.query(`SELECT address FROM brand_stores WHERE brand_company_id = $1 AND source_type <> 'official_website' AND lat IS NOT NULL`, [companyId])).rows;
+  let merged = 0;
+  for (const r of [...list]) {
+    const town = String(r.address || "").split(",").pop()!.trim().toLowerCase();
+    if (!town || !flat(r.name).includes(flat(company.name))) continue;
+    if (mappedRows.filter((m: any) => String(m.address || "").toLowerCase().includes(town)).length !== 1) continue;
+    merged += (await pool.query(`DELETE FROM brand_stores WHERE id = $1`, [r.id])).rowCount || 0;
+    list.splice(list.indexOf(r), 1);
   }
-  await pool.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING`, [KEY, JSON.stringify({ rows: rows.length, located, merged, at: new Date().toISOString() })]);
-  console.log(`[website-stores] ${located} located, ${merged} duplicates of mapped stores removed (of ${rows.length})`);
+  const findPlace = deps.findPlace || (await import("./brand-stores-website")).findOfficialPlace;
+  const found = await findPlace(company, list.map((r: any) => ({ name: r.name, city: String(r.address || "").split(",").pop()!.trim(), country: "GB" })));
+  const mapped = new Set((await pool.query(`SELECT place_id FROM brand_stores WHERE brand_company_id = $1 AND source_type <> 'official_website'`, [companyId])).rows.map((x: any) => x.place_id));
+  let located = 0;
+  for (let i = 0; i < list.length; i++) {
+    const f = found[i];
+    if (!f) continue;
+    if (mapped.has(f.placeId)) { merged += (await pool.query(`DELETE FROM brand_stores WHERE id = $1`, [list[i].id])).rowCount || 0; continue; }
+    mapped.add(f.placeId);
+    located += (await pool.query(`UPDATE brand_stores SET address = $2, lat = $3, lng = $4, updated_at = now() WHERE id = $1 AND lat IS NULL`, [list[i].id, f.address, f.lat, f.lng])).rowCount || 0;
+  }
+  await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2::jsonb, now())
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, [KEY, JSON.stringify({ tried: [...tried, ...list.map((r: any) => r.id)].slice(-500) })]);
+  return { located, merged };
 }

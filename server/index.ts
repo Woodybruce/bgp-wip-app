@@ -5161,8 +5161,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
       // — once for the backlog; new signals are read when a brand is viewed.
       setTimeout(async () => {
         try {
-          const { backfillOpeningStores, locateWebsiteOnlyStores } = await import("./brand-openings-map");
-          await locateWebsiteOnlyStores();
+          const { backfillOpeningStores } = await import("./brand-openings-map");
           await backfillOpeningStores();
         } catch (e: any) { console.error("[openings-map] backfill failed:", e?.message); }
       }, 90000);

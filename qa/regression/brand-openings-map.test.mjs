@@ -40,3 +40,30 @@ test('opening signals become coming-soon stores once; town-only and opened sites
   const again = await syncOpeningStores('b1', { pool, read, geocode });
   assert.equal(again.read, 0, 'each signal is read once');
 });
+
+test('a website venue named after the brand in a town with one mapped store is that store', async () => {
+  const deleted = [], updated = [];
+  const pool = {
+    async query(sql, params = []) {
+      if (/SELECT value FROM system_settings/.test(sql)) return { rows: [] };
+      if (/source_type = 'official_website' AND lat IS NULL/.test(sql)) return { rows: [
+        { id: 'w1', name: 'Wake The Tiger Amazement Park', address: 'Bristol' },
+        { id: 'w2', name: 'Dream Factory', address: 'Bristol' },
+        { id: 'w3', name: 'Absurd City', address: 'London' },
+      ] };
+      if (/FROM crm_companies/.test(sql)) return { rows: [{ id: 'b', name: 'Wake the Tiger' }] };
+      if (/lat IS NOT NULL/.test(sql)) return { rows: [{ address: 'Wake The Tiger, 127 Albert Rd, Bristol BS2 0YA' }] };
+      if (/SELECT place_id/.test(sql)) return { rows: [{ place_id: 'gp1' }] };
+      if (/^DELETE/.test(sql.trim())) { deleted.push(params[0]); return { rowCount: 1 }; }
+      if (/^UPDATE/.test(sql.trim())) { updated.push(params); return { rowCount: 1 }; }
+      if (/INSERT INTO system_settings/.test(sql)) return { rowCount: 1 };
+      throw new Error(sql);
+    },
+  };
+  const { locateWebsiteStoresFor } = await import('../../server/brand-openings-map.ts');
+  const findPlace = async (_c, items) => items.map(i => i.name === 'Dream Factory' ? { placeId: 'gp1', address: 'x', lat: 1, lng: 1 } : i.name === 'Absurd City' ? { placeId: 'gp2', address: '1 Somewhere St, London', lat: 51.5, lng: -0.1 } : null);
+  const out = await locateWebsiteStoresFor('b', { pool, findPlace });
+  assert.deepEqual(deleted, ['w1', 'w2']);
+  assert.equal(out.located, 1);
+  assert.equal(updated[0][0], 'w3');
+});

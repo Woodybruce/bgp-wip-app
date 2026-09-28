@@ -1128,8 +1128,9 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         // active rather than the generic open/closed colouring.
         // Planned openings: BGP's live deals for the brand (staff only), and
         // opening signals read into sites in the background for next view.
-        const { bgpDealStores, withoutOpenedPlans, syncOpeningStores } = await import("./brand-openings-map");
+        const { bgpDealStores, withoutOpenedPlans, syncOpeningStores, locateWebsiteStoresFor } = await import("./brand-openings-map");
         void syncOpeningStores(String(req.params.companyId)).catch((e: any) => console.warn("[openings-map]", e?.message));
+        void locateWebsiteStoresFor(String(req.params.companyId)).catch((e: any) => console.warn("[website-stores]", e?.message));
         const dealStores = bpScope ? [] : await bgpDealStores(String(req.params.companyId));
         const raw = withoutOpenedPlans([...stores.rows, ...dealStores]);
         const withCoords = raw.filter((s: any) => typeof s.lat === "number" && typeof s.lng === "number");
