@@ -230,30 +230,6 @@ const LOCATION_COLORS: Record<string, string> = {
 import { DEAL_STATUS_BADGE_COLORS as STATUS_COLORS } from "@/lib/deal-status-colors";
 import { DEAL_STATUS_DOT_COLORS as STATUS_LABEL_COLORS } from "@/lib/deal-status-colors";
 
-const ASSET_CLASS_COLORS: Record<string, string> = {
-  "E": "bg-blue-500",
-  "E(a)": "bg-blue-400",
-  "E(b)": "bg-blue-400",
-  "E(c)": "bg-blue-400",
-  "E(d)": "bg-blue-400",
-  "E(e)": "bg-blue-400",
-  "A1": "bg-emerald-500",
-  "A2": "bg-emerald-500",
-  "A3": "bg-teal-500",
-  "A4": "bg-teal-500",
-  "A5": "bg-teal-500",
-  "B1": "bg-purple-500",
-  "B2": "bg-purple-500",
-  "B8": "bg-purple-400",
-  "C1": "bg-rose-500",
-  "C3": "bg-rose-400",
-  "D1": "bg-orange-500",
-  "D2": "bg-orange-500",
-  "F1": "bg-cyan-500",
-  "F2": "bg-cyan-500",
-  "Sui Generis": "bg-gray-600",
-};
-
 function fmtNum(n: number | null | undefined) {
   if (n == null) return "—";
   return n.toLocaleString("en-GB");
@@ -1875,20 +1851,18 @@ export default function AvailableUnitsPage() {
         </Select>
         {activeAssetClasses.length > 0 && (
           <div className="flex items-center gap-1.5 flex-wrap">
-            {/* Chips read "Class E", not a "Class:" label over a bare "E"
-                (Woody, 2026-09-28). */}
+            {/* Chips read "Class E", not a "Class:" label over a bare "E",
+                as standard pills — not a bespoke blue capsule (Woody, 2026-09-28). */}
             {activeAssetClasses.map(c => (
-              <button
+              <Pill
                 key={c}
+                active={assetClassFilter === c}
                 onClick={() => setAssetClassFilter(assetClassFilter === c ? "all" : c)}
-                className={`${ASSET_CLASS_COLORS[c] || "bg-gray-500"} text-white text-[10px] font-medium px-2 py-0.5 rounded-full transition-all whitespace-nowrap ${
-                  assetClassFilter === c ? "ring-2 ring-primary ring-offset-1 scale-105" : assetClassFilter !== "all" ? "opacity-40" : "hover:opacity-90"
-                }`}
                 data-testid={`filter-class-${c.toLowerCase().replace(/[() ]/g, "-")}`}
               >
                 {useClassLabel(c)}
-                {assetClassFilter === c && <X className="inline h-3 w-3 ml-0.5 -mr-0.5" />}
-              </button>
+                {assetClassFilter === c && <X className="inline h-3 w-3 -mr-0.5" />}
+              </Pill>
             ))}
           </div>
         )}
@@ -2234,10 +2208,13 @@ export default function AvailableUnitsPage() {
                 {/* "Existing Tenant" wrapped to two lines and sat out of
                     line with the other headers (Woody, 2026-09-01) — one
                     word, tighter column. */}
-                {showCol("existingTenant") && <TableHead className="w-[90px] min-w-[80px] whitespace-nowrap" title="Existing tenant — from the tenancy schedule">Tenant</TableHead>}
+                {showCol("existingTenant") && <TableHead className="w-[84px] min-w-[80px] whitespace-nowrap" title="Existing tenant — from the tenancy schedule">Tenant</TableHead>}
                 {showCol("unitStatus") && <TableHead className="w-[100px] min-w-[96px]">Unit Status</TableHead>}
-                {showCol("pipelineStatus") && <TableHead className="w-[104px] min-w-[100px]">Deal Status</TableHead>}
-                {showCol("website") && <TableHead className="w-[92px] min-w-[88px]">Website</TableHead>}
+                {/* Left block trimmed so Target Tenant clears the pinned Actions
+                    column at 1440 — it read "Target Te" / "+ Target o" once
+                    Unit Status was hidden (Woody, 2026-09-28). */}
+                {showCol("pipelineStatus") && <TableHead className="w-[96px] min-w-[96px] px-2">Deal Status</TableHead>}
+                {showCol("website") && <TableHead className="w-[72px] min-w-[68px] px-2">Website</TableHead>}
                 {!hideClientCol && showCol("client") && (
                   <TableHead className="w-[116px] min-w-[108px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("client")} data-testid="sort-client">
                     Client{sortBy === "client" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
@@ -2246,8 +2223,8 @@ export default function AvailableUnitsPage() {
                 {/* Area & Costs sits with the unit's own facts (Client side of
                     the table) rather than out past the target-tenant block
                     (Woody, 2026-09-02). */}
-                {showCol("areaCosts") && <TableHead className="w-[130px] min-w-[130px]">Area &amp; Costs</TableHead>}
-                <TableHead className="w-[180px] min-w-[170px]">Target Tenant</TableHead>
+                {showCol("areaCosts") && <TableHead className="w-[116px] min-w-[112px] px-2 whitespace-nowrap">Area &amp; Costs</TableHead>}
+                <TableHead className="w-[150px] min-w-[150px] px-2">Target Tenant</TableHead>
                 {showCol("dealStatus") && <TableHead className="w-[130px] min-w-[130px]">Target Status</TableHead>}
                 {showCol("category") && <TableHead className="w-[144px] min-w-[144px]">Category</TableHead>}
                 {showCol("priority") && <TableHead className="w-[60px] min-w-[60px]">Priority</TableHead>}
@@ -2259,7 +2236,7 @@ export default function AvailableUnitsPage() {
                     sticky overlay (Woody, 2026-09-01 "target tenant still
                     not right"). */}
                 <TableHead className="p-0" aria-hidden />
-                <TableHead className="w-[205px] min-w-[205px] border-l bg-card sticky right-0 z-20">Actions &amp; Activity</TableHead>
+                <TableHead className="w-[200px] min-w-[200px] px-2 border-l bg-card sticky right-0 z-20">Actions &amp; Activity</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -2418,7 +2395,7 @@ export default function AvailableUnitsPage() {
                         </div>
                       </TableCell>
                       {showCol("existingTenant") && (
-                      <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[90px]">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[84px]">
                         {/* The name itself is derived from the tenancy
                             schedule (read-only) — but if it isn't a CRM
                             brand yet, the + adds it (Woody, 2026-09-01). */}
@@ -2726,7 +2703,7 @@ export default function AvailableUnitsPage() {
                           letting tracker, they are all lettings") — the type
                           still sets from the unit form / deal page. */}
                       <TableCell rowSpan={unitRowSpan} className="p-0" aria-hidden />
-                      <TableCell rowSpan={unitRowSpan} className={`sticky right-0 z-10 border-l ${selectedIds.has(u.id) ? "bg-primary/5" : "bg-card"}`}>
+                      <TableCell rowSpan={unitRowSpan} className={`sticky right-0 z-10 border-l px-2 ${selectedIds.has(u.id) ? "bg-primary/5" : "bg-card"}`}>
                         {/* Everything actionable in one pinned cluster —
                             activity counts, files/HOTs/brief and row actions
                             (Woody, 2026-09-01 "all in one"; supersedes the

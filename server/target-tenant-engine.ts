@@ -61,7 +61,7 @@ async function selfGet(req: Request, path: string) {
     .then(r => r.ok ? r.json() : null).catch(() => null);
 }
 const rows = (pool: any, sql: string, params: any[] = []) => pool.query(sql, params).then((r: any) => r.rows).catch(() => [] as any[]);
-const month = (d: any) => d ? new Date(d).toLocaleDateString("en-GB", { month: "short", year: "numeric" }) : "";
+const month = (d: any) => d ? new Date(d).toLocaleDateString("en-GB", { month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep") : "";
 
 export async function centreEvidence(pool: any, req: Request, propertyId: string): Promise<CentreEvidence> {
   const { isClientRequestUser } = await import("./company-scope");

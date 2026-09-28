@@ -215,6 +215,8 @@ function PendingSendersList({ suggestions: allSuggestions, companyId }: { sugges
   const psIsClient = !psViewer || psViewer.role === "Client" || !!psViewer.companyScopeId;
   const [saved, setSaved] = useState<Record<string, PromotedContact>>({});
   const [lastSaved, setLastSaved] = useState<{ companyId: string; contact: PromotedContact } | null>(null);
+  // An inner scroll box cut the last row mid-name — show 6, then "+N more".
+  const [showAllSenders, setShowAllSenders] = useState(false);
 
   const promote = useMutation({
     mutationFn: async ({ sender, sourceCompanyId }: { sender: any; sourceCompanyId: string }) => {
@@ -236,8 +238,8 @@ function PendingSendersList({ suggestions: allSuggestions, companyId }: { sugges
       <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1.5">
         From BGP inboxes <span className="font-mono tabular-nums">({suggestions.filter(sender => !saved[`${companyId}:${sender.email}`]).length} to review)</span>
       </div>
-      <div className="space-y-0.5 max-h-[180px] overflow-y-auto pr-1">
-        {suggestions.map((s) => (
+      <div className="space-y-0.5">
+        {(showAllSenders ? suggestions : suggestions.slice(0, 6)).map((s) => (
           <div key={s.email} className="flex items-center gap-1.5 text-[11px] px-1 py-1 rounded hover:bg-muted/50">
             <Mail className="w-2.5 h-2.5 text-muted-foreground shrink-0" />
             <span className="truncate flex-1 text-[11px]">{s.email}</span>
@@ -254,6 +256,11 @@ function PendingSendersList({ suggestions: allSuggestions, companyId }: { sugges
           </div>
         ))}
       </div>
+      {suggestions.length > 6 && (
+        <button type="button" className="mt-1 text-[11px] text-primary hover:underline" onClick={() => setShowAllSenders(v => !v)}>
+          {showAllSenders ? "Show fewer" : `+${(suggestions.length - 6).toLocaleString("en-GB")} more`}
+        </button>
+      )}
     </div>
   );
 }

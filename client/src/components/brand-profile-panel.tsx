@@ -509,9 +509,21 @@ const normBrandName = (s: string | null | undefined) => String(s || "").toLowerC
   .replace(/\b(?:bakery|bakeries|restaurants?|uk|group|ltd|limited|plc)\b/g, "").replace(/[^a-z0-9]/g, "");
 // The brand's own posts published via Google News ("… - Savills",
 // "… - Gail's Bakery") belong in its own feed, not Industry (Woody, 2026-09-28).
+// A brand's social channels ("Nando's (Instagram)", "(Jobs)") are not its
+// press — startsWith let "nandosinstagram" through into Press, duplicating
+// the Instagram grid (Woody, 2026-09-28).
+const SOCIAL_CHANNEL_RE = /\b(?:instagram|jobs|careers|linkedin|tiktok|facebook|twitter|social|youtube)\b|\(x\)/i;
 export function isOwnBrandSource(label: string | null | undefined, brandName: string | null | undefined): boolean {
+  if (SOCIAL_CHANNEL_RE.test(label || "")) return false;
   const own = normBrandName(brandName), n = normBrandName(label);
   return own.length >= 3 && !!n && (n === own || n.startsWith(own));
+}
+const SOCIAL_HOST_RE = /^(?:[\w-]+\.)?(?:instagram|linkedin|tiktok|facebook|twitter|x|youtube)\.com$/i;
+// Press = the brand's website news, openings and press releases only.
+export function isSocialNews(a: { source_name?: string | null; url?: string | null }): boolean {
+  let host = "";
+  try { host = new URL(String(a.url || "")).hostname; } catch { /* no url */ }
+  return SOCIAL_CHANNEL_RE.test(a.source_name || "") || SOCIAL_HOST_RE.test(host) || /\/(?:careers|jobs)\b/i.test(String(a.url || ""));
 }
 export function splitNewsTitle(title: string | null | undefined): { title: string; publisher: string | null } {
   let t = String(title || "").trim();
@@ -548,29 +560,114 @@ export function newsSourceLabel(source: string | null | undefined, title: string
   return publisherLike(junk ? splitNewsTitle(title).publisher : clean);
 }
 const newsWords = (t: string) => new Set(splitNewsTitle(t).title.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(w => w.length > 2));
+// Reworded retellings of one event ("Wingstop to open in Bournemouth" /
+// "Bournemouth gets its first Wingstop") share their distinctive names and
+// an event verb family, not 60% of their words (Woody, 2026-09-28).
+const NEWS_EVENT_FAMILIES: RegExp[] = [
+  /\b(?:open(?:s|ing|ed)?|launch(?:es|ed|ing)?|arriv(?:e|es|ed|ing|al)|debut(?:s|ed)?|unveil(?:s|ed)?|brings?|coming|comes?|enters?|expands?|expansion|first)\b/i,
+  /\b(?:sales|profits?|results|revenues?|earnings|turnover|trading update|half-year|full-year)\b/i,
+];
+const HEADLINE_STOP = new Set(("the and for with from into over after amid its their this that new first next week weeks month year today date uk britain british london city town "
+  + "restaurant restaurants store stores shop shops site sites opening openings open opens launch launches brand brands chain chains group owner boss "
+  + "plans plan set sets confirmed revealed reveals announces announced record rise rises rising fall falls up down more than says said will could "
+  + "fashion retail retailer high street centre shopping news report reports update latest exclusive live watch how why what where when who big major "
+  + "sales profit profits results revenue half full quarter q1 q2 q3 q4 jobs job new-look arrives arrive coming comes brings bring debut unveils second third").split(/\s+/));
+const properTokens = (title: string, brandName?: string | null) => {
+  const tok = (w: string) => w.replace(/[’']s$/i, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const brand = new Set(String(brandName || "").split(/\s+/).map(tok).filter(Boolean));
+  return new Set(splitNewsTitle(title).title.split(/[^A-Za-z0-9’'-]+/)
+    .filter(w => /^[A-Z]/.test(w)).map(tok).filter(w => w.length > 2 && !HEADLINE_STOP.has(w) && !brand.has(w)));
+};
 // Collapse the same story from several outlets: ≥60% of the shorter
-// headline's words shared, within 21 days (Woody, 2026-09-28).
-export function dedupeNearNews<T extends { title?: string | null; published_at?: string | null }>(items: T[]): T[] {
-  const kept: { item: T; words: Set<string>; at: number }[] = [];
+// headline's words shared, within 21 days — or, within 10 days, the same
+// event family with one headline's distinctive names all in the other's.
+export function dedupeNearNews<T extends { title?: string | null; published_at?: string | null }>(items: T[], brandName?: string | null): T[] {
+  const kept: { item: T; words: Set<string>; names: Set<string>; events: boolean[]; at: number }[] = [];
   for (const item of items) {
-    const words = newsWords(item.title || ""), at = item.published_at ? new Date(item.published_at).getTime() : NaN;
+    const title = item.title || "";
+    const words = newsWords(title), at = item.published_at ? new Date(item.published_at).getTime() : NaN;
+    const names = properTokens(title, brandName), events = NEWS_EVENT_FAMILIES.map(re => re.test(splitNewsTitle(title).title));
     const dup = kept.some(k => {
-      if (!isNaN(at) && !isNaN(k.at) && Math.abs(at - k.at) > 21 * 86400000) return false;
-      const small = Math.min(words.size, k.words.size);
-      if (small < 3) return false;
+      const gap = !isNaN(at) && !isNaN(k.at) ? Math.abs(at - k.at) : 0;
+      if (gap > 21 * 86400000) return false;
+      if (gap <= 10 * 86400000 && events.some((e, i) => e && k.events[i])) {
+        const [small, big] = names.size <= k.names.size ? [names, k.names] : [k.names, names];
+        if (small.size > 0 && [...small].every(w => big.has(w))) return true;
+      }
+      const smallWords = Math.min(words.size, k.words.size);
+      if (smallWords < 3) return false;
       let shared = 0; words.forEach(w => { if (k.words.has(w)) shared++; });
-      return shared / small >= 0.6;
+      return shared / smallWords >= 0.6;
     });
-    if (!dup) kept.push({ item, words, at });
+    if (!dup) kept.push({ item, words, names, events, at });
   }
   return kept.map(k => k.item);
 }
+// Shouting = ≥70% of the letters upper case, so a lone "x" in
+// "OFF-LICENCE SESSIONS x …" doesn't keep it shouting (Woody, 2026-09-28).
 export function sentenceCaseShouting(text: string | null | undefined): string {
   const t = String(text || "");
   const letters = t.replace(/[^A-Za-z]/g, "");
-  if (letters.length < 8 || letters !== letters.toUpperCase()) return t;
+  if (letters.length < 8 || letters.replace(/[^A-Z]/g, "").length / letters.length < 0.7) return t;
   const lower = t.toLowerCase();
   return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+// Google News snippets are "<headline>  <publisher>" (sometimes with the
+// publisher in a <font> tag) — the publisher when the stored source is
+// empty (Woody, 2026-09-28).
+export function snippetPublisher(title: string | null | undefined, snippet: string | null | undefined): string | null {
+  const raw = String(snippet || "");
+  const font = raw.match(/<font[^>]*>([^<]{2,60})<\/font>\s*$/i);
+  if (font) return publisherLike(font[1].replace(/&amp;/g, "&").trim());
+  const plain = raw.replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+  const head = splitNewsTitle(title).title.trim();
+  if (!head || !plain.toLowerCase().startsWith(head.toLowerCase())) return null;
+  const rest = plain.slice(head.length).replace(/^[\s\-–—|·]+/, "").trim();
+  return rest && rest.length <= 60 && rest.split(/\s+/).length <= 6 ? publisherLike(rest) : null;
+}
+// A database profile ("Propel Multi-Site Database — Aug 2026 profile") and
+// the brand's social posts ("hot honey @wingstopuk") are not signals
+// (Woody, 2026-09-28).
+export function isSignalNoise(s: { source?: string | null; headline?: string | null }): boolean {
+  const src = String(s.source || ""), head = String(s.headline || "");
+  let host = "";
+  try { host = new URL(src).hostname; } catch { /* not a url */ }
+  // LinkedIn headcount / hiring signals stay — they're data, not posts.
+  return /^(?:[\w-]+\.)?(?:instagram|tiktok|facebook|twitter|x)\.com$/i.test(host) || /\b(?:instagram|tiktok|facebook|twitter)\b/i.test(src) || /\bdatabase\b/i.test(src) || /\bdatabase\b.*\bprofile\b/i.test(head)
+    || /(?:^|\s)@[a-z0-9_.]{3,}\b/i.test(head) || (head.match(/(?:^|\s)#\w+/g) || []).length >= 2;
+}
+// A unit's own code, not the property the row already shows, its address
+// or the old tenant: "Unit R 11U Gunwharf Quays - First Floor" → "Unit R 11U
+// · First Floor", "L057 Bluewater - Lower Level" → "L057 · Lower Level",
+// "Basinghall Walk - Greggs" → "Unit at Basinghall Walk" (Woody, 2026-09-28).
+// Keep in step with unitLabel in server/crm.ts (suggested pitches).
+const UNIT_CODE_RE = /^(?:(?:unit|units|u|su|msu|kiosk|k|shop|suite|lsu|store|pod|restaurant|cafe|space)\s*[a-z]{0,2}\s*[\d/]+[a-z]{0,3}\b.*|[a-z]{0,3}\d{1,4}[a-z]{0,3}(?:\/\d+[a-z]?)?)$/i;
+const UNIT_CODE_IN_RE = /\b(?:unit|kiosk|shop|su|msu|suite)\s*[a-z]?\s*\d+[a-z]{0,3}\b/i;
+const UNIT_FLOOR_RE = /^(?:(?:lower|upper|ground|first|second|third|fourth|mezzanine|basement|lower ground|upper ground|top)\s+(?:floor|level|mall)|(?:level|floor)\s+-?\d+|lg|ug|gf)$/i;
+const UNIT_PLACE_RE = /\b(?:walk|street|st|road|rd|lane|way|place|court|parade|row|arcade|square|yard|gardens?|market|avenue|terrace|precinct|plaza|mall)\b/i;
+const UNIT_POSTCODE_RE = /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i;
+const PROPERTY_GENERIC_RE = /^(?:the|shopping|centre|center|retail|park|village|outlet|quay|quays|mall|london|and)$/i;
+export function cleanUnitLabel(raw: string | null | undefined, propertyName: string | null | undefined): string | null {
+  const text = String(raw || "").trim();
+  if (!text) return null;
+  const esc = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const prop = String(propertyName || "").split(",")[0].trim();
+  const core = prop.split(/\s+/).filter(w => w.length >= 4 && !PROPERTY_GENERIC_RE.test(w));
+  const tail = "(?:\\s+(?:shopping centre|centre|center|village|quays?|retail park|shopping park|outlet|mall))?";
+  const strip = (part: string) => {
+    let out = prop ? part.replace(new RegExp(`\\b${esc(prop)}\\b`, "ig"), " ") : part;
+    for (const w of core) out = out.replace(new RegExp(`(?:^|\\s)${esc(w)}${tail}(?=\\s*$)|^${esc(w)}${tail}\\b`, "i"), " ");
+    return out.replace(/\s+/g, " ").trim();
+  };
+  const parts = text.split(/\s+[–—-]\s+|,\s*/).map(strip).filter(p => p && !UNIT_POSTCODE_RE.test(p) && !/^(?:uk|united kingdom|england)$/i.test(p));
+  const floor = parts.find(p => UNIT_FLOOR_RE.test(p));
+  const isCore = (p: string) => p.split(/\s+/).some(w => core.some(c => c.toLowerCase() === w.toLowerCase()));
+  const place = parts.find(p => p !== floor && UNIT_PLACE_RE.test(p) && !UNIT_CODE_IN_RE.test(p) && !isCore(p));
+  const code = parts.find(p => UNIT_CODE_RE.test(p)) || parts.find(p => UNIT_CODE_IN_RE.test(p) && p.length <= 40);
+  if (code) { const extra = floor || place; return extra && extra !== code ? `${code} · ${extra}` : code; }
+  if (place) return `Unit at ${place}`;
+  if (floor) return floor;
+  return parts.length === 1 && /\d/.test(parts[0]) && parts[0].length <= 40 ? parts[0] : null;
 }
 // "£5.4m pa" from £1m up, "£385k pa" below (Woody, 2026-09-28).
 const rentPa = (n: number) => n >= 1e6 ? `£${(n / 1e6).toFixed(1)}m pa` : `£${Math.round(n / 1000).toLocaleString("en-GB")}k pa`;
@@ -686,7 +783,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // headlines — dedupe by normalised headline (first occurrence wins; the
   // feed is newest-first) so the visible six aren't half duplicates.
   const dedupedSignals = useMemo(() => {
-    const rows: any[] = data?.signals || [];
+    const rows: any[] = (data?.signals || []).filter((s: any) => !isSignalNoise(s));
     const seen: string[] = [];
     const norm = (h: string) => (h || "").toLowerCase().replace(/[^a-z0-9£$ ]+/g, " ").replace(/\s+/g, " ").trim();
     return rows.filter((s: any) => {
@@ -1231,7 +1328,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
           })()}
           {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-transparent text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
           {c.agent_type && <Badge variant="secondary" className="text-[10px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
-          {!isLandlord && c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
+          {!isLandlord && !isAgentFirm && c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
         </CardTitle>
         <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
         </div>
@@ -1560,7 +1657,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               </div>;
             })()}
 
-            <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} hideTenancyPropertyIds={liveLocations.map((p: any) => p.id)} pillsOnly={isLandlord || isAgentFirm} />
+            <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} liveTenancies={liveLocations} pillsOnly={isLandlord || isAgentFirm} />
             </div>
             </div>
   );
@@ -1722,7 +1819,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   const signalsFeed = (
             <div>
               <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-1">
-                <span className="flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Signals ({data.signals.length})</span>
+                <span className="flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Signals ({dedupedSignals.length})</span>
                 {!isClientViewer && (
                 <button
                   onClick={() => setAddSignalOpen(v => !v)}
@@ -1785,7 +1882,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   </div>
                 </div>
               )}
-              {data.signals.length > 0 && (
+              {dedupedSignals.length > 0 && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1">
                   {(signalsShowAll ? dedupedSignals : dedupedSignals.slice(0, 6)).map((s: any) => {
                     const typeCls: Record<string, string> = {
@@ -2024,7 +2121,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             <BrandProfileSidebar data={data} companyId={companyId} only={["covenant"]} />
           </div>
           <BrandProfileSidebar data={data} companyId={companyId} only={["news"]} />
-          {data.signals.length > 0 && <div className="rounded-xl border border-card-border bg-card shadow-sm p-3" data-testid="landlord-signals">{signalsFeed}</div>}
+          {dedupedSignals.length > 0 && <div className="rounded-xl border border-card-border bg-card shadow-sm p-3" data-testid="landlord-signals">{signalsFeed}</div>}
           <div className="flex flex-col gap-3">
             <BrandProfileSidebar data={data} companyId={companyId} only={["files"]} />
             <AccountFolderTreeCard companyId={companyId} />
@@ -4009,7 +4106,7 @@ export function BrandComplianceCard({
 // available units we should pitch them next.
 // `ledger` folds the old separate "Deal ledger & pipeline" counts into this
 // card's header, so each deal is counted in one place (Woody, 2026-09-23).
-export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTenancyPropertyIds, pillsOnly = false }: { companyId: string; ledger?: { completed: number; active: number; requirements: number }; bare?: boolean; hideTenancyPropertyIds?: string[]; pillsOnly?: boolean }) {
+export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTenancies, pillsOnly = false }: { companyId: string; ledger?: { completed: number; active: number; requirements: number }; bare?: boolean; liveTenancies?: Array<{ id: string; name: string; units?: number | string }>; pillsOnly?: boolean }) {
   // Each list opens on its own — one "Show all (8 more)" under the last
   // list summed four lists' hidden rows (Woody, 2026-09-28).
   const [openTiers, setOpenTiers] = useState<Set<string>>(new Set());
@@ -4033,10 +4130,27 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
     staleTime: 2 * 60 * 1000,
   });
   if (!act) return null;
-  // Tenancy-schedule rows already shown in Live tenancies aren't listed
-  // twice; deal-backed rows stay (they carry the Open deal link).
-  const hidden = new Set(hideTenancyPropertyIds || []);
-  const tenantAt: any[] = (act.tenantAt || []).filter((p: any) => !(p.via !== "deal" && hidden.has(p.property_id)));
+  // Tenant at = one row per property, folding in Live tenancies — hiding
+  // those left Wingstop "Tenant at" Gunwharf only beside four live
+  // tenancies, and Gunwharf listed 3× (two tenancies + a unit-less deal)
+  // (Woody, 2026-09-28).
+  const shortProp = (n: any) => String(n || "").split(",")[0].trim() || n;
+  const tenantByProp = new Map<string, any>();
+  const tenantRow = (id: any, name: any) => {
+    const k = String(id);
+    if (!tenantByProp.has(k)) tenantByProp.set(k, { id: k, property_id: id, property_name: shortProp(name), units: new Set<string>(), liveUnits: 0, dealId: null, dealType: null });
+    return tenantByProp.get(k);
+  };
+  for (const p of (act.tenantAt || [])) {
+    const row = tenantRow(p.property_id, p.property_name);
+    if (p.unit_name) row.units.add(cleanUnitLabel(p.unit_name, p.property_name) || String(p.unit_name));
+    if (p.via === "deal" && !row.dealId) { row.dealId = p.id; row.dealType = p.deal_type; }
+  }
+  for (const l of (liveTenancies || [])) tenantRow(l.id, l.name).liveUnits = Number(l.units) || 0;
+  const tenantAt: any[] = [...tenantByProp.values()].map(r => {
+    const n = Math.max(r.units.size, r.liveUnits);
+    return { ...r, unit_name: n > 1 ? `${n} units` : [...r.units][0] || null };
+  });
   // Inside About each list shows 2 (6 in its own card) until Show all —
   // Sainsbury's six suggested pitches made the profile card ~1,400px.
   const baseCap = bare ? 2 : 6;
@@ -4050,18 +4164,27 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
     const k = `${p.propertyId}|${String(p.unitName || "").toLowerCase().replace(/\s+/g, "")}`;
     const prev = pitchedByUnit.get(k);
     if (prev) prev.evidence = [prev.evidence, isoDay(p.evidence)].filter(Boolean).join(" · ");
-    else pitchedByUnit.set(k, { ...p, evidence: isoDay(p.evidence) });
+    else pitchedByUnit.set(k, { ...p, propertyName: shortProp(p.propertyName), unitName: cleanUnitLabel(p.unitName, p.propertyName), evidence: isoDay(p.evidence) });
   }
   const pitched: any[] = [...pitchedByUnit.values()];
   // One row per unit: a unit already pitched (with its evidence) or where
   // the brand is the tenant doesn't repeat under Targeted — Liverpool ONE
   // U 8/9 sat in both lists (Woody, 2026-09-27).
   const unitKey = (propertyId: any, unit: any) => `${propertyId}|${String(unit || "").toLowerCase().replace(/\s+/g, "")}`;
-  const shownUnits = new Set([...pitched.map((p: any) => unitKey(p.propertyId, p.unitName)), ...tenantAt.map((p: any) => unitKey(p.property_id, p.unit_name))]);
+  const shownUnits = new Set(pitched.map((p: any) => unitKey(p.propertyId, p.unitName)));
   // …and each unit once within its own list (Clarks Village 37D was listed
   // twice, once per source).
   const onceBy = (key: (p: any) => string) => (rows: any[]) => { const seen = new Set<string>(); return rows.filter(r => { const k = key(r); if (seen.has(k)) return false; seen.add(k); return true; }); };
-  const targeted: any[] = onceBy(p => unitKey(p.property_id, p.unit_name))((act.targeted || []).filter((p: any) => !shownUnits.has(unitKey(p.property_id, p.unit_name))));
+  // A property where they're the tenant isn't a target (Gail's Gunwharf sat
+  // under both); the row already names the property, so the unit drops it.
+  const targeted: any[] = onceBy(p => unitKey(p.property_id, p.unit_name))((act.targeted || [])
+    .map((p: any) => ({ ...p, property_name: shortProp(p.property_name), unit_name: cleanUnitLabel(p.unit_name, p.property_name) }))
+    .filter((p: any) => !tenantByProp.has(String(p.property_id)) && !shownUnits.has(unitKey(p.property_id, p.unit_name))));
+  // Status chips in words, Title Case: "Schedule", "Occupied", "Tenant".
+  const titleWords = (v: any) => String(v || "").replace(/_/g, " ").trim().split(/\s+/)
+    .map(w => /^[A-Z]{2,}s?$/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+  const TARGET_STATUS: Record<string, string> = { AVA: "Available", NEG: "Negotiating", HOT: "HOTs", SOL: "Solicitors", OPP: "Opportunity", REP: "Marketing" };
+  const targetStatus = (p: any) => TARGET_STATUS[String(p.status || "").toUpperCase()] || titleWords(p.status) || (p.via === "letting_tracker" ? "Brief" : "Schedule");
   const suggestions: any[] = sugg?.suggestions || [];
   const ledgerPills = [
     ledger?.completed ? `${ledger.completed} completed` : null,
@@ -4078,15 +4201,19 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
     </div>
   ) : null;
 
-  const Row = ({ propertyId, propertyName, unitName, dealId, right, title, subline }: any) => (
+  // Phone: the property keeps line 1 and the unit (plus a long right-hand
+  // note, stackRight) drops to line 2 — side by side they squeezed to
+  // "One…" / "Victoria S…" and a unit truncated to a stray "3"
+  // (Woody, 2026-09-28).
+  const Row = ({ propertyId, propertyName, unitName, dealId, right, title, subline, stackRight }: any) => (
     <div className="p-1.5 rounded border bg-card min-w-0" title={title || ""}>
       <div className="flex items-center justify-between gap-2 min-w-0">
         <Link href={`/properties/${propertyId}`} className="flex items-center gap-1.5 min-w-0 flex-1 hover:underline">
           <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           <span className="text-xs font-medium truncate">{propertyName}</span>
-          {unitName && <span className="text-[10px] text-muted-foreground truncate">{unitName}</span>}
+          {unitName && <span className="hidden md:inline text-[10px] text-muted-foreground truncate">{unitName}</span>}
         </Link>
-        <span className="flex items-center gap-1 shrink-0 max-w-[55%] justify-end">{right}
+        <span className="flex items-center gap-1 shrink-0 max-w-[55%] justify-end">{stackRight ? <span className="hidden md:contents">{right}</span> : right}
           {/* Same line as the property on desktop; the 44px tap target is phone-only. */}
           {dealId && <Link href={`/deals/${dealId}`} className="inline-flex min-h-11 md:min-h-0 items-center gap-1 pl-1.5 text-xs font-medium underline underline-offset-2 hover:text-primary"
             aria-label={`Open deal for ${propertyName}${unitName ? `, ${unitName}` : ""}`} data-testid={`portfolio-open-deal-${dealId}`}>
@@ -4094,6 +4221,13 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
           </Link>}
         </span>
       </div>
+      {(unitName || (stackRight && right)) && (
+        <div className="md:hidden flex items-center gap-1 min-w-0 text-[10px] text-muted-foreground mt-0.5 pl-5">
+          {unitName && <span className="truncate shrink">{unitName}</span>}
+          {unitName && stackRight && right && <span aria-hidden="true">·</span>}
+          {stackRight && <span className="min-w-0 truncate">{right}</span>}
+        </div>
+      )}
       {/* Hover titles don't exist on touch — the reason gets its own line. */}
       {subline && <div className="text-[10px] text-muted-foreground mt-0.5 pl-5 line-clamp-2">{subline}</div>}
     </div>
@@ -4119,6 +4253,9 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
     );
   };
 
+  // With no deal counts beside it the bare header was an empty label over
+  // lists that carry their own headings (Woody, 2026-09-28).
+  const showBareTitle = ledgerPills.length > 0;
   const title = <>
     <Target className="w-3.5 h-3.5" /> Portfolio activity
     {ledgerPills.map(label => <Badge key={label} variant="outline" className="text-[10px] normal-case tracking-normal tabular-nums">{label}</Badge>)}
@@ -4127,8 +4264,8 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
         {tenantAt.length > 0 && (
           <Tier tierKey="tenant" label="Tenant at" count={tenantAt.length}>
             {tenantAt.slice(0, capFor("tenant", tenantAt)).map((p: any) => (
-              <Row key={`t-${p.via}-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name} dealId={p.via === "deal" ? p.id : undefined}
-                right={<Badge variant="outline" className="text-[9px] shrink-0 text-emerald-700 border-emerald-200">{p.via === "deal" ? (p.deal_type || "deal") : "tenant"}</Badge>} />
+              <Row key={`t-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name} dealId={p.dealId || undefined}
+                right={<Badge variant="outline" className="text-[9px] shrink-0 text-emerald-700 border-emerald-200">{p.dealId ? titleWords(p.dealType) || "Deal" : "Tenant"}</Badge>} />
             ))}
 
           </Tier>
@@ -4137,7 +4274,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
           <Tier tierKey="targeted" label="Targeted" count={targeted.length}>
             {targeted.slice(0, capFor("targeted", targeted)).map((p: any) => (
               <Row key={`g-${p.via}-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name}
-                right={<Badge variant="outline" className="text-[9px] shrink-0">{({ AVA: "Available", NEG: "Negotiating", HOT: "HOTs", SOL: "Solicitors", OPP: "Opportunity", REP: "Marketing" } as Record<string, string>)[p.status] || p.status || (p.via === "letting_tracker" ? "brief" : "schedule")}</Badge>} />
+                right={<Badge variant="outline" className="text-[9px] shrink-0">{targetStatus(p)}</Badge>} />
             ))}
           </Tier>
         )}
@@ -4145,7 +4282,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
           <Tier tierKey="pitched" label="Pitched — with evidence" count={pitched.length}>
             {pitched.slice(0, capFor("pitched", pitched)).map((p: any, i: number) => (
               <Row key={`p-${i}`} propertyId={p.propertyId} propertyName={p.propertyName} unitName={p.unitName}
-                title={p.evidence}
+                title={p.evidence} stackRight
                 right={<span className="text-[10px] text-amber-700 truncate">{p.evidence}</span>} />
             ))}
           </Tier>
@@ -4163,7 +4300,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
   // bare: inside the BGP take card, no card of its own.
   if (bare) return (
     <div className="space-y-2" data-testid="portfolio-activity-bare">
-      <div className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">{title}</div>
+      {showBareTitle && <div className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">{title}</div>}
       <div className="space-y-3">{tiers}</div>
     </div>
   );
@@ -5078,7 +5215,7 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
         const brandDomain = c.domain ? c.domain.replace(/^www\./, "") : null;
         // Industry leaves out the brand's own Instagram / jobs / website
         // posts — those are the Brand feed (Woody, 2026-09-27).
-        const srcOf = (a: any) => newsSourceLabel(a.source_name, a.title, c.name);
+        const srcOf = (a: any) => newsSourceLabel(a.source_name, a.title, c.name) || snippetPublisher(a.title, a.summary);
         // The brand's own posts (source or title tail = the brand) go to
         // Press; near-duplicate stories collapse; stories over two years old
         // wait behind "Show more" (Woody, 2026-09-28).
@@ -5087,7 +5224,7 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
         const ownPost = (a: any) => isOwnBrandSource(splitNewsTitle(a.title).publisher, c.name)
           || (!/\(Google News\)\s*$/i.test(a.source_name || "") && isOwnBrandSource(a.source_name, c.name));
         const staleCut = Date.now() - 730 * 86400000;
-        const industryAll = dedupeNearNews(data.news.filter((a: any) => !isOwnChannelNews(a.source_name) && !ownPost(a)));
+        const industryAll = dedupeNearNews(data.news.filter((a: any) => !isOwnChannelNews(a.source_name) && !isSocialNews(a) && !ownPost(a)), c.name);
         const industryNews = newsShowAll ? industryAll : industryAll.filter((a: any) => !a.published_at || new Date(a.published_at).getTime() >= staleCut);
         const olderHidden = industryAll.length - industryNews.length;
         const allSources = [...new Set(
@@ -5099,7 +5236,7 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
         // old source-name clause matched "<Brand> (Google News)" on every
         // article, making Press identical to Industry (Woody, 2026-08-19).
         const tabFiltered = newsTab === "press"
-          ? data.news.filter((a: any) => (brandDomain && a.url?.includes(brandDomain)) || ownPost(a) || /(?:\(website news\)|\s[—–-]\s+news)\s*$/i.test(a.source_name || ""))
+          ? data.news.filter((a: any) => !isSocialNews(a) && ((brandDomain && a.url?.includes(brandDomain)) || ownPost(a) || /(?:\((?:website news|openings)\)|\s[—–-]\s+news)\s*$/i.test(a.source_name || "")))
           : (newsSourceFilter ? industryNews.filter((a: any) => srcOf(a) === newsSourceFilter) : industryNews);
         const filtered = newsTagFilter.size === 0
           ? tabFiltered
@@ -5158,7 +5295,7 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
                   const hasRealImage = !!(article.image_url && !isGoogleProxy);
                   // Strip the " (Google News)" suffix that the pipeline appends.
                   const cleanSourceName = srcOf(article) || "";
-                  const cleanTitle = splitNewsTitle(article.title).title;
+                  const cleanTitle = sentenceCaseShouting(splitNewsTitle(article.title).title);
                   const rawUrlDomain = (() => { try { return new URL(article.url).hostname.replace(/^www\./, ""); } catch { return null; } })();
                   // Don't use the URL domain for Google-News-proxied articles — it'd
                   // return Google's logo. Map known publishers from source_name instead.
@@ -5198,7 +5335,9 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
                   const domain = sourceDomain || (isGoogleUrl ? null : rawUrlDomain);
                   // Aggregator hosts (news.google.com, msn.com) are no chip.
                   const sourceLabel = cleanSourceName || (isGoogleUrl || AGGREGATOR_SOURCE_RE.test(rawUrlDomain || "") ? null : rawUrlDomain);
-                  const rawText = article.ai_summary || article.summary;
+                  // "Drapers Drapers Footwear Awards…": a doubled first word
+                  // hid that the snippet only repeats the headline.
+                  const rawText = String(article.ai_summary || article.summary || "").replace(/^(\S+)(?:\s+\1)+(?=\s|$)/i, "$1") || null;
                   const displayText = snippetAddsNothing(article.title, rawText) ? null : rawText;
                   // A failed image or favicon falls back to the source's
                   // initial rather than a blank tile (Woody, 2026-09-28).

@@ -4987,19 +4987,50 @@ Return a JSON object with these fields (use null for any field you cannot find):
         for (const r of peersQ.rows) peersAt.set(r.property_id, r.n);
       }
       // The unit's code/name, not a raw address carrying the old tenant
-      // ("Mr Pretzels – Trinity Shopping Centre, Leeds LS1 6AD, UK").
-      const postcodeRe = /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b|,\s*UK\s*$/i;
+      // ("Mr Pretzels – Trinity Shopping Centre, Leeds LS1 6AD, UK"), and
+      // never the property the row already shows: "Unit R 11U Gunwharf Quays
+      // - First Floor" → "Unit R 11U · First Floor", "Basinghall Walk -
+      // Greggs" → "Unit at Basinghall Walk" (Woody, 2026-09-28). Same rules
+      // as cleanUnitLabel in client/src/components/brand-profile-panel.tsx.
+      const postcodeRe = /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i;
+      const codeRe = /^(?:(?:unit|units|u|su|msu|kiosk|k|shop|suite|lsu|store|pod|restaurant|cafe|space)\s*[a-z]{0,2}\s*[\d/]+[a-z]{0,3}\b.*|[a-z]{0,3}\d{1,4}[a-z]{0,3}(?:\/\d+[a-z]?)?)$/i;
+      const codeInRe = /\b(?:unit|kiosk|shop|su|msu|suite)\s*[a-z]?\s*\d+[a-z]{0,3}\b/i;
+      const floorRe = /^(?:(?:lower|upper|ground|first|second|third|fourth|mezzanine|basement|lower ground|upper ground|top)\s+(?:floor|level|mall)|(?:level|floor)\s+-?\d+|lg|ug|gf)$/i;
+      const placeRe = /\b(?:walk|street|st|road|rd|lane|way|place|court|parade|row|arcade|square|yard|gardens?|market|avenue|terrace|precinct|plaza|mall)\b/i;
+      const esc = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const cleanUnit = (raw: any, propertyName: any): string | null => {
+        const text = String(raw || "").trim();
+        if (!text) return null;
+        const prop = String(propertyName || "").split(",")[0].trim();
+        const core = prop.split(/\s+/).filter((w: string) => w.length >= 4 && !/^(?:the|shopping|centre|center|retail|park|village|outlet|quay|quays|mall|london|and)$/i.test(w));
+        const tail = "(?:\\s+(?:shopping centre|centre|center|village|quays?|retail park|shopping park|outlet|mall))?";
+        const strip = (part: string) => {
+          let out = prop ? part.replace(new RegExp(`\\b${esc(prop)}\\b`, "ig"), " ") : part;
+          for (const w of core) out = out.replace(new RegExp(`(?:^|\\s)${esc(w)}${tail}(?=\\s*$)|^${esc(w)}${tail}\\b`, "i"), " ");
+          return out.replace(/\s+/g, " ").trim();
+        };
+        const parts = text.split(/\s+[–—-]\s+|,\s*/).map(strip).filter((p: string) => p && !postcodeRe.test(p) && !/^(?:uk|united kingdom|england)$/i.test(p));
+        const floor = parts.find((p: string) => floorRe.test(p));
+        const isCore = (p: string) => p.split(/\s+/).some((w: string) => core.some((c: string) => c.toLowerCase() === w.toLowerCase()));
+        const place = parts.find((p: string) => p !== floor && placeRe.test(p) && !codeInRe.test(p) && !isCore(p));
+        const code = parts.find((p: string) => codeRe.test(p)) || parts.find((p: string) => codeInRe.test(p) && p.length <= 40);
+        if (code) { const extra = floor || place; return extra && extra !== code ? `${code} · ${extra}` : code; }
+        if (place) return `Unit at ${place}`;
+        if (floor) return floor;
+        return parts.length === 1 && /\d/.test(parts[0]) && parts[0].length <= 40 ? parts[0] : null;
+      };
       const unitLabel = (u: any) => {
         for (const raw of [u.master_unit_name, u.schedule_unit_name, u.unit_name]) {
-          const parts = String(raw || "").split(/\s+[–—-]\s+|,\s*/).map((s: string) => s.trim()).filter(Boolean)
-            .filter((s: string) => !postcodeRe.test(s) && !(u.property_name && s.toLowerCase().includes(String(u.property_name).toLowerCase().split(",")[0])));
-          const code = parts.find((s: string) => /^(?:unit|su|msu|kiosk|k|shop|suite|lsu)\b|^\d+[a-z]?$/i.test(s));
-          if (code) return code;
-          if (raw && !postcodeRe.test(String(raw)) && String(raw).length <= 40) return String(raw).trim();
-          if (parts.length && raw === u.unit_name) return parts[0];
+          const label = cleanUnit(raw, u.property_name);
+          if (label) return label;
         }
-        return u.unit_name;
+        return null;
       };
+      // Nothing to size from (no requirement, under two sized tenancies):
+      // a format's usual band, so Wagamama isn't pitched 17,201 sq ft nor
+      // Gail's a 216 sq ft kiosk. Other formats get no size filter.
+      const formatBand = !range && !typical
+        ? (brandIsCafe ? { min: 400, max: 3000 } : brandIsRestaurant ? { min: 1500, max: 8000 } : null) : null;
       const suggestions: any[] = [];
       for (const u of unitsQ.rows) {
         const unitText = `${u.unit_name || ""} ${u.use_class || ""}`;
@@ -5024,6 +5055,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
           continue;
         }
         if (typical && sq != null && (sq < typical * 0.6 || sq > typical * 1.6)) continue;
+        if (formatBand && sq != null && (sq < formatBand.min || sq > formatBand.max)) continue;
         const useHit = USE_HINTS.some(([reqRe, unitRe]) => reqRe.test(typeText) && unitRe.test(unitText));
         if (useHit) {
           // "Restaurant suits their Restaurant format" said nothing — name the
@@ -5033,7 +5065,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
           const sameWord = use && format && use.toLowerCase().split(/[\s/,&]+/).some(w => w.length > 2 && format.toLowerCase().includes(w));
           const reason = sameWord ? `${use} unit — same use as their stores` : `${use || "Unit"} use fits their ${format || "format"}`;
           // Near the requirement range (or their typical size) beats unknown.
-          const sizeFit = sq == null ? 0 : (range || typical) ? 1 : 0;
+          const sizeFit = sq == null ? 0 : (range || typical || formatBand) ? 1 : 0;
           suggestions.push({ ...row, reason, sizeFit, useFit: 1, peers });
         }
       }

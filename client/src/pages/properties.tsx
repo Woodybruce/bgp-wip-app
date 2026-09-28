@@ -525,12 +525,16 @@ export function InlineAgents({
   colorMap,
   landlordId,
   readOnly,
+  maxVisible,
 }: {
   propertyId: string;
   agentLinks: Array<{ propertyId: string; userId: string; role?: string | null }>;
   allUsers: User[];
   colorMap?: Record<string, string>;
   readOnly?: boolean;
+  // List cells cap the pills and show "+N" — role-labelled pills ran past
+  // the table's right edge (Woody, 2026-09-28).
+  maxVisible?: number;
   // When set, the picker biases the unassigned list toward people already
   // on the landlord's client team (see crm_client_team_members). Falls
   // back to the full BGP staff list when omitted.
@@ -597,9 +601,11 @@ export function InlineAgents({
     },
   });
 
+  const shownUsers = maxVisible ? assignedUsers.slice(0, maxVisible) : assignedUsers;
+  const moreUsers = assignedUsers.slice(shownUsers.length);
   return (
-    <div className="flex items-center gap-1 flex-wrap">
-      {assignedUsers.map(user => {
+    <div className="flex items-center gap-1 flex-wrap min-w-0">
+      {shownUsers.map(user => {
         const bg = colorMap?.[user.name] || "bg-zinc-500";
         const link = linksByUser.get(String(user.id));
         const role = (link?.role || "").trim();
@@ -607,12 +613,12 @@ export function InlineAgents({
           <Popover key={user.id}>
             <PopoverTrigger asChild>
               <button
-                className={`inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded text-white hover:opacity-90 ${bg}`}
+                className={`inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded text-white hover:opacity-90 max-w-full min-w-0 ${bg}`}
                 data-testid={`agent-badge-${propertyId}-${user.id}`}
                 title={role ? `${user.name} — ${role}` : user.name}
               >
-                <span className="font-semibold">{user.name.split(" ")[0]}</span>
-                {role && <span className="text-[11px] opacity-90 border-l border-white/40 pl-1.5">{role}</span>}
+                <span className="font-semibold shrink-0">{user.name.split(" ")[0]}</span>
+                {role && <span className="text-[11px] opacity-90 border-l border-white/40 pl-1.5 truncate">{role}</span>}
               </button>
             </PopoverTrigger>
             <PopoverContent className="w-72 p-3" align="start">
@@ -671,6 +677,9 @@ export function InlineAgents({
           </Popover>
         );
       })}
+      {moreUsers.length > 0 && (
+        <Badge variant="secondary" className="text-[10px] px-1.5 py-0" title={moreUsers.map(u => u.name).join(", ")}>+{moreUsers.length}</Badge>
+      )}
       {!readOnly && (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -899,6 +908,7 @@ export function InlineOwnerLink({
   readOnly,
   roleOnChip = true,
   alsoFields = [],
+  chipLabel,
 }: {
   propertyId: string;
   companyId: string | null | undefined;
@@ -911,6 +921,7 @@ export function InlineOwnerLink({
   // Other role fields this same company fills — one chip for all of them,
   // and the X unlinks it from each (Woody, 2026-09-28).
   alsoFields?: string[];
+  chipLabel?: string;
 }) {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
@@ -945,10 +956,13 @@ export function InlineOwnerLink({
           {/* Role label on the chip — the same company often fills several
               roles (Landsec as Landlord AND Freeholder), and unlabelled
               chips read as duplicates. */}
-          <Badge variant="outline" className="text-[11px] px-2 py-0.5 cursor-pointer hover:bg-muted max-w-full inline-flex items-center" title={`${label}: ${company.name}`}>
+          {/* Role in full, short form ("Owner", "LLH"); the chip wraps
+              between role and name rather than cutting the role to "Own…"
+              (Woody, 2026-09-28). */}
+          <Badge variant="outline" className="text-[11px] px-2 py-0.5 cursor-pointer hover:bg-muted max-w-full inline-flex flex-wrap items-center" title={`${label}: ${company.name}`}>
             <Building2 className="w-3 h-3 mr-1 text-muted-foreground shrink-0" />
-            {roleOnChip && <span className="text-muted-foreground mr-1 truncate min-w-[2.5rem]">{label} ·</span>}
-            <span className="truncate shrink-0 max-w-[70%]">{company.name}</span>
+            {roleOnChip && <span className="text-muted-foreground mr-1 whitespace-nowrap shrink-0">{chipLabel || label} ·</span>}
+            <span className={`truncate ${roleOnChip ? "shrink-0 max-w-[70%]" : "min-w-0"}`}>{company.name}</span>
           </Badge>
         </Link>
         {!readOnly && (
@@ -5316,16 +5330,18 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
       {/* Summary chips follow the app pill standard (ui/pill.tsx metrics). */}
       {/* No "N properties" chip — the subtitle, the All pill and the
           pagination already say it (523 read four times) (Woody, 2026-09-27). */}
+      {/* "Live" drops on phones so the three chips fit one line — Map
+          wrapped onto a row of its own (Woody, 2026-09-28). */}
       <div className="flex items-center gap-1.5 flex-wrap">
         <Link href="/deals/letting" className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide hover:opacity-80 ${liveLettings ? "bg-card" : "opacity-40"}`} title="Open the Letting Tracker">
           <Store className="w-3 h-3 text-muted-foreground" />
           <span className="font-mono tabular-nums">{liveLettings}</span>
-          <span className="text-muted-foreground">live letting{liveLettings === 1 ? "" : "s"}</span>
+          <span className="text-muted-foreground"><span className="hidden sm:inline">live </span>letting{liveLettings === 1 ? "" : "s"}</span>
         </Link>
         <Link href="/deals/list" className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide hover:opacity-80 ${liveDeals ? "bg-card" : "opacity-40"}`} title="Open the Deals board">
           <Handshake className="w-3 h-3 text-muted-foreground" />
           <span className="font-mono tabular-nums">{liveDeals}</span>
-          <span className="text-muted-foreground">live deal{liveDeals === 1 ? "" : "s"}</span>
+          <span className="text-muted-foreground"><span className="hidden sm:inline">live </span>deal{liveDeals === 1 ? "" : "s"}</span>
         </Link>
         <button
           onClick={() => setMapOpen(o => !o)}
@@ -5354,11 +5370,11 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
 // empty slots — five "+ Owner / Landlord + Freeholder + …" prompts on every
 // row buried the table (Woody, 2026-09-27).
 const LIST_OWNER_ROLES = [
-  { field: "landlordId", label: "Owner / Landlord" },
-  { field: "freeholderId", label: "Freeholder" },
-  { field: "longLeaseholderId", label: "Long Leaseholder" },
-  { field: "seniorLenderId", label: "Senior Lender" },
-  { field: "juniorLenderId", label: "Junior Lender" },
+  { field: "landlordId", label: "Owner / Landlord", short: "Owner" },
+  { field: "freeholderId", label: "Freeholder", short: "Freeholder" },
+  { field: "longLeaseholderId", label: "Long Leaseholder", short: "LLH" },
+  { field: "seniorLenderId", label: "Senior Lender", short: "Sr Lender" },
+  { field: "juniorLenderId", label: "Junior Lender", short: "Jr Lender" },
 ] as const;
 
 function PropertyOwnershipCell({ item, allCompanies, readOnly }: { item: CrmProperty; allCompanies: CrmCompany[]; readOnly?: boolean }) {
@@ -5381,7 +5397,7 @@ function PropertyOwnershipCell({ item, allCompanies, readOnly }: { item: CrmProp
   return (
     <div className="flex flex-col gap-0.5 min-w-0">
       {[...byCompany.entries()].map(([id, roles]) => (
-        <InlineOwnerLink key={roles[0].field} propertyId={item.id} companyId={id} fieldName={roles[0].field} alsoFields={roles.slice(1).map(r => r.field)} label={roles.map(r => r.label).join(" + ")} allCompanies={allCompanies} readOnly={readOnly} />
+        <InlineOwnerLink key={roles[0].field} propertyId={item.id} companyId={id} fieldName={roles[0].field} alsoFields={roles.slice(1).map(r => r.field)} label={roles.map(r => r.label).join(" + ")} chipLabel={roles.map(r => r.short).join(" + ")} allCompanies={allCompanies} readOnly={readOnly} />
       ))}
       {!readOnly && empty.length > 0 && (adding ? (
         empty.map(r => (
@@ -5698,7 +5714,8 @@ function PropertiesList({
     const s = new Set<string>();
     items.forEach((i) => {
       const vals = Array.isArray(i.assetClass) ? i.assetClass : i.assetClass ? [i.assetClass] : [];
-      vals.forEach(v => s.add(v));
+      // One "Mixed Use", one "Class E" — stored spellings vary (Woody, 2026-09-28).
+      vals.forEach(v => { const l = useClassLabel(v); if (l) s.add(l); });
     });
     return Array.from(s).sort();
   }, [items]);
@@ -5772,7 +5789,7 @@ function PropertiesList({
         const assetFilters = columnFilters["assetClass"] || [];
         if (assetFilters.length > 0) {
           const itemAssets = Array.isArray(item.assetClass) ? item.assetClass : item.assetClass ? [item.assetClass] : [];
-          if (!itemAssets.some(a => assetFilters.includes(a))) return false;
+          if (!itemAssets.some(a => assetFilters.includes(useClassLabel(a)))) return false;
         }
 
         const tenureFilters = columnFilters["tenure"] || [];
@@ -5841,12 +5858,14 @@ function PropertiesList({
     setPage(Math.max(1, Math.min(next, pageCount)));
     resultsStartRef.current?.scrollIntoView({ block: "start" });
   };
-  const paginationControls = (position: "top" | "bottom") => sortedItems.length > 0 && (
+  // One page: the count once, at the top, and no Previous/Next — "1–1 of 1"
+  // read twice over a single card (Woody, 2026-09-28).
+  const paginationControls = (position: "top" | "bottom") => sortedItems.length > 0 && (pageCount > 1 || position === "top") && (
     <nav aria-label={`Property result pages (${position})`} className="flex flex-wrap items-center justify-between gap-3" data-testid={`property-pagination-${position}`}>
       <p className="text-[11px] text-muted-foreground" aria-live="polite">
-        <span className="font-mono tabular-nums">{(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, sortedItems.length)}</span> of <span className="font-mono tabular-nums">{sortedItems.length}</span> properties
+        {pageCount > 1 && <><span className="font-mono tabular-nums">{(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, sortedItems.length)}</span> of </>}<span className="font-mono tabular-nums">{sortedItems.length}</span> propert{sortedItems.length === 1 ? "y" : "ies"}
       </p>
-      <div className="flex flex-wrap items-center gap-2">
+      {pageCount > 1 && <div className="flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" disabled={currentPage === 1} onClick={() => changePage(currentPage - 1)} data-testid={`property-page-prev-${position}`}>Previous</Button>
         <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">Page
           <select aria-label={`Property results page (${position})`} className="rounded border border-border bg-background px-2 py-1.5 font-mono tabular-nums text-sm" value={currentPage} onChange={event => changePage(Number(event.target.value))} data-testid={`property-page-select-${position}`}>
@@ -5855,7 +5874,7 @@ function PropertiesList({
           of <span className="font-mono tabular-nums">{pageCount}</span>
         </label>
         <Button variant="outline" size="sm" disabled={currentPage === pageCount} onClick={() => changePage(currentPage + 1)} data-testid={`property-page-next-${position}`}>Next</Button>
-      </div>
+      </div>}
     </nav>
   );
 
@@ -6140,6 +6159,8 @@ function PropertiesList({
                   const agentNames = allUsers.filter(u => assignedIds.includes(String(u.id))).map(u => u.name || "").join(", ");
                   const teams = Array.isArray(item.bgpEngagement) ? item.bgpEngagement.join(", ") : (item.bgpEngagement || "");
                   const assetClass = (Array.isArray(item.assetClass) ? item.assetClass : item.assetClass ? String(item.assetClass).split(/,\s*/) : []).map(useClassLabel).join(", ");
+                  // A title-only card read as broken — say so (Woody, 2026-09-28).
+                  const bare = !assetClass && !teams && !item.tenure && !agentNames && !item.sqft;
                   return {
                     id: item.id,
                     title: item.name,
@@ -6148,7 +6169,7 @@ function PropertiesList({
                     // the locality (Woody, 2026-09-27). Segments accumulate and
                     // compare both ways, so "1 Barrett Street" drops "1, BARRETT
                     // STREET" and "140 Aldersgate" drops "140 Aldersgate Street".
-                    subtitle: addressAfterName(item.name, formatAddress(item.address)) || undefined,
+                    subtitle: addressAfterName(item.name, formatAddress(item.address)) || (bare ? "No details yet" : undefined),
                     href: `/properties/${item.id}`,
                     status: item.status || undefined,
                     statusColor: BUILDING_ICON_COLORS[item.status || ""]?.replace("text-", "bg-") || "bg-muted-foreground",
@@ -6361,13 +6382,22 @@ function PropertiesList({
                           {isClientViewer ? (
                             <span className="text-xs">{useClassLabel(Array.isArray(item.assetClass) ? item.assetClass[0] : item.assetClass) || "—"}</span>
                           ) : (
-                          <InlineLabelSelect
-                            value={Array.isArray(item.assetClass) ? item.assetClass[0] : item.assetClass}
-                            options={ASSET_CLASS_OPTIONS}
-                            colorMap={ASSET_CLASS_COLORS}
-                            onSave={(val) => inlineUpdateMutation.mutate({ id: item.id, field: "assetClass", value: val })}
-                            placeholder="Set class"
-                          />
+                          (() => {
+                            // Stored value and options unchanged; the chip reads
+                            // "Class E" / "Mixed Use", not raw "E" / "Mixed-Use" (Woody, 2026-09-28).
+                            const raw = Array.isArray(item.assetClass) ? item.assetClass[0] : item.assetClass;
+                            const label = useClassLabel(raw);
+                            return (
+                              <InlineLabelSelect
+                                value={raw}
+                                options={ASSET_CLASS_OPTIONS}
+                                colorMap={raw && !ASSET_CLASS_COLORS[raw] && ASSET_CLASS_COLORS[label] ? { ...ASSET_CLASS_COLORS, [raw]: ASSET_CLASS_COLORS[label] } : ASSET_CLASS_COLORS}
+                                labelMap={raw && label !== raw ? { [raw]: label } : undefined}
+                                onSave={(val) => inlineUpdateMutation.mutate({ id: item.id, field: "assetClass", value: val })}
+                                placeholder="Set class"
+                              />
+                            );
+                          })()
                           )}
                         </TableCell>
                       )}
@@ -6417,6 +6447,7 @@ function PropertiesList({
                             colorMap={userColorMap}
                             landlordId={item.landlordId}
                             readOnly={isClientViewer}
+                            maxVisible={2}
                           />
                         </TableCell>
                       )}

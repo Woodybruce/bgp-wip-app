@@ -159,7 +159,7 @@ function GapCommentary({ propertyId }: { propertyId: string }) {
           <Sparkles className="w-3.5 h-3.5 text-primary" /> BGP gap read
           {data?.generatedAt && (
             <span className="font-normal text-muted-foreground">
-              — {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+              — {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }).replace(/\bSept\b/, "Sep")}
             </span>
           )}
         </div>
@@ -234,7 +234,7 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
         <span className="text-[11px] font-normal text-muted-foreground">web-researched, cited · verify before pitching</span>
         {data?.generatedAt && (
           <span className="font-normal text-muted-foreground">
-            — {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+            — {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }).replace(/\bSept\b/, "Sep")}
           </span>
         )}
       </div>
@@ -693,7 +693,7 @@ function CentreOpenings({ propertyId }: { propertyId: string }) {
   });
   const items = (tab === "here" ? data?.here : data?.peers) || [];
   const shown = more ? items : items.slice(0, 6);
-  const fmt = (d: string | null) => d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" }) : "";
+  const fmt = (d: string | null) => d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" }).replace(/\bSept\b/, "Sep") : "";
   return (
     <div data-testid="centre-openings">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">

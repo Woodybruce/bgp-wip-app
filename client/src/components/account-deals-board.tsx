@@ -19,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Briefcase, ChevronLeft, ChevronRight } from "lucide-react";
 import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS, legacyToCode } from "@shared/deal-status";
 import { tidyActionTitle } from "@/components/account-workspace-cards";
+import { gbDate } from "@/lib/format";
 
 interface AccountDealRow {
   dealId: string;
@@ -76,7 +77,7 @@ function relDate(iso: string | null): string {
   if (days === 1) return "1d ago";
   if (days < 30) return `${days}d ago`;
   if (days < 365) return `${Math.floor(days / 30)}mo ago`;
-  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return gbDate(iso, { day: "numeric", month: "short", year: "numeric" });
 }
 
 function StatusChip({ status }: { status: string | null }) {
@@ -131,18 +132,30 @@ function dealShort(d: AccountDealRow, unit: string | null): string {
     return bare(seg) !== cp;
   });
   const rest = keep.join(" – ");
-  return !squash(rest) || bare(rest) === cp ? (unit || "Open deal") : rest;
+  // "Ashford - KFC" beside a KFC counterparty left just "Ashford" — a lone
+  // town word isn't a label, so it falls back like an empty name (Woody,
+  // 2026-09-28).
+  const loneTown = keep.length === 1 && name.split(DEAL_SEP).length > 1 && !!cp && /^[A-Z][a-z]+$/.test(rest);
+  return !squash(rest) || bare(rest) === cp || loneTown ? (unit || "Open deal") : rest;
 }
 // Units also restated the property at the END or middle ("Unit 7 Eureka
 // Leisure Park", "R6 - Gunwharf Quays", "146 Queen Street (LK16), Westgate,
 // OX1 1PB"), or left just the town ("Cardiff") or a "—". Strip the property
 // wherever it sits, drop postcodes and a trailing one-word town, and hide
-// what's left if it's empty (Woody, 2026-09-28).
+// what's left if it's empty (Woody, 2026-09-28). "EVL16 & Adjoining
+// Premises Bluewater, Lower Level" also restated the property's first
+// distinctive word, so that goes too and the level reads "· Lower Level"
+// (Woody, 2026-09-28).
+const GENERIC_FIRST = /^(the|unit|units|one|new|old|north|south|east|west|great|little|upper|lower|high|royal|saint|st|former|land)$/i;
+function propertyFirstWord(pn: string | null | undefined): string | null {
+  const w = (pn || "").trim().replace(/^the\s+/i, "").split(/[\s,(]+/)[0] || "";
+  return w.length >= 4 && /^[A-Za-z'’]+$/.test(w) && !GENERIC_FIRST.test(w) ? w : null;
+}
 const UNIT_SEP = /\s*,\s*|\s+[-–—]\s+/;
 const FULL_POSTCODE = /^([A-Za-z' ]+\s)?[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i;
 const TOWN_POSTCODE = /^[A-Za-z' ]+\s[A-Z]{1,2}\d[A-Z\d]?$/;
 const UNIT_WORD = /^(unit|kiosk|floor|level|basement|mezzanine|ground|first|upper|lower|suite|block|shop|store|pod|stand)\b/i;
-function cleanUnit(raw: string | null | undefined, propertyName: string | null): string | null {
+export function cleanUnit(raw: string | null | undefined, propertyName: string | null): string | null {
   let u = (raw || "").trim();
   if (!u || /^[-–—]+$/.test(u)) return null;
   const pn = (propertyName || "").trim();
@@ -151,6 +164,8 @@ function cleanUnit(raw: string | null | undefined, propertyName: string | null):
   for (const p of [pn, pn.split(/\s*[,(]/)[0]]) {
     if (p.length >= 4) u = u.replace(new RegExp(p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+"), "ig"), " ");
   }
+  const fw = propertyFirstWord(pn);
+  if (fw) u = u.replace(new RegExp(`\\b${fw}\\b`, "ig"), " ").replace(/\s{2,}/g, " ");
   const keep = u.split(UNIT_SEP).map(s => s.trim().replace(/^[\s,–—-]+|[\s,–—-]+$/g, "")).filter((seg, i) => {
     const q = squash(seg);
     if (!q) return false;
@@ -159,7 +174,7 @@ function cleanUnit(raw: string | null | undefined, propertyName: string | null):
     if (i > 0 && (TOWN_POSTCODE.test(seg) || (!/[\d\s]/.test(seg) && !UNIT_WORD.test(seg)))) return false;
     return true;
   });
-  const out = keep.join(", ").trim();
+  const out = keep.join(" · ").trim();
   return squash(out) ? out : null;
 }
 function rowLabels(d: AccountDealRow): { unit: string | null; dealRepeats: boolean } {
@@ -177,7 +192,7 @@ function NextActionCell({ d }: { d: AccountDealRow }) {
     <span className="block min-w-0">
       <span className="block truncate" title={na.title}>{tidyActionTitle(na.title, [d.propertyName])}</span>
       <span className="block text-[10px] text-muted-foreground truncate">
-        {[na.ownerName, na.dueDate ? `due ${new Date(na.dueDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : null].filter(Boolean).join(" · ")}
+        {[na.ownerName, na.dueDate ? `due ${gbDate(na.dueDate, { day: "numeric", month: "short" })}` : null].filter(Boolean).join(" · ")}
       </span>
     </span>
   );
@@ -310,10 +325,11 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                     <tr key={d.dealId} className="border-b border-border/20 last:border-0 hover:bg-muted/40" data-testid={`account-deal-row-${d.dealId}`}>
                       <td className="py-1.5 pr-2 max-w-[12rem]">
                         {/* No "—" placeholder line above the deal link — it
-                            read as a missing unit (Woody, 2026-09-28). */}
-                        {d.propertyId ? (
-                          <Link href={`/properties/${d.propertyId}`} className="font-medium hover:underline block truncate">{d.propertyName || "Property"}</Link>
-                        ) : d.propertyName ? <span className="font-medium block truncate">{d.propertyName}</span> : null}
+                            read as a missing unit, and a nameless property
+                            read "Property" — show nothing (Woody, 2026-09-28). */}
+                        {d.propertyName ? (d.propertyId ? (
+                          <Link href={`/properties/${d.propertyId}`} className="font-medium hover:underline block truncate">{d.propertyName}</Link>
+                        ) : <span className="font-medium block truncate">{d.propertyName}</span>) : null}
                         {labels.unit && dealLink !== labels.unit && <span className="block text-[10px] text-muted-foreground truncate">{labels.unit}</span>}
                         <Link href={`/deals?id=${d.dealId}`} className="block text-[10px] text-primary hover:underline truncate" title={d.name}>{dealLink}</Link>
                       </td>
@@ -365,9 +381,9 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                   </div>
                   {d.nextAction && (
                     <div className="text-[11px]">
-                      <span className="text-foreground">{tidyActionTitle(d.nextAction.title)}</span>
+                      <span className="text-foreground">{tidyActionTitle(d.nextAction.title, [d.propertyName])}</span>
                       <span className="text-muted-foreground">
-                        {" "}— {[d.nextAction.ownerName, d.nextAction.dueDate ? `due ${new Date(d.nextAction.dueDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : null].filter(Boolean).join(" · ")}
+                        {" "}— {[d.nextAction.ownerName, d.nextAction.dueDate ? `due ${gbDate(d.nextAction.dueDate, { day: "numeric", month: "short" })}` : null].filter(Boolean).join(" · ")}
                       </span>
                     </div>
                   )}

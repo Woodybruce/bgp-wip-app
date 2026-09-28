@@ -63,6 +63,7 @@ import { Link, useLocation } from "wouter";
 import type { CrmDeal, CrmProperty, CrmCompany, CrmContact } from "@shared/schema";
 import { buildUserColorMap, resolveDealAgents } from "@/lib/agent-colors";
 import { Breadcrumbs } from "@/components/breadcrumbs";
+import { stripPropertyFromTitle } from "@/lib/format";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
 import { MobileBrandView } from "@/components/mobile-brand-view";
 import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as STATUS_CHIP_COLORS, legacyToCode } from "@shared/deal-status";
@@ -349,6 +350,33 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const dealDisplayName = (isInvestmentDeal
     ? (linkedProperty?.name || deal?.name)
     : (deal?.name || linkedProperty?.name)) || "Untitled Deal";
+  // A unit linked from a different property (e.g. heading "55 Regent
+  // Street" over a 10 Piccadilly deal) contradicted the breadcrumb and
+  // linked property — only headline a unit that sits on the deal's
+  // property; otherwise flag the mislink (Woody, 2026-09-27).
+  const unitOffProperty = !!linkedUnit && !!deal?.propertyId && linkedUnit.propertyId !== deal.propertyId;
+  // The guard above missed the live case: the unit row sits on the
+  // 10 Piccadilly property but is NAMED "55 Regent Street" — a
+  // street address for another building. A numbered-address unit
+  // name only headlines when the deal or property name shares its
+  // street; "Unit 3", "T1" etc. still headline (Woody, 2026-09-27).
+  const streetOf = (s: string) => s.toLowerCase().replace(/^\d+[a-z]?(?:[-–]\d+[a-z]?)?\s+/, "").replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+  const unitNameIsOtherAddress = !!linkedUnit && /^\d+[a-z]?(?:[-–]\d+[a-z]?)?\s+[a-z]/i.test(linkedUnit.unitName || "") && (() => {
+    const street = streetOf(linkedUnit.unitName);
+    const ctx = `${deal?.name || ""} ${linkedProperty?.name || ""}`.toLowerCase();
+    return !!street && !ctx.includes(street) && !ctx.includes((linkedUnit.unitName || "").toLowerCase());
+  })();
+  const headingIsUnit = !isInvestmentDeal && !!linkedUnit && !unitOffProperty && !unitNameIsOtherAddress;
+  // Header "Unit 3" over a breadcrumb / side panel "South Molton - unit 3",
+  // and "10 Piccadilly Time Out Market T1" restating the property linked
+  // below it: one title everywhere on the page — the unit, else the deal
+  // name without its property — with the full name as the tooltip
+  // (Woody, 2026-09-28).
+  const pageTitle = headingIsUnit
+    ? linkedUnit!.unitName
+    : !isInvestmentDeal && deal?.name && linkedProperty?.name
+      ? stripPropertyFromTitle(deal.name, linkedProperty.name, typeof linkedProperty.address === "string" ? linkedProperty.address : (linkedProperty.address as any)?.formatted, deal.tenantId ? companies.find((c) => c.id === deal.tenantId)?.name : null)
+      : dealDisplayName;
 
   const linkedLandlord = deal?.landlordId ? companies.find((c) => c.id === deal.landlordId) : null;
   const linkedTenant = deal?.tenantId ? companies.find((c) => c.id === deal.tenantId) : null;
@@ -702,7 +730,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         <Breadcrumbs
           items={[
             { label: isComps ? "Comps" : "Deals", href: isComps ? "/comps" : "/deals" },
-            { label: dealDisplayName },
+            { label: pageTitle },
           ]}
         />
       </div>
@@ -732,27 +760,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
             // Investment (Sale/Purchase) deals are about the whole property —
             // heading = property name. Leasing deals are about a specific unit
             // — heading = unit name, property as subtitle.
-            const isInvestment = deal.dealType === "Sale" || deal.dealType === "Purchase";
-            // A unit linked from a different property (e.g. heading "55 Regent
-            // Street" over a 10 Piccadilly deal) contradicted the breadcrumb and
-            // linked property — only headline a unit that sits on the deal's
-            // property; otherwise flag the mislink (Woody, 2026-09-27).
-            const unitOffProperty = !!linkedUnit && !!deal.propertyId && linkedUnit.propertyId !== deal.propertyId;
-            // The guard above missed the live case: the unit row sits on the
-            // 10 Piccadilly property but is NAMED "55 Regent Street" — a
-            // street address for another building. A numbered-address unit
-            // name only headlines when the deal or property name shares its
-            // street; "Unit 3", "T1" etc. still headline (Woody, 2026-09-27).
-            const streetOf = (s: string) => s.toLowerCase().replace(/^\d+[a-z]?(?:[-–]\d+[a-z]?)?\s+/, "").replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
-            const unitNameIsOtherAddress = !!linkedUnit && /^\d+[a-z]?(?:[-–]\d+[a-z]?)?\s+[a-z]/i.test(linkedUnit.unitName || "") && (() => {
-              const street = streetOf(linkedUnit.unitName);
-              const ctx = `${deal.name || ""} ${linkedProperty?.name || ""}`.toLowerCase();
-              return !!street && !ctx.includes(street) && !ctx.includes((linkedUnit.unitName || "").toLowerCase());
-            })();
-            const headingIsUnit = !isInvestment && !!linkedUnit && !unitOffProperty && !unitNameIsOtherAddress;
-            const headingText = headingIsUnit
-              ? linkedUnit!.unitName
-              : dealDisplayName;
+            const isInvestment = isInvestmentDeal;
+            const headingText = pageTitle;
             // Counterparty: Purchaser/Vendor for investment, Tenant for leasing.
             let counterpartyId: string | null = null;
             let counterpartyLabel = "";
@@ -775,12 +784,12 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                       onClick={openUnitEdit}
                       className="text-xl font-bold truncate hover:underline hover:text-primary transition-colors"
                       data-testid="text-deal-name"
-                      title="Click to switch unit or edit unit address"
+                      title={`${deal.name ? `${deal.name} — ` : ""}click to switch unit or edit unit address`}
                     >
                       {headingText}
                     </button>
                   ) : (
-                    <h1 className="text-xl font-bold truncate" data-testid="text-deal-name">{headingText}</h1>
+                    <h1 className="text-xl font-bold truncate" data-testid="text-deal-name" title={deal.name || undefined}>{headingText}</h1>
                   )}
                   {deal.status && (
                     <Badge variant="outline" className={`text-[10px] border-transparent ${STATUS_CHIP_COLORS[(legacyToCode(deal.status) || "") as keyof typeof STATUS_CHIP_COLORS] || "bg-muted text-muted-foreground"}`} data-testid="badge-deal-status">{(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}</Badge>
@@ -1429,7 +1438,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         <div className="w-[340px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden md:flex">
           <ScrollArea className="flex-1">
             <div className="px-4 pt-4 pb-3 border-b">
-              <h3 className="text-sm font-bold leading-tight truncate" data-testid="sidebar-deal-name">{dealDisplayName}</h3>
+              <h3 className="text-sm font-bold leading-tight truncate" data-testid="sidebar-deal-name" title={deal.name || undefined}>{pageTitle}</h3>
             </div>
             {sidebarPanels}
           </ScrollArea>

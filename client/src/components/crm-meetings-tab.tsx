@@ -6,7 +6,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { gbDate } from "@/lib/format";
+import { gbDate, toDateInputValue } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -358,9 +358,15 @@ export function CrmMeetingsTab() {
                   <div className="h-full rounded-full bg-foreground transition-all" style={{ width: `${(answered / total) * 100}%` }} />
                 </div>
                 <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
-                  <span className="font-mono tabular-nums">
-                    {answered === 0 ? "Not started" : answered === total ? "Complete" : `${answered} of ${total} answered`}
-                  </span>
+                  {/* A past meeting with nothing captured isn't "Not started" —
+                      it's an outcome missing (Woody, 2026-09-28). */}
+                  {answered === 0 && iv.meeting_date && iv.meeting_date.slice(0, 10) < toDateInputValue(new Date()) ? (
+                    <span className="text-amber-700/80 dark:text-amber-400/80">No outcome logged</span>
+                  ) : answered === 0 ? (
+                    <span>Not started</span>
+                  ) : (
+                    <span className="tabular-nums">{answered === total ? "Complete" : `${answered} of ${total} answered`}</span>
+                  )}
                   {/* Dates are words in running UI, not mono (Woody, 2026-09-28). */}
                   <span>{dateLabel || "No date set"}</span>
                 </div>

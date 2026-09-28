@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { CheckSquare, TrendingUp, FolderTree, AlertTriangle } from "lucide-react";
+import { gbDate } from "@/lib/format";
 
 export interface WorkspaceTeamMember {
   userId: string;
@@ -161,11 +162,27 @@ const placeKey = (s: string) => s.toLowerCase()
   .replace(/\brd\b\.?/g, "road").replace(/\bst\b\.?/g, "street").replace(/\bave?\b\.?/g, "avenue")
   .replace(/\bsq\b\.?/g, "square").replace(/\bpl\b\.?/g, "place").replace(/\bln\b\.?/g, "lane")
   .replace(/[^a-z0-9]+/g, "");
+// "SU43/SU44 One New Change 22 Upper Cheapside Passage - London EC4M" kept
+// the property and its address inside one segment: cut the shown name out
+// and drop what follows it when that reads as an address (number + street
+// words, or a postcode) (Woody, 2026-09-28).
+const ADDRESS_TAIL = /^[\s,–—-]*(\d+[a-z]?\s+[A-Za-z]|.*\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b|.*\b(street|st|road|rd|lane|avenue|place|square|passage|row|way|hill|yard|mews|court)\b)/i;
+function stripShownInside(seg: string, shown: Array<string | null | undefined>): string {
+  for (const name of shown) {
+    const n = (name || "").trim();
+    if (n.length < 4) continue;
+    const at = seg.toLowerCase().indexOf(n.toLowerCase());
+    if (at < 0) continue;
+    const after = seg.slice(at + n.length);
+    seg = (seg.slice(0, at) + (!after.trim() || ADDRESS_TAIL.test(after) ? "" : after)).replace(/[\s,–—-]+$/, "").trim();
+  }
+  return seg;
+}
 export function tidyActionTitle(title: string, shown: Array<string | null | undefined> = []): string {
   const m = /^(.*?)\s+—\s+(.*)$/.exec(title.trim());
   const head = m ? m[1] : "", tail = m ? m[2] : title.trim();
   const shownKeys = shown.map(s => placeKey(s || "")).filter(k => k.length >= 4);
-  const segs = tail.split(/\s+·\s+/).map(s => s.trim()).filter(s => placeKey(s) && !/^brand not set$/i.test(s));
+  const segs = tail.split(/\s+·\s+/).map(s => stripShownInside(s.trim(), shown)).filter(s => placeKey(s) && !/^brand not set$/i.test(s));
   const keep = segs.filter((seg, i) => {
     const first = placeKey(seg.split(",")[0]), full = placeKey(seg);
     if (first.length >= 4 && shownKeys.some(k => k.includes(first))) return false;
@@ -206,7 +223,7 @@ export function AccountNextActionsCard({ companyId }: { companyId: string }) {
       <CardContent className="p-3 pt-0 space-y-1.5">
         {actions.map(({ a, count }) => {
           const overdue = !isNaN(dueMs(a)) && dueMs(a) < todayStart.getTime();
-          const due = a.dueDate ? new Date(a.dueDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : null;
+          const due = a.dueDate ? gbDate(a.dueDate, { day: "numeric", month: "short" }) : null;
           // The property chip repeated what the title already said — drop it
           // and let the title carry the link (Woody, 2026-09-27).
           const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");

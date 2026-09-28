@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Mail, Users, Calendar, Clock, ExternalLink, Loader2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { EmailViewerDialog, MeetingViewerDialog } from "@/components/ai-activity-card";
+import { gbDate } from "@/lib/format";
 
 interface InteractionRow {
   id: string;
@@ -93,14 +94,14 @@ function relDate(d: string | null | undefined): string {
     const ahead = -days;
     if (ahead <= 1) return "tomorrow";
     if (ahead < 30) return `in ${ahead}d`;
-    return new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+    return gbDate(d, { day: "numeric", month: "short", year: "numeric" });
   }
   if (days === 0) return "today";
   if (days === 1) return "1d ago";
   if (days < 7) return `${days}d ago`;
   if (days < 30) return `${Math.floor(days / 7)}w ago`;
   if (days < 365) return `${Math.floor(days / 30)}mo ago`;
-  return new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return gbDate(d, { day: "numeric", month: "short", year: "numeric" });
 }
 
 function bgpUserDisplay(raw: string | null | undefined, userMap: Map<string, string>): string {
@@ -274,7 +275,7 @@ export function InteractionsBoard({ scope, contextId }: Props) {
   const totalCount = interactions.length;
   const sinceLabel = useMemo(() => {
     const times = interactions.map((i) => new Date(i.interactionDate).getTime()).filter((t) => !isNaN(t));
-    return times.length ? new Date(Math.min(...times)).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
+    return times.length ? gbDate(Math.min(...times), { day: "numeric", month: "short", year: "numeric" }) : null;
   }, [interactions]);
 
   // Auto-fire meeting sync once when this page opens with 0 meetings.
@@ -415,7 +416,9 @@ export function InteractionsBoard({ scope, contextId }: Props) {
                           first name + initial there (Woody, 2026-09-28). */}
                       {(() => {
                         const names = (row.bgpUsers.length ? row.bgpUsers : [row.bgpUser]).map((u) => bgpUserDisplay(u, emailToName)).filter(Boolean);
-                        const short = names.slice(0, 2).map((n) => { const [f, ...rest] = n.split(/\s+/); return rest.length ? `${f} ${rest[rest.length - 1][0]}.` : f; }).join(", ") + (names.length > 2 ? ` +${names.length - 2}` : "");
+                        // Two names still cut to "Will P.,…" — one name plus
+                        // a count ("Will P. +3") (Woody, 2026-09-28).
+                        const short = names.slice(0, 1).map((n) => { const [f, ...rest] = n.split(/\s+/); return rest.length ? `${f} ${rest[rest.length - 1][0]}.` : f; }).join("") + (names.length > 1 ? ` +${names.length - 1}` : "");
                         return (
                           <span className="text-sm font-semibold text-primary truncate min-w-0" title={names.join(", ")}>
                             <span className="hidden md:inline">{names.join(", ")}</span>
@@ -425,13 +428,13 @@ export function InteractionsBoard({ scope, contextId }: Props) {
                       })()}
                       <span className="shrink-0">· {relDate(row.interactionDate)}</span>
                       {row.laterDates && row.laterDates.length > 0 && (
-                        <span className="shrink-0 opacity-70" title={row.laterDates.map((d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })).join(", ")}>
-                          · then {row.laterDates.slice(0, 2).map((d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" })).join(", ")}{row.laterDates.length > 2 ? ` +${row.laterDates.length - 2}` : ""}
+                        <span className="shrink-0 opacity-70" title={row.laterDates.map((d) => gbDate(d, { day: "numeric", month: "short", year: "numeric" })).join(", ")}>
+                          · then {row.laterDates.slice(0, 2).map((d) => gbDate(d, { day: "numeric", month: "short" })).join(", ")}{row.laterDates.length > 2 ? ` +${row.laterDates.length - 2}` : ""}
                         </span>
                       )}
                       {row.earlierDates && row.earlierDates.length > 0 && (
-                        <span className="shrink-0 opacity-70" title={row.earlierDates.map((d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })).join(", ")}>
-                          · also {row.earlierDates.slice(0, 2).map((d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" })).join(", ")}{row.earlierDates.length > 2 ? ` +${row.earlierDates.length - 2}` : ""}
+                        <span className="shrink-0 opacity-70" title={row.earlierDates.map((d) => gbDate(d, { day: "numeric", month: "short", year: "numeric" })).join(", ")}>
+                          · also {row.earlierDates.slice(0, 2).map((d) => gbDate(d, { day: "numeric", month: "short" })).join(", ")}{row.earlierDates.length > 2 ? ` +${row.earlierDates.length - 2}` : ""}
                         </span>
                       )}
                       {/* Meeting direction is stamped at sync time, so last

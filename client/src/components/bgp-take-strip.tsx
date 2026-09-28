@@ -106,7 +106,7 @@ export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty, f
       <div className="flex items-center justify-between mb-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-muted-foreground">
           <Sparkles className="w-3 h-3 text-primary" /> {TAB_LABELS[tab]}
-          {!!data?.generatedAt && <span className="font-normal">· {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}{data.stale ? " · Update pending" : ""}</span>}
+          {!!data?.generatedAt && <span className="font-normal">· {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep")}{data.stale ? " · Update pending" : ""}</span>}
         </div>
         <Button
           size="sm"

@@ -838,7 +838,7 @@ export function PropertyDetail({ id }: { id: string }) {
                         <div className="grid grid-cols-[minmax(84px,110px),minmax(0,1fr)] items-center gap-2 text-[11px]">
                           <span className="text-muted-foreground leading-tight truncate" title={empty[0].label}>{empty[0].label}</span>
                           <div className="min-w-0">
-                            <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} readOnly={isClientViewer} />
+                            <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} readOnly={isClientViewer} roleOnChip={false} />
                           </div>
                         </div>
                       ) : (

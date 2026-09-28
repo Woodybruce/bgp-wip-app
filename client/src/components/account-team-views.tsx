@@ -15,11 +15,18 @@ import { Pill } from "@/components/ui/pill";
 import { ArrowUpRight, CalendarClock, Loader2, Plus, Users } from "lucide-react";
 import { AGENT_ROLES } from "@shared/agent-roles";
 import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
+import { gbDate } from "@/lib/format";
+import { cleanUnit } from "@/components/account-deals-board";
 
 type Tab = "investment" | "tenantRep" | "leaseAdvisory" | "agents";
 
-const fmtDate = (d: any) => d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—";
-const fmtMonth = (d: any) => d ? new Date(d).toLocaleDateString("en-GB", { month: "short", year: "numeric" }) : "—";
+// en-GB prints "Sept" — gbDate reads "Sep" like everywhere else (Woody, 2026-09-28).
+const fmtDate = (d: any) => d ? gbDate(d, { day: "numeric", month: "short", year: "numeric" }) : "—";
+const fmtMonth = (d: any) => d ? gbDate(d, { month: "short", year: "numeric" }) : "—";
+// "Bluewater Shopping Centre · Bluewater Shopping Centre" / "· SVL06 Bluewater
+// - Lower Level" — the unit goes through the deals board's cleaning so it
+// never restates the property (Woody, 2026-09-28).
+const spaceTitle = (u: any) => { const unit = cleanUnit(u.unitName, u.propertyName); return `${u.propertyName}${unit ? ` · ${unit}` : ""}`; };
 const money = (v: any) => {
   const n = Number(v);
   if (!n) return null;
@@ -34,7 +41,7 @@ function Section({ title, count, link, linkLabel, children, empty }: { title: st
         <span className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
           {title}{count != null && <Badge variant="outline" className="text-[9px] tabular-nums">{count}</Badge>}
         </span>
-        {link && <Link href={link} className="text-[11px] text-primary hover:underline inline-flex items-center gap-0.5">{linkLabel || "Open"}<ArrowUpRight className="w-3 h-3" /></Link>}
+        {link && <Link href={link} className="text-[11px] text-primary hover:underline inline-flex items-center gap-0.5 whitespace-nowrap shrink-0">{linkLabel || "Open"}<ArrowUpRight className="w-3 h-3" /></Link>}
       </div>
       {children || (empty && <p className="text-xs text-muted-foreground italic">{empty}</p>)}
     </div>
@@ -148,8 +155,9 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                 {/* Title from the requirement itself (use / size / where),
                     not the landlord's own name (Woody, 2026-09-28). */}
                 {inv.requirements.length > 0 && <div className="space-y-1">{inv.requirements.slice(0, 6).map((r: any) => {
-                  const detail = [list(r.use_types || r.requirement_types), list(r.size_range), list(r.requirement_locations) || r.locations].filter((s: any) => s && String(s).trim()).join(" · ");
-                  const title = !r.ownName ? r.name : detail || (r.comments ? String(r.comments).slice(0, 80) : "Investment requirement");
+                  const detail = [list(r.use_types), list(r.requirement_types), list(r.size_range), list(r.requirement_locations) || r.locations].filter((s: any) => s && String(s).trim()).join(" · ");
+                  const when = [r.requirement_date, r.updated_at].find((v: any) => v && !isNaN(Date.parse(v)));
+                  const title = !r.ownName ? r.name : detail || (r.comments ? String(r.comments).slice(0, 80) : `Investment requirement${when ? ` · ${fmtDate(when)}` : ""}`);
                   const sub = [!r.ownName && detail, r.ownName && detail && r.comments && String(r.comments).slice(0, 80), r.updated_at && `updated ${fmtMonth(r.updated_at)}`].filter(Boolean).join(" · ");
                   return <Row key={r.id} href="/requirements?type=investment" title={title} sub={sub} right={r.status && <Badge variant="outline" className="text-[9px]">{statusLabel(r.status)}</Badge>} />;
                 })}</div>}
@@ -192,7 +200,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
               empty={tr.space.length ? `${tr.space.length} vacant or marketing units — none fits a live requirement's size with a matching use or location.` : "No vacant or marketing units on their schemes."}>
               {spaceWithFits.length > 0 && <div className="space-y-1">{spaceWithFits.slice(0, 10).map((u: any) => (
                 <Row key={`${u.kind}-${u.id}`} href={u.kind === "marketing" ? `/available?propertyId=${u.propertyId}&unitId=${u.id}` : `/leasing-schedule/${u.propertyId}`}
-                  title={`${u.propertyName}${u.unitName ? ` · ${u.unitName}` : ""}`}
+                  title={spaceTitle(u)}
                   sub={<>Fits: {u.fits.map((s: any, i: number) => <span key={s.requirementId}>{i > 0 && ", "}{s.bgpClient ? <strong className="text-foreground" title="BGP acts for this brand">{s.name} ★</strong> : s.name}</span>)}{u.fitCount > u.fits.length ? ` +${u.fitCount - u.fits.length}` : ""}</>}
                   right={<>{saleBadge(u.propertyId)}{u.sqft ? <span className="text-[10px] tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null}{u.status && <Badge variant="outline" className="text-[9px]">{statusLabel(u.status)}</Badge>}</>} />
               ))}</div>}
@@ -201,7 +209,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
               <Section title="Other vacant / marketing space" count={tr.space.length - spaceWithFits.length} link="/available" linkLabel="Letting tracker">
                 {tr.space.length - spaceWithFits.length > 0 && <div className="space-y-1">{tr.space.filter((u: any) => !u.fits.length).slice(0, 6).map((u: any) => (
                   <Row key={`${u.kind}-${u.id}`} href={u.kind === "marketing" ? `/available?propertyId=${u.propertyId}&unitId=${u.id}` : `/leasing-schedule/${u.propertyId}`}
-                    title={`${u.propertyName}${u.unitName ? ` · ${u.unitName}` : ""}`} right={<>{u.sqft ? <span className="text-[10px] tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null}{u.status && <Badge variant="outline" className="text-[9px]">{statusLabel(u.status)}</Badge>}</>} />
+                    title={spaceTitle(u)} right={<>{u.sqft ? <span className="text-[10px] tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null}{u.status && <Badge variant="outline" className="text-[9px]">{statusLabel(u.status)}</Badge>}</>} />
                 ))}</div>}
               </Section>
               <p className="text-[11px] text-muted-foreground">★ BGP acts for the brand (a live tenant rep deal or search) — <Link href="/tenant-rep" className="text-primary hover:underline">Tenant rep board</Link></p>

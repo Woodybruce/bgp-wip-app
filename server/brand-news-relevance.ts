@@ -34,16 +34,45 @@ function plainText(value: string): string {
   return value.replace(/<[^>]*>/g, " ").replace(/&(?:apos|#39|#x27);/gi, "'")
     .replace(/&(?:amp|#38);/gi, "&").replace(/&(?:nbsp|#160);/gi, " ");
 }
-function words(value: string, lower = true): string {
-  const text = plainText(value).normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[’']/g, "").replace(/&/g, " and ").replace(/[^a-zA-Z0-9]+/g, " ").trim();
+// dropPossessive reads "Cushman & Wakefield's" as "cushman and wakefield";
+// without it the apostrophe strip made "wakefields" and the firm's own
+// reports stopped matching (Woody, 2026-09-28). Names keep the plain form so
+// "Nando's" still meets "Nandos".
+function words(value: string, lower = true, dropPossessive = false): string {
+  let text = plainText(value).normalize("NFKD").replace(/[̀-ͯ]/g, "");
+  if (dropPossessive) text = text.replace(/([a-zA-Z0-9])[’']s\b/gi, "$1");
+  text = text.replace(/[’']/g, "").replace(/&/g, " and ").replace(/[^a-zA-Z0-9]+/g, " ").trim();
   return (lower ? text.toLowerCase() : text).replace(/\s+/g, " ");
 }
 function nameWords(value: string): string {
   return words(value).replace(/\s+(?:ltd|limited|plc|inc|llc)$/, "").trim();
 }
+// Which reading of the text carries the name: plain, or possessive dropped.
+function possessiveReading(text: string, name: string): boolean | null {
+  if (!name) return null;
+  if ((` ${words(text)} `).includes(` ${name} `)) return false;
+  return (` ${words(text, true, true)} `).includes(` ${name} `) ? true : null;
+}
 function containsName(text: string, name: string): boolean {
-  return !!name && (` ${words(text)} `).includes(` ${name} `);
+  return possessiveReading(text, name) !== null;
+}
+// "Grosvenor Casinos", "the Grosvenor Arms", "Grosvenor Hotel" are namesakes,
+// not the estate — unless the story is about property (Woody, 2026-09-28).
+const NAMESAKE_NOUNS = /^(?:casinos?|arms|hotels?|square|street|st|road|rd|house|avenue|place|park|gardens|bridge|crescent|terrace|lane|inn|pub|tavern|bar|club|cinema|theatre|school|college|hospital|chapel|court|hall|lodge)$/;
+const PROPERTY_CONTEXT = /\b(?:property|properties|estate|estates|landlord|landlords|real estate|developer|development|portfolio|leasing|lettings?|freehold|leasehold|mayfair|belgravia)\b/;
+function namesakeOnly(name: string, text: string): boolean {
+  const drop = possessiveReading(text, name);
+  if (drop === null) return false;
+  const normalized = words(text, true, drop);
+  const followers = [...normalized.matchAll(new RegExp(`(?:^| )${escapeRegex(name)}(?: (\\w+)|$)`, "g"))].map(m => m[1] || "");
+  return followers.length > 0 && followers.every(w => NAMESAKE_NOUNS.test(w)) && !PROPERTY_CONTEXT.test(normalized);
+}
+// Competition T&Cs pages are not news about anyone (Deliveroo's promo
+// terms were landing on Nando's and Wingstop, Woody 2026-09-28).
+const TERMS_PAGE = /\b(?:terms (?:and|&) conditions|t ?& ?cs?|competition (?:terms|rules)|terms of (?:entry|use)|promotion terms|prize draw terms)\b/i;
+const TERMS_URL = /\/[\w-]*(?:terms|t-and-c|t-cs|tandcs?)[\w-]*(?:\/|\.html?|\?|$)/i;
+function isAgentFirm(company: any): boolean {
+  return /^agent/i.test(String(company?.company_type ?? company?.companyType ?? "")) || !!(company?.agent_type ?? company?.agentType);
 }
 function ambiguous(name: string): boolean {
   return name.replace(/\s/g, "").length <= 4 || COMMON_NAMES.has(name);
@@ -55,8 +84,9 @@ function casedMention(text: string, name: string): boolean {
   if (normalized.replace(/\s/g, "").length > 3) {
     variants.push(normalized.toLowerCase().replace(/\b\w/g, ch => ch.toUpperCase()));
   }
+  const readings = [words(text, false), words(text, false, true)];
   return variants.some(value => value !== value.toLowerCase()
-    && new RegExp(`(?:^| )${escapeRegex(value)}(?: |$)`).test(words(text, false)));
+    && readings.some(reading => new RegExp(`(?:^| )${escapeRegex(value)}(?: |$)`).test(reading)));
 }
 
 function confirmedNewsIdentity(company: any) {
@@ -97,8 +127,9 @@ function namedContext(name: string, rawName: string, text: string, industry: str
   if (!containsName(candidate, name) || !casedMention(candidate, rawName)) return false;
   // Check context close to the name, rather than borrowing "retail" from an
   // unrelated paragraph in a long roundup.
-  const normalized = words(candidate);
-  const cased = words(candidate, false);
+  const drop = possessiveReading(candidate, name) === true;
+  const normalized = words(candidate, true, drop);
+  const cased = words(candidate, false, drop);
   const mentions = normalized.matchAll(new RegExp(`(?:^| )${escapeRegex(name)}(?= |$)`, "g"));
   for (const mention of mentions) {
     if (personNamesake(name, cased, mention.index!)) continue;
@@ -135,13 +166,25 @@ function namedContext(name: string, rawName: string, text: string, industry: str
 export function isBrandNewsRelevant(company: any, article: NewsArticle): boolean {
   const identity = confirmedNewsIdentity(company);
   if (!identity.names.length) return false;
+  if (TERMS_PAGE.test(article.title || "") || TERMS_URL.test(String(article.url || "").replace(/^https?:\/\/[^/]+/i, ""))) return false;
   // Ignore AI summaries: a generated mention cannot corroborate its own link.
-  const title = (article.title || "").replace(/\s[-–—|·]\s[^-–—|·]{2,60}$/, "");
-  const text = `${title} ${article.summary || ""}`;
-  if (identity.domain && domainEvidence(identity.domain, article, text)) return true;
+  const rawTitle = article.title || "";
+  const title = rawTitle.replace(/\s[-–—|·]\s[^-–—|·]{2,60}$/, "");
+  const tail = rawTitle.slice(title.length).replace(/^\s[-–—|·]\s/, "");
+  // An agent firm is named in plenty of stories about other firms ("joins
+  // from Knight Frank") — its news must name it in the headline
+  // (Woody, 2026-09-28).
+  const agent = isAgentFirm(company);
+  const text = agent ? title : `${title} ${article.summary || ""}`;
+  if (identity.domain && (agent
+    ? (() => { const host = normalizeBrandDomain(article.url); return host === identity.domain || !!host?.endsWith(`.${identity.domain}`); })()
+    : domainEvidence(identity.domain, article, text))) return true;
   for (const rawName of identity.names) {
     const name = nameWords(rawName);
+    // "… - Savills": the firm published it.
+    if (agent && tail && !ambiguous(name) && nameWords(tail) === name) return true;
     if (!containsName(text, name)) continue;
+    if (namesakeOnly(name, text)) continue;
     if (!ambiguous(name)) return true;
     if (!GENERIC_SHORT_NAMES.has(name) && namedContext(name, rawName, text, company?.industry || "")) return true;
   }

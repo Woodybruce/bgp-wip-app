@@ -1,5 +1,5 @@
 import { formatSizeList } from "@/lib/format-size";
-import { isOwnChannelNews, newsSourceLabel, splitNewsTitle, isOwnBrandSource, dedupeNearNews, ukDate, sentenceCaseShouting, aboutParagraphs } from "@/components/brand-profile-panel";
+import { isOwnChannelNews, newsSourceLabel, splitNewsTitle, isOwnBrandSource, dedupeNearNews, ukDate, sentenceCaseShouting, aboutParagraphs, isSocialNews, snippetPublisher, isSignalNoise } from "@/components/brand-profile-panel";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { BrandFeedCard } from "@/components/brand-feed-card";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
@@ -147,6 +147,7 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
     const seen = new Set<string>();
     const norm = (h: string) => (h || "").toLowerCase().replace(/[^a-z0-9£$ ]+/g, " ").replace(/\s+/g, " ").trim();
     return ((data.signals || []) as any[]).filter(s => {
+      if (isSignalNoise(s)) return false;
       const n = norm(s.headline);
       if (!n || seen.has(n)) return !n;
       seen.add(n);
@@ -381,7 +382,7 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
                   {hunter.expansionScore}/100
                 </Badge>
               )}
-              {c.rollout_status && <Badge variant="outline" className="text-[10px]">{String(c.rollout_status).replace(/_/g, " ")}</Badge>}
+              {!isLandlord && !isAgentFirm && c.rollout_status && <Badge variant="outline" className="text-[10px]">{String(c.rollout_status).replace(/_/g, " ")}</Badge>}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-2">
@@ -437,7 +438,7 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
       )}
 
       {/* Portfolio activity — tenant at / targeted / pitched / suggested */}
-      {!isAgentFirm && <PortfolioActivityBlock companyId={companyId} />}
+      {!isAgentFirm && <PortfolioActivityBlock companyId={companyId} liveTenancies={(data as any).liveLocations || []} />}
 
       {/* Signals — phone twin of the desktop feed: semantic type pill +
           mono date on a meta row, clamped headline underneath, sentiment
@@ -557,12 +558,12 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
         // Same Industry rules as desktop: the brand's own posts out, one row
         // per story, nothing over two years old (Woody, 2026-09-28).
         const staleCut = Date.now() - 730 * 86400000;
-        const industry = (data.news || []).filter((n: any) => !isOwnChannelNews(n.source_name)
+        const industry = (data.news || []).filter((n: any) => !isOwnChannelNews(n.source_name) && !isSocialNews(n)
           && !isOwnBrandSource(splitNewsTitle(n.title).publisher, c.name)
           && !(!/\(Google News\)\s*$/i.test(n.source_name || "") && isOwnBrandSource(n.source_name, c.name))
           && (!n.published_at || new Date(n.published_at).getTime() >= staleCut));
         if (industry.length === 0) return null;
-        const newsM = dedupeNearNews(industry);
+        const newsM = dedupeNearNews(industry, c.name);
         return (
         <Card>
           <CardHeader className="p-3 pb-2">
@@ -578,9 +579,9 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
                   <img src={n.image_url} alt="" loading="lazy" className="w-14 h-14 rounded object-cover shrink-0 bg-muted" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
                 )}
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium leading-snug line-clamp-2 group-hover:underline">{splitNewsTitle(n.title).title}</p>
+                  <p className="text-xs font-medium leading-snug line-clamp-2 group-hover:underline">{sentenceCaseShouting(splitNewsTitle(n.title).title)}</p>
                   <div className="text-[11px] text-muted-foreground truncate">
-                    {[newsSourceLabel(n.source_name, n.title, c.name), n.published_at ? ukDate(n.published_at, { day: "numeric", month: "short" }) : null].filter(Boolean).join(" · ")}
+                    {[newsSourceLabel(n.source_name, n.title, c.name) || snippetPublisher(n.title, n.summary), n.published_at ? ukDate(n.published_at, { day: "numeric", month: "short" }) : null].filter(Boolean).join(" · ")}
                   </div>
                 </div>
               </a>

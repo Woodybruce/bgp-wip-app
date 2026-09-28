@@ -29,6 +29,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { Sparkles, Mail, CalendarDays, AlertCircle, Loader2, ExternalLink, Copy, Download, Paperclip } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { getAuthHeaders } from "@/lib/queryClient";
+import { gbDate } from "@/lib/format";
 
 export type ActivitySubjectType = "deal" | "brand" | "landlord" | "contact" | "property";
 
@@ -209,7 +210,7 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, cachedO
                   {lastTouchPill}
                   {data?.generatedAt && (
                     <span className="text-[10px] text-muted-foreground font-normal">
-                      Analysed {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                      Analysed {gbDate(data.generatedAt, { day: "numeric", month: "short" })}
                     </span>
                   )}
                 </span>
@@ -320,7 +321,7 @@ function LastTouchBadge({ iso }: { iso: string }) {
   // next touch, not the last (Woody, 2026-09-27).
   if (t > Date.now()) {
     const ahead = Math.max(0, -days);
-    const when = ahead === 0 ? "today" : ahead === 1 ? "tomorrow" : ahead < 30 ? `in ${ahead}d` : new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    const when = ahead === 0 ? "today" : ahead === 1 ? "tomorrow" : ahead < 30 ? `in ${ahead}d` : gbDate(t, { day: "numeric", month: "short" });
     return <Badge variant="outline" className="text-[10px] font-medium">Next {when}</Badge>;
   }
   const cls = days <= 7 ? "bg-emerald-50 text-emerald-700 border-emerald-200"
@@ -628,7 +629,7 @@ export function MeetingViewerDialog({ eventId, mailboxEmail, onClose }: { eventI
   const fmtDateRange = (e: MeetingDetail) => {
     if (!e.start) return "";
     const s = new Date(e.start);
-    const day = s.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+    const day = gbDate(s, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
     if (e.isAllDay) return `${day} (all day)`;
     const stime = s.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
     if (!e.end) return `${day} · ${stime}`;

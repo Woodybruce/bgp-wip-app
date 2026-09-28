@@ -105,7 +105,7 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
   const forSale = await rows(q, `SELECT property_id FROM investment_tracker
     WHERE board_type = 'Sales' AND property_id = ANY($1::text[]) AND COALESCE(status, '') NOT IN ('COM','INV','WIT')`, [propertyIds]);
   const forSalePropertyIds = [...new Set(forSale.map((r: any) => r.property_id))];
-  const requirements = await rows(q, `SELECT id, name, status, use_types, requirement_types, size_range, requirement_locations, locations, comments, updated_at
+  const requirements = await rows(q, `SELECT id, name, status, use_types, requirement_types, size_range, requirement_locations, locations, comments, requirement_date, updated_at
     FROM crm_requirements_investment WHERE company_id = ANY($1::text[])
     ORDER BY updated_at DESC NULLS LAST LIMIT 20`, [entityIds]);
 
@@ -177,6 +177,9 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
   const entitySet = new Set(entityIds);
   const nameKey = (v: any) => String(v || "").toLowerCase().replace(/\b(plc|ltd|limited|group|properties|property)\b/g, "").replace(/[^a-z0-9]/g, "");
   const entityNames = new Set([view.root.name, ...view.entities.map(e => e.name)].map(nameKey).filter(Boolean));
+  const GENERIC_NAME_WORDS = /^(the|and|plc|ltd|limited|llp|group|properties|property|capital|estate|estates|holdings|investments?|assets?|management|real|reit|trust|partners|fund|funds|company|international|land|london|british|great|city|centre|centres|retail)$/;
+  const ownTokens = new Set([view.root.name, ...view.entities.map(e => e.name)]
+    .flatMap(n => String(n || "").toLowerCase().split(/[^a-z0-9]+/)).filter(w => w.length >= 4 && !GENERIC_NAME_WORDS.test(w)));
   const isUs = (id: any, name: any) => entitySet.has(id) || (!id && !!name && entityNames.has(nameKey(name)));
   const side = (t: any) => isUs(t.buyer_id, t.buyer) ? "buying" : isUs(t.vendor_id, t.vendor) ? "selling"
     : isUs(t.client_id, t.client) ? (t.board_type === "Sales" ? "selling" : "buying")
@@ -250,7 +253,11 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
       comps,
       // Rows were titled with the landlord's own name ("British Land") — the
       // name only adds something when it isn't them (Woody, 2026-09-28).
-      requirements: requirements.map((r: any) => ({ ...r, ownName: entityNames.has(nameKey(r.name)) })),
+      // "Capco Shaftesbury" under Shaftesbury Capital, or a bare "Investment
+      // requirement", also said nothing — any distinctive word of theirs in
+      // the title counts as their name (Woody, 2026-09-28).
+      requirements: requirements.map((r: any) => ({ ...r, ownName: entityNames.has(nameKey(r.name)) || /^investment requirements?$/i.test(String(r.name || "").trim())
+        || String(r.name || "").toLowerCase().split(/[^a-z0-9]+/).some(w => ownTokens.has(w)) })),
       sentToThem,
       theirBids,
       theirViewings,

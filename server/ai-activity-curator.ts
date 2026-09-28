@@ -173,6 +173,8 @@ export function buildActivityQuestion(subject: ActivitySubject, clientScope?: { 
     ``,
     `Be concise — under 400 words for the prose.`,
     ``,
+    `Money: only add, subtract or compare figures on the same VAT basis — invoices are usually VAT-inclusive, fee totals ex-VAT. Say "+VAT" or "inc. VAT" when quoting either, and never compute a balance across the two.`,
+    ``,
     `Write ONLY the findings. Never narrate your process: don't mention mailboxes, tools, fan-outs, searches you ran, errors or retries, which inboxes you checked, how many results came back, or what you dropped as noise/newsletters. Don't describe the data either ("the system holds…", "records show…", "a clean trail") — say what happened. Start straight with the first ## section.`,
     ``,
     `Only include a ## section when it has at least one item under it — never leave an empty heading (e.g. a "## Calendar" with nothing below it).`,
@@ -382,6 +384,7 @@ Output **clean markdown commentary** for the analyst. Rules:
 5. **Note gaps** in passing if obvious (e.g. "no introduction email is in the inbox").
 6. **End with 1-2 suggested actions** in a "## Next steps" section.
 7. **Be concise — under 350 words total.**
+7a. **Money: only add, subtract or compare figures on the same VAT basis — invoices are usually VAT-inclusive, fee totals ex-VAT. Say "+VAT" or "inc. VAT" when quoting either, and never compute a balance across the two.**
 8. **Findings only — never narrate your process.** Don't say what you filtered out, what was noise, or how you checked; start with the first ## section.
 
 If after filtering NONE of the emails are about this subject, just output:

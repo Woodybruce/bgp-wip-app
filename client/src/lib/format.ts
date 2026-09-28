@@ -65,16 +65,37 @@ export function toDateInputValue(v: string | Date | null | undefined): string {
 // strips to empty (Woody, 2026-09-27). A leading centre code ("XYRK -
 // Nandos") goes when the rest is the tenant (Woody, 2026-09-28).
 const TITLE_STOPWORDS = new Set(["the", "and", "of", "at", "on", "in"]);
+const STREET_ABBR: Record<string, string> = { st: "street", rd: "road", ave: "avenue", av: "avenue", sq: "square", pl: "place", ln: "lane", tce: "terrace", cres: "crescent", gdns: "gardens", ct: "court", dr: "drive" };
+const STREET_WORDS = new Set([...Object.values(STREET_ABBR), "row", "hill", "mews", "yard", "walk", "way", "parade", "grove"]);
 export function stripPropertyFromTitle(title: string, propName: string, propAddress?: string | null, tenantName?: string | null): string {
   // The title is itself a short form of the property ("Brent Cross") — keep it.
   if (propName.trim().toLowerCase().startsWith(title.trim().toLowerCase())) return title;
-  const norm = (v: string) => v.toLowerCase().replace(/[’']/g, "").replace(/&/g, "and").replace(/[^a-z0-9]+/g, " ").trim().replace(/^the /, "");
+  const norm = (v: string) => v.toLowerCase().replace(/[’']/g, "").replace(/&/g, "and").replace(/[^a-z0-9]+/g, " ").trim().replace(/^the /, "")
+    .split(" ").map(w => STREET_ABBR[w] || w).join(" ");
   const significant = (n: string) => n.split(" ").some(w => /[a-z]{3,}/.test(w) && !TITLE_STOPWORDS.has(w));
+  // "62, 64 & 66/66A Pimlico Road" and "50 Sloane Street" compare on the
+  // street, without the building numbers.
+  const dropNumbers = (n: string) => n.replace(/^(?:\d+[a-z]?\s+|and\s+)+/, "");
   const prop = norm(propName);
+  const propStreet = dropNumbers(prop);
   const addr = ` ${norm(propAddress || "")} `;
   const isProp = (seg: string) => {
     const n = norm(seg);
-    return !!n && !!prop && significant(n) && (n === prop || prop.startsWith(`${n} `) || n.startsWith(`${prop} `));
+    if (!n || !prop || !significant(n)) return false;
+    if (n === prop || prop.startsWith(`${n} `) || n.startsWith(`${prop} `)) return true;
+    const s = dropNumbers(n);
+    if (!s || !significant(s) || !propStreet) return false;
+    // "Sloane Street" under "50 Sloane Street", "Pulteney Street" under
+    // "29 Great Pulteney Street", "62, 64 & 66/66A Pimlico Road" under
+    // "Pimlico Rd, London SW1".
+    return s === propStreet || propStreet.startsWith(`${s} `)
+      || (s.includes(" ") && STREET_WORDS.has(s.split(" ").pop()!) && propStreet.endsWith(` ${s}`));
+  };
+  // A segment that repeats part of the property ("London E14" after
+  // "Canary Wharf Estate") goes with it.
+  const inProp = (seg: string) => {
+    const n = norm(seg);
+    return !!n && ` ${prop} `.includes(` ${n} `);
   };
   const isPlace = (seg: string) => {
     const n = norm(seg);
@@ -86,7 +107,8 @@ export function stripPropertyFromTitle(title: string, propName: string, propAddr
     const out: { text: string; start: number; end: number; comma: boolean }[] = [];
     let last = 0;
     let comma = false;
-    for (const m of t.matchAll(/\s*[–—|·]\s*|\s+-\s*|\s*-\s+|\s*[,:]\s+/g)) {
+    // No split inside a number list ("62, 64 & 66/66A").
+    for (const m of t.matchAll(/\s*[–—|·]\s*|\s+-\s*|\s*-\s+|\s*(?:(?<!\d)[,:]\s+|[,:]\s+(?![\s\d]))/g)) {
       out.push({ text: t.slice(last, m.index), start: last, end: m.index!, comma });
       last = m.index! + m[0].length;
       comma = m[0].trim() === ",";
@@ -104,8 +126,11 @@ export function stripPropertyFromTitle(title: string, propName: string, propAddr
       if (!head.some(w => /[a-z]{3,}/i.test(w) && !TITLE_STOPWORDS.has(w.toLowerCase()))) continue;
       const prefix = head.map(esc).join("\\s+");
       for (const re of [new RegExp(`^\\s*${prefix}\\s+`, "i"), new RegExp(`\\s+${prefix}\\s*$`, "i")]) {
-        const rest = seg.replace(re, "").trim();
-        if (rest && rest !== seg.trim()) return rest;
+        const rest = trimSep(seg.replace(re, "")).trim();
+        // Whole words of the property only — "30 Davies St" under "30 Davies
+        // Street" must not leave "St" (Woody, 2026-09-28).
+        const first = norm(rest.split(/\s+/)[0] || "");
+        if (rest && rest !== seg.trim() && !STREET_WORDS.has(first)) return rest;
       }
     }
     return seg;
@@ -121,7 +146,7 @@ export function stripPropertyFromTitle(title: string, propName: string, propAddr
       rest = [title.slice(0, segs[i].start), ...after].map(v => trimSep(v).trim()).filter(Boolean).join(" – ");
     } else if (i === 0) {
       let j = 1;
-      while (j < segs.length - 1 && isPlace(segs[j].text)) j++;
+      while (j < segs.length - 1 && (isPlace(segs[j].text) || inProp(segs[j].text))) j++;
       rest = title.slice(segs[j].start);
     } else if (isPlace(segs[0].text)) rest = title.slice(segs[1].start);
     else if (isPlace(segs[segs.length - 1].text)) rest = title.slice(0, segs[segs.length - 1].start);

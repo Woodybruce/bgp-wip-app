@@ -796,7 +796,14 @@ function ContactDetail({ id }: { id: string }) {
 
   const filteredCoworkers = useMemo(() => {
     if (!allContacts || !contact?.companyId) return [];
-    return allContacts.filter(c => c.companyId === contact.companyId && c.id !== id);
+    // Distribution lists ("!Retail Agents", an email as the name) listed as
+    // people at Canary Wharf — only people are co-workers (Woody, 2026-09-28).
+    const isList = (c: any) => {
+      const n = String(c.name || "").trim();
+      const local = String(c.email || "").split("@")[0].toLowerCase();
+      return /^[!#]/.test(n) || n.includes("@") || /\b(distribution|mailing)?\s*list\b/i.test(n) || (!!local && n.toLowerCase() === local);
+    };
+    return allContacts.filter(c => c.companyId === contact.companyId && c.id !== id && !isList(c));
   }, [allContacts, contact?.companyId, id]);
 
   const deleteMutation = useMutation({

@@ -952,7 +952,7 @@ export default function WipReport() {
   // Deal Detail column show/hide. Checkbox + Ref + Deal stay; the rest can be
   // toggled off to fit more on screen. Persisted per browser. The lead/trail
   // key groups drive the footer's colSpans so the totals stay column-aligned.
-  const WIP_DETAIL_COLS: { key: string; label: string; width: string }[] = [
+  const WIP_DETAIL_COLS: { key: string; label: string; width: string; title?: string }[] = [
     { key: "dealRef", label: "Ref", width: "w-12" },
     { key: "ref", label: "Deal", width: "w-32" },
     { key: "client", label: "Client", width: "w-24" },
@@ -970,7 +970,9 @@ export default function WipReport() {
     // The cell shows a compact "Nov 26" label over the month picker — the
     // native input's "November 2026" still clipped to "Novemb"/"Septem" at
     // 1440 however wide the column was set (Woody, 2026-09-27).
-    { key: "dealDate", label: "Target Month", width: "w-[128px] min-w-[128px]" },
+    // Header "Target" (tooltip + Columns menu say "Target month") — "Target
+    // Month" clipped to "Target" at the table's right edge (Woody, 2026-09-28).
+    { key: "dealDate", label: "Target", title: "Target month", width: "w-[128px] min-w-[128px]" },
     { key: "dealType", label: "Deal Type", width: "w-20" },
     { key: "agent", label: "BGP Contact", width: "w-20" },
     { key: "dealStatus", label: "Deal Status", width: "w-20" },
@@ -1735,8 +1737,10 @@ export default function WipReport() {
                 return code && code === s ? DEAL_STATUS_LABELS[code] : s;
               }}
             />
+            {/* "Month" — the chart panel below is already titled "Net fees by
+                month" (Woody, 2026-09-28). */}
             <FilterDropdown
-              title="Net Fees by Month"
+              title="Month"
               items={allMonths}
               selected={selectedMonths}
               onToggle={(m) => toggleFilter(selectedMonths, setSelectedMonths, m)}
@@ -2103,7 +2107,7 @@ export default function WipReport() {
                         {WIP_DETAIL_COLS.map((c) => (
                           <label key={c.key} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-muted cursor-pointer text-xs text-muted-foreground">
                             <Checkbox checked={showCol(c.key)} onCheckedChange={() => toggleWipCol(c.key)} className="h-4 w-4" data-no-min-touch />
-                            <span>{c.label}</span>
+                            <span>{c.title || c.label}</span>
                           </label>
                         ))}
                       </div>
@@ -2210,6 +2214,7 @@ export default function WipReport() {
                         key={col.key}
                         className={`px-2 py-2 text-left font-medium text-muted-foreground cursor-pointer hover:text-foreground whitespace-nowrap ${col.width}`}
                         onClick={() => toggleSort(col.key)}
+                        title={col.title}
                         data-testid={`wip-sort-${col.key}`}
                       >
                         <div className="flex items-center gap-1">

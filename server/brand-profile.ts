@@ -792,7 +792,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
            FROM cand
        )
        SELECT id, name, store_count, rollout_status FROM scored
-        WHERE NOT other_fmt OR (SELECT COUNT(*) FROM scored WHERE same_fmt) < 4
+        WHERE (NOT other_fmt OR (SELECT COUNT(*) FROM scored WHERE same_fmt) < 4)
+          -- With 4+ same-industry peers, comp-only matches (any E(b) F&B
+          -- tenant) stay out — they put Wingstop in every casual-dining set.
+          AND (same_industry OR (SELECT COUNT(*) FROM scored WHERE same_industry) < 4)
         ORDER BY same_industry DESC, same_fmt DESC, other_fmt ASC,
                  -- unknown store counts sit after the known chains of the
                  -- same format, by name — a tiny unknown can't outrank Nando's

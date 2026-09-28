@@ -98,9 +98,12 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
 
 // Some stored descriptions are the enrichment model's failure message, not a
 // description — don't print them on the list (Woody, 2026-09-27).
+// A stored "…" / "..." tail collapses to one ellipsis — "CH no. 00262958."
+// plus a truncation read as four dots (Woody, 2026-09-28).
 function shownDescription(d: string | null | undefined): string | null {
   if (!d || /^\s*(unable to identify|i could not|i couldn['’]t|no information)/i.test(d)) return null;
-  return d;
+  const t = d.trim();
+  return /(\.{2,}|…)$/.test(t) ? `${t.replace(/[\s.…]+$/, "")}…` : t;
 }
 
 function StatCard({ label, value, active }: { label: string; value: number | string; active?: boolean }) {
@@ -234,10 +237,11 @@ function LandlordsTab({
           All
         </Pill>
         <Pill active={landlordFilter === "clients"} onClick={() => setLandlordFilter(landlordFilter === "clients" ? "all" : "clients")} data-testid="stat-bgp-clients">
-          BGP Clients <span className="font-mono tabular-nums">{clientLandlords.length}</span>
+          {/* "Label · N" like the agent specialty pills (Woody, 2026-09-28). */}
+          BGP Clients · <span className="font-mono tabular-nums">{clientLandlords.length}</span>
         </Pill>
         <Pill active={landlordFilter === "non-clients"} onClick={() => setLandlordFilter(landlordFilter === "non-clients" ? "all" : "non-clients")} data-testid="stat-non-clients">
-          Non-Clients <span className="font-mono tabular-nums">{nonClientLandlords.length}</span>
+          Non-Clients · <span className="font-mono tabular-nums">{nonClientLandlords.length}</span>
         </Pill>
       </div>
 
@@ -300,7 +304,7 @@ function LandlordsTab({
                               <span className="font-medium text-sm truncate">{company.name}</span>
                               {isClient && <Crown className="w-3 h-3 text-amber-500 shrink-0" />}
                             </div>
-                            {shownDescription(company.description) && <p className="text-xs text-muted-foreground truncate max-w-[250px]">{company.description}</p>}
+                            {shownDescription(company.description) && <p className="text-xs text-muted-foreground truncate max-w-[250px]">{shownDescription(company.description)}</p>}
                           </div>
                         </div>
                       </TableCell>
@@ -366,7 +370,7 @@ function LandlordsTab({
                         {company.companyType || "Landlord"}
                       </p>
                       {shownDescription(company.description) && (
-                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{company.description}</p>
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{shownDescription(company.description)}</p>
                       )}
                     </div>
                   </div>
@@ -604,7 +608,7 @@ function AgentsTab({
           (Woody, 2026-09-27). */}
       <div className="flex flex-wrap items-center gap-1.5">
         <Pill active={!specialtyFilter} onClick={() => { setSpecialtyFilter(null); setLocationFilter(null); setSearch(""); }} data-testid="stat-agent-firms">
-          Agent Firms <span className="font-mono tabular-nums">{agentCompanies.length.toLocaleString("en-GB")}</span>
+          Agent Firms · <span className="font-mono tabular-nums">{agentCompanies.length.toLocaleString("en-GB")}</span>
         </Pill>
         {([
           ["Leasing", "stat-leasing", agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "leasing").length],
@@ -715,7 +719,7 @@ function AgentsTab({
                       ) : null;
                     })()}
                     {shownDescription(company.description) && (
-                      <span className="text-xs text-muted-foreground truncate flex-1">{company.description}</span>
+                      <span className="text-xs text-muted-foreground truncate flex-1">{shownDescription(company.description)}</span>
                     )}
                   </div>
                 </div>
@@ -1080,7 +1084,7 @@ function LendersTab({
                         <div className="min-w-0">
                           <span className="font-medium text-sm truncate block">{company.name}</span>
                           {shownDescription(company.description) && (
-                            <span className="text-xs text-muted-foreground truncate block max-w-[200px]">{company.description}</span>
+                            <span className="text-xs text-muted-foreground truncate block max-w-[200px]">{shownDescription(company.description)}</span>
                           )}
                         </div>
                       </div>
@@ -1799,11 +1803,17 @@ function PeopleHub() {
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
             CRM
           </h1>
-          <p className="text-sm text-muted-foreground">
+          {/* "Landlord accounts" = companies typed Landlord / Client (or a
+              portfolio account). Landlord Intelligence counts more — every
+              non-tenant owner, investor, REIT, developer or fund, plus any
+              company that is landlord on a live deal or freeholder / long
+              leaseholder of a property — so "197 landlords" vs "426
+              Landlords" read as a mismatch (Woody, 2026-09-28). */}
+          <p className="text-sm text-muted-foreground" title="Landlord accounts: companies typed Landlord or Client. Landlord Intelligence also counts investors, developers, funds and owners linked through deals or properties.">
             {/* toLocaleString — countLabel printed "1110 contacts" (Woody, 2026-09-27). */}
             {/* Agents are counted as firms — "146 agents" beside chips counting
                 439 people read as a contradiction (Woody, 2026-09-28). */}
-            {[[landlordCompanies.length, "landlord"], [agentCompaniesCount, "agent firm"], [hubContactCount, "contact"]].map(([n, w]) => `${(n as number).toLocaleString("en-GB")} ${w}${n === 1 ? "" : "s"}`).join(" · ")}
+            {[[landlordCompanies.length, "landlord account"], [agentCompaniesCount, "agent firm"], [hubContactCount, "contact"]].map(([n, w]) => `${(n as number).toLocaleString("en-GB")} ${w}${n === 1 ? "" : "s"}`).join(" · ")}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

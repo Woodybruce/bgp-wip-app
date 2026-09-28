@@ -53,7 +53,7 @@ import { MobileCardView } from "@/components/mobile-card-view";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { CRM_OPTIONS } from "@/lib/crm-options";
-import { InlineLabelSelect, InlineMultiSelect, InlineText, InlineDate } from "@/components/inline-edit";
+import { InlineLabelSelect, InlineMultiSelect, InlineText } from "@/components/inline-edit";
 import { buildUserIdColorMap } from "@/lib/agent-colors";
 import { AddressAutocomplete } from "@/components/address-autocomplete";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
@@ -1015,7 +1015,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
 
       {isMobile ? (<>
         <MobileCardView
-          emptyMessage="No requirements"
+          emptyMessage="No requirements found"
           emptyDescription={search || groupFilter !== "all" || Object.keys(columnFilters).length > 0
             ? "Try adjusting your filters"
             : isClientView ? "No live requirements for your portfolio yet — BGP logs these on your behalf" : "No live requirements yet"}
@@ -2330,15 +2330,25 @@ function LeasingSection({
               <Skeleton key={i} className="h-12" />
             ))}
           </div>
+        ) : items.length === 0 ? (
+          // No results = the message alone, centred — a header row over
+          // nothing pushed it off-centre (Woody, 2026-09-28).
+          <div className="py-12 text-center text-muted-foreground" data-testid="requirements-empty">
+            <Users className="w-8 h-8 mx-auto mb-2 opacity-30" />
+            <p className="text-sm">{isArchived ? "No archived requirements" : "No requirements found"}</p>
+          </div>
         ) : (
           // Scrolls with the page — its own fixed-height box cut the last
           // row off under the fold (Woody, 2026-09-28).
-          <ScrollableTable minWidth={2740} pageScroll>
+          <ScrollableTable minWidth={2600} pageScroll>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="min-w-[130px] w-[180px] max-w-[180px] sticky left-0 bg-background z-10">Name</TableHead>
-                  <TableHead className="min-w-[140px]">Date</TableHead>
+                  {/* "12 Sep 26" keeps the date + age badge on one line
+                      without widening the column and cutting the location
+                      chips (Woody, 2026-09-28). */}
+                  <TableHead className="min-w-[104px]">Date</TableHead>
                   <TableHead className="min-w-[100px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
@@ -2379,7 +2389,7 @@ function LeasingSection({
                       />
                     ) : "Size"}
                   </TableHead>
-                  <TableHead className="min-w-[280px]">
+                  <TableHead className="min-w-[240px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Req. Locations"
@@ -2432,7 +2442,7 @@ function LeasingSection({
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
                       <div className="flex items-center gap-1 whitespace-nowrap">
-                        <InlineDate
+                        <CompactInlineDate
                           value={item.requirementDate || null}
                           onSave={(v) => inlineUpdate(item.id, { requirementDate: v || null })}
                         />
@@ -2478,7 +2488,8 @@ function LeasingSection({
                         testId={`select-size-${item.id}`}
                       />
                     </TableCell>
-                    <TableCell className="px-1.5 py-1">
+                    {/* Capped so the chips wrap inside the column. */}
+                    <TableCell className="px-1.5 py-1 max-w-[260px]">
                       <InlineMultiSelect
                         value={item.requirementLocations}
                         options={LOCATION_OPTIONS}
@@ -2644,25 +2655,48 @@ function LeasingSection({
                     </TableCell>
                   </TableRow>
                 ))}
-                {items.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={20} className="p-0 text-muted-foreground">
-                      {/* Pinned to the left of the visible scroll area — centred
-                          across 20 columns it landed off-screen and the row read
-                          as a blank grey box (Woody, 2026-09-27). */}
-                      <div className="sticky left-0 w-full max-w-[min(28rem,calc(100vw-2rem))] py-8 text-center">
-                        <Users className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                        <p className="text-sm">{isArchived ? "No archived requirements" : "No active requirements found"}</p>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )}
               </TableBody>
             </Table>
           </ScrollableTable>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// InlineDate with a compact "12 Sep 26" display for the requirements
+// table's Date column (Woody, 2026-09-28).
+function CompactInlineDate({ value, onSave }: { value: string | null; onSave: (value: string | null) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const dateStr = value ? value.split("T")[0] : "";
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        type="date"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => { setEditing(false); if ((draft || null) !== (dateStr || null)) onSave(draft || null); }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") { setDraft(dateStr); setEditing(false); }
+        }}
+        className="px-1 py-0.5 text-xs border border-primary/40 rounded bg-background focus:outline-none focus:ring-1 focus:ring-primary/30"
+        data-testid="inline-edit-date"
+      />
+    );
+  }
+  const d = value ? new Date(value) : null;
+  const display = d && !isNaN(d.getTime()) ? gbDate(d, { day: "numeric", month: "short", year: "2-digit" }) : null;
+  return (
+    <span
+      onClick={() => { setDraft(dateStr); setEditing(true); }}
+      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] tabular-nums transition-colors ${!display ? "text-muted-foreground italic" : ""}`}
+      data-testid="inline-edit-display"
+    >
+      {display || "—"}
+    </span>
   );
 }
 

@@ -1354,7 +1354,9 @@ function ClientXeroCell({
               {/* min-w-0 — flex items refuse to shrink below content width
                   without it, which is exactly how long billing entities were
                   painting across the Deal Type column. */}
-              <span className="truncate min-w-0" title={`${xeroName}${xeroAcct ? ` · A/C ${xeroAcct}` : ""}`}>{xeroName}{xeroAcct ? ` · A/C ${xeroAcct}` : ""}</span>
+              {/* The Xero account code is back-office — tooltip only; it
+                  truncated to a raw "A/C TCE0…" (Woody, 2026-09-28). */}
+              <span className="truncate min-w-0" title={`Xero: ${xeroName}${xeroAcct ? ` · account ${xeroAcct}` : ""}`}>{xeroName}</span>
             </span>
           ) : clientName ? (
             <span className="text-[10px] text-muted-foreground italic">No Xero contact</span>
@@ -6610,6 +6612,18 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                 <Skeleton key={i} className="h-12" />
               ))}
             </div>
+          ) : filteredDeals.length === 0 ? (
+            // No results = the message alone, centred — a header row over
+            // nothing pushed it off-centre (Woody, 2026-09-28).
+            <div className="py-12 text-center text-muted-foreground" data-testid="deals-empty">
+              <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
+                <BarChart3 className="w-6 h-6 text-muted-foreground" />
+              </div>
+              <p className="text-sm font-semibold text-foreground">{isCompsMode ? "No comps found" : "No deals found"}</p>
+              <p className="text-xs mt-1">
+                {hasFilters ? "Create a deal or adjust your filters" : "Create a deal to get started"}
+              </p>
+            </div>
           ) : (
             <ScrollableTable minWidth={1700}>
               <Table>
@@ -7077,10 +7091,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         <TableCell className="px-1.5 py-1">
                           {(deal as any).xeroContactName ? (
                             <div className="flex flex-col">
-                              <span className="text-xs truncate">{(deal as any).xeroContactName}</span>
-                              {(deal as any).xeroAccountNumber && (
-                                <span className="text-[10px] text-muted-foreground">A/C {(deal as any).xeroAccountNumber}</span>
-                              )}
+                              <span className="text-xs truncate" title={(deal as any).xeroAccountNumber ? `Xero account ${(deal as any).xeroAccountNumber}` : undefined}>{(deal as any).xeroContactName}</span>
                             </div>
                           ) : (
                             <span className="text-[10px] text-muted-foreground italic">No Xero contact</span>
@@ -7281,24 +7292,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     <TableRow className="bg-muted/50 font-semibold border-t-2 hover:bg-muted/50">
                       <TableCell colSpan={3 + Object.values(visibleColumns).filter(v => v).length} className="text-right py-2 text-xs">
                         {filteredDeals.length} {isCompsMode ? "comps" : "deals"} · Total fees: {formatCurrency(filteredDeals.reduce((s, d) => s + (Number((d as any).fee) || 0), 0))}
-                      </TableCell>
-                    </TableRow>
-                  )}
-                  {filteredDeals.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={3 + Object.values(visibleColumns).filter(v => v).length} className="p-0 text-muted-foreground">
-                        {/* Pinned to the left of the visible scroll area — centred
-                            across the full colSpan it landed off-screen right
-                            (Woody, 2026-09-27). */}
-                        <div className="sticky left-0 w-full max-w-[min(28rem,calc(100vw-2rem))] py-12 text-center">
-                          <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
-                            <BarChart3 className="w-6 h-6 text-muted-foreground" />
-                          </div>
-                          <p className="text-sm font-semibold text-foreground">{isCompsMode ? "No comps found" : "No deals found"}</p>
-                          <p className="text-xs mt-1">
-                            {hasFilters ? "Create a deal or adjust your filters" : "Create a deal to get started"}
-                          </p>
-                        </div>
                       </TableCell>
                     </TableRow>
                   )}
