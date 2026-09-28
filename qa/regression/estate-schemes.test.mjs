@@ -76,6 +76,9 @@ test('unit references compare across naming styles; estate names carry the schem
   assert.equal(unitRefKey('Unit 4 Cabot Place'), unitRefKey('Cabot Place Unit 04'));
   assert.equal(unitRefKey('Unit 1 Building J3'), unitRefKey('Building J3 Unit 1'));
   assert.notEqual(unitRefKey('Unit 4 Cabot Place'), unitRefKey('Unit 4 Canada Place'));
+  assert.equal(unitRefKey('Unit R:S:315 Cabot Place'), unitRefKey('Unit RS315 Cabot Place'));
+  assert.equal(unitRefKey('Cabot Place Unit RS 155'), unitRefKey('Unit RS155 Cabot Place'));
+  assert.notEqual(unitRefKey('Kiosk 3 Wharf Kitchen'), unitRefKey('Kiosk3 Wharf Kitchen'), 'a word is not a ref prefix');
   assert.equal(estateUnitName('Unit 48', 'Jubilee Place'), 'Unit 48 Jubilee Place');
   assert.equal(estateUnitName('Jubilee Place Unit 48', 'Jubilee Place'), 'Jubilee Place Unit 48');
   assert.equal(estateUnitName('Unit RS315', null), 'Unit RS315');

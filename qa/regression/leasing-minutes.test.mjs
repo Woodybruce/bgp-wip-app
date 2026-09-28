@@ -114,6 +114,19 @@ test('the latest week parses into schemes and units', async () => {
   assert.ok(p.warnings.some(w => /Unit 58 Jubilee Place is listed again/.test(w)));
 });
 
+test('a renamed scheme is still found through its landlord code', async () => {
+  const { parseLeasingMinutesRows } = await import('../../server/leasing-minutes.ts');
+  const rows = [HEADER, [null, 'Additional/Street level unit Voids'],
+    [null, '7 Westferry Circus\r\nUnit\r\nYardi: 13800040', 'NOTW\r\nLEX: 31/03/2027', '462', 'BP26: £20,000', 'TBC', 9800, null, null],
+    [null, '7 Westferry Circus, Unit B2:S:85 \r\nYardi: 13800085', 'Bupa Dental', '2497', 'BP: £85,000', 'TBC', 'TBC', null, null]];
+  const renamed = parseLeasingMinutesRows(rows, { knownSchemes: [{ name: 'Street level', code: '138' }] });
+  assert.deepEqual(renamed.schemes, [{ name: 'Street level', code: '138' }]);
+  assert.deepEqual(renamed.units.map(u => u.scheme), ['Street level', 'Street level']);
+  assert.ok(renamed.units[0].unitName.endsWith('Street level'));
+  const fresh = parseLeasingMinutesRows(rows, { knownSchemes: [] });
+  assert.deepEqual(fresh.schemes, [{ name: 'Additional/Street level', code: '138' }]);
+});
+
 const row = (id, unit_name, extra = {}) => ({ id, unit_name, zone: null, unit_code: null, tenant_name: null, sqft: null, status: 'Occupied', updates: null, financial_notes: null, lease_expiry: null, lease_break: null, ...extra });
 
 test('matching: landlord code, then name, then a bare label only when unique', async () => {

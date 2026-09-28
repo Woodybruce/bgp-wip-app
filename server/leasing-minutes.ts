@@ -179,7 +179,7 @@ export function statusFromMinutes(offers: string | null, comments: string | null
   return null;
 }
 
-export function parseLeasingMinutesRows(rows: any[][], opts: { knownSchemes?: Array<{ name: string }> } = {}): Omit<ParsedMinutes, "sheetName" | "weekLabel" | "weeklySheets"> {
+export function parseLeasingMinutesRows(rows: any[][], opts: { knownSchemes?: Array<{ name: string; code?: string | null }> } = {}): Omit<ParsedMinutes, "sheetName" | "weekLabel" | "weeklySheets"> {
   const warnings: string[] = [];
   const header = findHeader(rows);
   if (!header) throw Object.assign(new Error("Couldn't find the minutes header row (Property … Offers)."), { status: 400 });
@@ -268,6 +268,7 @@ export function parseLeasingMinutesRows(rows: any[][], opts: { knownSchemes?: Ar
 
   // A scheme's landlord code is the shared prefix of its units' codes
   // (CWG Yardi: 294xxxxx = Jubilee Place).
+  const saved = opts.knownSchemes || [];
   for (const s of schemes) {
     const prefixes = units.filter(u => u.scheme === s.name).flatMap(u => u.unitCodes.map(c => c.slice(0, 3)));
     const counts = new Map<string, number>();
@@ -275,10 +276,23 @@ export function parseLeasingMinutesRows(rows: any[][], opts: { knownSchemes?: Ar
     const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
     if (top && top[1] >= Math.max(2, prefixes.length * 0.6)) s.code = top[0];
   }
+  // A heading that names no saved scheme but whose units carry a saved
+  // scheme's code is that scheme under its old name (renamed on the
+  // property page) — the units go to the saved one.
+  for (const s of [...schemes]) {
+    if (!s.code || saved.some(k => schemeKey(k.name) === schemeKey(s.name))) continue;
+    const owners = saved.filter(k => k.code && String(k.code).trim() === s.code);
+    if (owners.length !== 1) continue;
+    const target = owners[0].name;
+    for (const u of units) if (u.scheme === s.name) { u.scheme = target; u.unitName = estateUnitName(u.label, target); }
+    schemes.splice(schemes.indexOf(s), 1);
+    if (!schemes.some(x => schemeKey(x.name) === schemeKey(target))) schemes.push({ name: target, code: s.code });
+    warnings.push(`"${s.name}" matched ${target} by its landlord code ${s.code}.`);
+  }
   return { schemes, units, warnings };
 }
 
-export async function parseLeasingMinutes(buffer: Buffer, opts: { knownSchemes?: Array<{ name: string }> } = {}): Promise<ParsedMinutes> {
+export async function parseLeasingMinutes(buffer: Buffer, opts: { knownSchemes?: Array<{ name: string; code?: string | null }> } = {}): Promise<ParsedMinutes> {
   const XLSX = await import("xlsx");
   const wb = XLSX.read(buffer, { cellDates: false });
   const pick = pickMinutesSheet(wb as any);

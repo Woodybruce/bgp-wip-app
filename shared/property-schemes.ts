@@ -111,15 +111,24 @@ export function matchEstate(parsed: UnitLikeName, candidates: readonly EstateCan
 }
 
 /** Order-free key for comparing unit references across naming styles:
- *  "Unit 4 Cabot Place", "Cabot Place Unit 04" and "cabot place 4" agree. */
+ *  "Unit 4 Cabot Place", "Cabot Place Unit 04" and "cabot place 4" agree,
+ *  as do "R:S:315", "RS 315" and "RS315". */
 export function unitRefKey(value: string | null | undefined): string {
-  return String(value || "")
+  const tokens = String(value || "")
     .toUpperCase()
     .replace(/\b(UNITS?|STORE|SHOP)\b/g, " ")
+    .replace(/([A-Z0-9])[:.](?=[A-Z0-9])/g, "$1")
     .replace(/[^A-Z0-9]+/g, " ")
     .trim()
     .split(/\s+/)
-    .filter(Boolean)
+    .filter(Boolean);
+  const joined: string[] = [];
+  for (const token of tokens) {
+    const prev = joined[joined.length - 1];
+    if (prev && /^[A-Z]{1,3}$/.test(prev) && /^\d+[A-Z]?$/.test(token)) joined[joined.length - 1] = prev + token;
+    else joined.push(token);
+  }
+  return joined
     .map(token => token.replace(/^0+(?=\d)/, "").replace(/([A-Z]+)0+(\d)/g, "$1$2"))
     .sort()
     .join(" ");
