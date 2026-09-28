@@ -305,17 +305,21 @@ export function InlineEngagement({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type="button" className="flex items-center gap-1 flex-wrap min-h-[20px] max-w-full" data-testid="inline-engagement-trigger">
+        <button type="button" data-no-min-touch className="flex items-center gap-1 flex-wrap min-h-[20px] max-w-full" data-testid="inline-engagement-trigger">
           {current.length === 0 ? (
-            <span className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
-              <Plus className="w-3 h-3" />
+            // Same empty look as the inline selects beside it ("Set status").
+            <span className="text-[11px] text-muted-foreground italic hover:bg-muted/60 rounded px-1.5 py-0.5 transition-colors">
               {placeholder}
             </span>
           ) : (
+            // Identity colours as a dot on a quiet outline chip, not a full
+            // fill (docs/DESIGN.md §14) — four saturated blocks per card read
+            // as the loudest thing on the property page.
             current.map(v => (
-              <Badge key={v} className={`text-[10px] px-1.5 py-0 text-white whitespace-nowrap max-w-full truncate ${colorMap[v] || "bg-gray-500"}`} title={v}>
+              <span key={v} className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-[3px] text-[11px] font-medium leading-none text-foreground whitespace-nowrap max-w-full truncate" title={v}>
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${colorMap[v] || "bg-muted-foreground"}`} />
                 {v}
-              </Badge>
+              </span>
             ))
           )}
         </button>
@@ -614,12 +618,14 @@ export function InlineAgents({
           <Popover key={user.id}>
             <PopoverTrigger asChild>
               <button
-                className={`inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded text-white hover:opacity-90 max-w-full min-w-0 ${bg}`}
+                className="inline-flex items-center gap-1.5 text-xs leading-none px-2 py-[5px] rounded-full border border-border bg-background text-foreground hover:bg-muted max-w-full min-w-0"
                 data-testid={`agent-badge-${propertyId}-${user.id}`}
                 title={role ? `${user.name} — ${role}` : user.name}
               >
+                {/* Person colour as a dot, not a full fill (docs/DESIGN.md §14). */}
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${bg}`} />
                 <span className="font-semibold shrink-0">{user.name.split(" ")[0]}</span>
-                {role && <span className="text-[11px] opacity-90 border-l border-white/40 pl-1.5 truncate">{role}</span>}
+                {role && <span className="text-[11px] text-muted-foreground border-l border-border pl-1.5 truncate">{role}</span>}
               </button>
             </PopoverTrigger>
             <PopoverContent className="w-72 p-3" align="start">
@@ -962,7 +968,7 @@ export function InlineOwnerLink({
               "Own…" (Woody, 2026-09-28). The name wraps to two lines — a
               single-line truncate cut "335 Ramsbury Oxford…" and "The Office
               Group (TO…" (Woody, 2026-09-28). */}
-          <Badge variant="outline" className="text-[11px] px-2 py-0.5 cursor-pointer hover:bg-muted max-w-full inline-flex flex-wrap items-center" title={`${label}: ${company.name}`}>
+          <Badge variant="outline" className="text-[11px] font-medium text-foreground rounded-full border-border px-2 py-[3px] cursor-pointer hover:bg-muted max-w-full inline-flex flex-wrap items-center" title={`${label}: ${company.name}`}>
             <Building2 className="w-3 h-3 mr-1 text-muted-foreground shrink-0" />
             {roleOnChip && <span className="text-muted-foreground mr-1 whitespace-nowrap shrink-0">{chipLabel || label} ·</span>}
             <span className="min-w-0 max-w-full line-clamp-2 break-words">{company.name}</span>
@@ -1230,7 +1236,7 @@ export function InlineBillingEntity({
       )}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+          <button className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
             <Plus className="w-3 h-3" />
             Set billing entity
           </button>
@@ -2955,23 +2961,23 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
   const personRow = (contact: LinkedContact, showVia: boolean, pinnedRow = false, chipVia = !!contact.via && contact.via.length <= 18) => (
     <div key={contact.id} className="group/lcrow relative">
       <Link href={contact.id.startsWith("u-") ? "/hr" : contact.id.startsWith("co-") ? `/companies/${contact.company_id}` : `/contacts/${contact.id}`} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted/50 min-w-0" data-testid={`contact-item-${contact.id}`}>
-        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-semibold shrink-0 ${contact.side === "bgp" ? "bg-foreground text-background" : contact.side === "client" ? "bg-blue-100 text-blue-700" : "bg-muted text-muted-foreground"}`}>
+        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-semibold shrink-0 ${contact.side === "bgp" ? "bg-foreground text-background" : contact.side === "client" ? "border border-border bg-background text-foreground" : "bg-muted text-muted-foreground"}`}>
           {(contact.name || "?").split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
         </span>
         <div className="flex-1 min-w-0">
           <span className="text-xs font-medium truncate block">{contact.name}</span>
-          <span className="text-[10px] text-muted-foreground truncate block" title={contact.context || undefined}>
+          <span className="text-[11px] text-muted-foreground truncate block" title={contact.context || undefined}>
             {[contact.role, contact.side === "bgp" ? "BGP" : contact.company_name !== contact.name ? contact.company_name : null, contact.context, showVia && !chipVia && contact.side !== "client" ? contact.via : null].filter(Boolean).join(" · ")}
           </span>
         </div>
-        {contact.side === "client" && <span className={`${pillMetrics} shrink-0 border border-border text-foreground`}>Client</span>}
+        {contact.side === "client" && showVia && <span className={`${pillMetrics} shrink-0 border border-border text-foreground`}>Client</span>}
         {/* A word or two — the deal / unit itself is on the line under the
             name, so the chip never cuts off mid-word. */}
         {showVia && chipVia && contact.side !== "client" && (
           <span className={`${pillMetrics} shrink-0 border border-border text-muted-foreground`}>{contact.via}</span>
         )}
         {contact.last_interaction && (
-          <span className="text-[9px] text-muted-foreground shrink-0">{gbDate(contact.last_interaction, { day: "numeric", month: "short" })}</span>
+          <span className="text-[11px] font-mono tabular-nums text-muted-foreground shrink-0">{gbDate(contact.last_interaction, { day: "numeric", month: "short" })}</span>
         )}
       </Link>
       {/* Hide (or unpin) — BGP team rows are managed on the property-team
@@ -2992,12 +2998,12 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
   const groupHeader = (key: string, title: string, count: number, tint: string) => (
     <button
       onClick={() => setOpenGroups(prev => ({ ...prev, [key]: !(prev[key] ?? false) }))}
-      className={`w-full flex items-center gap-1.5 text-[10px] uppercase tracking-wide font-semibold py-1 rounded hover:bg-muted/50 transition-colors ${tint}`}
+      className={`w-full flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-semibold py-1 rounded hover:bg-muted/50 transition-colors text-muted-foreground`}
       data-testid={`linked-contacts-group-${key}`}
     >
       {(openGroups[key] ?? false) ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
       <span className="text-left flex-1">{title}</span>
-      <Badge variant="outline" className="text-[9px] tabular-nums">{count}</Badge>
+      <span className="font-mono tabular-nums font-normal">{count}</span>
     </button>
   );
 
@@ -3007,11 +3013,11 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
         <div className="flex items-center gap-2 mb-2">
           {!bare && <Users className="w-4 h-4" />}
           {!bare && <h3 className="text-sm font-semibold">Linked Contacts</h3>}
-          {total > 0 && <Badge variant="secondary" className="text-[10px]">{total}{bare ? " linked" : ""}</Badge>}
+          {total > 0 && <span className="text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{total}</span>{bare ? " linked" : ""}</span>}
           <div className="flex-1" />
           <button
             onClick={() => { setAddOpen(v => !v); setAddSearch(""); }}
-            className="text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
+            className="text-[11px] h-6 px-2 rounded-md border border-border bg-background hover:bg-muted inline-flex items-center gap-1"
             data-testid="linked-contacts-add"
           >
             <Plus className="w-3 h-3" /> Add
@@ -3030,7 +3036,7 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
             {addSearch.trim().length >= 2 && (
               <div className="mt-1.5 space-y-0.5 max-h-[180px] overflow-y-auto">
                 {addMatches.length === 0 ? (
-                  <p className="text-[10px] text-muted-foreground italic px-1 py-1">No matching CRM contacts.</p>
+                  <p className="text-[11px] text-muted-foreground italic px-1 py-1">No matching CRM contacts.</p>
                 ) : addMatches.map((c: any) => (
                   <button
                     key={c.id}
@@ -3042,7 +3048,7 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
                       {(c.name || "?").split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase()}
                     </span>
                     <span className="text-xs truncate">{c.name}</span>
-                    <span className="text-[10px] text-muted-foreground truncate">{c.companyName || c.company_name || ""}</span>
+                    <span className="text-[11px] text-muted-foreground truncate">{c.companyName || c.company_name || ""}</span>
                   </button>
                 ))}
               </div>
@@ -3082,7 +3088,7 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
                         <span className="w-6 h-6 rounded bg-amber-100 text-amber-700 flex items-center justify-center text-[9px] font-semibold shrink-0">!</span>
                         <div className="flex-1 min-w-0">
                           <span className="text-xs font-medium truncate block">{u.unit_name}</span>
-                          <span className="text-[10px] text-amber-700 truncate block">{u.status || "active"} — no brand linked yet, add it on the tracker</span>
+                          <span className="text-[11px] text-amber-700 truncate block">{u.status || "active"} — no brand linked yet, add it on the tracker</span>
                         </div>
                       </Link>
                     ))}
@@ -3112,15 +3118,15 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
                         <div className="flex-1 min-w-0">
                           <Link href={`/companies/${o.company_id}`} className="text-xs font-semibold truncate block hover:underline">{o.company_name}</Link>
                           {o.contact ? (
-                            <Link href={`/contacts/${o.contact.id}`} className="text-[10px] text-muted-foreground truncate block hover:underline">
+                            <Link href={`/contacts/${o.contact.id}`} className="text-[11px] text-muted-foreground truncate block hover:underline">
                               {[o.contact.name, o.contact.role].filter(Boolean).join(" · ")}
                             </Link>
                           ) : (
-                            <span className="text-[10px] text-muted-foreground/60 italic block">no contact on file</span>
+                            <span className="text-[11px] text-muted-foreground/60 italic block">no contact on file</span>
                           )}
                         </div>
                         {o.contact?.last_interaction && (
-                          <span className="text-[9px] text-muted-foreground shrink-0">{gbDate(o.contact.last_interaction, { day: "numeric", month: "short" })}</span>
+                          <span className="text-[11px] font-mono tabular-nums text-muted-foreground shrink-0">{gbDate(o.contact.last_interaction, { day: "numeric", month: "short" })}</span>
                         )}
                       </div>
                     ))}
@@ -3137,7 +3143,7 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
             {(data?.hiddenCount || 0) > 0 && (
               <button
                 onClick={() => clearOverride("__hidden__")}
-                className="text-[10px] text-muted-foreground hover:text-foreground hover:underline px-2 pt-1"
+                className="text-[11px] text-muted-foreground hover:text-foreground hover:underline px-2 pt-1"
                 data-testid="linked-contacts-restore-hidden"
               >
                 {data!.hiddenCount} hidden — restore
@@ -4430,12 +4436,9 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
 
   if (!postcode) {
     return (
-      <Card data-testid="property-intelligence-panel">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Brain className="h-4 w-4 text-primary" />
-            <span className="text-sm font-semibold">Property Intelligence</span>
-          </div>
+      <Card data-testid="property-intelligence-panel" className="border-0 shadow-none bg-transparent rounded-none">
+        {/* Framed and titled by the property page's board card. */}
+        <CardContent className="p-0">
           <div className="text-center py-6 text-muted-foreground">
             <Brain className="w-6 h-6 mx-auto mb-2 opacity-30" />
             <p className="text-xs">No postcode available — add an address to enable intelligence</p>
@@ -4576,13 +4579,11 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
   const hasPlanningApps = planningApps.length > 0;
 
   return (
-    <Card data-testid="property-intelligence-panel">
-      <CardContent className="p-4">
+    <Card data-testid="property-intelligence-panel" className="border-0 shadow-none bg-transparent rounded-none">
+      <CardContent className="p-0">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <Brain className="h-4 w-4 text-primary" />
-            <span className="text-sm font-semibold">Property Intelligence</span>
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{postcode}</Badge>
+            <span className="text-[11px] text-muted-foreground">Around <span className="font-mono">{postcode}</span></span>
           </div>
           <div className="flex items-center gap-1">
             <Button
@@ -4628,9 +4629,9 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               {hasFreeholds && (
                 <IntelligenceSection icon={FileSearch} title="Land & Ownership" defaultOpen>
                   <div className="space-y-1">
-                    <p className="text-[10px] text-muted-foreground mb-1">{freeholds.length} freehold title{freeholds.length !== 1 ? "s" : ""} found for {postcode}</p>
+                    <p className="text-[11px] text-muted-foreground mb-1">{freeholds.length} freehold title{freeholds.length !== 1 ? "s" : ""} found for {postcode}</p>
                     {aiMatchLoading && (
-                      <div className="flex items-center gap-2 p-2 bg-muted/40 rounded text-[10px] text-muted-foreground">
+                      <div className="flex items-center gap-2 p-2 bg-muted/40 rounded text-[11px] text-muted-foreground">
                         <Loader2 className="w-3 h-3 animate-spin" />
                         AI is matching your property address to the correct title...
                       </div>
@@ -4639,12 +4640,12 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                       <div className="p-2 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded">
                         <div className="flex items-center gap-1.5 mb-0.5">
                           <Sparkles className="w-3 h-3 text-green-600" />
-                          <span className="text-[10px] font-semibold text-green-800 dark:text-green-200">AI Recommendation</span>
-                          <Badge variant="outline" className={`text-[10px] ${aiMatch.confidence === "high" ? "border-green-500 text-green-700" : aiMatch.confidence === "medium" ? "border-yellow-500 text-yellow-700" : "border-orange-500 text-orange-700"}`}>
+                          <span className="text-[11px] font-semibold text-green-800 dark:text-green-200">AI Recommendation</span>
+                          <Badge variant="outline" className={`text-[11px] ${aiMatch.confidence === "high" ? "border-green-500 text-green-700" : aiMatch.confidence === "medium" ? "border-yellow-500 text-yellow-700" : "border-orange-500 text-orange-700"}`}>
                             {aiMatch.confidence} confidence
                           </Badge>
                         </div>
-                        <p className="text-[10px] text-muted-foreground">{aiMatch.reason}</p>
+                        <p className="text-[11px] text-muted-foreground">{aiMatch.reason}</p>
                       </div>
                     )}
                     {(() => {
@@ -4667,12 +4668,12 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                             <div className={`flex items-center justify-between p-2 rounded ${isSelected ? "bg-muted/40 border border-border" : isAiRecommended ? "bg-green-50 dark:bg-green-950/20 border border-green-300 dark:border-green-800" : "bg-muted/30"}`}>
                               <div className="min-w-0 flex-1">
                                 <span className="font-mono font-medium text-[11px]">{tn}</span>
-                                {fh.address && <span className="text-[10px] text-muted-foreground ml-2">{fh.address}</span>}
-                                {fh.ownership_type && <Badge variant="outline" className="text-[10px] ml-1">{fh.ownership_type}</Badge>}
-                                {isSelected && <Badge className="text-[10px] ml-1 bg-foreground text-background">Selected</Badge>}
-                                {isAiRecommended && <Badge className="text-[10px] ml-1 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">AI Match</Badge>}
+                                {fh.address && <span className="text-[11px] text-muted-foreground ml-2">{fh.address}</span>}
+                                {fh.ownership_type && <Badge variant="outline" className="text-[11px] ml-1">{fh.ownership_type}</Badge>}
+                                {isSelected && <Badge className="text-[11px] ml-1 bg-foreground text-background">Selected</Badge>}
+                                {isAiRecommended && <Badge className="text-[11px] ml-1 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">AI Match</Badge>}
                                 {lhCount > 0 && (
-                                  <Badge variant="outline" className="text-[10px] ml-1 cursor-pointer hover:bg-muted" onClick={() => loadFreeholdLeaseholds(tn)}>
+                                  <Badge variant="outline" className="text-[11px] ml-1 cursor-pointer hover:bg-muted" onClick={() => loadFreeholdLeaseholds(tn)}>
                                     {lhCount} lease{lhCount !== 1 ? "s" : ""}
                                     {isExpanded ? " ▾" : " ▸"}
                                   </Badge>
@@ -4682,7 +4683,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  className="h-6 text-[10px] gap-1"
+                                  className="h-6 text-[11px] gap-1"
                                   onClick={() => downloadTitleDocument(tn, "register")}
                                   disabled={downloadingDoc === `${tn}-register`}
                                   data-testid={`button-download-register-${i}`}
@@ -4694,7 +4695,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                   <Button
                                     variant={isAiRecommended ? "default" : "ghost"}
                                     size="sm"
-                                    className={`h-6 text-[10px] gap-1 ${isAiRecommended ? "bg-green-600 hover:bg-green-700 text-white" : ""}`}
+                                    className={`h-6 text-[11px] gap-1 ${isAiRecommended ? "bg-green-600 hover:bg-green-700 text-white" : ""}`}
                                     onClick={() => fillTitleFromIntelligence(tn)}
                                     disabled={!!fetchingTitle}
                                     data-testid={`button-fill-title-${i}`}
@@ -4708,18 +4709,18 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                             {isExpanded && lhData && (
                               <div className="ml-4 border-l-2 border-muted pl-2 space-y-1">
                                 {lhData.loading && lhData.details.length === 0 && (
-                                  <div className="flex items-center gap-2 p-1.5 text-[10px] text-muted-foreground">
+                                  <div className="flex items-center gap-2 p-1.5 text-[11px] text-muted-foreground">
                                     <Loader2 className="w-3 h-3 animate-spin" />
                                     Loading leaseholds...
                                   </div>
                                 )}
                                 {!lhData.loading && lhData.titles.length === 0 && (
-                                  <div className="p-1.5 text-[10px] text-muted-foreground">
+                                  <div className="p-1.5 text-[11px] text-muted-foreground">
                                     {(lhData as any).error ? "Failed to load leaseholds" : "No leasehold titles found"}
                                   </div>
                                 )}
                                 {lhData.details.map((ld: any, li: number) => (
-                                  <div key={li} className="flex items-center justify-between p-1.5 rounded bg-muted/20 text-[10px]">
+                                  <div key={li} className="flex items-center justify-between p-1.5 rounded bg-muted/20 text-[11px]">
                                     <div className="min-w-0 flex-1">
                                       <span className="font-mono font-medium">{ld.titleNumber}</span>
                                       {ld.ownership?.details?.owner && (
@@ -4731,7 +4732,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="h-5 text-[10px] gap-0.5"
+                                        className="h-5 text-[11px] gap-0.5"
                                         onClick={() => downloadTitleDocument(ld.titleNumber, "register")}
                                         disabled={downloadingDoc === `${ld.titleNumber}-register`}
                                         data-testid={`button-download-leasehold-intel-${li}`}
@@ -4741,7 +4742,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="h-5 text-[10px] gap-0.5"
+                                        className="h-5 text-[11px] gap-0.5"
                                         onClick={() => fillTitleFromIntelligence(ld.titleNumber)}
                                         disabled={!!fetchingTitle}
                                         data-testid={`button-fill-leasehold-${li}`}
@@ -4756,7 +4757,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                   <Button
                                     variant="outline"
                                     size="sm"
-                                    className="w-full h-5 text-[10px]"
+                                    className="w-full h-5 text-[11px]"
                                     onClick={() => loadLeaseholdDetailBatch(tn, lhData.titles, lhData.page + 1)}
                                     data-testid={`button-more-leaseholds-${i}`}
                                   >
@@ -4764,7 +4765,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                   </Button>
                                 )}
                                 {lhData.loading && lhData.details.length > 0 && (
-                                  <div className="flex items-center gap-2 p-1 text-[10px] text-muted-foreground">
+                                  <div className="flex items-center gap-2 p-1 text-[11px] text-muted-foreground">
                                     <Loader2 className="w-2.5 h-2.5 animate-spin" />
                                     Loading more...
                                   </div>
@@ -4857,17 +4858,17 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                         <div key={i} className="p-2 bg-muted/30 rounded space-y-0.5" data-testid={`planning-app-${i}`}>
                           <div className="flex items-start justify-between gap-2">
                             <p className="font-medium text-sm flex-1">{pa.proposal || pa.description || "Planning Application"}</p>
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full whitespace-nowrap ${isApproved ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : isRefused ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" : isPending ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400" : "bg-muted text-muted-foreground"}`}>
+                            <span className={`text-[11px] px-1.5 py-0.5 rounded-full whitespace-nowrap ${isApproved ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : isRefused ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" : isPending ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400" : "bg-muted text-muted-foreground"}`}>
                               {pa.status || pa.decision || "Unknown"}
                             </span>
                           </div>
                           {pa.address && <p className="text-xs text-muted-foreground">{pa.address}</p>}
-                          <div className="flex gap-3 text-[10px] text-muted-foreground">
+                          <div className="flex gap-3 text-[11px] text-muted-foreground">
                             {(pa.dates?.received_at || pa.date) && <span>Received: {pa.dates?.received_at || pa.date}</span>}
                             {pa.dates?.decided_at && <span>Decided: {pa.dates.decided_at}</span>}
                             {pa.reference && <span>Ref: {pa.reference}</span>}
                           </div>
-                          {pa.type && <p className="text-[10px] text-muted-foreground">Type: {pa.type}</p>}
+                          {pa.type && <p className="text-[11px] text-muted-foreground">Type: {pa.type}</p>}
                         </div>
                       );
                     })}
@@ -4940,7 +4941,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                         </div>
                       </div>
                     )}
-                    <p className="text-[10px] text-muted-foreground">Source: PropertyData · {new Date(marketTone.generatedAt).toLocaleDateString("en-GB")}</p>
+                    <p className="text-[11px] text-muted-foreground">Source: PropertyData · {new Date(marketTone.generatedAt).toLocaleDateString("en-GB")}</p>
                   </div>
                 </IntelligenceSection>
               )}
@@ -4976,14 +4977,14 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               <div className={`p-2.5 rounded-lg space-y-0.5 ${aiMatch && aiMatch.confidence !== "none" && !property.titleNumber ? "bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800" : "bg-muted/30"}`} data-testid="intel-summary-ownership">
                 <div className="flex items-center gap-1.5">
                   {aiMatch && !property.titleNumber ? <Sparkles className="w-3 h-3 text-green-500" /> : <FileSearch className="w-3 h-3 text-muted-foreground" />}
-                  <span className="text-[10px] text-muted-foreground font-medium">Land Titles</span>
+                  <span className="text-[11px] text-muted-foreground font-medium">Land Titles</span>
                 </div>
                 <p className="text-sm font-bold">{freeholds.length} freehold{freeholds.length !== 1 ? "s" : ""}</p>
                 {(() => {
                   const totalLeaseholds = freeholds.reduce((sum: number, fh: any) => sum + (fh.polygons?.[0]?.leaseholds || 0), 0);
-                  return totalLeaseholds > 0 ? <p className="text-[10px] text-muted-foreground">{totalLeaseholds} leasehold{totalLeaseholds !== 1 ? "s" : ""}</p> : null;
+                  return totalLeaseholds > 0 ? <p className="text-[11px] text-muted-foreground">{totalLeaseholds} leasehold{totalLeaseholds !== 1 ? "s" : ""}</p> : null;
                 })()}
-                <p className="text-[10px] text-muted-foreground">
+                <p className="text-[11px] text-muted-foreground">
                   {property.titleNumber ? `Selected: ${property.titleNumber}` : aiMatch?.titleNumber ? `AI match: ${aiMatch.titleNumber}` : aiMatchLoading ? "AI matching..." : "Click Full Report to select"}
                 </p>
               </div>
@@ -4994,10 +4995,10 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                 <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-epc">
                   <div className="flex items-center gap-1.5">
                     <Zap className="w-3 h-3 text-muted-foreground" />
-                    <span className="text-[10px] text-muted-foreground font-medium">EPC Rating</span>
+                    <span className="text-[11px] text-muted-foreground font-medium">EPC Rating</span>
                   </div>
                   <p className="text-sm font-bold">{topEpc.ratingBand || topEpc.rating || "N/A"}</p>
-                  <p className="text-[10px] text-muted-foreground">{data.epc.length} certificate{data.epc.length !== 1 ? "s" : ""} found</p>
+                  <p className="text-[11px] text-muted-foreground">{data.epc.length} certificate{data.epc.length !== 1 ? "s" : ""} found</p>
                 </div>
               );
             })()}
@@ -5007,27 +5008,27 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                 <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-voa">
                   <div className="flex items-center gap-1.5">
                     <Landmark className="w-3 h-3 text-muted-foreground" />
-                    <span className="text-[10px] text-muted-foreground font-medium">Rateable Value</span>
+                    <span className="text-[11px] text-muted-foreground font-medium">Rateable Value</span>
                   </div>
                   <p className="text-sm font-bold">£{Number(topVoa.rateableValue || 0).toLocaleString()}</p>
-                  <p className="text-[10px] text-muted-foreground truncate">{topVoa.description || "VOA record"}</p>
+                  <p className="text-[11px] text-muted-foreground truncate">{topVoa.description || "VOA record"}</p>
                 </div>
               );
             })()}
             <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-flood">
               <div className="flex items-center gap-1.5">
                 <Droplets className="w-3 h-3 text-muted-foreground" />
-                <span className="text-[10px] text-muted-foreground font-medium">Flood Risk</span>
+                <span className="text-[11px] text-muted-foreground font-medium">Flood Risk</span>
               </div>
               {hasFlood && data.floodRisk.activeFloods > 0 ? (
                 <>
                   <p className="text-sm font-bold text-red-600">⚠ Active</p>
-                  <p className="text-[10px] text-red-500">{data.floodRisk.activeFloods} warning(s)</p>
+                  <p className="text-[11px] text-red-500">{data.floodRisk.activeFloods} warning(s)</p>
                 </>
               ) : (
                 <>
                   <p className="text-sm font-bold text-green-600">Low</p>
-                  <p className="text-[10px] text-muted-foreground">No active warnings</p>
+                  <p className="text-[11px] text-muted-foreground">No active warnings</p>
                 </>
               )}
             </div>
@@ -5037,10 +5038,10 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                 <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-tfl">
                   <div className="flex items-center gap-1.5">
                     <Train className="w-3 h-3 text-muted-foreground" />
-                    <span className="text-[10px] text-muted-foreground font-medium">Nearest Station</span>
+                    <span className="text-[11px] text-muted-foreground font-medium">Nearest Station</span>
                   </div>
                   <p className="text-sm font-bold truncate">{nearest.name}</p>
-                  <p className="text-[10px] text-muted-foreground">{nearest.distance ? `${nearest.distance}m away` : ""}</p>
+                  <p className="text-[11px] text-muted-foreground">{nearest.distance ? `${nearest.distance}m away` : ""}</p>
                 </div>
               );
             })()}
@@ -5048,40 +5049,40 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-planning-apps">
                 <div className="flex items-center gap-1.5">
                   <FileText className="w-3 h-3 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground font-medium">Planning Apps</span>
+                  <span className="text-[11px] text-muted-foreground font-medium">Planning Apps</span>
                 </div>
                 <p className="text-sm font-bold">{planningApps.length} application{planningApps.length !== 1 ? "s" : ""}</p>
-                <p className="text-[10px] text-muted-foreground">Last 10 years</p>
+                <p className="text-[11px] text-muted-foreground">Last 10 years</p>
               </div>
             )}
             {hasPlanning && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-planning">
                 <div className="flex items-center gap-1.5">
                   <ShieldAlert className="w-3 h-3 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground font-medium">Planning</span>
+                  <span className="text-[11px] text-muted-foreground font-medium">Planning</span>
                 </div>
                 <p className="text-sm font-bold">{Object.values(data.planningData).filter((v: any) => Array.isArray(v) && v.length > 0).length} designation(s)</p>
-                <p className="text-[10px] text-muted-foreground">Heritage & conservation</p>
+                <p className="text-[11px] text-muted-foreground">Heritage & conservation</p>
               </div>
             )}
             {hasListed && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-listed">
                 <div className="flex items-center gap-1.5">
                   <Landmark className="w-3 h-3 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground font-medium">Listed Buildings</span>
+                  <span className="text-[11px] text-muted-foreground font-medium">Listed Buildings</span>
                 </div>
                 <p className="text-sm font-bold">{data.listedBuilding.length} nearby</p>
-                <p className="text-[10px] text-muted-foreground">Grade {data.listedBuilding[0]?.grade}</p>
+                <p className="text-[11px] text-muted-foreground">Grade {data.listedBuilding[0]?.grade}</p>
               </div>
             )}
             {hasPdStats && data.propertyDataCoUk["postcode-key-stats"].data.average_yield && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-yield">
                 <div className="flex items-center gap-1.5">
                   <TrendingUp className="w-3 h-3 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground font-medium">Avg Yield</span>
+                  <span className="text-[11px] text-muted-foreground font-medium">Avg Yield</span>
                 </div>
                 <p className="text-sm font-bold">{data.propertyDataCoUk["postcode-key-stats"].data.average_yield}</p>
-                <p className="text-[10px] text-muted-foreground">Postcode average</p>
+                <p className="text-[11px] text-muted-foreground">Postcode average</p>
               </div>
             )}
           </div>
@@ -5106,22 +5107,20 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
 
   return (
     <Card data-testid="property-news-panel" className="overflow-hidden">
-      <CardContent className="p-4 pt-3">
-        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap -mx-4 -mt-3 px-4 pt-3 pb-2 bg-muted/40">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="w-6 h-6 rounded-full bg-muted flex items-center justify-center shrink-0">
-              <Newspaper className="h-3.5 w-3.5 text-primary" />
-            </span>
-            <span className="text-sm font-semibold shrink-0">News Feed</span>
-            {/* Property name in the badge is redundant with the page
-                header — only render it when there's plenty of room
-                (xl+) so narrow viewports don't truncate it to "Bluewa…". */}
-            <Badge variant="secondary" className="hidden xl:inline-flex text-[10px] px-1.5 py-0 truncate max-w-[180px]" title={propertyName}>{propertyName}</Badge>
+      <CardContent className="p-3 pt-2.5">
+        {/* Same board header as the rest of the property page — the tinted
+            band, icon bubble and 14px title made it the odd one out, and the
+            property-name badge repeated the page title. */}
+        <div className="flex items-center justify-between gap-2 mb-2 -mx-1 -mt-0.5">
+          <div className="flex items-center gap-2 min-w-0" title={propertyName}>
+            <Newspaper className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground shrink-0">News</span>
+            {articles.length > 0 && <span className="text-[11px] font-mono tabular-nums text-muted-foreground">{articles.length}</span>}
           </div>
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs gap-1 shrink-0"
+            className="h-6 px-1.5 text-[11px] gap-1 shrink-0"
             onClick={() => refetch()}
             disabled={isFetching}
             data-testid="button-refresh-news"
@@ -5200,16 +5199,16 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
                         <p className="text-[11px] text-muted-foreground line-clamp-2 mt-0.5">{article.summary}</p>
                       )}
                       <div className="flex items-center gap-1.5 mt-1">
-                        {article.sourceName && <span className="text-[10px] text-muted-foreground">{article.sourceName}</span>}
+                        {article.sourceName && <span className="text-[11px] text-muted-foreground">{article.sourceName}</span>}
                         {article.publishedAt && (
                           <>
-                            <span className="text-[10px] text-muted-foreground">·</span>
-                            <span className="text-[10px] text-muted-foreground">{newsTimeAgo(article.publishedAt)}</span>
+                            <span className="text-[11px] text-muted-foreground">·</span>
+                            <span className="text-[11px] text-muted-foreground">{newsTimeAgo(article.publishedAt)}</span>
                           </>
                         )}
                         {article.source === "web" && (
                           <>
-                            <span className="text-[10px] text-muted-foreground">·</span>
+                            <span className="text-[11px] text-muted-foreground">·</span>
                             <Globe className="w-2.5 h-2.5 text-muted-foreground" />
                           </>
                         )}

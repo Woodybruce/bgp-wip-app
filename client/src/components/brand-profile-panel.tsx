@@ -4070,13 +4070,13 @@ export function BrandComplianceCard({
     <div className="space-y-2.5">
       {prefix}
       <div>
-        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1.5">
+        <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
           UK trading entity
             {hasEntity && !editing && (
               <Pill active={false}>Recorded</Pill>
             )}
             {rescrape.isPending && (
-              <span className="text-[10px] italic flex items-center gap-1 text-muted-foreground">
+              <span className="text-[11px] italic flex items-center gap-1 text-muted-foreground">
                 <Loader2 className="w-2.5 h-2.5 animate-spin" /> Checking…
               </span>
             )}
@@ -4085,7 +4085,7 @@ export function BrandComplianceCard({
             <div className="flex items-center gap-1.5">
               <div className="flex-1 min-w-0">
                 {hasEntity ? (
-                  <div className="text-sm font-semibold leading-tight truncate" title={entity}>{entity}</div>
+                  <div className="text-sm font-semibold leading-tight line-clamp-2 break-words" title={entity}>{entity}</div>
                 ) : (
                   <div className="text-xs italic text-muted-foreground">
                     {rescrape.isPending ? "Checking the website and deal records…" : bcIsClient ? "Not confirmed yet — BGP is identifying the UK trading entity." : "Not found — enter manually or re-run scraper."}
@@ -4096,14 +4096,14 @@ export function BrandComplianceCard({
                     href={chCompanyUrl || "#"}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-[10px] text-muted-foreground hover:text-foreground hover:underline inline-flex items-center gap-1 mt-0.5"
+                    className="text-[11px] text-muted-foreground hover:text-foreground hover:underline inline-flex items-center gap-1 mt-0.5"
                   >
                     CH {company.companies_house_number} <ExternalLink className="w-2.5 h-2.5" />
                   </a>
                 )}
                 {hasEntity && company.ai_generated_fields?.uk_entity_source?.kind === "deal_documents"
                   && sameEntityName(company.ai_generated_fields.uk_entity_source.entityName, entity) && (
-                  <div className="text-[10px] text-muted-foreground truncate mt-0.5" title={company.ai_generated_fields.uk_entity_source.quote || ""}>
+                  <div className="text-[11px] text-muted-foreground truncate mt-0.5" title={company.ai_generated_fields.uk_entity_source.quote || ""}>
                     From deal records · {company.ai_generated_fields.uk_entity_source.fileName}
                   </div>
                 )}
@@ -4111,7 +4111,7 @@ export function BrandComplianceCard({
               {!bcIsClient && (
               <button
                 onClick={() => { setDraft(entity); setEditing(true); }}
-                className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted"
+                className="text-[11px] px-2 py-1 rounded border bg-card hover:bg-muted"
                 title="Edit the trading entity manually"
               >
                 <Pencil className="w-3 h-3" />
@@ -4121,7 +4121,7 @@ export function BrandComplianceCard({
               <button
                 onClick={() => rescrape.mutate()}
                 disabled={rescrape.isPending}
-                className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted disabled:opacity-50"
+                className="text-[11px] px-2 py-1 rounded border bg-card hover:bg-muted disabled:opacity-50"
                 title="Refresh — check the website and deal records again"
               >
                 {rescrape.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "↻"}
@@ -4145,13 +4145,13 @@ export function BrandComplianceCard({
                 <button
                   onClick={() => save.mutate(draft.trim())}
                   disabled={save.isPending}
-                  className="text-[10px] px-2 py-1 rounded bg-foreground text-background disabled:opacity-50"
+                  className="text-[11px] px-2 py-1 rounded bg-foreground text-background disabled:opacity-50"
                 >
                   {save.isPending ? "Saving…" : "Save"}
                 </button>
                 <button
                   onClick={() => { setEditing(false); setDraft(entity); }}
-                  className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted"
+                  className="text-[11px] px-2 py-1 rounded border bg-card hover:bg-muted"
                 >
                   Cancel
                 </button>
@@ -4159,7 +4159,7 @@ export function BrandComplianceCard({
                   href={chSearchUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="ml-auto text-[10px] text-primary hover:underline inline-flex items-center gap-1"
+                  className="ml-auto text-[11px] text-primary hover:underline inline-flex items-center gap-1"
                   title="Search Companies House for this brand"
                 >
                   <Search className="w-2.5 h-2.5" /> Find on Companies House
@@ -4172,7 +4172,7 @@ export function BrandComplianceCard({
               href={chSearchUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[10px] text-primary hover:underline inline-flex items-center gap-1 mt-1.5"
+              className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 mt-1.5"
             >
               <Search className="w-2.5 h-2.5" /> Search Companies House for "{company.name}"
             </a>
@@ -4180,7 +4180,7 @@ export function BrandComplianceCard({
         </div>
 
         <div className="border-t pt-2">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">Downstream checks</div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Downstream checks</div>
           <div className="space-y-0.5">
             {downstreamChecks.map((row) => (
               <div key={row.key} className="flex items-center gap-1.5 text-[11px]">
@@ -4204,7 +4204,7 @@ export function BrandComplianceCard({
                         href={`/api/brand/${companyId}/latest-accounts.pdf`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+                        className="text-[11px] text-primary hover:underline inline-flex items-center gap-0.5"
                         title="Download stored PDF"
                       >
                         <ExternalLink className="w-2.5 h-2.5" /> PDF
@@ -4214,7 +4214,7 @@ export function BrandComplianceCard({
                       <button
                         onClick={() => fetchAccounts.mutate()}
                         disabled={fetchAccounts.isPending}
-                        className="text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50"
+                        className="text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-50"
                         title={row.done ? "Re-check Companies House for a newer filing" : "Download latest accounts from Companies House"}
                       >
                         {fetchAccounts.isPending ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : (row.done ? "↻" : "Fetch")}
@@ -4227,20 +4227,20 @@ export function BrandComplianceCard({
                     href={`/api/landlord/${companyId}/annual-report.pdf`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="ml-auto text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+                    className="ml-auto text-[11px] text-primary hover:underline inline-flex items-center gap-0.5"
                     title="Download cached annual report PDF"
                   >
                     <ExternalLink className="w-2.5 h-2.5" /> PDF
                   </a>
                 )}
                 {!hasEntity && !row.done && row.key !== "accounts" && row.key !== "annual_report" && (
-                  <span className="text-[10px] text-muted-foreground/60 italic ml-auto">parked</span>
+                  <span className="text-[11px] text-muted-foreground/60 italic ml-auto">parked</span>
                 )}
               </div>
             ))}
           </div>
           {!hasEntity && (
-            <p className="text-[10px] text-muted-foreground italic mt-2 leading-snug">
+            <p className="text-[11px] text-muted-foreground italic mt-2 leading-snug">
               {bcIsClient
                 ? "BGP is compiling these checks — covenant, accounts and AML screening appear here as they complete."
                 : "Confirm the UK trading entity above, then we'll work out which APIs to pull (CH, Red Flag, AML PEP) against the right registered name."}

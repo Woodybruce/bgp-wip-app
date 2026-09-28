@@ -916,8 +916,10 @@ async function victoriaRound(page, cross) {
       await mob.goto(`${BASE}/`, nav);
       await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/properties/${BLUEWATER}`, nav);
-      await mob.locator('[data-testid="button-setup-folders"]').waitFor({ timeout: 30000 });
-      for (const id of ['button-ask-ai-property', 'button-image-studio', 'button-create-document', 'button-setup-folders']) {
+      // Phones fold Image Studio / Create document / Set Up Folders / Delete
+      // into the ⋯ menu beside Ask ChatBGP (board passes, 2026-09-28).
+      await mob.locator('[data-testid="button-property-more"]').waitFor({ timeout: 30000 });
+      for (const id of ['button-ask-ai-property', 'button-property-more']) {
         const box = await mob.locator(`[data-testid="${id}"]`).first().boundingBox();
         if (!box) throw new Error(`property action ${id} missing at 390px`);
         if (box.x < 0 || box.x + box.width > 390 + 2) {

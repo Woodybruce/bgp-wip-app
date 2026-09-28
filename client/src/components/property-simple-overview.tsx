@@ -13,7 +13,7 @@ const money = (value: number) => `£${Math.round(value).toLocaleString("en-GB")}
 // Lease events kinds → the Lease events board's event types.
 const TRACK_TYPE: Record<string, string> = { "Lease expiry": "Lease Expiry", "Break date": "Break Option", "Landlord break": "Break Option", "Rent review": "Rent Review" };
 // "Unit L033 Upper Thames Walk" → "L033": the code is what the team says.
-const unitCode = (ref: string) => (ref.match(/^(?:unit|shop|kiosk)?\s*((?:[A-Z]{1,3}(?:\/[A-Z]{1,3})*\s?)?\d[\w./-]*)/i)?.[1] || ref.split(/\s+[-–]\s+|,/)[0]).trim();
+const unitCode = (ref: string) => (ref.match(/^(?:units?|shops?|kiosks?)?\s*((?:[A-Z]{1,3}(?:\/[A-Z]{1,3})*\s?)?\d[\w./-]*)/i)?.[1] || ref.split(/\s+[-–]\s+|,/)[0]).trim();
 const trackKey = (unit: string | null | undefined, type: string, date: string) => `${String(unit || "").toLowerCase().replace(/\s+/g, "")}|${type}|${String(date).slice(0, 7)}`;
 
 // Next lease events with a Track button that adds the event to Lease events
@@ -45,7 +45,7 @@ export function NextLeaseEvents({ propertyId, propertyName, landlordName, rows, 
       const nameAt = propertyName ? unitRef.toLowerCase().indexOf(propertyName.toLowerCase().split(/[,(]/)[0].trim()) : -1;
       const shortRef = (nameAt > 2 ? unitRef.slice(0, nameAt) : unitRef).replace(/[\s,·-]+$/, "").slice(0, 40) || unitRef;
       const done = trackedKeys.get(trackKey(unitRef, TRACK_TYPE[event.kind] || event.kind, event.date));
-      return <div key={`${event.unit.id}-${event.kind}`} className="flex items-center justify-between gap-3 text-sm">
+      return <div key={`${event.unit.id}-${event.kind}`} className="flex items-center justify-between gap-3 text-xs">
         {/* Two lines so the event kind never truncates away on a phone —
             "Leomonica Yoshoku · …" twice couldn't tell a break from an expiry. */}
         <Link href={tenancyHref(event.unit)} className="hover:underline min-w-0 flex flex-col leading-tight" title={`${unitRef} · ${event.unit.tenant_name || ""}`}>
@@ -54,8 +54,8 @@ export function NextLeaseEvents({ propertyId, propertyName, landlordName, rows, 
         </Link>
         <span className="flex items-center gap-2 shrink-0">
           <span className="font-mono tabular-nums whitespace-nowrap">{formatCalendarDate(event.date)}</span>
-          {done ? <Link href="/lease-events" className="text-[10px] text-emerald-700 hover:underline">{done.status || "Tracked"}</Link>
-            : <Button variant="outline" size="sm" className="h-6 px-2 text-[10px]" disabled={track.isPending} onClick={() => track.mutate(event)} data-testid="button-track-property-lease-event">Track</Button>}
+          {done ? <Link href="/lease-events" className="text-[11px] text-emerald-700 hover:underline">{done.status || "Tracked"}</Link>
+            : <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" disabled={track.isPending} onClick={() => track.mutate(event)} data-testid="button-track-property-lease-event">Track</Button>}
         </span>
       </div>;
     })}
@@ -77,11 +77,11 @@ export function PropertySimpleOverview({ propertyId, propertyName, landlordName,
   const { units, knownRent, rentRows, nextEvents, pastEvents } = propertyOverviewFacts(rows, today);
   const tenancyHref = (unit: PropertyOverviewUnit) => `/tenancy-schedule/${propertyId}${unit.is_vacant ? "" : `?unitId=${encodeURIComponent(String(unit.id))}`}`;
   return <Card data-testid="property-simple-overview">
-    <CardHeader className="p-4 pb-3 flex flex-row items-center justify-between gap-2 space-y-0">
+    <CardHeader className="px-3 py-2.5 flex flex-row items-center justify-between gap-2 space-y-0">
       <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Tenancy at a glance</CardTitle>
-      <Button variant="outline" size="sm" onClick={onOpenTenancy}>Open tenancy</Button>
+      <Button variant="outline" size="sm" className="h-7 text-xs" onClick={onOpenTenancy}>Open tenancy</Button>
     </CardHeader>
-    <CardContent className="p-4 pt-0 space-y-4">
+    <CardContent className="p-3 pt-0 space-y-4">
       {!units.length ? <div className="space-y-2"><p className="text-sm text-muted-foreground">No current tenancy rows recorded. Add the schedule to show tenants, rents and lease events.</p><Button size="sm" onClick={onOpenTenancy}>Add tenancy information</Button></div> : <>
         {/* Multi-let puts the compact schedule (with its own passing-rent
             tile) on the same screen — the figure showed twice. */}
@@ -101,7 +101,7 @@ export function PropertySimpleOverview({ propertyId, propertyName, landlordName,
           {units.length > 6 && <Button variant="outline" size="sm" onClick={onOpenTenancy}>Show all {units.length} tenancy rows</Button>}
         </div>}
         <div className={`${showUnits ? "border-t pt-3 " : ""}space-y-2`}>
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Next lease events</h2>
+          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Next lease events</h2>
           {canTrack ? <NextLeaseEvents propertyId={propertyId} propertyName={propertyName} landlordName={landlordName} rows={rows} limit={showUnits ? 3 : 5} onOpenTenancy={onOpenTenancy} /> : <>
           {nextEvents.slice(0, showUnits ? 3 : 5).map(event => <Link key={`${event.unit.id}-${event.kind}`} href={tenancyHref(event.unit)} className="flex justify-between gap-3 text-sm hover:underline"><span>{event.unit.unit_number || event.unit.premises || "Unit"} · {event.kind}</span><span className="font-mono tabular-nums whitespace-nowrap">{formatCalendarDate(event.date)}</span></Link>)}
           {!nextEvents.length && <p className="text-sm text-muted-foreground">No upcoming lease dates recorded.</p>}

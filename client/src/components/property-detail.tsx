@@ -38,6 +38,7 @@ import {
   AlertTriangle,
   Plus,
   Layers,
+  MoreHorizontal,
 } from "lucide-react";
 import { PropertySchemesPanel, usePropertySchemeList } from "@/components/property-schemes-panel";
 import { useState, useMemo, useEffect, useRef } from "react";
@@ -75,6 +76,7 @@ import { InlineText, InlineLabelSelect, InlineNumber } from "@/components/inline
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { AddressAutocomplete, buildGoogleMapsUrl } from "@/components/address-autocomplete";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import type { CrmProperty, CrmCompany, User, PropertyView } from "@shared/schema";
 import {
@@ -159,12 +161,12 @@ function PropertyComplianceBoardWrapper({
   // ComplianceBoard's `prefix` slot.
   const billingEntityRow = isClientViewer ? null : (
     <div>
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1.5">
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
         Billing entity
         <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-300 text-amber-600">SPV</Badge>
       </div>
       <InlineBillingEntity propertyId={property.id} billingEntityId={property.billingEntityId} landlordId={property.landlordId} allCompanies={allCompanies} />
-      <p className="text-[10px] text-muted-foreground mt-1 leading-snug">
+      <p className="text-[11px] text-muted-foreground mt-1 leading-snug">
         The corporate entity invoiced for fees. Often a property SPV distinct from the freeholder / landlord above.
       </p>
     </div>
@@ -258,13 +260,15 @@ function CollapsibleCard({
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="w-full flex items-center justify-between px-3 py-2 hover:bg-muted/50 transition-colors text-left"
+        className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-muted/50 transition-colors text-left"
         data-testid={testId}
       >
-        <div className="flex items-center gap-2">
-          <Icon className="w-3.5 h-3.5 text-muted-foreground" />
-          <span className="text-xs font-semibold">{title}</span>
-          {badge && <Badge variant="secondary" className="text-[10px] h-4 px-1">{badge}</Badge>}
+        {/* One board-header style across the page (docs/DESIGN.md §2/§9):
+            the boards mixed title-case, uppercase and 14px headers. */}
+        <div className="flex items-center gap-2 min-w-0">
+          <Icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground truncate">{title}</span>
+          {badge && <span className="text-[11px] font-mono tabular-nums text-muted-foreground">{badge}</span>}
         </div>
         {open ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
       </button>
@@ -622,7 +626,7 @@ export function PropertyDetail({ id }: { id: string }) {
               ) : (
                 <div className="flex items-center gap-2 flex-wrap">
                   {/* Phones already say "Property" in the top bar and breadcrumb. */}
-                  <span className="hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="property-eyebrow">
+                  <span className="hidden [@container(min-width:720px)]:inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="property-eyebrow">
                     Property
                   </span>
                   <h1 className="text-2xl font-bold tracking-tight" data-testid="text-property-name">
@@ -639,13 +643,13 @@ export function PropertyDetail({ id }: { id: string }) {
                     ) : null;
                   })()}
                   {(property.status === "Leasing Instruction" || property.status === "Lease Advisory Instruction" || property.status === "Sales Instruction") && (
-                    <Badge variant="outline" className={`text-[10px] ${property.status === "Sales Instruction" ? "border-emerald-500 text-emerald-600" : property.status === "Lease Advisory Instruction" ? "border-violet-500 text-violet-600" : "border-blue-500 text-blue-600"}`} data-testid="badge-instruction-type">
+                    <Badge variant="outline" className={`text-[11px] ${property.status === "Sales Instruction" ? "border-emerald-500 text-emerald-600" : property.status === "Lease Advisory Instruction" ? "border-violet-500 text-violet-600" : "border-blue-500 text-blue-600"}`} data-testid="badge-instruction-type">
                       {property.status}
                     </Badge>
                   )}
                   <SalesBoardLink property={property} />
                   {property.groupName && !/^properties$/i.test(property.groupName) && (
-                    <Badge variant="outline" className="text-[10px]" data-testid="badge-property-group">{property.groupName}</Badge>
+                    <Badge variant="outline" className="text-[11px]" data-testid="badge-property-group">{property.groupName}</Badge>
                   )}
                 </div>
               )}
@@ -660,43 +664,60 @@ export function PropertyDetail({ id }: { id: string }) {
                   }}
                   data-testid="button-ask-ai-property" title="Ask ChatBGP" aria-label="Ask ChatBGP"
                 >
-                  <MessageSquare className="w-3.5 h-3.5" /><span className="hidden sm:inline">Ask ChatBGP</span>
+                  <MessageSquare className="w-3.5 h-3.5" /><span className="hidden [@container(min-width:720px)]:inline">Ask ChatBGP</span>
                 </Button>
                 {!isClientViewer && (<>
+                {/* Phones: one ⋯ menu instead of a row of five 44px icon
+                    squares (plus the Street View button) above the address. */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-7 sm:hidden" aria-label="More actions" data-testid="button-property-more"><MoreHorizontal className="w-4 h-4" /></Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuItem onClick={() => setStreetViewExpanded(value => !value)}><ImageIcon className="w-3.5 h-3.5 mr-2" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => navigate(`/image-studio?property=${encodeURIComponent(property.name)}&address=${encodeURIComponent(formatAddress(property.address) || property.name)}&propertyId=${encodeURIComponent(property.id)}`)}><ImageIcon className="w-3.5 h-3.5 mr-2" />Image Studio</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => navigate(`/document-briefs?propertyId=${encodeURIComponent(property.id)}&propertyName=${encodeURIComponent(property.name)}&postcode=${encodeURIComponent(property.postcode || "")}`)}><FileText className="w-3.5 h-3.5 mr-2" />Create document</DropdownMenuItem>
+                    {linkedEvidencePlan && <DropdownMenuItem onClick={() => navigate(`/evidence-plans/${linkedEvidencePlan.id}`)}><MapIcon className="w-3.5 h-3.5 mr-2" />Evidence plan</DropdownMenuItem>}
+                    <DropdownMenuItem onClick={() => setFolderDialogOpen(true)}><FolderTree className="w-3.5 h-3.5 mr-2" />Set Up Folders</DropdownMenuItem>
+                    <DropdownMenuItem className="text-destructive" disabled={deleteMutation.isPending} onClick={() => { if (confirm("Are you sure you want to delete this property?")) deleteMutation.mutate(); }}><Trash2 className="w-3.5 h-3.5 mr-2" />Delete property</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <div className="hidden sm:contents">
                 <Link href={`/image-studio?property=${encodeURIComponent(property.name)}&address=${encodeURIComponent(formatAddress(property.address) || property.name)}&propertyId=${encodeURIComponent(property.id)}`}>
-                  <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-image-studio" title="Image Studio" aria-label="Image Studio">
+                  <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" data-testid="button-image-studio" title="Image Studio" aria-label="Image Studio">
                     <ImageIcon className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Image Studio</span>
+                    <span className="hidden [@container(min-width:1000px)]:inline">Image Studio</span>
                   </Button>
                 </Link>
                 <Link href={`/document-briefs?propertyId=${encodeURIComponent(property.id)}&propertyName=${encodeURIComponent(property.name)}&postcode=${encodeURIComponent(property.postcode || "")}`}>
-                  <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-create-document" title="Create document" aria-label="Create document">
+                  <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" data-testid="button-create-document" title="Create document" aria-label="Create document">
                     <FileText className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Create document</span>
+                    <span className="hidden [@container(min-width:1000px)]:inline">Create document</span>
                   </Button>
                 </Link>
                 {linkedEvidencePlan && (
                   <Link href={`/evidence-plans/${linkedEvidencePlan.id}`}>
-                    <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-evidence-plan" title="Evidence plan" aria-label="Evidence plan">
+                    <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" data-testid="button-evidence-plan" title="Evidence plan" aria-label="Evidence plan">
                       <MapIcon className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Evidence plan</span>
+                      <span className="hidden [@container(min-width:1000px)]:inline">Evidence plan</span>
                     </Button>
                   </Link>
                 )}
-                <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setFolderDialogOpen(true)} data-testid="button-setup-folders" title="Set Up Folders" aria-label="Set Up Folders">
+                <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => setFolderDialogOpen(true)} data-testid="button-setup-folders" title="Set Up Folders" aria-label="Set Up Folders">
                   <FolderTree className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Set Up Folders</span>
+                  <span className="hidden [@container(min-width:1000px)]:inline">Set Up Folders</span>
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
-                  className="text-xs"
+                  className="h-7 text-xs" title="Delete property" aria-label="Delete property"
                   onClick={() => { if (confirm("Are you sure you want to delete this property?")) deleteMutation.mutate(); }}
                   disabled={deleteMutation.isPending}
                   data-testid="button-delete-property"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </Button>
+                </div>
                 </>)}
               </div>
             </div>
@@ -720,7 +741,9 @@ export function PropertyDetail({ id }: { id: string }) {
             )}
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="property-view-controls"
               title={property.propertyView ? "Saved for this property. Layout changes keep the same records and editing permissions." : suggestedView ? "Suggested from the recorded property use and tenancy information. Choose a layout to keep it fixed." : "No reliable layout suggestion yet — choose one."}>
-              <label className="flex items-center gap-2 min-w-0">Layout
+              {/* Phones: the words go (the selects carry aria-labels) so Layout
+                  and Positioning share one row. */}
+              <label className="flex items-center gap-2 min-w-0 max-sm:flex-1"><span className="max-sm:sr-only">Layout</span>
                 <select aria-label="Property layout" value={property.propertyView || "auto"} disabled={updateMutation.isPending || !pdViewer} className="rounded border bg-background px-2 py-1 text-xs text-foreground min-w-0 w-full sm:w-auto" onChange={event => {
                   const value = event.target.value;
                   updateMutation.mutate({ propertyView: value === "auto" ? null : value as PropertyView }, { onSuccess: () => { setShowFullPage(false); setPhoneSection("overview"); } });
@@ -733,7 +756,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   arcade is read against the luxury destinations). Stored as a
                   property tag; Automatic reads the tags and tenant mix. */}
               {propertyView === "centre" && !isClientViewer && (
-                <label className="flex items-center gap-2 min-w-0" title="Who the Brand gap compares this scheme with and which brands count as a fit. Automatic reads the property's tags and its tenants' brands.">Positioning
+                <label className="flex items-center gap-2 min-w-0 max-sm:flex-1" title="Who the Brand gap compares this scheme with and which brands count as a fit. Automatic reads the property's tags and its tenants' brands."><span className="max-sm:sr-only">Positioning</span>
                   <select aria-label="Scheme positioning" data-testid="property-positioning" value={exactPositioningTag(property.tags) || "auto"} disabled={updateMutation.isPending} className="rounded border bg-background px-2 py-1 text-xs text-foreground min-w-0 w-full sm:w-auto" onChange={event => {
                     const value = event.target.value;
                     updateMutation.mutate({ tags: withPositioningTag(property.tags, value === "auto" ? null : value as SchemePositioning) }, { onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/property", property.id] }) });
@@ -744,7 +767,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 </label>
               )}
               {(propertyView === "building" || propertyView === "multi_let") && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setShowFullPage(previous => !previous); setPhoneSection("overview"); }} data-testid="property-toggle-full-page">{showFullPage ? "Return to simple view" : "Show full page"}</Button>}
-              {!isClientViewer && <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5" onClick={() => setStreetViewExpanded(value => !value)} data-testid="button-expand-street-view"><ImageIcon className="w-3.5 h-3.5" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</Button>}
+              {!isClientViewer && <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 max-sm:hidden" onClick={() => setStreetViewExpanded(value => !value)} data-testid="button-expand-street-view"><ImageIcon className="w-3.5 h-3.5" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</Button>}
             </div>
 
             <div className={`flex flex-wrap gap-1.5 ${simpleLayout ? "" : "lg:hidden"}`} data-testid="property-phone-sections">
@@ -866,9 +889,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   const empty = allRows.filter(r => !linked(r));
                   return (
                     <div className="border-t pt-2">
-                      <p className="text-[10px] text-muted-foreground leading-tight mb-1.5 flex items-center gap-1">
-                        <Landmark className="w-3 h-3" /> Ownership
-                      </p>
+                      <p className="text-[11px] text-muted-foreground leading-tight mb-1.5">Ownership</p>
                       {filled.length === 0 && empty.length > 0 ? (
                         // No ownership recorded yet — show one inline
                         // row to start with (Freeholder) so the team
@@ -943,10 +964,10 @@ export function PropertyDetail({ id }: { id: string }) {
                   {!isClientViewer && (
                   <div>
                     <div className="flex items-center gap-1 mb-0.5">
-                      <p className="text-[10px] text-muted-foreground leading-tight">Competitor Agent</p>
+                      <p className="text-[11px] text-muted-foreground leading-tight">Competitor agent</p>
                       {property.competitorAgentStatus === "active" && property.competitorAgentInstructedAt && (
                         Date.now() - new Date(property.competitorAgentInstructedAt).getTime() > 365 * 864e5 ? (
-                          <Badge variant="outline" className="text-[10px] px-1 py-0 border-orange-300 text-orange-600">stale</Badge>
+                          <Badge variant="outline" className="text-[11px] px-1 py-0 border-orange-300 text-orange-600">stale</Badge>
                         ) : null
                       )}
                     </div>
@@ -1021,7 +1042,7 @@ export function PropertyDetail({ id }: { id: string }) {
               <ErrorBoundary compact name="Risk register"><RiskRegisterCard propertyId={property.id} /></ErrorBoundary>
             </>}
             <ErrorBoundary compact name="Brand gap">
-              <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
+              <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand gap" testId="toggle-brands">
                 <BrandGapPanel propertyId={property.id} />
               </CollapsibleCard>
             </ErrorBoundary>
@@ -1077,7 +1098,10 @@ export function PropertyDetail({ id }: { id: string }) {
             </ErrorBoundary>
             </PropertySection>
 
-            <div className={simpleLayout && propertyView === "multi_let" && phoneSection === "overview" ? "space-y-3" : sec(simpleLayout ? "tenancy" : "boards")}>
+            {/* With no rows yet the glance card already says so and offers the
+                add — a second empty schedule box under it said it twice
+                (Brixton Village). The schedule stays on the Tenancy pill. */}
+            <div className={simpleLayout && propertyView === "multi_let" && phoneSection === "overview" && (overviewSchedule.data || []).length > 0 ? "space-y-3" : sec(simpleLayout ? "tenancy" : "boards")}>
             {/* Schedule — unified view (Lettings / Tenancy lens toggle)
                 rendered for every property. Bluewater was the rollout
                 test; verified, so the firm-wide flip is in. The
@@ -1090,7 +1114,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 sync — so the lens toggle is purely a column-visibility
                 preset, not a data switch. */}
             <ErrorBoundary compact name="Schedule">
-              <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Tenancy Schedule" testId="toggle-schedule">
+              <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Tenancy schedule" testId="toggle-schedule">
                 <div className="max-h-[640px] overflow-y-auto pr-1">
                   <PropertyUnifiedSchedule propertyId={property.id} presentation={simpleLayout ? "compact" : "full"} />
                 </div>
@@ -1103,7 +1127,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 2026-09-28: "Pathway can be removed too"). */}
             {!isClientViewer && propertyView !== "centre" && (
             <ErrorBoundary compact name="Pathway intel strip">
-              <CollapsibleCard open={mainSections.pathway} onToggle={() => toggleMain("pathway")} icon={TrendingUp} title="Pathway Intel" testId="toggle-pathway">
+              <CollapsibleCard open={mainSections.pathway} onToggle={() => toggleMain("pathway")} icon={TrendingUp} title="Pathway intel" testId="toggle-pathway">
                 <PathwayIntelStrip
                   propertyId={property.id}
                   address={typeof property.address === "string" ? property.address : (property.address as any)?.line1 || property.name}
@@ -1124,7 +1148,7 @@ export function PropertyDetail({ id }: { id: string }) {
                  the page focuses on the operational view. */}
             {!/instruction/i.test(property.status || "") && (
               <ErrorBoundary compact name="Property intelligence (Land Registry / planning)">
-                <CollapsibleCard open={mainSections.intel} onToggle={() => toggleMain("intel")} icon={Landmark} title="Property Intelligence" testId="toggle-intel">
+                <CollapsibleCard open={mainSections.intel} onToggle={() => toggleMain("intel")} icon={Landmark} title="Property intelligence" testId="toggle-intel">
                   <PropertyIntelligencePanel property={property} />
                 </CollapsibleCard>
               </ErrorBoundary>
@@ -1201,7 +1225,7 @@ export function PropertyDetail({ id }: { id: string }) {
               >
                 <div className="mb-2 pb-2 border-b">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">BGP team</div>
+                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground">BGP team</div>
                     <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} readOnly={isClientViewer} />
                   </div>
                   <PropertyBgpTeamFromWork propertyId={property.id} readOnly={isClientViewer} />
@@ -1397,7 +1421,7 @@ function PropertyBgpTeamFromWork({ propertyId, readOnly }: { propertyId: string;
           {p.role && <span className="text-[11px] text-muted-foreground truncate">{p.role}</span>}
         </div>
       ))}
-      <p className="text-[10px] text-muted-foreground">From {sources.join(" and ")}{readOnly ? "." : " — use + to set the property team."}</p>
+      <p className="text-[11px] text-muted-foreground">From {sources.join(" and ")}{readOnly ? "." : " — use + to set the property team."}</p>
     </div>
   );
 }
@@ -1426,22 +1450,22 @@ function PropertyReviewPanel({ propertyId, onOpenPlans }: { propertyId: string; 
   const KIND: Record<string, string> = { plan_scan: "Plan scan", plan_links: "Plan links", tracker_unit: "Leasing tracker", data_difference: "Data difference", trading_name: "Trading name" };
   return (
     <Card className="border-amber-300" data-testid="property-review-panel">
-      <div className="px-3 py-2 flex items-center gap-2 border-b">
+      <div className="px-3 py-2.5 flex items-center gap-2 border-b">
         <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-        <span className="text-xs font-semibold">Needs review</span>
-        <Badge variant="secondary" className="text-[10px] h-4 px-1">{items.length}</Badge>
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Needs review</span>
+        <span className="text-[11px] font-mono tabular-nums text-muted-foreground">{items.length}</span>
       </div>
       <div className="max-h-[420px] overflow-y-auto divide-y">
         {(showAll ? items : items.slice(0, 4)).map(item => (
           <div key={item.id} className="px-3 py-2 text-xs space-y-1" data-testid={`review-item-${item.kind}`}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{KIND[item.kind] || item.kind}</div>
+                <div className="text-[11px] text-muted-foreground">{KIND[item.kind] || item.kind}</div>
                 <div className="font-medium">{item.title}</div>
               </div>
               {item.live
-                ? <Button variant="outline" size="sm" className="h-6 px-2 text-[10px] shrink-0" onClick={onOpenPlans}>Open plans</Button>
-                : <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] shrink-0" onClick={() => setOpenItem(openItem === item.id ? null : item.id)}>{openItem === item.id ? "Hide" : "Choose"}</Button>}
+                ? <Button variant="outline" size="sm" className="h-6 px-2 text-[11px] shrink-0" onClick={onOpenPlans}>Open plans</Button>
+                : <Button variant="outline" size="sm" className="h-6 px-2 text-[11px] shrink-0" onClick={() => setOpenItem(openItem === item.id ? null : item.id)}>{openItem === item.id ? "Hide" : "Choose"}</Button>}
             </div>
             {/* Detail shows when the item is opened — the card read as a wall
                 of working notes (Woody, 2026-09-27). */}
@@ -1452,7 +1476,7 @@ function PropertyReviewPanel({ propertyId, onOpenPlans }: { propertyId: string; 
                   <div key={o.key} className="rounded border p-2 space-y-1">
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-medium">{o.label}</span>
-                      <Button size="sm" className="h-6 px-2 text-[10px]" disabled={resolve.isPending} onClick={() => resolve.mutate({ id: item.id, option: o.key })} data-testid={`review-apply-${o.key}`}>Apply</Button>
+                      <Button size="sm" className="h-6 px-2 text-[11px]" disabled={resolve.isPending} onClick={() => resolve.mutate({ id: item.id, option: o.key })} data-testid={`review-apply-${o.key}`}>Apply</Button>
                     </div>
                     {o.detail && <p className="text-[11px] text-muted-foreground whitespace-pre-line">{o.detail}</p>}
                   </div>
@@ -1486,14 +1510,14 @@ function PropertySpaceFitsPanel({ propertyId }: { propertyId: string }) {
   if (!space.length) return null;
   return (
     <div className="mt-3 pt-2 border-t space-y-1">
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Brands that fit the vacant space</div>
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Brands that fit the vacant space</div>
       {fitting.map(u => (
         <div key={`${u.kind}-${u.id}`} className="py-1.5 border-b last:border-0 text-xs" data-testid={`space-fit-${u.id}`}>
           <div className="flex items-center justify-between gap-2">
             <Link href={u.kind === "marketing" ? `/available?propertyId=${propertyId}&unitId=${u.id}` : `/leasing-schedule/${propertyId}`} className="font-medium hover:underline truncate">{u.unitName || "Unit"}</Link>
             <span className="flex items-center gap-1.5 shrink-0">
-              {u.sqft ? <span className="text-[10px] tabular-nums text-muted-foreground">{Number(u.sqft).toLocaleString()} sq ft</span> : null}
-              <Badge variant="outline" className="text-[9px]">{u.status}</Badge>
+              {u.sqft ? <span className="text-[11px] tabular-nums text-muted-foreground">{Number(u.sqft).toLocaleString()} sq ft</span> : null}
+              <Badge variant="outline" className="text-[11px]">{u.status}</Badge>
             </span>
           </div>
           <div className="text-[11px] text-muted-foreground">
@@ -1508,7 +1532,7 @@ function PropertySpaceFitsPanel({ propertyId }: { propertyId: string }) {
       ))}
       {fitting.length === 0 && <p className="text-xs text-muted-foreground">{space.length} vacant or marketing unit{space.length === 1 ? "" : "s"} — none fits a live requirement's size with a matching use or location.</p>}
       {fitting.length > 0 && space.length > fitting.length && <p className="text-[11px] text-muted-foreground">{space.length - fitting.length} other vacant unit{space.length - fitting.length === 1 ? "" : "s"} with no fit yet.</p>}
-      <p className="text-[10px] text-muted-foreground">★ BGP acts for the brand · <Link href="/requirements?type=leasing" className="text-primary hover:underline">Requirements</Link></p>
+      <p className="text-[11px] text-muted-foreground">★ BGP acts for the brand · <Link href="/requirements?type=leasing" className="text-primary hover:underline">Requirements</Link></p>
     </div>
   );
 }
@@ -1538,7 +1562,7 @@ function PropertyInvestmentPanel({ propertyId }: { propertyId: string }) {
           <div key={a.id} className="space-y-1.5" data-testid={`property-investment-${a.id}`}>
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-medium">{a.board_type === "Sales" ? "Sale" : "Purchase"}{a.client ? ` for ${a.client}` : ""}</span>
-              <Badge variant="outline" className="text-[10px]">{code ? DEAL_STATUS_LABELS[code] : a.status || "Reporting"}</Badge>
+              <Badge variant="outline" className="text-[11px]">{code ? DEAL_STATUS_LABELS[code] : a.status || "Reporting"}</Badge>
             </div>
             <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-2 tabular-nums">
               {money(a.guide_price) && <span>Guide {money(a.guide_price)}</span>}
@@ -1551,7 +1575,7 @@ function PropertyInvestmentPanel({ propertyId }: { propertyId: string }) {
                 {[["Sent", a.sent], ["Viewings", a.viewings], ["Bids", a.bids]].map(([label, n]) => (
                   <div key={label as string} className="rounded border py-1">
                     <div className="text-sm font-semibold font-mono tabular-nums">{n || 0}</div>
-                    <div className="text-[10px] text-muted-foreground">{label}</div>
+                    <div className="text-[11px] text-muted-foreground">{label}</div>
                   </div>
                 ))}
               </div>
@@ -1559,14 +1583,14 @@ function PropertyInvestmentPanel({ propertyId }: { propertyId: string }) {
             {money(a.best_bid) && <p className="text-[11px]">Best bid <span className="font-medium tabular-nums">{money(a.best_bid)}</span>{a.buyer ? <> · buyer {a.buyer_id ? <Link href={`/companies/${a.buyer_id}`} className="hover:underline">{a.buyer}</Link> : a.buyer}</> : null}</p>}
             {a.fits?.length > 0 && (
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-0.5">Buyers who fit — not yet sent{a.fitsTotal > a.fits.length ? ` (top ${a.fits.length} of ${a.fitsTotal})` : ""}</div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-0.5">Buyers who fit — not yet sent{a.fitsTotal > a.fits.length ? ` (top ${a.fits.length} of ${a.fitsTotal})` : ""}</div>
                 {a.fits.map((b: any) => (
                   <div key={b.companyId || b.name} className="py-1 border-b last:border-0">
                     <div className="text-[11px] flex items-center justify-between gap-2">
                       {b.companyId ? <Link href={`/companies/${b.companyId}`} className="font-medium hover:underline truncate">{b.name}</Link> : <span className="font-medium truncate">{b.name}</span>}
-                      <span className="text-[10px] text-muted-foreground shrink-0">{(b.sources || []).map((x: string) => x === "comps" ? "past buyer" : x).join(" · ")}</span>
+                      <span className="text-[11px] text-muted-foreground shrink-0">{(b.sources || []).map((x: string) => x === "comps" ? "past buyer" : x).join(" · ")}</span>
                     </div>
-                    <div className="text-[10px] text-muted-foreground">{(b.reasons || []).map((r: string) => r.replace(/ \((requirement|mandate)\)$/, "")).join(" · ")}</div>
+                    <div className="text-[11px] text-muted-foreground">{(b.reasons || []).map((r: string) => r.replace(/ \((requirement|mandate)\)$/, "")).join(" · ")}</div>
                   </div>
                 ))}
               </div>
@@ -1580,7 +1604,7 @@ function PropertyInvestmentPanel({ propertyId }: { propertyId: string }) {
       })}
       {ownership.length > 0 && (
         <div className="border-t pt-2">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-0.5">Ownership history</div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-0.5">Ownership history</div>
           {ownership.map((o, i) => (
             <div key={i} className="text-[11px]">
               {when(o.date)}: {o.fromId ? <Link href={`/companies/${o.fromId}`} className="hover:underline">{o.from || "seller"}</Link> : (o.from || "seller")} → {o.toId ? <Link href={`/companies/${o.toId}`} className="hover:underline font-medium">{o.to || "buyer"}</Link> : (o.to || "buyer")}
@@ -1621,7 +1645,7 @@ function PropertyInvestmentCompsPanel({ propertyId }: { propertyId: string }) {
             : c.seller ? <>Sold by {party(c.seller, c.seller_company_id)}</> : <>Bought by {party(c.buyer, c.buyer_company_id)}</>}
         </div>
       )}
-      {extra && <div className="text-[10px] text-muted-foreground">{extra}</div>}
+      {extra && <div className="text-[11px] text-muted-foreground">{extra}</div>}
     </div>
   );
   if (isLoading) return <div className="text-xs text-muted-foreground py-2">Loading…</div>;
@@ -1629,12 +1653,12 @@ function PropertyInvestmentCompsPanel({ propertyId }: { propertyId: string }) {
   return (
     <div className="space-y-3">
       <div>
-        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">This building</div>
+        <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">This building</div>
         {here.length ? here.map(c => row(c)) : <div className="text-xs text-muted-foreground">No recorded trades.</div>}
       </div>
       {similar.length > 0 && (
         <div>
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Comparable trades</div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Comparable trades</div>
           {similar.map(c => row(c, (c.reasons || []).join(" · ")))}
         </div>
       )}
