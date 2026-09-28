@@ -1,5 +1,6 @@
 import propertyPlanScanningRouter from "./property-plan-scanning";
 import propertyPlanSourcesRouter from "./property-plan-sources";
+import { tidyFloorName } from "./property-plan-links";
 // Property plan outlines link to the canonical tenancy schedule by stable ID.
 // Original image bytes remain untouched; scanning/tracing only proposes geometry.
 import { Router, type Request, type Response } from "express";
@@ -144,7 +145,7 @@ export async function savePdfPlan(req: Request, propertyId: string, file: PlanFi
     const storageKey = `property-plans/${propertyId}/pdf-${pdfId}/page-${page.page}.png`;
     await saveFile(storageKey, page.buffer, "image/png", `${(file.originalname || "plan").replace(/\.pdf$/i, "")}-p${page.page}.png`);
     const pageOrigin = origin.pages?.[page.page - 1] || {};
-    const floor = (page.name || pageOrigin.floor || (pages.length === 1 ? baseFloor : baseFloor ? `${baseFloor} · page ${page.page}` : `Page ${page.page}`) || "Ground").slice(0, 100);
+    const floor = (tidyFloorName(page.name) || tidyFloorName(pageOrigin.floor) || (pages.length === 1 ? baseFloor : baseFloor ? `${baseFloor} · page ${page.page}` : `Page ${page.page}`) || "Ground").slice(0, 100);
     const { rows } = await pool.query(`INSERT INTO property_plans (id, property_id, floor, source, notes, storage_key, width, height, display_order, original_pdf_key, pdf_page, source_ref)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING id, property_id, floor, display_order, storage_key, width, height, source, notes, original_pdf_key, pdf_page, created_at, updated_at`,
