@@ -16,7 +16,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Store, ChevronRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { LETTING_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 import { DEAL_STATUS_BADGE_COLORS, DEAL_STATUS_DOT_COLORS } from "@/lib/deal-status-colors";
@@ -119,6 +119,32 @@ export function TrackerSummary({ propertyId, propertyIds, variant, tall, propert
   }
 
   const totalSqft = live.reduce((n, u) => n + (Number(u.sqft) || 0), 0);
+  // Nothing live: one line with the action in it, then whatever closed
+  // stages there are — "0 live lettings" over an icon and "Nothing live"
+  // said it twice (Woody, 2026-09-28).
+  if (!live.length) {
+    return (
+      <div className="space-y-1.5" data-testid="tracker-summary-card">
+        <div className="flex items-center justify-between gap-2 text-xs">
+          <span className="text-muted-foreground">Nothing live — <Link href={trackerHref(propertyId)} className="text-primary hover:underline">add a unit</Link></span>
+          <Link href={trackerHref(propertyId)} className="text-[11px] text-primary hover:underline inline-flex items-center shrink-0">
+            Letting Tracker <ChevronRight className="w-3 h-3" />
+          </Link>
+        </div>
+        {LETTING_STATUSES.some(code => counts[code] > 0) && (
+          <div className="flex items-center gap-1 flex-wrap">
+            {LETTING_STATUSES.filter(code => counts[code] > 0).map(code => (
+              <Link key={code} href={trackerHref(propertyId, code)}>
+                <Badge variant="outline" className={`text-[10px] cursor-pointer ${DEAL_STATUS_BADGE_COLORS[code] || ""}`}>
+                  {counts[code]} {DEAL_STATUS_LABELS[code]}
+                </Badge>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="space-y-2" data-testid="tracker-summary-card">
       <div className="flex items-center justify-between gap-2">
@@ -142,12 +168,6 @@ export function TrackerSummary({ propertyId, propertyIds, variant, tall, propert
       </div>
       {isLoading ? (
         <p className="text-xs text-muted-foreground italic">Loading tracker…</p>
-      ) : live.length === 0 ? (
-        <div className="text-center py-3">
-          <Store className="w-6 h-6 mx-auto mb-1 text-muted-foreground/30" />
-          <p className="text-xs text-muted-foreground">Nothing live on the Letting Tracker.</p>
-          <Link href={trackerHref(propertyId)} className="text-[11px] text-primary hover:underline">Add a unit →</Link>
-        </div>
       ) : (
         <div className={`space-y-1 ${tall ? "max-h-[640px]" : "max-h-[300px]"} overflow-y-auto pr-1`}>
           {live.map(u => (

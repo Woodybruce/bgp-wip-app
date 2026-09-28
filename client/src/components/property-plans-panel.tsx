@@ -141,9 +141,14 @@ export function PropertyPlansPanel({ propertyId, bare = false }: { propertyId: s
   const listedUnits = units.filter(unit => !searchKey || [unit.label, unit.unit_name, unit.tenant_name].some(value => value?.toLowerCase().includes(searchKey)))
     .sort((a, b) => String(a.label || a.unit_name || "").localeCompare(String(b.label || b.unit_name || ""), undefined, { numeric: true }));
   function changeMode(next: EditorMode) { setMode(previous => previous === next ? "select" : next); setPendingPoints([]); }
+  const noPlans = !plansQ.isPending && !plansQ.isError && plans.length === 0;
   return <Card data-testid="property-plans-panel" className={fullScreen ? "fixed inset-0 z-50 rounded-none overflow-y-auto" : bare ? "border-0 shadow-none bg-transparent rounded-none" : undefined}>
     <CardHeader className={`flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 ${bare && !fullScreen ? "p-0 pb-2" : "p-4 pb-2"}`}>
-      <CardTitle className="text-sm flex items-center gap-2">{(!bare || fullScreen) && <><MapIcon className="w-4 h-4" /> Plans</>}<Badge variant="secondary" className="text-xs">{plans.length} {bare && !fullScreen ? `floor${plans.length === 1 ? "" : "s"}` : ""}</Badge></CardTitle>
+      {/* No plans: the header line says so beside the Upload button — no
+          "0 floors" chip over an empty dashed box (Woody, 2026-09-28). */}
+      <CardTitle className="text-sm flex items-center gap-2">{(!bare || fullScreen) && <><MapIcon className="w-4 h-4" /> Plans</>}{noPlans
+        ? <span className="text-xs font-normal text-muted-foreground">No plans yet — upload a plan image or PDF to trace units against the tenancy schedule.</span>
+        : <Badge variant="secondary" className="text-xs">{plans.length} {bare && !fullScreen ? `floor${plans.length === 1 ? "" : "s"}` : ""}</Badge>}</CardTitle>
       <div className="flex flex-wrap items-center gap-1.5">
         {canEdit && <UploadPlanButton propertyId={propertyId} onUploaded={plan => setActivePlanId(plan.id)} />}
         {activePlan && canEdit && <>
@@ -160,7 +165,7 @@ export function PropertyPlansPanel({ propertyId, bare = false }: { propertyId: s
     </CardHeader>
     <CardContent className={`${bare && !fullScreen ? "p-0" : "p-4 pt-0"} space-y-3`}>
       {plansQ.isError && <p role="alert" className="text-sm text-destructive">{plansQ.error.message} <button className="underline" onClick={() => plansQ.refetch()}>Retry</button></p>}
-      {plansQ.isPending ? <p className="text-sm text-muted-foreground">Loading plans…</p> : !plansQ.isError && plans.length === 0 ? <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">Upload a plan image or PDF to trace units and link them to the tenancy schedule.</div> : activePlan && <>
+      {plansQ.isPending ? <p className="text-sm text-muted-foreground">Loading plans…</p> : noPlans ? null : activePlan && <>
         <div className="flex items-center gap-1 flex-wrap">
           {plans.map(plan => <button key={plan.id} onClick={() => setActivePlanId(plan.id)} onDoubleClick={async () => {
             if (!canEdit) return;

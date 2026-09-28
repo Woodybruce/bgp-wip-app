@@ -43,7 +43,8 @@ import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view
 import { PropertyUnifiedSchedule } from "@/components/PropertyUnifiedSchedule";
 import { PropertyPlansPanel } from "@/components/property-plans-panel";
 import { PropertySimpleOverview, NextLeaseEvents } from "@/components/property-simple-overview";
-import { PROPERTY_VIEW_LABELS, suggestPropertyView, type PropertyOverviewUnit } from "@shared/property-view";
+import { PROPERTY_VIEW_LABELS, suggestPropertyView, propertyOverviewFacts, type PropertyOverviewUnit } from "@shared/property-view";
+import { bgpTeamsOnly, displayAliases } from "@shared/property-labels";
 import { BrandGapPanel } from "@/components/brand-gap-panel";
 import { NotesPanel } from "@/components/notes-panel";
 import { TrackerSummary } from "@/components/tracker-summary";
@@ -705,10 +706,11 @@ export function PropertyDetail({ id }: { id: string }) {
               return trimmed || (/^\d/.test(name) ? "" : "Address not recorded");
             })() || null}</p>
             {/* Other names the building goes by (Lucent is Piccadilly Lights) —
-                search finds the property under each of them too. */}
-            {Array.isArray((property as any).aliases) && (property as any).aliases.length > 0 && (
+                search finds the property under each of them too. "The Royal
+                Exchange" on "Royal Exchange" isn't another name. */}
+            {displayAliases(property.name, (property as any).aliases).length > 0 && (
               <p className="text-xs text-muted-foreground -mt-1" data-testid="property-aliases">
-                Also known as {((property as any).aliases as string[]).filter(a => !/,\s*UK$|^\d+.*,.*,/i.test(a)).join(" · ") || (property as any).aliases.join(" · ")}
+                Also known as {displayAliases(property.name, (property as any).aliases).join(" · ")}
               </p>
             )}
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="property-view-controls"
@@ -752,11 +754,12 @@ export function PropertyDetail({ id }: { id: string }) {
                 inside (Status/Asset/Team/Website at 4-col) overflowed
                 their cells. Single column at lg means each card gets
                 full main-col width before the side-by-side kicks in. */}
-            <div className={`grid grid-cols-1 ${simpleLayout ? "[@container(min-width:760px)]:grid-cols-2" : "[@container(min-width:760px)]:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]"} gap-3`}>
-              {/* Left column stack: Asset Owner card + Weekly Focus
-                  beneath. h-full lets the grid cell stretch and the
-                  inner flex-1 on Weekly Focus compute properly. */}
-              <div className="flex flex-col gap-3 h-full min-h-0">
+            {/* items-start: each card is as tall as its content. Stretching
+                the columns to match left big blank blocks inside the focus
+                and risk cards (Woody, 2026-09-28, the Royal Exchange). */}
+            <div className={`grid grid-cols-1 ${simpleLayout ? "[@container(min-width:760px)]:grid-cols-2" : "[@container(min-width:760px)]:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]"} gap-3 items-start`}>
+              {/* Left column stack: Asset Owner card + Weekly Focus beneath. */}
+              <div className="flex flex-col gap-3 min-w-0">
               <Card>
                 <CardContent className="p-3 space-y-2">
                   {/* Property covering strip — Asset Owner + Asset
@@ -795,13 +798,19 @@ export function PropertyDetail({ id }: { id: string }) {
                       <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">Use class</p>
                       <InlineLabelSelect value={(property as any).useClass} options={USE_CLASS_OPTIONS} labelMap={USE_CLASS_LABELS} onSave={(val) => inlineUpdate("useClass" as any, val)} placeholder="Set use class" />
                     </div>
+                    {/* BGP's departments on the property. Only real teams show —
+                        deal edits copied "Landlord" / "BGP" and the retired
+                        "London Leasing" in; the next edit here saves them out.
+                        The people are the BGP team on the Contacts card. */}
                     <div className="min-w-0" data-testid="property-field-team">
-                      <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">BGP team</p>
-                      <InlineEngagement value={property.bgpEngagement} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} />
+                      <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">Teams</p>
+                      <InlineEngagement value={bgpTeamsOnly(property.bgpEngagement)} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} />
                     </div>
-                    <div className="min-w-0" data-testid="property-field-website">
+                    {/* Fifth field — sits alone on its row, so give it the
+                        full width instead of cutting the URL mid-word. */}
+                    <div className="min-w-0 col-span-2" data-testid="property-field-website">
                       <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">Website</p>
-                      <InlineText value={property.website || ""} onSave={(val) => inlineUpdateAsync("website", val)} label="Website" placeholder="Set website" className="text-sm truncate block" />
+                      <InlineText value={property.website || ""} display={(property.website || "").replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "")} onSave={(val) => inlineUpdateAsync("website", val)} label="Website" placeholder="Set website" className="text-sm truncate block" />
                     </div>
                   </div>
 
@@ -824,8 +833,11 @@ export function PropertyDetail({ id }: { id: string }) {
                     { label: "Senior Lender",     field: "seniorLenderId",    id: (property as any).seniorLenderId },
                     { label: "Junior Lender",     field: "juniorLenderId",    id: (property as any).juniorLenderId },
                   ];
-                  const filled = allRows.filter(r => !!r.id);
-                  const empty = allRows.filter(r => !r.id);
+                  // A link to a deleted company (REX's freeholder) reads as an
+                  // empty role, not a filled row showing "+ Add".
+                  const linked = (r: { id: string | null }) => !!r.id && (isClientViewer || !companiesLoaded || !allCompanies.length || allCompanies.some(c => c.id === r.id));
+                  const filled = allRows.filter(linked);
+                  const empty = allRows.filter(r => !linked(r));
                   return (
                     <div className="border-t pt-2">
                       <p className="text-[10px] text-muted-foreground leading-tight mb-1.5 flex items-center gap-1">
@@ -925,19 +937,11 @@ export function PropertyDetail({ id }: { id: string }) {
 
                 </CardContent>
               </Card>
-              {/* Weekly Focus — same width as Asset Owner. flex-1
-                  makes the card stretch to fill the leftover vertical
-                  space in the column, so the right-hand News card
-                  never has a white void beneath it. */}
-              {/* Hidden for clients: the tasks GET is blocked for client
-                  accounts, so the card showed empty while still accepting
-                  input that silently vanished. */}
+              {/* Weekly Focus — same width as Asset Owner, natural height. */}
               {/* Clients see + edit the focus list on their own property —
                   board parity with the BGP view (Woody, 2026-08-03). */}
               <ErrorBoundary compact name="Weekly focus">
-                <div className="flex-1 flex flex-col min-h-0 [&>div]:flex-1 [&>div]:flex [&>div]:flex-col">
-                  <WeeklyFocusCard propertyId={property.id} />
-                </div>
+                <WeeklyFocusCard propertyId={property.id} />
               </ErrorBoundary>
               </div>
 
@@ -945,7 +949,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   Register sits up here so the operational watch list
                   is visible at a glance alongside the news ticker.
                   Brochures moved down to share a row with Brand Gap. */}
-              <div className="flex flex-col gap-3 h-full min-h-0">
+              <div className="flex flex-col gap-3 min-w-0">
                 {simpleLayout && !isClientViewer && <PropertyReviewPanel propertyId={property.id} onOpenPlans={() => { setMainSections(previous => ({ ...previous, plans: true })); setPhoneSection("plans"); }} />}
                 {simpleLayout ? <div className="flex-1 flex flex-col [&>*]:flex-1"><PropertySimpleOverview propertyId={id} propertyName={property.name} landlordName={allCompanies.find(c => c.id === (property as any).landlordId)?.name || null} canTrack={!isClientViewer} showUnits={propertyView === "building"} rows={overviewSchedule.data} loading={overviewSchedule.isPending} failed={overviewSchedule.isError} onRetry={() => overviewSchedule.refetch()} onOpenTenancy={() => { setMainSections(previous => ({ ...previous, leasingSchedule: true })); setPhoneSection("tenancy"); }} /></div> : <>
                 {/* PropertyNewsPanel renders its own card + "News Feed"
@@ -954,9 +958,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
                 </ErrorBoundary>
                 <ErrorBoundary compact name="Risk register">
-                  <div className="flex-1 min-h-[280px] empty:hidden">
-                    <RiskRegisterCard propertyId={property.id} />
-                  </div>
+                  <RiskRegisterCard propertyId={property.id} />
                 </ErrorBoundary>
                 </>}
               </div>
@@ -1168,8 +1170,11 @@ export function PropertyDetail({ id }: { id: string }) {
                 testId="toggle-contacts-section"
               >
                 <div className="mb-2 pb-2 border-b">
-                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">BGP team</div>
-                  <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} readOnly={isClientViewer} />
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">BGP team</div>
+                    <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} readOnly={isClientViewer} />
+                  </div>
+                  <PropertyBgpTeamFromWork propertyId={property.id} readOnly={isClientViewer} />
                 </div>
                 <LinkedContactsPanel propertyId={property.id} bare />
               </ReferenceSection>
@@ -1238,7 +1243,11 @@ export function PropertyDetail({ id }: { id: string }) {
               </ReferenceSection>
               </PropertySection>
 
-              {!isClientViewer && !simpleLayout && (overviewSchedule.data || []).length > 0 && (
+              {/* Only when there's a date coming up — a card saying "No
+                  upcoming lease dates recorded" was an empty box (the Risk
+                  register already notes missing expiries). */}
+              {!isClientViewer && !simpleLayout && (overviewSchedule.data || []).length > 0
+                && propertyOverviewFacts(overviewSchedule.data || [], new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())).nextEvents.length > 0 && (
               <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
               <ReferenceSection
                 title="Next lease events"
@@ -1306,6 +1315,40 @@ export function PropertyDetail({ id }: { id: string }) {
         </div>
 
       </div>
+    </div>
+  );
+}
+
+// ── BGP team from the work ──────────────────────────────────────────────────
+// The people working the property who aren't on its set team (the pills
+// above): BGP agents on its deals and, until the property team is set, the
+// owner's account team with their roles (Woody, 2026-09-28: the Royal
+// Exchange's BGP team read empty). Same linked-contacts payload as the list
+// below — one fetch.
+function PropertyBgpTeamFromWork({ propertyId, readOnly }: { propertyId: string; readOnly?: boolean }) {
+  const { data } = useQuery<{ internal?: Array<{ id: string; name: string; role: string | null; side?: string; source?: string; via?: string }> }>({
+    queryKey: ["/api/properties", propertyId, "linked-contacts"],
+    queryFn: async () => {
+      const res = await fetch(`/api/properties/${propertyId}/linked-contacts`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return { landlord: [], tenants: [], deals: [], interest: [], internal: [], consultants: [], trackerUnlinked: [], pinned: [], hiddenCount: 0 };
+      return res.json();
+    },
+  });
+  const people = (data?.internal || []).filter(p => p.side === "bgp" && p.source && p.source !== "property");
+  if (!people.length) return null;
+  const sources = [...new Set(people.map(p => p.source === "account" ? `the ${p.via}` : "its deals"))];
+  return (
+    <div className="mt-1.5 space-y-0.5" data-testid="property-bgp-team-from-work">
+      {people.map(p => (
+        <div key={p.id} className="flex items-center gap-2 min-w-0 text-xs" title={p.via}>
+          <span className="w-5 h-5 rounded-full bg-foreground text-background flex items-center justify-center text-[9px] font-semibold shrink-0">
+            {p.name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase()}
+          </span>
+          <span className="font-medium shrink-0">{p.name}</span>
+          {p.role && <span className="text-[11px] text-muted-foreground truncate">{p.role}</span>}
+        </div>
+      ))}
+      <p className="text-[10px] text-muted-foreground">From {sources.join(" and ")}{readOnly ? "." : " — use + to set the property team."}</p>
     </div>
   );
 }
@@ -1453,14 +1496,17 @@ function PropertyInvestmentPanel({ propertyId }: { propertyId: string }) {
               {a.niy && <span>NIY {Number(a.niy).toFixed(2)}%</span>}
               {a.bid_deadline && <span>Bids {a.bid_deadline}</span>}
             </div>
-            <div className="grid grid-cols-3 gap-1 text-center">
-              {[["Sent", a.sent], ["Viewings", a.viewings], ["Bids", a.bids]].map(([label, n]) => (
-                <div key={label as string} className="rounded border py-1">
-                  <div className="text-sm font-semibold tabular-nums">{n || 0}</div>
-                  <div className="text-[10px] text-muted-foreground">{label}</div>
-                </div>
-              ))}
-            </div>
+            {/* Three zero tiles said nothing's happened three times. */}
+            {a.sent || a.viewings || a.bids ? (
+              <div className="grid grid-cols-3 gap-1 text-center">
+                {[["Sent", a.sent], ["Viewings", a.viewings], ["Bids", a.bids]].map(([label, n]) => (
+                  <div key={label as string} className="rounded border py-1">
+                    <div className="text-sm font-semibold font-mono tabular-nums">{n || 0}</div>
+                    <div className="text-[10px] text-muted-foreground">{label}</div>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="text-[11px] text-muted-foreground">No particulars sent, viewings or bids yet.</p>}
             {money(a.best_bid) && <p className="text-[11px]">Best bid <span className="font-medium tabular-nums">{money(a.best_bid)}</span>{a.buyer ? <> · buyer {a.buyer_id ? <Link href={`/companies/${a.buyer_id}`} className="hover:underline">{a.buyer}</Link> : a.buyer}</> : null}</p>}
             {a.fits?.length > 0 && (
               <div>
@@ -1513,10 +1559,12 @@ function PropertyInvestmentCompsPanel({ propertyId }: { propertyId: string }) {
     <div key={c.id} className="py-1.5 border-b last:border-0 text-xs" data-testid={`property-investment-comp-${c.id}`}>
       <div className="flex items-center justify-between gap-2">
         <span className="font-medium truncate">{c.property_name || "Trade"}</span>
-        <span className="tabular-nums shrink-0">{[money(c.price), pct(c.cap_rate)].filter(Boolean).join(" · ")}</span>
+        <span className="font-mono tabular-nums shrink-0">{[money(c.price), pct(c.cap_rate)].filter(Boolean).join(" · ")}</span>
       </div>
       <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-1">
-        <span>{[c.status === "Sale - Pending" ? "Exchanged" : "Sold", when(c.transaction_date), c.city].filter(Boolean).join(" · ")}</span>
+        {/* Town plus postcode district, so "London SE1" (Old Kent Road)
+            reads apart from "London W1S" (Bond Street). */}
+        <span>{[c.status === "Sale - Pending" ? "Exchanged" : "Sold", when(c.transaction_date), [c.city, String(c.postal_code || "").trim().split(/\s+/)[0]].filter(Boolean).join(" ")].filter(Boolean).join(" · ")}</span>
       </div>
       {(c.seller || c.buyer) && (
         <div className="text-[11px] text-muted-foreground">

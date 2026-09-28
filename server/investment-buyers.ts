@@ -11,7 +11,7 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import type { Querier } from "./account-resolver";
-import { assetClassesIn, assetIsLondon, assetProfile, criteriaFit, useDetailsIn } from "@shared/investment-fit";
+import { assetClassesIn, assetIsCentralLondon, assetIsLondon, assetProfile, criteriaFit, useDetailsIn } from "@shared/investment-fit";
 
 async function rows(q: Querier, sql: string, params: any[]): Promise<any[]> {
   try { return (await q.query(sql, params)).rows; }
@@ -153,7 +153,7 @@ export async function getBuyersForAsset(trackerId: string, deps: { pool?: Querie
 // detail of the use), then the same London / national side, newest first.
 export async function getPropertyInvestmentComps(propertyId: string, deps: { pool?: Querier } = {}) {
   const q = deps.pool ?? (await import("./db")).pool;
-  const [p] = await rows(q, `SELECT id, name, address::text AS address, postcode, asset_class FROM crm_properties WHERE id = $1`, [propertyId]);
+  const [p] = await rows(q, `SELECT id, name, address::text AS address, postcode, asset_class, tags FROM crm_properties WHERE id = $1`, [propertyId]);
   if (!p) throw new Error("property not found");
   const cols = `id, property_name, address, city, postal_code, transaction_type, subtype, status, price, cap_rate, area_sqft, price_psf,
     buyer, buyer_company_id, seller, seller_company_id, transaction_date, property_id, rca_deal_id, source`;
@@ -163,7 +163,13 @@ export async function getPropertyInvestmentComps(propertyId: string, deps: { poo
   const assetClass = Array.isArray(p.asset_class) ? p.asset_class.join(" ") : String(p.asset_class || "");
   const [guide] = await rows(q, `SELECT guide_price FROM investment_tracker WHERE property_id = $1 AND guide_price IS NOT NULL ORDER BY updated_at DESC NULLS LAST LIMIT 1`, [propertyId]);
   const guidePrice = Number(guide?.guide_price) || null;
-  const profile = assetProfile({ assetType: assetClass, name: p.name, address: `${p.address || ""} ${p.postcode || ""}`, guidePrice });
+  // The property's tags carry the detail of the use ("luxury retail, arcade
+  // retail, F&B" on the Royal Exchange) that the bare class doesn't. Uses
+  // only — a tenant-mix tag like "F&B" doesn't make the building leisure.
+  const address = `${p.address || ""} ${p.postcode || ""}`;
+  const profile = assetProfile({ assetType: assetClass, name: p.name, address, guidePrice });
+  profile.uses = [...new Set([...profile.uses, ...useDetailsIn(Array.isArray(p.tags) ? p.tags.join(", ") : p.tags)])];
+  const central = profile.london && assetIsCentralLondon(address);
   let similar: any[] = [];
   if (profile.classes.length) {
     const candidates = await rows(q, `SELECT ${cols} FROM investment_comps
@@ -173,12 +179,18 @@ export async function getPropertyInvestmentComps(propertyId: string, deps: { poo
     similar = candidates.filter((c: any) => !hereIds.has(c.id)).map((c: any) => {
       const text = `${c.transaction_type || ""} ${c.subtype || ""} ${c.property_name || ""}`;
       if (!compClasses(c).some(x => profile.classes.includes(x))) return null;
-      const uses = useDetailsIn(`${text} ${c.subtype === "Centers" ? "shopping centre" : ""}`).filter(u => profile.uses.includes(u));
-      const sameSide = assetIsLondon(`${c.city || ""} ${c.address || ""} ${c.postal_code || ""}`) === profile.london;
+      const compUses = useDetailsIn(`${text} ${c.subtype === "Centers" ? "shopping centre" : ""}`);
+      const uses = compUses.filter(u => profile.uses.includes(u));
+      // A comp of a different format (a retail park against an arcade)
+      // sinks below the same format, rather than tying on "retail".
+      const otherFormat = profile.uses.length > 0 && compUses.length > 0 && uses.length === 0;
+      const compPlace = `${c.city || ""} ${c.address || ""} ${c.postal_code || ""}`;
+      const sameSide = assetIsLondon(compPlace) === profile.london;
+      const sameCore = central && assetIsCentralLondon(compPlace);
       const price = Number(c.price) || 0;
       const nearPrice = !!(guidePrice && price && price >= guidePrice / 3 && price <= guidePrice * 3);
-      const reasons = [profile.classes[0], ...uses, sameSide ? (profile.london ? "London" : "outside London") : null, nearPrice ? `near the £${Math.round(guidePrice! / 1e6)}m guide` : null].filter(Boolean);
-      return { ...c, score: 4 + uses.length * 2 + (sameSide ? 1 : 0) + (nearPrice ? 1 : 0), reasons };
+      const reasons = [profile.classes[0], ...uses, sameCore ? "central London" : sameSide ? (profile.london ? "London" : "outside London") : null, nearPrice ? `near the £${Math.round(guidePrice! / 1e6)}m guide` : null].filter(Boolean);
+      return { ...c, score: 4 + uses.length * 2 + (sameSide ? 1 : 0) + (sameCore ? 2 : 0) + (nearPrice ? 1 : 0) - (otherFormat ? 3 : 0), reasons };
     }).filter(Boolean)
       .sort((a: any, b: any) => b.score - a.score || String(b.transaction_date || "").localeCompare(String(a.transaction_date || "")))
       .slice(0, 12);

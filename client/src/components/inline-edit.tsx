@@ -129,9 +129,12 @@ interface InlineTextProps {
   className?: string;
   multiline?: boolean;
   maxLines?: number;
+  // Shown instead of the raw value while not editing ("theroyalexchange.co.uk"
+  // for a full URL); editing still works on the stored value.
+  display?: string;
 }
 
-export function InlineText({ value, onSave, label, placeholder = "—", className = "", multiline = false, maxLines }: InlineTextProps) {
+export function InlineText({ value, onSave, label, placeholder = "—", className = "", multiline = false, maxLines, display }: InlineTextProps) {
   const editor = useInlineDraft(value || "", value || "", onSave, (draft) => draft.trim());
   const { editing, draft, saving, error, errorId } = editor;
   const [expanded, setExpanded] = useState(false);
@@ -211,7 +214,7 @@ export function InlineText({ value, onSave, label, placeholder = "—", classNam
         style={clampStyle}
         data-testid="inline-edit-trigger"
       >
-        {value || placeholder}
+        {(value && display) || value || placeholder}
       </button>
       {maxLines && value && value.length > 60 && !expanded && (
         <button
