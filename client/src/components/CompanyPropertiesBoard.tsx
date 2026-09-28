@@ -697,7 +697,7 @@ export function CompanyPropertiesBoard({
   return (
     <>
     {reconRows.length > 0 && reconciliation && (!tabbed || tab === "data") && (
-      <Card>
+      <Card className="[container-type:inline-size]">
         <CardContent className="p-3 space-y-2" data-testid="account-reconciliation-card">
           {tabRow}
           <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -765,7 +765,7 @@ export function CompanyPropertiesBoard({
       </Card>
     )}
     {(boardProperties.length > 0 || discovered.length > 0) && (!tabbed || tab === "properties") && (
-    <Card>
+    <Card className="[container-type:inline-size]">
       <CardContent className="p-3 space-y-3" data-testid="company-properties-board">
         {tabRow}
         <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -819,13 +819,13 @@ export function CompanyPropertiesBoard({
         {/* The property list is capped with its own scroll — on landlords
             with a real portfolio (Landsec) it ran on for screens under the
             map ("lots under the map", Woody 2026-07-30). */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[560px] overflow-y-auto pr-1">
+        <div className="grid grid-cols-1 [@container(min-width:760px)]:grid-cols-2 gap-2 max-h-[560px] overflow-y-auto pr-1">
           {visibleProps.map(p => {
             const isOpen = expanded.has(p.id);
             const occ = p.units.filter(u => u.status === "Occupied").length;
             const exp = p.units.filter(u => isExpiringSoon(u.lease_expiry)).length;
             return (
-              <div key={p.id} className={`border rounded-lg overflow-hidden ${isOpen ? "md:col-span-2" : ""}`} data-testid={`board-property-${p.id}`}>
+              <div key={p.id} className={`border rounded-lg overflow-hidden ${isOpen ? "[@container(min-width:760px)]:col-span-2" : ""}`} data-testid={`board-property-${p.id}`}>
                 <button
                   onClick={() => toggle(p.id)}
                   className="w-full flex items-center gap-2 px-3 py-2 bg-background hover:bg-muted/40 transition-colors text-left"
