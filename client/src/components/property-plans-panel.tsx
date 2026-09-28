@@ -17,6 +17,8 @@ import { interiorPoint } from "@shared/plan-geometry";
 import { layoutPlanMarkers } from "@shared/plan-marker-layout";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { PropertyPlanScanReview } from "./property-plan-scan-review";
+import { BrochurePlansBanner, PlanSourcesMenu } from "./property-plan-sources";
+import { Pill } from "@/components/ui/pill";
 import { PropertyPlanPreview, usePropertyPlanImage } from "./property-plan-preview";
 import { planUnitChoiceKey, type PropertyPlan as Plan, type PropertyPlanUnit as PlanUnit, type PickablePlanUnit as PickableUnit, type PlanPolygon } from "./property-plan-types";
 
@@ -147,10 +149,12 @@ export function PropertyPlansPanel({ propertyId, bare = false }: { propertyId: s
       {/* No plans: the header line says so beside the Upload button — no
           "0 floors" chip over an empty dashed box (Woody, 2026-09-28). */}
       <CardTitle className="text-sm flex items-center gap-2">{(!bare || fullScreen) && <><MapIcon className="w-4 h-4" /> Plans</>}{noPlans
-        ? <span className="text-xs font-normal text-muted-foreground">No plans yet — upload a plan image or PDF to trace units against the tenancy schedule.</span>
+        ? <span className="text-xs font-normal text-muted-foreground">No plans yet — upload a plan image or PDF{canScan ? ", or add one from a brochure or SharePoint," : ""} to trace units against the tenancy schedule.</span>
         : <Badge variant="secondary" className="text-xs">{plans.length} {bare && !fullScreen ? `floor${plans.length === 1 ? "" : "s"}` : ""}</Badge>}</CardTitle>
       <div className="flex flex-wrap items-center gap-1.5">
         {canEdit && <UploadPlanButton propertyId={propertyId} onUploaded={plan => setActivePlanId(plan.id)} />}
+        {/* Brochure pages and SharePoint plan files — the BGP team only. */}
+        {canScan && <PlanSourcesMenu propertyId={propertyId} onImported={setActivePlanId} />}
         {activePlan && canEdit && <>
           <PropertyPlanScanReview key={activePlan.id} plan={activePlan} canStart={canScan} />
           {/* Scanning runs on upload and matching runs after each review, so
@@ -165,18 +169,19 @@ export function PropertyPlansPanel({ propertyId, bare = false }: { propertyId: s
     </CardHeader>
     <CardContent className={`${bare && !fullScreen ? "p-0" : "p-4 pt-0"} space-y-3`}>
       {plansQ.isError && <p role="alert" className="text-sm text-destructive">{plansQ.error.message} <button className="underline" onClick={() => plansQ.refetch()}>Retry</button></p>}
+      {canScan && <BrochurePlansBanner propertyId={propertyId} onImported={setActivePlanId} />}
       {plansQ.isPending ? <p className="text-sm text-muted-foreground">Loading plans…</p> : noPlans ? null : activePlan && <>
         <div className="flex items-center gap-1 flex-wrap">
-          {plans.map(plan => <button key={plan.id} onClick={() => setActivePlanId(plan.id)} onDoubleClick={async () => {
+          {plans.map(plan => <Pill key={plan.id} active={plan.id === activePlan.id} onClick={() => setActivePlanId(plan.id)} onDoubleClick={async () => {
             if (!canEdit) return;
             const next = prompt(`Rename floor "${plan.floor}":`, plan.floor)?.trim();
             if (!next || next === plan.floor) return;
             try { await apiRequest("PATCH", `/api/plans/${plan.id}`, { floor: next }); queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plans"] }); }
             catch (error: any) { toast({ title: "Could not rename floor", description: error.message, variant: "destructive" }); }
-          }} className={`text-xs px-2 py-1 rounded border ${plan.id === activePlan.id ? "bg-foreground text-background border-foreground" : "bg-card hover:bg-muted"}`} data-testid={`button-floor-${plan.floor}`} title={canEdit ? "Click to switch · double-click to rename" : "Click to switch"}><Layers className="w-3 h-3 inline mr-1" />{plan.floor}</button>)}
+          }} data-testid={`button-floor-${plan.floor}`} title={canEdit ? "Click to switch · double-click to rename" : "Click to switch"}><Layers className="w-3 h-3" />{plan.floor}</Pill>)}
           <span className="ml-auto flex items-center gap-1">
             {activePlan.has_pdf && <OriginalPdfLink plan={activePlan} />}
-            {(["labels", "outlines", "clean"] as PlanView[]).map(view => <button key={view} onClick={() => setPlanView(view)} className={`text-xs px-2 py-1 rounded-full border ${planView === view ? "bg-foreground text-background border-foreground" : "bg-card hover:bg-muted"}`} data-testid={`button-plan-view-${view}`}>{view === "labels" ? "Labels" : view === "outlines" ? "Outlines" : "Clean plan"}</button>)}
+            {(["labels", "outlines", "clean"] as PlanView[]).map(view => <Pill key={view} active={planView === view} onClick={() => setPlanView(view)} data-testid={`button-plan-view-${view}`}>{view === "labels" ? "Labels" : view === "outlines" ? "Outlines" : "Clean plan"}</Pill>)}
           </span>
         </div>
         <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">{["occupied", "lease_event", "under_offer", "deal_in_progress", "vacant", "unlinked"].map(status => <span key={status} className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm border-2" style={{ borderColor: STATUS_COLOURS[status].stroke }} />{STATUS_COLOURS[status].label}</span>)}</div>
@@ -427,7 +432,7 @@ function UploadPlanButton({ propertyId, onUploaded }: { propertyId: string; onUp
 
 function OriginalPdfLink({ plan }: { plan: Plan }) {
   const { toast } = useToast();
-  return <button className="text-xs px-2 py-1 rounded-full border bg-card hover:bg-muted inline-flex items-center gap-1" data-testid="button-plan-original-pdf" onClick={async () => {
+  return <Button size="sm" variant="outline" className="h-7 text-xs" data-testid="button-plan-original-pdf" onClick={async () => {
     try {
       const response = await fetch(`/api/plans/${plan.id}/original-pdf`, { credentials: "include", headers: getAuthHeaders() });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || "The original PDF could not be opened.");
@@ -435,7 +440,7 @@ function OriginalPdfLink({ plan }: { plan: Plan }) {
       window.open(url, "_blank", "noopener");
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (error: any) { toast({ title: "Could not open the PDF", description: error.message, variant: "destructive" }); }
-  }}><FileText className="w-3 h-3" />Original PDF</button>;
+  }}><FileText className="w-3 h-3 mr-1" />Original PDF</Button>;
 }
 
 function PlanEditMenu({ plan, onTrace, onDraw, onDeleted }: { plan: Plan; onTrace: () => void; onDraw: () => void; onDeleted: () => void }) {

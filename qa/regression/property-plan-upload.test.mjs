@@ -11,10 +11,11 @@ const handlerSource = find(file, (node, ast) => ts.isCallExpression(node) && ts.
   && node.expression.expression.getText(ast) === 'router' && node.expression.name.text === 'post'
   && node.arguments[0]?.text === '/api/properties/:propertyId/plans') + ';';
 const errorHelper = find(file, node => ts.isFunctionDeclaration(node) && node.name?.text === 'errorResponse');
+const imageHelper = find(file, node => ts.isFunctionDeclaration(node) && node.name?.text === 'savePlanImage');
 function fixture({ blocked = false, missing = false } = {}) {
   let handler;
   const saved = [], queries = [], pdfCalls = [];
-  evaluate(`${errorHelper}\n${handlerSource}`, {
+  evaluate(`${errorHelper}\n${imageHelper}\n${handlerSource}`, {
     sharp, PropertyPlanInputError, crypto: { randomUUID }, requireAuth() {}, upload: { single() {} },
     router: { post(_path, _auth, _upload, fn) { handler = fn; } },
     clientBlockedForProperty: async () => blocked,
