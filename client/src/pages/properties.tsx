@@ -4,7 +4,7 @@ import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import { DEAL_STATUS_BADGE_COLORS } from "@/lib/deal-status-colors";
-import { gbDate, useClassLabel, dealDisplayTitle } from "@/lib/format";
+import { gbDate, useClassLabel, dealDisplayTitle, titleIsOnlyProperty } from "@/lib/format";
 import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import { useTeam } from "@/lib/team-context";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -1268,7 +1268,7 @@ export function InlineBillingEntity({
   );
 }
 
-export type DealLink = { id: string; name: string; propertyId: string | null; status: string | null; groupName: string | null; tenantName?: string | null };
+export type DealLink = { id: string; name: string; propertyId: string | null; status: string | null; groupName: string | null; tenantName?: string | null; dealType?: string | null };
 
 export function InlineDeals({
   propertyId,
@@ -1304,10 +1304,17 @@ export function InlineDeals({
   // The tenant comes from the full deals list: a chip that is only the
   // property ("1 Wood Street") or a bare unit ("Unit 3") names the tenant,
   // as on the deal page (Woody, 2026-09-28).
-  const tenantByDeal = new Map(allDeals.map(d => [d.id, d.tenantName || null]));
+  // No tenant and the title is just the property ("1 Wood Street") → the
+  // deal type, else its stage — never the property twice (Woody, 2026-09-28).
+  const fullByDeal = new Map(allDeals.map(d => [d.id, d]));
   for (const d of linkedDeals) {
-    const tenantName = d.tenantName ?? tenantByDeal.get(d.id) ?? null;
-    const label = propertyName ? dropPropWord(dealDisplayTitle({ name: d.name, propertyName, propertyAddress, tenantName })) : d.name;
+    const full = fullByDeal.get(d.id);
+    const tenantName = d.tenantName ?? full?.tenantName ?? null;
+    let label = propertyName ? dropPropWord(dealDisplayTitle({ name: d.name, propertyName, propertyAddress, tenantName })) : d.name;
+    if (propertyName && titleIsOnlyProperty(label, propertyName, propertyAddress)) {
+      const code = legacyToCode(d.status);
+      label = (full?.dealType || d.dealType || (code ? DEAL_STATUS_LABELS[code] : d.status) || "Deal").trim();
+    }
     const g = dealGroups.find(x => x.label === label);
     if (g) g.deals.push(d); else dealGroups.push({ label, deals: [d] });
   }
@@ -1359,11 +1366,13 @@ export function InlineDeals({
               >
                 <Handshake className="w-2.5 h-2.5 mr-0.5 shrink-0 text-muted-foreground" />
                 {/* Truncate the middle, keep the end — "Time Out Mar…" hid
-                    the T1/T2 that tells two chips apart (Woody, 2026-09-28). */}
+                    the T1/T2 that tells two chips apart; a "· Unit 3" tail
+                    stays whole ("City Baristas 3 Lt… 3" lost "Unit")
+                    (Woody, 2026-09-28). */}
                 {(() => {
-                  const m = label.match(/^(.+?)\s+(\S{1,8})$/);
+                  const m = label.match(/^(.+?)(\s+·\s+.{1,14}|\s+(?:unit|shop|suite|kiosk|store|lot|pitch)\s*\S{1,6}|\s+\S{1,8})$/i);
                   return m ? (
-                    <><span className="truncate min-w-0">{m[1]}</span><span className="shrink-0 whitespace-pre">{` ${m[2]}`}</span></>
+                    <><span className="truncate min-w-0">{m[1]}</span><span className="shrink-0 whitespace-pre">{m[2]}</span></>
                   ) : <span className="truncate">{label}</span>;
                 })()}
                 {deals.length > 1 && <span className="ml-0.5 shrink-0 font-mono tabular-nums text-muted-foreground">×{deals.length}</span>}
@@ -5611,7 +5620,7 @@ function PropertiesList({
 
   const { data: allDealsRaw = [] } = useQuery<{ id: string; name: string; propertyId: string | null; status: string | null; groupName: string | null; tenantId: string | null }[]>({
     queryKey: ["/api/crm/deals"],
-    select: (data: any[]) => data.map((d: any) => ({ id: d.id, name: d.name, propertyId: d.propertyId, status: d.status, groupName: d.groupName, tenantId: d.tenantId ?? null })),
+    select: (data: any[]) => data.map((d: any) => ({ id: d.id, name: d.name, propertyId: d.propertyId, status: d.status, groupName: d.groupName, tenantId: d.tenantId ?? null, dealType: d.dealType ?? null })),
   });
   const allDealsWithTenant = useMemo(() => {
     const names = new Map(allCompanies.map(c => [c.id, c.name]));
@@ -6199,8 +6208,11 @@ function PropertiesList({
                   const agentNames = allUsers.filter(u => assignedIds.includes(String(u.id))).map(u => u.name || "").join(", ");
                   const teams = Array.isArray(item.bgpEngagement) ? item.bgpEngagement.join(", ") : (item.bgpEngagement || "");
                   const assetClass = (Array.isArray(item.assetClass) ? item.assetClass : item.assetClass ? String(item.assetClass).split(/,\s*/) : []).map(useClassLabel).join(", ");
-                  // A title-only card read as broken — say so (Woody, 2026-09-28).
-                  const bare = !assetClass && !teams && !item.tenure && !agentNames && !item.sqft;
+                  // A title-only card read as broken — say so, but only when
+                  // truly nothing shows: a status or live deals count too
+                  // (Woody, 2026-09-28).
+                  const dealCount = dealLinks.filter(d => d.propertyId === item.id).length;
+                  const bare = !assetClass && !teams && !item.tenure && !agentNames && !item.sqft && !item.status && !dealCount;
                   return {
                     id: item.id,
                     title: item.name,
@@ -6219,6 +6231,7 @@ function PropertiesList({
                       { label: "Tenure", value: item.tenure },
                       { label: "BGP Contacts", value: agentNames },
                       { label: "Sq Ft", value: item.sqft ? Math.round(Number(item.sqft)).toLocaleString("en-GB") : null },
+                      { label: "Deals", value: dealCount ? String(dealCount) : null },
                     ],
                   };
                 })}
@@ -6471,8 +6484,12 @@ function PropertiesList({
                           />
                         </TableCell>
                       )}
+                      {/* overflow-hidden on the Tenants / BGP Contacts boxes and a
+                          fixed-width agents box — on a "Bluewater" search the
+                          pink contact chips widened the column past the right
+                          edge and shifted the headers (Woody, 2026-09-28). */}
                       {visibleColumns.tenants && (
-                        <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px]" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px] overflow-hidden" onClick={(e) => e.stopPropagation()}>
                           <InlineTenants
                             propertyId={item.id}
                             tenantLinks={tenantLinks}
@@ -6482,7 +6499,8 @@ function PropertiesList({
                         </TableCell>
                       )}
                       {visibleColumns.agents && (
-                        <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px]" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                          <div className="w-[98px] max-w-[98px] overflow-hidden">
                           <InlineAgents
                             propertyId={item.id}
                             agentLinks={agentLinks}
@@ -6492,6 +6510,7 @@ function PropertiesList({
                             readOnly={isClientViewer}
                             maxVisible={2}
                           />
+                          </div>
                         </TableCell>
                       )}
                       {visibleColumns.sqft && (

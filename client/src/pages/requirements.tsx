@@ -2356,8 +2356,12 @@ function LeasingSection({
           </div>
         ) : (
           // Scrolls with the page — its own fixed-height box cut the last
-          // row off under the fold (Woody, 2026-09-28).
-          <ScrollableTable minWidth={2600} pageScroll>
+          // row off under the fold (Woody, 2026-09-28). Fixed widths up to
+          // Req. Locations (1140px) and a minWidth under the column sum, so
+          // no spare width is shared out by content: at 1440 "Fits" starts
+          // just past the edge instead of a 12px "Ur / W / +27" sliver, and
+          // columns hold still across searches (Woody, 2026-09-28).
+          <ScrollableTable minWidth={2400} pageScroll>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -2365,8 +2369,8 @@ function LeasingSection({
                   {/* "12 Sep 26" keeps the date + age badge on one line
                       without widening the column and cutting the location
                       chips (Woody, 2026-09-28). */}
-                  <TableHead className="min-w-[104px]">Date</TableHead>
-                  <TableHead className="min-w-[100px]">
+                  <TableHead className="min-w-[124px] w-[124px]">Date</TableHead>
+                  <TableHead className="min-w-[100px] w-[100px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Status"
@@ -2376,7 +2380,7 @@ function LeasingSection({
                       />
                     ) : "Status"}
                   </TableHead>
-                  <TableHead className="min-w-[140px]">
+                  <TableHead className="min-w-[144px] w-[144px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Use"
@@ -2386,7 +2390,7 @@ function LeasingSection({
                       />
                     ) : "Use"}
                   </TableHead>
-                  <TableHead className="min-w-[170px] whitespace-nowrap">
+                  <TableHead className="min-w-[176px] w-[176px] whitespace-nowrap">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Requirement Type"
@@ -2396,7 +2400,7 @@ function LeasingSection({
                       />
                     ) : "Requirement Type"}
                   </TableHead>
-                  <TableHead className="min-w-[150px]">
+                  <TableHead className="min-w-[152px] w-[152px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Size"
@@ -2406,7 +2410,7 @@ function LeasingSection({
                       />
                     ) : "Size"}
                   </TableHead>
-                  <TableHead className="min-w-[240px]">
+                  <TableHead className="min-w-[264px] w-[264px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Req. Locations"

@@ -96,10 +96,27 @@ const ESTATE_CONTEXT = /\b(?:mayfair|belgravia|estates?|landlords?|leases?|leasi
 // Center") isn't UK news unless it names UK places too (Woody, 2026-09-28).
 const US_STATES = "Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|Florida|Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|Kentucky|Louisiana|Maryland|Massachusetts|Michigan|Minnesota|Mississippi|Missouri|Montana|Nebraska|Nevada|New Hampshire|New Jersey|New Mexico|New York|North Carolina|North Dakota|Ohio|Oklahoma|Oregon|Pennsylvania|Rhode Island|South Carolina|South Dakota|Tennessee|Texas|Utah|Vermont|Virginia|West Virginia|Wisconsin|Wyoming|Washington State|Washington,? D\\.?C\\.?";
 const US_ABBREVIATIONS = "AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IA|KS|KY|LA|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY";
-const US_PLACE = new RegExp(`\\b(?:${US_STATES})\\b|,\\s(?:${US_ABBREVIATIONS})\\b|\\b[A-Z][a-z]+(?: [A-Z][a-z]+)* Center\\b(?! Parcs)|\\bmalls?\\b|\\b(?:Los Angeles|San Francisco|San Diego|Chicago|Houston|Dallas|Miami|Atlanta|Boston|Seattle|Las Vegas|Brooklyn|Manhattan)\\b`);
+const US_PLACE = new RegExp(`\\b(?:${US_STATES})\\b|,\\s(?:${US_ABBREVIATIONS})\\b|\\b[A-Z][a-z]+(?: [A-Z][a-z]+)* Center\\b(?! Parcs)|\\b(?:Los Angeles|San Francisco|San Diego|Chicago|Houston|Dallas|Miami|Atlanta|Boston|Seattle|Las Vegas|Brooklyn|Manhattan)\\b`);
+// "mall" alone is British too (Woody, 2026-09-28): it counts only beside a US marker.
+const US_MALL = /\bmalls?\b/i;
+const US_MARKER = /\b(?:US|U\.S\.|USA|America|American)\b/;
+const usStory = (text: string) => (US_PLACE.test(text) || (US_MALL.test(text) && US_MARKER.test(text))) && !UK_CONTEXT.test(text);
 const UK_CONTEXT = /\b(?:UK|U\.K\.|Britain|British|England|English|Scotland|Scottish|Wales|Welsh|Northern Ireland|London|Manchester|Birmingham|Leeds|Glasgow|Edinburgh|Liverpool|Bristol|Cardiff|Belfast|Newcastle|Sheffield|Nottingham|high street|shopping centre|retail park)\b|£/i;
 function isAgentFirm(company: any): boolean {
   return /^agent/i.test(String(company?.company_type ?? company?.companyType ?? "")) || !!(company?.agent_type ?? company?.agentType);
+}
+// Another firm hiring the agent's people is the other firm's news: "Newmark
+// hires Savills' head of capital markets", "… joins JLL from Savills"
+// (Woody, 2026-09-28).
+function staffDeparture(name: string, title: string): boolean {
+  if (!name) return false;
+  const firm = name.split(" ").map(w => w === "and" ? "(?:and|&)" : escapeRegex(w)).join("[^a-z0-9]+");
+  const t = plainText(title).toLowerCase().replace(/’/g, "'");
+  const hire = "(?:hires?|hired|poach(?:es|ed)?|lures?|lured|recruits?|recruited|snaps? up|nabs?)";
+  return new RegExp(`\\b${hire}\\s+(?:former\\s+|ex-\\s*)?${firm}(?:'s|')(?=\\s)`).test(t)
+    || new RegExp(`\\bpoach(?:es|ed|ing)?\\s+(?:[a-z]+\\s+){0,2}?${firm}(?![a-z0-9])`).test(t)
+    || new RegExp(`\\b(?:${hire}|joins?|joined|appoints?|appointed)\\b.*\\bfrom\\s+(?:rival\\s+)?${firm}(?![a-z0-9])`).test(t)
+    || new RegExp(`\\b(?:leaves|left|quits|exits)\\s+${firm}\\s+(?:for|to join)\\b`).test(t);
 }
 function ambiguous(name: string): boolean {
   return name.replace(/\s/g, "").length <= 4 || COMMON_NAMES.has(name);
@@ -199,7 +216,7 @@ export function isBrandNewsRelevant(company: any, article: NewsArticle): boolean
   const companyType = String(company?.company_type ?? company?.companyType ?? "");
   if (!/^tenant/i.test(companyType) && GAMBLING_CONTEXT.test(whole) && !ESTATE_CONTEXT.test(whole)
     && !GAMBLING_COMPANY.test(`${company?.name || ""} ${company?.industry || ""} ${companyType}`)) return false;
-  if (US_PLACE.test(whole) && !UK_CONTEXT.test(whole)) return false;
+  if (usStory(whole)) return false;
   // Ignore AI summaries: a generated mention cannot corroborate its own link.
   const rawTitle = article.title || "";
   const title = rawTitle.replace(/\s[-–—|·]\s[^-–—|·]{2,60}$/, "");
@@ -209,6 +226,7 @@ export function isBrandNewsRelevant(company: any, article: NewsArticle): boolean
   // (Woody, 2026-09-28).
   const agent = isAgentFirm(company);
   const text = agent ? title : `${title} ${article.summary || ""}`;
+  if (agent && identity.names.some(n => staffDeparture(nameWords(n), title))) return false;
   if (identity.domain && (agent
     ? (() => { const host = normalizeBrandDomain(article.url); return host === identity.domain || !!host?.endsWith(`.${identity.domain}`); })()
     : domainEvidence(identity.domain, article, text))) return true;
@@ -228,7 +246,10 @@ export function isBrandSignalRelevant(company: any, signal: { source?: string | 
   const source = signal.source || "";
   // Staff notes and structured provider signals already belong to a company;
   // they need not repeat its name. Social posts use separately configured
-  // brand channels and are not keyword-search news results.
+  // brand channels and are not keyword-search news results. A US story is
+  // still a US story whatever its source ("Zara doubles footprint at Los
+  // Cerritos Center", Woody 2026-09-28).
+  if (usStory(plainText(`${signal.headline || ""} ${signal.detail || ""}`))) return false;
   if (!/^https?:\/\//i.test(source)) return true;
   const host = normalizeBrandDomain(source);
   if (host && /^(?:www\.)?(?:instagram\.com|linkedin\.com|x\.com|twitter\.com)$/.test(host)) return true;

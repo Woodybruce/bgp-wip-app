@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { stripPropertyFromTitle, dealDisplayTitle } from "../../client/src/lib/format.ts";
+import { stripPropertyFromTitle, dealDisplayTitle, titleIsOnlyProperty } from "../../client/src/lib/format.ts";
 
 // Run with: node --import tsx --test qa/regression/strip-property-title.test.mjs
 // Real WIP titles (ref | property | tenant) from the live WIP report. A title
@@ -34,6 +34,28 @@ const cases = [
   ["30 Davies St", "30 Davies Street", "The Frankie Shop", "The Frankie Shop"],
 ];
 
+// A postal-address run is the location, not the deal — with or without the
+// property's address passed (#3582, Woody, 2026-09-28).
+const addressCases = [
+  ["Queen St, Oxford OX1 1NZ, UK - Gail's Bakery", "Westgate Shopping Centre", "Queen St, Oxford OX1 1NZ, UK", "Gail's Bakery", "Gail's Bakery"],
+  ["Queen St, Oxford OX1 1NZ, UK - Gail's Bakery", "Westgate Shopping Centre", null, "Gail's Bakery", "Gail's Bakery"],
+  ["Gail's Bakery - Queen St, Oxford OX1 1NZ, UK", "Westgate Shopping Centre", null, null, "Gail's Bakery"],
+];
+
+for (const [title, property, address, tenant, expected] of addressCases) {
+  test(`${title} under ${property} (address ${address ? "given" : "absent"})`, () => {
+    assert.equal(stripPropertyFromTitle(title, property, address, tenant), expected);
+  });
+}
+
+// Title that is only its property → callers show the deal type instead.
+test("titleIsOnlyProperty", () => {
+  assert.equal(titleIsOnlyProperty("1 Wood Street", "1 Wood Street"), true);
+  assert.equal(titleIsOnlyProperty("103 Mount Street", "103 Mount Street, London W1K 2TJ"), true);
+  assert.equal(titleIsOnlyProperty("Nando's", "Bluewater Shopping Centre"), false);
+  assert.equal(titleIsOnlyProperty("10-12 Chiltern Street", "23-25 Chiltern Street"), false);
+});
+
 for (const [title, property, tenant, expected] of cases) {
   test(`${title} under ${property}`, () => {
     assert.equal(stripPropertyFromTitle(title, property, null, tenant), expected);
@@ -53,6 +75,8 @@ const displayCases = [
   [{ name: "1 Wood Street", propertyName: "1 Wood Street", tenantName: "Gail's" }, "Gail's"],
   [{ name: "12 George Street", propertyName: "12 George Street", tenantName: "Pret A Manger" }, "Pret A Manger"],
   [{ name: "Unit 7a", propertyName: "Southbank", tenantName: null }, "Unit 7a"],
+  [{ name: "Southbank - Unit 7a", propertyName: "Southbank", tenantName: null }, "Southbank · Unit 7a"],
+  [{ name: "Landsec - Consultancy - (Q2)", propertyName: "Cardinal Place", tenantName: null }, "Landsec - Consultancy (Q2)"],
   [{ name: "Time Out Market T1", propertyName: "10 Piccadilly", tenantName: "Time Out Market" }, "Time Out Market T1"],
 ];
 

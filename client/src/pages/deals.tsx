@@ -6665,13 +6665,19 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         data-testid="checkbox-select-all-deals"
                       />
                     </TableHead>
-                    <SortableTableHead sortKey="ref" sort={dealsSort} className="w-[60px]">Ref</SortableTableHead>
-                    <SortableTableHead sortKey="property" sort={dealsSort} className="min-w-[200px]">Property / Unit</SortableTableHead>
+                    {/* Fixed header widths on the default columns: with min-widths only the
+                        spare width was shared out by content, so every
+                        search re-flowed the columns. Pass-9 widths restored
+                        (220 / 200 / 160) and the table scrolls sideways to
+                        reach Fee Split instead of truncating names to fit
+                        it (Woody, 2026-09-28). */}
+                    <SortableTableHead sortKey="ref" sort={dealsSort} className="w-[88px] min-w-[88px]">Ref</SortableTableHead>
+                    <SortableTableHead sortKey="property" sort={dealsSort} className="w-[220px] min-w-[220px]">Property / Unit</SortableTableHead>
                     {effectiveColumns.unit && <SortableTableHead sortKey="unit" sort={dealsSort} className="min-w-[100px]">Unit</SortableTableHead>}
-                    {effectiveColumns.clientXero && <TableHead className="min-w-[160px]">Client / Billing</TableHead>}
+                    {effectiveColumns.clientXero && <TableHead className="w-[200px] min-w-[200px]">Client / Billing</TableHead>}
                     {effectiveColumns.landlord && <SortableTableHead sortKey="landlord" sort={dealsSort} className="min-w-[120px] px-1.5">Client</SortableTableHead>}
                     {effectiveColumns.type && (
-                      <TableHead className="min-w-[120px] whitespace-nowrap">
+                      <TableHead className="w-[128px] min-w-[128px] whitespace-nowrap">
                         {/* Two-word headers wrapped when Save View / Clear all
                             narrowed the table (Woody, 2026-09-28). */}
                         <div className="flex items-center gap-1">
@@ -6688,7 +6694,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       </TableHead>
                     )}
                     {effectiveColumns.status && (
-                      <TableHead className="min-w-[120px] whitespace-nowrap">
+                      <TableHead className="w-[128px] min-w-[128px] whitespace-nowrap">
                         <div className="flex items-center gap-1">
                           <ColumnFilterPopover
                             label="Deal Status"
@@ -6712,11 +6718,11 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         />
                       </TableHead>
                     )}
-                    {effectiveColumns.tenant && <SortableTableHead sortKey="tenant" sort={dealsSort} className="min-w-[140px]">Tenant</SortableTableHead>}
+                    {effectiveColumns.tenant && <SortableTableHead sortKey="tenant" sort={dealsSort} className="w-[196px] min-w-[196px]">Tenant</SortableTableHead>}
                     {effectiveColumns.parties && <TableHead className="min-w-[180px]">Parties</TableHead>}
-                    {effectiveColumns.feeCombined && <TableHead className="min-w-[110px]">Fee</TableHead>}
+                    {effectiveColumns.feeCombined && <TableHead className="w-[110px] min-w-[110px]">Fee</TableHead>}
                     {effectiveColumns.fee && <SortableTableHead sortKey="fee" sort={dealsSort} align="right" className="min-w-[80px]">Fee</SortableTableHead>}
-                    {effectiveColumns.feeAlloc && !isClientDeals && <TableHead className="min-w-[112px] whitespace-nowrap">Fee Split</TableHead>}
+                    {effectiveColumns.feeAlloc && !isClientDeals && <TableHead className="w-[160px] min-w-[160px] whitespace-nowrap">Fee Split</TableHead>}
                     {effectiveColumns.agent && <SortableTableHead sortKey="agent" sort={dealsSort} className="min-w-[80px]">BGP Contact</SortableTableHead>}
                     {effectiveColumns.assetClass && (
                       <TableHead className="min-w-[80px]">
@@ -6735,7 +6741,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {effectiveColumns.acquisitionAgent && <SortableTableHead sortKey="acquisitionAgent" sort={dealsSort} className="min-w-[120px]">Acquisition Agent</SortableTableHead>}
                     {effectiveColumns.purchaserAgent && <SortableTableHead sortKey="purchaserAgent" sort={dealsSort} className="min-w-[120px]">Purchaser Agent</SortableTableHead>}
                     {effectiveColumns.leasingAgent && <SortableTableHead sortKey="leasingAgent" sort={dealsSort} className="min-w-[120px]">Leasing Agent</SortableTableHead>}
-                    {effectiveColumns.pricingCombined && <TableHead className="min-w-[130px]">Pricing</TableHead>}
+                    {effectiveColumns.pricingCombined && <TableHead className="w-[130px] min-w-[130px]">Pricing</TableHead>}
                     {effectiveColumns.pricing && <SortableTableHead sortKey="pricing" sort={dealsSort} align="right" className="min-w-[100px]">Pricing</SortableTableHead>}
                     {effectiveColumns.yield && <SortableTableHead sortKey="yield" sort={dealsSort} align="right" className="min-w-[80px]">Yield %</SortableTableHead>}
                     {effectiveColumns.feeAgreement && <SortableTableHead sortKey="feeAgreement" sort={dealsSort} className="min-w-[100px]">Fee Agreement</SortableTableHead>}
@@ -6743,13 +6749,13 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {effectiveColumns.floorAreas && <TableHead className="min-w-[140px]">Floor Areas</TableHead>}
                     {effectiveColumns.pricePsf && <TableHead className="min-w-[80px] text-right">Price PSF</TableHead>}
                     {effectiveColumns.priceItza && <TableHead className="min-w-[80px] text-right">Price ITZA</TableHead>}
-                    {effectiveColumns.leaseTerms && <TableHead className="min-w-[160px]">Lease Terms</TableHead>}
+                    {effectiveColumns.leaseTerms && <TableHead className="w-[160px] min-w-[160px]">Lease Terms</TableHead>}
                     {effectiveColumns.rentPa && <SortableTableHead sortKey="rentPa" sort={dealsSort} align="right" className="min-w-[100px]">Rent PA</SortableTableHead>}
                     {effectiveColumns.capitalContribution && <SortableTableHead sortKey="capitalContribution" sort={dealsSort} align="right" className="min-w-[100px]">Capital Contribution</SortableTableHead>}
                     {effectiveColumns.rentFree && <SortableTableHead sortKey="rentFree" sort={dealsSort} align="right" className="min-w-[80px]">Rent Free</SortableTableHead>}
                     {effectiveColumns.leaseLength && <SortableTableHead sortKey="leaseLength" sort={dealsSort} align="right" className="min-w-[80px]">Lease Length</SortableTableHead>}
                     {effectiveColumns.breakOption && <SortableTableHead sortKey="breakOption" sort={dealsSort} align="right" className="min-w-[80px]">Break Option</SortableTableHead>}
-                    {effectiveColumns.datesCombined && <SortableTableHead sortKey="datesCombined" sort={dealsSort} className="min-w-[140px]">Dates</SortableTableHead>}
+                    {effectiveColumns.datesCombined && <SortableTableHead sortKey="datesCombined" sort={dealsSort} className="w-[140px] min-w-[140px]">Dates</SortableTableHead>}
                     {effectiveColumns.dateAdded && <SortableTableHead sortKey="dateAdded" sort={dealsSort} className="min-w-[110px]">Date Added</SortableTableHead>}
                     {effectiveColumns.instructedAt && <SortableTableHead sortKey="instructedAt" sort={dealsSort} className="min-w-[110px]">Instructed</SortableTableHead>}
                     {effectiveColumns.targetDate && <SortableTableHead sortKey="targetDate" sort={dealsSort} className="min-w-[120px]">Target Date</SortableTableHead>}
@@ -6758,7 +6764,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {effectiveColumns.invoicedAt && <SortableTableHead sortKey="invoicedAt" sort={dealsSort} className="min-w-[110px]">Invoiced</SortableTableHead>}
                     {effectiveColumns.rentAnalysis && <TableHead className="min-w-[100px] text-right">Rent Analysis</TableHead>}
                     {effectiveColumns.sharepoint && <TableHead className="min-w-[140px]">SharePoint Files</TableHead>}
-                    {effectiveColumns.lastInteraction && <SortableTableHead sortKey="lastInteraction" sort={dealsSort} className="min-w-[100px]">Last Touch</SortableTableHead>}
+                    {effectiveColumns.lastInteraction && <SortableTableHead sortKey="lastInteraction" sort={dealsSort} className="w-[110px] min-w-[110px]">Last Touch</SortableTableHead>}
                     <TableHead className="w-[40px]"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -6803,10 +6809,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           ) : "—"}
                         </div>
                       </TableCell>
-                      {/* 220 → 200 and Client/Billing 200 → 176 so the default
-                          columns end with Fee Split in view at 1440 (Woody,
-                          2026-09-28). */}
-                      <TableCell className="px-1.5 py-1 w-[200px] max-w-[200px] overflow-hidden">
+                      <TableCell className="px-1.5 py-1 w-[220px] max-w-[220px] overflow-hidden">
                         <PropertyUnitCell
                           deal={deal}
                           properties={properties}
@@ -6823,7 +6826,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         </TableCell>
                       )}
                       {effectiveColumns.clientXero && (
-                        <TableCell className="px-1.5 py-1 w-[176px] max-w-[176px] overflow-hidden">
+                        <TableCell className="px-1.5 py-1 w-[200px] max-w-[200px] overflow-hidden">
                           <ClientXeroCell
                             deal={deal}
                             companies={companies}
@@ -6902,11 +6905,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {effectiveColumns.tenant && (
                         <TableCell className="px-1.5 py-1">
-                          {/* 110px cut "Time Out Market" to "Time Out Mar…" beside
-                              free space; 160px then pushed Fee Split off the
-                              right edge at 1440 ("Fee S") — 128px, truncating
-                              with the full name as tooltip (Woody, 2026-09-28). */}
-                          <div className="w-[128px] overflow-hidden truncate" title={deal.tenantId ? companyMap.get(deal.tenantId as string) || undefined : undefined}>
+                          {/* 110px cut "Time Out Market" to "Time Out Mar…";
+                              160px reads the full names, the table scrolls to
+                              Fee Split (Woody, 2026-09-28). */}
+                          <div className="w-[160px] overflow-hidden truncate" title={deal.tenantId ? companyMap.get(deal.tenantId as string) || undefined : undefined}>
                             <InlineLinkSelect
                               value={deal.tenantId}
                               options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.id === deal.tenantId).map(c => ({ id: c.id, name: c.name }))}
@@ -6956,7 +6958,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       {/* Fee Split is the internal per-BGP-agent breakdown —
                           staff-only, never shown to a client/client-view. */}
                       {effectiveColumns.feeAlloc && !isClientDeals && (
-                        <TableCell className="px-1.5 py-1 min-w-[112px] max-w-[150px]">
+                        <TableCell className="px-1.5 py-1 w-[160px] min-w-[160px]">
                           <FeeAllocCell dealId={deal.id} dealFee={deal.fee} allAllocations={allFeeAllocations} colorMap={userColorMap2} teams={deal.team} onClick={() => setFeeAllocEditDeal(deal)} />
                         </TableCell>
                       )}

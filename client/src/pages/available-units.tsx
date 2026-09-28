@@ -2194,7 +2194,11 @@ export default function AvailableUnitsPage() {
                     data-testid="checkbox-select-all-units"
                   />
                 </TableHead>
-                {showCol("ref") && <TableHead className="w-[34px] min-w-[34px] px-1">Ref</TableHead>}
+                {/* Ref / Tenant / Client widths re-cut so Target Tenant still clears
+                    the pinned Actions at 1440: Ref fits "#3856" + its dot (a
+                    34px column grew with content per search), Tenant reads
+                    more than "Snowflake…" (Woody, 2026-09-28). */}
+                {showCol("ref") && <TableHead className="w-[56px] min-w-[56px] px-1">Ref</TableHead>}
                 {/* Left block runs tight (Woody, 2026-09-01: "all need to be
                     reduced in width") — Target Tenant and Comments carry no
                     fixed width, so THEY absorb spare page width instead of
@@ -2208,7 +2212,7 @@ export default function AvailableUnitsPage() {
                 {/* "Existing Tenant" wrapped to two lines and sat out of
                     line with the other headers (Woody, 2026-09-01) — one
                     word, tighter column. */}
-                {showCol("existingTenant") && <TableHead className="w-[84px] min-w-[80px] whitespace-nowrap" title="Existing tenant — from the tenancy schedule">Tenant</TableHead>}
+                {showCol("existingTenant") && <TableHead className="w-[108px] min-w-[108px] whitespace-nowrap" title="Existing tenant — from the tenancy schedule">Tenant</TableHead>}
                 {showCol("unitStatus") && <TableHead className="w-[100px] min-w-[96px]">Unit Status</TableHead>}
                 {/* Left block trimmed so Target Tenant clears the pinned Actions
                     column at 1440 — it read "Target Te" / "+ Target o" once
@@ -2216,7 +2220,7 @@ export default function AvailableUnitsPage() {
                 {showCol("pipelineStatus") && <TableHead className="w-[96px] min-w-[96px] px-2">Deal Status</TableHead>}
                 {showCol("website") && <TableHead className="w-[72px] min-w-[68px] px-2">Website</TableHead>}
                 {!hideClientCol && showCol("client") && (
-                  <TableHead className="w-[116px] min-w-[108px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("client")} data-testid="sort-client">
+                  <TableHead className="w-[108px] min-w-[108px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("client")} data-testid="sort-client">
                     Client{sortBy === "client" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                   </TableHead>
                 )}
@@ -2234,8 +2238,11 @@ export default function AvailableUnitsPage() {
                     width lands HERE, next to the pinned cluster, instead of
                     inflating a data column and shoving the rest under the
                     sticky overlay (Woody, 2026-09-01 "target tenant still
-                    not right"). */}
-                <TableHead className="p-0" aria-hidden />
+                    not right"). The 1px div gives it a content width: with
+                    none, the browser shared the spare out across the fixed
+                    columns instead, and they shifted after every search
+                    (Woody, 2026-09-28). */}
+                <TableHead className="p-0" aria-hidden><div className="w-px" /></TableHead>
                 <TableHead className="w-[200px] min-w-[200px] px-2 border-l bg-card sticky right-0 z-20">Actions &amp; Activity</TableHead>
               </TableRow>
             </TableHeader>
@@ -2403,7 +2410,7 @@ export default function AvailableUnitsPage() {
                         </div>
                       </TableCell>
                       {showCol("existingTenant") && (
-                      <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[84px]">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 w-[108px] max-w-[108px]">
                         {/* The name itself is derived from the tenancy
                             schedule (read-only) — but if it isn't a CRM
                             brand yet, the + adds it (Woody, 2026-09-01). */}
@@ -2486,7 +2493,7 @@ export default function AvailableUnitsPage() {
                       </TableCell>
                       )}
                       {!hideClientCol && showCol("client") && (
-                      <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[116px]">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[108px]">
                         <div className="flex flex-col gap-0.5">
                         {deal ? (() => {
                           const isTenantRep = (deal.dealType || "").toLowerCase().includes("tenant rep");

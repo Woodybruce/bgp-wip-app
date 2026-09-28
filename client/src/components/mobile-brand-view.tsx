@@ -1,9 +1,9 @@
 import { formatSizeList } from "@/lib/format-size";
-import { isOwnChannelNews, newsSourceLabel, splitNewsTitle, isOwnBrandSource, dedupeNearNews, ukDate, sentenceCaseShouting, aboutParagraphs, isSocialNews, snippetPublisher, isSignalNoise, signalKind, accountBoardContacts, propertyUnitText, trackerUnitLabel, displayStoreName } from "@/components/brand-profile-panel";
+import { isOwnChannelNews, newsSourceLabel, splitNewsTitle, isOwnBrandSource, dedupeNearNews, ukDate, sentenceCaseShouting, aboutParagraphs, isSocialNews, snippetPublisher, urlPublisher, isSignalNoise, signalKind, accountBoardContacts, propertyUnitText, trackerUnitLabel, displayStoreName } from "@/components/brand-profile-panel";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { BrandFeedCard } from "@/components/brand-feed-card";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
-import { CompanyProfileImage } from "@/components/company-profile-image";
+import { CompanyProfileImage, dedupeGalleryImages } from "@/components/company-profile-image";
 import { useState, useEffect, useRef } from "react";
 import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandImageRefreshButton } from "@/components/brand-profile-overview";
 import { Button } from "@/components/ui/button";
@@ -169,7 +169,7 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
   return (
     <div className="p-4 space-y-3 pb-6">
       {/* Hero + identity */}
-      <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={data.images || []} />
+      <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={dedupeGalleryImages(data.images || [])} />
       <div className="flex flex-wrap items-center gap-2">
         {/* With an industry chip the type keeps only its kind ("Tenant") —
             "Tenant · Restaurant" beside "Casual dining restaurant" said it
@@ -218,7 +218,7 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
         {/* First paragraph clamped on its own; the rest only when expanded. */}
         {(() => {
-          const { summary, notes } = aboutParagraphs(c.description);
+          const { summary, notes } = aboutParagraphs(c.description, c.store_count);
           const clamped = !aboutOpen && c.description.length > 220;
           return <>
             {(clamped ? summary.slice(0, 1) : summary).map((para, i) => (
@@ -586,7 +586,7 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-medium leading-snug line-clamp-2 group-hover:underline">{sentenceCaseShouting(splitNewsTitle(n.title).title)}</p>
                   <div className="text-[11px] text-muted-foreground truncate">
-                    {[newsSourceLabel(n.source_name, n.title, c.name) || snippetPublisher(n.title, n.summary), n.published_at ? ukDate(n.published_at, { day: "numeric", month: "short" }) : null].filter(Boolean).join(" · ")}
+                    {[newsSourceLabel(n.source_name, n.title, c.name) || snippetPublisher(n.title, n.summary) || urlPublisher(n.url), n.published_at ? ukDate(n.published_at, { day: "numeric", month: "short" }) : null].filter(Boolean).join(" · ")}
                   </div>
                 </div>
               </a>
@@ -604,7 +604,7 @@ export function MobileBrandView({ companyId, embedded = false }: { companyId: st
 
       <div className={sec("stores")}>
       {!isLandlord && ((data.stores || []).length > 0 || !isClientViewer) && <BrandStoresBoard
-        companyId={companyId} stores={(data.stores || []).map((st: any) => ({ ...st, name: displayStoreName(st.name, c.name) }))} reportedTotal={c.store_count} canRefresh={!isClientViewer}
+        companyId={companyId} stores={(data.stores || []).map((st: any) => ({ ...st, name: displayStoreName(st.name, c.name, st.address) }))} reportedTotal={c.store_count} canRefresh={!isClientViewer}
         refreshing={storeScan.isPending} diagnostic={storeScan.error instanceof Error ? storeScan.error.message : null}
         onRefresh={() => storeScan.mutate({})}
       />}

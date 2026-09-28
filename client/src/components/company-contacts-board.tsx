@@ -123,9 +123,10 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead }:
             </Badge>
           )}
         </div>
-        {/* Phone: the count gets its own line — beside the name it cut
-            "Michael …" / "James …" (Woody, 2026-09-28). */}
-        {touches > 0 && <div className="md:hidden text-[10px] text-muted-foreground tabular-nums" title={touchTitle}>{touchText}</div>}
+        {/* Phone: the count sits at the end of the role line — beside the
+            name it cut "Michael …" / "James …", and on a line of its own it
+            made every row 18px taller (Woody, 2026-09-28). */}
+        <div className="flex items-center gap-2 min-w-0">
         {editingRole ? (
           <input
             autoFocus
@@ -151,6 +152,8 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead }:
             {contact.role || <span className="italic text-muted-foreground/70">add role…</span>}
           </button>
         )}
+        {touches > 0 && <span className="md:hidden shrink-0 text-[10px] text-muted-foreground tabular-nums" title={touchTitle}>{touchText}</span>}
+        </div>
         {/* Account-mode provenance (Delivery 3): where this contact enters
             the account — employer, property links, portfolio names. Only
             renders when the caller passes workspace-shaped contacts. */}

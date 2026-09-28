@@ -4,6 +4,26 @@ import { selectCompanyHeroImage, rankCompanyHeroImages, companyImageHeroIssue } 
 import { BrandImageRefreshButton } from "@/components/brand-profile-overview";
 import { Button } from "@/components/ui/button";
 
+// One tile per picture: the same row id or the exact source URL (query
+// kept). Name + size matching merged distinct photos, so Gail's strip showed
+// 3 while the gallery counted "2 shown above" (Woody, 2026-09-28).
+export function dedupeGalleryImages<T extends { id?: any; source?: string | null }>(images: T[]): T[] {
+  const seen = new Set<string>();
+  return images.filter(img => {
+    const src = /^https?:\/\//i.test(String(img.source || "")) ? `u:${String(img.source).trim()}` : null;
+    const keys = [img.id != null ? `i:${img.id}` : null, src].filter(Boolean) as string[];
+    if (keys.some(k => seen.has(k))) return false;
+    keys.forEach(k => seen.add(k));
+    return true;
+  });
+}
+// What the header strip shows (before any load failures): the cover + up to
+// three more. The gallery's "shown above" count reads this same list.
+export const companyStripImages = <T extends { id?: any; source?: string | null }>(images: T[] | null | undefined, companyType?: string | null): T[] =>
+  rankCompanyHeroImages(dedupeGalleryImages(images || []), companyType).slice(0, 4);
+
+// `images` arrive deduped (dedupeGalleryImages) from both callers, so the
+// strip ranks the same list the gallery counts.
 export function CompanyProfileImage({ companyId, companyName, companyType, images, canRefresh = false }: {
   companyId: string;
   companyName: string;

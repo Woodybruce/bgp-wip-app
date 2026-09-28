@@ -415,7 +415,10 @@ export function InteractionsBoard({ scope, contextId }: Props) {
                       {/* Phone truncated the full names to "Charlo…" — show
                           first name + initial there (Woody, 2026-09-28). */}
                       {(() => {
-                        const names = (row.bgpUsers.length ? row.bgpUsers : [row.bgpUser]).map((u) => bgpUserDisplay(u, emailToName)).filter(Boolean);
+                        // Alphabetical: the first mailbox synced led, so the
+                        // same meeting read "Rupert B. +3" then "Will P. +3"
+                        // (Woody, 2026-09-28).
+                        const names = [...new Set((row.bgpUsers.length ? row.bgpUsers : [row.bgpUser]).map((u) => bgpUserDisplay(u, emailToName)).filter(Boolean))].sort((a, b) => a.localeCompare(b, "en-GB"));
                         // Two names still cut to "Will P.,…" — one name plus
                         // a count ("Will P. +3") (Woody, 2026-09-28). On a
                         // phone the name keeps its width and the "then …"

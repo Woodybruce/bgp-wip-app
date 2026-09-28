@@ -3,8 +3,8 @@ import { formatSizeList } from "@/lib/format-size";
 import { snippetAddsNothing } from "@shared/news-snippet";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
-import { CompanyProfileImage, CompanyImageCoverChoice } from "@/components/company-profile-image";
-import { selectCompanyHeroImage, isCompanyImageLogo, rankCompanyHeroImages } from "@shared/brand-image-selection";
+import { CompanyProfileImage, CompanyImageCoverChoice, dedupeGalleryImages, companyStripImages } from "@/components/company-profile-image";
+import { selectCompanyHeroImage, isCompanyImageLogo } from "@shared/brand-image-selection";
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandImageRefreshButton } from "@/components/brand-profile-overview";
 import { type ContactImportResult } from "@/components/contact-import-results";
@@ -661,6 +661,13 @@ export function snippetPublisher(title: string | null | undefined, snippet: stri
   const rest = plain.slice(head.length).replace(/^[\s\-–—|·]+/, "").trim();
   return rest && rest.length <= 60 && rest.split(/\s+/).length <= 6 ? publisherLike(rest) : null;
 }
+// Last resort: the article's own host ("harrogateadvertiser.co.uk") — Gail's
+// Harrogate story had no label at all (Woody, 2026-09-28).
+export function urlPublisher(url: string | null | undefined): string | null {
+  let host = "";
+  try { host = new URL(String(url || "")).hostname.replace(/^www\./i, ""); } catch { return null; }
+  return host && !AGGREGATOR_SOURCE_RE.test(host) ? host : null;
+}
 // A database profile ("Propel Multi-Site Database — Aug 2026 profile") and
 // the brand's social posts ("hot honey @wingstopuk") are not signals
 // (Woody, 2026-09-28).
@@ -689,26 +696,9 @@ export const accountBoardContacts = (ws: NonNullable<ReturnType<typeof useAccoun
   employerName: ct.employerName,
   propertyNames: ct.propertyNames,
 }));
-// One tile per picture: the same file saved twice (by source URL, or a
-// near-identical name like "logo.png" / "logo (2).png" / "logo-300x200.png")
-// showed the British Land logo twice (Woody, 2026-09-28).
-// Exact URL (query kept) and a name only with matching dimensions — CDN
-// photos differing only in ?query collapsed Zara's three photos to one
-// (Woody, 2026-09-28).
-export function dedupeGalleryImages<T extends { id?: any; file_name?: string | null; source?: string | null; file_size?: number | null; width?: number | null; height?: number | null }>(images: T[]): T[] {
-  const seen = new Set<string>();
-  return images.filter(img => {
-    const src = /^https?:\/\//i.test(String(img.source || "")) ? `u:${String(img.source).trim()}` : null;
-    const stem = String(img.file_name || "").toLowerCase().replace(/\.[a-z0-9]{2,5}$/, "")
-      .replace(/(?:[\s._-]*(?:\(\d+\)|copy|\d{2,4}x\d{2,4}|scaled))+$/g, "").replace(/[^a-z0-9]/g, "");
-    const dims = img.width && img.height ? `${img.width}x${img.height}` : null;
-    const size = img.file_size && dims ? `s:${img.file_size}:${dims}` : null;
-    const keys = [img.id != null ? `i:${img.id}` : null, src, stem.length >= 3 && dims ? `n:${stem}:${dims}` : null, size].filter(Boolean) as string[];
-    if (keys.some(k => seen.has(k))) return false;
-    keys.forEach(k => seen.add(k));
-    return true;
-  });
-}
+// Gallery dedupe (id / exact URL) lives with the strip in
+// company-profile-image.tsx so both count the same pictures.
+export { dedupeGalleryImages };
 // A "hiring" signal that reports headcount down 12% is contracting, not
 // hiring (Woody, 2026-09-28).
 export function signalKind(s: { signal_type?: string | null; headline?: string | null }): string {
@@ -740,7 +730,10 @@ export function cleanUnitLabel(raw: string | null | undefined, propertyName: str
     let out = !prop ? part : /[a-z]{3}/i.test(prop)
       ? part.replace(new RegExp(`(?<![\\w-])${esc(prop)}(?![\\w-])`, "ig"), " ")
       : part.trim().toLowerCase() === prop.toLowerCase() ? "" : part;
-    for (const w of core) out = out.replace(new RegExp(`(?:^|\\s)${esc(w)}${tail}(?=\\s*$)|^${esc(w)}${tail}\\b`, "i"), " ");
+    // Anywhere in the label, not just its ends: "U052B Bluewater upper
+    // level" → "U052B upper level" — but a street keeps its name
+    // ("Pimlico Road") (Woody, 2026-09-28).
+    for (const w of core) out = out.replace(new RegExp(`(?<![\\w-])${esc(w)}${tail}(?![\\w-])(?!\\s+(?:street|st|road|rd|lane|way|place|court|parade|row|avenue|terrace|gardens?|square|walk|yard|passage|arcade)\\b)`, "ig"), " ");
     return out.replace(/\s+/g, " ").trim();
   };
   const parts = text.split(/\s+[–—-]\s+|,\s*/).map(strip).filter(p => p && !UNIT_POSTCODE_RE.test(p) && !/^(?:uk|united kingdom|england)$/i.test(p));
@@ -751,10 +744,16 @@ export function cleanUnitLabel(raw: string | null | undefined, propertyName: str
   // Passage") keeps just the code (Woody, 2026-09-28).
   const trimAddress = (p: string) => { const m = p.match(/^(.*\d.*?)\s+(\d+[a-z]?(?:[-–]\d+[a-z]?)?\s+[a-z].*)$/i); return m && UNIT_PLACE_RE.test(m[2]) ? m[1] : p; };
   const codeRaw = parts.find(p => UNIT_CODE_RE.test(p)) || parts.find(p => UNIT_CODE_IN_RE.test(p) && p.length <= 40);
-  const code = codeRaw && trimAddress(codeRaw);
-  if (code) { const extra = floor || place; return extra && extra !== code && extra !== codeRaw ? `${code} · ${extra}` : code; }
+  let code = codeRaw && trimAddress(codeRaw);
+  // A floor run on after the code ("U052B upper level") splits off:
+  // "U052B · Upper Level" (Woody, 2026-09-28).
+  let runOnFloor: string | null = null;
+  const runOn = code && code.match(/^(\S*\d\S*)\s+(.+)$/);
+  if (runOn && UNIT_FLOOR_RE.test(runOn[2])) { code = runOn[1]; runOnFloor = runOn[2]; }
+  const floorText = (f: string) => /^(?:lg|ug|gf)$/i.test(f) ? f.toUpperCase() : f.replace(/\b[a-z]/g, ch => ch.toUpperCase());
+  if (code) { const extra = runOnFloor || floor || place; return extra && extra !== code && extra !== codeRaw ? `${code} · ${extra === place ? extra : floorText(extra)}` : code; }
   if (place) return `Unit at ${place}`;
-  if (floor) return floor;
+  if (floor) return floorText(floor);
   return parts.length === 1 && /\d/.test(parts[0]) && parts[0].length <= 40 ? parts[0] : null;
 }
 // A property named just "99", or already inside the unit's label, isn't a
@@ -784,8 +783,21 @@ export function trackerUnitLabel(cm: { unitName?: string | null; propertyName?: 
 // read in title case; a brand styled lower case keeps its own token:
 // "wagamama Edinburgh Lothian Road" (Woody, 2026-09-28).
 const LOWERCASE_STYLED_BRANDS = /^(?:wagamama|itsu)$/i;
-export function displayStoreName(name: string | null | undefined, brandName: string | null | undefined): string {
+// A store named just the brand ("ZARA" on every card) reads as its centre or
+// town from the address instead (Woody, 2026-09-28).
+function storeLocationName(address: unknown): string | null {
+  const a = address && typeof address === "object" ? address as Record<string, unknown> : null;
+  const parts = (typeof address === "string" ? address.split(/,\s*/) : a ? [a.street, a.city] : [])
+    .map(p => String(p || "").trim()).filter(p => p && !UNIT_POSTCODE_RE.test(p) && !/^(?:uk|united kingdom|england|scotland|wales|gb)$/i.test(p) && /[a-z]{3}/i.test(p));
+  const centre = parts.find(p => /\b(?:centre|center|westfield|shopping|mall|retail park|arcade|quays?|outlet|village)\b/i.test(p) && !/^\d/.test(p));
+  const town = (a?.city ? String(a.city).trim() : null) || [...parts].reverse().find(p => !/\d/.test(p));
+  const street = parts.map(p => p.replace(/^(?:unit\s+)?[\d/-]+[a-z]?\s+/i, "")).find(p => p !== town && UNIT_PLACE_RE.test(p));
+  return centre || [street, town].filter(Boolean).join(", ") || null;
+}
+export function displayStoreName(name: string | null | undefined, brandName: string | null | undefined, address?: unknown): string {
   const text = String(name || "");
+  const flat = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (brandName && flat(text) && flat(text) === flat(String(brandName))) return storeLocationName(address) || String(brandName).trim();
   if (!/[a-z]/.test(text) || text !== text.toLowerCase()) return text;
   const brand = String(brandName || "").trim().toLowerCase();
   const keepBrand = !!brand && (String(brandName).trim() === brand || LOWERCASE_STYLED_BRANDS.test(brand));
@@ -802,14 +814,20 @@ export const ukDate = (d: string | number | Date, opts: Intl.DateTimeFormatOptio
 // Dated research extracts ("Propel, Aug 2026: …") sit under the brand's own
 // summary as a muted source note, not as competing prose (Woody, 2026-09-28).
 const SOURCE_NOTE_RE = /^([A-Z][\w&.' -]{1,30}?),\s+((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{4}):\s*/;
-export function aboutParagraphs(description: string | null | undefined): { summary: string[]; notes: { label: string; text: string }[] } {
+// With a stores count on the profile, a dated extract's own count ("circa
+// 437 in the UK") is a third competing number — its store-count sentences
+// go (Nando's: 450+ / circa 437 / 487; Woody, 2026-09-28).
+const STORE_COUNT_SENTENCE_RE = /\b\d[\d,]*\+?\s+(?:[a-z-]+\s+){0,2}(?:stores?|restaurants?|outlets?|sites?|shops?|branches|locations|units|cafes?|bakeries)\b|\b(?:circa|around|about|c\.|over|nearly)\s+\d[\d,]*\+?\s+in the UK\b/i;
+export function aboutParagraphs(description: string | null | undefined, storeCount?: number | null): { summary: string[]; notes: { label: string; text: string }[] } {
   const paras = aboutText(description).split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
   const summary = paras.filter(p => !SOURCE_NOTE_RE.test(p));
   if (!summary.length) return { summary: paras, notes: [] };
   const notes = paras.filter(p => SOURCE_NOTE_RE.test(p)).map(p => {
     const m = p.match(SOURCE_NOTE_RE)!;
-    return { label: `${m[1]}, ${m[2].replace(/^Sept/, "Sep")}`, text: p.slice(m[0].length) };
-  });
+    let text = p.slice(m[0].length);
+    if (storeCount != null) text = text.split(/(?<=[.!?])\s+(?=[A-Z])/).filter(s => !STORE_COUNT_SENTENCE_RE.test(s)).join(" ");
+    return { label: `${m[1]}, ${m[2].replace(/^Sept/, "Sep")}`, text };
+  }).filter(n => n.text.trim());
   return { summary, notes };
 }
 
@@ -1371,7 +1389,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
 
   const c = data.company;
   const aiFields = c.ai_generated_fields || {};
-  const stores = (data.stores || []).map((st: any) => ({ ...st, name: displayStoreName(st.name, c.name) }));
+  const stores = (data.stores || []).map((st: any) => ({ ...st, name: displayStoreName(st.name, c.name, st.address) }));
   const ownedProperties = data.ownedProperties || [];
   const landRegistryTitles = data.landRegistryTitles || [];
   // Landlord-shaped CRM rows render a different profile: the brand "UK
@@ -1569,7 +1587,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   paragraph break left the ellipsis after "(Putney)." — the
                   rest shows when expanded (Woody, 2026-09-27). */}
               {c.description && (() => {
-                const { summary, notes } = aboutParagraphs(c.description);
+                const { summary, notes } = aboutParagraphs(c.description, c.store_count);
                 const clamped = !aboutOpen && c.description.length > ABOUT_CLAMP_CHARS;
                 return <>
                   {(clamped ? summary.slice(0, 1) : summary).map((para, i) => (
@@ -2272,9 +2290,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         {refreshStatus}
         {!isClientViewer && <AgentRelationshipCard companyId={companyId} />}
         {/* No news → one column: two columns left a blank half beside Key
-            contacts (CBRE; Woody, 2026-09-28). */}
-        <MasonryGrid className={data.news?.length ? masonryCls : "space-y-3"}>
-          {(data.representing.length > 0 || !isClientViewer) && <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-2" data-testid="agent-represents">{representsBlock}</div>}
+            contacts (CBRE; Woody, 2026-09-28). That column is capped and
+            gapped (space-y missed the display:contents cards), and an empty
+            "Currently representing (0)" card becomes a slim Add link
+            (Woody, 2026-09-28). */}
+        <MasonryGrid className={data.news?.length ? masonryCls : "flex flex-col gap-3 w-full max-w-3xl"}>
+          {(data.representing.length > 0 || addRep) ? <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-2" data-testid="agent-represents">{representsBlock}</div>
+            : !isClientViewer && <Button size="sm" variant="ghost" className="self-start h-7 px-2 text-xs text-muted-foreground" onClick={() => { setAddRep("brand"); setRepForm({ ...EMPTY_REP_FORM, agent_type: c.agent_type || "tenant_rep" }); }} data-testid="button-add-brand"><Plus className="w-3 h-3 mr-1" /> Add a brand they represent</Button>}
           <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
           <BrandProfileSidebar data={data} companyId={companyId} only={["news"]} />
         </MasonryGrid>
@@ -2369,7 +2391,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             )}
 
 
-            <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={data.images || []} canRefresh={!isClientViewer} />
+            <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={dedupeGalleryImages(data.images || [])} canRefresh={!isClientViewer} />
 
 
             {/* PLC market data — full-width row in the middle of the landlord
@@ -5124,11 +5146,11 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
   // to three more on a brand page, nothing on agent / landlord pages. The
   // strip's photos go first so a duplicate of one never tiles below
   // (Woody, 2026-09-28).
-  const stripImages = heroStrip ? rankCompanyHeroImages(data.images || [], c.company_type).slice(0, 4) : [];
+  const stripImages = heroStrip ? companyStripImages(data.images || [], c.company_type) : [];
   const stripIds = new Set(stripImages.map((img: any) => img.id));
-  const uniqueImages = dedupeGalleryImages([...stripImages, ...(data.images || []).filter((img: any) => !stripIds.has(img.id))]);
+  const uniqueImages = dedupeGalleryImages([...stripImages, ...(data.images || [])]);
   const galleryImages = galleryAll ? uniqueImages : uniqueImages.filter((img: any) => !stripIds.has(img.id));
-  const shownAbove = uniqueImages.length - uniqueImages.filter((img: any) => !stripIds.has(img.id)).length;
+  const shownAbove = stripImages.length;
   const covenantReport = useCovenantReport((c as any)?.companies_house_number);
   const covenantRun = useMutation({
     mutationFn: async () => apiRequest("POST", `/api/kyc/run-all-checks`, { companyId }),
@@ -5344,7 +5366,7 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
         const brandDomain = c.domain ? c.domain.replace(/^www\./, "") : null;
         // Industry leaves out the brand's own Instagram / jobs / website
         // posts — those are the Brand feed (Woody, 2026-09-27).
-        const srcOf = (a: any) => newsSourceLabel(a.source_name, a.title, c.name) || snippetPublisher(a.title, a.summary);
+        const srcOf = (a: any) => newsSourceLabel(a.source_name, a.title, c.name) || snippetPublisher(a.title, a.summary) || urlPublisher(a.url);
         // The brand's own posts (source or title tail = the brand) go to
         // Press; near-duplicate stories collapse; stories over two years old
         // wait behind "Show more" (Woody, 2026-09-28).

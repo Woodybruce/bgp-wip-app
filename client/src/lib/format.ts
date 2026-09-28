@@ -156,6 +156,29 @@ export function stripPropertyFromTitle(title: string, propName: string, propAddr
     }
     return seg;
   };
+  // A postal address run ("Queen St, Oxford OX1 1NZ, UK - Gail's Bakery", or
+  // "Holy Greens – Pimlico Rd, London SW1W, UK") is the property's location,
+  // not the deal: it goes when it ends in a postcode or a country (Woody,
+  // 2026-09-28).
+  const addressy = (seg: string) => /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i.test(seg) || /^\s*(uk|u\.k\.|united kingdom|england|scotland|wales|gb)\s*$/i.test(seg);
+  {
+    const s0 = split(title);
+    let k = -1;
+    for (let x = 0; x < s0.length - 1; x++) {
+      if (x > 0 && !s0[x].comma) break;
+      if (addressy(s0[x].text)) k = x;
+    }
+    const lead = k >= 0 ? trimSep(title.slice(s0[k + 1].start)).trim() : "";
+    if (lead && !addressy(lead) && /[a-z]{2,}/i.test(lead)) title = lead;
+    else {
+      const s1 = split(title);
+      let x = s1.length - 1;
+      while (x > 0 && s1[x].comma) x--;
+      const tail = s1.slice(x);
+      const head = x > 0 ? trimSep(title.slice(0, s1[x].start)).trim() : "";
+      if (head && tail.length > 1 && tail.slice(1).some(sg => addressy(sg.text)) && /[a-z]{2,}/i.test(head)) title = head;
+    }
+  }
   let base = title;
   const segs = split(title);
   if (segs.length > 1) {
@@ -190,6 +213,15 @@ export function stripPropertyFromTitle(title: string, propName: string, propAddr
   return result;
 }
 
+// True when a title names nothing but its property ("1 Wood Street" under "1
+// Wood Street") — callers with no tenant show the deal type instead (Woody,
+// 2026-09-28).
+const ONLY_PROPERTY_PROBE = "zzonlypropertyzz";
+export function titleIsOnlyProperty(title: string, propName: string, propAddress?: string | null): boolean {
+  if (!title.trim() || !propName.trim()) return false;
+  return stripPropertyFromTitle(title, propName, propAddress, ONLY_PROPERTY_PROBE) === ONLY_PROPERTY_PROBE;
+}
+
 // One deal title for the deal page header, breadcrumb, side panel and Quick
 // Access. The property is always shown beside it, so it's stripped — but a
 // bare "Unit 3" never identifies the deal: a unit takes its tenant
@@ -206,10 +238,19 @@ export function dealDisplayTitle(d: { name?: string | null; propertyName?: strin
   const bare = /^(?:(?:unit|shop|suite|kiosk|store|lot|pitch)\s*)?[a-z]{0,2}\s*\d+[a-z]?(?:\s*\([^)]*\))?$/i.test(stripped.trim())
     || (!!unit && stripped.trim().toLowerCase() === unit.toLowerCase());
   const cap = (v: string) => v.trim().replace(/^[a-z]/, c => c.toUpperCase());
-  if (bare) return tenant ? `${tenant} · ${cap(stripped)}` : full;
+  // No tenant: "Southbank - Unit 7a" reads "Southbank · Unit 7a" beside
+  // "Kinraden · Unit 3"; "Consultancy - (Q2)" reads "Consultancy (Q2)"
+  // (Woody, 2026-09-28).
+  const tidy = (v: string) => v.replace(/\s+[–—\-]\s+(?=\()/g, " ");
+  if (bare) {
+    if (tenant) return `${tenant} · ${cap(stripped)}`;
+    const s = stripped.trim();
+    const head = full.trim().toLowerCase().endsWith(s.toLowerCase()) ? full.trim().slice(0, full.trim().length - s.length).replace(/[\s–—\-|,:·]+$/, "").trim() : "";
+    return tidy(head && head !== full.trim() ? `${head} · ${cap(s)}` : full);
+  }
   // The property itself carries the unit ("South Molton - unit 3") and the
   // title is just the property — keep the unit beside the tenant.
   const unitTail = (d.propertyName || "").match(/[\s–—\-|,:·]+((?:unit|shop|suite|kiosk|store|lot|pitch)\s*[a-z]{0,2}\s*\d+[a-z]?)\s*$/i);
   if (tenant && stripped === tenant && unitTail && (d.name || "").toLowerCase().includes(unitTail[1].toLowerCase())) return `${tenant} · ${cap(unitTail[1])}`;
-  return stripped;
+  return tidy(stripped);
 }

@@ -104,7 +104,15 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
         loading={retry > 0 ? "eager" : "lazy"}
         decoding="async"
         className={`${sizeClass} relative rounded-lg object-contain border shrink-0 ${loaded ? "bg-white" : "opacity-0"}`}
-        onLoad={() => setLoaded(true)}
+        onLoad={(e) => {
+          // A favicon-sized, banner-shaped or photo-ish fallback read worse
+          // than initials (pixelated Aberdeen block, tiny Apex / Brydell) —
+          // under 32px wide or beyond 3:1 falls back to initials (Woody,
+          // 2026-09-28).
+          const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+          if (w < 32 || h < 1 || Math.max(w / h, h / w) > 3) { setRetry(0); setFailCount(c => c + 1); }
+          else setLoaded(true);
+        }}
         onError={() => {
           setLoaded(false);
           if (retry < 2) {

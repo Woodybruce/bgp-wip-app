@@ -138,10 +138,20 @@ function formatCurrency(value: number): string {
 // chart axis (Woody, 2026-09-27).
 // The Property (and Tenant) columns sit beside the deal name, so
 // "Bluewater - Shake Shack" reads "Shake Shack"; a bare "Unit C10" takes its
-// tenant, same as the deal page (Woody, 2026-09-28).
-function wipDealTitle(e: { ref?: string | null; project?: string | null; tenant?: string | null }): string {
+// tenant, same as the deal page (Woody, 2026-09-28). The property's address
+// goes in too — "Queen St, Oxford OX1 1NZ, UK - Gail's Bakery" under
+// Westgate kept the address (Woody, 2026-09-28).
+function wipDealTitle(e: { ref?: string | null; project?: string | null; tenant?: string | null; propertyId?: string | null }, addressById?: Map<string, string>): string {
   if (!e.ref) return "—";
-  return dealDisplayTitle({ name: e.ref, propertyName: e.project, tenantName: e.tenant });
+  const propertyAddress = e.propertyId ? addressById?.get(e.propertyId) || null : null;
+  return dealDisplayTitle({ name: e.ref, propertyName: e.project, propertyAddress, tenantName: e.tenant });
+}
+
+function addressText(a: any): string {
+  if (!a) return "";
+  if (typeof a === "string") return a;
+  if (a.address || a.formatted || a.text) return a.address || a.formatted || a.text;
+  return [a.street || a.line1, a.line2, a.city || a.town, a.postcode, a.country].filter(Boolean).join(", ");
 }
 
 const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -858,6 +868,9 @@ export default function WipReport() {
   const { data: wipResponse, isLoading, isError, isFetching, refetch } = useQuery<{ entries: WipDealEntry[]; isAdmin: boolean; userTeam: string | null } | WipDealEntry[]>({
     queryKey: ["/api/wip"],
   });
+
+  const { data: wipProperties = [] } = useQuery<any[]>({ queryKey: ["/api/crm/properties"] });
+  const propertyAddressById = useMemo(() => new Map(wipProperties.map((p: any) => [String(p.id), addressText(p.address)])), [wipProperties]);
 
   const rawEntries = Array.isArray(wipResponse) ? wipResponse : (wipResponse?.entries || []);
   const isWipAdmin = Array.isArray(wipResponse) ? false : (wipResponse?.isAdmin || false);
@@ -2145,10 +2158,10 @@ export default function WipReport() {
                     <div className="min-w-0">
                       {e.dealId ? (
                         <Link href={`/deals/${e.dealId}`}>
-                          <span className="text-sm font-medium text-primary cursor-pointer">{wipDealTitle(e)}</span>
+                          <span className="text-sm font-medium text-primary cursor-pointer">{wipDealTitle(e, propertyAddressById)}</span>
                         </Link>
                       ) : (
-                        <span className="text-sm font-medium">{wipDealTitle(e)}</span>
+                        <span className="text-sm font-medium">{wipDealTitle(e, propertyAddressById)}</span>
                       )}
                       {e.dealRef && <span className="ml-1.5 text-[11px] font-mono text-muted-foreground/70">#{e.dealRef}</span>}
                     </div>
@@ -2259,9 +2272,9 @@ export default function WipReport() {
                       <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[210px]">
                         {e.dealId ? (
                           <Link href={`/deals/${e.dealId}`}>
-                            <span className="text-primary hover:underline cursor-pointer" title={e.ref || undefined} data-testid={`link-deal-${e.dealId}`}>{wipDealTitle(e)}</span>
+                            <span className="text-primary hover:underline cursor-pointer" title={e.ref || undefined} data-testid={`link-deal-${e.dealId}`}>{wipDealTitle(e, propertyAddressById)}</span>
                           </Link>
-                        ) : wipDealTitle(e)}
+                        ) : wipDealTitle(e, propertyAddressById)}
                       </td>
                       )}
                       {colVisible("client") && (
@@ -2315,9 +2328,11 @@ export default function WipReport() {
                           return (
                             <div className="flex flex-col gap-0.5">
                               {!isActual && e.dealId ? (
-                                <label key={`wip-target-${e.dealId}-${e.targetDate ?? ""}`} title="Set target month" className="relative inline-flex items-center text-xs border border-border rounded px-1 py-0.5 w-[72px] cursor-pointer focus-within:border-ring">
+                                <label key={`wip-target-${e.dealId}-${e.targetDate ?? ""}`} title="Set target month" className={`relative inline-flex items-center text-xs border rounded px-1 py-0.5 w-[72px] cursor-pointer focus-within:border-ring ${dateStr ? "border-border" : "border-transparent hover:border-border"}`}>
                                 {/* Empty reads "—" like every other blank cell here — "Set" on
-                                    one row among dashes looked like data (Woody, 2026-09-27). */}
+                                    one row among dashes looked like data (Woody, 2026-09-27).
+                                    No box round an empty one — a boxed "—" read as a value;
+                                    the box shows on hover (Woody, 2026-09-28). */}
                                 <span className={dateStr ? "" : "text-muted-foreground/70"}>{dateStr || "—"}</span>
                                 <input
                                   type="month"
