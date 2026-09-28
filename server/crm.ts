@@ -2564,6 +2564,26 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // Per-team and extra SharePoint folders for the property's Files tabs
+  // (crm_properties.sharepoint_team_folders, raw SQL). Staff only.
+  app.get("/api/crm/properties/:id/sharepoint-folders", requireAuth, async (req, res) => {
+    try {
+      if ((await resolveCompanyScope(req)) || (await isClientRequestUser(req))) return res.status(403).json({ error: "Not available for client accounts" });
+      const { propertyFolderLinks } = await import("./sharepoint-property-files");
+      const links = await propertyFolderLinks(pool, String(req.params.id));
+      if (!links) return res.status(404).json({ error: "Not found" });
+      res.json(links);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.put("/api/crm/properties/:id/sharepoint-folders", requireAuth, async (req, res) => {
+    try {
+      if ((await resolveCompanyScope(req)) || (await isClientRequestUser(req))) return res.status(403).json({ error: "Not available for client accounts" });
+      const { setPropertyFolderLink } = await import("./sharepoint-property-files");
+      res.json(await setPropertyFolderLink(pool, String(req.params.id), req.body?.label, req.body?.url));
+    } catch (e: any) { res.status(e?.status || 500).json({ error: e.message }); }
+  });
+
   app.delete("/api/crm/properties/:id", requireAuth, async (req, res) => {
     try {
       const scopeCompanyId = await resolveCompanyScope(req);

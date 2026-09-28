@@ -2,7 +2,8 @@
 // 2026-09-28: "should be able to pull the leasing schedule and brochure from
 // the SharePoint too?"). Candidates come from three places, all on the app
 // Graph token:
-//   1. the property's linked folder (crm_properties.sharepoint_folder_url),
+//   1. every folder linked to the property (crm_properties.sharepoint_folder_url
+//      plus the per-team / extra folders in sharepoint_team_folders), each
 //      walked recursively — marketing / brochure / leasing folders first;
 //   2. a Microsoft 365 search for the property's name across SharePoint and
 //      OneDrive (falls back to a search of the BGP site drive);
@@ -13,6 +14,7 @@
 // the routes refuse client logins.
 
 import { sharesId } from "./sharepoint-graph";
+import { folderLinkLabel, linkedFolderUrls, normaliseFolderLinks } from "../shared/property-labels";
 
 export type SpKind = "brochure" | "schedule";
 export type BrochureType = "leasing" | "investment";
@@ -305,30 +307,58 @@ export async function indexedPropertyFiles(pool: any, propertyName: string, kind
   }));
 }
 
-export type CandidateResult = { candidates: SpCandidate[]; linkedFolder: string | null; propertyName: string; warnings: string[] };
+export type CandidateResult = { candidates: SpCandidate[]; linkedFolder: string | null; linkedFolders: string[]; propertyName: string; warnings: string[] };
+
+const folderName = (url: string) => decodeURIComponentSafe(String(url).split("?")[0].replace(/\/+$/, "").split("/").pop() || url);
 
 /** Everything the finder shows for one property, ranked. */
 export async function findPropertyFiles(pool: any, propertyId: string, kind: SpKind, wanted: BrochureType = "leasing", deps: { graph?: Graph } = {}): Promise<CandidateResult> {
-  const property = (await pool.query(`SELECT name, sharepoint_folder_url FROM crm_properties WHERE id = $1`, [propertyId])).rows[0];
+  const property = (await pool.query(`SELECT name, sharepoint_folder_url, sharepoint_team_folders FROM crm_properties WHERE id = $1`, [propertyId])).rows[0];
   if (!property) throw Object.assign(new Error("Property not found"), { status: 404 });
-  const folderUrl: string | null = property.sharepoint_folder_url || null;
+  const folderUrls = linkedFolderUrls(property.sharepoint_folder_url, property.sharepoint_team_folders);
   const want = kind === "brochure" ? isPdf : isSpreadsheet;
-  const [folder, search, index] = await Promise.allSettled([
-    folderUrl ? walkLinkedFolder(folderUrl, want, deps) : Promise.resolve([]),
+  const [search, index, ...folders] = await Promise.allSettled([
     searchPropertyFiles(property.name, kind, deps),
     indexedPropertyFiles(pool, property.name, kind),
+    ...folderUrls.map(url => walkLinkedFolder(url, want, deps)),
   ]);
   const warnings: string[] = [];
-  if (folder.status === "rejected") warnings.push(`Linked folder: ${plainGraphError(folder.reason)}`);
+  folders.forEach((folder, i) => {
+    if (folder.status === "rejected") warnings.push(`Linked folder${folderUrls.length > 1 ? ` “${folderName(folderUrls[i])}”` : ""}: ${plainGraphError(folder.reason)}`);
+  });
   if (search.status === "rejected") warnings.push(`Search: ${plainGraphError(search.reason)}`);
   if (index.status === "rejected") console.warn("[sharepoint-property-files] index lookup failed:", index.reason?.message);
   const merged = mergeCandidates([
-    folder.status === "fulfilled" ? folder.value : [],
+    ...folders.map(folder => folder.status === "fulfilled" ? folder.value : []),
     search.status === "fulfilled" ? search.value : [],
     index.status === "fulfilled" ? index.value : [],
   ]);
   const ranked = kind === "brochure" ? rankBrochureCandidates(merged, wanted) : rankScheduleCandidates(merged);
-  return { candidates: ranked.slice(0, 40), linkedFolder: folderUrl, propertyName: property.name, warnings };
+  return { candidates: ranked.slice(0, 40), linkedFolder: folderUrls[0] || null, linkedFolders: folderUrls, propertyName: property.name, warnings };
+}
+
+export type PropertyFolderLinks = { propertyName: string; defaultUrl: string | null; folders: Record<string, string> };
+
+/** The property's default linked folder and its per-team / extra folders. */
+export async function propertyFolderLinks(pool: any, propertyId: string): Promise<PropertyFolderLinks | null> {
+  const row = (await pool.query(`SELECT name, sharepoint_folder_url, sharepoint_team_folders FROM crm_properties WHERE id = $1`, [propertyId])).rows[0];
+  if (!row) return null;
+  return { propertyName: row.name, defaultUrl: row.sharepoint_folder_url || null, folders: normaliseFolderLinks(row.sharepoint_team_folders) };
+}
+
+/** Link one team's or extra folder, or unlink it when no url is given. Only
+ *  BGP tenant SharePoint / OneDrive links are stored. */
+export async function setPropertyFolderLink(pool: any, propertyId: string, rawLabel: unknown, rawUrl: unknown): Promise<PropertyFolderLinks> {
+  const label = folderLinkLabel(rawLabel);
+  if (!label) throw Object.assign(new Error("Give the folder a name (up to 60 characters)."), { status: 400 });
+  const url = typeof rawUrl === "string" ? rawUrl.trim() : "";
+  if (url && !SHAREPOINT_URL_RE.test(url)) throw Object.assign(new Error("Paste a link to a folder in the BGP SharePoint or OneDrive."), { status: 400 });
+  const current = await propertyFolderLinks(pool, propertyId);
+  if (!current) throw Object.assign(new Error("Property not found"), { status: 404 });
+  const folders = Object.fromEntries(Object.entries(current.folders).filter(([k]) => k.toLowerCase() !== label.toLowerCase()));
+  if (url) folders[label] = url;
+  await pool.query(`UPDATE crm_properties SET sharepoint_team_folders = $2::jsonb, updated_at = now() WHERE id = $1`, [propertyId, Object.keys(folders).length ? JSON.stringify(folders) : null]);
+  return { ...current, folders };
 }
 
 export type SpFileRef = { driveId?: string | null; itemId?: string | null; webUrl?: string | null };

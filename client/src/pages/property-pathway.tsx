@@ -2563,6 +2563,7 @@ function PathwayFoldersPanel({ run }: { run: PathwayRun }) {
           {hasFolderTree ? (
             <PropertyFoldersPanel
               propertyName={property.name}
+              propertyId={property.id}
               folderTeams={folderTeams}
               sharepointFolderUrl={property.sharepointFolderUrl}
             />
