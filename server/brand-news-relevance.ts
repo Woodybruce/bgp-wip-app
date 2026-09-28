@@ -8,7 +8,26 @@ const COMMON_NAMES = new Set([
   "sky", "next", "cook", "until", "fuel", "pitch", "base", "oliver", "supreme",
   "coach", "monsoon", "jigsaw", "diesel", "pandora", "boots", "river", "bills",
   "mountain", "gap", "mango", "space", "end", "size", "apple", "office", "white stuff",
+  "zara", "oasis", "joules", "pret", "wren", "iceland", "river island",
 ]);
+// Brands that are also first names: "Zara Larsson" / "Zara Tindall" is a
+// person, not the retailer, however much fashion is nearby (Woody, 2026-09-28).
+const FIRST_NAME_BRANDS = new Set(["zara", "wren"]);
+const KNOWN_NAMESAKES = /^(?:larsson|mcdermott|tindall|phillips|holland|hunt)$/i;
+const BRAND_FOLLOWERS = new Set(["home", "kids", "man", "men", "woman", "women", "store", "stores", "shop", "shops", "uk",
+  "group", "outlet", "flagship", "sa", "owner", "inditex", "opens", "open", "launches", "sales", "profits", "results",
+  "boss", "plans", "and", "kitchens", "origins", "larger", "new"]);
+function personNamesake(name: string, cased: string, index: number): boolean {
+  if (!FIRST_NAME_BRANDS.has(name)) return false;
+  const next = cased.slice(index).replace(/^ /, "").slice(name.length).trim().split(" ")[0] || "";
+  if (KNOWN_NAMESAKES.test(next)) return true;
+  if (!/^(?:Mc)?[A-Z][a-z]+(?:[A-Z][a-z]+)?$/.test(next) || BRAND_FOLLOWERS.has(next.toLowerCase())) return false;
+  // In a Title Case headline every word is capitalised, so a capital proves
+  // nothing there.
+  const long = cased.split(" ").filter(w => w.length > 3);
+  const capitalised = long.filter(w => /^[A-Z]/.test(w)).length;
+  return long.length > 0 && capitalised / long.length < 0.7;
+}
 const GENERIC_SHORT_NAMES = new Set(["uk", "us", "eu", "the", "and", "a", "an"]);
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function plainText(value: string): string {
@@ -79,8 +98,10 @@ function namedContext(name: string, rawName: string, text: string, industry: str
   // Check context close to the name, rather than borrowing "retail" from an
   // unrelated paragraph in a long roundup.
   const normalized = words(candidate);
+  const cased = words(candidate, false);
   const mentions = normalized.matchAll(new RegExp(`(?:^| )${escapeRegex(name)}(?= |$)`, "g"));
   for (const mention of mentions) {
+    if (personNamesake(name, cased, mention.index!)) continue;
     const nearby = normalized.slice(Math.max(0, mention.index! - 90), mention.index! + name.length + 130);
     if (name === "cook") {
       if (/\b(?:frozen (?:food|meals?)|ready meals?|edward perry|dale penfold)\b/.test(nearby)

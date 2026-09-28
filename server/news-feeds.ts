@@ -2083,17 +2083,6 @@ export function setupNewsFeedRoutes(app: Express) {
         if (hits === 1 && locationTokens.some((t: string) => hasWord(text, t))) return true;
         if (ownerName.length > 5 && text.includes(ownerName)) return true;
         return false;
-      }).filter((a, i, all) => {
-        // "News | Bluewater opens…" and the same story from two outlets read
-        // as a double-up on the property page (Woody, 2026-09-27).
-        (a as any).title = String(a.title || "").replace(/^\s*(?:news|press release|latest)\s*[|:]\s*/i, "").replace(/\s+[-–|]\s+[A-Z][^-–|?!]{1,39}$/, "");
-        const words = (t: string) => new Set(t.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(w => w.length > 2));
-        const mine = words((a as any).title);
-        return !all.slice(0, i).some(b => {
-          const theirs = words(String(b.title || ""));
-          const shared = Array.from(mine).filter(w => theirs.has(w)).length;
-          return shared / Math.max(1, Math.min(mine.size, theirs.size)) >= 0.7;
-        });
       }).slice(0, 10);
 
       // Thumbnail the matched slice — DB pipeline articles often land with
@@ -2195,7 +2184,23 @@ export function setupNewsFeedRoutes(app: Express) {
         })),
       ];
 
-      res.json({ articles: combined.filter(article => !isNewsErrorTitle(article.title)), propertyName, searchQuery });
+      // "News | Landsec hoists…" and the same sale story from CoStar, Property
+      // Week and EdgeProp read as a double-up on the property page — clean
+      // the title and keep the first of any near-duplicate headline, across
+      // the database and web results alike (Woody, 2026-09-28).
+      const headlineWords = (t: string) => new Set(t.toLowerCase().replace(/[^a-z0-9£\s]/g, " ").split(/\s+/).filter(w => w.length > 2));
+      const kept: { words: Set<string> }[] = [];
+      const articles = combined.filter(article => !isNewsErrorTitle(article.title)).map(article => {
+        let title = String(article.title || "").replace(/^\s*(?:news|press release|latest)\s*[|:]\s*/i, "");
+        for (let i = 0; i < 3; i++) title = title.replace(/\s+[-–|]\s+(?:[A-Z][^-–|?!]{1,39}|[\w.-]+\.(?:co\.uk|com|net|org|uk|io|news))\s*$/, "");
+        return { ...article, title };
+      }).filter(article => {
+        const words = headlineWords(article.title);
+        const dup = kept.some(k => Array.from(words).filter(w => k.words.has(w)).length / Math.max(1, Math.min(words.size, k.words.size)) >= 0.6);
+        if (!dup) kept.push({ words });
+        return !dup;
+      });
+      res.json({ articles, propertyName, searchQuery });
     } catch (err: any) {
       console.error("[Property News] Error:", err);
       res.status(500).json({ message: "Failed to fetch property news" });

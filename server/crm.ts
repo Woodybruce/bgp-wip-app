@@ -4936,8 +4936,11 @@ Return a JSON object with these fields (use null for any field you cannot find):
 
       const unitsQ = await pool.query(
         `SELECT au.id, au.unit_name, au.sqft, au.use_class,
+                pu.unit_name AS master_unit_name, lsu.unit_name AS schedule_unit_name,
                 p.id AS property_id, p.name AS property_name
            FROM available_units au JOIN crm_properties p ON p.id = au.property_id
+           LEFT JOIN property_units pu ON pu.id = au.unit_id
+           LEFT JOIN leasing_schedule_units lsu ON lsu.id = au.leasing_schedule_unit_id
           WHERE au.marketing_status IN ('AVA','NEG')
             ${scope ? "AND (p.landlord_id = $2 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $2))" : ""}
             -- Not at a centre where they already trade or are already on a
@@ -4971,6 +4974,32 @@ Return a JSON object with these fields (use null for any field you cannot find):
       const fmtText = `${brandIndustry || ""} ${brandType || ""}`;
       const brandIsCafe = /coffee|caf[eé]|bakery|patisserie|juice|dessert/i.test(brandIndustry || "") || (!brandIndustry && /coffee|caf[eé]/i.test(brandType || ""));
       const brandIsRestaurant = !brandIsCafe && /restaurant|dining|takeaway|fast food|quick service/i.test(fmtText);
+      // Same-format brands already trading at each centre — the tie-break
+      // after size and use (Woody, 2026-09-28).
+      const peersAt = new Map<string, number>();
+      if (brandIndustry && unitsQ.rows.length) {
+        const peersQ = await pool.query(
+          `SELECT lu.property_id, COUNT(DISTINCT cc.id)::int AS n
+             FROM leasing_schedule_units lu JOIN crm_companies cc ON lower(cc.name) = lower(lu.tenant_name)
+            WHERE lu.property_id = ANY($1) AND cc.industry = $2 AND cc.id <> $3
+            GROUP BY lu.property_id`,
+          [[...new Set(unitsQ.rows.map((u: any) => u.property_id))], brandIndustry, brandId]);
+        for (const r of peersQ.rows) peersAt.set(r.property_id, r.n);
+      }
+      // The unit's code/name, not a raw address carrying the old tenant
+      // ("Mr Pretzels – Trinity Shopping Centre, Leeds LS1 6AD, UK").
+      const postcodeRe = /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b|,\s*UK\s*$/i;
+      const unitLabel = (u: any) => {
+        for (const raw of [u.master_unit_name, u.schedule_unit_name, u.unit_name]) {
+          const parts = String(raw || "").split(/\s+[–—-]\s+|,\s*/).map((s: string) => s.trim()).filter(Boolean)
+            .filter((s: string) => !postcodeRe.test(s) && !(u.property_name && s.toLowerCase().includes(String(u.property_name).toLowerCase().split(",")[0])));
+          const code = parts.find((s: string) => /^(?:unit|su|msu|kiosk|k|shop|suite|lsu)\b|^\d+[a-z]?$/i.test(s));
+          if (code) return code;
+          if (raw && !postcodeRe.test(String(raw)) && String(raw).length <= 40) return String(raw).trim();
+          if (parts.length && raw === u.unit_name) return parts[0];
+        }
+        return u.unit_name;
+      };
       const suggestions: any[] = [];
       for (const u of unitsQ.rows) {
         const unitText = `${u.unit_name || ""} ${u.use_class || ""}`;
@@ -4978,19 +5007,23 @@ Return a JSON object with these fields (use null for any field you cannot find):
         const unitIsRestaurant = /restaurant|dining/i.test(unitText);
         if (brandIsRestaurant && unitIsCafe && !unitIsRestaurant) continue;
         if (brandIsCafe && unitIsRestaurant && !unitIsCafe) continue;
-        if (range && u.sqft != null) {
-          const sq = Number(u.sqft);
-          if (sq >= range.min && sq <= range.max) {
-            // The row already shows the unit's size; say the requirement
-            // plainly ("1,500–3,500 sq ft", not "1500-3500 ft2").
-            const reqSize = (Array.isArray(liveReq.size) ? liveReq.size.join(", ") : String(liveReq.size || ""))
-              .replace(/(\d+)\s*-\s*(\d+)\s*(?:ft2|sq\.? ?ft|sqft)/gi, (_m: string, a: string, b: string) => `${Number(a).toLocaleString("en-GB")}–${Number(b).toLocaleString("en-GB")} sq ft`)
-              .replace(/(\d+)\s*-\s*(?:ft2|sq\.? ?ft|sqft)/gi, (_m: string, a: string) => `${Number(a).toLocaleString("en-GB")}+ sq ft`);
-            suggestions.push({ ...u, reason: `Fits their live ${reqSize} requirement`, strength: 2 });
-            continue;
-          }
+        const sq = u.sqft != null ? Number(u.sqft) : null;
+        const row = { ...u, unit_name: unitLabel(u), property_name: String(u.property_name || "").split(",")[0].trim() || u.property_name };
+        const peers = peersAt.get(u.property_id) || 0;
+        delete row.master_unit_name; delete row.schedule_unit_name;
+        // A live requirement's size range is binding: Nando's (2,500–4,500)
+        // was pitched a 17,201 sq ft unit on use alone (Woody, 2026-09-28).
+        if (range && sq != null && (sq > range.max * 1.6 || sq < range.min * 0.5)) continue;
+        if (range && sq != null && sq >= range.min && sq <= range.max) {
+          // The row already shows the unit's size; say the requirement
+          // plainly ("1,500–3,500 sq ft", not "1500-3500 ft2").
+          const reqSize = (Array.isArray(liveReq.size) ? liveReq.size.join(", ") : String(liveReq.size || ""))
+            .replace(/(\d+)\s*-\s*(\d+)\s*(?:ft2|sq\.? ?ft|sqft)/gi, (_m: string, a: string, b: string) => `${Number(a).toLocaleString("en-GB")}–${Number(b).toLocaleString("en-GB")} sq ft`)
+            .replace(/(\d+)\s*-\s*(?:ft2|sq\.? ?ft|sqft)/gi, (_m: string, a: string) => `${Number(a).toLocaleString("en-GB")}+ sq ft`);
+          suggestions.push({ ...row, reason: `Fits their live ${reqSize} requirement`, sizeFit: 2, useFit: 1, peers });
+          continue;
         }
-        if (typical && u.sqft != null && (Number(u.sqft) < typical * 0.6 || Number(u.sqft) > typical * 1.6)) continue;
+        if (typical && sq != null && (sq < typical * 0.6 || sq > typical * 1.6)) continue;
         const useHit = USE_HINTS.some(([reqRe, unitRe]) => reqRe.test(typeText) && unitRe.test(unitText));
         if (useHit) {
           // "Restaurant suits their Restaurant format" said nothing — name the
@@ -4999,11 +5032,13 @@ Return a JSON object with these fields (use null for any field you cannot find):
           const format = (brandType || "").replace(/^Tenant - /, "").trim();
           const sameWord = use && format && use.toLowerCase().split(/[\s/,&]+/).some(w => w.length > 2 && format.toLowerCase().includes(w));
           const reason = sameWord ? `${use} unit — same use as their stores` : `${use || "Unit"} use fits their ${format || "format"}`;
-          suggestions.push({ ...u, reason, strength: 1 });
+          // Near the requirement range (or their typical size) beats unknown.
+          const sizeFit = sq == null ? 0 : (range || typical) ? 1 : 0;
+          suggestions.push({ ...row, reason, sizeFit, useFit: 1, peers });
         }
       }
-      suggestions.sort((a, b) => b.strength - a.strength);
-      res.json({ brandName, liveRequirement: !!liveReq, suggestions: suggestions.slice(0, 8) });
+      suggestions.sort((a, b) => b.sizeFit - a.sizeFit || b.useFit - a.useFit || b.peers - a.peers);
+      res.json({ brandName, liveRequirement: !!liveReq, suggestions: suggestions.slice(0, 6).map(({ sizeFit, useFit, peers, ...s }) => ({ ...s, strength: sizeFit === 2 ? 2 : 1 })) });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Loader2, Plus, Building2, Mail, GripVertical, MoreHorizontal, Star, Pencil, Trash2, Check } from "lucide-react";
+import { useAccountWorkspace } from "@/components/account-workspace-cards";
 
 interface TeamMember {
   id: string;
@@ -195,6 +196,11 @@ export function ClientTeamOrgChart({ clientCompanyId, quietWhenEmpty = false }: 
   // "should mirror our internal client Landsec board"). Server-side the
   // client-teams writes are opened in index.ts's client write allowlist.
   const readOnly = false;
+  // The header listed six people "From deals" while this line said "No team
+  // pinned yet" — say they're shown from deals, don't claim none (Woody,
+  // 2026-09-28). Same cached workspace query the header reads.
+  const { data: workspace } = useAccountWorkspace(quietWhenEmpty ? clientCompanyId : undefined);
+  const derivedCount = (workspace?.team || []).filter(m => !m.sources.includes("curated")).length;
 
   const { data: members = [], isLoading } = useQuery<TeamMember[]>({
     queryKey: ["/api/client-teams", clientCompanyId],
@@ -392,7 +398,7 @@ export function ClientTeamOrgChart({ clientCompanyId, quietWhenEmpty = false }: 
   if (quietWhenEmpty && members.length === 0) {
     return (
       <div className="text-xs text-muted-foreground" data-testid="client-team-orgchart">
-        No team pinned yet · <button type="button" className="text-primary hover:underline" onClick={() => setShowAdd(true)} data-testid="btn-add-team-member">Add to team</button>
+        {derivedCount > 0 ? "Not pinned yet — showing BGP people from deals" : "No team pinned yet"} · <button type="button" className="text-primary hover:underline" onClick={() => setShowAdd(true)} data-testid="btn-add-team-member">Add to team</button>
         {addDialog}
       </div>
     );

@@ -310,7 +310,7 @@ function LandlordsTab({
                       <TableCell className="text-center text-sm">{compContacts.length}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center gap-1 justify-end">
-                          {onScopeLandlord && (
+                          {onScopeLandlord && compContacts.length > 0 && (
                             <button onClick={(e) => { e.stopPropagation(); onScopeLandlord(company.id); }} className="text-xs text-primary hover:text-primary/80 font-medium whitespace-nowrap">Open people</button>
                           )}
                           {onDeleteCompany && (
@@ -351,8 +351,11 @@ function LandlordsTab({
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 )}
-                <CardContent className="p-4">
-                  <div className="flex items-start gap-3">
+                {/* Footer pinned to the card bottom so the stats line up across
+                    a row whether or not there's a description; "Open people"
+                    only when there are people (Woody, 2026-09-28). */}
+                <CardContent className="p-4 h-full flex flex-col">
+                  <div className="flex items-start gap-3 mb-3">
                     <CompanyLogo company={company} size="lg" />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
@@ -367,7 +370,7 @@ function LandlordsTab({
                       )}
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 pt-3 border-t text-xs text-muted-foreground">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-auto pt-3 border-t text-xs text-muted-foreground">
                     <span className="flex items-center gap-1 shrink-0">
                       <Building className="w-3 h-3" />
                       {compProps.length} {compProps.length === 1 ? "property" : "properties"}
@@ -380,7 +383,7 @@ function LandlordsTab({
                       <Users className="w-3 h-3" />
                       {compContacts.length} {compContacts.length === 1 ? "contact" : "contacts"}
                     </span>
-                    {onScopeLandlord && (
+                    {onScopeLandlord && compContacts.length > 0 && (
                       <button
                         onClick={(e) => { e.preventDefault(); e.stopPropagation(); onScopeLandlord(company.id); }}
                         className="ml-auto flex items-center gap-1 text-primary hover:text-primary/80 font-medium shrink-0 whitespace-nowrap"
@@ -407,6 +410,14 @@ function LandlordsTab({
       )}
     </div>
   );
+}
+
+// Our own firm isn't an outside agent — keep BGP out of the agent-firm list
+// and counts (Woody, 2026-09-28).
+function isOwnFirm(c: CrmCompany): boolean {
+  if (/bruce\s+gillingham\s+pollard/i.test(c.name || "")) return true;
+  const d = `${(c as any).domain || ""} ${(c as any).domainUrl || ""}`.toLowerCase();
+  return d.includes("brucegillinghampollard.com");
 }
 
 function AgentsTab({
@@ -505,15 +516,17 @@ function AgentsTab({
   }, [investmentItems]);
 
   const agentCompanies = useMemo(() => {
-    return companies.filter((c) => (c.companyType || "").toLowerCase() === "agent");
+    return companies.filter((c) => (c.companyType || "").toLowerCase() === "agent" && !isOwnFirm(c));
   }, [companies]);
 
   const agentContacts = useMemo(() => {
+    const ownIds = new Set(companies.filter(isOwnFirm).map((c) => c.id));
     return contacts.filter((c) => {
+      if (c.companyId && ownIds.has(c.companyId)) return false;
       const t = (c.contactType || "").toLowerCase();
       return t === "agent" || (c.companyId && agentCompanies.find((a) => a.id === c.companyId));
     });
-  }, [contacts, agentCompanies]);
+  }, [contacts, companies, agentCompanies]);
 
   const contactsByCompany = useMemo(() => {
     const map: Record<string, CrmContact[]> = {};
@@ -600,9 +613,10 @@ function AgentsTab({
           ["Lease Advisory", "stat-lease-advisory", agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "lease advisory").length],
         ] as const).filter(([label, , n]) => n > 0 || specialtyFilter === label).map(([label, testId, n]) => (
           <Pill key={label} active={specialtyFilter === label} onClick={() => setSpecialtyFilter(specialtyFilter === label ? null : label)} data-testid={testId}>
-            {/* These count people, the reset chip counts firms — say so
-                (Woody, 2026-09-27). */}
-            {label} <span className="font-mono tabular-nums">{n.toLocaleString("en-GB")}</span> {n === 1 ? "agent" : "agents"}
+            {/* People counts, number last — "LEASING 171 AGENTS" put it
+                mid-label; the "individual agents" line says what they count
+                (Woody, 2026-09-28). */}
+            {label} · <span className="font-mono tabular-nums">{n.toLocaleString("en-GB")}</span>
           </Pill>
         ))}
         <span className="text-xs text-muted-foreground ml-1" data-testid="stat-individual-agents">
@@ -614,7 +628,7 @@ function AgentsTab({
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Search agents, firms, or people..."
+            placeholder="Search agents…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 h-9"
@@ -1750,7 +1764,7 @@ function PeopleHub() {
   }, [companies]);
 
   const agentCompaniesCount = useMemo(() => {
-    return companies.filter((c) => (c.companyType || "").toLowerCase().trim() === "agent").length;
+    return companies.filter((c) => (c.companyType || "").toLowerCase().trim() === "agent" && !isOwnFirm(c)).length;
   }, [companies]);
 
   const lendersCompanies = useMemo(() => {
@@ -1787,7 +1801,9 @@ function PeopleHub() {
           </h1>
           <p className="text-sm text-muted-foreground">
             {/* toLocaleString — countLabel printed "1110 contacts" (Woody, 2026-09-27). */}
-            {[[landlordCompanies.length, "landlord"], [agentCompaniesCount, "agent"], [hubContactCount, "contact"]].map(([n, w]) => `${(n as number).toLocaleString("en-GB")} ${w}${n === 1 ? "" : "s"}`).join(" · ")}
+            {/* Agents are counted as firms — "146 agents" beside chips counting
+                439 people read as a contradiction (Woody, 2026-09-28). */}
+            {[[landlordCompanies.length, "landlord"], [agentCompaniesCount, "agent firm"], [hubContactCount, "contact"]].map(([n, w]) => `${(n as number).toLocaleString("en-GB")} ${w}${n === 1 ? "" : "s"}`).join(" · ")}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -1801,7 +1817,9 @@ function PeopleHub() {
           <Button variant="outline" size="sm" onClick={() => setHubAddContactOpen(true)} data-testid="button-hub-add-contact">
             <Plus className="w-4 h-4 mr-1" /> Add contact
           </Button>
-          <ViewToggle view={viewMode} onToggle={setViewMode} />
+          {/* Only the Landlords tab has a table/cards choice, and below md
+              the toggle is a lone "Cards" — hide it otherwise (Woody, 2026-09-28). */}
+          {tab === "landlords" && <div className="hidden md:block"><ViewToggle view={viewMode} onToggle={setViewMode} /></div>}
         </div>
       </div>
       <ContactFormDialog open={hubAddContactOpen} onOpenChange={setHubAddContactOpen} />
@@ -1809,7 +1827,8 @@ function PeopleHub() {
           page title and fill the first phone screen (Woody, 2026-09-27). */}
       <ContactDataHealth />
 
-      <div className="flex flex-wrap gap-1.5">
+      {/* One sideways-scrolling row on the phone rather than wrapping. */}
+      <div className="flex gap-1.5 flex-nowrap overflow-x-auto pb-1 md:flex-wrap md:overflow-visible md:pb-0 [&>*]:shrink-0">
         {tabs.map((t) => (
           <Pill
             key={t.key}

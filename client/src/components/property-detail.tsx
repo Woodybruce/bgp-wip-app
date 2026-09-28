@@ -119,17 +119,20 @@ import {
 // that already provides the heading + Card chrome, so we drop our
 // own wrapper.
 function PropertyComplianceBoardWrapper({
-  property, allCompanies, embedded = false,
+  property, allCompanies, companiesLoaded = true, embedded = false,
 }: {
   property: CrmProperty;
   allCompanies: CrmCompany[];
+  companiesLoaded?: boolean;
   embedded?: boolean;
 }) {
   // First owner link that still points at a company — Brixton's freeholder
   // id pointed at a deleted record and the card could only say "not found".
   const ownerCandidates = [(property as any).freeholderId, (property as any).longLeaseholderId, (property as any).landlordId].filter(Boolean) as string[];
+  // Wait for the company list — guessing the first candidate fired a 404
+  // for the deleted freeholder on every Brixton load.
   const ownerId: string | null =
-    (allCompanies.length ? ownerCandidates.find(id => allCompanies.some(c => c.id === id)) : ownerCandidates[0])
+    (allCompanies.length ? ownerCandidates.find(id => allCompanies.some(c => c.id === id)) : companiesLoaded ? ownerCandidates[0] : null)
     || null;
 
   // Billing entity is BGP invoicing bookkeeping — the setter's PUT
@@ -380,7 +383,7 @@ export function PropertyDetail({ id }: { id: string }) {
   const linkedEvidencePlan = evidencePlans.find(p => p.property_id === id);
   const { data: investmentData } = useQuery<{ assets: any[]; ownership: any[] }>({ queryKey: ["/api/properties", id, "investment"], enabled: !!pdViewer && !isClientViewer });
   const hasInvestment = !!(investmentData?.assets?.length || investmentData?.ownership?.length);
-  const { data: allCompanies = [] } = useQuery<CrmCompany[]>({
+  const { data: allCompanies = [], isFetched: companiesLoaded } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies", { includeBillingEntities: true }],
     queryFn: async () => {
       const res = await fetch("/api/crm/companies?includeBillingEntities=true", { credentials: "include", headers: getAuthHeaders() });
@@ -1183,7 +1186,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 testId="toggle-compliance-section"
               >
                 <ErrorBoundary compact name="Property compliance & KYC">
-                  <PropertyComplianceBoardWrapper property={property} allCompanies={allCompanies} embedded />
+                  <PropertyComplianceBoardWrapper property={property} allCompanies={allCompanies} companiesLoaded={companiesLoaded} embedded />
                 </ErrorBoundary>
               </ReferenceSection>
               </PropertySection>

@@ -110,16 +110,22 @@ export function verdictAsBullets(text: string): string {
   return `**${head.replace(/\*\*/g, "")}**\n${rest.map(x => `- ${x}`).join("\n")}`;
 }
 
-export function CovenantCommentary({ companyNumber, className = "" }: { companyNumber?: string | null; className?: string }) {
+// The report query on its own, so a card can decide whether it has anything
+// to show before drawing a bare "Covenant" heading (Woody, 2026-09-28).
+export function useCovenantReport(companyNumber?: string | null) {
   const num = (companyNumber || "").trim();
-  const isClientViewer = useIsClientViewer();
-  const { data } = useQuery<any>({
+  return useQuery<any>({
     queryKey: ["covenant", num],
     queryFn: async () => (await apiRequest("GET", `/api/covenant/${encodeURIComponent(num)}`)).json(),
     enabled: !!num,
     staleTime: 60 * 60 * 1000,
     retry: 1,
   });
+}
+
+export function CovenantCommentary({ companyNumber, className = "" }: { companyNumber?: string | null; className?: string }) {
+  const num = (companyNumber || "").trim();
+  const { data } = useCovenantReport(num);
   if (!num || !data?.grade) return null;
 
   return (

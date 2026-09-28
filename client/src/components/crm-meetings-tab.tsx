@@ -6,6 +6,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { gbDate } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -102,7 +103,7 @@ function formatMeetingDate(iso: string | null): string | null {
   if (!y || !m || !d) return null;
   const date = new Date(y, m - 1, d);
   const sameYear = date.getFullYear() === new Date().getFullYear();
-  return date.toLocaleDateString("en-GB", { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) });
+  return gbDate(date, { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) });
 }
 
 export function CrmMeetingsTab() {
@@ -360,7 +361,8 @@ export function CrmMeetingsTab() {
                   <span className="font-mono tabular-nums">
                     {answered === 0 ? "Not started" : answered === total ? "Complete" : `${answered} of ${total} answered`}
                   </span>
-                  <span className="font-mono tabular-nums">{dateLabel || "No date set"}</span>
+                  {/* Dates are words in running UI, not mono (Woody, 2026-09-28). */}
+                  <span>{dateLabel || "No date set"}</span>
                 </div>
               </button>
             );

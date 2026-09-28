@@ -640,7 +640,10 @@ function ContactNotes({ notes }: { notes: string }) {
   return (
     <div className="text-sm space-y-1" data-testid="text-contact-notes">
       <p>
-        Emailed {count} times by {nameList}.
+        {/* The count is a snapshot from when the contact was added, so it
+            read as contradicting the live board's 90-day counts — say its
+            scope (Woody, 2026-09-28). */}
+        Added from email after {count} emails with {nameList}.
         {subjectList.length > 0 && (
           <button type="button" className="ml-1.5 text-xs text-muted-foreground underline hover:text-foreground" onClick={() => setShowSubjects((v) => !v)}>
             {showSubjects ? "Hide subjects" : "Sample subjects"}

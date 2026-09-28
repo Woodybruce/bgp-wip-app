@@ -24,7 +24,10 @@ export interface CentreOpening { centre: string; title: string; url: string; sou
 const escapeRe = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const namesCentre = (text: string, centre: UkCentre) => [centre.name, ...centre.aliases]
   .some(alias => new RegExp(`(^|[^a-z0-9])${escapeRe(alias.toLowerCase().replace(/['’]/g, "'"))}([^a-z0-9]|$)`).test(text.toLowerCase().replace(/[’]/g, "'")));
-export const isOpeningHeadline = (text: string) => OPENING.test(text) && !CLOSING.test(text) && !NOISE.test(text);
+// "Landsec (LSE:LAND) Signs a Danish Fashion Name…" is investor clickbait
+// retelling an opening already listed (Woody, 2026-09-28).
+const TICKER = /\((?:LSE|LON|NYSE|NASDAQ|AIM|OTC)\s*:\s*[A-Z.]+\)/i;
+export const isOpeningHeadline = (text: string) => OPENING.test(text) && !CLOSING.test(text) && !NOISE.test(text) && !TICKER.test(text);
 
 type BrandIndex = Array<{ id: string; name: string; re: RegExp }>;
 let brandIndex: { at: number; list: BrandIndex } | null = null;
@@ -64,7 +67,7 @@ async function googleNews(centre: UkCentre): Promise<Array<{ title: string; url:
 }
 
 async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpening[]> {
-  const key = `centre-openings:v7:${centre.name}`;
+  const key = `centre-openings:v8:${centre.name}`;
   const cached = (await pool.query("SELECT value, updated_at FROM system_settings WHERE key = $1", [key])).rows[0];
   if (cached && Date.now() - new Date(cached.updated_at).getTime() < DAY_MS && Array.isArray(cached.value?.items)) return cached.value.items;
 
@@ -149,7 +152,7 @@ async function centreFeed(centre: UkCentre, list: BrandIndex): Promise<CentreOpe
       }
       // A feed named after the brand ("Mulberry") or the centre's own "what's
       // new" page isn't a source worth printing beside the brand link.
-      if (source && (item.brand && source.toLowerCase() === item.brand.name.toLowerCase() || /what['’]s new|^news$/i.test(source))) source = null;
+      if (source && (item.brand && source.toLowerCase() === item.brand.name.toLowerCase() || /what['’]s new|^news$|\s[—–-]\s*news$/i.test(source))) source = null;
       return { ...item, title, source };
     });
   await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2::jsonb, NOW())

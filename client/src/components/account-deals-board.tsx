@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Briefcase, ChevronLeft, ChevronRight } from "lucide-react";
 import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS, legacyToCode } from "@shared/deal-status";
+import { tidyActionTitle } from "@/components/account-workspace-cards";
 
 interface AccountDealRow {
   dealId: string;
@@ -132,17 +133,38 @@ function dealShort(d: AccountDealRow, unit: string | null): string {
   const rest = keep.join(" – ");
   return !squash(rest) || bare(rest) === cp ? (unit || "Open deal") : rest;
 }
+// Units also restated the property at the END or middle ("Unit 7 Eureka
+// Leisure Park", "R6 - Gunwharf Quays", "146 Queen Street (LK16), Westgate,
+// OX1 1PB"), or left just the town ("Cardiff") or a "—". Strip the property
+// wherever it sits, drop postcodes and a trailing one-word town, and hide
+// what's left if it's empty (Woody, 2026-09-28).
+const UNIT_SEP = /\s*,\s*|\s+[-–—]\s+/;
+const FULL_POSTCODE = /^([A-Za-z' ]+\s)?[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i;
+const TOWN_POSTCODE = /^[A-Za-z' ]+\s[A-Z]{1,2}\d[A-Z\d]?$/;
+const UNIT_WORD = /^(unit|kiosk|floor|level|basement|mezzanine|ground|first|upper|lower|suite|block|shop|store|pod|stand)\b/i;
+function cleanUnit(raw: string | null | undefined, propertyName: string | null): string | null {
+  let u = (raw || "").trim();
+  if (!u || /^[-–—]+$/.test(u)) return null;
+  const pn = (propertyName || "").trim();
+  const prop = squash(pn);
+  if (prop && prop.includes(squash(u))) return null;
+  for (const p of [pn, pn.split(/\s*[,(]/)[0]]) {
+    if (p.length >= 4) u = u.replace(new RegExp(p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+"), "ig"), " ");
+  }
+  const keep = u.split(UNIT_SEP).map(s => s.trim().replace(/^[\s,–—-]+|[\s,–—-]+$/g, "")).filter((seg, i) => {
+    const q = squash(seg);
+    if (!q) return false;
+    if (prop && (q.includes(prop) || (q.length >= 4 && prop.includes(q)))) return false;
+    if (FULL_POSTCODE.test(seg)) return false;
+    if (i > 0 && (TOWN_POSTCODE.test(seg) || (!/[\d\s]/.test(seg) && !UNIT_WORD.test(seg)))) return false;
+    return true;
+  });
+  const out = keep.join(", ").trim();
+  return squash(out) ? out : null;
+}
 function rowLabels(d: AccountDealRow): { unit: string | null; dealRepeats: boolean } {
   const prop = squash(d.propertyName);
-  let unit: string | null = d.unitName?.trim() || null;
-  if (unit && prop) {
-    if (prop.includes(squash(unit))) unit = null;
-    else if (squash(unit).startsWith(prop)) {
-      // "Newsons Yard Kiosk" under "Newsons Yard" → "Kiosk"
-      const rest = unit.slice((d.propertyName || "").trim().length).replace(/^[\s,–-]+/, "");
-      unit = squash(rest) ? rest : null;
-    }
-  }
+  const unit = cleanUnit(d.unitName, d.propertyName);
   const name = squash(d.name);
   const dealRepeats = !!name && (name === prop || name === squash(d.unitName) || name === squash(`${d.propertyName} ${d.unitName}`));
   return { unit, dealRepeats };
@@ -153,7 +175,7 @@ function NextActionCell({ d }: { d: AccountDealRow }) {
   const na = d.nextAction;
   return (
     <span className="block min-w-0">
-      <span className="block truncate">{na.title}</span>
+      <span className="block truncate" title={na.title}>{tidyActionTitle(na.title, [d.propertyName])}</span>
       <span className="block text-[10px] text-muted-foreground truncate">
         {[na.ownerName, na.dueDate ? `due ${new Date(na.dueDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : null].filter(Boolean).join(" · ")}
       </span>
@@ -287,9 +309,11 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                     return (
                     <tr key={d.dealId} className="border-b border-border/20 last:border-0 hover:bg-muted/40" data-testid={`account-deal-row-${d.dealId}`}>
                       <td className="py-1.5 pr-2 max-w-[12rem]">
+                        {/* No "—" placeholder line above the deal link — it
+                            read as a missing unit (Woody, 2026-09-28). */}
                         {d.propertyId ? (
-                          <Link href={`/properties/${d.propertyId}`} className="font-medium hover:underline block truncate">{d.propertyName || "—"}</Link>
-                        ) : <span className="text-muted-foreground">—</span>}
+                          <Link href={`/properties/${d.propertyId}`} className="font-medium hover:underline block truncate">{d.propertyName || "Property"}</Link>
+                        ) : d.propertyName ? <span className="font-medium block truncate">{d.propertyName}</span> : null}
                         {labels.unit && dealLink !== labels.unit && <span className="block text-[10px] text-muted-foreground truncate">{labels.unit}</span>}
                         <Link href={`/deals?id=${d.dealId}`} className="block text-[10px] text-primary hover:underline truncate" title={d.name}>{dealLink}</Link>
                       </td>
@@ -341,7 +365,7 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                   </div>
                   {d.nextAction && (
                     <div className="text-[11px]">
-                      <span className="text-foreground">{d.nextAction.title}</span>
+                      <span className="text-foreground">{tidyActionTitle(d.nextAction.title)}</span>
                       <span className="text-muted-foreground">
                         {" "}— {[d.nextAction.ownerName, d.nextAction.dueDate ? `due ${new Date(d.nextAction.dueDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : null].filter(Boolean).join(" · ")}
                       </span>

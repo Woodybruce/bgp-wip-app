@@ -90,7 +90,7 @@ function matchBaselineRow(
       } else if (candidates.length > 1) {
         differences.push(`"${part}" matches ${candidates.length} CRM properties — ambiguous, not guessed`);
       } else {
-        differences.push(`"${part}" not found in the CRM portfolio`);
+        differences.push(`"${part}" not in our CRM`);
       }
     }
     if (matched.length !== b.expected_crm_property_count) {
@@ -107,7 +107,9 @@ function matchBaselineRow(
   }
   const matched = nameMatches;
   if (matched.length === 0) {
-    differences.push("not found in the CRM portfolio (exact name match)");
+    // Plain short labels — the pipeline wording ("not found in the CRM
+    // portfolio (exact name match)") repeated on every row (Woody, 2026-09-28).
+    differences.push("Not in our CRM");
   } else if (matched.length !== b.expected_crm_property_count) {
     differences.push(`expected ${b.expected_crm_property_count} CRM properties, matched ${matched.length}`);
   }
@@ -167,7 +169,7 @@ export function reconcileBaseline(
       bgp_instruction: instructionPropertyIds.has(p.propertyId),
       media_count: mediaCounts.get(p.propertyId) ?? 0,
       status: "extra_in_crm",
-      unresolved_differences: ["in the CRM portfolio but not on the official baseline"],
+      unresolved_differences: ["Not on the official list"],
     });
   }
 
@@ -299,6 +301,11 @@ router.get("/api/accounts/:id/reconciliation", requireAuth, async (req: Request,
 
     const seeded = await ensureBaselineSeeded(q, companyId, baselineName, companyRows[0].name);
     if (seeded === 0) {
+      // Most landlords have no baseline: that's "no data check", not an
+      // error — a 404 put a red line in the console on every landlord page
+      // (Woody, 2026-09-28). An explicit ?baseline= that doesn't exist
+      // still 404s.
+      if (!req.query.baseline) return res.status(204).end();
       return res.status(404).json({ error: "No reconciliation baseline for this company" });
     }
 

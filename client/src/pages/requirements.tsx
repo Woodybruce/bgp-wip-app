@@ -36,6 +36,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Search, Users, FileText, AlertCircle, X, Plus, Pencil, Trash2, Building2, Archive, User, Mail, Phone, Upload, Download, File, MapPin, Check, Circle, Loader2, Sparkles, MessageCircle, Target, Flame, MoreVertical } from "lucide-react";
 import { formatSizeList, formatSizeText } from "@/lib/format-size";
+import { gbDate, useClassLabel } from "@/lib/format";
 import { countLabel } from "@/lib/utils";
 import { TENANT_CATEGORIES, CLIENT_CRM_CATEGORIES } from "@shared/tenant-categories";
 import {
@@ -829,10 +830,13 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
     );
   }
 
+  // Phone: search first and each tile strip one sideways-scrolling row — the
+  // tiles filled the first screen and hid the search (Woody, 2026-09-28).
+  const tileRow = isMobile ? "flex-nowrap overflow-x-auto pb-1" : "flex-wrap";
   return (
-    <div className="space-y-4">
+    <div className={isMobile ? "flex flex-col gap-4" : "space-y-4"}>
       {Object.keys(groupCounts).some((group) => group !== "Ungrouped") && (
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className={`flex items-center gap-3 ${tileRow}`}>
         {Object.entries(groupCounts).sort(([a], [b]) => (a === "Ungrouped" ? 1 : 0) - (b === "Ungrouped" ? 1 : 0)).map(([group, count]) => {
           const groupColor = group === "Active" ? "bg-emerald-500" :
             group === "Prospect" ? "bg-blue-500" :
@@ -880,7 +884,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
         <h3 className="text-sm font-semibold">Recent viewing evidence</h3>
         {recentViewingQuery.isLoading ? <Skeleton className="h-24 w-full" /> : recentViewingQuery.isError ? <div className="space-y-2"><p className="text-sm">Viewing evidence could not be loaded.</p><Button variant="outline" size="sm" onClick={() => void recentViewingQuery.refetch()}>Refresh</Button></div> : <>
           {recentViewings.filter(v => filteredItems.some(item => item.companyId === v.companyId)).slice(0, 12).map(viewing => <div key={viewing.id} className="rounded-lg border p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div className="min-w-0"><p className="text-sm font-semibold break-words">{viewing.companyName}</p><p className="text-[11px] text-muted-foreground break-words">{viewing.propertyName} · {viewing.unitName}{viewing.sqft != null ? ` · ${viewing.sqft.toLocaleString("en-GB")} sq ft` : ""}</p><p className="text-[11px] text-muted-foreground">{new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(`${viewing.viewingDate}T12:00:00Z`))}{viewing.outcome ? ` · ${viewing.outcome}` : ""}</p></div>
+            <div className="min-w-0"><p className="text-sm font-semibold break-words">{viewing.companyName}</p><p className="text-[11px] text-muted-foreground break-words">{viewing.propertyName} · {viewing.unitName}{viewing.sqft != null ? ` · ${viewing.sqft.toLocaleString("en-GB")} sq ft` : ""}</p><p className="text-[11px] text-muted-foreground">{gbDate(`${viewing.viewingDate}T12:00:00Z`, { day: "numeric", month: "short", timeZone: "UTC" })}{viewing.outcome ? ` · ${viewing.outcome}` : ""}</p></div>
             <Button variant="outline" size="sm" asChild><a href={`/available?workspace=viewings&viewing=${encodeURIComponent(viewing.id)}`}>Open viewing</a></Button>
           </div>)}
           {!filteredItems.length && <p className="text-sm text-muted-foreground">No requirements match the recent viewing evidence and current filters.</p>}
@@ -893,7 +897,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
           complements the group cards (use mix) with size, geography and how
           much of that demand fits the caller's own vacancies. */}
       {demand.total > 0 && (
-        <div className="flex items-stretch gap-3 flex-wrap">
+        <div className={`flex items-stretch gap-3 ${tileRow}`}>
           <Card className={`flex-1 min-w-[170px] cursor-pointer transition-colors ${fitsOnly ? "border-primary" : ""}`} data-testid="card-demand-fits" onClick={() => setFitsOnly(!fitsOnly)}>
             <CardContent className="p-3">
               <div className="flex items-center gap-2">
@@ -939,11 +943,11 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
         </div>
       )}
 
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className={`flex items-center gap-3 flex-wrap ${isMobile ? "order-first" : ""}`}>
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Search leasing requirements..."
+            placeholder="Search requirements…"
             className="pl-9"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -1027,7 +1031,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
             status: item.status || "Active",
             statusColor: item.status === "Past" ? "bg-zinc-400" : item.status === "Archived" ? "bg-zinc-300" : "bg-emerald-500",
             fields: [
-              { label: "Use", value: Array.isArray(item.use) ? item.use.join(", ") : (item.use as any) },
+              { label: "Use", value: Array.isArray(item.use) ? item.use.map(useClassLabel).join(", ") : useClassLabel(item.use as any) },
               { label: "Size", value: formatSizeList(item.size as any) },
               { label: "Locations", value: Array.isArray(item.requirementLocations) ? item.requirementLocations.join(", ") : (item.requirementLocations as any) },
               { label: "Type", value: Array.isArray(item.requirementType) ? item.requirementType.join(", ") : (item.requirementType as any) },
@@ -1411,7 +1415,7 @@ function RequirementMatchesDialog({ requirement, onClose }: { requirement: any |
                 <div key={unit.id} className="flex items-center justify-between p-3 rounded-md border hover:bg-muted/50 transition-colors" data-testid={`match-unit-${unit.id}`}>
                   <div className="min-w-0">
                     <p className="text-sm font-medium">{unit.unit_name}</p>
-                    <p className="text-xs text-muted-foreground">{unit.property_name || ""} · {unit.use_class || ""}</p>
+                    <p className="text-xs text-muted-foreground">{unit.property_name || ""} · {useClassLabel(unit.use_class)}</p>
                     {unit.location && <p className="text-[10px] text-muted-foreground">{unit.location}</p>}
                   </div>
                   <div className="text-right shrink-0 ml-2">
@@ -1571,7 +1575,7 @@ function LandlordPackCell({ itemId, landlordPack }: { itemId: string; landlordPa
   );
 }
 
-const USE_OPTIONS = CRM_OPTIONS.reqLeasingUse.map((u) => ({ label: u, value: u }));
+const USE_OPTIONS = CRM_OPTIONS.reqLeasingUse.map((u) => ({ label: useClassLabel(u), value: u }));
 const TYPE_OPTIONS = CRM_OPTIONS.reqLeasingType.map((t) => ({ label: t, value: t }));
 const SIZE_OPTIONS = CRM_OPTIONS.reqLeasingSize.map((s) => ({ label: formatSizeText(s), value: s }));
 // Imported sizes ("10000- ft2") aren't in the option list, so the chip showed
@@ -2327,12 +2331,14 @@ function LeasingSection({
             ))}
           </div>
         ) : (
-          <ScrollableTable minWidth={2740}>
+          // Scrolls with the page — its own fixed-height box cut the last
+          // row off under the fold (Woody, 2026-09-28).
+          <ScrollableTable minWidth={2740} pageScroll>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="min-w-[130px] w-[180px] max-w-[180px] sticky left-0 bg-background z-10">Name</TableHead>
-                  <TableHead className="min-w-[100px]">Date</TableHead>
+                  <TableHead className="min-w-[140px]">Date</TableHead>
                   <TableHead className="min-w-[100px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
@@ -2353,7 +2359,7 @@ function LeasingSection({
                       />
                     ) : "Use"}
                   </TableHead>
-                  <TableHead className="min-w-[150px]">
+                  <TableHead className="min-w-[170px] whitespace-nowrap">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Requirement Type"
@@ -2425,7 +2431,7 @@ function LeasingSection({
                       )}
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1 whitespace-nowrap">
                         <InlineDate
                           value={item.requirementDate || null}
                           onSave={(v) => inlineUpdate(item.id, { requirementDate: v || null })}
@@ -3625,7 +3631,7 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
             status: item.status || "Active",
             statusColor: item.status === "Past" ? "bg-zinc-400" : item.status === "Archived" ? "bg-zinc-300" : "bg-emerald-500",
             fields: [
-              { label: "Use", value: Array.isArray(item.use) ? item.use.join(", ") : (item.use as any) },
+              { label: "Use", value: Array.isArray(item.use) ? item.use.map(useClassLabel).join(", ") : useClassLabel(item.use as any) },
               { label: "Type", value: Array.isArray(item.requirementType) ? item.requirementType.join(", ") : (item.requirementType as any) },
               { label: "Lot size", value: Array.isArray(item.size) ? item.size.join(", ") : (item.size as any) },
               { label: "Locations", value: Array.isArray(item.requirementLocations) ? item.requirementLocations.join(", ") : (item.requirementLocations as any) },

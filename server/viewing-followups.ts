@@ -43,6 +43,22 @@ function londonInstant(date: string, time = "12:00") {
   return desired - (offset ? (offset[1] === "+" ? 1 : -1) * (Number(offset[2]) * 60 + Number(offset[3] || 0)) * 60_000 : 0);
 }
 
+// Titles read "Brent Cross · Brent Cross Shopping Centre", "83 Pimlico Road ·
+// Pimlico Rd, London SW1W, UK" and "brand not set · …". Drop a part that is
+// contained in (or abbreviates) another; a missing brand is already listed in
+// the reasons (Woody, 2026-09-28).
+const placeKey = (s: string) => s.toLowerCase()
+  .replace(/\brd\b\.?/g, "road").replace(/\bst\b\.?/g, "street").replace(/\bave?\b\.?/g, "avenue")
+  .replace(/\bsq\b\.?/g, "square").replace(/\bpl\b\.?/g, "place").replace(/\bln\b\.?/g, "lane")
+  .replace(/[^a-z0-9]+/g, "");
+export function placeContext(parts: Array<string | null | undefined>): string {
+  const segs = parts.map(s => (s || "").trim()).filter(s => s && placeKey(s) && !/^brand not set$/i.test(s));
+  return segs.filter((seg, i) => {
+    const head = placeKey(seg.split(",")[0]), full = placeKey(seg);
+    return !segs.some((other, j) => j !== i && head.length >= 4 && placeKey(other).includes(head) && (placeKey(other) !== full || j < i));
+  }).join(" · ");
+}
+
 export function viewingFollowupDecision(viewing: FollowupViewing, now = new Date()): ViewingFollowupDecision {
   const empty: ViewingFollowupDecision = { needed: false, kind: null, dueDate: null, title: "", reasons: [], emailOverdue: false };
   if (viewing.deletedAt || ["cancelled", "no_show", "not_leasing"].includes(viewing.status)) return empty;
@@ -50,7 +66,7 @@ export function viewingFollowupDecision(viewing: FollowupViewing, now = new Date
   const date = calendarDateValue(viewing.viewingDate);
   const missing = viewingMissingDetails(viewing);
   if (!viewing.detailsConfirmedAt) missing.push("Review and confirm the booking details");
-  const context = [viewing.companyName || "brand not set", viewing.unitName, viewing.propertyName].filter(Boolean).join(" · ");
+  const context = placeContext([viewing.companyName, viewing.unitName, viewing.propertyName]);
   let kind: ViewingFollowupDecision["kind"] = null, dueDate: string | null = null;
   let reasons: string[] = [];
   if (missing.length) {
@@ -67,7 +83,7 @@ export function viewingFollowupDecision(viewing: FollowupViewing, now = new Date
   if (!kind || !dueDate) return empty;
   const reminderFrom = kind === "outcome" && date ? londonInstant(date, viewing.viewingTime || "12:00") : londonInstant(dueDate, "09:00");
   return { needed: true, kind, dueDate, reasons,
-    title: `${kind === "details" ? "Confirm viewing details" : kind === "outcome" ? "Log viewing outcome" : "Follow up viewing"} — ${context}`.slice(0, 300),
+    title: `${kind === "details" ? "Confirm viewing details" : kind === "outcome" ? "Log viewing outcome" : "Follow up viewing"}${context ? ` — ${context}` : ""}`.slice(0, 300),
     emailOverdue: now.getTime() - reminderFrom >= 2 * DAY_MS,
   };
 }

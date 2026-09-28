@@ -13,10 +13,11 @@ import { Badge } from "@/components/ui/badge";
 import { Pill } from "@/components/ui/pill";
 import { Handshake, Loader2 } from "lucide-react";
 import { AGENT_ROLES, type AgentRole } from "@shared/agent-roles";
+import { contactDisplayName } from "@/components/company-contacts-board";
 
 type Tab = "teams" | "deals" | "requirements" | "instructions" | "sales" | "leaseAdvisory" | "viewings";
 
-const fmtDate = (d: any) => d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
+const fmtDate = (d: any) => d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep") : "";
 const money = (v: any) => { const n = Number(v); if (!n) return null; return n >= 1_000_000 ? `£${(n / 1_000_000).toFixed(1)}m` : `£${Math.round(n / 1000)}k`; };
 const list = (v: any) => Array.isArray(v) ? v.filter(Boolean).join(", ") : String(v || "");
 const MATTER_LABEL: Record<string, string> = { rent_review: "Rent review", lease_renewal: "Lease renewal", dilapidations: "Dilapidations", service_charge: "Service charge", general: "General" };
@@ -85,6 +86,17 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
   useEffect(() => { setTab(null); }, [companyId]);
   const active = tab && counts[tab] > 0 ? tab : shown[0]?.[0] || null;
 
+  // A role chip opens the tab that lists those dealings. With no evidence
+  // at all the server's roles are the recorded specialties, not dealings —
+  // "3 leasing-agent dealings" sat over "3 people, no recorded dealings
+  // yet" (Woody, 2026-09-28).
+  const ROLE_TABS: Partial<Record<AgentRole, Tab[]>> = {
+    tenant_rep: ["deals", "requirements", "viewings"], letting: ["deals", "instructions"], joint_agent: ["deals"],
+    investment_sell: ["sales", "deals"], investment_buy: ["requirements", "sales", "deals"], lease_advisory: ["leaseAdvisory"],
+  };
+  const tabForRole = (role: AgentRole) => (ROLE_TABS[role] || ["deals"]).find(t => counts[t] > 0) || null;
+  const noEvidence = !!data && !(data.representing?.length) && (Object.keys(counts) as Tab[]).every(t => t === "teams" || counts[t] === 0);
+
   if (data === null) return null;
   return (
     <Card data-testid="agent-relationship">
@@ -101,7 +113,13 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
                   // "Tenant rep 10" beside "Tenant rep team 9" read as two
                   // counts of the same thing — this one is dealings, the team
                   // header is people (Woody, 2026-09-27).
-                  return <Badge key={r.role} variant="outline" className="text-[11px] font-normal" title={meta?.description}><span className="tabular-nums mr-1">{r.count}</span>{String(meta?.short || r.role).toLowerCase().replace(/[\s_]+/g, "-")} dealing{r.count === 1 ? "" : "s"}</Badge>;
+                  const short = String(meta?.short || r.role).toLowerCase();
+                  if (noEvidence) return <Badge key={r.role} variant="outline" className="text-[11px] font-normal text-muted-foreground" title="From recorded specialties — no dealings on record yet">recorded as {short}</Badge>;
+                  const target = tabForRole(r.role);
+                  const chip = <><span className="tabular-nums mr-1">{r.count}</span>{short.replace(/[\s_]+/g, "-")} dealing{r.count === 1 ? "" : "s"}</>;
+                  return target
+                    ? <button key={r.role} type="button" onClick={() => setTab(target)} title={meta?.description} className="inline-flex items-center rounded-md border px-2.5 py-0.5 text-[11px] hover:bg-muted" data-testid={`agent-role-${r.role}`}>{chip}</button>
+                    : <Badge key={r.role} variant="outline" className="text-[11px] font-normal" title={meta?.description}>{chip}</Badge>;
                 })
               : <span className="text-xs text-muted-foreground italic">No recorded dealings yet — roles appear as deals, requirements, viewings and matters link to this firm or its people.</span>}
           </div>
@@ -128,10 +146,13 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
                 <div key={g.team || "none"} className="space-y-1">
                   <div className="text-[10px] uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
                     {g.team ? `${g.team} team` : "No team set"}<Badge variant="outline" className="text-[9px] tabular-nums normal-case tracking-normal">{g.people.length} {g.people.length === 1 ? "person" : "people"}</Badge>
-                    {toFix.length > 1 && <Button variant="ghost" size="sm" className="h-5 px-1.5 text-[10px] normal-case tracking-normal ml-auto" disabled={setTeam.isPending} onClick={() => setTeam.mutate(toFix)} data-testid="button-agent-team-fix-all">Set all {toFix.length} to {g.team}</Button>}
+                    {toFix.length > 1 && <span className="ml-auto flex items-center gap-1 normal-case tracking-normal text-[10px]">
+                      {toFix.length} people here are recorded under another team ·
+                      <Button variant="ghost" size="sm" className="h-5 px-1.5 text-[10px] underline underline-offset-2" disabled={setTeam.isPending} onClick={() => setTeam.mutate(toFix)} data-testid="button-agent-team-fix-all">Set all to {g.team}</Button>
+                    </span>}
                   </div>
                   {busy.slice(0, 8).map((p: any) => (
-                    <Row key={p.id} href={`/contacts/${p.id}`} title={p.name}
+                    <Row key={p.id} href={`/contacts/${p.id}`} title={contactDisplayName(p.name)}
                       sub={p.title || undefined}
                       right={<>{Object.entries(p.capacities).sort((a: any, b: any) => b[1] - a[1]).slice(0, 2).map(([role, n]: any) => (
                         <Badge key={role} variant="outline" className="text-[9px]">{AGENT_ROLES.find(r => r.role === role)?.short || role} {n}</Badge>

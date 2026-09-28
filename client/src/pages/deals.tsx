@@ -110,7 +110,7 @@ import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineLinkSe
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass, teamLabel } from "@/lib/crm-options";
-import { toDateInputValue } from "@/lib/format";
+import { toDateInputValue, stripPropertyFromTitle, gbDate } from "@/lib/format";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { PageLayout } from "@/components/page-layout";
@@ -283,7 +283,7 @@ export function formatDate(val: string | Date | null | undefined): string {
     const d = new Date(val);
     // Year only when it isn't this year (docs/DESIGN.md §15).
     const sameYear = d.getFullYear() === new Date().getFullYear();
-    return d.toLocaleDateString("en-GB", sameYear ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "numeric" });
+    return gbDate(d, sameYear ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "numeric" });
   } catch {
     return typeof val === "string" ? val : "—";
   }
@@ -294,7 +294,7 @@ export function formatDate(val: string | Date | null | undefined): string {
 export function formatMonthYear(val: string | Date | null | undefined): string {
   if (!val) return "—";
   try {
-    return new Date(val).toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+    return gbDate(val, { month: "short", year: "numeric" });
   } catch {
     return typeof val === "string" ? val : "—";
   }
@@ -1071,83 +1071,7 @@ function PropertyUnitCell({
   );
 }
 
-// Drop the property from a deal title when the card subtitle already shows
-// it. First by separator-delimited segment (– — - | : , ·): a segment that is
-// the property (or its leading words — "Kings Road" under "Kings Road Park")
-// goes along with any trailing town after it, so "Pret A Manger – Gunwharf
-// Quays, Portsmouth" → "Pret A Manger"; a leading/trailing segment that is a
-// town in the property's address goes too ("Cardiff - Starbucks Hays" →
-// "Starbucks Hays"). Then by the property's leading words at either end with
-// no separator ("10 Piccadilly Time Out Market" under "10 Piccadilly"). Never
-// strips to empty (Woody, 2026-09-27).
-const TITLE_STOPWORDS = new Set(["the", "and", "of", "at", "on", "in"]);
-export function stripPropertyFromTitle(title: string, propName: string, propAddress?: string | null): string {
-  // The title is itself a short form of the property ("Brent Cross") — keep it.
-  if (propName.trim().toLowerCase().startsWith(title.trim().toLowerCase())) return title;
-  const norm = (v: string) => v.toLowerCase().replace(/[’']/g, "").replace(/&/g, "and").replace(/[^a-z0-9]+/g, " ").trim().replace(/^the /, "");
-  const significant = (n: string) => n.split(" ").some(w => /[a-z]{3,}/.test(w) && !TITLE_STOPWORDS.has(w));
-  const prop = norm(propName);
-  const addr = ` ${norm(propAddress || "")} `;
-  const isProp = (seg: string) => {
-    const n = norm(seg);
-    return !!n && !!prop && significant(n) && (n === prop || prop.startsWith(`${n} `) || n.startsWith(`${prop} `));
-  };
-  const isPlace = (seg: string) => {
-    const n = norm(seg);
-    return !!n && significant(n) && n.split(" ").length <= 3 && addr.includes(` ${n} `);
-  };
-  const trimSep = (v: string) => v.replace(/^[\s–—\-|,:·]+|[\s–—\-|,:·]+$/g, "");
-  // `comma` marks a segment that follows ", " — the "Property, Town" form.
-  const split = (t: string) => {
-    const out: { text: string; start: number; end: number; comma: boolean }[] = [];
-    let last = 0;
-    let comma = false;
-    for (const m of t.matchAll(/\s*[–—|·]\s*|\s+-\s*|\s*-\s+|\s*[,:]\s+/g)) {
-      out.push({ text: t.slice(last, m.index), start: last, end: m.index!, comma });
-      last = m.index! + m[0].length;
-      comma = m[0].trim() === ",";
-    }
-    out.push({ text: t.slice(last), start: last, end: t.length, comma });
-    return out;
-  };
-  // The property's leading words at either end of one segment, with no
-  // separator: "10 Piccadilly Time Out Market", "The Blue Lagoon Bluewater".
-  const words = propName.trim().split(/\s+/).filter(Boolean);
-  const esc = (w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const stripEnds = (seg: string) => {
-    for (let k = words.length; k >= 1; k--) {
-      const head = words.slice(0, k);
-      if (!head.some(w => /[a-z]{3,}/i.test(w) && !TITLE_STOPWORDS.has(w.toLowerCase()))) continue;
-      const prefix = head.map(esc).join("\\s+");
-      for (const re of [new RegExp(`^\\s*${prefix}\\s+`, "i"), new RegExp(`\\s+${prefix}\\s*$`, "i")]) {
-        const rest = seg.replace(re, "").trim();
-        if (rest && rest !== seg.trim()) return rest;
-      }
-    }
-    return seg;
-  };
-  let base = title;
-  const segs = split(title);
-  if (segs.length > 1) {
-    let rest: string | null = null;
-    const i = segs.findIndex(sg => isProp(sg.text));
-    if (i > 0) {
-      // Keep what follows the property unless it's its town ("…, Portsmouth").
-      const after = segs.slice(i + 1).filter(sg => !sg.comma && !isPlace(sg.text)).map(sg => trimSep(sg.text).trim()).filter(Boolean);
-      rest = [title.slice(0, segs[i].start), ...after].map(v => trimSep(v).trim()).filter(Boolean).join(" – ");
-    } else if (i === 0) {
-      let j = 1;
-      while (j < segs.length - 1 && isPlace(segs[j].text)) j++;
-      rest = title.slice(segs[j].start);
-    } else if (isPlace(segs[0].text)) rest = title.slice(segs[1].start);
-    else if (isPlace(segs[segs.length - 1].text)) rest = title.slice(0, segs[segs.length - 1].start);
-    const out = rest == null ? "" : trimSep(rest).trim();
-    if (out) base = out;
-  }
-  const parts = split(base);
-  const rebuilt = parts.map((sg, idx) => (idx ? base.slice(parts[idx - 1].end, sg.start) : "") + stripEnds(sg.text)).join("").trim();
-  return rebuilt || base;
-}
+export { stripPropertyFromTitle };
 
 // Consolidated Fee cell — £ amount on top, Fee Agreement chip
 // underneath. Popover lets the team set both without touching two
@@ -3273,11 +3197,11 @@ function FeeAllocCell({ dealId, dealFee, allAllocations, colorMap, teams, onClic
   const fee = dealFee || 0;
   const teamList: string[] = Array.isArray(teams) ? teams : (teams ? [teams] : []);
   const teamBadges = teamList.length > 0 ? (
-    <div className="flex flex-wrap gap-0.5 mb-0.5">
+    <div className="flex flex-wrap gap-0.5 mb-0.5 min-w-0">
       {teamList.map(t => (
         // Long team names ("Development Re-Purposing") truncate with a
         // tooltip instead of widening/clipping the column (Woody, 2026-09-27).
-        <Badge key={t} variant="secondary" title={t} className={`text-[9px] px-1 py-0 leading-tight max-w-[150px] truncate block ${DEAL_TEAM_COLORS[t] || ""}`}>{t}</Badge>
+        <Badge key={t} variant="secondary" title={t} className={`text-[9px] px-1 py-0 leading-tight max-w-full truncate block ${DEAL_TEAM_COLORS[t] || ""}`}>{t}</Badge>
       ))}
     </div>
   ) : null;
@@ -3292,23 +3216,27 @@ function FeeAllocCell({ dealId, dealFee, allAllocations, colorMap, teams, onClic
     );
   }
   return (
-    // min-w + shrink-0 amount — at 1440px the split column squeezed "£15,000"
-    // down to "£15" (Woody, 2026-09-27).
-    <div className="space-y-0.5 cursor-pointer group min-w-[170px]" onClick={onClick} data-testid={`fee-alloc-summary-${dealId}`}>
+    // Name over amount, so the split fits the column instead of pushing the
+    // £ amounts off the table's right edge; the avatar falls back to a solid
+    // ink dot — BGP House's white initials on primary/10 were invisible
+    // (Woody, 2026-09-28).
+    <div className="space-y-1 cursor-pointer group min-w-0" onClick={onClick} data-testid={`fee-alloc-summary-${dealId}`}>
       {teamBadges}
       {allocations.map((a, i) => {
         const amount = a.allocationType === "percentage"
           ? (fee ?? 0) * (a.percentage || 0) / 100
           : a.fixedAmount || 0;
         const initials = a.agentName.split(" ").map(n => n[0]).join("").slice(0, 2);
-        const bg = colorMap?.[a.agentName] || "bg-primary/10";
+        const bg = colorMap?.[a.agentName] || "bg-muted-foreground";
         return (
-          <div key={i} className="flex items-center gap-1.5">
+          <div key={i} className="flex items-center gap-1.5 min-w-0" title={`${a.agentName} · ${formatCurrency(amount)}`}>
             <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 ${bg}`}>
               <span className="text-[7px] font-bold text-white">{initials}</span>
             </div>
-            <span className="text-[11px] truncate min-w-0 max-w-[70px]" title={a.agentName}>{a.agentName.split(" ")[0]}</span>
-            <span className="text-[10px] text-muted-foreground ml-auto font-mono tabular-nums shrink-0 whitespace-nowrap">{formatCurrency(amount)}</span>
+            <div className="min-w-0 leading-tight">
+              <p className="text-[11px] truncate">{a.agentName.split(" ")[0]}</p>
+              <p className="text-[10px] text-muted-foreground font-mono tabular-nums whitespace-nowrap">{formatCurrency(amount)}</p>
+            </div>
           </div>
         );
       })}
@@ -4409,24 +4337,31 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
         {invoices.length > 0 && (
           <div className="space-y-2">
             {invoices.map((inv: any) => (
-              <div key={inv.id} className="flex items-center justify-between p-2 rounded-md border text-sm">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Badge variant="outline" className={`border-transparent text-[10px] text-white ${XERO_STATUS_COLORS[inv.status] || "bg-zinc-500"}`}>
+              <div key={inv.id} className="flex items-center justify-between gap-2 p-2 rounded-md border text-sm">
+                {/* Two lines — entity name, then invoice # + amount — so the
+                    phone row stops clipping to "The Cr…" with the number
+                    hidden and the amount wrapping (Woody, 2026-09-28). */}
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <Badge variant="outline" className={`border-transparent text-[10px] text-white shrink-0 ${XERO_STATUS_COLORS[inv.status] || "bg-zinc-500"}`}>
                     {XERO_STATUS_LABELS[inv.status] || inv.status}
                   </Badge>
-                  <span className="truncate">
-                    {inv.invoicingEntityName && <span className="text-muted-foreground">{inv.invoicingEntityName} — </span>}
-                    {inv.invoiceNumber || inv.reference || "Draft"}
-                  </span>
-                  {inv.totalAmount != null && (
-                    <span className="text-muted-foreground font-mono text-xs">
-                      £{inv.totalAmount.toLocaleString("en-GB", { minimumFractionDigits: 2 })}
-                      {/* Xero totals include VAT — say so beside a net fee. */}
-                      {deal.fee != null && inv.totalAmount > Number(deal.fee) * 1.1 ? " inc. VAT" : ""}
-                    </span>
-                  )}
+                  <div className="min-w-0 flex-1">
+                    {inv.invoicingEntityName && (
+                      <p className="truncate text-muted-foreground" title={inv.invoicingEntityName}>{inv.invoicingEntityName}</p>
+                    )}
+                    <p className="flex items-center gap-2 whitespace-nowrap text-xs">
+                      <span className="font-mono tabular-nums truncate">{inv.invoiceNumber || inv.reference || "Draft"}</span>
+                      {inv.totalAmount != null && (
+                        <span className="text-muted-foreground font-mono tabular-nums shrink-0">
+                          £{inv.totalAmount.toLocaleString("en-GB", { minimumFractionDigits: 2 })}
+                          {/* Xero totals include VAT — say so beside a net fee. */}
+                          {deal.fee != null && inv.totalAmount > Number(deal.fee) * 1.1 ? <span className="font-sans"> inc. VAT</span> : ""}
+                        </span>
+                      )}
+                    </p>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 shrink-0">
                   {inv.xeroUrl && (
                     <a href={inv.xeroUrl} target="_blank" rel="noopener noreferrer">
                       <Button variant="ghost" size="icon" className="h-7 w-7" data-testid={`button-xero-link-${inv.id}`}>
@@ -4889,7 +4824,7 @@ export function DealTimeline({ dealId }: { dealId: string }) {
                   <div className="flex-1 min-w-0 pb-1">
                     <p className="text-xs font-medium">{event.detail}</p>
                     <p className="text-[10px] text-muted-foreground mt-0.5">
-                      {event.date && !isNaN(new Date(event.date).getTime()) ? new Date(event.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : ""}
+                      {event.date && !isNaN(new Date(event.date).getTime()) ? gbDate(event.date, { day: "numeric", month: "short", year: "numeric" }) : ""}
                     </p>
                   </div>
                 </div>
@@ -4992,7 +4927,7 @@ export function DealAuditLog({ dealId }: { dealId: string }) {
               const initials = (log.changedByName || "?")
                 .split(" ").map((w: string) => w[0]).join("").toUpperCase().slice(0, 2);
               const ts = log.createdAt ? new Date(log.createdAt) : null;
-              const timeStr = ts ? ts.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) + " " + ts.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "";
+              const timeStr = ts ? gbDate(ts, { day: "numeric", month: "short", year: "numeric" }) + " " + ts.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "";
               return (
                 <div key={log.id || idx} className="flex items-start gap-3 relative" data-testid={`audit-log-${idx}`}>
                   <div className="w-6 h-6 rounded-full bg-muted border flex items-center justify-center shrink-0 z-10" title={log.changedByName || ""}>
@@ -5075,7 +5010,7 @@ export function DealRelatedEmails({ dealId }: { dealId: string }) {
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-sm font-medium truncate flex-1">{email.subject}</p>
                       <span className="text-[10px] text-muted-foreground whitespace-nowrap">
-                        {new Date(email.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                        {gbDate(email.date, { day: "numeric", month: "short" })}
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground truncate">{email.from}</p>
@@ -5106,7 +5041,7 @@ export function DealRelatedMeetings({ dealId }: { dealId: string }) {
   const formatEventTime = (start: string, end: string) => {
     const s = new Date(start);
     const e = new Date(end);
-    const dateStr = s.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+    const dateStr = gbDate(s, { weekday: "short", day: "numeric", month: "short" });
     const startTime = s.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
     const endTime = e.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
     return `${dateStr}, ${startTime} - ${endTime}`;
@@ -6620,7 +6555,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   // Bluewater Shopping Centre" over "Bluewater Shopping Centre"
                   // becomes "Nando's" (Woody, 2026-09-27).
                   const cardTitle = customDealName && propName
-                    ? stripPropertyFromTitle(customDealName, propName, typeof cardProp?.address === "string" ? cardProp.address : (cardProp?.address as any)?.formatted)
+                    ? stripPropertyFromTitle(customDealName, propName, typeof cardProp?.address === "string" ? cardProp.address : (cardProp?.address as any)?.formatted, companyMap.get(deal.tenantId as string))
                     : customDealName;
                   // Phone triage needs dates without opening each deal:
                   // Target Date drives the WIP bucket, and time-in-status
@@ -6748,7 +6683,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {effectiveColumns.parties && <TableHead className="min-w-[180px]">Parties</TableHead>}
                     {effectiveColumns.feeCombined && <TableHead className="min-w-[110px]">Fee</TableHead>}
                     {effectiveColumns.fee && <SortableTableHead sortKey="fee" sort={dealsSort} align="right" className="min-w-[80px]">Fee</SortableTableHead>}
-                    {effectiveColumns.feeAlloc && !isClientDeals && <TableHead className="min-w-[190px] whitespace-nowrap">Fee Split</TableHead>}
+                    {effectiveColumns.feeAlloc && !isClientDeals && <TableHead className="min-w-[120px] whitespace-nowrap">Fee Split</TableHead>}
                     {effectiveColumns.agent && <SortableTableHead sortKey="agent" sort={dealsSort} className="min-w-[80px]">BGP Contact</SortableTableHead>}
                     {effectiveColumns.assetClass && (
                       <TableHead className="min-w-[80px]">
@@ -6981,7 +6916,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       {/* Fee Split is the internal per-BGP-agent breakdown —
                           staff-only, never shown to a client/client-view. */}
                       {effectiveColumns.feeAlloc && !isClientDeals && (
-                        <TableCell className="px-1.5 py-1 min-w-[190px]">
+                        <TableCell className="px-1.5 py-1 min-w-[120px] max-w-[150px]">
                           <FeeAllocCell dealId={deal.id} dealFee={deal.fee} allAllocations={allFeeAllocations} colorMap={userColorMap2} teams={deal.team} onClick={() => setFeeAllocEditDeal(deal)} />
                         </TableCell>
                       )}

@@ -214,7 +214,25 @@ export function InteractionsBoard({ scope, contextId }: Props) {
     // three times — show the soonest and note the rest.
     const now = Date.now();
     const seriesHead = new Map<string, InteractionRow & { bgpUsers: string[]; laterDates?: string[] }>();
-    const all = Array.from(byKey.values());
+    // Cancelled occurrences still listed as upcoming ("then 21 Oct, 4 Nov"
+    // while the summary says 4 Nov was cancelled). Stored rows carry no
+    // cancel flag, so drop explicit "Canceled:/Declined:" rows and any
+    // occurrence left in under half the BGP calendars the series normally
+    // reaches — the organiser's cancellation removed it from the rest
+    // (Woody, 2026-09-28).
+    const CANCELLED = /^\s*(cancel{1,2}ed|declined)\b|\b(this|the) (meeting|event|occurrence) (has been|was|is) cancel{1,2}ed\b/i;
+    const reach = new Map<string, number>();
+    for (const r of Array.from(byKey.values())) {
+      if (r.type !== "meeting") continue;
+      const sk = (r.subject || "").trim().toLowerCase();
+      reach.set(sk, Math.max(reach.get(sk) || 0, r.bgpUsers.length));
+    }
+    const all = Array.from(byKey.values()).filter((r) => {
+      if (r.type !== "meeting" || new Date(r.interactionDate).getTime() <= now) return true;
+      if (CANCELLED.test(r.subject || "") || CANCELLED.test(r.preview || "")) return false;
+      const max = reach.get((r.subject || "").trim().toLowerCase()) || 0;
+      return !(max >= 3 && r.bgpUsers.length * 2 < max);
+    });
     const upcomingSoonestFirst = all
       .filter((r) => r.type === "meeting" && new Date(r.interactionDate).getTime() > now && (r.subject || "").trim())
       .sort((a, b) => new Date(a.interactionDate).getTime() - new Date(b.interactionDate).getTime());
@@ -254,6 +272,10 @@ export function InteractionsBoard({ scope, contextId }: Props) {
   const emailCount = interactions.filter(i => i.type === "email" || i.type === "call" || i.type === "note").length;
   const meetingCount = interactions.filter(i => i.type === "meeting").length;
   const totalCount = interactions.length;
+  const sinceLabel = useMemo(() => {
+    const times = interactions.map((i) => new Date(i.interactionDate).getTime()).filter((t) => !isNaN(t));
+    return times.length ? new Date(Math.min(...times)).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
+  }, [interactions]);
 
   // Auto-fire meeting sync once when this page opens with 0 meetings.
   // One-off per scope+id per session — won't loop.
@@ -308,14 +330,17 @@ export function InteractionsBoard({ scope, contextId }: Props) {
               {topBgp.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1 text-xs">
                   <Users className="w-3 h-3 text-muted-foreground shrink-0" />
-                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-1">Most active BGP</span>
+                  {/* These count every logged email and meeting invite in the
+                      last 90 days — say so, or they read as contradicting the
+                      deduped tab counts and the contact's notes (Woody, 2026-09-28). */}
+                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-1">Most active BGP · last 90 days</span>
                   {/* Busiest first (Woody, 2026-09-27) */}
                   {[...topBgp].sort((a, b) => (b.count90d - a.count90d) || (b.countAll - a.countAll)).slice(0, 4).map(b => (
                     <Badge
                       key={b.email}
                       variant="outline"
                       className="text-[10px] font-normal"
-                      title={`${b.countAll} interactions all-time`}
+                      title={`${b.count90d} logged emails and invites in the last 90 days · ${b.countAll} all-time`}
                     >
                       {b.name} · {b.count90d}
                     </Badge>
@@ -342,6 +367,10 @@ export function InteractionsBoard({ scope, contextId }: Props) {
                 {t === "meeting" && <><Calendar className="w-3 h-3" /> Meetings ({meetingCount})</>}
               </button>
             ))}
+            {/* Tab counts are distinct emails / meetings (series collapsed)
+                in the loaded window — date it so it doesn't read as all-time
+                (Woody, 2026-09-28). */}
+            {sinceLabel && <span className="text-[10px] text-muted-foreground">since {sinceLabel}</span>}
             {syncMutation.isPending && (
               <span className="text-[10px] text-muted-foreground flex items-center gap-1 ml-1">
                 <Loader2 className="w-3 h-3 animate-spin" /> Syncing meetings…
@@ -382,9 +411,18 @@ export function InteractionsBoard({ scope, contextId }: Props) {
                         size and coloured so it pops out of the row. */}
                     <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                       {isMeeting ? <Calendar className="w-3 h-3 text-purple-600 shrink-0" /> : <Mail className="w-3 h-3 text-blue-600 shrink-0" />}
-                      <span className="text-sm font-semibold text-primary truncate min-w-0">
-                        {(row.bgpUsers.length ? row.bgpUsers : [row.bgpUser]).map((u) => bgpUserDisplay(u, emailToName)).filter(Boolean).join(", ")}
-                      </span>
+                      {/* Phone truncated the full names to "Charlo…" — show
+                          first name + initial there (Woody, 2026-09-28). */}
+                      {(() => {
+                        const names = (row.bgpUsers.length ? row.bgpUsers : [row.bgpUser]).map((u) => bgpUserDisplay(u, emailToName)).filter(Boolean);
+                        const short = names.slice(0, 2).map((n) => { const [f, ...rest] = n.split(/\s+/); return rest.length ? `${f} ${rest[rest.length - 1][0]}.` : f; }).join(", ") + (names.length > 2 ? ` +${names.length - 2}` : "");
+                        return (
+                          <span className="text-sm font-semibold text-primary truncate min-w-0" title={names.join(", ")}>
+                            <span className="hidden md:inline">{names.join(", ")}</span>
+                            <span className="md:hidden">{short}</span>
+                          </span>
+                        );
+                      })()}
                       <span className="shrink-0">· {relDate(row.interactionDate)}</span>
                       {row.laterDates && row.laterDates.length > 0 && (
                         <span className="shrink-0 opacity-70" title={row.laterDates.map((d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })).join(", ")}>
@@ -404,7 +442,7 @@ export function InteractionsBoard({ scope, contextId }: Props) {
                         const dir = isMeeting || /^(upcoming|past)$/i.test(row.direction || "")
                           ? (future ? "upcoming" : null)
                           : row.direction;
-                        return dir ? <span className="opacity-70">· {dir}</span> : null;
+                        return dir ? <span className="shrink-0 whitespace-nowrap opacity-70">· {dir}</span> : null;
                       })()}
                       {canOpen && <ExternalLink className="w-2.5 h-2.5 ml-auto opacity-0 group-hover:opacity-60" />}
                     </div>

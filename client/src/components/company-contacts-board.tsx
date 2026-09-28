@@ -95,7 +95,7 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead }:
       </Link>
       <div className="min-w-0 flex-1">
         <div className="font-medium truncate flex items-center gap-1 text-sm">
-          <Link href={`/contacts/${contact.id}`} className="hover:underline">{contact.name}</Link>
+          <Link href={`/contacts/${contact.id}`} className="hover:underline truncate">{contactDisplayName(contact.name)}</Link>
           {isLead && <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 bg-foreground text-background border-transparent" title="The AI check's read of BGP's main property contact here">Lead</Badge>}
           {/* A "Title?" / "Left?" badge on every row was noise — a small dot
               with the note on hover; the full list sits in the AI check
@@ -200,7 +200,15 @@ interface PromotedContact {
   employerConfirmed: boolean;
 }
 
-function PendingSendersList({ suggestions, companyId }: { suggestions: any[]; companyId: string }) {
+// Automated senders aren't people to add (noreply@wagamama.com was offered
+// with Add to CRM) (Woody, 2026-09-28).
+const AUTOMATED_SENDER_RE = /^(?:no-?reply|do-?not-?reply|notifications?|mailer-daemon|postmaster|bounces?)(?:[+._-][^@]*)?@/i;
+const CONTACT_ROW_CAP = 8;
+// "Jane Smith/GBR" — a directory's country suffix, display only.
+export const contactDisplayName = (name: string | null | undefined) => String(name || "").replace(/\s*\/\s*[A-Z]{2,3}\s*$/, "");
+
+function PendingSendersList({ suggestions: allSuggestions, companyId }: { suggestions: any[]; companyId: string }) {
+  const suggestions = allSuggestions.filter(s => !AUTOMATED_SENDER_RE.test(String(s.email || "").trim()));
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: psViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -275,6 +283,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   const { data: kcViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const kcIsClient = !kcViewer || kcViewer.role === "Client" || !!kcViewer.companyScopeId;
   const [showAll, setShowAll] = useState(false);
+  const [listAll, setListAll] = useState(false);
   // The AI check reads a brand's board (property people vs C-suite); agent
   // firms show everyone (filterPropertyTier off) and skip it.
   const aiCheck = useContactsCheck(companyId, !kcIsClient && discovery && !isLandlord && filterPropertyTier);
@@ -397,6 +406,11 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   });
   const crmVisible = effectiveShowAll || !applyTierFilter ? ranked : ranked.filter((c: any) => isPropertyTier(c.role));
   const discoveredVisible = effectiveShowAll || !applyTierFilter ? discovered : discovered.filter((k: any) => isPropertyTier(k.title));
+  // Whole rows, then "+N more" — the 340px scroll box cut the last row
+  // mid-name (Woody, 2026-09-28).
+  const crmShown = listAll ? crmVisible : crmVisible.slice(0, CONTACT_ROW_CAP);
+  const discoveredShown = listAll ? discoveredVisible : discoveredVisible.slice(0, Math.max(0, CONTACT_ROW_CAP - crmShown.length));
+  const rowsHidden = crmVisible.length + discoveredVisible.length - crmShown.length - discoveredShown.length;
   const hiddenCount = (accountFiltered.length - crmVisible.length) + (discovered.length - discoveredVisible.length);
   const summary = cascade?.summary;
 
@@ -536,11 +550,11 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
                 : "No property-tier contacts. Click Show all below."}
           </p>
         ) : (
-          <div className="max-h-[340px] overflow-y-auto pr-1 space-y-1.5">
-            {crmVisible.map((dm: any) => (
+          <div className={`space-y-1.5 ${listAll ? "max-h-[520px] overflow-y-auto pr-1" : ""}`}>
+            {crmShown.map((dm: any) => (
               <KeyContactRow key={dm.id} contact={dm} companyId={companyId} discovery={discoveryFor(dm)} aiFlag={aiFlagFor(dm.id)} isLead={aiCheck.check?.lead === String(dm.id)} />
             ))}
-            {discoveredVisible.map((k: any) => {
+            {discoveredShown.map((k: any) => {
               const rowKey = normEmail(k.email) || normName(k.name);
               const added = addedContacts[`${companyId}:${rowKey}`];
               const conf = k.ai?.confidence;
@@ -552,7 +566,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
                     {(k.name || k.email || "?").split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase()}
                   </span>
                   <div className="min-w-0 basis-[calc(100%-2rem)] md:basis-0 flex-1">
-                    <p className="font-medium truncate">{k.name || k.email}</p>
+                    <p className="font-medium truncate">{contactDisplayName(k.name) || k.email}</p>
                     <p className="text-[11px] text-muted-foreground break-words [overflow-wrap:anywhere] md:truncate" title={k.ai?.reason || ""}>
                       {[k.title, k.email, k.phone || k.mobile].filter(Boolean).join(" · ") || "—"}
                     </p>
@@ -578,6 +592,11 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
                 </div>
               );
             })}
+            {(rowsHidden > 0 || listAll) && (
+              <button type="button" onClick={() => setListAll(v => !v)} className="text-[11px] text-primary hover:underline" data-testid="key-contacts-more">
+                {listAll ? "Show fewer" : `+${rowsHidden} more`}
+              </button>
+            )}
           </div>
         )}
         {summary && !kcIsClient && (

@@ -78,6 +78,18 @@ test('short and common names need their named sector, while distinctive names ma
   assert.equal(isBrandNewsRelevant({ name: 'UK', industry: 'Retail' }, article('UK retail grows')), false);
 });
 
+test('first-name brands reject namesake people but keep the retailer', () => {
+  const zara = { name: 'Zara', industry: 'Fashion' };
+  for (const title of ['Zara Larsson shines on stage in a fashion-forward look', 'Zara McDermott launches a fashion range with a retailer',
+    'Zara Tindall wears a high street fashion retailer dress', 'Zara Larsson Shines On Stage In Fashion Look']) {
+    assert.equal(isBrandNewsRelevant(zara, article(title)), false, title);
+  }
+  for (const title of ['Zara Home opens a new store as the fashion retailer grows', 'Zara opens a fashion flagship in Leeds',
+    'Zara Opens New Fashion Store In Leeds']) {
+    assert.equal(isBrandNewsRelevant(zara, article(title)), true, title);
+  }
+});
+
 test('generic and dedicated feed ingestion both screen identity, without changing industry article storage', async () => {
   const companies = [co(), { id: 'bp', name: 'BP', industry: 'Retail' }];
   const articles = [

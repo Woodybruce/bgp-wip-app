@@ -247,7 +247,9 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, cachedO
           )}
 
           {hasContent && data && (
-            <div className="max-h-[480px] overflow-y-auto pr-1">
+            // Phone: no inner scroll box — it stopped at a heading with no cue
+            // that more sat below. The page scrolls instead (Woody, 2026-09-28).
+            <div className="md:max-h-[480px] md:overflow-y-auto md:pr-1">
               <ActivityMarkdown
                 markdown={data.markdown}
                 emailHits={data.emailHits}

@@ -1276,7 +1276,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                   <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1 flex items-center gap-1.5">
                     <Building2 className="w-3 h-3" /> {role}: {company!.name}
                   </p>
-                  <div className="md:hidden"><MobileBrandView companyId={company!.id} /></div>
+                  <div className="md:hidden"><MobileBrandView companyId={company!.id} embedded /></div>
                   <div className="hidden md:block"><BrandProfilePanel companyId={company!.id} /></div>
                 </div>
               ))}
@@ -1297,7 +1297,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       {deal.updatedAt && (
         <p className={`text-xs text-muted-foreground items-center gap-1 ${phoneSection === "overview" ? "flex" : "hidden md:flex"}`}>
           <Clock className="w-3 h-3" />
-          Last updated: {new Date(deal.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+          Last updated: {new Date(deal.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep")}
         </p>
       )}
 

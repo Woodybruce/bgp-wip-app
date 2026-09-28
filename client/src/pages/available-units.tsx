@@ -47,7 +47,7 @@ import { BrandSearchInput, type BrandPick } from "@/components/brand-search-inpu
 import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
 import { TargetRowCells, LETTING_CATEGORIES, targetStatusLabel } from "@/components/target-operators-table";
 import { useTeam } from "@/lib/team-context";
-import { stripPropertyFromTitle } from "@/pages/deals";
+import { stripPropertyFromTitle, useClassLabel } from "@/lib/format";
 import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
@@ -531,15 +531,24 @@ export default function AvailableUnitsPage() {
     { key: "comments", label: "Comments" },
     { key: "areaCosts", label: "Area & Costs" },
   ];
+  // v2: Unit Status hidden once for everyone, carrying over earlier hides —
+  // rows read "Vacant" / "Available" / "Marketing" for one fact; Deal Status
+  // already says Opportunity / Marketing, and the unit form still sets it
+  // (Woody, 2026-09-28). The Columns menu brings it back per browser.
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => {
-    try { return new Set<string>(JSON.parse(localStorage.getItem("bgp_letting_hidden_cols") || "[]")); } catch { return new Set(); }
+    try {
+      const v2 = localStorage.getItem("bgp_letting_hidden_cols_v2");
+      if (v2 !== null) return new Set<string>(JSON.parse(v2));
+      const v1: string[] = JSON.parse(localStorage.getItem("bgp_letting_hidden_cols") || "[]");
+      return new Set<string>([...v1, "unitStatus"]);
+    } catch { return new Set(["unitStatus"]); }
   });
   const [colMenuOpen, setColMenuOpen] = useState(false);
   const showCol = (k: string) => !hiddenCols.has(k);
   const toggleColVis = (k: string) => setHiddenCols((prev) => {
     const n = new Set(prev);
     if (n.has(k)) n.delete(k); else n.add(k);
-    try { localStorage.setItem("bgp_letting_hidden_cols", JSON.stringify([...n])); } catch {}
+    try { localStorage.setItem("bgp_letting_hidden_cols_v2", JSON.stringify([...n])); } catch {}
     return n;
   });
   const [propertyFilter, setPropertyFilter] = useState(() => urlParam("propertyId"));
@@ -1787,7 +1796,7 @@ export default function AvailableUnitsPage() {
         <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search units, property or tenant..."
+            placeholder="Search units…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="pl-9"
@@ -1866,7 +1875,8 @@ export default function AvailableUnitsPage() {
         </Select>
         {activeAssetClasses.length > 0 && (
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs text-muted-foreground mr-0.5">Class:</span>
+            {/* Chips read "Class E", not a "Class:" label over a bare "E"
+                (Woody, 2026-09-28). */}
             {activeAssetClasses.map(c => (
               <button
                 key={c}
@@ -1876,7 +1886,7 @@ export default function AvailableUnitsPage() {
                 }`}
                 data-testid={`filter-class-${c.toLowerCase().replace(/[() ]/g, "-")}`}
               >
-                {c}
+                {useClassLabel(c)}
                 {assetClassFilter === c && <X className="inline h-3 w-3 ml-0.5 -mr-0.5" />}
               </button>
             ))}
@@ -2182,7 +2192,18 @@ export default function AvailableUnitsPage() {
         )
       )}
 
-      {!isMobile && (
+      {/* No results = the empty message alone. A header row over nothing
+          left half columns ("Target Tenant", a cut "Target") and lost the
+          pinned Actions column (Woody, 2026-09-28). */}
+      {!isMobile && filtered.length === 0 && (
+        <Card>
+          <div className="py-12 text-center text-sm text-muted-foreground" data-testid="units-empty">
+            <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
+            {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
+          </div>
+        </Card>
+      )}
+      {!isMobile && filtered.length > 0 && (
       <Card>
         <ScrollableTable minWidth={2600}>
           <Table>
@@ -2238,10 +2259,7 @@ export default function AvailableUnitsPage() {
                     sticky overlay (Woody, 2026-09-01 "target tenant still
                     not right"). */}
                 <TableHead className="p-0" aria-hidden />
-                {/* Pinned only when there are rows to act on — with no results
-                    it sat over the headers and left a stray "Tar" of Target
-                    Tenant peeking out beside it (Woody, 2026-09-27). */}
-                <TableHead className={`w-[205px] min-w-[205px] border-l bg-card ${filtered.length > 0 ? "sticky right-0 z-20" : ""}`}>Actions &amp; Activity</TableHead>
+                <TableHead className="w-[205px] min-w-[205px] border-l bg-card sticky right-0 z-20">Actions &amp; Activity</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -2407,7 +2425,8 @@ export default function AvailableUnitsPage() {
                         {(() => {
                           const et = String((u as any).existingTenant || "").trim();
                           const vacant = !et || /^vacant$/i.test(et);
-                          if (vacant) return <span className="text-xs text-muted-foreground italic">Vacant</span>;
+                          // "—", not "Vacant" — the status column already says it's available.
+                          if (vacant) return <span className="text-xs text-muted-foreground" title="Vacant">—</span>;
                           const match = crmCompanies.find(c => (c.name || "").trim().toLowerCase() === et.toLowerCase());
                           return (
                             <span className="text-xs truncate flex items-center gap-1 group/et" title={et}>

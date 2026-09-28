@@ -1427,8 +1427,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
             title={(s as any).note}
           >
             <div className="text-[11px] text-muted-foreground uppercase">{s.label}</div>
-            <div className="text-sm font-semibold font-mono tabular-nums leading-tight break-words mt-1" title={s.full && s.full !== s.value ? s.full : undefined}>{s.value}</div>
-            {s.sub && <div className="text-[11px] text-muted-foreground mt-1">{s.sub}</div>}
+            {s.value === "Not recorded"
+              ? <div className="text-sm text-muted-foreground leading-tight mt-1">Not recorded</div>
+              : <div className="text-sm font-semibold font-mono tabular-nums leading-tight break-words mt-1" title={s.full && s.full !== s.value ? s.full : undefined}>{s.value}</div>}
+            {s.sub && <div className="text-[11px] text-muted-foreground mt-1 truncate" title={s.sub}>{s.sub}</div>}
           </div>
         ))}
       </div>

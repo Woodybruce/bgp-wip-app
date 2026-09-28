@@ -1,6 +1,5 @@
-import { aboutText } from "@/lib/about-text";
 import { formatSizeList } from "@/lib/format-size";
-import { isOwnChannelNews, newsSourceLabel, splitNewsTitle } from "@/components/brand-profile-panel";
+import { isOwnChannelNews, newsSourceLabel, splitNewsTitle, isOwnBrandSource, dedupeNearNews, ukDate, sentenceCaseShouting, aboutParagraphs } from "@/components/brand-profile-panel";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { BrandFeedCard } from "@/components/brand-feed-card";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
@@ -30,10 +29,12 @@ import {
 } from "@/components/brand-profile-panel";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import { CompanyContactsBoard } from "@/components/company-contacts-board";
-import { CovenantBadge, CovenantCommentary } from "@/components/covenant-badge";
+import { CovenantBadge, CovenantCommentary, useCovenantReport } from "@/components/covenant-badge";
 import { ActivitySummary } from "@/components/activity-summary";
 
-export function MobileBrandView({ companyId }: { companyId: string }) {
+// `embedded`: inside a deal's Brand tab, which has its own KYC tab — no
+// second Compliance pill there (Woody, 2026-09-28).
+export function MobileBrandView({ companyId, embedded = false }: { companyId: string; embedded?: boolean }) {
   const { data, isLoading, isError, refetch: reloadSavedProfile } = useQuery<any>({
     queryKey: ["/api/brand", companyId, "profile"],
     queryFn: async () => {
@@ -120,6 +121,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
     retry: false,
   });
   const refreshProfile = useBrandProfileRefresh(companyId, !isClientViewer);
+  const covenantReport = useCovenantReport(data?.company?.companies_house_number);
 
   if (isError) return <Card className="p-4 space-y-3"><p className="text-sm text-muted-foreground">The saved brand profile could not be loaded.</p><Button size="sm" variant="outline" onClick={() => reloadSavedProfile()}>Try again</Button></Card>;
   if (isLoading || !data?.company) {
@@ -165,20 +167,13 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       {/* Hero + identity */}
       <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={data.images || []} />
       <div className="flex flex-wrap items-center gap-2">
-        {c.company_type && <Pill className="max-w-full"><span className="truncate">{String(c.company_type).replace(/\s*-\s*/g, " · ")}</span></Pill>}
+        {/* With an industry chip the type keeps only its kind ("Tenant") —
+            "Tenant · Restaurant" beside "Casual dining restaurant" said it
+            twice (Woody, 2026-09-28). */}
+        {c.company_type && <Pill className="max-w-full"><span className="truncate">{c.industry ? String(c.company_type).split(/\s*-\s*/)[0] : String(c.company_type).replace(/\s*-\s*/g, " · ")}</span></Pill>}
         {c.industry && <Pill className="max-w-full"><span className="truncate">{c.industry}</span></Pill>}
         {!isLandlord && !isAgentFirm && c.store_count != null && <Pill><span className="font-mono tabular-nums">{c.store_count}</span> reported stores</Pill>}
         {!isAgentFirm && (c as any).companies_house_number && <CovenantBadge companyNumber={(c as any).companies_house_number} />}
-        {(c.domain_url || c.domain) && (
-          <Button variant="outline" size="sm" asChild>
-          <a
-            href={(c.domain_url || `https://${c.domain}`).startsWith("http") ? (c.domain_url || `https://${c.domain}`) : `https://${c.domain_url || c.domain}`}
-            target="_blank" rel="noreferrer"
-          >
-            <Globe className="w-4 h-4" /> Website
-          </a>
-          </Button>
-        )}
       </div>
       {/* Status and refresh on one quiet line — a full-width button above the
           tabs pushed the content down the phone (Woody, 2026-09-27). */}
@@ -194,11 +189,24 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
         <Pill active={section === "intel"} onClick={() => setSection("intel")} data-testid="company-section-intel">Intel</Pill>
         {!isLandlord && !isAgentFirm && <Pill active={section === "stores"} onClick={() => setSection("stores")} data-testid="company-section-stores">Stores</Pill>}
         {!isLandlord && !isAgentFirm && <Pill active={section === "social"} onClick={() => setSection("social")} data-testid="company-section-social">Social</Pill>}
-        <Pill active={section === "compliance"} onClick={() => setSection("compliance")} data-testid="company-section-compliance">Compliance</Pill>
+        {/* Agents have no KYC panel on desktop either; a deal's Brand tab has
+            the deal's own KYC tab (Woody, 2026-09-28). */}
+        {!isAgentFirm && !embedded && <Pill active={section === "compliance"} onClick={() => setSection("compliance")} data-testid="company-section-compliance">Compliance</Pill>}
       </div>
 
       <div className={sec("chat")}>
-      <BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} suggestedDomain={c.ai_generated_fields?.website_suggestion?.domain} />
+      {/* One website line: the identity line plus an open-site icon — a
+          separate Website button repeated it (Woody, 2026-09-28). */}
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1"><BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} suggestedDomain={c.ai_generated_fields?.website_suggestion?.domain} /></div>
+        {(c.domain_url || c.domain) && (
+          <Button variant="outline" size="icon" className="h-11 w-11 shrink-0" asChild>
+            <a href={(c.domain_url || `https://${c.domain}`).startsWith("http") ? (c.domain_url || `https://${c.domain}`) : `https://${c.domain_url || c.domain}`} target="_blank" rel="noreferrer" aria-label={`Open ${c.name} website`}>
+              <Globe className="w-4 h-4" />
+            </a>
+          </Button>
+        )}
+      </div>
       {/* Image search is a staff tool for brands — agent firms and
           landlords showed it too (Woody, 2026-09-27). */}
       {!isClientViewer && !isAgentFirm && !isLandlord && <BrandImageRefreshButton companyId={companyId} />}
@@ -206,11 +214,16 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
         {/* First paragraph clamped on its own; the rest only when expanded. */}
         {(() => {
-          const paras = aboutText(c.description).split(/\n{2,}/).filter(Boolean);
+          const { summary, notes } = aboutParagraphs(c.description);
           const clamped = !aboutOpen && c.description.length > 220;
-          return (clamped ? paras.slice(0, 1) : paras).map((para, i) => (
-            <p key={i} className={`text-sm leading-relaxed whitespace-pre-line ${clamped ? "line-clamp-5" : ""}`}>{para}</p>
-          ));
+          return <>
+            {(clamped ? summary.slice(0, 1) : summary).map((para, i) => (
+              <p key={i} className={`text-sm leading-relaxed whitespace-pre-line ${clamped ? "line-clamp-5" : ""}`}>{para}</p>
+            ))}
+            {!clamped && notes.map((n, i) => (
+              <p key={`note-${i}`} className="text-[11px] leading-snug text-muted-foreground line-clamp-4"><span className="font-medium">Source note · {n.label}</span> — {n.text}</p>
+            ))}
+          </>;
         })()}
         {c.description.length > 220 && <button type="button" onClick={() => setAboutOpen(v => !v)} className="text-xs text-primary hover:underline">{aboutOpen ? "Show less" : "Read more"}</button>}
       </div>}
@@ -276,7 +289,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
               </div>
               <div>
                 <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Last touch</div>
-                <div className="text-sm font-mono tabular-nums">{data.bgpSummary.lastInteractionAt ? new Date(data.bgpSummary.lastInteractionAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—"}</div>
+                <div className="text-sm font-mono tabular-nums">{data.bgpSummary.lastInteractionAt ? ukDate(data.bgpSummary.lastInteractionAt, { day: "numeric", month: "short" }) : "—"}</div>
               </div>
             </div>
             {(data.bgpSummary.team || []).length > 0 && (
@@ -296,7 +309,11 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
 
       <div className={sec("compliance")}>
       {/* Covenant — tenants only; an agent firm's lease covenant means nothing. */}
-      {!isAgentFirm && <Card>
+      {/* A CH number with no grade yet was a bare "COVENANT" heading —
+          skeleton while it loads, then only a card with a grade
+          (Woody, 2026-09-28). */}
+      {!isAgentFirm && (c as any).companies_house_number && covenantReport.isLoading && <Skeleton className="h-24 w-full rounded-xl" />}
+      {!isAgentFirm && !((c as any).companies_house_number && !covenantReport.data?.grade) && <Card>
         <CardHeader className="p-3 pb-2">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
             Covenant
@@ -336,7 +353,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
               <div key={i} className="text-xs rounded-lg border border-border/50 px-2.5 py-1.5">
                 <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-0.5">
                   <span className="font-medium text-foreground/80">{cm.userName}</span>
-                  {cm.at && <span>{new Date(cm.at).toLocaleDateString("en-GB")}</span>}
+                  {cm.at && <span>{ukDate(cm.at)}</span>}
                 </div>
                 <p className="whitespace-pre-wrap break-words">{cm.text}</p>
                 <Link href={`/properties/${cm.propertyId}`} className="text-[11px] text-primary hover:underline">
@@ -457,12 +474,12 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
                     </Badge>
                     {s.signal_date && (
                       <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
-                        {new Date(s.signal_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                        {ukDate(s.signal_date, { day: "numeric", month: "short" })}
                       </span>
                     )}
                     {s.source && s.source.startsWith("http") && <ExternalLink className="w-3 h-3 text-muted-foreground ml-auto shrink-0" />}
                   </div>
-                  <p className="text-xs leading-snug line-clamp-2">{s.headline}</p>
+                  <p className="text-xs leading-snug line-clamp-2">{sentenceCaseShouting(s.headline)}</p>
                 </>
               );
               return s.source && s.source.startsWith("http") ? (
@@ -537,8 +554,15 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           like "Crisis (Google News)" give way to the title's publisher
           (Woody, 2026-09-27). */}
       {(() => {
-        const newsM = (data.news || []).filter((n: any) => !isOwnChannelNews(n.source_name));
-        if (newsM.length === 0) return null;
+        // Same Industry rules as desktop: the brand's own posts out, one row
+        // per story, nothing over two years old (Woody, 2026-09-28).
+        const staleCut = Date.now() - 730 * 86400000;
+        const industry = (data.news || []).filter((n: any) => !isOwnChannelNews(n.source_name)
+          && !isOwnBrandSource(splitNewsTitle(n.title).publisher, c.name)
+          && !(!/\(Google News\)\s*$/i.test(n.source_name || "") && isOwnBrandSource(n.source_name, c.name))
+          && (!n.published_at || new Date(n.published_at).getTime() >= staleCut));
+        if (industry.length === 0) return null;
+        const newsM = dedupeNearNews(industry);
         return (
         <Card>
           <CardHeader className="p-3 pb-2">
@@ -556,7 +580,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-medium leading-snug line-clamp-2 group-hover:underline">{splitNewsTitle(n.title).title}</p>
                   <div className="text-[11px] text-muted-foreground truncate">
-                    {[newsSourceLabel(n.source_name, n.title, c.name), n.published_at ? new Date(n.published_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : null].filter(Boolean).join(" · ")}
+                    {[newsSourceLabel(n.source_name, n.title, c.name), n.published_at ? ukDate(n.published_at, { day: "numeric", month: "short" }) : null].filter(Boolean).join(" · ")}
                   </div>
                 </div>
               </a>

@@ -105,7 +105,7 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
   const forSale = await rows(q, `SELECT property_id FROM investment_tracker
     WHERE board_type = 'Sales' AND property_id = ANY($1::text[]) AND COALESCE(status, '') NOT IN ('COM','INV','WIT')`, [propertyIds]);
   const forSalePropertyIds = [...new Set(forSale.map((r: any) => r.property_id))];
-  const requirements = await rows(q, `SELECT id, name, status, use_types, size_range, requirement_locations, updated_at
+  const requirements = await rows(q, `SELECT id, name, status, use_types, requirement_types, size_range, requirement_locations, locations, comments, updated_at
     FROM crm_requirements_investment WHERE company_id = ANY($1::text[])
     ORDER BY updated_at DESC NULLS LAST LIMIT 20`, [entityIds]);
 
@@ -242,10 +242,15 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
     investment: {
       flags: flags || null,
       tracker: tracker.map((t: any) => ({ ...t, side: side(t), property_name: propertyName.get(t.property_id) || null })),
-      salesCandidates,
+      // 103 Mount Street sat under Selling (Withdrawn) AND Might sell — a site
+      // already on the investment boards (any status) isn't a "might sell"
+      // (Woody, 2026-09-28).
+      salesCandidates: salesCandidates.filter((p: any) => !tracker.some((t: any) => t.property_id === p.id || (!!t.asset_name && nameKey(t.asset_name) === nameKey(p.name)))),
       debtEvents: debtEvents.map((e: any) => ({ ...e, property_name: e.property_id ? propertyName.get(e.property_id) || null : null })),
       comps,
-      requirements,
+      // Rows were titled with the landlord's own name ("British Land") — the
+      // name only adds something when it isn't them (Woody, 2026-09-28).
+      requirements: requirements.map((r: any) => ({ ...r, ownName: entityNames.has(nameKey(r.name)) })),
       sentToThem,
       theirBids,
       theirViewings,

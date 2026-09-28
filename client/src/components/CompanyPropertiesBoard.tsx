@@ -402,7 +402,8 @@ export function CompanyPropertiesBoard({
     queryKey: ["/api/accounts", companyId, "reconciliation"],
     queryFn: async () => {
       const res = await fetch(`/api/accounts/${companyId}/reconciliation`, { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) return null;
+      // 204 = no baseline for this landlord, i.e. no data check.
+      if (!res.ok || res.status === 204) return null;
       return res.json();
     },
     enabled: kind === "landlord" && !!companyId && !!cpbViewer && !cpbIsClient,
@@ -410,6 +411,15 @@ export function CompanyPropertiesBoard({
     staleTime: 5 * 60_000,
   });
   const reconRows = reconciliation?.rows ?? [];
+  // Plain labels on stored runs too: "Not on Landsec's list" / "Not in our
+  // CRM" rather than the pipeline wording (Woody, 2026-09-28).
+  const reconOwner = (() => {
+    const w = (reconciliation?.baselineName || "").split("-")[0];
+    return w ? (w.length <= 3 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1)) : "";
+  })();
+  const reconNote = (d: string) => /not on the official (baseline|list)/i.test(d)
+    ? (reconOwner ? `Not on ${reconOwner}'s list` : "Not on the official list")
+    : d.replace(/^not found in the CRM portfolio \(exact name match\)$/i, "Not in our CRM").replace(/ not found in the CRM portfolio$/i, " not in our CRM");
   // Rows needing attention first, then the first few matched ones — the full
   // list (100+ for Landsec) ran ~4,000px and pushed the page down (Woody,
   // 2026-09-26: "fits well regardless").
@@ -726,11 +736,11 @@ export function CompanyPropertiesBoard({
                         <span className="block text-[9px] font-normal text-muted-foreground">{r.owning_entity_names.join(", ")}</span>
                       )}
                       {r.unresolved_differences.length > 0 && (
-                        <span className="block text-[9px] font-normal text-muted-foreground">{r.unresolved_differences.join("; ")}</span>
+                        <span className="block text-[9px] font-normal text-muted-foreground">{r.unresolved_differences.map(reconNote).join("; ")}</span>
                       )}
                     </td>
                     <td className="py-1 pr-2">{r.country ?? "—"}</td>
-                    <td className="py-1 pr-2">{r.relationship_role ?? "—"}</td>
+                    <td className="py-1 pr-2">{r.relationship_role && r.relationship_role !== "unknown" ? r.relationship_role : "—"}</td>
                     <td className="py-1 pr-2">{r.ownership_stake_pct != null ? `${r.ownership_stake_pct}%` : "—"}</td>
                     <td className="py-1 pr-2">{r.crm_property_ids.length}</td>
                     <td className="py-1 pr-2">{r.bgp_instruction ? "Yes" : "No"}</td>

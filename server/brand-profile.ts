@@ -771,13 +771,17 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
                      WHEN COALESCE(c.company_type, '') ~* '(\\mbar\\M|\\mpub)' THEN 'bar'
                 END AS fmt
            FROM crm_companies c
-           JOIN crm_comps cm ON (cm.tenant ILIKE c.name OR cm.contact_company ILIKE c.name)
           WHERE c.company_type ILIKE 'tenant%'
             AND c.id <> $1
             AND c.merged_into_id IS NULL
             AND c.id IS DISTINCT FROM (SELECT merged_into_id FROM me_co)
             AND lower(trim(c.name)) <> (SELECT lower(trim(name)) FROM me_co)
-            AND cm.use_class IN (SELECT use_class FROM me)
+            -- Pass 6: the rent-comp join left a pool of ~10, so every
+            -- restaurant still got the same eight. Same industry (e.g. "QSR
+            -- restaurant") OR a shared comp use class is enough to qualify.
+            AND ((c.industry IS NOT NULL AND lower(c.industry) = (SELECT lower(industry) FROM me_co))
+                 OR EXISTS (SELECT 1 FROM crm_comps cm WHERE (cm.tenant ILIKE c.name OR cm.contact_company ILIKE c.name)
+                              AND cm.use_class IN (SELECT use_class FROM me)))
        ), scored AS (
          SELECT cand.*,
                 (cand.industry IS NOT NULL AND lower(cand.industry) = (SELECT lower(industry) FROM me_co)) AS same_industry,

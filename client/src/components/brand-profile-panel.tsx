@@ -4,7 +4,7 @@ import { snippetAddsNothing } from "@shared/news-snippet";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
 import { CompanyProfileImage, CompanyImageCoverChoice } from "@/components/company-profile-image";
-import { selectCompanyHeroImage, isCompanyImageLogo } from "@shared/brand-image-selection";
+import { selectCompanyHeroImage, isCompanyImageLogo, rankCompanyHeroImages } from "@shared/brand-image-selection";
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandImageRefreshButton } from "@/components/brand-profile-overview";
 import { type ContactImportResult } from "@/components/contact-import-results";
@@ -28,7 +28,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pill } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { CovenantBadge, CovenantCommentary } from "@/components/covenant-badge";
+import { CovenantBadge, CovenantCommentary, useCovenantReport } from "@/components/covenant-badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -497,30 +497,98 @@ const ABOUT_CLAMP_CHARS = 420;
 // the Brand feed, not Industry; Google News titles carry the publisher as a
 // suffix (" - The Bury Times"), which becomes the source when the stored one
 // is empty, a junk word ("Crisis", "Source") or just the brand's own name.
-const OWN_CHANNEL_RE = /\s*\((instagram|jobs|website news|openings|linkedin)\)\s*$/i;
-const CHANNEL_LABELS: Record<string, string> = { instagram: "Instagram", jobs: "Jobs", "website news": "Website news", openings: "Openings", linkedin: "LinkedIn" };
-const JUNK_SOURCE_RE = /^(crisis|source|sources|news|press|media|article|update|unknown|other|web|online|google|google news)$/i;
+// A landlord's own web feed is stored as "<Brand> — news" (Woody, 2026-09-28).
+const OWN_CHANNEL_RE = /\s*(?:\((instagram|jobs|website news|openings|linkedin)\)|\s[—–-]\s(news))\s*$/i;
+const CHANNEL_LABELS: Record<string, string> = { instagram: "Instagram", jobs: "Jobs", "website news": "Website news", openings: "Openings", linkedin: "LinkedIn", news: "Website news" };
+const JUNK_SOURCE_RE = /^(crisis|source|sources|news|press|media|article|update|unknown|other|web|online|google|google news|co\.?|boost|win|live|watch|exclusive|opinion|analysis)$/i;
+// Aggregator hosts are never the publisher (Woody, 2026-09-28).
+const AGGREGATOR_SOURCE_RE = /^(?:www\.)?(?:[\w-]+\.)?(?:news\.google|google|msn|yahoo)\.(?:com|co\.uk)$/i;
+const KNOWN_OUTLET_RE = /\b(?:news|times|post|gazette|guardian|telegraph|mail|mirror|standard|herald|journal|week|weekly|daily|echo|chronicle|express|independent|observer|review|radio|bbc|itv|sky|reuters|bloomberg|insider|live|online|magazine|today|world|retail|property|drapers|propel|caterer|mcl|campaign|forbes|vogue|metro|evening|argus|advertiser|courier|press|hospitality|dinners|grocer|eater|wire|business|estates?|fashion|beauty|travel|finance|city)\b/i;
 export const isOwnChannelNews = (source: string | null | undefined) => OWN_CHANNEL_RE.test(source || "");
+const normBrandName = (s: string | null | undefined) => String(s || "").toLowerCase().replace(/[’'`]/g, "")
+  .replace(/\b(?:bakery|bakeries|restaurants?|uk|group|ltd|limited|plc)\b/g, "").replace(/[^a-z0-9]/g, "");
+// The brand's own posts published via Google News ("… - Savills",
+// "… - Gail's Bakery") belong in its own feed, not Industry (Woody, 2026-09-28).
+export function isOwnBrandSource(label: string | null | undefined, brandName: string | null | undefined): boolean {
+  const own = normBrandName(brandName), n = normBrandName(label);
+  return own.length >= 3 && !!n && (n === own || n.startsWith(own));
+}
 export function splitNewsTitle(title: string | null | undefined): { title: string; publisher: string | null } {
   let t = String(title || "").trim();
   const parts: string[] = [];
-  for (let i = 0; i < 2; i++) {
-    const m = t.match(/^(.{20,}?)\s+[-–]\s+([A-Z0-9][^-–]{0,40})$/);
+  let domain: string | null = null;
+  // Up to three tails: " - campaignlive.co.uk", " - Hits Radio", " | Win".
+  for (let i = 0; i < 3; i++) {
+    const d = t.match(/^(.{20,}?)\s+[-–|]\s+((?:[\w-]+\.)+(?:co\.uk|com|net|org|uk|io|news|fr|ie))\s*$/i);
+    if (d) { domain = domain || d[2]; t = d[1].trim(); continue; }
+    const m = t.match(/^(.{20,}?)\s+[-–|]\s+([A-Z0-9][^-–|]{0,40})$/);
     if (!m || m[2].trim().split(/\s+/).length > 5) break;
-    if (i === 1 && parts[0].split(/\s+/).length > 2) break;
+    if (parts.length && parts[0].split(/\s+/).length > 2) break;
     parts.unshift(m[2].trim());
     t = m[1].trim();
   }
-  return { title: t, publisher: parts.length ? parts.join(" - ") : null };
+  return { title: t, publisher: parts.length ? parts[parts.length - 1] : domain };
+}
+// Only a publisher-looking name earns a chip — not a headline word ("Boost"),
+// a person ("Molly Alexander") or a brand feed's name (Woody, 2026-09-28).
+function publisherLike(label: string | null): string | null {
+  if (!label || label.length < 2 || JUNK_SOURCE_RE.test(label) || AGGREGATOR_SOURCE_RE.test(label)) return null;
+  if (/^(?!The )[A-Z][a-z]+ [A-Z][a-z]+$/.test(label) && !KNOWN_OUTLET_RE.test(label)) return null;
+  return label;
 }
 export function newsSourceLabel(source: string | null | undefined, title: string | null | undefined, brandName?: string | null): string | null {
+  // "<Brand> (Google News)" is the name of a brand search feed, never the
+  // publisher — the publisher is the title's tail (Woody, 2026-09-28).
   const clean = String(source || "")
-    .replace(/\s*\(Google News\)\s*$/i, "")
-    .replace(OWN_CHANNEL_RE, (_m, ch: string) => ` (${CHANNEL_LABELS[ch.toLowerCase()] || ch})`)
+    .replace(/^.*\(Google News\)\s*$/i, "")
+    .replace(OWN_CHANNEL_RE, (_m, ch1: string, ch2: string) => { const ch = ch1 || ch2; return ` (${CHANNEL_LABELS[ch.toLowerCase()] || ch})`; })
     .trim();
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const junk = !clean || JUNK_SOURCE_RE.test(clean) || (!!brandName && norm(clean) === norm(brandName));
-  return junk ? splitNewsTitle(title).publisher : clean;
+  const junk = !clean || JUNK_SOURCE_RE.test(clean) || AGGREGATOR_SOURCE_RE.test(clean) || (!!brandName && norm(clean) === norm(brandName));
+  return publisherLike(junk ? splitNewsTitle(title).publisher : clean);
+}
+const newsWords = (t: string) => new Set(splitNewsTitle(t).title.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(w => w.length > 2));
+// Collapse the same story from several outlets: ≥60% of the shorter
+// headline's words shared, within 21 days (Woody, 2026-09-28).
+export function dedupeNearNews<T extends { title?: string | null; published_at?: string | null }>(items: T[]): T[] {
+  const kept: { item: T; words: Set<string>; at: number }[] = [];
+  for (const item of items) {
+    const words = newsWords(item.title || ""), at = item.published_at ? new Date(item.published_at).getTime() : NaN;
+    const dup = kept.some(k => {
+      if (!isNaN(at) && !isNaN(k.at) && Math.abs(at - k.at) > 21 * 86400000) return false;
+      const small = Math.min(words.size, k.words.size);
+      if (small < 3) return false;
+      let shared = 0; words.forEach(w => { if (k.words.has(w)) shared++; });
+      return shared / small >= 0.6;
+    });
+    if (!dup) kept.push({ item, words, at });
+  }
+  return kept.map(k => k.item);
+}
+export function sentenceCaseShouting(text: string | null | undefined): string {
+  const t = String(text || "");
+  const letters = t.replace(/[^A-Za-z]/g, "");
+  if (letters.length < 8 || letters !== letters.toUpperCase()) return t;
+  const lower = t.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+// "£5.4m pa" from £1m up, "£385k pa" below (Woody, 2026-09-28).
+const rentPa = (n: number) => n >= 1e6 ? `£${(n / 1e6).toFixed(1)}m pa` : `£${Math.round(n / 1000).toLocaleString("en-GB")}k pa`;
+// en-GB "short" months give "Sept"; the house style is "Sep" (Woody, 2026-09-28).
+export const ukDate = (d: string | number | Date, opts: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", year: "numeric" }) =>
+  new Date(d).toLocaleDateString("en-GB", opts).replace(/\bSept\b/g, "Sep");
+// Dated research extracts ("Propel, Aug 2026: …") sit under the brand's own
+// summary as a muted source note, not as competing prose (Woody, 2026-09-28).
+const SOURCE_NOTE_RE = /^([A-Z][\w&.' -]{1,30}?),\s+((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{4}):\s*/;
+export function aboutParagraphs(description: string | null | undefined): { summary: string[]; notes: { label: string; text: string }[] } {
+  const paras = aboutText(description).split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
+  const summary = paras.filter(p => !SOURCE_NOTE_RE.test(p));
+  if (!summary.length) return { summary: paras, notes: [] };
+  const notes = paras.filter(p => SOURCE_NOTE_RE.test(p)).map(p => {
+    const m = p.match(SOURCE_NOTE_RE)!;
+    return { label: `${m[1]}, ${m[2].replace(/^Sept/, "Sep")}`, text: p.slice(m[0].length) };
+  });
+  return { summary, notes };
 }
 
 export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat = false, topSlot }: { companyId: string; showPropertiesBoard?: boolean; flat?: boolean; topSlot?: React.ReactNode }) {
@@ -1279,11 +1347,16 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   paragraph break left the ellipsis after "(Putney)." — the
                   rest shows when expanded (Woody, 2026-09-27). */}
               {c.description && (() => {
-                const paras = aboutText(c.description).split(/\n{2,}/).filter(Boolean);
+                const { summary, notes } = aboutParagraphs(c.description);
                 const clamped = !aboutOpen && c.description.length > ABOUT_CLAMP_CHARS;
-                return (clamped ? paras.slice(0, 1) : paras).map((para, i) => (
-                  <p key={i} className={`text-sm leading-relaxed break-words whitespace-pre-line ${clamped ? "line-clamp-5" : ""}`}>{para}</p>
-                ));
+                return <>
+                  {(clamped ? summary.slice(0, 1) : summary).map((para, i) => (
+                    <p key={i} className={`text-sm leading-relaxed break-words whitespace-pre-line ${clamped ? "line-clamp-5" : ""}`}>{para}</p>
+                  ))}
+                  {!clamped && notes.map((n, i) => (
+                    <p key={`note-${i}`} className="text-[11px] leading-snug text-muted-foreground break-words line-clamp-4"><span className="font-medium">Source note · {n.label}</span> — {n.text}</p>
+                  ))}
+                </>;
               })()}
               {(c.description || "").length > ABOUT_CLAMP_CHARS && (
                 <button type="button" onClick={() => setAboutOpen(open => !open)} className="text-xs text-primary hover:underline" data-testid="button-about-more">{aboutOpen ? "Show less" : "Read more"}</button>
@@ -1475,13 +1548,14 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               const active90 = stats ? stats.people_90d : data.contacts.filter((ct: any) => ct.last_interaction_at && Date.now() - new Date(ct.last_interaction_at).getTime() < 90 * 864e5).length;
               const parts = [
                 c.bgp_contact_crm ? <span key="lead">Lead <span className="font-medium text-foreground">{c.bgp_contact_crm}</span></span> : null,
-                <span key="touch">Last touch <span className={`font-medium ${daysSince == null ? "" : daysSince < 30 ? "text-emerald-700" : daysSince < 90 ? "text-amber-600" : "text-red-600"}`}>{daysSince == null ? "—" : daysSince === 0 ? "today" : daysSince === 1 ? "yesterday" : `${daysSince} days ago`}</span></span>,
+                // No touch on record = no "Last touch —" (Woody, 2026-09-28).
+                daysSince == null ? null : <span key="touch">Last touch <span className={`font-medium ${daysSince < 30 ? "text-emerald-700" : daysSince < 90 ? "text-amber-600" : "text-red-600"}`}>{daysSince === 0 ? "today" : daysSince === 1 ? "yesterday" : `${daysSince} days ago`}</span></span>,
                 threads ? (stats
                   ? <button key="threads" type="button" onClick={() => setEmailsOpen(true)} className="hover:text-foreground underline decoration-dotted underline-offset-2" data-testid="button-brand-emails"><span className="font-mono tabular-nums text-foreground">{threads.toLocaleString("en-GB")}</span> email thread{threads === 1 ? "" : "s"}</button>
                   : <span key="threads"><span className="font-mono tabular-nums text-foreground">{threads.toLocaleString("en-GB")}</span> email thread{threads === 1 ? "" : "s"}</span>) : null,
                 active90 ? <span key="active"><span className="font-mono tabular-nums text-foreground">{active90}</span> {active90 === 1 ? "person" : "people"} active in 90 days</span> : null,
               ].filter(Boolean);
-              return <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground" data-testid="brand-relationship-line">{parts}
+              return <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground empty:hidden" data-testid="brand-relationship-line">{parts}
                 {stats && <BrandEmailHistory companyId={companyId} companyName={c.name} open={emailsOpen} onOpenChange={setEmailsOpen} entities={commentaryEntities} />}
               </div>;
             })()}
@@ -1737,15 +1811,18 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                           {s.magnitude === "large" && " ●●"}
                           {s.magnitude === "medium" && " ●"}
                         </Badge>
+                        {/* Two lines, not a 25-char truncate; shouting
+                            all-caps headlines read in sentence case; dates
+                            "25 Sep 2026" (Woody, 2026-09-28). */}
                         <div className="flex-1 min-w-0">
                           {s.source && s.source.startsWith("http") ? (
-                            <a href={s.source} target="_blank" rel="noopener noreferrer" className="font-medium truncate block hover:underline">
-                              {s.headline}
+                            <a href={s.source} target="_blank" rel="noopener noreferrer" className="font-medium line-clamp-2 break-words hover:underline" title={s.headline}>
+                              {sentenceCaseShouting(s.headline)}
                             </a>
                           ) : (
-                            <p className="font-medium truncate">{s.headline}</p>
+                            <p className="font-medium line-clamp-2 break-words" title={s.headline}>{sentenceCaseShouting(s.headline)}</p>
                           )}
-                          {s.signal_date && <span className="text-[10px] text-muted-foreground">{new Date(s.signal_date).toLocaleDateString("en-GB")}</span>}
+                          {s.signal_date && <span className="text-[10px] text-muted-foreground">{ukDate(s.signal_date)}</span>}
                         </div>
                         {!isClientViewer && (
                         <button
@@ -2190,7 +2267,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                           </Badge>
                           {Number(p.total_rent_pa) > 0 && (
                             <span className="text-[10px] text-muted-foreground tabular-nums">
-                              £{Math.round(Number(p.total_rent_pa) / 1000).toLocaleString("en-GB")}k pa
+                              {rentPa(Number(p.total_rent_pa))}
                             </span>
                           )}
                         </span>
@@ -2223,7 +2300,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                         <div className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5 cursor-pointer">
                           <Badge variant="outline" className="text-[10px] shrink-0 border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400 capitalize">{label}</Badge>
                           <span className="truncate flex-1">{le.property_name}{le.unit_name ? ` · ${le.unit_name}` : ""}</span>
-                          <span className="font-medium tabular-nums text-xs shrink-0">{nextEvent?.toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</span>
+                          <span className="font-medium tabular-nums text-xs shrink-0">{nextEvent?.toLocaleDateString("en-GB", { month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep")}</span>
                         </div>
                       </Link>
                     );
@@ -2316,7 +2393,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 for landlords. */}
             {isLandlord && <AccountDealsBoard companyId={companyId} />}
 
-            {isBrand && <BrandViewingActivity companyId={companyId} />}
+            {isBrand && <QuietViewingActivity companyId={companyId} />}
             {/* Active requirements moved into the unified Expansion intelligence zone below. */}
 
 
@@ -2353,7 +2430,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                         })()}
                       </div>
                       <div className="text-right shrink-0">
-                        {u.rent_pa != null && <div className="font-semibold text-xs">£{Math.round(u.rent_pa / 1000).toLocaleString("en-GB")}k pa</div>}
+                        {u.rent_pa != null && <div className="font-semibold text-xs">{rentPa(u.rent_pa)}</div>}
                         {u.sqft != null && <div className="text-[10px] text-muted-foreground">{Math.round(u.sqft).toLocaleString()} sqft</div>}
                       </div>
                       <ExternalLink className="w-2.5 h-2.5 text-muted-foreground opacity-0 group-hover:opacity-100 shrink-0" />
@@ -2496,7 +2573,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 )}
                 {!isLandlord && c.brand_analysis && (
                   <details className="rounded-lg border border-border p-3">
-                    <summary className="text-sm font-medium cursor-pointer">Previous expansion research{c.brand_analysis_at ? ` · ${new Date(c.brand_analysis_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : ""}</summary>
+                    <summary className="text-sm font-medium cursor-pointer">Previous expansion research{c.brand_analysis_at ? ` · ${ukDate(c.brand_analysis_at, { day: "numeric", month: "short", year: "numeric" })}` : ""}</summary>
                     <div className="pt-3">
                       <AiCommentary entities={commentaryEntities} text={isClientViewer
                         ? String(c.brand_analysis).split(/\*{0,2}Recommendation\b/i)[0].replace(/[\s*—:-]+$/, "")
@@ -2609,7 +2686,7 @@ export function PipnetRequirementsRow({ companyId, brandName, isClient }: { comp
         <span className="flex items-center gap-1">
           <Search className="w-3 h-3" /> Requirements {hasRows ? `(${rows.length})` : ""}
           {data?.fetched_at && (
-            <span className="text-[10px] ml-1">· {new Date(data.fetched_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+            <span className="text-[10px] ml-1">· {ukDate(data.fetched_at, { day: "numeric", month: "short" })}</span>
           )}
         </span>
         {!isClient && (
@@ -2643,6 +2720,23 @@ export function PipnetRequirementsRow({ companyId, brandName, isClient }: { comp
       )}
     </div>
   );
+}
+
+// A failed viewings load is a quiet line of its own, not an error box that
+// read as part of the competitor set above it (Woody, 2026-09-28). Same
+// query key as BrandViewingActivity, so it shares the one request.
+function QuietViewingActivity({ companyId }: { companyId: string }) {
+  const query = useQuery<{ viewings: any[] }>({
+    queryKey: ["/api/leasing-viewings", "brand", companyId],
+    queryFn: async () => (await apiRequest("GET", `/api/leasing-viewings?companyId=${encodeURIComponent(companyId)}`)).json(),
+    staleTime: 30_000,
+  });
+  if (query.isError) return (
+    <p className="border-t pt-2 text-[11px] text-muted-foreground">
+      Viewing activity unavailable right now · <button type="button" onClick={() => void query.refetch()} className="underline underline-offset-2 hover:text-foreground">Retry</button>
+    </p>
+  );
+  return <BrandViewingActivity companyId={companyId} />;
 }
 
 function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesForPicker, similarTenants = [] }: {
@@ -2708,12 +2802,23 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
   const similarNames = new Set(similarTenants.map((t) => t.name.toLowerCase().trim()));
   const aiCompetitors = competitors.filter((comp) => !similarNames.has(comp.name.toLowerCase().trim()));
 
+  // Empty set: no header-only card — staff get one quiet line with the
+  // Research action, clients nothing (Woody, 2026-09-28).
+  if (similarTenants.length === 0 && aiCompetitors.length === 0) return cpIsClient ? null : (
+    <div className="border-t pt-2 flex items-center gap-2 text-[11px] text-muted-foreground" data-testid="competitor-set-empty">
+      <Sparkles className="w-3 h-3 text-primary" /> No competitor set yet
+      <button onClick={() => research.mutate()} disabled={research.isPending} className="underline underline-offset-2 hover:text-foreground disabled:opacity-50">
+        {research.isPending ? "Researching…" : "Research"}
+      </button>
+    </div>
+  );
+
   return (
     <div className="border-t pt-2">
       <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1">
         <Sparkles className="w-3 h-3 text-primary" /> Similar tenants &amp; competitor set
         {generatedAt && (
-          <span className="text-[10px] ml-1">· {new Date(generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+          <span className="text-[10px] ml-1">· {ukDate(generatedAt, { day: "numeric", month: "short" })}</span>
         )}
         {!cpIsClient && (
         <button
@@ -2911,7 +3016,7 @@ export function MenuIntelCard({
           <Store className="w-3.5 h-3.5" /> {labelKind}
           {refreshedAt && (
             <span className="text-[10px] normal-case text-muted-foreground ml-1">
-              · {new Date(refreshedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+              · {ukDate(refreshedAt, { day: "numeric", month: "short" })}
             </span>
           )}
         </CardTitle>
@@ -3068,7 +3173,7 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
         <BadgeInfo className="w-3.5 h-3.5 text-muted-foreground" />
         <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Brand intel</span>
         {data?.fetched_at && (
-          <span className="text-[10px] text-muted-foreground ml-1">· {new Date(data.fetched_at).toLocaleDateString("en-GB")}</span>
+          <span className="text-[10px] text-muted-foreground ml-1">· {ukDate(data.fetched_at)}</span>
         )}
         {!rrIsClient && (
         <button
@@ -3292,7 +3397,7 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
   const dateLevelQuote = typeof quoteTs === "string" && quoteTs.endsWith("T00:00:00.000Z");
   const fetchedLabel = quoteTs
     ? dateLevelQuote
-      ? new Date(quoteTs).toLocaleDateString("en-GB", { day: "numeric", month: "short" })
+      ? ukDate(quoteTs, { day: "numeric", month: "short" })
       : new Date(quoteTs).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
     : null;
 
@@ -3905,8 +4010,10 @@ export function BrandComplianceCard({
 // `ledger` folds the old separate "Deal ledger & pipeline" counts into this
 // card's header, so each deal is counted in one place (Woody, 2026-09-23).
 export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTenancyPropertyIds, pillsOnly = false }: { companyId: string; ledger?: { completed: number; active: number; requirements: number }; bare?: boolean; hideTenancyPropertyIds?: string[]; pillsOnly?: boolean }) {
-  const [showAllTenancies, setShowAllTenancies] = useState(false);
-  useEffect(() => setShowAllTenancies(false), [companyId]);
+  // Each list opens on its own — one "Show all (8 more)" under the last
+  // list summed four lists' hidden rows (Woody, 2026-09-28).
+  const [openTiers, setOpenTiers] = useState<Set<string>>(new Set());
+  useEffect(() => setOpenTiers(new Set()), [companyId]);
   const { data: act } = useQuery<any>({
     queryKey: ["/api/brands", companyId, "portfolio-activity"],
     queryFn: async () => {
@@ -3932,10 +4039,12 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
   const tenantAt: any[] = (act.tenantAt || []).filter((p: any) => !(p.via !== "deal" && hidden.has(p.property_id)));
   // Inside About each list shows 2 (6 in its own card) until Show all —
   // Sainsbury's six suggested pitches made the profile card ~1,400px.
-  const cap = showAllTenancies ? Infinity : bare ? 2 : 6;
+  const baseCap = bare ? 2 : 6;
+  // A list only two over the cap just shows in full ("Tenant at 3" listed 2).
+  const capFor = (key: string, list: any[]) => openTiers.has(key) || list.length <= baseCap + 2 ? list.length : baseCap;
   // One row per pitched unit, its evidence joined ("Viewing 15 Apr 2026 ·
   // Offer (Pending) 3 Jul 2026"), dates in words not ISO.
-  const isoDay = (t: string) => String(t || "").replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, (_m, y, mo, d) => new Date(`${y}-${mo}-${d}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }));
+  const isoDay = (t: string) => String(t || "").replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, (_m, y, mo, d) => ukDate(`${y}-${mo}-${d}T12:00:00Z`, { day: "numeric", month: "short", year: "numeric" }));
   const pitchedByUnit = new Map<string, any>();
   for (const p of (act.pitched || [])) {
     const k = `${p.propertyId}|${String(p.unitName || "").toLowerCase().replace(/\s+/g, "")}`;
@@ -3990,15 +4099,25 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
     </div>
   );
 
-  const Tier = ({ label, count, tone, children }: any) => (
-    <div>
-      <div className="flex items-center gap-1.5 mb-1">
-        <span className={`text-[10px] uppercase tracking-widest ${tone || "text-muted-foreground/70"}`}>{label}</span>
-        <Badge variant="outline" className="text-[9px] tabular-nums">{count}</Badge>
+  const Tier = ({ label, count, tone, children, tierKey }: any) => {
+    const hiddenHere = count - capFor(tierKey, { length: count } as any[]);
+    const open = openTiers.has(tierKey);
+    return (
+      <div>
+        <div className="flex items-center gap-1.5 mb-1">
+          <span className={`text-[10px] uppercase tracking-widest ${tone || "text-muted-foreground/70"}`}>{label}</span>
+          <Badge variant="outline" className="text-[9px] tabular-nums">{count}</Badge>
+        </div>
+        <div className="space-y-1">{children}</div>
+        {(hiddenHere > 0 || open) && (
+          <button type="button" className="mt-1 text-[10px] text-primary hover:underline" aria-expanded={open} data-testid={`portfolio-more-${tierKey}`}
+            onClick={() => setOpenTiers(prev => { const next = new Set(prev); if (next.has(tierKey)) next.delete(tierKey); else next.add(tierKey); return next; })}>
+            {open ? "Show fewer" : `+${hiddenHere} more`}
+          </button>
+        )}
       </div>
-      <div className="space-y-1">{children}</div>
-    </div>
-  );
+    );
+  };
 
   const title = <>
     <Target className="w-3.5 h-3.5" /> Portfolio activity
@@ -4006,8 +4125,8 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
   </>;
   const tiers = <>
         {tenantAt.length > 0 && (
-          <Tier label="Tenant at" count={tenantAt.length}>
-            {tenantAt.slice(0, cap).map((p: any) => (
+          <Tier tierKey="tenant" label="Tenant at" count={tenantAt.length}>
+            {tenantAt.slice(0, capFor("tenant", tenantAt)).map((p: any) => (
               <Row key={`t-${p.via}-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name} dealId={p.via === "deal" ? p.id : undefined}
                 right={<Badge variant="outline" className="text-[9px] shrink-0 text-emerald-700 border-emerald-200">{p.via === "deal" ? (p.deal_type || "deal") : "tenant"}</Badge>} />
             ))}
@@ -4015,16 +4134,16 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
           </Tier>
         )}
         {targeted.length > 0 && (
-          <Tier label="Targeted" count={targeted.length}>
-            {targeted.slice(0, cap).map((p: any) => (
+          <Tier tierKey="targeted" label="Targeted" count={targeted.length}>
+            {targeted.slice(0, capFor("targeted", targeted)).map((p: any) => (
               <Row key={`g-${p.via}-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name}
                 right={<Badge variant="outline" className="text-[9px] shrink-0">{({ AVA: "Available", NEG: "Negotiating", HOT: "HOTs", SOL: "Solicitors", OPP: "Opportunity", REP: "Marketing" } as Record<string, string>)[p.status] || p.status || (p.via === "letting_tracker" ? "brief" : "schedule")}</Badge>} />
             ))}
           </Tier>
         )}
         {pitched.length > 0 && (
-          <Tier label="Pitched — with evidence" count={pitched.length}>
-            {pitched.slice(0, cap).map((p: any, i: number) => (
+          <Tier tierKey="pitched" label="Pitched — with evidence" count={pitched.length}>
+            {pitched.slice(0, capFor("pitched", pitched)).map((p: any, i: number) => (
               <Row key={`p-${i}`} propertyId={p.propertyId} propertyName={p.propertyName} unitName={p.unitName}
                 title={p.evidence}
                 right={<span className="text-[10px] text-amber-700 truncate">{p.evidence}</span>} />
@@ -4032,8 +4151,8 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
           </Tier>
         )}
         {suggestions.length > 0 && (
-          <Tier label="Suggested pitches" count={suggestions.length} tone="text-emerald-700/80">
-            {suggestions.slice(0, cap).map((u: any) => (
+          <Tier tierKey="suggested" label="Suggested pitches" count={suggestions.length} tone="text-emerald-700/80">
+            {suggestions.slice(0, capFor("suggested", suggestions)).map((u: any) => (
               <Row key={`s-${u.id}`} propertyId={u.property_id} propertyName={u.property_name} unitName={u.unit_name}
                 title={u.reason} subline={u.reason}
                 right={u.sqft ? <span className="text-[10px] text-muted-foreground tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null} />
@@ -4041,18 +4160,11 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
           </Tier>
         )}
   </>;
-  const baseCap = bare ? 2 : 6;
-  const hiddenRows = [tenantAt, targeted, pitched, suggestions].reduce((n, list) => n + Math.max(0, list.length - baseCap), 0);
-  const more = hiddenRows > 0 && (
-    <Button variant="ghost" size="sm" className="min-h-11" onClick={() => setShowAllTenancies(value => !value)} aria-expanded={showAllTenancies} data-testid="portfolio-show-all-tenancies">
-      {showAllTenancies ? "Show fewer" : `Show all (${hiddenRows} more)`}
-    </Button>
-  );
   // bare: inside the BGP take card, no card of its own.
   if (bare) return (
     <div className="space-y-2" data-testid="portfolio-activity-bare">
       <div className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">{title}</div>
-      <div className="space-y-3">{tiers}{more}</div>
+      <div className="space-y-3">{tiers}</div>
     </div>
   );
   return (
@@ -4060,7 +4172,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, hideTe
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">{title}</CardTitle>
       </CardHeader>
-      <CardContent className="p-3 pt-0 space-y-3 max-h-[380px] overflow-y-auto">{tiers}{more}</CardContent>
+      <CardContent className="p-3 pt-0 space-y-3 max-h-[380px] overflow-y-auto">{tiers}</CardContent>
     </Card>
   );
 }
@@ -4375,7 +4487,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
               <div key={i} className="text-xs rounded-lg border border-border/50 px-2.5 py-1.5">
                 <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mb-0.5">
                   <span className="font-medium text-foreground/80">{cm.userName}</span>
-                  {cm.at && <span>{new Date(cm.at).toLocaleDateString("en-GB")}</span>}
+                  {cm.at && <span>{ukDate(cm.at)}</span>}
                   <Link href={`/properties/${cm.propertyId}`} className="ml-auto hover:underline truncate max-w-[45%]">
                     {cm.propertyName}{cm.unitName ? ` · ${cm.unitName}` : ""}
                   </Link>
@@ -4415,7 +4527,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
                     const today = new Date().toDateString() === d.toDateString();
                     const label = today
                       ? d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
-                      : `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
+                      : `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" }).replace(/\bSept\b/, "Sep")} ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
                     return <span className="font-normal opacity-60"> · {label}</span>;
                   })()}
                   {m.editedAt || m.edited_at ? <span className="font-normal opacity-60"> · edited</span> : null}
@@ -4733,6 +4845,14 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
   const { data: sbViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const sbIsClient = !sbViewer || sbViewer.role === "Client" || !!sbViewer.companyScopeId;
   const coverImage = selectCompanyHeroImage(data.images, c.company_type);
+  const [galleryAll, setGalleryAll] = useState(false);
+  const stripIds = new Set(rankCompanyHeroImages(data.images || [], c.company_type).slice(0, 4).map((img: any) => img.id));
+  const galleryImages = galleryAll ? data.images : data.images.filter((img: any) => !stripIds.has(img.id));
+  const covenantReport = useCovenantReport((c as any)?.companies_house_number);
+  const covenantRun = useMutation({
+    mutationFn: async () => apiRequest("POST", `/api/kyc/run-all-checks`, { companyId }),
+    onSettled: () => { void covenantReport.refetch(); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); },
+  });
 
   const deleteImageMutation = useMutation({
     mutationFn: async (imageId: string) => {
@@ -4866,7 +4986,7 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
           standard layout; before a CH match lands it explains what unlocks
           it instead of silently disappearing (Woody, 2026-08-03). flex-1 so
           it fills the column to the Compliance board's depth. */}
-      {show("covenant") && <Card className="flex-1">
+      {show("covenant") && !(sbIsClient && (c as any)?.companies_house_number && !covenantReport.data?.grade) && <Card className="flex-1">
         <CardHeader className="p-3 pb-2">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
             Covenant
@@ -4885,6 +5005,17 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
               <div className="max-h-[300px] overflow-y-auto pr-1">
                 <CovenantCommentary companyNumber={(c as any).companies_house_number} />
               </div>
+              {/* CH number but no grade yet: say so instead of a bare
+                  heading; clients don't see the card at all then
+                  (Woody, 2026-09-28). */}
+              {!sbIsClient && !covenantReport.isLoading && !covenantReport.data?.grade && (
+                <p className="text-xs text-muted-foreground">
+                  Covenant check not run yet ·{" "}
+                  <button type="button" onClick={() => covenantRun.mutate()} disabled={covenantRun.isPending} className="underline underline-offset-2 hover:text-foreground disabled:opacity-50">
+                    {covenantRun.isPending ? "Running…" : "Run check"}
+                  </button>
+                </p>
+              )}
             </>
           ) : (
             <p className="text-xs text-muted-foreground">
@@ -4942,23 +5073,33 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
           if (days < 7) return `${days}d ago`;
           if (days < 30) return `${Math.floor(days / 7)}w ago`;
           if (days < 365) return `${Math.floor(days / 30)}mo ago`;
-          return new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+          return ukDate(d, { day: "numeric", month: "short", year: "numeric" });
         };
         const brandDomain = c.domain ? c.domain.replace(/^www\./, "") : null;
         // Industry leaves out the brand's own Instagram / jobs / website
         // posts — those are the Brand feed (Woody, 2026-09-27).
-        const industryNews = data.news.filter((a: any) => !isOwnChannelNews(a.source_name));
         const srcOf = (a: any) => newsSourceLabel(a.source_name, a.title, c.name);
+        // The brand's own posts (source or title tail = the brand) go to
+        // Press; near-duplicate stories collapse; stories over two years old
+        // wait behind "Show more" (Woody, 2026-09-28).
+        // ("<Brand> (Google News)" is the brand's search feed — other
+        // publishers' stories — so only the title tail decides there.)
+        const ownPost = (a: any) => isOwnBrandSource(splitNewsTitle(a.title).publisher, c.name)
+          || (!/\(Google News\)\s*$/i.test(a.source_name || "") && isOwnBrandSource(a.source_name, c.name));
+        const staleCut = Date.now() - 730 * 86400000;
+        const industryAll = dedupeNearNews(data.news.filter((a: any) => !isOwnChannelNews(a.source_name) && !ownPost(a)));
+        const industryNews = newsShowAll ? industryAll : industryAll.filter((a: any) => !a.published_at || new Date(a.published_at).getTime() >= staleCut);
+        const olderHidden = industryAll.length - industryNews.length;
         const allSources = [...new Set(
           industryNews
             .map(srcOf)
-            .filter((s: any): s is string => !!s && !/^google( news)?$/i.test(s))
+            .filter((s: any): s is string => !!s)
         )];
         // Press = the brand's OWN newsroom only (url on their domain). The
         // old source-name clause matched "<Brand> (Google News)" on every
         // article, making Press identical to Industry (Woody, 2026-08-19).
         const tabFiltered = newsTab === "press"
-          ? data.news.filter((a: any) => brandDomain && a.url?.includes(brandDomain))
+          ? data.news.filter((a: any) => (brandDomain && a.url?.includes(brandDomain)) || ownPost(a) || /(?:\(website news\)|\s[—–-]\s+news)\s*$/i.test(a.source_name || ""))
           : (newsSourceFilter ? industryNews.filter((a: any) => srcOf(a) === newsSourceFilter) : industryNews);
         const filtered = newsTagFilter.size === 0
           ? tabFiltered
@@ -5055,9 +5196,17 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
                   // Final domain for favicon: prefer mapped publisher, fall back to
                   // URL domain only if it's NOT a Google proxy.
                   const domain = sourceDomain || (isGoogleUrl ? null : rawUrlDomain);
-                  const sourceLabel = cleanSourceName || rawUrlDomain;
+                  // Aggregator hosts (news.google.com, msn.com) are no chip.
+                  const sourceLabel = cleanSourceName || (isGoogleUrl || AGGREGATOR_SOURCE_RE.test(rawUrlDomain || "") ? null : rawUrlDomain);
                   const rawText = article.ai_summary || article.summary;
                   const displayText = snippetAddsNothing(article.title, rawText) ? null : rawText;
+                  // A failed image or favicon falls back to the source's
+                  // initial rather than a blank tile (Woody, 2026-09-28).
+                  const initial = (sourceLabel || cleanTitle || "?").replace(/^the\s+/i, "")[0]?.toUpperCase() || "?";
+                  const showFallback = (e: React.SyntheticEvent<HTMLImageElement>) => {
+                    const img = e.currentTarget; img.style.display = "none";
+                    img.parentElement?.querySelector("[data-news-initial]")?.classList.remove("hidden");
+                  };
                   return (
                     <a
                       key={article.id}
@@ -5068,33 +5217,38 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
                     >
                       <div className="shrink-0">
                         {hasRealImage ? (
-                          <img
-                            src={article.image_url!}
-                            alt=""
-                            className="w-14 h-10 rounded object-cover border"
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                          />
+                          <>
+                            <img
+                              src={article.image_url!}
+                              alt=""
+                              className="w-14 h-10 rounded object-cover border"
+                              onError={showFallback}
+                            />
+                            <div data-news-initial className="hidden w-10 h-10 rounded border bg-muted flex items-center justify-center text-sm font-bold text-muted-foreground">{initial}</div>
+                          </>
                         ) : (
                           <div className="w-10 h-10 rounded border bg-muted flex items-center justify-center overflow-hidden">
-                            {domain ? (
+                            {domain && (
                               // Google favicon API — works for any domain, free, no key.
                               // Replaces deprecated Clearbit.
                               <img
                                 src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`}
                                 alt=""
                                 className="w-5 h-5 object-contain"
-                                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                                onError={showFallback}
                               />
-                            ) : (
-                              <span className="text-sm font-bold text-muted-foreground">{(sourceLabel || "?")[0].toUpperCase()}</span>
                             )}
+                            <span data-news-initial className={`text-sm font-bold text-muted-foreground ${domain ? "hidden" : ""}`}>{initial}</span>
                           </div>
                         )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1 mb-0.5 flex-wrap">
+                          {/* One neutral chip style for every outlet — the
+                              Guardian's blue read as a different kind of
+                              thing (Woody, 2026-09-28). */}
                           {sourceLabel && (
-                            <span className={`text-[9px] font-semibold px-1 py-0.5 rounded border ${newsSourceColor(sourceLabel)}`}>
+                            <span className="text-[9px] font-semibold px-1 py-0.5 rounded border bg-zinc-100 text-zinc-600 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700">
                               {sourceLabel}
                             </span>
                           )}
@@ -5109,12 +5263,12 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
                   );
                 })}
               </div>
-              {filtered.length > 6 && (
+              {(filtered.length > 6 || newsShowAll || (newsTab === "industry" && olderHidden > 0)) && (
                 <button
                   onClick={() => setNewsShowAll(v => !v)}
                   className="text-[10px] text-primary hover:underline"
                 >
-                  {newsShowAll ? "Show less" : `Show ${filtered.length - 6} more`}
+                  {newsShowAll ? "Show less" : `Show ${Math.max(0, filtered.length - 6) + (newsTab === "industry" ? olderHidden : 0)} more`}
                 </button>
               )}
             </CardContent>
@@ -5215,14 +5369,22 @@ function BrandProfileSidebar({ data, companyId, column, only }: { data: BrandPro
                 onDelete={(imageId) => deleteImageMutation.mutate(imageId)}
               />
             )}
-            {!isLandlord && data.images.length > 0 && (
+            {/* The header strip already shows the cover + up to three
+                photos; the grid skips those unless staff open the full set
+                to manage them (Woody, 2026-09-28). */}
+            {!isLandlord && galleryImages.length < data.images.length && (
+              <button type="button" onClick={() => setGalleryAll(v => !v)} className="mb-2 text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2">
+                {galleryAll ? "Hide the photos shown above" : `${data.images.length - galleryImages.length} shown above${sbIsClient ? "" : " · Show all to manage"}`}
+              </button>
+            )}
+            {!isLandlord && galleryImages.length > 0 && (
               // Scrollable grid — show every image, capped at a sensible
               // height so the gallery doesn't dominate the sidebar. 3-col
               // gives bigger thumbnails than the previous 4-col.
               <div className={(isLandlord || isBrand)
                 ? "grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[640px] overflow-y-auto pr-1"
                 : "grid grid-cols-3 gap-1 max-h-[420px] overflow-y-auto pr-1"}>
-                {data.images.map((img: any) => {
+                {galleryImages.map((img: any) => {
                   const thumbSrc = img.thumbnail_data
                     ? (img.thumbnail_data.startsWith("data:")
                         ? img.thumbnail_data

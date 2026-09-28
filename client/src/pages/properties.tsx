@@ -4,6 +4,7 @@ import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import { DEAL_STATUS_BADGE_COLORS } from "@/lib/deal-status-colors";
+import { gbDate, stripPropertyFromTitle, useClassLabel } from "@/lib/format";
 import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import { useTeam } from "@/lib/team-context";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -471,6 +472,28 @@ export function resultToAddress(result: { formatted: string; placeId: string; la
   };
 }
 
+// The address minus leading segments that just repeat the property name
+// ("1 Wood Street" / "1 Wood St, Barbican…" → "Barbican…"); "" when the
+// address IS the name. Segments accumulate and compare both ways, so
+// "1 Barrett Street" drops "1, BARRETT STREET" (Woody, 2026-09-27/28).
+function addressAfterName(name: string | null | undefined, addr: string): string {
+  const norm = (t: string) => t.toLowerCase().replace(/\bstreet\b/g, "st").replace(/\broad\b/g, "rd").replace(/[^a-z0-9]/g, "");
+  const segs = addr.split(",");
+  const n = norm(name || "");
+  let acc = "";
+  let cut = -1;
+  if (addr && n.length >= 4) {
+    for (let i = 0; i < segs.length; i++) {
+      acc += norm(segs[i]);
+      if (n.startsWith(acc)) { if (acc.length >= 4) cut = i; if (acc === n) break; continue; }
+      if (acc.startsWith(n)) cut = i;
+      break;
+    }
+  }
+  if (cut >= 0) return segs.slice(cut + 1).join(",").trim();
+  return addr;
+}
+
 export function formatAddress(address: any): string {
   if (!address) return "";
   if (typeof address === "string") return address;
@@ -875,6 +898,7 @@ export function InlineOwnerLink({
   allCompanies,
   readOnly,
   roleOnChip = true,
+  alsoFields = [],
 }: {
   propertyId: string;
   companyId: string | null | undefined;
@@ -884,9 +908,14 @@ export function InlineOwnerLink({
   readOnly?: boolean;
   // Off where the row already carries the role label (property page).
   roleOnChip?: boolean;
+  // Other role fields this same company fills — one chip for all of them,
+  // and the X unlinks it from each (Woody, 2026-09-28).
+  alsoFields?: string[];
 }) {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
+  // A dangling id (company deleted/merged) is treated as empty — it used to
+  // fall through to the picker and read "Freeholder  + Freeholder".
   const company = companyId ? allCompanies.find(c => c.id === companyId) : null;
   const filtered = searchTerm
     ? allCompanies.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 20)
@@ -894,7 +923,9 @@ export function InlineOwnerLink({
 
   const updateMutation = useMutation({
     mutationFn: async (val: string | null) => {
-      await apiRequest("PUT", `/api/crm/properties/${propertyId}`, { [fieldName]: val });
+      await apiRequest("PUT", `/api/crm/properties/${propertyId}`, val === null
+        ? Object.fromEntries([fieldName, ...alsoFields].map(f => [f, null]))
+        : { [fieldName]: val });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
@@ -916,8 +947,8 @@ export function InlineOwnerLink({
               chips read as duplicates. */}
           <Badge variant="outline" className="text-[11px] px-2 py-0.5 cursor-pointer hover:bg-muted max-w-full inline-flex items-center" title={`${label}: ${company.name}`}>
             <Building2 className="w-3 h-3 mr-1 text-muted-foreground shrink-0" />
-            {roleOnChip && <span className="text-muted-foreground mr-1 shrink-0">{label} ·</span>}
-            <span className="truncate">{company.name}</span>
+            {roleOnChip && <span className="text-muted-foreground mr-1 truncate min-w-[2.5rem]">{label} ·</span>}
+            <span className="truncate shrink-0 max-w-[70%]">{company.name}</span>
           </Badge>
         </Link>
         {!readOnly && (
@@ -937,9 +968,11 @@ export function InlineOwnerLink({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
+        {/* Where the row already shows the role, the picker just says
+            "+ Add" — the label once, not "Freeholder  + Freeholder". */}
         <button className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
           <Plus className="w-3 h-3" />
-          {label}
+          {roleOnChip ? label : "Add"}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
@@ -1226,15 +1259,31 @@ export function InlineDeals({
   dealLinks,
   allDeals,
   readOnly,
+  propertyName,
+  propertyAddress,
 }: {
   propertyId: string;
   dealLinks: DealLink[];
   allDeals: DealLink[];
   readOnly?: boolean;
+  propertyName?: string;
+  propertyAddress?: string;
 }) {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
+  const [showAllDeals, setShowAllDeals] = useState(false);
   const linkedDeals = dealLinks.filter(d => d.propertyId === propertyId);
+  // The row already names the property, so chips drop it ("Bluewater -
+  // Nando's" → "Nando's"); identical labels collapse to one chip "×N", and
+  // three show before "+N" (Woody, 2026-09-28: six "Bluewater - …" chips
+  // and two identical "10 Piccadilly T…").
+  const dealGroups: { label: string; deals: DealLink[] }[] = [];
+  for (const d of linkedDeals) {
+    const label = propertyName ? stripPropertyFromTitle(d.name, propertyName, propertyAddress) : d.name;
+    const g = dealGroups.find(x => x.label === label);
+    if (g) g.deals.push(d); else dealGroups.push({ label, deals: [d] });
+  }
+  const shownGroups = showAllDeals ? dealGroups : dealGroups.slice(0, 3);
   const unlinkedDeals = allDeals.filter(d => !d.propertyId || d.propertyId === propertyId);
   const filteredDeals = searchTerm
     ? unlinkedDeals.filter(d => !linkedDeals.some(l => l.id === d.id) && d.name.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 20)
@@ -1268,20 +1317,24 @@ export function InlineDeals({
 
   return (
     <div className="flex flex-col gap-0.5 w-full min-w-0">
-      <div className={`flex flex-col gap-0.5 ${linkedDeals.length > 5 ? "max-h-[120px] overflow-y-auto pr-0.5" : ""}`}>
-        {linkedDeals.map(deal => (
+      <div className={`flex flex-col gap-0.5 ${shownGroups.length > 5 ? "max-h-[120px] overflow-y-auto pr-0.5" : ""}`}>
+        {shownGroups.map(({ label, deals }) => {
+          const deal = deals[0];
+          return (
           <div key={deal.id} className="flex items-center gap-0.5 min-w-0 group/deal">
             <Link href={`/deals/${deal.id}`} className="min-w-0 flex-1">
               <Badge
                 variant="outline"
                 className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted w-full justify-start"
+                title={deals.map(d => d.name).join("\n")}
                 data-testid={`deal-badge-${deal.id}`}
               >
                 <Handshake className="w-2.5 h-2.5 mr-0.5 shrink-0 text-muted-foreground" />
-                <span className="truncate">{deal.name}</span>
+                <span className="truncate">{label}</span>
+                {deals.length > 1 && <span className="ml-0.5 shrink-0 font-mono tabular-nums text-muted-foreground">×{deals.length}</span>}
               </Badge>
             </Link>
-            {!readOnly && (
+            {!readOnly && deals.length === 1 && (
             <button
               className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center shrink-0 opacity-0 group-hover/deal:opacity-100 transition-opacity"
               onClick={() => unlinkMutation.mutate(deal.id)}
@@ -1291,7 +1344,18 @@ export function InlineDeals({
             </button>
             )}
           </div>
-        ))}
+          );
+        })}
+        {dealGroups.length > 3 && (
+          <button
+            type="button"
+            className="text-[10px] text-muted-foreground hover:text-foreground self-start"
+            onClick={() => setShowAllDeals(v => !v)}
+            data-testid={`more-deals-${propertyId}`}
+          >
+            {showAllDeals ? "Show fewer" : <>+<span className="font-mono tabular-nums">{dealGroups.length - 3}</span> more</>}
+          </button>
+        )}
       </div>
       {!readOnly && (
       <DropdownMenu>
@@ -1391,22 +1455,25 @@ export function InlineTenants({
   const hiddenCount = assignedCompanies.length - MAX_VISIBLE;
 
   return (
-    <div className="flex items-center gap-1 flex-wrap">
+    // Chips truncate inside the column — long tenant names ran the table
+    // past its right edge (Woody, 2026-09-28).
+    <div className="flex items-center gap-1 flex-wrap min-w-0">
       {visibleCompanies.map(company => (
-        <span key={company.id} className="inline-flex items-center gap-0.5">
-          <Link href={`/companies/${company.id}`}>
+        <span key={company.id} className="inline-flex items-center gap-0.5 min-w-0 max-w-full">
+          <Link href={`/companies/${company.id}`} className="min-w-0">
             <Badge
               variant="outline"
-              className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted group"
+              className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted group max-w-full"
+              title={company.name}
               data-testid={`tenant-badge-${propertyId}-${company.id}`}
             >
-              <Building2 className="w-2.5 h-2.5 mr-0.5 text-muted-foreground" />
-              {company.name}
+              <Building2 className="w-2.5 h-2.5 mr-0.5 text-muted-foreground shrink-0" />
+              <span className="truncate">{company.name}</span>
             </Badge>
           </Link>
           {!readOnly && (
           <button
-            className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center"
+            className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center shrink-0"
             onClick={() => removeMutation.mutate(company.id)}
             data-testid={`remove-tenant-${propertyId}-${company.id}`}
           >
@@ -2767,7 +2834,7 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
           <Badge variant="outline" className="text-[9px] shrink-0 max-w-[110px] truncate" title={contact.via}>{contact.via}</Badge>
         )}
         {contact.last_interaction && (
-          <span className="text-[9px] text-muted-foreground shrink-0">{new Date(contact.last_interaction).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+          <span className="text-[9px] text-muted-foreground shrink-0">{gbDate(contact.last_interaction, { day: "numeric", month: "short" })}</span>
         )}
       </Link>
       {/* Hide (or unpin) — BGP team rows are managed on the property-team
@@ -2916,7 +2983,7 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
                           )}
                         </div>
                         {o.contact?.last_interaction && (
-                          <span className="text-[9px] text-muted-foreground shrink-0">{new Date(o.contact.last_interaction).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+                          <span className="text-[9px] text-muted-foreground shrink-0">{gbDate(o.contact.last_interaction, { day: "numeric", month: "short" })}</span>
                         )}
                       </div>
                     ))}
@@ -3254,7 +3321,7 @@ function newsTimeAgo(date: string | Date | null): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d ago`;
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return gbDate(d, { day: "numeric", month: "short" });
 }
 
 const extractPostcode = postcodeFromPropertyAddress;
@@ -5096,7 +5163,7 @@ export function Property360Panel({ propertyId }: { propertyId: string }) {
                   <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 transition-colors cursor-pointer" data-testid={`comp-${c.id}`}>
                     <div className="min-w-0">
                       <p className="text-xs font-medium truncate">{c.tenant || c.name}</p>
-                      <p className="text-[10px] text-muted-foreground">{c.use_class || ""} · {c.completion_date || ""}</p>
+                      <p className="text-[10px] text-muted-foreground">{useClassLabel(c.use_class)} · {c.completion_date || ""}</p>
                     </div>
                     {c.headline_rent && <span className="text-xs font-medium text-muted-foreground shrink-0">{c.headline_rent}</span>}
                   </div>
@@ -5119,7 +5186,7 @@ export function Property360Panel({ propertyId }: { propertyId: string }) {
                   <div className="flex items-start gap-2 p-2 rounded-md hover:bg-muted/50 transition-colors cursor-pointer" data-testid={`news-${n.id}`}>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium leading-tight">{n.title}</p>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">{n.source_name || "News"}{n.published_at && !isNaN(new Date(n.published_at).getTime()) ? ` · ${new Date(n.published_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">{n.source_name || "News"}{n.published_at && !isNaN(new Date(n.published_at).getTime()) ? ` · ${gbDate(n.published_at, { day: "numeric", month: "short" })}` : ""}</p>
                     </div>
                     <ExternalLink className="w-3 h-3 text-muted-foreground shrink-0 mt-0.5" />
                   </div>
@@ -5174,7 +5241,7 @@ export function LinkedLandRegistryPanel({ propertyId }: { propertyId: string }) 
           >
             <p className="text-xs font-medium truncate">{s.address}</p>
             <p className="text-[10px] text-muted-foreground mt-0.5">
-              {new Date(s.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+              {gbDate(s.createdAt, { day: "numeric", month: "short", year: "numeric" })}
               {s.freeholdsCount > 0 && ` · ${s.freeholdsCount} freehold${s.freeholdsCount !== 1 ? "s" : ""}`}
               {s.leaseholdsCount > 0 && ` · ${s.leaseholdsCount} leasehold${s.leaseholdsCount !== 1 ? "s" : ""}`}
             </p>
@@ -5196,7 +5263,9 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
   // two canonical feeds with chips deep-linking into each board, plus the
   // portfolio map. Renders identically for staff and client logins (the
   // feeds are already scoped server-side), so Landsec sees the same board.
-  const [mapOpen, setMapOpen] = useState(true);
+  // Collapsed on the phone — open, it pushed the search box off the first
+  // screen (Woody, 2026-09-28).
+  const [mapOpen, setMapOpen] = useState(() => typeof window === "undefined" || window.innerWidth >= 768);
 
   const { data: units = [] } = useQuery<any[]>({
     queryKey: ["/api/available-units"],
@@ -5294,15 +5363,25 @@ const LIST_OWNER_ROLES = [
 
 function PropertyOwnershipCell({ item, allCompanies, readOnly }: { item: CrmProperty; allCompanies: CrmCompany[]; readOnly?: boolean }) {
   const [adding, setAdding] = useState(false);
-  const filled = LIST_OWNER_ROLES.filter(r => (item as any)[r.field]);
-  const empty = LIST_OWNER_ROLES.filter(r => !(item as any)[r.field]);
-  // Chip names wrap to two lines instead of truncating ("Freeholder ·
-  // Land...") — the column is 240px now, taken from Property's spare width
-  // (Woody, 2026-09-27).
+  // Only ids that resolve count as filled — a dangling id is an empty slot.
+  const idOf = (r: typeof LIST_OWNER_ROLES[number]) => {
+    const id = (item as any)[r.field] as string | null;
+    return id && allCompanies.some(c => c.id === id) ? id : null;
+  };
+  const filled = LIST_OWNER_ROLES.filter(r => idOf(r));
+  const empty = LIST_OWNER_ROLES.filter(r => !idOf(r));
+  // One chip per company listing all its roles — "Owner / Landlord · Metro
+  // Bank" + "Freeholder · Metro Bank" read as duplicates. Chips stay one
+  // line and truncate (title has the full text) (Woody, 2026-09-28).
+  const byCompany = new Map<string, (typeof LIST_OWNER_ROLES[number])[]>();
+  for (const r of filled) {
+    const id = idOf(r)!;
+    byCompany.set(id, [...(byCompany.get(id) || []), r]);
+  }
   return (
-    <div className="flex flex-col gap-0.5 [&_.truncate]:whitespace-normal [&_.truncate]:break-words [&_.truncate]:line-clamp-2">
-      {filled.map(r => (
-        <InlineOwnerLink key={r.field} propertyId={item.id} companyId={(item as any)[r.field]} fieldName={r.field} label={r.label} allCompanies={allCompanies} readOnly={readOnly} />
+    <div className="flex flex-col gap-0.5 min-w-0">
+      {[...byCompany.entries()].map(([id, roles]) => (
+        <InlineOwnerLink key={roles[0].field} propertyId={item.id} companyId={id} fieldName={roles[0].field} alsoFields={roles.slice(1).map(r => r.field)} label={roles.map(r => r.label).join(" + ")} allCompanies={allCompanies} readOnly={readOnly} />
       ))}
       {!readOnly && empty.length > 0 && (adding ? (
         empty.map(r => (
@@ -5888,9 +5967,24 @@ function PropertiesList({
           only the ~240px left below it, three rows at 900px tall
           (Woody, 2026-09-27). */}
       {activeView === "list" && <div className="flex-1 min-h-0 overflow-y-auto" data-testid="properties-list-scroll">
+        {/* Phone: search first, team pills in one scrolling row — the
+            search sat under the map and four rows of chips, out of sight
+            (Woody, 2026-09-28). */}
+        {isMobile && (
+          <div className="relative mb-2">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder="Search properties..."
+              className="pl-9"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              data-testid="input-search-properties"
+            />
+          </div>
+        )}
         <PropertiesBoardHeader items={filteredItems} />
 
-        <div className="flex flex-wrap gap-1.5">
+        <div className={`flex gap-1.5 ${isMobile ? "flex-nowrap overflow-x-auto pb-1 [&>*]:shrink-0" : "flex-wrap"}`}>
           {groupCounts.map((g) => (
             <Pill
               key={g.id}
@@ -5911,6 +6005,7 @@ function PropertiesList({
         </div>
 
       <div className="flex flex-wrap items-center gap-3">
+        {!isMobile && (
         <div className="relative flex-1 min-w-[180px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -5921,6 +6016,7 @@ function PropertiesList({
             data-testid="input-search-properties"
           />
         </div>
+        )}
         {/* On mobile the toolbar collapses to just the search box — the
             column/saved-view controls are desktop power tools that squeezed
             the search field down to nothing. */}
@@ -6043,7 +6139,7 @@ function PropertiesList({
                   const assignedIds = agentLinks.filter(l => l.propertyId === item.id).map(l => l.userId);
                   const agentNames = allUsers.filter(u => assignedIds.includes(String(u.id))).map(u => u.name || "").join(", ");
                   const teams = Array.isArray(item.bgpEngagement) ? item.bgpEngagement.join(", ") : (item.bgpEngagement || "");
-                  const assetClass = Array.isArray(item.assetClass) ? item.assetClass.join(", ") : (item.assetClass || "");
+                  const assetClass = (Array.isArray(item.assetClass) ? item.assetClass : item.assetClass ? String(item.assetClass).split(/,\s*/) : []).map(useClassLabel).join(", ");
                   return {
                     id: item.id,
                     title: item.name,
@@ -6052,24 +6148,7 @@ function PropertiesList({
                     // the locality (Woody, 2026-09-27). Segments accumulate and
                     // compare both ways, so "1 Barrett Street" drops "1, BARRETT
                     // STREET" and "140 Aldersgate" drops "140 Aldersgate Street".
-                    subtitle: (() => {
-                      const addr = formatAddress(item.address);
-                      const norm = (t: string) => t.toLowerCase().replace(/\bstreet\b/g, "st").replace(/\broad\b/g, "rd").replace(/[^a-z0-9]/g, "");
-                      const segs = addr.split(",");
-                      const n = norm(item.name || "");
-                      let acc = "";
-                      let cut = -1;
-                      if (addr && n.length >= 4) {
-                        for (let i = 0; i < segs.length; i++) {
-                          acc += norm(segs[i]);
-                          if (n.startsWith(acc)) { if (acc.length >= 4) cut = i; if (acc === n) break; continue; }
-                          if (acc.startsWith(n)) cut = i;
-                          break;
-                        }
-                      }
-                      if (cut >= 0) return segs.slice(cut + 1).join(",").trim() || undefined;
-                      return addr || undefined;
-                    })(),
+                    subtitle: addressAfterName(item.name, formatAddress(item.address)) || undefined,
                     href: `/properties/${item.id}`,
                     status: item.status || undefined,
                     statusColor: BUILDING_ICON_COLORS[item.status || ""]?.replace("text-", "bg-") || "bg-muted-foreground",
@@ -6096,6 +6175,16 @@ function PropertiesList({
               {[1, 2, 3, 4, 5].map((i) => (
                 <Skeleton key={i} className="h-12" />
               ))}
+            </div>
+          ) : filteredItems.length === 0 ? (
+            // No results = the empty state alone — a header row over nothing
+            // left a stray, cut column label at the right (Woody, 2026-09-28).
+            <div className="py-12 text-center text-muted-foreground" data-testid="properties-empty">
+              <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
+                <Building2 className="w-6 h-6 text-muted-foreground" />
+              </div>
+              <p className="text-sm font-semibold text-foreground">No properties found</p>
+              <p className="text-xs mt-1">Add a property or adjust your filters</p>
             </div>
           ) : (
             // minWidth ≈ the sum of the column widths. At 2200 the spare
@@ -6220,7 +6309,13 @@ function PropertiesList({
                               // addressToResult misses formatted/line1/postcode
                               // shapes, so desktop said "Set address" where the
                               // phone showed one (Woody, 2026-09-27).
-                              const listAddress = addressToResult(item.address) || (formatAddress(item.address) ? { formatted: formatAddress(item.address), placeId: "" } : null);
+                              const fullAddress = addressToResult(item.address) || (formatAddress(item.address) ? { formatted: formatAddress(item.address), placeId: "" } : null);
+                              // Don't repeat the name on the address line — show
+                              // what follows it, or nothing when the title IS
+                              // the address (Woody, 2026-09-28).
+                              const rest = fullAddress?.formatted ? addressAfterName(item.name, fullAddress.formatted) : "";
+                              if (fullAddress?.formatted && !rest) return null;
+                              const listAddress = fullAddress ? { ...fullAddress, formatted: rest } : null;
                               return isClientViewer ? (
                                 listAddress?.formatted ? (
                                   <span className="text-xs flex items-center gap-1">
@@ -6264,7 +6359,7 @@ function PropertiesList({
                       {visibleColumns.assetClass && (
                         <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
                           {isClientViewer ? (
-                            <span className="text-xs">{(Array.isArray(item.assetClass) ? item.assetClass[0] : item.assetClass) || "—"}</span>
+                            <span className="text-xs">{useClassLabel(Array.isArray(item.assetClass) ? item.assetClass[0] : item.assetClass) || "—"}</span>
                           ) : (
                           <InlineLabelSelect
                             value={Array.isArray(item.assetClass) ? item.assetClass[0] : item.assetClass}
@@ -6298,6 +6393,8 @@ function PropertiesList({
                             dealLinks={dealLinks}
                             allDeals={allDealsRaw}
                             readOnly={isClientViewer}
+                            propertyName={item.name}
+                            propertyAddress={formatAddress(item.address)}
                           />
                         </TableCell>
                       )}
@@ -6347,21 +6444,6 @@ function PropertiesList({
                       )}
                     </TableRow>
                   ))}
-                  {filteredItems.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={2 + Object.values(visibleColumns).filter(v => v).length} className="p-0 text-muted-foreground">
-                        {/* Pinned to the left of the visible scroll area — centred
-                            across every column it ran off-screen (Woody, 2026-09-27). */}
-                        <div className="sticky left-0 w-full max-w-[min(28rem,calc(100vw-2rem))] py-12 text-center">
-                          <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
-                            <Building2 className="w-6 h-6 text-muted-foreground" />
-                          </div>
-                          <p className="text-sm font-semibold text-foreground">No properties found</p>
-                          <p className="text-xs mt-1">Add a property or adjust your filters</p>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )}
                 </TableBody>
               </Table>
             </ScrollableTable>

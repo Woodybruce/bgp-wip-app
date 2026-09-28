@@ -256,7 +256,8 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
               {expanding.map((b, i) => (
                 <div key={i} className="text-xs rounded border bg-white/60 dark:bg-white/5 px-2 py-1 min-w-0">
                   <span className="font-semibold">{b.name}</span>
-                  {b.confidence && <span className="text-[11px] text-muted-foreground ml-1">({b.confidence})</span>}
+                  {/* "(high)" read as the researcher's working; only flag a weak one. */}
+                  {b.confidence === "low" && <span className="text-[11px] text-muted-foreground ml-1">(unconfirmed)</span>}
                   {b.source_url && (
                     <a href={b.source_url} target="_blank" rel="noreferrer" className="inline-flex align-middle ml-1 text-primary hover:underline" title={b.source_url}>
                       <ExternalLink className="w-2.5 h-2.5" />
@@ -723,7 +724,7 @@ function CentreOpenings({ propertyId }: { propertyId: string }) {
                   : <span>{item.title}</span>}
                 <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-2">
                   {tab === "peers" && <span className="font-medium text-foreground/80">{item.centre}</span>}
-                  {item.brand && <Link href={`/companies/${item.brand.id}`} className="hover:underline">{item.brand.name}</Link>}
+                  {item.brand && <Link href={`/companies/${item.brand.id}`} className="font-medium text-foreground/80 hover:underline">{item.brand.name}</Link>}
                   {item.source && item.source.replace(/\s*\(Google News\)\s*$/i, "").toLowerCase() !== item.brand?.name.toLowerCase() && <span>{item.source.replace(/\s*\(Google News\)\s*$/i, "")}</span>}
                 </div>
               </div>

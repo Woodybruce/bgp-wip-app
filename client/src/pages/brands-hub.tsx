@@ -94,6 +94,9 @@ function formatTurnover(val: number): string {
   return `£${val.toFixed(0)}`;
 }
 
+const PRODUCT_REVIEW_SOURCES = /\b(highsnobiety|hypebeast|sneaker\w*|complex|gq|vogue|esquire|footwear news|dazed|the verge|engadget)\b/i;
+const PROPERTY_CONTEXT = /\b(open(s|ed|ing|ings)?|store(s)?|shop(s)?|site(s)?|lease(s|d)?|letting|launch(es|ed|ing)?|expan(d|ds|ding|sion)|restaurant(s)?|flagship|outlet(s)?|branch(es)?|unit(s)?|roll-?out|high street|shopping cent(re|er)|retail park|property|landlord|footfall|UK|London)\b/i;
+
 // "27 Sep 2026" — en-GB toLocaleDateString gives "27/09/2026" or "Sept"
 // (Woody, 2026-09-27).
 function newsDate(iso: string): string {
@@ -309,7 +312,7 @@ export default function BrandsHub() {
           <Card key={s.label}>
             <CardContent className="p-4">
               <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{s.label}</div>
-              <div className="text-2xl font-bold font-mono tabular-nums mt-0.5">{s.value}</div>
+              <div className="text-2xl font-bold font-mono tabular-nums mt-0.5">{typeof s.value === "number" ? s.value.toLocaleString("en-GB") : s.value}</div>
             </CardContent>
           </Card>
         ))}
@@ -775,6 +778,11 @@ function BrandExplorer() {
     return brandNewsRaw.filter((a: any) => {
       // Clients keep every Hospitality story (UX #139's original rule).
       if (isClientExplorer && a.category === "Hospitality") return true;
+      // A brand name alone let a wall of Highsnobiety sneaker reviews
+      // through: drop the product-review sites and want a property/retail
+      // word in the headline or summary too (Woody, 2026-09-28).
+      if (PRODUCT_REVIEW_SOURCES.test(String(a.sourceName || ""))) return false;
+      if (!PROPERTY_CONTEXT.test(`${a.title || ""} ${a.summary || ""}`)) return false;
       const t = String(a.title || "");
       const tl = t.toLowerCase();
       for (const n of long) if (hasWord(tl, n)) return true;
@@ -976,7 +984,7 @@ function BrandExplorer() {
             <span className="w-2 h-2 rounded-full bg-muted-foreground shrink-0" />
             <span className="text-sm font-semibold truncate">All Brands</span>
           </div>
-          <div className="text-sm font-mono tabular-nums text-muted-foreground mt-1">{companies.length}</div>
+          <div className="text-sm font-mono tabular-nums text-muted-foreground mt-1">{companies.length.toLocaleString("en-GB")}</div>
         </button>
         {BRAND_CATEGORIES.filter(cat => !isClientExplorer || (catCounts[cat.key] || 0) > 0).map(cat => {
           const isActive = activeCat === cat.key;
@@ -991,9 +999,10 @@ function BrandExplorer() {
             >
               <div className="flex items-center gap-2 min-w-0">
                 <span className={`w-2 h-2 rounded-full shrink-0 ${cat.color}`} />
-                <span className="text-sm font-semibold truncate">{cat.label}</span>
+                {/* Two lines, not "Leisure & Exper…" on the phone (Woody, 2026-09-28). */}
+                <span className="text-sm font-semibold line-clamp-2 leading-tight">{cat.label}</span>
               </div>
-              <div className="text-sm font-mono tabular-nums text-muted-foreground mt-1">{catCounts[cat.key] || 0}</div>
+              <div className="text-sm font-mono tabular-nums text-muted-foreground mt-1">{(catCounts[cat.key] || 0).toLocaleString("en-GB")}</div>
             </button>
           );
         })}
@@ -1003,14 +1012,14 @@ function BrandExplorer() {
       {activeCatObj && (
         <div className="flex flex-wrap gap-1.5">
           <Pill active={activeSub === null} onClick={() => setSub(null)}>
-            All {activeCatObj.label} <span className="font-mono tabular-nums">{catCounts[activeCatObj.key] || 0}</span>
+            All {activeCatObj.label} <span className="font-mono tabular-nums">{(catCounts[activeCatObj.key] || 0).toLocaleString("en-GB")}</span>
           </Pill>
           {activeCatObj.subs.filter(sub => !isClientExplorer || (catCounts[sub.key] || 0) > 0).map(sub => {
             const count = catCounts[sub.key] || 0;
             const isActive = activeSub === sub.key;
             return (
               <Pill key={sub.key} active={isActive} onClick={() => setSub(isActive ? null : sub.key)}>
-                {sub.label} <span className="font-mono tabular-nums">{count}</span>
+                {sub.label} <span className="font-mono tabular-nums">{count.toLocaleString("en-GB")}</span>
               </Pill>
             );
           })}

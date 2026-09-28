@@ -17,7 +17,7 @@ const domainHost = (value?: string | null) => {
 const shortDate = (value: string | number | null | undefined) => {
   if (!value) return null;
   const date = new Date(value);
-  return isNaN(date.getTime()) ? null : date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return isNaN(date.getTime()) ? null : date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep");
 };
 
 export function BrandPreparationStatus({ companyId, refreshedAt }: { companyId: string; refreshedAt: string | null }) {

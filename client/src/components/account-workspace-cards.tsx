@@ -72,6 +72,19 @@ export interface AccountWorkspace {
   totals: { deals: number; completedDeals: number };
 }
 
+// Hammerson's contacts read "SHEPPARD, Thandwie" and "Holly HOBBS" — show
+// people as "First Surname" with all-caps words title-cased (display only;
+// short all-caps words stay, they're usually initials) (Woody, 2026-09-28).
+const titleWord = (w: string) => w.length >= 3 && w === w.toUpperCase() && /[A-Z]/.test(w)
+  ? w.toLowerCase().replace(/(^|[-'’])([a-z])/g, (_, p, c) => p + c.toUpperCase())
+  : w;
+export function displayPersonName(name: string): string {
+  let n = (name || "").trim();
+  const m = /^([^,]+),\s*([^,]+)$/.exec(n);
+  if (m && m[1].split(/\s+/).length <= 3 && m[2].split(/\s+/).length <= 3 && !/\b(ltd|limited|plc|llp|inc)\b/i.test(n)) n = `${m[2]} ${m[1]}`;
+  return n.split(/\s+/).map(titleWord).join(" ");
+}
+
 // One shared query — every card on the workspace uses the same key, so
 // react-query dedupes them into a single fetch.
 export function useAccountWorkspace(companyId: string | undefined) {
@@ -81,7 +94,8 @@ export function useAccountWorkspace(companyId: string | undefined) {
     queryFn: async () => {
       const res = await fetch(`/api/accounts/${companyId}/workspace`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
+      const body: AccountWorkspace = await res.json();
+      return { ...body, contacts: (body.contacts || []).map(c => ({ ...c, name: displayPersonName(c.name) })) };
     },
   });
 }
@@ -138,6 +152,29 @@ function actionLink(a: WorkspaceNextAction): string {
   return `/contacts/${a.linkId}`;
 }
 
+// Stored follow-up titles read "… — brand not set · Brent Cross · Brent Cross
+// Shopping Centre" or "83 Pimlico Road · Pimlico Rd, London SW1W, UK". Tidy on
+// display: drop "brand not set", any "· part" contained in / abbreviating
+// another part, and parts the row already shows (`shown`, e.g. the deal's
+// property) (Woody, 2026-09-28).
+const placeKey = (s: string) => s.toLowerCase()
+  .replace(/\brd\b\.?/g, "road").replace(/\bst\b\.?/g, "street").replace(/\bave?\b\.?/g, "avenue")
+  .replace(/\bsq\b\.?/g, "square").replace(/\bpl\b\.?/g, "place").replace(/\bln\b\.?/g, "lane")
+  .replace(/[^a-z0-9]+/g, "");
+export function tidyActionTitle(title: string, shown: Array<string | null | undefined> = []): string {
+  const m = /^(.*?)\s+—\s+(.*)$/.exec(title.trim());
+  const head = m ? m[1] : "", tail = m ? m[2] : title.trim();
+  const shownKeys = shown.map(s => placeKey(s || "")).filter(k => k.length >= 4);
+  const segs = tail.split(/\s+·\s+/).map(s => s.trim()).filter(s => placeKey(s) && !/^brand not set$/i.test(s));
+  const keep = segs.filter((seg, i) => {
+    const first = placeKey(seg.split(",")[0]), full = placeKey(seg);
+    if (first.length >= 4 && shownKeys.some(k => k.includes(first))) return false;
+    return !segs.some((other, j) => j !== i && first.length >= 4 && placeKey(other).includes(first) && (placeKey(other) !== full || j < i));
+  });
+  if (!m) return keep.join(" · ") || title;
+  return keep.length ? `${head} — ${keep.join(" · ")}` : head;
+}
+
 export function AccountNextActionsCard({ companyId }: { companyId: string }) {
   const { data } = useAccountWorkspace(companyId);
   if (!data || data.nextActions.length === 0) return null;
@@ -147,7 +184,8 @@ export function AccountNextActionsCard({ companyId }: { companyId: string }) {
   // (Woody, 2026-09-27).
   const dueMs = (a: WorkspaceNextAction) => (a.dueDate ? Date.parse(a.dueDate) : NaN);
   const groups = new Map<string, { a: WorkspaceNextAction; count: number }>();
-  for (const a of data.nextActions) {
+  for (const raw of data.nextActions) {
+    const a = { ...raw, title: tidyActionTitle(raw.title, [raw.linkLabel]) };
     const key = `${a.title.trim().toLowerCase()}|${(a.linkLabel || "").trim().toLowerCase()}`;
     const g = groups.get(key);
     if (!g) { groups.set(key, { a, count: 1 }); continue; }
