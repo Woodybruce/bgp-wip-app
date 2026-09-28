@@ -8,7 +8,7 @@ import { isNonLeasingVisit } from "./viewing-matching";
 import { brandIssueLabels, loadViewingMatchContext, matchViewingEvent, NOT_LEASING_ISSUE } from "./viewing-sync";
 import { reconcileViewingFollowup } from "./viewing-followups";
 
-const KEY = "migration:viewing_rematch_v1";
+const KEY = "migration:viewing_rematch_v2";
 const UNIT_ISSUE = /tracker unit|units are being viewed|confirm the property/i;
 const BRAND_ISSUE = /brand|attendee/i;
 

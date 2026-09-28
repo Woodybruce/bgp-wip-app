@@ -62,18 +62,26 @@ export function matchViewingUnits(text: string, units: ViewingTrackerUnit[], opt
   const fullText = options.location ? `${text} ${options.location}` : text;
   // The subject outranks the location: "GP x Brixton Village Viewing" at
   // "Market Row entrance" is a Brixton Village viewing (Woody, 2026-09-28).
-  let namedEntries = namedProperties(text, properties, true);
-  if (!namedEntries.length && options.location) namedEntries = namedProperties(fullText, properties, true);
+  // A property with no tracker units yet can still be named for the task,
+  // but only by a multi-word name or alias — and when the subject names one,
+  // a tracker property in the location does not override it.
+  const trackerIds = new Set(properties.map(entry => entry.id));
+  const others = (options.properties || []).filter(entry => !trackerIds.has(entry.id));
+  const namedOther = (hay: string) => {
+    const found = namedProperties(hay, others, false);
+    return found.length === 1 ? { id: found[0].property.id, name: found[0].property.name } : null;
+  };
+  // "Brixton market" names Brixton Market, not Market Row by its first word.
+  const subjectOthers = namedProperties(text, others, false);
+  let namedEntries = namedProperties(text, properties, true)
+    .filter(entry => !subjectOthers.some(other => other.needle.length > entry.needle.length && other.needle.toLowerCase().includes(entry.needle.toLowerCase())));
+  const subjectOther = namedEntries.length ? null : namedOther(text);
+  if (!namedEntries.length && !subjectOther && options.location) namedEntries = namedProperties(fullText, properties, true);
   const named = namedEntries.map(entry => [entry.property.id, entry.property.name] as const);
   if (named.length > 1) return { units: [], issues: ["Confirm the property: more than one is named"], property: null };
-  let property = named.length === 1 ? { id: named[0][0], name: named[0][1] } : null;
-  if (!property && options.properties?.length) {
-    // A property with no tracker units yet can still be named for the task,
-    // but only by a multi-word name or alias.
-    const trackerIds = new Set(properties.map(entry => entry.id));
-    const others = namedProperties(fullText, options.properties.filter(entry => !trackerIds.has(entry.id)), false);
-    if (others.length === 1) property = { id: others[0].property.id, name: others[0].property.name };
-  }
+  let property = named.length === 1 ? { id: named[0][0], name: named[0][1] } : subjectOther;
+  if (!property && others.length) property = namedOther(fullText);
+  if (subjectOther) return { units: [], issues: ["Choose which tracker units are being viewed"], property };
   const propertyUnits = named.length === 1 ? units.filter(unit => unit.propertyId === named[0][0]) : units;
   const matched = propertyUnits.filter(unit => {
     const name = unit.unitName.split(",")[0].trim();

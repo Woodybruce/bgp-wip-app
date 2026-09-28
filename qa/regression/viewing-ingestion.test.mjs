@@ -265,6 +265,12 @@ test('property aliases and multi-word names match anywhere; the subject outranks
   assert.deepEqual(matching.matchViewingUnits('Brixton Village Unit 12 viewing', brixton).units.map(unit => unit.id), ['bv1']);
   const other = matching.matchViewingUnits('Viewing at Coldharbour Works', brixton, { properties: [{ id: 'cw', name: 'Coldharbour Works' }, { id: 'lone', name: 'Works' }] });
   assert.deepEqual(other.property, { id: 'cw', name: 'Coldharbour Works' }, 'a property without tracker units is still named');
+  // Live shape: Brixton Village / Brixton Market have no tracker units, Market Row does.
+  const live = { properties: [{ id: 'bv', name: 'Brixton Village' }, { id: 'bm', name: 'Brixton Market' }, { id: 'mr', name: 'Market Row' }] };
+  const rowOnly = brixton.filter(unit => unit.propertyId === 'mr');
+  assert.equal(matching.matchViewingUnits('GP x Brixton Village Viewing', rowOnly, { ...live, location: 'Meet outside the Market Row entrance on Electric Road' }).property?.id, 'bv', 'the subject outranks a tracker property in the location');
+  assert.equal(matching.matchViewingUnits('Brixton market viewing Bourne', rowOnly, { ...live, location: 'Market Row' }).property?.id, 'bm');
+  assert.equal(matching.matchViewingUnits('Viewing', rowOnly, { ...live, location: 'Market Row entrance' }).property?.id, 'mr');
   assert.deepEqual(matching.propertyAliasList(['A', 1, ' ']), ['A']);
   assert.deepEqual(matching.propertyAliasList('Brixton Market'), ['Brixton Market']);
 });
