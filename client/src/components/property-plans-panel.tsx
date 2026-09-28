@@ -179,7 +179,7 @@ export function PropertyPlansPanel({ propertyId, bare = false }: { propertyId: s
             try { await apiRequest("PATCH", `/api/plans/${plan.id}`, { floor: next }); queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plans"] }); }
             catch (error: any) { toast({ title: "Could not rename floor", description: error.message, variant: "destructive" }); }
           }} data-testid={`button-floor-${plan.floor}`} title={canEdit ? "Click to switch · double-click to rename" : "Click to switch"}><Layers className="w-3 h-3" />{plan.floor}</Pill>)}
-          <span className="ml-auto flex items-center gap-1">
+          <span className="ml-auto flex flex-wrap items-center gap-1 max-w-full">
             {activePlan.has_pdf && <OriginalPdfLink plan={activePlan} />}
             {(["labels", "outlines", "clean"] as PlanView[]).map(view => <Pill key={view} active={planView === view} onClick={() => setPlanView(view)} data-testid={`button-plan-view-${view}`}>{view === "labels" ? "Labels" : view === "outlines" ? "Outlines" : "Clean plan"}</Pill>)}
           </span>
@@ -191,7 +191,7 @@ export function PropertyPlansPanel({ propertyId, bare = false }: { propertyId: s
         {mode === "draw" && <div className="flex items-center flex-wrap gap-2"><Button size="sm" variant="outline" disabled={!pendingPoints.length} onClick={() => setPendingPoints(points => points.slice(0, -1))}><Undo2 className="w-3.5 h-3.5 mr-1" />Undo point</Button><Button size="sm" disabled={pendingPoints.length < 3} onClick={() => { setLinkDialog({ polygon: { points: pendingPoints } }); setPendingPoints([]); setMode("select"); }}>Review boundary</Button><span className="text-xs text-muted-foreground">{pendingPoints.length} points · click corners in order, then review.</span></div>}
         {units.length > 0 && <div className="border rounded-lg" data-testid="plan-unit-list">
           <div className="flex items-center flex-wrap gap-2 p-2 border-b">
-            <span className="text-xs text-muted-foreground uppercase tracking-widest">Units on {activePlan.floor} · {units.length}</span>
+            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Units on {activePlan.floor} <span className="font-mono tabular-nums font-normal">{units.length}</span></span>
             {mismatches > 0 && <span className="text-xs text-amber-700 inline-flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{mismatches} label{mismatches === 1 ? "" : "s"} differ from the schedule</span>}
             {canEdit && unlinkedLabelled > 0 && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={autoLink.isPending} onClick={() => autoLink.mutate()} data-testid="button-plan-auto-link"><Link2 className="w-3 h-3 mr-1" />{autoLink.isPending ? "Matching…" : `Match ${unlinkedLabelled} unlinked outline${unlinkedLabelled === 1 ? "" : "s"} to the schedule`}</Button>}
             <label className="ml-auto flex items-center gap-1 border rounded px-2 h-7"><Search className="w-3 h-3 text-muted-foreground" /><input value={unitSearch} onChange={event => setUnitSearch(event.target.value)} placeholder="Find a unit or tenant" className="text-xs bg-transparent outline-none w-40" aria-label="Find a unit or tenant" /></label>

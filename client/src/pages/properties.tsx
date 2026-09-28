@@ -307,8 +307,8 @@ export function InlineEngagement({
       <DropdownMenuTrigger asChild>
         <button type="button" data-no-min-touch className="flex items-center gap-1 flex-wrap min-h-[20px] max-w-full" data-testid="inline-engagement-trigger">
           {current.length === 0 ? (
-            <span className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
-              <Plus className="w-3 h-3" />
+            // Same empty look as the inline selects beside it ("Set status").
+            <span className="text-[11px] text-muted-foreground italic hover:bg-muted/60 rounded px-1.5 py-0.5 transition-colors">
               {placeholder}
             </span>
           ) : (

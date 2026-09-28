@@ -1258,8 +1258,9 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
           {/* Tracker link leads the whole schedule header (Woody, 2026-08-03) —
-              live lettings are worked THERE; this board is the rent roll. */}
-          <Button size="sm" className="h-7 text-xs" asChild data-testid="btn-open-letting-tracker">
+              live lettings are worked THERE; this board is the rent roll.
+              Outline: a way out, not the board's main action (DESIGN.md §1). */}
+          <Button size="sm" variant="outline" className="h-7 text-xs" asChild data-testid="btn-open-letting-tracker">
             <a href={`/deals/letting?propertyId=${propertyId}`}>
               <ExternalLink className="w-3 h-3 mr-1" />Letting Tracker
             </a>

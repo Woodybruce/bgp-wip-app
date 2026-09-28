@@ -561,7 +561,7 @@ function BrochureTile({
             {fmtDate(brochure.uploadedAt)} · {fmtSize(brochure.size)}
             {brochure.pageCount ? ` · ${brochure.pageCount}p` : ""}
           </span>
-          <div className="flex gap-0.5">
+          <div className="flex items-center gap-0.5">
             {!readOnly && (
               <>
                 <button
