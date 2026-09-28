@@ -1002,7 +1002,9 @@ export function PropertyDetail({ id }: { id: string }) {
                 start"). Renders for clients too — the server slices the
                 analysis to their brand categories + self-adds, so Landsec
                 sees the hospitality/leisure view. */}
-            {!isClientViewer && (
+            {/* No Notes card on shopping centres — their actions go into This
+                week's focus (Woody, 2026-09-28). */}
+            {!isClientViewer && propertyView !== "centre" && (
               <ErrorBoundary compact name="Notes">
                 <NotesPanel propertyId={property.id} />
               </ErrorBoundary>
