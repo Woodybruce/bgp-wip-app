@@ -206,7 +206,7 @@ function PropertyManageActions({ companyId, property }: { companyId: string; pro
     queryKey: ["/api/crm/companies/search", debounced],
     queryFn: async () => {
       if (!debounced || debounced.length < 2) return [];
-      const r = await fetch(`/api/crm/companies?q=${encodeURIComponent(debounced)}&limit=8`, { credentials: "include" });
+      const r = await fetch(`/api/crm/companies?q=${encodeURIComponent(debounced)}&limit=8`, { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) return [];
       const d = await r.json();
       const arr = Array.isArray(d) ? d : (d.companies || []);
@@ -441,7 +441,7 @@ export function CompanyPropertiesBoard({
         const start = Date.now();
         const poll = async () => {
           if (Date.now() - start > 5 * 60_000) return;
-          const r = await fetch(`/api/landlord/${companyId}/scrape-portfolio/status`, { credentials: "include" });
+          const r = await fetch(`/api/landlord/${companyId}/scrape-portfolio/status`, { credentials: "include", headers: getAuthHeaders() });
           if (r.ok) {
             const s = await r.json();
             if (s.progress?.state === "done") {
@@ -837,20 +837,26 @@ export function CompanyPropertiesBoard({
                   <Link href={`/properties/${p.id}`} className="text-sm font-medium truncate min-w-0 hover:underline" onClick={e => e.stopPropagation()}>
                     {p.name}
                   </Link>
-                  <div className="flex items-center gap-1 ml-auto shrink-0">
+                  {/* Counts as quiet metadata and the BGP people as a colour
+                      dot + first name — identity colours are dots, never
+                      fills (DESIGN §14); the chips squeezed the name to
+                      "Canary Wharf …". */}
+                  <div className="flex items-center gap-2 ml-auto shrink-0 text-[11px] text-muted-foreground">
                     {p.units.length > 0 && (
-                      <Badge variant="secondary" className="text-[9px]">{p.units.length} unit{p.units.length !== 1 ? "s" : ""} · {occ} occ</Badge>
+                      <span><span className="font-mono tabular-nums">{p.units.length}</span> unit{p.units.length !== 1 ? "s" : ""} · <span className="font-mono tabular-nums">{occ}</span> let</span>
                     )}
-                    {exp > 0 && <Badge variant="outline" className="text-[9px] border-amber-300 text-amber-600">{exp} exp</Badge>}
+                    {exp > 0 && <span className="text-amber-700"><span className="font-mono tabular-nums">{exp}</span> expiring</span>}
                     {p.deals.length > 0 && (
-                      <Badge variant="secondary" className="text-[9px]">{p.deals.length} deal{p.deals.length !== 1 ? "s" : ""}</Badge>
+                      <span><span className="font-mono tabular-nums">{p.deals.length}</span> deal{p.deals.length !== 1 ? "s" : ""}</span>
                     )}
                     {/* Two names, then +N — a row of chips ran off the card. */}
-                    {p.agentNames.slice(0, 2).map(name => (
-                      <Badge key={name} className={`text-[9px] px-1 py-0 text-white ${userColorMap[name] || "bg-zinc-500"}`}>{name.split(" ")[0]}</Badge>
-                    ))}
-                    {p.agentNames.length > 2 && (
-                      <Badge variant="outline" className="text-[9px] px-1 py-0" title={p.agentNames.slice(2).join(", ")}>+{p.agentNames.length - 2}</Badge>
+                    {p.agentNames.length > 0 && (
+                      <span className="hidden [@container(min-width:560px)]:inline-flex items-center gap-1.5" title={p.agentNames.join(", ")}>
+                        {p.agentNames.slice(0, 2).map(name => (
+                          <span key={name} className="inline-flex items-center gap-1"><span className={`w-1.5 h-1.5 rounded-full ${userColorMap[name] || "bg-muted-foreground"}`} />{name.split(" ")[0]}</span>
+                        ))}
+                        {p.agentNames.length > 2 && <span>+{p.agentNames.length - 2}</span>}
+                      </span>
                     )}
                   </div>
                 </button>

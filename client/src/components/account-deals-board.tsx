@@ -235,10 +235,10 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Briefcase className="w-3.5 h-3.5" /> Deals &amp; activity
-          {data && <Badge variant="outline" className="text-[11px] font-mono tabular-nums">{data.total}</Badge>}
+          {data && <span className="font-mono tabular-nums normal-case tracking-normal">{data.total}</span>}
           {data && data.completedTotal > 0 && (
-            <span className="text-[10px] text-muted-foreground normal-case font-normal tabular-nums">
-              {data.completedTotal} completed
+            <span className="text-[11px] text-muted-foreground normal-case tracking-normal font-normal">
+              · <span className="font-mono tabular-nums">{data.completedTotal}</span> completed
             </span>
           )}
         </CardTitle>
@@ -316,7 +316,7 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
             <div className="hidden [@container(min-width:820px)]:block overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="text-left text-[10px] uppercase tracking-wide text-muted-foreground border-b border-border/40">
+                  <tr className="text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border/40">
                     <th className="py-1 pr-2 font-medium">Property / unit</th>
                     <th className="py-1 pr-2 font-medium">Counterparty</th>
                     <th className="py-1 pr-2 font-medium">Instruction / service</th>
@@ -352,7 +352,7 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                       <td className="py-1.5 pr-2 whitespace-nowrap text-muted-foreground">{relDate(d.lastActivityAt)}</td>
                       <td className="py-1.5 pr-2 max-w-[12rem]"><NextActionCell d={d} /></td>
                       {data.feesVisible && (
-                        <td className="py-1.5 text-right tabular-nums whitespace-nowrap">
+                        <td className="py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
                           {d.fee != null ? `£${Math.round(Number(d.fee)).toLocaleString("en-GB")}` : "—"}
                         </td>
                       )}

@@ -1134,13 +1134,17 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // from company_type alone, so a landlord typed as anything else fell
     // into the BRAND layout (UK stores, Apollo momentum, brand expansion —
     // "landlords don't have stores, they have properties", Woody 2026-09-08).
+    // Asset managers run a landlord's estate (Pave on the Royal Exchange) —
+    // their page is the landlord one; as a "brand" Pave showed a bakery's
+    // best sellers, a stores board and Pitch property (boards pass
+    // 2026-09-28).
     let isLandlord = false;
     try {
       const ll = await pool.query(
         `SELECT (LOWER(COALESCE(c.company_type, '')) NOT LIKE 'tenant%' AND (
-                  LOWER(COALESCE(c.company_type, '')) IN ('landlord', 'landlord/freeholder', 'investor', 'reit', 'developer', 'fund')
+                  LOWER(COALESCE(c.company_type, '')) IN ('landlord', 'landlord/freeholder', 'investor', 'reit', 'developer', 'fund', 'asset manager')
                   OR EXISTS (SELECT 1 FROM crm_deals d WHERE d.landlord_id = c.id AND d.status NOT IN ('ARCH'))
-                  OR EXISTS (SELECT 1 FROM crm_properties p WHERE p.freeholder_id = c.id OR p.long_leaseholder_id = c.id)
+                  OR EXISTS (SELECT 1 FROM crm_properties p WHERE p.freeholder_id = c.id OR p.long_leaseholder_id = c.id OR p.asset_manager_id = c.id)
                 )) AS is_landlord
            FROM crm_companies c WHERE c.id = $1`, [companyId]);
       isLandlord = !!ll.rows[0]?.is_landlord;

@@ -261,7 +261,9 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
               abroadCountries ? `${abroadCountries} other countr${abroadCountries === 1 ? "y" : "ies"}` : null,
               reportedTotal != null && reportedTotal > trading.length ? `${reportedTotal.toLocaleString("en-GB")} reported in total` : null,
             ].filter(Boolean).join(" · ")}
-            {velocity && velocity !== 0 ? <span className={`ml-2 text-[11px] ${velocity > 0 ? "text-emerald-700" : "text-red-700"}`}>{velocity > 0 ? "+" : ""}{velocity} in 12m</span> : null}
+            {/* Net store change — only beside mapped stores; "+1 in 12m" after
+                "UK stores not mapped yet" read as a stray code. */}
+            {velocity && velocity !== 0 && trading.length > 0 ? <span className={`ml-2 text-[11px] ${velocity > 0 ? "text-emerald-700" : "text-red-700"}`}><span className="font-mono tabular-nums">{velocity > 0 ? "+" : ""}{velocity}</span> net in 12 months</span> : null}
           </p>
         </div>
         {canRefresh && <Button type="button" size="sm" variant="outline" disabled={refreshing} onClick={onRefresh} data-testid="btn-research-stores-uk"><RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />{refreshing ? "Refreshing…" : "Refresh stores"}</Button>}
@@ -274,7 +276,9 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
             {visible.map(store => <div key={store.id} className="rounded-lg border border-border p-2.5 text-sm">
               <p className="font-medium break-words">{store.name}</p>
               {store.status === "closed" && <p className="text-xs text-muted-foreground">Closed</p>}
-              {store.status === "coming_soon" && <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-0.5 line-clamp-2" title={plannedSource(store) || undefined}><span className="font-medium">Opening soon</span>{plannedSource(store) ? ` · ${plannedSource(store)}` : ""}</p>}
+              {/* Blue is the map's "planned" pin colour — the status only; the
+                  source line reads as ordinary metadata. */}
+              {store.status === "coming_soon" && <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2" title={plannedSource(store) || undefined}><span className="font-medium text-blue-700 dark:text-blue-300">Opening soon</span>{plannedSource(store) ? ` · ${plannedSource(store)}` : ""}</p>}
               <p className="text-[11px] text-muted-foreground mt-1 break-words">{storeAddress(store.address) || "Address not recorded"}{store.lat == null && storeAddress(store.address) && !/\d/.test(storeAddress(store.address)) ? " · exact site not listed yet, so not on the map" : ""}</p>
               {store.lat != null && store.lng != null && <a className="inline-flex items-center gap-1 text-[11px] text-primary mt-1" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${store.lat},${store.lng}`)}`} target="_blank" rel="noreferrer"><MapPin className="w-3 h-3" />Open location</a>}
             </div>)}

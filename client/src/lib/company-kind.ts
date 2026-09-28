@@ -16,5 +16,5 @@ export function isLandlordCompany(
   if (typeof serverFlag === "boolean") return serverFlag;
   const t = (companyType || "").toLowerCase();
   if (!t) return false;
-  return t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("reit") || t.includes("fund");
+  return t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("reit") || t.includes("fund") || t.includes("asset manager");
 }

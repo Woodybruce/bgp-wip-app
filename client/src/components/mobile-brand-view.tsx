@@ -20,7 +20,10 @@ import { getAuthHeaders, apiRequest, queryClient } from "@/lib/queryClient";
 import { isLandlordCompany } from "@/lib/company-kind";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Pill } from "@/components/ui/pill";
+import { Pill, pillMetrics, pillInactive } from "@/components/ui/pill";
+import { AgentRelationshipCard } from "@/components/agent-relationship-card";
+import { CompanyPropertiesBoard } from "@/components/CompanyPropertiesBoard";
+import { AccountDealsBoard } from "@/components/account-deals-board";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Building2, TrendingUp, ClipboardList, Instagram, Store, Swords, ExternalLink, Globe, Newspaper, RefreshCw } from "lucide-react";
@@ -57,7 +60,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
 
   // Phone section switcher (docs/DESIGN.md §16) — this view is phone-only
   // and ran 8+ boards deep in one scroll. Hook sits above the early return.
-  const [section, setSection] = useState<"chat" | "lending" | "contacts" | "intel" | "stores" | "social" | "compliance">("chat");
+  const [section, setSection] = useState<"chat" | "portfolio" | "lending" | "contacts" | "intel" | "stores" | "social" | "compliance">("chat");
   const [signalsShowAll, setSignalsShowAll] = useState(false);
   const [newsShowAllM, setNewsShowAllM] = useState(false);
   const [conversationOpen, setConversationOpen] = useState(false);
@@ -192,6 +195,9 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
         {!isClientViewer && refreshProfile.message && !/^Profile (refreshed|checked)\./.test(refreshProfile.message) && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{refreshProfile.message}</p>}
       <div className="flex flex-wrap gap-1.5" data-testid="company-phone-sections">
         <Pill active={section === "chat"} onClick={() => setSection("chat")} data-testid="company-section-chat">Overview</Pill>
+        {/* Landlords: their properties and deals lead the desktop page and
+            were missing on the phone. */}
+        {isLandlord && !isLender && <Pill active={section === "portfolio"} onClick={() => setSection("portfolio")} data-testid="company-section-portfolio">Portfolio</Pill>}
         {isLender && <Pill active={section === "lending"} onClick={() => setSection("lending")} data-testid="company-section-lending">Lending</Pill>}
         <Pill active={section === "contacts"} onClick={() => setSection("contacts")} data-testid="company-section-contacts">Contacts</Pill>
         <Pill active={section === "intel"} onClick={() => setSection("intel")} data-testid="company-section-intel">Intel</Pill>
@@ -243,9 +249,29 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
       </div>
       </div>
 
+      {isLandlord && !isLender && section === "portfolio" && <div className="space-y-3" data-testid="company-phone-portfolio">
+        <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
+        <AccountDealsBoard companyId={companyId} />
+      </div>}
       {isLender && <div className={sec("lending")} data-testid="company-phone-lending">{lenderSlot}</div>}
 
       <div className={sec("contacts")}>
+      {/* Agent firms: who they are to BGP and who they act for — desktop's
+          two agent boards were missing on the phone. */}
+      {isAgentFirm && !isClientViewer && <AgentRelationshipCard companyId={companyId} />}
+      {isAgentFirm && (data.representing || []).length > 0 && (
+        <Card data-testid="company-phone-representing">
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Currently representing <span className="font-mono tabular-nums normal-case tracking-normal">{data.representing.length}</span></CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 pt-0 flex flex-wrap gap-1.5">
+            {data.representing.slice(0, 12).map((r: any) => (
+              <Link key={r.id} href={`/companies/${r.brand_company_id}`} className={`${pillMetrics} ${pillInactive} normal-case tracking-normal text-foreground`}>{r.brand_name}</Link>
+            ))}
+            {data.representing.length > 12 && <span className="text-[11px] text-muted-foreground self-center">+{data.representing.length - 12} more</span>}
+          </CardContent>
+        </Card>
+      )}
       {(data.representedBy || []).length > 0 && (
         <Card data-testid="company-phone-represented-by">
           <CardHeader className="p-3 pb-2">
@@ -355,7 +381,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
               <ClipboardList className="w-3.5 h-3.5" /> Tracker updates
-              <Badge variant="outline" className="text-[10px]">{trackerComments.length}</Badge>
+              <span className="font-mono tabular-nums normal-case tracking-normal">{trackerComments.length}</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-1.5 max-h-[300px] overflow-y-auto">
@@ -457,7 +483,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
               <TrendingUp className="w-3.5 h-3.5" /> Signals
-              <Badge variant="outline" className="text-[10px] font-mono tabular-nums">{signals.length}</Badge>
+              <span className="font-mono tabular-nums normal-case tracking-normal">{signals.length}</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-2.5">
@@ -532,7 +558,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
               <Swords className="w-3.5 h-3.5" /> Competition
-              <Badge variant="outline" className="text-[10px] tabular-nums">{similarTenants.length + aiCompetitors.length}</Badge>
+              <span className="font-mono tabular-nums normal-case tracking-normal">{similarTenants.length + aiCompetitors.length}</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-2">
@@ -580,7 +606,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
               <Newspaper className="w-3.5 h-3.5" /> News & media
-              <Badge variant="outline" className="text-[10px] font-mono tabular-nums">{newsM.length}</Badge>
+              <span className="font-mono tabular-nums normal-case tracking-normal">{newsM.length}</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-2">
@@ -646,7 +672,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
               <Building2 className="w-3.5 h-3.5" /> Live tenancies
-              <Badge variant="outline" className="text-[10px]">{data.liveLocations.length}</Badge>
+              <span className="font-mono tabular-nums normal-case tracking-normal">{data.liveLocations.length}</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-1">

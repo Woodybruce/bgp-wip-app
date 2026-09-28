@@ -1165,7 +1165,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     queryFn: async () => {
       const term = repSearch.trim();
       if (term.length < 2) return [];
-      const r = await fetch(`/api/crm/contacts?search=${encodeURIComponent(term)}&limit=10`, { credentials: "include" });
+      const r = await fetch(`/api/crm/contacts?search=${encodeURIComponent(term)}&limit=10`, { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) return [];
       return r.json();
     },
@@ -1433,7 +1433,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   const isBrand = /^tenant/i.test(c.company_type || "");
   // Full-width brand / landlord layout: the sidebar boards split onto the
   // bottom of the two column stacks instead of rendering as paired rows.
-  const splitSidebar = isLandlord || isBrand;
+  // Every other kind on the company page (Client, Solicitor, Vendor…) takes
+  // the full-width brand layout too — the legacy narrow column squeezed the
+  // stores board to a truncated "Find a t" search (boards pass 2026-09-28).
+  const fullWidth = isLandlord || isBrand || flat;
+  const splitSidebar = fullWidth;
   const isAgent = !!c.agent_type;
   // Agent firms get their own page layout (like landlords).
   const isAgentFirm = !isLandlord && (/^agent/i.test(c.company_type || "") || isAgent);
@@ -2353,7 +2357,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   }
 
   return (
-    <div className={(isLandlord || isBrand)
+    <div className={fullWidth
       ? "flex flex-col gap-3 items-stretch w-full min-w-0 [container-type:inline-size]"
       : "flex flex-col md:flex-row gap-3 items-start w-full min-w-0"}>
     {/* flat (the company page): no outer card, so these boards sit on the page
@@ -2537,38 +2541,33 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 The reciprocal of the tenancy schedule's brand link.
                 Paired with Portfolio activity in one row; when there are
                 no live tenancies the activity block takes the full width. */}
+            {/* A section of the relationship card like its siblings — it was a
+                card inside the card (a double border). */}
             {liveLocations.length > 0 && (
-              <Card>
-                <CardHeader className="p-3 pb-2">
-                  <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-                    <Building2 className="w-3.5 h-3.5" /> Live tenancies
-                    <Badge variant="outline" className="text-[10px]">{liveLocations.length}</Badge>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-3 pt-0">
-                  <div className="space-y-1 max-h-[340px] overflow-y-auto pr-1">
-                    {liveLocations.map((p: any) => (
-                      <div key={p.id} className="flex items-center justify-between gap-2 p-1.5 rounded border bg-card min-w-0">
-                        <Link href={`/properties/${p.id}`} className="flex items-center gap-1.5 min-w-0 flex-1 hover:underline">
-                          <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                          <span className="text-xs font-medium truncate">{p.name}</span>
-                        </Link>
-                        <span className="flex items-center gap-1 shrink-0">
-                          {forSaleIds.has(p.id) && <Badge className="text-[9px] bg-amber-50 text-amber-800 border-amber-200" title="BGP is selling this building — worth talking to them about their lease">building for sale</Badge>}
-                          <Badge variant="outline" className="text-[9px]">
-                            {p.units} unit{Number(p.units) === 1 ? "" : "s"}
-                          </Badge>
-                          {Number(p.total_rent_pa) > 0 && (
-                            <span className="text-[10px] text-muted-foreground tabular-nums">
-                              {rentPa(Number(p.total_rent_pa))}
-                            </span>
-                          )}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
+              <div className="border-t pt-2" data-testid="brand-live-tenancies">
+                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                  <Building2 className="w-3.5 h-3.5" /> Live tenancies <span className="font-mono tabular-nums normal-case tracking-normal">{liveLocations.length}</span>
+                </div>
+                <div className="space-y-1 max-h-[340px] overflow-y-auto pr-1">
+                  {liveLocations.map((p: any) => (
+                    <div key={p.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded border border-border bg-card min-w-0">
+                      <Link href={`/properties/${p.id}`} className="flex items-center gap-1.5 min-w-0 flex-1 hover:underline">
+                        <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                        <span className="text-sm font-medium truncate">{p.name}</span>
+                      </Link>
+                      <span className="flex items-center gap-1.5 shrink-0">
+                        {forSaleIds.has(p.id) && <Badge className="text-[9px] bg-amber-50 text-amber-800 border-amber-200" title="BGP is selling this building — worth talking to them about their lease">building for sale</Badge>}
+                        <span className="text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{p.units}</span> unit{Number(p.units) === 1 ? "" : "s"}</span>
+                        {Number(p.total_rent_pa) > 0 && (
+                          <span className="text-xs font-mono tabular-nums">
+                            {rentPa(Number(p.total_rent_pa))}
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
 
             {/* The Activity card and All correspondence drawer are gone — the BGP
@@ -2580,7 +2579,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             {leaseEvents.length > 0 && (
               <div className="border-t pt-2">
                 <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                  <Clock className="w-3 h-3 text-amber-600" /> Lease events in next 18 months ({leaseEvents.length})
+                  <Clock className="w-3 h-3 text-amber-600" /> Lease events in next 18 months <span className="font-mono tabular-nums">{leaseEvents.length}</span>
                 </div>
                 <div className="space-y-0.5">
                   {leaseEvents.slice(0, 5).map((le) => {
@@ -2607,26 +2606,26 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 landlords don't take space, they let it) */}
             {!isLandlord && spacePreferences && spacePreferences.sampleSize >= 2 && (
               <div className="border-t pt-2">
-                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                  <Target className="w-3 h-3" /> Space preferences (from {spacePreferences.sampleSize} comps)
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
+                  <Target className="w-3.5 h-3.5" /> Space preferences <span className="normal-case tracking-normal font-normal">from <span className="font-mono tabular-nums">{spacePreferences.sampleSize}</span> comps</span>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
                   {spacePreferences.sqftMin != null && spacePreferences.sqftMax != null && (
                     <div>
-                      <div className="text-[10px] text-muted-foreground">Unit size</div>
-                      <div className="font-semibold">{Math.round(spacePreferences.sqftMin) === Math.round(spacePreferences.sqftMax) ? Math.round(spacePreferences.sqftMin).toLocaleString("en-GB") : `${Math.round(spacePreferences.sqftMin).toLocaleString("en-GB")}–${Math.round(spacePreferences.sqftMax).toLocaleString("en-GB")}`} sq ft</div>
+                      <div className="text-[11px] text-muted-foreground">Unit size</div>
+                      <div className="text-sm font-mono tabular-nums">{Math.round(spacePreferences.sqftMin) === Math.round(spacePreferences.sqftMax) ? Math.round(spacePreferences.sqftMin).toLocaleString("en-GB") : `${Math.round(spacePreferences.sqftMin).toLocaleString("en-GB")}–${Math.round(spacePreferences.sqftMax).toLocaleString("en-GB")}`} sq ft</div>
                     </div>
                   )}
                   {spacePreferences.rentPsfMin != null && spacePreferences.rentPsfMax != null && (
                     <div>
-                      <div className="text-[10px] text-muted-foreground">Rent range</div>
-                      <div className="font-semibold">£{Math.round(spacePreferences.rentPsfMin)}–£{Math.round(spacePreferences.rentPsfMax)} psf</div>
+                      <div className="text-[11px] text-muted-foreground">Rent range</div>
+                      <div className="text-sm font-mono tabular-nums">£{Math.round(spacePreferences.rentPsfMin)}–£{Math.round(spacePreferences.rentPsfMax)} psf</div>
                     </div>
                   )}
                   {spacePreferences.topUseClass && (
                     <div>
-                      <div className="text-[10px] text-muted-foreground">Typical use class</div>
-                      <div className="font-semibold">{spacePreferences.topUseClass}</div>
+                      <div className="text-[11px] text-muted-foreground">Typical use class</div>
+                      <div className="text-sm">{spacePreferences.topUseClass}</div>
                     </div>
                   )}
                 </div>
@@ -2636,8 +2635,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             {/* Parent group + sibling brands */}
             {(parentGroup || siblingBrands.length > 0) && (
               <div className="border-t pt-2">
-                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                  <Building2 className="w-3 h-3" /> Group &amp; sibling brands
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
+                  <Building2 className="w-3.5 h-3.5" /> Group &amp; sibling brands
                 </div>
                 {parentGroup && (
                   <Link href={`/companies/${parentGroup.id}`}>
@@ -2784,35 +2783,35 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-7 text-[10px] gap-1 text-muted-foreground"
+                    className="h-7 text-[11px] gap-1 text-muted-foreground"
                     onClick={() => refreshIntelMutation.mutate()}
                     disabled={refreshIntelMutation.isPending}
-                    title="Fetch latest Google News for this brand + re-link signals"
+                    title="Refresh from Google News and re-link signals"
                   >
                     <Search className={`w-3 h-3 ${refreshIntelMutation.isPending ? "animate-spin" : ""}`} />
-                    {refreshIntelMutation.isPending ? "Fetching…" : "News"}
+                    {refreshIntelMutation.isPending ? "Refreshing…" : "News"}
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-7 text-[10px] gap-1 text-muted-foreground"
+                    className="h-7 text-[11px] gap-1 text-muted-foreground"
                     onClick={() => perplexityRefreshMutation.mutate()}
                     disabled={perplexityRefreshMutation.isPending}
-                    title="Ask Perplexity for last 30 days of UK-relevant news and extract signals"
+                    title="Refresh from a web search of the last 30 days of UK news (Perplexity)"
                   >
                     <Sparkles className={`w-3 h-3 ${perplexityRefreshMutation.isPending ? "animate-spin" : ""}`} />
-                    {perplexityRefreshMutation.isPending ? "Thinking…" : "Perplexity"}
+                    {perplexityRefreshMutation.isPending ? "Refreshing…" : "Web search"}
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-7 text-[10px] gap-1 text-muted-foreground"
+                    className="h-7 text-[11px] gap-1 text-muted-foreground"
                     onClick={() => scrapeWebsiteMutation.mutate()}
                     disabled={scrapeWebsiteMutation.isPending || !c.domain}
-                    title={c.domain ? "Scrape careers/press pages for expansion signals" : "No domain set"}
+                    title={c.domain ? "Refresh from their careers / press pages" : "No website set"}
                   >
                     <Globe className={`w-3 h-3 ${scrapeWebsiteMutation.isPending ? "animate-spin" : ""}`} />
-                    {scrapeWebsiteMutation.isPending ? "Scraping…" : "Scrape"}
+                    {scrapeWebsiteMutation.isPending ? "Refreshing…" : "Website"}
                   </Button>
                 </div>
                 )}
@@ -2963,7 +2962,7 @@ export function PipnetRequirementsRow({ companyId, brandName, isClient }: { comp
   const { data, isLoading, refetch, isFetching } = useQuery<{ rows: any[]; fetched_at: string | null; cached?: boolean; error?: string }>({
     queryKey: ["/api/brand", companyId, "pipnet-requirements"],
     queryFn: async () => {
-      const r = await fetch(`/api/brand/${companyId}/pipnet-requirements`, { credentials: "include" });
+      const r = await fetch(`/api/brand/${companyId}/pipnet-requirements`, { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) return { rows: [], fetched_at: null };
       return r.json();
     },
@@ -2977,14 +2976,16 @@ export function PipnetRequirementsRow({ companyId, brandName, isClient }: { comp
     <div>
       <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
         <span className="flex items-center gap-1">
-          <Search className="w-3 h-3" /> Requirements {hasRows ? `(${rows.length})` : ""}
+          <Search className="w-3 h-3" /> Requirements {hasRows && <span className="font-mono tabular-nums">{rows.length}</span>}
+          {/* A bare label over nothing read as a failed load. */}
+          {!isLoading && !hasRows && <span className="text-[11px]">· none on PIPnet</span>}
           {data?.fetched_at && (
-            <span className="text-[10px] ml-1">· {ukDate(data.fetched_at, { day: "numeric", month: "short" })}</span>
+            <span className="text-[11px] ml-1">· {ukDate(data.fetched_at, { day: "numeric", month: "short" })}</span>
           )}
         </span>
         {!isClient && (
         <button
-          onClick={() => fetch(`/api/brand/${companyId}/pipnet-requirements?refresh=1`, { credentials: "include" }).then(() => refetch())}
+          onClick={() => fetch(`/api/brand/${companyId}/pipnet-requirements?refresh=1`, { credentials: "include", headers: getAuthHeaders() }).then(() => refetch())}
           disabled={isFetching}
           className="text-[10px] text-primary hover:underline disabled:opacity-50"
         >
@@ -4412,17 +4413,18 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
   const targetStatus = (p: any) => TARGET_STATUS[String(p.status || "").toUpperCase()] || titleWords(p.status) || (p.via === "letting_tracker" ? "Brief" : "Schedule");
   const suggestions: any[] = sugg?.suggestions || [];
   const ledgerPills = [
-    ledger?.completed ? `${ledger.completed} completed` : null,
-    ledger?.active ? `${ledger.active} active` : null,
-    ledger?.requirements ? `${ledger.requirements} requirement${ledger.requirements === 1 ? "" : "s"}` : null,
-  ].filter(Boolean) as string[];
+    ledger?.completed ? { n: ledger.completed, label: "completed" } : null,
+    ledger?.active ? { n: ledger.active, label: "active" } : null,
+    ledger?.requirements ? { n: ledger.requirements, label: `requirement${ledger.requirements === 1 ? "" : "s"}` } : null,
+  ].filter(Boolean) as Array<{ n: number; label: string }>;
+  const ledgerChip = (p: { n: number; label: string }) => <span key={p.label} className={`${pillMetrics} ${pillInactive}`}><span className="font-mono tabular-nums">{p.n}</span> {p.label}</span>;
   if (!tenantAt.length && !targeted.length && !pitched.length && !suggestions.length && !ledgerPills.length) return null;
   // Landlord page: just the deal counts — the tenant-shaped lists (tenant
   // at, pitched, suggested) don't apply and the deals table carries them.
   if (pillsOnly) return ledgerPills.length ? (
-    <div className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground" data-testid="portfolio-activity-pills">
+    <div className="text-[11px] font-semibold flex flex-wrap items-center gap-2 uppercase tracking-wider text-muted-foreground" data-testid="portfolio-activity-pills">
       <Briefcase className="w-3.5 h-3.5" /> BGP deals
-      {ledgerPills.map(label => <Badge key={label} variant="outline" className="text-[10px] normal-case tracking-normal tabular-nums">{label}</Badge>)}
+      {ledgerPills.map(ledgerChip)}
     </div>
   ) : null;
 
@@ -4437,26 +4439,26 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
       <div className="flex items-center justify-between gap-2 min-w-0">
         <Link href={`/properties/${propertyId}`} className="flex items-center gap-1.5 min-w-0 flex-1 hover:underline">
           <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-          <span className="text-xs font-medium truncate">{propertyName}</span>
-          {unitName && <span className="hidden md:inline text-[10px] text-muted-foreground truncate">{unitName}</span>}
+          <span className="text-sm font-medium truncate">{propertyName}</span>
+          {unitName && <span className="hidden md:inline text-[11px] text-muted-foreground truncate">{unitName}</span>}
         </Link>
         <span className="flex items-center gap-1 shrink-0 max-w-[55%] justify-end">{stackRight ? <span className="hidden md:contents">{right}</span> : right}
           {/* Same line as the property on desktop; the 44px tap target is phone-only. */}
-          {dealId && <Link href={`/deals/${dealId}`} className="inline-flex min-h-11 md:min-h-0 items-center gap-1 pl-1.5 text-xs font-medium underline underline-offset-2 hover:text-primary"
+          {dealId && <Link href={`/deals/${dealId}`} className="inline-flex min-h-11 md:min-h-0 items-center gap-1 pl-1.5 text-xs font-medium underline underline-offset-2 hover:text-primary whitespace-nowrap"
             aria-label={`Open deal for ${propertyName}${unitName ? `, ${unitName}` : ""}`} data-testid={`portfolio-open-deal-${dealId}`}>
             Open deal <ExternalLinkIcon className="h-3 w-3" aria-hidden="true" />
           </Link>}
         </span>
       </div>
       {(unitName || (stackRight && right)) && (
-        <div className="md:hidden flex items-center gap-1 min-w-0 text-[10px] text-muted-foreground mt-0.5 pl-5">
+        <div className="md:hidden flex items-center gap-1 min-w-0 text-[11px] text-muted-foreground mt-0.5 pl-5">
           {unitName && <span className="truncate shrink">{unitName}</span>}
           {unitName && stackRight && right && <span aria-hidden="true">·</span>}
           {stackRight && <span className="min-w-0 truncate">{right}</span>}
         </div>
       )}
       {/* Hover titles don't exist on touch — the reason gets its own line. */}
-      {subline && <div className="text-[10px] text-muted-foreground mt-0.5 pl-5 line-clamp-2">{subline}</div>}
+      {subline && <div className="text-[11px] text-muted-foreground mt-0.5 pl-5 line-clamp-2">{subline}</div>}
     </div>
     );
   };
@@ -4467,14 +4469,14 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
     return (
       <div>
         <div className="flex items-center gap-1.5 mb-1">
-          <span className={`text-[10px] uppercase tracking-widest ${tone || "text-muted-foreground/70"}`}>{label}</span>
-          <Badge variant="outline" className="text-[9px] tabular-nums">{count}</Badge>
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
+          <span className="text-[11px] font-mono tabular-nums text-muted-foreground">{count}</span>
         </div>
         <div className="space-y-1">{children}</div>
         {(hiddenHere > 0 || open) && (
-          <button type="button" className="mt-1 text-[10px] text-primary hover:underline" aria-expanded={open} data-testid={`portfolio-more-${tierKey}`}
+          <button type="button" className="mt-1 text-xs text-primary hover:underline" aria-expanded={open} data-testid={`portfolio-more-${tierKey}`}
             onClick={() => setOpenTiers(prev => { const next = new Set(prev); if (next.has(tierKey)) next.delete(tierKey); else next.add(tierKey); return next; })}>
-            {open ? "Show fewer" : `+${hiddenHere} more`}
+            {open ? "Show fewer" : `Show all ${count}`}
           </button>
         )}
       </div>
@@ -4486,14 +4488,14 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
   const showBareTitle = ledgerPills.length > 0;
   const title = <>
     <Target className="w-3.5 h-3.5" /> Portfolio activity
-    {ledgerPills.map(label => <Badge key={label} variant="outline" className="text-[10px] normal-case tracking-normal tabular-nums">{label}</Badge>)}
+    {ledgerPills.map(ledgerChip)}
   </>;
   const tiers = <>
         {tenantAt.length > 0 && (
           <Tier tierKey="tenant" label="Tenant at" count={tenantAt.length}>
             {tenantAt.slice(0, capFor("tenant", tenantAt)).map((p: any) => (
               <Row key={`t-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name} dealId={p.dealId || undefined}
-                right={<Badge variant="outline" className="text-[9px] shrink-0 text-emerald-700 border-emerald-200">{p.dealId ? titleWords(p.dealType) || "Deal" : "Tenant"}</Badge>} />
+                right={<span className={`${pillMetrics} ${pillInactive} shrink-0`}>{p.dealId ? titleWords(p.dealType) || "Deal" : "Tenant"}</span>} />
             ))}
 
           </Tier>
@@ -4502,7 +4504,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
           <Tier tierKey="targeted" label="Targeted" count={targeted.length}>
             {targeted.slice(0, capFor("targeted", targeted)).map((p: any) => (
               <Row key={`g-${p.via}-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name}
-                right={<Badge variant="outline" className="text-[9px] shrink-0">{targetStatus(p)}</Badge>} />
+                right={<span className={`${pillMetrics} ${pillInactive} shrink-0`}>{targetStatus(p)}</span>} />
             ))}
           </Tier>
         )}
@@ -4511,16 +4513,16 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
             {pitched.slice(0, capFor("pitched", pitched)).map((p: any, i: number) => (
               <Row key={`p-${i}`} propertyId={p.propertyId} propertyName={p.propertyName} unitName={p.unitName}
                 title={p.evidence} stackRight
-                right={<span className="text-[10px] text-amber-700 truncate">{p.evidence}</span>} />
+                right={<span className="text-[11px] text-muted-foreground truncate">{p.evidence}</span>} />
             ))}
           </Tier>
         )}
         {suggestions.length > 0 && (
-          <Tier tierKey="suggested" label="Suggested pitches" count={suggestions.length} tone="text-emerald-700/80">
+          <Tier tierKey="suggested" label="Suggested pitches" count={suggestions.length}>
             {suggestions.slice(0, capFor("suggested", suggestions)).map((u: any) => (
               <Row key={`s-${u.id}`} propertyId={u.property_id} propertyName={u.property_name} unitName={u.unit_name}
                 title={u.reason} subline={u.reason}
-                right={u.sqft ? <span className="text-[10px] text-muted-foreground tabular-nums">{Math.round(Number(u.sqft)).toLocaleString("en-GB")} sq ft</span> : null} />
+                right={u.sqft ? <span className="text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{Math.round(Number(u.sqft)).toLocaleString("en-GB")}</span> sq ft</span> : null} />
             ))}
           </Tier>
         )}
@@ -4528,7 +4530,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
   // bare: inside the BGP take card, no card of its own.
   if (bare) return (
     <div className="space-y-2" data-testid="portfolio-activity-bare">
-      {showBareTitle && <div className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">{title}</div>}
+      {showBareTitle && <div className="text-[11px] font-semibold flex flex-wrap items-center gap-2 uppercase tracking-wider text-muted-foreground">{title}</div>}
       <div className="space-y-3">{tiers}</div>
     </div>
   );
@@ -5663,7 +5665,7 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
               type="button"
               className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
               onClick={() => {
-                fetch(`/api/microsoft/company-folders/browse?company=${encodeURIComponent(c.name)}`, { credentials: "include" })
+                fetch(`/api/microsoft/company-folders/browse?company=${encodeURIComponent(c.name)}`, { credentials: "include", headers: getAuthHeaders() })
                   .then(r => r.json())
                   .then(d => {
                     const url = d.items?.[0]?.webUrl

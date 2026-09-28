@@ -63,6 +63,7 @@ import { BrandProfilePanel } from "@/components/brand-profile-panel";
 import { MobileBrandView } from "@/components/mobile-brand-view";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { LenderPanel } from "@/components/lender-panel";
+import { isLandlordCompany } from "@/lib/company-kind";
 import { PropertiesSummary } from "@/components/properties-summary";
 
 interface CHSearchResult {
@@ -1220,7 +1221,12 @@ function CompanyDetail({ id }: { id: string }) {
     || companyTypeLower.includes("debt fund") || companyTypeLower.includes("private credit") || companyTypeLower.includes("mezzanine")
     || companyTypeLower.includes("bridging") || companyTypeLower.includes("development finance") || companyTypeLower.includes("building society")
     || companyTypeLower.includes("insurance lender") || companyTypeLower.includes("pension fund");
-  const isLandlordCo = !isLenderCo && (companyTypeLower.includes("landlord") || companyTypeLower.includes("investor") || companyTypeLower.includes("developer") || companyTypeLower.includes("fund"));
+  // The profile's server flag decides landlord-ness (typed "Client" or
+  // "Asset Manager" landlords — Canary Wharf Group, Pave — got the landlord
+  // page AND the legacy Linked Properties / Leasing Schedule blocks under it).
+  // Same query key as the panel, so this reads its cached payload.
+  const { data: profileKind } = useQuery<{ isLandlord?: boolean }>({ queryKey: ["/api/brand", id, "profile"], enabled: !!company });
+  const isLandlordCo = !isLenderCo && (profileKind?.isLandlord === true || isLandlordCompany(company?.companyType, profileKind?.isLandlord));
   const usePropertiesBoard = isLenderCo || isLandlordCo;
 
   const deleteMutation = useMutation({
@@ -1468,9 +1474,9 @@ function CompanyDetail({ id }: { id: string }) {
                 return (
                 <Card>
                   <CardContent className="p-3 space-y-2">
-                    <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                      <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
-                      Linked Properties ({linkedProperties.length})
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <Building2 className="w-3.5 h-3.5" />
+                      Linked properties <span className="font-mono tabular-nums normal-case tracking-normal">{linkedProperties.length}</span>
                     </h3>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 max-h-[300px] overflow-y-auto">
                       {linkedProperties.map((property) => {
@@ -1479,17 +1485,16 @@ function CompanyDetail({ id }: { id: string }) {
                         const isLeasing = property.status === "Leasing Instruction";
                         return (
                         <Link key={property.id} href={`/properties/${property.id}`}>
-                          <div className={`flex flex-col p-2 rounded-md transition-colors cursor-pointer ${isLeasing ? "border border-green-300 dark:border-green-700 bg-green-50/50 dark:bg-green-900/10 hover:bg-green-50 dark:hover:bg-green-900/20" : "border border-purple-300 dark:border-purple-700 bg-purple-50/50 dark:bg-purple-900/10 hover:bg-purple-50 dark:hover:bg-purple-900/20"}`} data-testid={`link-property-${property.id}`}>
+                          {/* Token surfaces; the dot keeps the leasing / other
+                              distinction and the agents read as names (identity
+                              colours are dots, never fills — DESIGN §14). */}
+                          <div className="flex flex-col p-2 rounded-md border border-border bg-card hover:bg-muted/40 transition-colors cursor-pointer" data-testid={`link-property-${property.id}`}>
                             <div className="flex items-center gap-2 min-w-0">
-                              <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLeasing ? "bg-green-500" : "bg-purple-500"}`} />
-                              <p className="text-sm font-medium truncate text-zinc-800 dark:text-zinc-200">{property.name}</p>
+                              <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLeasing ? "bg-green-500" : "bg-purple-500"}`} title={isLeasing ? "Leasing instruction" : property.status || undefined} />
+                              <p className="text-sm font-medium truncate">{property.name}</p>
                             </div>
                             {agentNames.length > 0 && (
-                              <div className="flex flex-wrap gap-0.5 mt-1 ml-4">
-                                {agentNames.map((name) => (
-                                  <Badge key={name} className={`text-[9px] px-1 py-0 text-white ${userColorMap[name] || "bg-zinc-500"}`}>{name.split(" ")[0]}</Badge>
-                                ))}
-                              </div>
+                              <p className="text-[11px] text-muted-foreground truncate mt-0.5 ml-3.5">{agentNames.map(name => name.split(" ")[0]).join(", ")}</p>
                             )}
                           </div>
                         </Link>
