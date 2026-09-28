@@ -221,7 +221,7 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
   // Only brands with real evidence. The research sometimes flags a brand as
   // expanding while its own note says the evidence is missing or stale —
   // those read as working notes, not intel (Woody, 2026-09-27).
-  const NO_EVIDENCE = /cannot be confirmed|can'?t be confirmed|no evidence|wasn'?t returned|not returned|outside the (?:roughly )?\d+-month window|does not identify|doesn'?t identify|no (?:specific|direct|cited) evidence|not a direct match|available results? (?:gives?|shows?|provides?) no/i;
+  const NO_EVIDENCE = /cannot be confirmed|can'?t be confirmed|no evidence|wasn'?t returned|not returned|outside the (?:roughly )?\d+-month window|does not identify|doesn'?t identify|no (?:specific|direct|cited) evidence|no (?:attributable )?(?:recent )?(?:expansion )?evidence (?:surfaced|found|was found)|no attributable recent|not a direct match|available results? (?:gives?|shows?|provides?) no/i;
   // Caveat sentences ("No Bluewater-specific plan was found.") are the
   // researcher's working, not intel — drop them from otherwise good notes.
   const CAVEAT = /^(?:no\b[^.]*\b(?:was|were|has been|have been) (?:found|identified|confirmed|announced)|[^.]*\bno [^.]*\b(?:was|were) (?:found|identified|available|returned)\b|[^.]*\b(?:not|yet to be) (?:been )?(?:found|confirmed)\b|no [\w'’ -]+-specific\b|[^.]*\bnot (?:one of )?the specified\b|[^.]*\bnot specifically\b)/i;
@@ -636,7 +636,7 @@ function CentreBenchmark({ benchmark, name, peers, brandsNoun }: { benchmark: No
             <div className="flex flex-wrap gap-1 mt-1 md:mt-0 min-w-0">
               {(distinct.get(r.name) || []).map(b => (
                 <Link key={b.id} href={`/companies/${b.id}`}>
-                  <Badge variant="outline" className="text-[11px] cursor-pointer hover:bg-muted">{b.name}</Badge>
+                  <Badge variant="outline" className="text-[11px] font-medium text-foreground cursor-pointer hover:bg-muted">{b.name}</Badge>
                 </Link>
               ))}
             </div>

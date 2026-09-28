@@ -2876,23 +2876,23 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
   const personRow = (contact: LinkedContact, showVia: boolean, pinnedRow = false, chipVia = !!contact.via && contact.via.length <= 18) => (
     <div key={contact.id} className="group/lcrow relative">
       <Link href={contact.id.startsWith("u-") ? "/hr" : contact.id.startsWith("co-") ? `/companies/${contact.company_id}` : `/contacts/${contact.id}`} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted/50 min-w-0" data-testid={`contact-item-${contact.id}`}>
-        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-semibold shrink-0 ${contact.side === "bgp" ? "bg-foreground text-background" : contact.side === "client" ? "bg-blue-100 text-blue-700" : "bg-muted text-muted-foreground"}`}>
+        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-semibold shrink-0 ${contact.side === "bgp" ? "bg-foreground text-background" : contact.side === "client" ? "border border-border bg-background text-foreground" : "bg-muted text-muted-foreground"}`}>
           {(contact.name || "?").split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
         </span>
         <div className="flex-1 min-w-0">
           <span className="text-xs font-medium truncate block">{contact.name}</span>
-          <span className="text-[10px] text-muted-foreground truncate block" title={contact.context || undefined}>
+          <span className="text-[11px] text-muted-foreground truncate block" title={contact.context || undefined}>
             {[contact.role, contact.side === "bgp" ? "BGP" : contact.company_name !== contact.name ? contact.company_name : null, contact.context, showVia && !chipVia && contact.side !== "client" ? contact.via : null].filter(Boolean).join(" · ")}
           </span>
         </div>
-        {contact.side === "client" && <span className={`${pillMetrics} shrink-0 border border-border text-foreground`}>Client</span>}
+        {contact.side === "client" && showVia && <span className={`${pillMetrics} shrink-0 border border-border text-foreground`}>Client</span>}
         {/* A word or two — the deal / unit itself is on the line under the
             name, so the chip never cuts off mid-word. */}
         {showVia && chipVia && contact.side !== "client" && (
           <span className={`${pillMetrics} shrink-0 border border-border text-muted-foreground`}>{contact.via}</span>
         )}
         {contact.last_interaction && (
-          <span className="text-[9px] text-muted-foreground shrink-0">{gbDate(contact.last_interaction, { day: "numeric", month: "short" })}</span>
+          <span className="text-[11px] font-mono tabular-nums text-muted-foreground shrink-0">{gbDate(contact.last_interaction, { day: "numeric", month: "short" })}</span>
         )}
       </Link>
       {/* Hide (or unpin) — BGP team rows are managed on the property-team
@@ -2913,12 +2913,12 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
   const groupHeader = (key: string, title: string, count: number, tint: string) => (
     <button
       onClick={() => setOpenGroups(prev => ({ ...prev, [key]: !(prev[key] ?? false) }))}
-      className={`w-full flex items-center gap-1.5 text-[10px] uppercase tracking-wide font-semibold py-1 rounded hover:bg-muted/50 transition-colors ${tint}`}
+      className={`w-full flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-semibold py-1 rounded hover:bg-muted/50 transition-colors text-muted-foreground`}
       data-testid={`linked-contacts-group-${key}`}
     >
       {(openGroups[key] ?? false) ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
       <span className="text-left flex-1">{title}</span>
-      <Badge variant="outline" className="text-[9px] tabular-nums">{count}</Badge>
+      <span className="font-mono tabular-nums font-normal">{count}</span>
     </button>
   );
 
@@ -2928,11 +2928,11 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
         <div className="flex items-center gap-2 mb-2">
           {!bare && <Users className="w-4 h-4" />}
           {!bare && <h3 className="text-sm font-semibold">Linked Contacts</h3>}
-          {total > 0 && <Badge variant="secondary" className="text-[10px]">{total}{bare ? " linked" : ""}</Badge>}
+          {total > 0 && <span className="text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{total}</span>{bare ? " linked" : ""}</span>}
           <div className="flex-1" />
           <button
             onClick={() => { setAddOpen(v => !v); setAddSearch(""); }}
-            className="text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
+            className="text-[11px] h-6 px-2 rounded-md border border-border bg-background hover:bg-muted inline-flex items-center gap-1"
             data-testid="linked-contacts-add"
           >
             <Plus className="w-3 h-3" /> Add
@@ -2951,7 +2951,7 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
             {addSearch.trim().length >= 2 && (
               <div className="mt-1.5 space-y-0.5 max-h-[180px] overflow-y-auto">
                 {addMatches.length === 0 ? (
-                  <p className="text-[10px] text-muted-foreground italic px-1 py-1">No matching CRM contacts.</p>
+                  <p className="text-[11px] text-muted-foreground italic px-1 py-1">No matching CRM contacts.</p>
                 ) : addMatches.map((c: any) => (
                   <button
                     key={c.id}
@@ -2963,7 +2963,7 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
                       {(c.name || "?").split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase()}
                     </span>
                     <span className="text-xs truncate">{c.name}</span>
-                    <span className="text-[10px] text-muted-foreground truncate">{c.companyName || c.company_name || ""}</span>
+                    <span className="text-[11px] text-muted-foreground truncate">{c.companyName || c.company_name || ""}</span>
                   </button>
                 ))}
               </div>
@@ -3003,7 +3003,7 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
                         <span className="w-6 h-6 rounded bg-amber-100 text-amber-700 flex items-center justify-center text-[9px] font-semibold shrink-0">!</span>
                         <div className="flex-1 min-w-0">
                           <span className="text-xs font-medium truncate block">{u.unit_name}</span>
-                          <span className="text-[10px] text-amber-700 truncate block">{u.status || "active"} — no brand linked yet, add it on the tracker</span>
+                          <span className="text-[11px] text-amber-700 truncate block">{u.status || "active"} — no brand linked yet, add it on the tracker</span>
                         </div>
                       </Link>
                     ))}
@@ -3033,15 +3033,15 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
                         <div className="flex-1 min-w-0">
                           <Link href={`/companies/${o.company_id}`} className="text-xs font-semibold truncate block hover:underline">{o.company_name}</Link>
                           {o.contact ? (
-                            <Link href={`/contacts/${o.contact.id}`} className="text-[10px] text-muted-foreground truncate block hover:underline">
+                            <Link href={`/contacts/${o.contact.id}`} className="text-[11px] text-muted-foreground truncate block hover:underline">
                               {[o.contact.name, o.contact.role].filter(Boolean).join(" · ")}
                             </Link>
                           ) : (
-                            <span className="text-[10px] text-muted-foreground/60 italic block">no contact on file</span>
+                            <span className="text-[11px] text-muted-foreground/60 italic block">no contact on file</span>
                           )}
                         </div>
                         {o.contact?.last_interaction && (
-                          <span className="text-[9px] text-muted-foreground shrink-0">{gbDate(o.contact.last_interaction, { day: "numeric", month: "short" })}</span>
+                          <span className="text-[11px] font-mono tabular-nums text-muted-foreground shrink-0">{gbDate(o.contact.last_interaction, { day: "numeric", month: "short" })}</span>
                         )}
                       </div>
                     ))}
@@ -3058,7 +3058,7 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
             {(data?.hiddenCount || 0) > 0 && (
               <button
                 onClick={() => clearOverride("__hidden__")}
-                className="text-[10px] text-muted-foreground hover:text-foreground hover:underline px-2 pt-1"
+                className="text-[11px] text-muted-foreground hover:text-foreground hover:underline px-2 pt-1"
                 data-testid="linked-contacts-restore-hidden"
               >
                 {data!.hiddenCount} hidden — restore
@@ -4351,12 +4351,9 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
 
   if (!postcode) {
     return (
-      <Card data-testid="property-intelligence-panel">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Brain className="h-4 w-4 text-primary" />
-            <span className="text-sm font-semibold">Property Intelligence</span>
-          </div>
+      <Card data-testid="property-intelligence-panel" className="border-0 shadow-none bg-transparent rounded-none">
+        {/* Framed and titled by the property page's board card. */}
+        <CardContent className="p-0">
           <div className="text-center py-6 text-muted-foreground">
             <Brain className="w-6 h-6 mx-auto mb-2 opacity-30" />
             <p className="text-xs">No postcode available — add an address to enable intelligence</p>
@@ -4497,13 +4494,11 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
   const hasPlanningApps = planningApps.length > 0;
 
   return (
-    <Card data-testid="property-intelligence-panel">
-      <CardContent className="p-4">
+    <Card data-testid="property-intelligence-panel" className="border-0 shadow-none bg-transparent rounded-none">
+      <CardContent className="p-0">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <Brain className="h-4 w-4 text-primary" />
-            <span className="text-sm font-semibold">Property Intelligence</span>
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{postcode}</Badge>
+            <span className="text-[11px] text-muted-foreground">Around <span className="font-mono">{postcode}</span></span>
           </div>
           <div className="flex items-center gap-1">
             <Button

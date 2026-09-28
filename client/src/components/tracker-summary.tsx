@@ -135,7 +135,7 @@ export function TrackerSummary({ propertyId, propertyIds, variant, tall, propert
           <div className="flex items-center gap-1 flex-wrap">
             {LETTING_STATUSES.filter(code => counts[code] > 0).map(code => (
               <Link key={code} href={trackerHref(propertyId, code)}>
-                <Badge variant="outline" className={`text-[10px] cursor-pointer ${DEAL_STATUS_BADGE_COLORS[code] || ""}`}>
+                <Badge variant="outline" className={`text-[11px] cursor-pointer ${DEAL_STATUS_BADGE_COLORS[code] || ""}`}>
                   {counts[code]} {DEAL_STATUS_LABELS[code]}
                 </Badge>
               </Link>
@@ -160,7 +160,7 @@ export function TrackerSummary({ propertyId, propertyIds, variant, tall, propert
       <div className="flex items-center gap-1 flex-wrap">
         {LETTING_STATUSES.filter(code => counts[code] > 0).map(code => (
           <Link key={code} href={trackerHref(propertyId, code)}>
-            <Badge variant="outline" className={`text-[10px] cursor-pointer ${DEAL_STATUS_BADGE_COLORS[code] || ""}`}>
+            <Badge variant="outline" className={`text-[11px] cursor-pointer ${DEAL_STATUS_BADGE_COLORS[code] || ""}`}>
               {counts[code]} {DEAL_STATUS_LABELS[code]}
             </Badge>
           </Link>
@@ -173,9 +173,9 @@ export function TrackerSummary({ propertyId, propertyIds, variant, tall, propert
           {live.map(u => (
             <Link key={u.id} href={trackerHref(u.propertyId)} className="flex items-center justify-between gap-2 p-1.5 rounded border bg-card hover:bg-muted/40 min-w-0">
               <span className="text-xs font-medium truncate" title={u.unitName || undefined}>{withoutScheme(u.unitName, propertyName) || "—"}</span>
-              <span className="flex items-center gap-1.5 shrink-0 text-[10px] text-muted-foreground">
+              <span className="flex items-center gap-1.5 shrink-0 text-[11px] text-muted-foreground">
                 {u.sqft ? `${Math.round(Number(u.sqft)).toLocaleString("en-GB")} sq ft` : ""}
-                <Badge variant="outline" className={`text-[9px] ${DEAL_STATUS_BADGE_COLORS[effOf(u)] || ""}`}>
+                <Badge variant="outline" className={`text-[11px] ${DEAL_STATUS_BADGE_COLORS[effOf(u)] || ""}`}>
                   {DEAL_STATUS_LABELS[effOf(u)]}
                 </Badge>
               </span>

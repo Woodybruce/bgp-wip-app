@@ -18,6 +18,7 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Mail, Phone, Users, Activity, CalendarDays, MapPin, Handshake, Sparkles, Plus, Loader2, UserRound } from "lucide-react";
@@ -103,12 +104,12 @@ function RecentRow({ a, propertyId, summaries, setSummaries }: {
               {a.subject ? (
                 <>
                   <div className="text-xs leading-snug font-medium truncate">{a.subject}</div>
-                  <div className="text-[10px] text-muted-foreground truncate">{a.summary} · {timeAgo(a.date)}</div>
+                  <div className="text-[11px] text-muted-foreground truncate">{a.summary} · {timeAgo(a.date)}</div>
                 </>
               ) : (
                 <>
                   <div className="text-xs leading-snug">{a.summary}</div>
-                  <div className="text-[10px] text-muted-foreground">{timeAgo(a.date)}</div>
+                  <div className="text-[11px] text-muted-foreground">{timeAgo(a.date)}</div>
                 </>
               )}
             </div>
@@ -118,7 +119,7 @@ function RecentRow({ a, propertyId, summaries, setSummaries }: {
               {a.subject && <p className="text-xs font-semibold leading-snug">{a.subject}</p>}
               <p className="text-[11px] leading-snug">{a.summary}</p>
               {aiText && <p className="text-[11px] leading-snug opacity-80">{aiText}</p>}
-              <p className="text-[10px] opacity-60">
+              <p className="text-[11px] opacity-60">
                 {new Date(a.date).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
                 {" · "}
                 {new Date(a.date).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
@@ -179,7 +180,7 @@ function RecentRow({ a, propertyId, summaries, setSummaries }: {
         )}
         {a.deal_id && (
           <Link href={`/deals/${a.deal_id}`}>
-            <Badge variant="outline" className="text-[9px] shrink-0 cursor-pointer hover:bg-muted" title={a.deal_name || undefined}>deal →</Badge>
+            <span className="text-[11px] text-primary hover:underline shrink-0" title={a.deal_name || undefined}>Deal →</span>
           </Link>
         )}
         {a.contact_id && (
@@ -282,46 +283,38 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
       {variant === "both" && (
         <div className="flex items-center gap-1.5 flex-wrap">
           {/* "0 upcoming" was the only chip that showed at zero. */}
-          {allUpcoming.length > 0 && <button
+          {/* Filters are the standard pills (docs/DESIGN.md §3), counts in mono. */}
+          {allUpcoming.length > 0 && <Pill
+            active={section === "upcoming"}
             onClick={() => setSection(s => s === "upcoming" ? "all" : "upcoming")}
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 ${section === "upcoming" ? "border-primary bg-primary/5 font-semibold" : "bg-card"}`}
             data-testid="activity-chip-upcoming"
           >
-            <CalendarDays className="w-3 h-3 text-muted-foreground" />
-            <span className="font-semibold tabular-nums">{allUpcoming.length}</span>
-            <span className="text-muted-foreground">upcoming</span>
-          </button>}
-          <button
+            <span className="font-mono tabular-nums">{allUpcoming.length}</span> upcoming
+          </Pill>}
+          <Pill
+            active={section === "recent"}
             onClick={() => setSection(s => s === "recent" ? "all" : "recent")}
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 ${section === "recent" ? "border-primary bg-primary/5 font-semibold" : "bg-card"}`}
             data-testid="activity-chip-recent"
           >
-            <Activity className="w-3 h-3 text-muted-foreground" />
-            <span className="font-semibold tabular-nums">{allRecent.length}</span>
-            <span className="text-muted-foreground">recent</span>
-          </button>
-          {(["email", "meeting", "call", "deal"] as const).filter(k => kindCounts[k]).map(k => {
-            const Icon = KIND_ICON[k] || Activity;
-            return (
-              <button
-                key={k}
-                onClick={() => setKind(f => f === k ? null : k)}
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 ${kind === k ? "border-primary bg-primary/5 font-semibold" : kind ? "opacity-40" : "bg-card"}`}
-                data-testid={`activity-kind-${k}`}
-              >
-                <Icon className="w-3 h-3 text-muted-foreground" />
-                <span className="font-semibold tabular-nums">{kindCounts[k]}</span>
-                <span className="text-muted-foreground">{KIND_LABEL[k]}</span>
-              </button>
-            );
-          })}
+            <span className="font-mono tabular-nums">{allRecent.length}</span> recent
+          </Pill>
+          {(["email", "meeting", "call", "deal"] as const).filter(k => kindCounts[k]).map(k => (
+            <Pill
+              key={k}
+              active={kind === k}
+              onClick={() => setKind(f => f === k ? null : k)}
+              data-testid={`activity-kind-${k}`}
+            >
+              <span className="font-mono tabular-nums">{kindCounts[k]}</span> {KIND_LABEL[k]}
+            </Pill>
+          ))}
         </div>
       )}
       <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
       {upcoming.length > 0 && (
         <div>
           {variant === "both" && (
-            <div className="text-[10px] uppercase tracking-wide font-semibold mb-1 sticky top-0 bg-card text-muted-foreground">Upcoming · {upcoming.length}</div>
+            <div className="text-[11px] uppercase tracking-wider font-semibold mb-1 sticky top-0 bg-card text-muted-foreground">Upcoming <span className="font-mono tabular-nums font-normal">{upcoming.length}</span></div>
           )}
           <div className="space-y-0.5">
             {upcoming.map(ev => {
@@ -330,23 +323,23 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
                   <CalendarDays className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="text-xs leading-snug truncate">{ev.title}</div>
-                    <div className="text-[10px] text-muted-foreground flex items-center gap-1 flex-wrap">
+                    <div className="text-[11px] text-muted-foreground flex items-center gap-1 flex-wrap">
                       {new Date(ev.start_time).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}
                       {" · "}
                       {new Date(ev.start_time).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
                       {ev.location && <span className="inline-flex items-center gap-0.5 truncate"><MapPin className="w-2.5 h-2.5" />{ev.location}</span>}
                     </div>
                   </div>
-                  {ev.event_type && <Badge variant="outline" className="text-[9px] shrink-0">{ev.event_type}</Badge>}
+                  {ev.event_type && <Badge variant="outline" className="text-[11px] shrink-0">{ev.event_type}</Badge>}
                   {ev.deal_id && (
                     <Link href={`/deals/${ev.deal_id}`} onClick={e => e.stopPropagation()}>
-                      <Badge variant="outline" className="text-[9px] shrink-0 cursor-pointer hover:bg-muted">deal →</Badge>
+                      <span className="text-[11px] text-primary hover:underline shrink-0">Deal →</span>
                     </Link>
                   )}
                   {ev.property_name && !propertyId && (
                     ev.property_id
-                      ? <Badge variant="outline" className="text-[9px] shrink-0 max-w-[110px] truncate cursor-pointer hover:bg-muted">{ev.property_name} →</Badge>
-                      : <span className="text-[9px] text-muted-foreground shrink-0 max-w-[110px] truncate">{ev.property_name}</span>
+                      ? <Badge variant="outline" className="text-[11px] shrink-0 max-w-[110px] truncate cursor-pointer hover:bg-muted">{ev.property_name} →</Badge>
+                      : <span className="text-[11px] text-muted-foreground shrink-0 max-w-[110px] truncate">{ev.property_name}</span>
                   )}
                 </>
               );
@@ -354,13 +347,13 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
               const tip = (
                 <div className="space-y-1">
                   <p className="text-xs font-semibold leading-snug">{ev.title}</p>
-                  <p className="text-[10px] opacity-80">
+                  <p className="text-[11px] opacity-80">
                     {new Date(ev.start_time).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}
                     {" · "}
                     {new Date(ev.start_time).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
                   </p>
-                  {ev.location && <p className="text-[10px] opacity-80">{ev.location}</p>}
-                  {ev.property_name && <p className="text-[10px] opacity-80">{ev.property_name}</p>}
+                  {ev.location && <p className="text-[11px] opacity-80">{ev.location}</p>}
+                  {ev.property_name && <p className="text-[11px] opacity-80">{ev.property_name}</p>}
                 </div>
               );
               const row = ev.property_id && !propertyId ? (
@@ -381,7 +374,7 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
       {recent.length > 0 && (
         <div>
           {variant === "both" && (
-            <div className="text-[10px] uppercase tracking-wide font-semibold mb-1 sticky top-0 bg-card text-muted-foreground">Recent · {recent.length}</div>
+            <div className="text-[11px] uppercase tracking-wider font-semibold mb-1 sticky top-0 bg-card text-muted-foreground">Recent <span className="font-mono tabular-nums font-normal">{recent.length}</span></div>
           )}
           <div className="space-y-0.5">
             {recent.map(a => (

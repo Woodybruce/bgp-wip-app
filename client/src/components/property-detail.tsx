@@ -157,12 +157,12 @@ function PropertyComplianceBoardWrapper({
   // ComplianceBoard's `prefix` slot.
   const billingEntityRow = isClientViewer ? null : (
     <div>
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1.5">
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
         Billing entity
         <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-300 text-amber-600">SPV</Badge>
       </div>
       <InlineBillingEntity propertyId={property.id} billingEntityId={property.billingEntityId} landlordId={property.landlordId} allCompanies={allCompanies} />
-      <p className="text-[10px] text-muted-foreground mt-1 leading-snug">
+      <p className="text-[11px] text-muted-foreground mt-1 leading-snug">
         The corporate entity invoiced for fees. Often a property SPV distinct from the freeholder / landlord above.
       </p>
     </div>
@@ -637,13 +637,13 @@ export function PropertyDetail({ id }: { id: string }) {
                     ) : null;
                   })()}
                   {(property.status === "Leasing Instruction" || property.status === "Lease Advisory Instruction" || property.status === "Sales Instruction") && (
-                    <Badge variant="outline" className={`text-[10px] ${property.status === "Sales Instruction" ? "border-emerald-500 text-emerald-600" : property.status === "Lease Advisory Instruction" ? "border-violet-500 text-violet-600" : "border-blue-500 text-blue-600"}`} data-testid="badge-instruction-type">
+                    <Badge variant="outline" className={`text-[11px] ${property.status === "Sales Instruction" ? "border-emerald-500 text-emerald-600" : property.status === "Lease Advisory Instruction" ? "border-violet-500 text-violet-600" : "border-blue-500 text-blue-600"}`} data-testid="badge-instruction-type">
                       {property.status}
                     </Badge>
                   )}
                   <SalesBoardLink property={property} />
                   {property.groupName && !/^properties$/i.test(property.groupName) && (
-                    <Badge variant="outline" className="text-[10px]" data-testid="badge-property-group">{property.groupName}</Badge>
+                    <Badge variant="outline" className="text-[11px]" data-testid="badge-property-group">{property.groupName}</Badge>
                   )}
                 </div>
               )}
@@ -942,7 +942,7 @@ export function PropertyDetail({ id }: { id: string }) {
                       <p className="text-[11px] text-muted-foreground leading-tight">Competitor agent</p>
                       {property.competitorAgentStatus === "active" && property.competitorAgentInstructedAt && (
                         Date.now() - new Date(property.competitorAgentInstructedAt).getTime() > 365 * 864e5 ? (
-                          <Badge variant="outline" className="text-[10px] px-1 py-0 border-orange-300 text-orange-600">stale</Badge>
+                          <Badge variant="outline" className="text-[11px] px-1 py-0 border-orange-300 text-orange-600">stale</Badge>
                         ) : null
                       )}
                     </div>
@@ -1073,7 +1073,10 @@ export function PropertyDetail({ id }: { id: string }) {
             </ErrorBoundary>
             </PropertySection>
 
-            <div className={simpleLayout && propertyView === "multi_let" && phoneSection === "overview" ? "space-y-3" : sec(simpleLayout ? "tenancy" : "boards")}>
+            {/* With no rows yet the glance card already says so and offers the
+                add — a second empty schedule box under it said it twice
+                (Brixton Village). The schedule stays on the Tenancy pill. */}
+            <div className={simpleLayout && propertyView === "multi_let" && phoneSection === "overview" && (overviewSchedule.data || []).length > 0 ? "space-y-3" : sec(simpleLayout ? "tenancy" : "boards")}>
             {/* Schedule — unified view (Lettings / Tenancy lens toggle)
                 rendered for every property. Bluewater was the rollout
                 test; verified, so the firm-wide flip is in. The
@@ -1197,7 +1200,7 @@ export function PropertyDetail({ id }: { id: string }) {
               >
                 <div className="mb-2 pb-2 border-b">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">BGP team</div>
+                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground">BGP team</div>
                     <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} readOnly={isClientViewer} />
                   </div>
                   <PropertyBgpTeamFromWork propertyId={property.id} readOnly={isClientViewer} />
@@ -1374,7 +1377,7 @@ function PropertyBgpTeamFromWork({ propertyId, readOnly }: { propertyId: string;
           {p.role && <span className="text-[11px] text-muted-foreground truncate">{p.role}</span>}
         </div>
       ))}
-      <p className="text-[10px] text-muted-foreground">From {sources.join(" and ")}{readOnly ? "." : " — use + to set the property team."}</p>
+      <p className="text-[11px] text-muted-foreground">From {sources.join(" and ")}{readOnly ? "." : " — use + to set the property team."}</p>
     </div>
   );
 }
@@ -1463,14 +1466,14 @@ function PropertySpaceFitsPanel({ propertyId }: { propertyId: string }) {
   if (!space.length) return null;
   return (
     <div className="mt-3 pt-2 border-t space-y-1">
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Brands that fit the vacant space</div>
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Brands that fit the vacant space</div>
       {fitting.map(u => (
         <div key={`${u.kind}-${u.id}`} className="py-1.5 border-b last:border-0 text-xs" data-testid={`space-fit-${u.id}`}>
           <div className="flex items-center justify-between gap-2">
             <Link href={u.kind === "marketing" ? `/available?propertyId=${propertyId}&unitId=${u.id}` : `/leasing-schedule/${propertyId}`} className="font-medium hover:underline truncate">{u.unitName || "Unit"}</Link>
             <span className="flex items-center gap-1.5 shrink-0">
-              {u.sqft ? <span className="text-[10px] tabular-nums text-muted-foreground">{Number(u.sqft).toLocaleString()} sq ft</span> : null}
-              <Badge variant="outline" className="text-[9px]">{u.status}</Badge>
+              {u.sqft ? <span className="text-[11px] tabular-nums text-muted-foreground">{Number(u.sqft).toLocaleString()} sq ft</span> : null}
+              <Badge variant="outline" className="text-[11px]">{u.status}</Badge>
             </span>
           </div>
           <div className="text-[11px] text-muted-foreground">
@@ -1485,7 +1488,7 @@ function PropertySpaceFitsPanel({ propertyId }: { propertyId: string }) {
       ))}
       {fitting.length === 0 && <p className="text-xs text-muted-foreground">{space.length} vacant or marketing unit{space.length === 1 ? "" : "s"} — none fits a live requirement's size with a matching use or location.</p>}
       {fitting.length > 0 && space.length > fitting.length && <p className="text-[11px] text-muted-foreground">{space.length - fitting.length} other vacant unit{space.length - fitting.length === 1 ? "" : "s"} with no fit yet.</p>}
-      <p className="text-[10px] text-muted-foreground">★ BGP acts for the brand · <Link href="/requirements?type=leasing" className="text-primary hover:underline">Requirements</Link></p>
+      <p className="text-[11px] text-muted-foreground">★ BGP acts for the brand · <Link href="/requirements?type=leasing" className="text-primary hover:underline">Requirements</Link></p>
     </div>
   );
 }
@@ -1515,7 +1518,7 @@ function PropertyInvestmentPanel({ propertyId }: { propertyId: string }) {
           <div key={a.id} className="space-y-1.5" data-testid={`property-investment-${a.id}`}>
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-medium">{a.board_type === "Sales" ? "Sale" : "Purchase"}{a.client ? ` for ${a.client}` : ""}</span>
-              <Badge variant="outline" className="text-[10px]">{code ? DEAL_STATUS_LABELS[code] : a.status || "Reporting"}</Badge>
+              <Badge variant="outline" className="text-[11px]">{code ? DEAL_STATUS_LABELS[code] : a.status || "Reporting"}</Badge>
             </div>
             <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-2 tabular-nums">
               {money(a.guide_price) && <span>Guide {money(a.guide_price)}</span>}
@@ -1528,7 +1531,7 @@ function PropertyInvestmentPanel({ propertyId }: { propertyId: string }) {
                 {[["Sent", a.sent], ["Viewings", a.viewings], ["Bids", a.bids]].map(([label, n]) => (
                   <div key={label as string} className="rounded border py-1">
                     <div className="text-sm font-semibold font-mono tabular-nums">{n || 0}</div>
-                    <div className="text-[10px] text-muted-foreground">{label}</div>
+                    <div className="text-[11px] text-muted-foreground">{label}</div>
                   </div>
                 ))}
               </div>
@@ -1536,14 +1539,14 @@ function PropertyInvestmentPanel({ propertyId }: { propertyId: string }) {
             {money(a.best_bid) && <p className="text-[11px]">Best bid <span className="font-medium tabular-nums">{money(a.best_bid)}</span>{a.buyer ? <> · buyer {a.buyer_id ? <Link href={`/companies/${a.buyer_id}`} className="hover:underline">{a.buyer}</Link> : a.buyer}</> : null}</p>}
             {a.fits?.length > 0 && (
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-0.5">Buyers who fit — not yet sent{a.fitsTotal > a.fits.length ? ` (top ${a.fits.length} of ${a.fitsTotal})` : ""}</div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-0.5">Buyers who fit — not yet sent{a.fitsTotal > a.fits.length ? ` (top ${a.fits.length} of ${a.fitsTotal})` : ""}</div>
                 {a.fits.map((b: any) => (
                   <div key={b.companyId || b.name} className="py-1 border-b last:border-0">
                     <div className="text-[11px] flex items-center justify-between gap-2">
                       {b.companyId ? <Link href={`/companies/${b.companyId}`} className="font-medium hover:underline truncate">{b.name}</Link> : <span className="font-medium truncate">{b.name}</span>}
-                      <span className="text-[10px] text-muted-foreground shrink-0">{(b.sources || []).map((x: string) => x === "comps" ? "past buyer" : x).join(" · ")}</span>
+                      <span className="text-[11px] text-muted-foreground shrink-0">{(b.sources || []).map((x: string) => x === "comps" ? "past buyer" : x).join(" · ")}</span>
                     </div>
-                    <div className="text-[10px] text-muted-foreground">{(b.reasons || []).map((r: string) => r.replace(/ \((requirement|mandate)\)$/, "")).join(" · ")}</div>
+                    <div className="text-[11px] text-muted-foreground">{(b.reasons || []).map((r: string) => r.replace(/ \((requirement|mandate)\)$/, "")).join(" · ")}</div>
                   </div>
                 ))}
               </div>
@@ -1557,7 +1560,7 @@ function PropertyInvestmentPanel({ propertyId }: { propertyId: string }) {
       })}
       {ownership.length > 0 && (
         <div className="border-t pt-2">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-0.5">Ownership history</div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-0.5">Ownership history</div>
           {ownership.map((o, i) => (
             <div key={i} className="text-[11px]">
               {when(o.date)}: {o.fromId ? <Link href={`/companies/${o.fromId}`} className="hover:underline">{o.from || "seller"}</Link> : (o.from || "seller")} → {o.toId ? <Link href={`/companies/${o.toId}`} className="hover:underline font-medium">{o.to || "buyer"}</Link> : (o.to || "buyer")}
@@ -1598,7 +1601,7 @@ function PropertyInvestmentCompsPanel({ propertyId }: { propertyId: string }) {
             : c.seller ? <>Sold by {party(c.seller, c.seller_company_id)}</> : <>Bought by {party(c.buyer, c.buyer_company_id)}</>}
         </div>
       )}
-      {extra && <div className="text-[10px] text-muted-foreground">{extra}</div>}
+      {extra && <div className="text-[11px] text-muted-foreground">{extra}</div>}
     </div>
   );
   if (isLoading) return <div className="text-xs text-muted-foreground py-2">Loading…</div>;
@@ -1606,12 +1609,12 @@ function PropertyInvestmentCompsPanel({ propertyId }: { propertyId: string }) {
   return (
     <div className="space-y-3">
       <div>
-        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">This building</div>
+        <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">This building</div>
         {here.length ? here.map(c => row(c)) : <div className="text-xs text-muted-foreground">No recorded trades.</div>}
       </div>
       {similar.length > 0 && (
         <div>
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Comparable trades</div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Comparable trades</div>
           {similar.map(c => row(c, (c.reasons || []).join(" · ")))}
         </div>
       )}

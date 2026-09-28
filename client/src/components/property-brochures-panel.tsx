@@ -297,7 +297,7 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
           // (Woody, 2026-08-04: "make the brochure depth larger").
           // A fixed depth, not a floor: at full board width the cover grew
           // to ~1,000px — taller than the screen (docs/DESIGN.md §9).
-          <div className="h-[480px]">
+          <div className="h-[360px] md:h-[480px]">
             <BrochureTile
               brochure={active[0]}
               hero

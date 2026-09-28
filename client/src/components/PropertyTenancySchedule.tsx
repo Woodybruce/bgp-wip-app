@@ -245,10 +245,10 @@ const SCHEDULE_STATUS_COLOURS: Record<string, string> = {
   "Opportunity":    "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900 dark:text-fuchsia-300",
   "In Negotiation": "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
   "Under Offer":    "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300",
-  "Occupied":       "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-  "Let":            "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300", // Landsec feed
-  "Holding Over":   "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-  "TAW":            "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
+  "Occupied":       "bg-muted text-foreground",
+  "Let":            "bg-muted text-foreground", // Landsec feed
+  "Holding Over":   "bg-muted text-foreground",
+  "TAW":            "bg-muted text-foreground",
   "Trading":        "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300",
   "Lease Event":    "bg-violet-100 text-violet-700 dark:bg-violet-900 dark:text-violet-300",
   "Archived":       "bg-neutral-100 text-neutral-500 dark:bg-neutral-900 dark:text-neutral-500",
@@ -345,7 +345,7 @@ function HeaderFilter({ field, label, distinctValues, active, onChange }: {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className={`inline-flex items-center justify-center w-4 h-4 rounded ml-1 ${isActive ? "text-primary bg-primary/10" : "text-gray-400 hover:text-gray-600"}`}
+          className={`inline-flex items-center justify-center w-4 h-4 rounded ml-1 ${isActive ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-foreground"}`}
           title={`Filter ${label}`}
           data-testid={`tenancy-filter-trigger-${field}`}
         >
@@ -367,7 +367,7 @@ function HeaderFilter({ field, label, distinctValues, active, onChange }: {
         </div>
         <div className="space-y-1">
           {distinctValues.map(v => (
-            <label key={v} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded px-1 py-0.5">
+            <label key={v} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-muted rounded px-1 py-0.5">
               <Checkbox checked={active.has(v)} onCheckedChange={() => toggle(v)} />
               <span className="truncate">{v || "(empty)"}</span>
             </label>
@@ -569,7 +569,7 @@ function BreakTypeChip({ value, onChange }: { value: string; onChange: (v: strin
     value === "T" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" :
     value === "L" ? "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300" :
     value === "M" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300" :
-    "bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400";
+    "bg-muted text-muted-foreground";
   return (
     <select
       value={value || ""}
@@ -617,7 +617,7 @@ function InlineEdit({ value, field, unitId, onSave, type = "text", options, clas
     }
     return (
       <span
-        className={`cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-1 rounded text-xs ${className}`}
+        className={`cursor-pointer hover:bg-muted px-1 rounded text-xs ${className}`}
         onClick={() => { setVal(value || ""); setEditing(true); setTimeout(() => (isSelect ? selectRef.current?.focus() : inputRef.current?.focus()), 50); }}
         data-testid={`tenancy-cell-${field}-${unitId}`}
       >
@@ -634,7 +634,7 @@ function InlineEdit({ value, field, unitId, onSave, type = "text", options, clas
         onChange={(e) => { setVal(e.target.value); setEditing(false); if (e.target.value !== (value || "")) onSave(unitId, field, e.target.value); }}
         onBlur={() => setEditing(false)}
         onKeyDown={(e) => { if (e.key === "Escape") setEditing(false); }}
-        className="h-6 text-xs px-1 py-0 w-full border rounded bg-white dark:bg-gray-700"
+        className="h-6 text-xs px-1 py-0 w-full border rounded bg-background"
         data-testid={`tenancy-input-${field}-${unitId}`}
       >
         <option value="">—</option>
@@ -1093,14 +1093,14 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
     });
   };
 
-  if (isLoading) return <div className="flex items-center gap-2 text-sm text-gray-400 py-4"><Loader2 className="w-4 h-4 animate-spin" />Loading tenancy schedule...</div>;
+  if (isLoading) return <div className="flex items-center gap-2 text-sm text-muted-foreground py-4"><Loader2 className="w-4 h-4 animate-spin" />Loading tenancy schedule...</div>;
 
   if (unitsError) {
     const isAccessDenied = (unitsError as Error)?.message === "ACCESS_DENIED";
     return (
       <div className="space-y-3" data-testid="property-tenancy-schedule">
         <TenancyImportReview rows={importReviewRows} />
-        <div className="text-center py-6 text-gray-400 border rounded-lg">
+        <div className="text-center py-6 text-muted-foreground border rounded-lg">
           <Lock className="w-6 h-6 mx-auto mb-1 opacity-40" />
           <p className="text-xs">{isAccessDenied ? "Access restricted" : "Failed to load"}</p>
         </div>
@@ -1243,7 +1243,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
             )}
           </div>
         </div>
-        <div className="text-center py-8 text-gray-400 border rounded-lg border-dashed">
+        <div className="text-center py-8 text-muted-foreground border rounded-lg border-dashed">
           <FileSpreadsheet className="w-8 h-8 mx-auto mb-2 opacity-30" />
           <p className="text-xs">No tenancy schedule data</p>
           <p className="text-xs mt-1">Import an Excel tenancy schedule or add units manually</p>
@@ -1277,7 +1277,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
         <div className="flex gap-2 flex-wrap">
           <div>
             <div className="relative">
-              <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+              <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." className="h-7 text-xs pl-7 w-40" data-testid="tenancy-search" />
             </div>
             {/* Phones: the KPI tiles sit between this input and the table, so
@@ -1417,7 +1417,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                       {cols.map(c => (
                         <label
                           key={c.field as string}
-                          className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded px-1 py-0.5"
+                          className="flex items-center gap-2 text-xs cursor-pointer hover:bg-muted rounded px-1 py-0.5"
                           data-testid={`tenancy-col-toggle-${c.field as string}`}
                         >
                           <Checkbox
@@ -1621,14 +1621,14 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
               )}
               <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
                 {!canEdit ? (
-                  <span className={`text-[10px] font-semibold rounded px-1.5 py-0.5 whitespace-nowrap ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-gray-100 text-gray-700"}`}>
+                  <span className={`text-[10px] font-semibold rounded px-1.5 py-0.5 whitespace-nowrap ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-muted text-foreground"}`}>
                     {statusValue || "—"}
                   </span>
                 ) : (
                   <select
                     value={statusValue || ""}
                     onChange={(e) => inlineUpdate(unit.id, "status", e.target.value)}
-                    className={`text-[10px] font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer outline-none whitespace-nowrap ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-gray-100 text-gray-700"}`}
+                    className={`text-[10px] font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer outline-none whitespace-nowrap ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-muted text-foreground"}`}
                     data-testid={`tenancy-status-card-${unit.id}`}
                     aria-label="Status"
                   >
@@ -1741,18 +1741,18 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                   else bands.push({ name: c.band, span: 1 });
                 }
                 return bands.map((b, i) => (
-                  <th key={i} colSpan={b.span} className={`p-1.5 font-semibold text-[10px] uppercase tracking-wider text-center ${BAND_COLOURS[b.name] || "bg-slate-700 text-white"}`}>
+                  <th key={i} colSpan={b.span} className={`p-1.5 font-semibold text-[11px] uppercase tracking-wider text-center ${BAND_COLOURS[b.name] || "bg-slate-700 text-white"}`}>
                     {b.name}
                   </th>
                 ));
               })()}
-              <th colSpan={2} className="bg-slate-800 text-white p-1.5 font-semibold text-[10px] uppercase tracking-wider text-center">Actions</th>
+              <th colSpan={2} className="bg-slate-800 text-white p-1.5 font-semibold text-[11px] uppercase tracking-wider text-center">Actions</th>
             </tr>}
             {/* Column labels — text-style columns get an inline filter pill
                 so the team can narrow by Use, Zone, Tenant, etc without
                 leaving the table. Numeric / currency columns skip the
                 filter (range-filtering them adds noise for little win). */}
-            <tr className="bg-gray-100 dark:bg-gray-800 border-b">
+            <tr className="bg-muted border-b">
               {visibleColumns.map((c, ci) => {
                 const filterable = !c.type || c.type === "text";
                 let distinct: string[] = [];
@@ -1772,9 +1772,9 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                 // On phones the sticky rails ate most of a 390px viewport
                 // (~225px Unit + ~90px actions left a ~74px scroll strip),
                 // so the Unit pin is capped/truncated below md.
-                const stickyCls = ci === 0 ? " sticky left-0 bg-gray-100 dark:bg-gray-800 border-r z-10 max-w-[260px] max-md:max-w-[120px] overflow-hidden text-ellipsis" : "";
+                const stickyCls = ci === 0 ? " sticky left-0 bg-muted border-r z-10 max-w-[260px] max-md:max-w-[120px] overflow-hidden text-ellipsis" : "";
                 return (
-                  <th key={c.field} className={`p-2 font-medium whitespace-nowrap text-${c.align || "left"}${stickyCls}`} style={{ minWidth: c.width }}>
+                  <th key={c.field} className={`p-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap text-${c.align || "left"}${stickyCls}`} style={{ minWidth: c.width }}>
                     <span className="inline-flex items-center">
                       <button
                         type="button"
@@ -1803,10 +1803,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                   </th>
                 );
               })}
-              <th className="text-center p-2 font-medium" style={{ minWidth: 80 }}>Links</th>
+              <th className="text-center p-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground" style={{ minWidth: 80 }}>Links</th>
               {/* Sticky right so the delete button is always visible
                   without horizontal scrolling to the end of the table. */}
-              <th className="text-center p-2 font-medium w-10 sticky max-md:static right-0 bg-gray-100 dark:bg-gray-800 border-l z-10">
+              <th className="text-center p-2 font-medium w-10 sticky max-md:static right-0 bg-muted border-l z-10">
                 {!readOnly && !isClientViewer && (
                   <input
                     type="checkbox"
@@ -2019,7 +2019,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
   }
 
   return (
-    <tr className={`group border-b hover:bg-gray-50 dark:hover:bg-gray-800/50 ${isVacant ? "bg-amber-50/30 dark:bg-amber-900/10" : ""}`} data-testid={`tenancy-row-${unit.id}`}>
+    <tr className={`group border-b hover:bg-muted/50 ${isVacant ? "bg-amber-50/30 dark:bg-amber-900/10" : ""}`} data-testid={`tenancy-row-${unit.id}`}>
       {columns.map((c, ci) => {
         // First column (Unit) stays pinned left while the sheet scrolls —
         // solid background so the moving columns slide underneath it.
@@ -2050,7 +2050,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
             const statusValue = unit.status === "Not Vacant" ? "Occupied" : unit.status;
             return (
               <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap${stickyCls}`}>
-                <span className={`text-[10px] font-semibold rounded px-1.5 py-0.5 ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-gray-100 text-gray-700"}`}>
+                <span className={`text-[10px] font-semibold rounded px-1.5 py-0.5 ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-muted text-foreground"}`}>
                   {statusValue || "—"}
                 </span>
               </td>
@@ -2094,7 +2094,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
               <select
                 value={statusValue || ""}
                 onChange={(e) => onUpdate(unit.id, "status", e.target.value)}
-                className={`text-[10px] font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer outline-none ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-gray-100 text-gray-700"}`}
+                className={`text-[10px] font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer outline-none ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-muted text-foreground"}`}
                 data-testid={`tenancy-status-${unit.id}`}
                 aria-label="Status"
               >
@@ -2365,7 +2365,7 @@ function AddTenancyUnitForm({ propertyId, onAdd, onCancel, isPending }: {
   });
 
   return (
-    <div className="border rounded-lg p-3 bg-gray-50 dark:bg-gray-800 space-y-2">
+    <div className="border rounded-lg p-3 bg-muted/40 space-y-2">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold">Add Unit</span>
         <button onClick={onCancel}><X className="w-3 h-3" /></button>
@@ -2394,7 +2394,7 @@ function AddTenancyUnitForm({ propertyId, onAdd, onCancel, isPending }: {
         <Input placeholder="Zone/Premises" value={form.premises} onChange={e => setForm({ ...form, premises: e.target.value })} className="h-7 text-xs" data-testid="add-tenancy-premises" />
         <Input placeholder="NIA sq ft" value={form.nia_sqft} onChange={e => setForm({ ...form, nia_sqft: e.target.value })} className="h-7 text-xs" type="number" data-testid="add-tenancy-sqft" />
         <Input placeholder="Passing Rent" value={form.passing_rent_pa} onChange={e => setForm({ ...form, passing_rent_pa: e.target.value })} className="h-7 text-xs" type="number" data-testid="add-tenancy-rent" />
-        <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} className="h-7 text-xs border rounded px-2 bg-white dark:bg-gray-700" data-testid="add-tenancy-status">
+        <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} className="h-7 text-xs border rounded px-2 bg-background" data-testid="add-tenancy-status">
           {SCHEDULE_STATUSES.map((s) => (
             <option key={s} value={s}>{s}</option>
           ))}
