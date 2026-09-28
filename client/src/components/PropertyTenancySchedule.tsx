@@ -24,6 +24,9 @@ import {
   Eye, Filter, RefreshCw, Sparkles, FolderSearch
 } from "lucide-react";
 import { SharePointFilePicker, candidateKey, type SharePointCandidate } from "@/components/sharepoint-file-picker";
+import { SchemePillRow, schemeFilterMatches, usePropertySchemeList } from "@/components/property-schemes-panel";
+import { LeasingMinutesImportDialog, type MinutesSource } from "@/components/leasing-minutes-import-dialog";
+import { unitScheme } from "@shared/property-schemes";
 
 // Compact retail-tuned set of use labels we want the team to land on across
 // the tenancy schedules — chosen over the full UK planning class list
@@ -820,7 +823,14 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
       return next;
     });
   };
-  const clearAllFilters = () => { setColFilters({}); setSearch(""); setStatusFilter(null); setFocusedUnitId(null); };
+  // Estates split into schemes (Canary Wharf) filter and group by scheme —
+  // the unit's grouping is its scheme label.
+  const { data: schemeData } = usePropertySchemeList(propertyId);
+  const schemes = schemeData?.schemes || [];
+  const [schemeFilter, setSchemeFilter] = useState("");
+  const [minutesSource, setMinutesSource] = useState<MinutesSource | null>(null);
+  const minutesFileRef = useRef<HTMLInputElement>(null);
+  const clearAllFilters = () => { setColFilters({}); setSearch(""); setStatusFilter(null); setFocusedUnitId(null); setSchemeFilter(""); };
 
   const { data: units = [], isLoading, error: unitsError } = useQuery<TenancyUnit[]>({
     queryKey: ["/api/tenancy-schedule/property", propertyId],
@@ -1057,7 +1067,9 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
       setSpImportingKey(null);
     }
   };
-  const sharePointPicker = !isClientViewer && (
+  // Landlord leasing minutes (CWG's weekly "Units to let") go through the
+  // minutes importer onto the leasing schedule — previewed first.
+  const sharePointPicker = !isClientViewer && (<>
     <SharePointFilePicker
       open={spOpen}
       onClose={() => setSpOpen(false)}
@@ -1065,9 +1077,14 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
       url={`/api/tenancy-schedule/property/${propertyId}/sharepoint-candidates`}
       importLabel="Import"
       importingKey={spImportingKey}
-      onImport={handleSharePointImport}
+      onImport={(c) => {
+        if (c.minutes) { setSpOpen(false); setMinutesSource({ kind: "sharepoint", candidate: c }); return; }
+        handleSharePointImport(c);
+      }}
+      importLabelFor={(c) => (c.minutes ? "Import minutes" : "Import")}
     />
-  );
+    <LeasingMinutesImportDialog propertyId={propertyId} source={minutesSource} onClose={() => setMinutesSource(null)} />
+  </>);
 
   const handleExport = async () => {
     try {
@@ -1112,6 +1129,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
     if (!showArchived && isArchivedTenancy(u)) return false;
     if (focusedUnitId && String(u.id) !== focusedUnitId) return false;
     if (statusFilter && !tenancyStatusMatches(u.status, statusFilter)) return false;
+    if (!schemeFilterMatches(schemes, u.grouping, schemeFilter, u.unit_number || u.premises)) return false;
     if (search) {
       const s = search.toLowerCase();
       const matchesSearch = [u.unit_number, u.tenant_name, u.trading_name, u.premises, u.permitted_use].some(f => f?.toLowerCase().includes(s));
@@ -1147,7 +1165,14 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
         if (col?.type === "num") return (Number(va) - Number(vb)) * sortBy.dir;
         return String(va).localeCompare(String(vb)) * sortBy.dir;
       })
-    : filtered;
+    : schemes.length
+      // Unsorted on an estate: rows grouped scheme by scheme, in the
+      // schemes' own order, units with no scheme last.
+      ? [...filtered].sort((a, b) => {
+          const rank = (u: TenancyUnit) => { const hit = unitScheme(schemes, u.grouping, u.unit_number || u.premises); return hit ? schemes.indexOf(hit) : schemes.length; };
+          return rank(a) - rank(b);
+        })
+      : filtered;
 
   const zones = [...new Set(filtered.map(u => u.premises || "Unassigned"))];
   const currentUnits = units.filter(unit => !isArchivedTenancy(unit));
@@ -1300,6 +1325,17 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
             <FolderSearch className="w-3 h-3 mr-1" />From SharePoint
           </Button>
           )}
+          {/* Estates with schemes: the landlord's weekly leasing minutes. */}
+          {!readOnly && !isClientViewer && schemes.length > 0 && (<>
+          <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={() => minutesFileRef.current?.click()} title="Import the landlord's weekly leasing minutes workbook onto the leasing schedule — previewed before anything changes" data-testid="btn-import-minutes-upload">
+            <Upload className="w-3 h-3 mr-1" />Minutes
+          </Button>
+          <input type="file" ref={minutesFileRef} accept=".xlsx,.xls,.xlsm" className="hidden" onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) setMinutesSource({ kind: "file", file: f });
+            e.target.value = "";
+          }} />
+          </>)}
           <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={handleExport} data-testid="btn-export-tenancy">
             <Download className="w-3 h-3 mr-1" />Excel
           </Button>
@@ -1454,6 +1490,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
       }} />
       {sharePointPicker}
 
+      <SchemePillRow schemes={schemes} items={currentUnits.map(u => ({ label: u.grouping, name: u.unit_number || u.premises }))} value={schemeFilter} onChange={setSchemeFilter} testId="tenancy-scheme-pills" />
       <div className="flex flex-wrap items-center gap-1.5" aria-label="Tenancy status filters">
         {[
           { label: "Occupied", count: occupied },

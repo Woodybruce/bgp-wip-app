@@ -1337,6 +1337,9 @@ You have read AND write access to almost every operational table in the BGP data
 - **Confirmation rule for destructives**: Before any DELETE that could affect more than ~10 rows, run sql_query first to count + sample, show the user the number and a few representative rows, then wait for explicit "yes" / "do it" before running sql_write. For UPDATEs of more than ~50 rows, same pattern. Single-row or trivially-small ops can run without a preview.
 - The Brand Library (\`category = 'Brands'\` in image_studio_images) is curated — only delete from it if the user is explicit about wanting to.
 
+## Estates with schemes (Canary Wharf)
+An estate property can have named schemes in \`property_schemes\` (property_id, name, code = landlord's property code e.g. CWG Yardi 294, billing_entity_id → crm_companies = the landlord entity invoices go to, invoicing_email, sharepoint_folder_url). A unit's scheme is its label: tenancy_schedule_units.grouping, leasing_schedule_units.zone (unit_code = the landlord's unit code, e.g. Yardi 29400001), available_units.scheme, crm_deals.scheme. "Who do we invoice for Jubilee Place?" → the scheme's billing entity. \`crm_companies.requires_po\` (on the company or its parent) means invoices need a PO number (Canary Wharf Group: "No PO No Pay") — warn when a deal billed to one has no po_number.
+
 ## Portfolios
 One portfolio entity (e.g. "CEG Portfolio") with two kinds of members: \`portfolios\` + \`portfolio_runs\` (pathway runs → combined Excel / Why Buy outputs) and \`portfolio_properties\` (portfolio_id, property_id → crm_properties, drives the expandable head rows on the Investment Tracker). Each portfolio has a page at /portfolios/<id>. Use sql_query/sql_write on those tables to answer "what's in the X portfolio" or add/remove members. Deleting a portfolio removes ONLY the grouping — never properties or runs.
 
@@ -3619,7 +3622,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "create_property",
-      description: "Create a new property in the CRM. Use when the user mentions a new property, building, or address that needs to be tracked. Always search first to avoid duplicates. If you provide a postcode in the address, the system will AUTOMATICALLY run Land Registry lookup, AI-match the freehold title, identify the owner, create/link the landlord company, and prepare KYC. You do NOT need to do this manually — just provide the address with postcode and it all happens.",
+      description: "Create a new property in the CRM. Use when the user mentions a new property, building, or address that needs to be tracked. Always search first to avoid duplicates. A unit of a known estate or centre ('Unit 48 Jubilee Place', 'Kiosk 3 Wharf Kitchen') is not a property: the tool puts it on that estate's tenancy schedule and returns the estate instead (action 'attached_unit'). If you provide a postcode in the address, the system will AUTOMATICALLY run Land Registry lookup, AI-match the freehold title, identify the owner, create/link the landlord company, and prepare KYC. You do NOT need to do this manually — just provide the address with postcode and it all happens.",
       parameters: {
         type: "object",
         properties: {
@@ -6965,6 +6968,14 @@ export async function executeCrmToolRaw(
 
   if (fnName === "create_property") {
     const { crmProperties } = await import("@shared/schema");
+    const { resolveEstateUnit, estateUnitMessage } = await import("./estate-units");
+    const estateUnit = await resolveEstateUnit(pool, fnArgs.name);
+    if (estateUnit) {
+      return {
+        data: { success: true, action: "attached_unit", entity: "unit", id: estateUnit.propertyId, propertyId: estateUnit.propertyId, name: estateUnit.propertyName, unitId: estateUnit.unitId, unitName: estateUnit.unitName, scheme: estateUnit.scheme, message: estateUnitMessage(estateUnit) },
+        action: { type: "crm_updated", entityType: "property", id: estateUnit.propertyId },
+      };
+    }
     const created = await db.insert(crmProperties).values({
       name: fnArgs.name,
       address: fnArgs.address || null,
@@ -12639,6 +12650,11 @@ export async function handleCrmToolCall(
 
   if (fnName === "create_property") {
     const { crmProperties } = await import("@shared/schema");
+    const { resolveEstateUnit, estateUnitMessage } = await import("./estate-units");
+    const estateUnit = await resolveEstateUnit(pool, fnArgs.name);
+    if (estateUnit) {
+      return { handled: true, response: { reply: estateUnitMessage(estateUnit), action: { type: "crm_updated", entityType: "property", id: estateUnit.propertyId } } };
+    }
     const created = await db.insert(crmProperties).values({
       name: fnArgs.name, address: fnArgs.address || null,
       postcode: fnArgs.postcode || fnArgs.address?.postcode || null,

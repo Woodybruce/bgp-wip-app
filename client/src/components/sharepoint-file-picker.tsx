@@ -24,6 +24,8 @@ export interface SharePointCandidate {
   source: "folder" | "search" | "index";
   type?: "leasing" | "investment";
   imported?: boolean;
+  // A landlord's weekly leasing-meeting minutes workbook.
+  minutes?: boolean;
 }
 
 interface CandidateResponse {
@@ -55,7 +57,7 @@ function fmtMonth(iso: string | null | undefined): string {
 }
 
 export function SharePointFilePicker({
-  open, onClose, title, url, importLabel, importingKey, onImport, header,
+  open, onClose, title, url, importLabel, importingKey, onImport, header, importLabelFor,
 }: {
   open: boolean;
   onClose: () => void;
@@ -65,6 +67,8 @@ export function SharePointFilePicker({
   importingKey: string | null;
   onImport: (candidate: SharePointCandidate) => void;
   header?: ReactNode;
+  // Per-file button label ("Import minutes" for a minutes workbook).
+  importLabelFor?: (candidate: SharePointCandidate) => string;
 }) {
   const { data, isLoading, error } = useQuery<CandidateResponse>({
     queryKey: [url],
@@ -109,7 +113,7 @@ export function SharePointFilePicker({
             data.candidates.map(c => {
               const key = candidateKey(c);
               const busy = importingKey === key;
-              const meta = [fmtMonth(c.docDate || c.lastModified), fmtSize(c.size), SOURCE_LABEL[c.source], c.type ? (c.type === "investment" ? "Investment" : "Leasing") : ""].filter(Boolean).join(" · ");
+              const meta = [fmtMonth(c.docDate || c.lastModified), fmtSize(c.size), SOURCE_LABEL[c.source], c.type ? (c.type === "investment" ? "Investment" : "Leasing") : "", c.minutes ? "Leasing minutes" : ""].filter(Boolean).join(" · ");
               return (
                 <div key={key} className="flex items-start gap-3 py-2 border-b border-border last:border-0" data-testid="sharepoint-candidate">
                   <div className="min-w-0 flex-1">
@@ -129,7 +133,7 @@ export function SharePointFilePicker({
                       <span className="text-[11px] text-muted-foreground flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />Imported</span>
                     ) : (
                       <Button size="sm" variant="outline" className="h-7 text-xs" disabled={!!importingKey} onClick={() => onImport(c)}>
-                        {busy && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}{importLabel}
+                        {busy && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}{importLabelFor ? importLabelFor(c) : importLabel}
                       </Button>
                     )}
                   </div>

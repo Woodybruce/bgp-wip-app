@@ -2883,6 +2883,25 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       generated_by text,
       rows jsonb NOT NULL
     )`,
+    // Estate schemes + landlord unit codes + PO-required clients (0048):
+    `CREATE TABLE IF NOT EXISTS property_schemes (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      property_id varchar NOT NULL,
+      name text NOT NULL,
+      code text,
+      billing_entity_id varchar,
+      invoicing_email text,
+      sharepoint_folder_url text,
+      plan_id varchar,
+      sort_order integer DEFAULT 0,
+      created_at timestamp DEFAULT now(),
+      updated_at timestamp DEFAULT now()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_property_schemes_name ON property_schemes(property_id, lower(trim(name)))`,
+    `ALTER TABLE leasing_schedule_units ADD COLUMN IF NOT EXISTS unit_code text`,
+    `ALTER TABLE available_units ADD COLUMN IF NOT EXISTS scheme text`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS scheme text`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS requires_po boolean`,
   ];
 
   let ok = 0, skipped = 0;
@@ -2907,6 +2926,20 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     await runSchemaDriftGuard(pool);
   } catch (e: any) {
     console.warn("[schema-drift] guard failed:", e?.message);
+  }
+
+  // ── One-off (per Woody, 2026-09-28): Canary Wharf Group runs "No PO No
+  // Pay", so its invoices need a PO number. Guarded on requires_po never
+  // having been set (NULL), so it applies once and a later change on the
+  // company stands.
+  try {
+    const r = await pool.query(
+      `UPDATE crm_companies SET requires_po = true, updated_at = now()
+        WHERE id = '4f0ca8e1-ddbe-4363-a92e-076fd2331934' AND requires_po IS NULL`,
+    );
+    if ((r.rowCount ?? 0) > 0) console.log("[one-off cwg-po] Canary Wharf Group → requires PO");
+  } catch (e: any) {
+    console.warn("[one-off cwg-po] failed:", e?.message);
   }
 
   // ── One-off (per Woody, 2026-08): staff headshots. Point profile_pic_url
@@ -3440,6 +3473,7 @@ import propertyPlansRouter from "./property-plans";
 import unitInfoSheetRouter from "./unit-info-sheet";
 import propertyAssetBriefRouter from "./property-asset-brief";
 import { registerPropertyBrochureRoutes } from "./property-brochures";
+import { registerPropertySchemeRoutes } from "./property-schemes";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
 import portfolioPropertiesRouter from "./portfolio-properties";
@@ -4336,6 +4370,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupCovenantRoutes(app);
   registerPropertyResolverRoutes(app);
   registerPropertyBrochureRoutes(app);
+  registerPropertySchemeRoutes(app);
   registerPlaMattersRoutes(app);
   registerPlaValuationRoutes(app);
   registerComparablesScheduleRoute(app);

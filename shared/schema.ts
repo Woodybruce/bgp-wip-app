@@ -569,6 +569,9 @@ export const crmCompanies = pgTable("crm_companies", {
   // Restaurants / cafés / F&B → 'menu'. Retail/everything else → 'bestsellers'.
   menuIntel: jsonb("menu_intel"),
   menuIntelAt: timestamp("menu_intel_at"),
+  // Invoices to this client need a purchase order number (Canary Wharf
+  // Group: "No PO No Pay"). Applies to its subsidiaries too. NULL = never set.
+  requiresPo: boolean("requires_po"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -854,6 +857,27 @@ export const crmPropertyClients = pgTable("crm_property_clients", {
 
 export type CrmPropertyClient = typeof crmPropertyClients.$inferSelect;
 
+// The named parts of one estate or centre (Canary Wharf: Jubilee Place,
+// Cabot Place, Crossrail Place…). The scheme name is the label units carry
+// (tenancy grouping, leasing zone, available_units.scheme, crm_deals.scheme);
+// this row holds the per-scheme facts — who invoices go to and where the
+// files live. Migration 0048.
+export const propertySchemes = pgTable("property_schemes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  propertyId: varchar("property_id").notNull(),
+  name: text("name").notNull(),
+  // The landlord's own property code (CWG Yardi: 294 = Jubilee Place).
+  code: text("code"),
+  billingEntityId: varchar("billing_entity_id"), // → crm_companies (the landlord entity invoiced)
+  invoicingEmail: text("invoicing_email"),
+  sharepointFolderUrl: text("sharepoint_folder_url"),
+  planId: varchar("plan_id"),
+  sortOrder: integer("sort_order").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export type PropertyScheme = typeof propertySchemes.$inferSelect;
+
 export const crmDeals = pgTable("crm_deals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   dealRef: integer("deal_ref"),
@@ -964,6 +988,9 @@ export const crmDeals = pgTable("crm_deals", {
   feePercentage: real("fee_percentage"),
   invoicingNotes: text("invoicing_notes"),
   poNumber: text("po_number"),
+  // The scheme of an estate the deal sits in (property_schemes.name on the
+  // deal's property) — decides the landlord entity invoices go to.
+  scheme: text("scheme"),
   kycApproved: boolean("kyc_approved").default(false),
   kycApprovedAt: timestamp("kyc_approved_at"),
   kycApprovedBy: text("kyc_approved_by"),
@@ -1878,6 +1905,8 @@ export const availableUnits = pgTable("available_units", {
   availableDate: text("available_date"),
   marketingStatus: text("marketing_status").default("Available"),
   location: text("location"),
+  // The estate scheme the unit sits in (property_schemes.name).
+  scheme: text("scheme"),
   epcRating: text("epc_rating"),
   notes: text("notes"),
   restrictions: text("restrictions"),
@@ -2679,7 +2708,10 @@ export const leasingScheduleUnits = pgTable("leasing_schedule_units", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   propertyId: varchar("property_id").notNull(),
   unitName: text("unit_name"),
+  // Zone heading; on a property with schemes it is the scheme name.
   zone: text("zone"),
+  // The landlord's own unit reference (Canary Wharf's Yardi code, 29400001).
+  unitCode: text("unit_code"),
   positioning: text("positioning"),
   tenantName: text("tenant_name"),
   agentInitials: text("agent_initials"),
