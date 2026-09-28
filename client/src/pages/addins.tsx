@@ -6,7 +6,7 @@ const addins = [
   {
     name: "Outlook",
     icon: Mail,
-    description: "CRM sidebar that looks up email senders automatically — the BGP relationship read, matched contacts/companies/deals with links into the app, and one-click Log to CRM. Sign in once with Microsoft; the pane is pinnable.",
+    description: "ChatBGP inside Outlook — summarises the thread, drafts replies straight into Outlook's reply window (or into the message you're writing), opens new emails and meeting invites, with BGP's CRM, deals and your memory behind it. Plus the Sender & CRM tab: relationship read, matched contacts/companies/deals and one-click Log to CRM. Pinnable; remembers each thread.",
     manifest: "/manifests/outlook-addin.xml",
     preview: "/addin/outlook",
     adminSteps: "Microsoft 365 Admin Centre → Settings → Integrated Apps → Upload custom apps",
@@ -15,7 +15,7 @@ const addins = [
   {
     name: "Excel",
     icon: FileSpreadsheet,
-    description: "ChatBGP AI assistant for Excel — write formulas, build financial models, look up CRM data, and get help with any spreadsheet task. Powered by BGP's AI with full access to your deals, properties, and contacts.",
+    description: "ChatBGP inside Excel — works your workbook directly: reads, writes, formats, adds sheets, tables and charts, traces formulas and fixes errors, with undo per reply. BGP's CRM, comps and your memory behind it; remembers each workbook.",
     manifest: "/manifests/excel-addin.xml",
     preview: "/addin/excel",
     adminSteps: "Microsoft 365 Admin Centre → Settings → Integrated Apps → Upload custom apps",

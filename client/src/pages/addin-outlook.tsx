@@ -11,6 +11,8 @@ import {
   Briefcase, AlertCircle, CheckCircle2, Loader2, FilePlus2, LogOut,
 } from "lucide-react";
 import { AddinHeader } from "@/components/addin-header";
+import { Pill } from "@/components/ui/pill";
+import { OutlookChat } from "@/components/outlook-chat";
 
 declare global {
   interface Window {
@@ -179,6 +181,10 @@ function AddinOutlook() {
   const [emailDate, setEmailDate] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [logState, setLogState] = useState<"idle" | "logging" | "done" | "already" | "error">("idle");
+  // ChatBGP first (Woody, 2026-09-28: as good as the Claude add-ins); the
+  // sender CRM panel stays one tap away.
+  const [tab, setTab] = useState<"chat" | "crm">(() => { try { return (localStorage.getItem("bgp-outlook-tab") as any) || "chat"; } catch { return "chat"; } });
+  useEffect(() => { try { localStorage.setItem("bgp-outlook-tab", tab); } catch {} }, [tab]);
   const queryClient = useQueryClient();
 
   const readOpenEmail = useCallback(() => {
@@ -313,7 +319,7 @@ function AddinOutlook() {
   if (!token) {
     return (
       <div className="min-h-screen bg-background text-foreground" style={{ maxWidth: 400 }}>
-        <AddinHeader title="BGP Dashboard" subtitle="Outlook" />
+        <AddinHeader title="ChatBGP" />
         <OutlookLogin onLogin={handleLogin} />
       </div>
     );
@@ -323,11 +329,16 @@ function AddinOutlook() {
 
   return (
     <div className="min-h-screen bg-background text-foreground" style={{ maxWidth: 400 }}>
-      <AddinHeader title="BGP Dashboard" subtitle="Outlook">
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleLogout} title={`Sign out${userName ? ` (${userName})` : ""}`} data-testid="button-outlook-logout">
+      <AddinHeader title="ChatBGP">
+        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={handleLogout} title={`Sign out${userName ? ` (${userName})` : ""}`} data-testid="button-outlook-logout">
           <LogOut className="h-3.5 w-3.5" />
         </Button>
       </AddinHeader>
+      <div className="flex items-center gap-1.5 px-3 py-2 border-b">
+        <Pill active={tab === "chat"} onClick={() => setTab("chat")} data-testid="tab-outlook-chat">ChatBGP</Pill>
+        <Pill active={tab === "crm"} onClick={() => setTab("crm")} data-testid="tab-outlook-crm">Sender &amp; CRM</Pill>
+      </div>
+      {tab === "chat" ? <OutlookChat token={token} onUnauthorised={handleLogout} /> : (
       <div className="p-3 space-y-3">
 
         {senderEmail && (
@@ -473,8 +484,9 @@ function AddinOutlook() {
           </div>
         )}
       </div>
+      )}
 
-      <div className="fixed bottom-0 left-0 right-0 p-2 bg-background border-t" style={{ maxWidth: 400 }}>
+      {tab === "crm" && <div className="fixed bottom-0 left-0 right-0 p-2 bg-background border-t" style={{ maxWidth: 400 }}>
         <a
           href={window.location.origin}
           target="_blank"
@@ -484,7 +496,7 @@ function AddinOutlook() {
         >
           Open full dashboard <ExternalLink className="h-3 w-3" />
         </a>
-      </div>
+      </div>}
     </div>
   );
 }
