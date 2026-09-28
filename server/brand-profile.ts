@@ -886,11 +886,11 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     // Resolve bgp_contact_user_ids → user display names + per-account
     // roles from crm_company_bgp_roles (Charlotte = Investment lead).
-    let coverers: Array<{ id: string; name: string; email: string | null; role: string | null }> = [];
+    let coverers: Array<{ id: string; name: string; email: string | null; role: string | null; bgp_title?: string | null; profile_pic_url?: string | null; threads?: number; last_touch?: string | null }> = [];
     if (Array.isArray(c.bgp_contact_user_ids) && c.bgp_contact_user_ids.length > 0) {
       const cov = await pool.query(
         `SELECT u.id, COALESCE(u.name, u.username, u.email) AS name, u.email,
-                r.role
+                r.role, u.role AS bgp_title, u.profile_pic_url
            FROM users u
            LEFT JOIN crm_company_bgp_roles r ON r.user_id = u.id AND r.company_id = $2
           WHERE u.id = ANY($1::text[]) ORDER BY u.name`,
@@ -903,7 +903,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // its Canary Wharf letting — Woody, 2026-09-23).
     if (coverers.length === 0) {
       const fromDeals = await pool.query(
-        `SELECT DISTINCT ON (u.id) u.id, COALESCE(u.name, u.username, u.email) AS name, u.email, 'From deals' AS role
+        `SELECT DISTINCT ON (u.id) u.id, COALESCE(u.name, u.username, u.email) AS name, u.email, 'From deals' AS role, u.role AS bgp_title, u.profile_pic_url
            FROM crm_deals d
            CROSS JOIN LATERAL unnest(COALESCE(d.internal_agent, ARRAY[]::text[])) AS agent(name)
            JOIN users u ON lower(u.name) = lower(agent.name) AND u.is_active IS DISTINCT FROM false
@@ -912,6 +912,26 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         [companyId]
       ).catch(() => empty);
       coverers = fromDeals.rows;
+    }
+
+    // Each coverer's own correspondence with the account — the team cards
+    // show who's actually talking to them (Woody, 2026-09-28: "beef up the
+    // team names"). Staff only, like the relationship stats below.
+    if (coverers.length && !bpScope) {
+      const dom = (c.domain || c.domain_url || "").toString().replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").toLowerCase();
+      const per = await pool.query(
+        `SELECT u.id, COUNT(DISTINCT i.id)::int AS threads, MAX(i.interaction_date) AS last_touch
+           FROM users u
+           JOIN crm_interactions i
+             ON i.interaction_date <= NOW()
+            AND (i.company_id = $1::varchar OR ($2::text <> '' AND i.participants::text ILIKE ('%@' || $2::text || '%')))
+            AND u.email IS NOT NULL AND i.participants::text ILIKE ('%' || u.email || '%')
+          WHERE u.id = ANY($3::text[])
+          GROUP BY u.id`,
+        [companyId, dom, coverers.map(cv => cv.id)]
+      ).catch(() => empty);
+      const byId = new Map(per.rows.map((r: any) => [r.id, r]));
+      coverers = coverers.map(cv => ({ ...cv, threads: (byId.get(cv.id) as any)?.threads || 0, last_touch: (byId.get(cv.id) as any)?.last_touch || null }));
     }
 
     // Email senders we've corresponded with at this company's domain

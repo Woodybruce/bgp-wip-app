@@ -165,8 +165,18 @@ async function loadUkSlice(companyId: string) {
 }
 
 async function loadActivitySlice(companyId: string) {
-  const company = await pool.query(`SELECT name, bgp_contact_crm FROM crm_companies WHERE id = $1`, [companyId]);
+  const company = await pool.query(`SELECT name, bgp_contact_crm, company_type FROM crm_companies WHERE id = $1`, [companyId]);
   if (!company.rows[0]) return null;
+  // Who covers the account and what each does — the header chips.
+  const team = await pool.query(
+    `SELECT COALESCE(u.name, u.username) AS name, u.role AS title, r.role
+       FROM crm_companies c
+       CROSS JOIN LATERAL unnest(COALESCE(c.bgp_contact_user_ids, '{}'::text[])) AS m(user_id)
+       JOIN users u ON u.id = m.user_id
+       LEFT JOIN crm_company_bgp_roles r ON r.company_id = c.id AND r.user_id = u.id
+      WHERE c.id = $1`,
+    [companyId]
+  ).catch(() => ({ rows: [] }));
   const contacts = await pool.query(
     `SELECT name, role FROM crm_contacts WHERE company_id = $1 ORDER BY name ASC LIMIT 12`,
     [companyId]
@@ -194,7 +204,9 @@ async function loadActivitySlice(companyId: string) {
   const lastAt = interactions.rows[0]?.last_at;
   return {
     name: company.rows[0].name,
+    account_type: /landlord|investor|owner/i.test(company.rows[0].company_type || "") ? "landlord" : "tenant",
     lead_broker: company.rows[0].bgp_contact_crm,
+    bgp_team: team.rows.map((r: any) => ({ name: r.name, bgp_title: r.title, covers: r.role })),
     days_since_last_touch: lastAt ? Math.floor((Date.now() - new Date(lastAt).getTime()) / 86400000) : null,
     interactions_90d: interactions.rows[0]?.last_90d || 0,
     interactions_total: interactions.rows[0]?.total || 0,
@@ -314,7 +326,8 @@ Total under 110 words.`;
 }
 
 function activityPrompt(d: any): string {
-  return `You are a senior BGP retail-property broker writing a one-paragraph relationship read on a tenant for our team.
+  const who = d.account_type === "landlord" ? "a landlord / property owner we work for or pitch to" : "a tenant";
+  return `You are a senior BGP retail-property broker writing a one-paragraph relationship read on ${who} for our team.
 
 ${BRAND_BRIEF_EVIDENCE_RULES}
 
@@ -324,7 +337,8 @@ ${JSON.stringify(d, null, 2)}
 Write a single 60-90 word paragraph covering:
 - The current relationship temperature (warm / cooling / cold / new)
 - Who's the live contact and last touchpoint context
-- The next best action (who to contact, what about, why now)
+- Who on the BGP team (bgp_team) owns which part of the relationship, when it helps
+- The next best action (who at BGP contacts whom, what about, why now)
 
 Tone: direct, broker-to-broker.
 

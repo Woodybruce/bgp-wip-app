@@ -34,6 +34,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
+import { MemberAvatar } from "@/components/ClientTeamOrgChart";
 import { BGP_ACCOUNT_ROLES, canonicalBgpRole } from "@shared/bgp-account-roles";
 import { BrandEmailHistory } from "@/components/brand-email-history";
 import { BrandFeedCard } from "@/components/brand-feed-card";
@@ -1772,13 +1773,19 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             <div className="space-y-2 pt-2 border-t border-border" data-testid="brand-relationship-summary">
             {/* Coverage sits in the header row; when nobody is set by hand the
                 server falls back to the BGP agents on this brand's deals. */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <Handshake className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-[11px] font-medium text-muted-foreground mr-1">BGP team</span>
-              {(data.coverers || []).map((cov: any) => (
-                <CovererChip key={cov.id} cov={cov} companyId={companyId} />
-              ))}
-              {!isClientViewer && <BgpTeamMenu companyId={companyId} coverers={data.coverers || []} />}
+            <div className="space-y-1.5 [container-type:inline-size]">
+              <div className="flex items-center gap-2">
+                <Handshake className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-[11px] font-medium text-muted-foreground mr-1">BGP team</span>
+                {!isClientViewer && <BgpTeamMenu companyId={companyId} coverers={data.coverers || []} />}
+              </div>
+              {(data.coverers || []).length > 0 && (
+                <div className="grid gap-1.5 [@container(min-width:420px)]:grid-cols-2">
+                  {(data.coverers || []).map((cov: any) => (
+                    <CovererChip key={cov.id} cov={cov} companyId={companyId} />
+                  ))}
+                </div>
+              )}
             </div>
             {/* One line: lead broker, last touch and email volume — from CRM
                 contacts AND the BGP inbox threads with the brand's people
@@ -2252,7 +2259,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         {/* No BGP take on landlords: it is a fixed count of the linked
             records ("30 linked CRM properties shown (up to 30)") that the
             boards right below show properly — and it disagreed with them
-            (Woody, 2026-09-27). */}
+            (Woody, 2026-09-27). The relationship read stays — it's the
+            team's commentary on the account, not a count (Woody, 2026-09-28:
+            "the AI commentary on the relationship has disappeared"). */}
+        <BgpTakeStrip companyId={companyId} tab="activity" entities={commentaryEntities} />
         <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
         <AccountDealsBoard companyId={companyId} />
         {!isClientViewer && <AccountTeamViewsCard companyId={companyId} />}
@@ -3854,7 +3864,10 @@ function BgpTeamMenu({ companyId, coverers }: { companyId: string; coverers: Arr
   );
 }
 
-function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role: string | null }; companyId: string }) {
+// One card per person on the account's BGP team — photo, job title, their
+// role on this account and their own correspondence with it (Woody,
+// 2026-09-28: "beef up the team names should have maybe cards").
+function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role: string | null; bgp_title?: string | null; profile_pic_url?: string | null; threads?: number; last_touch?: string | null }; companyId: string }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: ccViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -3876,16 +3889,20 @@ function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role
     onError: (e: any) => toast({ title: "Couldn't save role", description: e?.message, variant: "destructive" }),
   });
 
+  const touch = touchAgo(cov.last_touch);
   return (
-    <span className="inline-flex items-center gap-1 rounded-full leading-none text-[11px] font-semibold uppercase tracking-wide px-2.5 py-[5px] border border-border bg-muted/40 text-muted-foreground">
-      <Users className="w-2.5 h-2.5" />
-      <span className="font-medium">{cov.name}</span>
+    <div className="flex items-center gap-2 min-w-0 rounded-lg border border-border bg-card px-2 py-1.5" data-testid={`bgp-team-card-${cov.id}`}>
+      <MemberAvatar member={{ full_name: cov.name, username: cov.name, user_id: cov.id, profile_pic_url: cov.profile_pic_url || null }} className="w-9 h-9 text-[11px]" />
+      <div className="min-w-0 flex-1">
+      <div className="text-[12px] font-semibold leading-tight truncate" title={cov.name}>{cov.name}</div>
+      {cov.bgp_title && <div className="text-[10px] text-muted-foreground truncate" title={cov.bgp_title}>{cov.bgp_title}</div>}
+      <div className="flex items-center gap-1.5 min-w-0 text-[10px] mt-0.5">
       {ccIsClient ? (
-        current ? <span className="text-[10px] normal-case tracking-normal text-muted-foreground">{current}</span> : null
+        current ? <span className="text-muted-foreground">{current}</span> : null
       ) : (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button type="button" className="text-[10px] normal-case tracking-normal text-primary hover:underline decoration-dotted inline-flex items-center gap-0.5" title="Set this person's role on the account" data-testid={`bgp-role-${cov.id}`}>
+            <button type="button" className="text-[10px] font-medium text-primary hover:underline decoration-dotted inline-flex items-center gap-0.5 shrink-0" title="Set this person's role on the account" data-testid={`bgp-role-${cov.id}`}>
               {current || <span className="italic opacity-70">{fromDeals ? "from deals · set role" : "set role"}</span>}
               <ChevronDown className="w-2.5 h-2.5" />
             </button>
@@ -3901,12 +3918,25 @@ function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role
           </DropdownMenuContent>
         </DropdownMenu>
       )}
-    </span>
+      {!ccIsClient && (cov.threads || 0) > 0 && (
+        <span className="text-muted-foreground truncate" title={cov.last_touch ? `Last email ${new Date(cov.last_touch).toLocaleDateString("en-GB")}` : undefined}>
+          · <span className="font-mono tabular-nums">{cov.threads!.toLocaleString("en-GB")}</span> email{cov.threads === 1 ? "" : "s"}{touch ? ` · ${touch}` : ""}
+        </span>
+      )}
+      </div>
+      </div>
+    </div>
   );
 }
 
 // Compact relative-time formatter ("3d", "2w", "5mo") for the touches
 // badge — full date is in the tooltip.
+function touchAgo(d: string | null | undefined): string {
+  if (!d) return "";
+  const days = Math.floor((Date.now() - new Date(d).getTime()) / 86_400_000);
+  if (!Number.isFinite(days) || days < 0) return "";
+  return days < 1 ? "today" : days < 14 ? `${days}d` : days < 60 ? `${Math.floor(days / 7)}w` : days < 730 ? `${Math.floor(days / 30)}mo` : `${Math.floor(days / 365)}y`;
+}
 
 
 // Compliance / KYC entry-point. Gates the AML/KYC workflow on knowing the
