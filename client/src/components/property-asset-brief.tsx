@@ -367,16 +367,24 @@ export function PropertyAssetBriefPanel({ propertyId }: { propertyId: string }) 
 // Standalone Risk Register card. Same source data as the brief
 // panel via useAssetBrief (react-query dedupes). Renders compactly
 // for the top-strip 2-col row beside Weekly Focus.
+// "expires in 6 months" → 6, "this month" → 0; unknown sorts last.
+const riskMonths = (message: string) => /this month/i.test(message) ? 0 : Number(message.match(/in (\d+) months?/i)?.[1] ?? 99);
+
 export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
   const { data, isLoading, isError, refetch } = useAssetBrief(propertyId);
+  const [showAllRisks, setShowAllRisks] = useState(false);
   if (isError) {
     return <Card><CardContent className="p-3"><p className="text-xs text-muted-foreground">Risk checks could not be loaded.</p><Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button></CardContent></Card>;
   }
   if (isLoading || !data) {
     return <Card><CardContent className="p-3"><Skeleton className="h-16 w-full" /></CardContent></Card>;
   }
-  const high = data.risks.filter(r => r.severity === "high");
-  const med = data.risks.filter(r => r.severity !== "high");
+  // Soonest first within each severity; six rows then "Show all" — the
+  // full list ran past a phone screen (Woody, 2026-09-28).
+  const high = data.risks.filter(r => r.severity === "high").sort((a, b) => riskMonths(a.message) - riskMonths(b.message));
+  const med = data.risks.filter(r => r.severity !== "high").sort((a, b) => riskMonths(a.message) - riskMonths(b.message));
+  const allRisks = [...high, ...med];
+  const shownRisks = showAllRisks ? allRisks : allRisks.slice(0, 6);
   const complete = data.data_quality?.risks === "ready";
   // No schedule recorded = nothing to check; the card only repeated the
   // missing-schedule warning shown on the overview.
@@ -408,8 +416,8 @@ export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
         {data.risks.length === 0 ? (
           complete ? <p className="text-xs text-muted-foreground italic">No risks flagged in the recorded lease and covenant data.</p> : null
         ) : (
-          <div className="space-y-1 md:max-h-[420px] md:overflow-y-auto pr-1">
-            {[...high, ...med].map((r, i) => (
+          <div className="space-y-1 pr-1">
+            {shownRisks.map((r, i) => (
               <div
                 key={i}
                 className={`flex items-start gap-2 text-xs px-2 py-1.5 rounded-md border-l-2 leading-snug ${
@@ -424,6 +432,11 @@ export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
                 }`}>{r.severity === "high" ? "Urgent" : "Watch"}</span>
               </div>
             ))}
+            {allRisks.length > 6 && (
+              <button type="button" className="text-[11px] text-primary hover:underline mt-1" onClick={() => setShowAllRisks(v => !v)} data-testid="risk-register-toggle">
+                {showAllRisks ? "Show fewer" : `Show all ${allRisks.length}`}
+              </button>
+            )}
           </div>
         )}
       </CardContent>

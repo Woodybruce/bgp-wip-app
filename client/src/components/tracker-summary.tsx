@@ -154,7 +154,7 @@ export function TrackerSummary({ propertyId, propertyIds, variant, tall, propert
             <Link key={u.id} href={trackerHref(u.propertyId)} className="flex items-center justify-between gap-2 p-1.5 rounded border bg-card hover:bg-muted/40 min-w-0">
               <span className="text-xs font-medium truncate" title={u.unitName || undefined}>{withoutScheme(u.unitName, propertyName) || "—"}</span>
               <span className="flex items-center gap-1.5 shrink-0 text-[10px] text-muted-foreground">
-                {u.sqft ? `${Number(u.sqft).toLocaleString()} sqft` : ""}
+                {u.sqft ? `${Math.round(Number(u.sqft)).toLocaleString("en-GB")} sq ft` : ""}
                 <Badge variant="outline" className={`text-[9px] ${DEAL_STATUS_BADGE_COLORS[effOf(u)] || ""}`}>
                   {DEAL_STATUS_LABELS[effOf(u)]}
                 </Badge>

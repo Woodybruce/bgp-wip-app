@@ -2193,7 +2193,7 @@ export function setupNewsFeedRoutes(app: Express) {
         .replace(/[^a-z0-9£\s]/g, " ").split(/\s+/).filter(w => w.length > 2 && !/^(?:the|and|for|with|from|its|has|after|into|over)$/.test(w)));
       // Crime and incident reports ("Bluewater arrests after 'chaos'",
       // "shoppers evacuated") aren't property intel.
-      const INCIDENT = /\b(?:arrest(?:s|ed)?|stabb(?:ed|ing)|murder|police|evacuated|emergency services|robbery|shoplift\w*|assault|jailed|sentenced|fire crews?|missing (?:boy|girl|man|woman))\b/i;
+      const INCIDENT = /\b(?:arrest(?:s|ed)?|stabb(?:ed|ing)|murder|evacuated|emergency services|robbery|shoplift\w*|assault|jailed|sentenced)\b/i;
       const cleaned = combined.filter(article => !isNewsErrorTitle(article.title) && !INCIDENT.test(String(article.title || ""))).map(article => {
         let title = String(article.title || "").replace(/^\s*(?:news|press release|latest)\s*[|:]\s*/i, "");
         for (let i = 0; i < 3; i++) title = title.replace(/\s+[-–|]\s+(?:[A-Z][^-–|?!]{1,39}|[\w.-]+\.(?:co\.uk|com|net|org|uk|io|news))\s*$/, "");
@@ -2208,8 +2208,11 @@ export function setupNewsFeedRoutes(app: Express) {
         const words = headlineWords(article.title);
         const match = kept.find(k => {
           const shared = Array.from(words).filter(w => k.words.has(w));
+          // Same figure but months apart is a different event (sale launch
+          // in March, withdrawal in August) — only merge within 3 weeks.
+          const days = Math.abs((Date.parse(String(article.publishedAt || "")) || 0) - (Date.parse(String(k.article.publishedAt || "")) || 0)) / 86400000;
           return shared.length / Math.max(1, Math.min(words.size, k.words.size)) >= 0.6
-            || (shared.some(w => /^£\d/.test(w)) && shared.length >= 2);
+            || (shared.some(w => /^£\d/.test(w)) && shared.length >= 3 && days <= 21);
         });
         if (!match) kept.push({ words, article });
         else if (!match.article.summary && article.summary) match.article = article;

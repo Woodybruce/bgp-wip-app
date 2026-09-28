@@ -483,6 +483,14 @@ function TargetTenantsCell({ unit, letting, onUpdate }: {
 type AiTarget = { id: string; brand_name: string; company_id: string | null; quality_rating: "green" | "amber" | "red"; rationale: string | null; internal_evidence?: string | null; tenancy_unit_id: string | null; unit_name: string };
 const AI_TIER: Record<string, string> = { green: "A", amber: "B", red: "C" };
 
+// Evidence that rewords the reasoning (most of its words already there)
+// read as a double-up in the popover.
+const repeats = (why: string | undefined, evidence: string) => {
+  const words = (t: string) => new Set(t.toLowerCase().replace(/[^a-z0-9£\s]/g, " ").split(/\s+/).filter(w => w.length > 3));
+  const e = words(evidence), w = words(why || "");
+  return e.size > 0 && Array.from(e).filter(x => w.has(x)).length / e.size >= 0.5;
+};
+
 // One AI-planned target: tier letter + brand; click for the reasoning, its
 // evidence and Add as target / Dismiss.
 function AiTargetChip({ target, onAdopt, onDismiss }: { target: AiTarget; onAdopt: () => Promise<void>; onDismiss: () => Promise<void> }) {
@@ -503,7 +511,7 @@ function AiTargetChip({ target, onAdopt, onDismiss }: { target: AiTarget; onAdop
           <span className="text-[11px] text-muted-foreground shrink-0">AI plan · {AI_TIER[target.quality_rating] || "B"}-tier</span>
         </div>
         <p className="whitespace-pre-line">{why}</p>
-        {evidence && !(why || "").toLowerCase().includes(evidence.toLowerCase().replace(/[.\s]+$/, "").slice(0, 60)) && <p className="text-muted-foreground"><span className="font-medium text-foreground">Evidence:</span> {evidence}</p>}
+        {evidence && !repeats(why, evidence) && <p className="text-muted-foreground"><span className="font-medium text-foreground">Evidence:</span> {evidence}</p>}
         {target.internal_evidence && <p className="text-muted-foreground"><span className="font-medium text-foreground">BGP only:</span> {target.internal_evidence.replace(/\bSept\b/g, "Sep")}</p>}
         <div className="flex items-center gap-2 pt-1">
           <Button size="sm" className="h-7 text-xs" disabled={busy} onClick={() => run(onAdopt)}>Add as target</Button>
@@ -1546,7 +1554,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
               </p>}
               {compact && (
                 <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground mt-1">
-                  {(canEdit || unit.nia_sqft != null) && <span>NIA {canEdit ? <InlineEdit value={String(unit.nia_sqft ?? "")} field="nia_sqft" unitId={unit.id} onSave={inlineUpdate} type="number" /> : fmtNum(unit.nia_sqft)}{unit.nia_sqft != null ? " sq ft" : ""}</span>}
+                  {(canEdit || unit.nia_sqft != null) && <span>NIA {canEdit ? <InlineEdit value={String(unit.nia_sqft ?? "")} field="nia_sqft" unitId={unit.id} onSave={inlineUpdate} type="number" /> : fmtNum(unit.nia_sqft)}{unit.nia_sqft != null ? (canEdit ? "sq ft" : " sq ft") : ""}</span>}
                   {canEdit && <span>Rent <InlineEdit value={String(unit.passing_rent_pa ?? "")} field="passing_rent_pa" unitId={unit.id} onSave={inlineUpdate} type="number" /></span>}
                   {unit.next_review_date && <span>Review {fmtDate(unit.next_review_date)}</span>}
                 </div>
