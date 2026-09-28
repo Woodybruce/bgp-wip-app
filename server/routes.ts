@@ -4601,7 +4601,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           au.updated_at AS "updatedAt",
           p.name AS "propertyName",
           p.address AS "propertyAddress",
-          ts.existing_tenant AS "existingTenant"
+          ts.existing_tenant AS "existingTenant",
+          -- The estate scheme (Canary Wharf: Jubilee Place…): the listing's
+          -- own, else its tenancy row's grouping, else its leasing zone.
+          COALESCE(nullif(trim(au.scheme), ''), ts.grouping,
+            (SELECT nullif(trim(l.zone), '') FROM leasing_schedule_units l WHERE l.id = au.leasing_schedule_unit_id)) AS "scheme"
         FROM available_units au
         LEFT JOIN crm_properties p ON p.id = au.property_id
         LEFT JOIN property_units pu ON pu.id = au.unit_id
@@ -4610,7 +4614,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           -- Who sits in this unit today per the tenancy schedule — matched
           -- by the tenancy link when present, else by unit name. NULL when
           -- the schedule has no occupier (genuinely vacant).
-          SELECT COALESCE(nullif(trim(t.trading_name), ''), nullif(trim(t.tenant_name), '')) AS existing_tenant
+          SELECT COALESCE(nullif(trim(t.trading_name), ''), nullif(trim(t.tenant_name), '')) AS existing_tenant,
+                 nullif(trim(t.grouping), '') AS grouping
             FROM tenancy_schedule_units t
            WHERE (au.tenancy_unit_id IS NOT NULL AND t.id = au.tenancy_unit_id)
               OR (au.tenancy_unit_id IS NULL AND t.property_id = au.property_id

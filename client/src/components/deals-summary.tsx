@@ -13,7 +13,7 @@
 //
 // Scope with `propertyId` (property pages) or `propertyIds` (dashboard
 // favourites). Client logins are scoped server-side by the endpoint.
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +23,8 @@ import { getAuthHeaders } from "@/lib/queryClient";
 import { WIP_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 import { withoutPropertyName } from "@shared/property-labels";
 import { DEAL_STATUS_BADGE_COLORS, DEAL_STATUS_DOT_COLORS } from "@/lib/deal-status-colors";
+import { SchemePillRow, schemeFilterMatches, usePropertySchemeList } from "@/components/property-schemes-panel";
+import { unitScheme } from "@shared/property-schemes";
 
 // The Deals schedule (/deals/list) shows WIP_STATUSES; "live" = still being
 // worked (COM/INV are done, they stay visible as chips but not in the list).
@@ -30,7 +32,7 @@ const LIVE_CODES = new Set<DealStatusCode>(["REP", "AVA", "NEG", "HOT", "SOL", "
 
 type Deal = {
   id: string; propertyId: string | null; name: string; status: string | null;
-  dealType: string | null; updatedAt: string | null;
+  dealType: string | null; updatedAt: string | null; scheme?: string | null;
 };
 
 function useBoardDeals(propertyId?: string, propertyIds?: string[]) {
@@ -76,7 +78,16 @@ export function DealsSummary({ propertyId, propertyIds, variant }: {
   propertyIds?: string[];
   variant: "strip" | "card";
 }) {
-  const { live, counts, isLoading, isError, refetch } = useBoardDeals(propertyId, propertyIds);
+  const { live: allLive, counts, isLoading, isError, refetch } = useBoardDeals(propertyId, propertyIds);
+  // On an estate (Canary Wharf) the live list filters and groups by scheme.
+  const { data: schemeData } = usePropertySchemeList(variant === "card" ? propertyId : null);
+  const schemes = schemeData?.schemes || [];
+  const [schemeFilter, setSchemeFilter] = useState("");
+  const live = useMemo(() => {
+    if (!schemes.length) return allLive;
+    const rank = (d: Deal) => { const hit = unitScheme(schemes, d.scheme, d.name); return hit ? schemes.indexOf(hit) : schemes.length; };
+    return allLive.filter(d => schemeFilterMatches(schemes, d.scheme, schemeFilter, d.name)).sort((a, b) => rank(a) - rank(b));
+  }, [allLive, schemes, schemeFilter]);
   // On a property's own page the cached property record gives its name, so
   // "Nando's – Bluewater Shopping Centre" reads "Nando's" and "Royal
   // Exchange - Inception T2" reads "Inception T2" (no extra fetch).
@@ -108,17 +119,18 @@ export function DealsSummary({ propertyId, propertyIds, variant }: {
     <div className="space-y-2" data-testid="deals-summary-card">
       <div className="flex items-center justify-between gap-2">
         <div className="text-xs">
-          <span className="font-semibold tabular-nums">{live.length}</span>
+          <span className="font-semibold font-mono tabular-nums">{live.length}</span>
           <span className="text-muted-foreground"> live deal{live.length === 1 ? "" : "s"}</span>
         </div>
         <Link href={boardHref(propertyId)} className="text-[11px] text-primary hover:underline inline-flex items-center shrink-0">
           Deals board <ChevronRight className="w-3 h-3" />
         </Link>
       </div>
+      <SchemePillRow schemes={schemes} items={allLive.map(d => ({ label: d.scheme, name: d.name }))} value={schemeFilter} onChange={setSchemeFilter} testId="deals-scheme-pills" />
       <div className="flex items-center gap-1 flex-wrap">
         {WIP_STATUSES.filter(code => counts[code] > 0).map(code => (
           <Link key={code} href={boardHref(propertyId, code)}>
-            <Badge variant="outline" className={`text-[10px] cursor-pointer ${DEAL_STATUS_BADGE_COLORS[code] || ""}`}>
+            <Badge variant="outline" className={`text-[11px] cursor-pointer ${DEAL_STATUS_BADGE_COLORS[code] || ""}`}>
               {counts[code]} {DEAL_STATUS_LABELS[code]}
             </Badge>
           </Link>
@@ -135,9 +147,9 @@ export function DealsSummary({ propertyId, propertyIds, variant }: {
           {live.map(d => (
             <Link key={d.id} href={`/deals/${d.id}`} className="flex items-center justify-between gap-2 p-1.5 rounded border bg-card hover:bg-muted/40 min-w-0">
               <span className="text-xs font-medium truncate" title={d.name || undefined}>{dealLabel(d.name) || "—"}</span>
-              <span className="flex items-center gap-1.5 shrink-0 text-[10px] text-muted-foreground">
-                {d.dealType || ""}
-                <Badge variant="outline" className={`text-[9px] ${DEAL_STATUS_BADGE_COLORS[legacyToCode(d.status) || ""] || ""}`}>
+              <span className="flex items-center gap-1.5 shrink-0 text-[11px] text-muted-foreground">
+                {schemes.length ? unitScheme(schemes, d.scheme, d.name)?.name || "" : ""}{schemes.length && d.dealType ? " · " : ""}{d.dealType || ""}
+                <Badge variant="outline" className={`text-[11px] ${DEAL_STATUS_BADGE_COLORS[legacyToCode(d.status) || ""] || ""}`}>
                   {DEAL_STATUS_LABELS[legacyToCode(d.status) as DealStatusCode] || d.status || "—"}
                 </Badge>
               </span>

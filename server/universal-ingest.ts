@@ -831,6 +831,11 @@ export async function commitDiff(args: {
 
     try {
       if (entry.type === "add") {
+        // A unit of a known estate lands on that estate, not as a property.
+        if (preview.target === "crm_properties") {
+          const estateUnit = await (await import("./estate-units")).resolveEstateUnit(pool, entry.record?.name);
+          if (estateUnit) { result.written++; continue; }
+        }
         const cols = Object.keys(entry.record).filter((k) => entry.record[k] !== undefined);
         const placeholders = cols.map((_, i) => `$${i + 1}`);
         const values = cols.map((k) => entry.record[k]);

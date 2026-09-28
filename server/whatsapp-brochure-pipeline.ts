@@ -203,6 +203,9 @@ async function createPropertyFromExtraction(e: BrochureExtraction): Promise<stri
     || e.addressLine
     || [e.postcode].filter(Boolean).join(" ")
     || "Untitled brochure property";
+  // A unit brochure ("Unit 48 Jubilee Place") belongs on its estate.
+  const estateUnit = await (await import("./estate-units")).resolveEstateUnit(pool, name);
+  if (estateUnit) return estateUnit.propertyId;
   const [created] = await db.insert(crmProperties).values({
     name,
     postcode: e.postcode || null,

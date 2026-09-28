@@ -162,7 +162,8 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
       {/* The owner is in the card's Ownership rows just below — not repeated here. */}
       {data.asset_lead && (
         <>
-          <span className="text-muted-foreground/40">·</span>
+          {/* No separator: nothing sits before the lead since the owner moved
+              to the Ownership rows (Canary Wharf read "· Lead Rupert"). */}
           <div className="flex items-center gap-1.5 min-w-0">
             <div className="w-5 h-5 rounded-full bg-muted overflow-hidden flex items-center justify-center text-[9px] font-semibold shrink-0">
               {data.asset_lead.avatar_url ? (
@@ -192,8 +193,8 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
       {/* Tenant-linking health is back-of-house (Woody, 2026-09-27): the
           detail lives in Data housekeeping and the nightly trading-name /
           brand linking fills the gaps. */}
-      <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
-        <span className="uppercase tracking-wider mr-1">Last activity</span>
+      <span className="ml-auto text-[11px] text-muted-foreground shrink-0">
+        <span className="mr-1">Last activity</span>
         <span className="text-foreground font-medium">{timeAgo(data.property.last_updated_at)}</span>
       </span>
     </div>
@@ -396,29 +397,27 @@ export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
       <Card data-testid="risk-register-note">
         <CardContent className="px-3 py-2 flex items-start gap-2 text-xs text-muted-foreground" role="status">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-          <p><span className="font-semibold uppercase tracking-wider text-[11px] mr-1.5">Risk register</span>{complete ? "No risks flagged in the recorded lease and covenant data." : data.data_warnings?.find(w => w.section === "schedule")?.message || "Risk checks are incomplete. Confirm the tenancy schedule before relying on this summary."}</p>
+          <p><span className="font-semibold uppercase tracking-wider mr-1.5">Risk register</span>{complete ? "No risks flagged in the recorded lease and covenant data." : data.data_warnings?.find(w => w.section === "schedule")?.message || "Risk checks are incomplete. Confirm the tenancy schedule before relying on this summary."}</p>
         </CardContent>
       </Card>
     );
   }
   return (
     <Card className="overflow-hidden">
-      <CardHeader className="p-3 pb-2 bg-gradient-to-r from-rose-500/[0.06] to-transparent">
-        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-          <span className="w-6 h-6 rounded-full bg-rose-500/10 flex items-center justify-center shrink-0">
-            <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
-          </span>
+      <CardHeader className="px-3 py-2.5 space-y-0">
+        <CardTitle className="text-xs font-semibold flex items-center gap-2 flex-wrap uppercase tracking-wider text-muted-foreground">
+          <AlertTriangle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           Risk register
           {high.length > 0 && (
-            <Badge className="text-[10px] bg-rose-100 text-rose-700 hover:bg-rose-100 dark:bg-rose-950 dark:text-rose-300 border-transparent">{high.length} urgent</Badge>
+            <span className="text-[11px] normal-case tracking-normal text-rose-600 dark:text-rose-400"><span className="font-mono tabular-nums">{high.length}</span> urgent</span>
           )}
           {med.length > 0 && (
-            <Badge className="text-[10px] bg-amber-100 text-amber-700 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300 border-transparent">{med.length} watch</Badge>
+            <span className="text-[11px] normal-case tracking-normal text-amber-700 dark:text-amber-400"><span className="font-mono tabular-nums">{med.length}</span> watch</span>
           )}
           {/* Data-coverage caveat as a hover note when there are risks to
               show — the paragraph read as back-of-house (Woody, 2026-09-27). */}
           {!complete && data.risks.length > 0 && (
-            <span className="text-[10px] font-normal normal-case tracking-normal text-muted-foreground border rounded px-1" role="status"
+            <span className="text-[11px] font-normal normal-case tracking-normal text-muted-foreground" role="status"
               title={data.data_warnings?.find(w => w.section === "schedule")?.message || "Risk checks are incomplete. Confirm the tenancy schedule before relying on this summary."}>partial</span>
           )}
         </CardTitle>
@@ -429,14 +428,12 @@ export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
             <div
               key={i}
               className={`flex items-start gap-2 text-xs px-2 py-1.5 rounded-md border-l-2 leading-snug ${
-                r.severity === "high"
-                  ? "border-l-rose-500 bg-rose-50/60 dark:bg-rose-950/20"
-                  : "border-l-amber-400 bg-amber-50/50 dark:bg-amber-950/15"
+                r.severity === "high" ? "border-l-rose-500" : "border-l-amber-400"
               }`}
             >
               <div className="flex-1 min-w-0">{r.message}</div>
-              <span className={`text-[9px] font-semibold uppercase tracking-wide shrink-0 mt-0.5 ${
-                r.severity === "high" ? "text-rose-600" : "text-amber-600"
+              <span className={`text-[11px] shrink-0 ${
+                r.severity === "high" ? "text-rose-600" : "text-amber-700"
               }`}>{r.severity === "high" ? "Urgent" : "Watch"}</span>
             </div>
           ))}
@@ -1095,7 +1092,9 @@ export function PropertyRecentActivityCard({ propertyId }: { propertyId: string 
 // Delegates to the shared styled renderer so property commentary looks the
 // same as brand/landlord takes (bullets, coloured lead-ins, entity links).
 export function renderAiCommentary(text: string) {
-  return <AiCommentary text={text} size="sm" />;
+  // Board body size — at text-sm the two BGP takes on the property page read
+  // at different sizes, and larger than every board around them.
+  return <AiCommentary text={text} size="xs" className="leading-relaxed" />;
 }
 
 export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { propertyId: string; commentary: string | null; updatedAt: string | null }) {
@@ -1119,7 +1118,7 @@ export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { prope
       <Card data-testid="bgp-commentary-empty">
         <CardContent className="px-3 py-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
           <Sparkles className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-          <span className="font-semibold shrink-0">BGP Commentary</span>
+          <span className="font-semibold uppercase tracking-wider text-muted-foreground shrink-0">BGP take — the asset</span>
           <span className="text-muted-foreground">No commentary yet —</span>
           <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[11px] shrink-0 -ml-1" onClick={() => regenerate.mutate()} disabled={regenerate.isPending}
             title="Written by Claude from the live deals, activity, risks and tenancy schedule">
@@ -1132,11 +1131,12 @@ export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { prope
 
   return (
     <Card>
-      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
-        <CardTitle className="text-xs flex items-center gap-2">
-          <Sparkles className="w-3.5 h-3.5 text-muted-foreground" /> BGP Commentary
+      <CardHeader className="px-3 py-2.5 space-y-0 flex flex-row items-center justify-between">
+        {/* §15: AI-written blocks are titled "BGP take — <topic>". */}
+        <CardTitle className="text-xs font-semibold flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <Sparkles className="w-3.5 h-3.5 text-muted-foreground" /> BGP take — the asset
           {updatedAt && (
-            <span className="text-[10px] text-muted-foreground font-normal ml-auto">
+            <span className="text-[11px] text-muted-foreground font-normal normal-case tracking-normal ml-auto">
               {new Date(updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }).replace(/\bSept\b/, "Sep")}
             </span>
           )}
@@ -1144,7 +1144,7 @@ export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { prope
         <Button
           size="sm"
           variant="ghost"
-          className="h-6 text-[10px]"
+          className="h-6 text-[11px]"
           onClick={() => regenerate.mutate()}
           disabled={regenerate.isPending}
           title="Re-run Claude over the latest deals / activity / risks"
@@ -1154,9 +1154,7 @@ export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { prope
         </Button>
       </CardHeader>
       <CardContent className="p-3 pt-0">
-        <div className="rounded-md border border-border bg-muted/40 p-3">
-          {renderAiCommentary(commentary)}
-        </div>
+        {renderAiCommentary(commentary)}
       </CardContent>
     </Card>
   );
@@ -1261,17 +1259,13 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
 
   return (
     <Card className="overflow-hidden">
-      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
-        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+      <CardHeader className="px-3 py-2.5 space-y-0 flex flex-row items-center justify-between">
+        <CardTitle className="text-xs font-semibold flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Target className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           This week's focus
-          <Badge variant="secondary" className="text-[10px]">{tasksLoading || tasksError ? "—" : tasks.length}</Badge>
+          <span className="text-[11px] font-mono tabular-nums">{tasksLoading || tasksError ? "—" : tasks.length}</span>
         </CardTitle>
-        <Link href="/tasks">
-          <Button size="sm" variant="ghost" className="h-6 text-[10px]">
-            All tasks →
-          </Button>
-        </Link>
+        <Link href="/tasks" className="text-[11px] text-primary hover:underline shrink-0">All tasks →</Link>
       </CardHeader>
       <CardContent className="p-3 pt-2 space-y-1.5">
         {tasksLoading && <p className="text-[11px] text-muted-foreground">Loading property tasks…</p>}
@@ -1290,12 +1284,8 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
           {tasks.slice(0, 10).map(t => {
             const due = dueLabel(t.due_date);
             return (
-              <div key={t.id} className={`flex items-start gap-2 text-[12px] px-2 py-1.5 rounded-md border-l-2 group ${
-                t.priority === "high"
-                  ? "border-l-rose-400 bg-rose-50/50 dark:bg-rose-950/15 hover:bg-rose-50 dark:hover:bg-rose-950/25"
-                  : t.priority === "low"
-                    ? "border-l-slate-300 dark:border-l-slate-700 hover:bg-muted/40"
-                    : "border-l-violet-300 dark:border-l-violet-800 bg-violet-50/30 dark:bg-violet-950/10 hover:bg-violet-50/60 dark:hover:bg-violet-950/20"
+              <div key={t.id} className={`flex items-start gap-2 text-xs px-2 py-1.5 rounded-md border-l-2 group hover:bg-muted/40 ${
+                t.priority === "high" || t.priority === "urgent" ? "border-l-rose-400" : "border-l-border"
               }`}>
                 {t.can_complete === true ? <button
                   onClick={() => completeTask.mutate(t.id)}
@@ -1308,8 +1298,8 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
                 </button> : <span className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />}
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${PRIORITY_DOT[t.priority || "medium"]}`} title={`Priority: ${t.priority || "medium"}`} />
                 <div className="flex-1 min-w-0">
-                  <div className="leading-snug truncate">{t.title}</div>
-                  <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mt-0.5">
+                  <div className="leading-snug line-clamp-2" title={t.title}>{t.title}</div>
+                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mt-0.5 min-w-0">
                     {t.owner_name && <span>{t.owner_name.split(" ")[0]}</span>}
                     {t.deal_name && (
                       <>
@@ -1322,7 +1312,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
                   </div>
                 </div>
                 {due.label && (
-                  <span className={`text-[10px] shrink-0 mt-0.5 font-medium ${
+                  <span className={`text-[11px] shrink-0 mt-0.5 font-mono tabular-nums ${
                     due.tone === "overdue" ? "text-rose-600" : due.tone === "soon" ? "text-amber-600" : "text-muted-foreground"
                   }`}>{due.label}</span>
                 )}
@@ -1330,7 +1320,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
             );
           })}
           {tasks.length > 10 && (
-            <div className="text-[10px] italic text-muted-foreground pt-1 px-1.5">
+            <div className="text-[11px] text-muted-foreground pt-1 px-1.5">
               + {tasks.length - 10} more — see them all on My Tasks.
             </div>
           )}
@@ -1344,7 +1334,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
             className="text-xs h-7 max-md:h-11 max-md:basis-full flex-1 min-w-[180px]"
           />
           <Select value={assigneeId || "me"} onValueChange={(v) => setAssigneeId(v === "me" ? "" : v)}>
-            <SelectTrigger className="h-7 w-[110px] text-[10px]" data-testid="focus-task-assignee">
+            <SelectTrigger className="h-7 w-[110px] text-xs" data-testid="focus-task-assignee">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1353,7 +1343,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
             </SelectContent>
           </Select>
           <Select value={priority} onValueChange={setPriority}>
-            <SelectTrigger className="h-7 w-[92px] text-[10px]" data-testid="focus-task-priority">
+            <SelectTrigger className="h-7 w-[92px] text-xs" data-testid="focus-task-priority">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1365,7 +1355,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
           <Button
             size="sm"
             variant="outline"
-            className="h-7 text-[10px]"
+            className="h-7 text-xs"
             onClick={() => draft.trim() && addTask.mutate(draft.trim())}
             disabled={!draft.trim() || addTask.isPending}
           >

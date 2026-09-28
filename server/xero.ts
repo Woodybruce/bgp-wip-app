@@ -109,6 +109,8 @@ const createInvoiceSchema = z.object({
   contactName: z.string().optional(),
   contactEmail: z.string().email().optional().or(z.literal("")),
   poNumber: z.string().nullable().optional(),
+  // The user saw the "needs a PO number" warning and chose to raise anyway.
+  allowMissingPo: z.boolean().optional(),
   reference: z.string().optional(),
   dueDate: z.string().optional(),
   accountCode: z.string().optional(),
@@ -780,6 +782,15 @@ export function setupXeroRoutes(app: Express) {
 
       const [deal] = await db.select().from(crmDeals).where(eq(crmDeals.id, dealId));
       if (!deal) return res.status(404).json({ message: "Deal not found" });
+
+      // "No PO No Pay" clients (Canary Wharf Group): stop a PO-less invoice
+      // unless the user has explicitly chosen to raise it anyway.
+      if (!parsed.data.allowMissingPo && !(poNumber && poNumber.trim())) {
+        const { dealPoCheck, poMissingMessage } = await import("./deal-po");
+        const { pool } = await import("./db");
+        const check = await dealPoCheck(pool, dealId).catch(() => null);
+        if (check?.missing) return res.status(409).json({ code: "PO_REQUIRED", message: poMissingMessage(check), requiredBy: check.requiredBy });
+      }
 
       // KYC approval is not a hard pre-condition for drafting an invoice —
       // surveyors need to be able to draft early. AML status is still

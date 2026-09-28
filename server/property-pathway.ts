@@ -515,6 +515,15 @@ async function ensureCrmPropertyLink(
     }
   }
   try {
+    // A unit of a known estate ("Unit 48 Jubilee Place") runs on the estate.
+    const estateUnit = await (await import("./estate-units")).resolveEstateUnit(pool, name);
+    if (estateUnit) {
+      const { rows: estate } = await pool.query(`SELECT * FROM crm_properties WHERE id = $1`, [estateUnit.propertyId]);
+      if (estate[0]) {
+        await updateRun(run.id, { propertyId: estateUnit.propertyId }).catch(() => {});
+        return estate[0];
+      }
+    }
     const [created] = await db
       .insert(crmProperties)
       .values({

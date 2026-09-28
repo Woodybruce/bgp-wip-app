@@ -10,12 +10,12 @@ import { formatSizeList } from "@/lib/format-size";
 import { useClassLabel } from "@/lib/format";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { renderAiCommentary } from "@/components/property-asset-brief";
 import {
-  Target, MapPin, TrendingUp, AlertCircle, FileText, Sparkles, RefreshCw,
+  MapPin, TrendingUp, AlertCircle, FileText, Sparkles, RefreshCw,
   Swords, Globe2, Store, ChevronRight, Loader2, Radar, ExternalLink,
 } from "lucide-react";
 
@@ -115,10 +115,10 @@ function GapColumn({ icon: Icon, tint, title, sub, brands, contextFor, emptyText
 }) {
   return (
     <div className="rounded-lg border p-2.5 min-w-0">
-      <div className="text-[11px] font-semibold mb-0.5 flex items-center gap-1.5">
+      <div className={`${SUB_LABEL} mb-0.5 flex items-center gap-1.5`}>
         <Icon className={`w-3.5 h-3.5 ${tint}`} />
         {title}
-        <Badge variant="secondary" className="text-[11px]">{brands.length}</Badge>
+        <span className="font-mono tabular-nums">{brands.length}</span>
       </div>
       {sub && <div className="text-[11px] text-muted-foreground mb-1.5">{sub}</div>}
       {brands.length === 0 ? (
@@ -157,12 +157,12 @@ function GapCommentary({ propertyId }: { propertyId: string }) {
     onSuccess: (fresh) => qc.setQueryData(key, fresh),
   });
   return (
-    <div className="rounded-lg border border-border bg-muted/40 p-3">
+    <div>
       <div className="flex items-center justify-between mb-1">
-        <div className="text-[11px] font-semibold flex items-center gap-1.5">
-          <Sparkles className="w-3.5 h-3.5 text-primary" /> BGP gap read
+        <div className={`${SUB_LABEL} flex items-center gap-1.5`}>
+          <Sparkles className="w-3.5 h-3.5" /> BGP take — brand gap
           {data?.generatedAt && (
-            <span className="font-normal text-muted-foreground">
+            <span className="font-normal normal-case tracking-normal">
               — {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }).replace(/\bSept\b/, "Sep")}
             </span>
           )}
@@ -182,7 +182,7 @@ function GapCommentary({ propertyId }: { propertyId: string }) {
           <Loader2 className="w-3 h-3 animate-spin" /> Reading the gaps — competing centres, sectors, live demand…
         </p>
       ) : data?.text ? (
-        <div className="text-xs leading-relaxed [&_p]:text-xs">{renderAiCommentary(data.text)}</div>
+        renderAiCommentary(data.text)
       ) : (
         <p className="text-xs text-muted-foreground italic">No read yet — hit refresh to generate.</p>
       )}
@@ -221,7 +221,7 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
   // Only brands with real evidence. The research sometimes flags a brand as
   // expanding while its own note says the evidence is missing or stale —
   // those read as working notes, not intel (Woody, 2026-09-27).
-  const NO_EVIDENCE = /cannot be confirmed|can'?t be confirmed|no evidence|wasn'?t returned|not returned|outside the (?:roughly )?\d+-month window|does not identify|doesn'?t identify|no (?:specific|direct|cited) evidence|not a direct match|available results? (?:gives?|shows?|provides?) no/i;
+  const NO_EVIDENCE = /cannot be confirmed|can'?t be confirmed|no evidence|wasn'?t returned|not returned|outside the (?:roughly )?\d+-month window|does not identify|does not establish|doesn'?t establish|(?:was|were) not available in the results|doesn'?t identify|no (?:specific|direct|cited) evidence|no (?:attributable )?(?:recent )?(?:expansion )?evidence (?:surfaced|found|was found)|no attributable recent|not a direct match|available results? (?:gives?|shows?|provides?) no/i;
   // Caveat sentences ("No Bluewater-specific plan was found.") are the
   // researcher's working, not intel — drop them from otherwise good notes.
   const CAVEAT = /^(?:no\b[^.]*\b(?:was|were|has been|have been) (?:found|identified|confirmed|announced)|[^.]*\bno [^.]*\b(?:was|were) (?:found|identified|available|returned)\b|[^.]*\b(?:not|yet to be) (?:been )?(?:found|confirmed)\b|no [\w'’ -]+-specific\b|[^.]*\bnot (?:one of )?the specified\b|[^.]*\bnot specifically\b)/i;
@@ -232,12 +232,12 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
   const marketNotes = tidy(data?.market_notes).trim();
   const [notesOpen, setNotesOpen] = useState(false);
   return (
-    <div className="rounded-lg border border-border bg-muted/40 p-3" data-testid="gap-live-intel">
-      <div className="flex items-center gap-1.5 mb-1 text-[11px] font-semibold">
-        <Radar className="w-3.5 h-3.5 text-primary" /> Live expansion intel
-        <span className="text-[11px] font-normal text-muted-foreground">web-researched, cited · verify before pitching</span>
+    <div className="border-t border-border pt-3" data-testid="gap-live-intel">
+      <div className={`${SUB_LABEL} flex flex-wrap items-center gap-x-1.5 mb-1`}>
+        <Radar className="w-3.5 h-3.5" /> Live expansion intel
+        <span className="font-normal normal-case tracking-normal">web-researched, cited · verify before pitching</span>
         {data?.generatedAt && (
-          <span className="font-normal text-muted-foreground">
+          <span className="font-normal normal-case tracking-normal">
             — {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }).replace(/\bSept\b/, "Sep")}
           </span>
         )}
@@ -258,7 +258,7 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
               {expanding.map((b, i) => (
-                <div key={i} className="text-xs rounded border bg-white/60 dark:bg-white/5 px-2 py-1 min-w-0">
+                <div key={i} className="text-xs rounded-md border border-border px-2 py-1.5 min-w-0">
                   <span className="font-semibold">{b.name}</span>
                   {/* "(high)" read as the researcher's working; only flag a weak one. */}
                   {b.confidence === "low" && <span className="text-[11px] text-muted-foreground ml-1">(unconfirmed)</span>}
@@ -291,11 +291,11 @@ function InternationalWatchlist({ propertyId }: { propertyId: string }) {
   });
   return (
     <details className="rounded-lg border p-2.5 group/intl">
-      <summary className="text-[11px] font-semibold cursor-pointer list-none flex items-center gap-1.5">
+      <summary className={`${SUB_LABEL} cursor-pointer list-none flex flex-wrap items-center gap-1.5`}>
         <ChevronRight className="w-3 h-3 transition-transform group-open/intl:rotate-90" />
         <Globe2 className="w-3.5 h-3.5 text-muted-foreground" />
         International watchlist — concepts not yet in the UK
-        <span className="text-[11px] font-normal text-muted-foreground">AI-researched · verify before pitching</span>
+        <span className="font-normal normal-case tracking-normal">AI-researched · verify before pitching</span>
       </summary>
       <div className="mt-2">
         {isLoading ? (
@@ -324,6 +324,10 @@ function InternationalWatchlist({ propertyId }: { propertyId: string }) {
   );
 }
 
+// Sub-section label inside the board (docs/DESIGN.md §2) — the sections here
+// each had their own mix of 11px semibold, primary icons and tinted boxes.
+const SUB_LABEL = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
+
 // Plain words, not "HTTP 429", when a section can't load.
 const loadError = (status: number) => status === 429 ? "Busy right now — this refreshes in a minute." : "Couldn't load this just now.";
 
@@ -344,45 +348,20 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
     retry: false,
   });
 
-  if (isLoading) {
-    return (
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Target className="w-4 h-4 text-muted-foreground" />
-            Brand gap analysis
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-xs text-muted-foreground italic">Loading store network…</p>
-        </CardContent>
-      </Card>
-    );
-  }
+  // The property page frames this in its own "Brand gap" board card — a
+  // second Card here drew a box inside the box.
+  if (isLoading) return <p className="text-xs text-muted-foreground">Loading store network…</p>;
 
   if (error || !data) {
     return (
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Target className="w-4 h-4 text-muted-foreground" />
-            Brand gap analysis
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-xs text-muted-foreground italic">
-            {error?.message || "Needs property geocoding or brand_stores data. Use the \"Find stores\" button on brands to populate store locations via Google Places."}
-          </p>
-        </CardContent>
-      </Card>
+      <p className="text-xs text-muted-foreground">
+        {error?.message || "Needs property geocoding or brand_stores data. Use the \"Find stores\" button on brands to populate store locations via Google Places."}
+      </p>
     );
   }
 
   if (data.applicable === false) return (
-    <Card data-testid="brand-gap-not-applicable"><CardContent className="pt-4 space-y-2">
-      <p className="text-sm font-semibold">Occupier research</p>
-      <p className="text-sm text-muted-foreground">{data.reason}</p>
-    </CardContent></Card>
+    <p className="text-xs text-muted-foreground" data-testid="brand-gap-not-applicable">{data.reason}</p>
   );
   const sectors = data.sectors || [];
   const missing = sectors.filter(s => s.missing);
@@ -409,25 +388,17 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
   const peers = positioning?.peers || "the top UK centres";
 
   return (
-    <Card data-testid="brand-gap-panel">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
-          <Target className="w-4 h-4 text-muted-foreground" />
-          {centre ? "Brand gap analysis" : "Local occupier opportunities"}
-          <span className="text-[11px] font-normal text-muted-foreground">{positioning?.categories || "hospitality, F&B, wellness & leisure"}</span>
-          {positioning && positioning.key !== "mainstream" && (
-            <span className="text-[11px] font-normal text-muted-foreground" title={positioning.source === "tag" ? "From the property's tags — change it with Positioning at the top of the page" : "From the current tenants' brands — set it with Positioning at the top of the page"}>
-              · {positioning.label} positioning
-            </span>
-          )}
-          {competing.length > 0 && (
-            <span className="text-[11px] text-muted-foreground">
-              vs {competing.map(c => `${c.name} (${c.distance_km}km)`).join(" · ")}
-            </span>
-          )}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
+    <div className="space-y-3" data-testid="brand-gap-panel">
+      <p className="text-[11px] text-muted-foreground">
+        {!centre && <span className="font-semibold text-foreground">Local occupier opportunities · </span>}
+        {positioning?.categories || "hospitality, F&B, wellness & leisure"}
+        {positioning && positioning.key !== "mainstream" && (
+          <span title={positioning.source === "tag" ? "From the property's tags — change it with Positioning at the top of the page" : "From the current tenants' brands — set it with Positioning at the top of the page"}>
+            {" "}· {positioning.label} positioning
+          </span>
+        )}
+        {competing.length > 0 && <> · vs {competing.map(c => `${c.name} (${c.distance_km}km)`).join(" · ")}</>}
+      </p>
         {/* Local mode's reason only repeated the card's own heading. */}
         {data.researchContext && !centre && data.researchContext.mode !== "local" && <p className="text-sm text-muted-foreground">{data.researchContext.reason}</p>}
         {/* AI gap read */}
@@ -522,7 +493,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
         {/* Sector coverage — missing sectors first, loud */}
         {centre && sectors.length > 0 && (
           <div>
-            <div className="text-[11px] font-semibold mb-1.5 flex items-center gap-1.5">
+            <div className={`${SUB_LABEL} mb-1.5 flex items-center gap-1.5`}>
               <Store className="w-3.5 h-3.5 text-muted-foreground" />
               Sector coverage
               {missing.length > 0 && (
@@ -615,8 +586,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
           </p>
         )}
         </>)}
-      </CardContent>
-    </Card>
+    </div>
   );
 }
 
@@ -637,9 +607,9 @@ function CentreBenchmark({ benchmark, name, peers, brandsNoun }: { benchmark: No
     return [r.name, pick];
   }));
   return (
-    <div data-testid="centre-benchmark">
+    <div className="border-t border-border pt-3" data-testid="centre-benchmark">
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1.5">
-        <div className="text-[11px] font-semibold flex items-center gap-1.5">
+        <div className={`${SUB_LABEL} flex items-center gap-1.5`}>
           <TrendingUp className="w-3.5 h-3.5 text-muted-foreground" />
           Against {peers}
         </div>
@@ -666,7 +636,7 @@ function CentreBenchmark({ benchmark, name, peers, brandsNoun }: { benchmark: No
             <div className="flex flex-wrap gap-1 mt-1 md:mt-0 min-w-0">
               {(distinct.get(r.name) || []).map(b => (
                 <Link key={b.id} href={`/companies/${b.id}`}>
-                  <Badge variant="outline" className="text-[11px] cursor-pointer hover:bg-muted">{b.name}</Badge>
+                  <Badge variant="outline" className="text-[11px] font-medium text-foreground cursor-pointer hover:bg-muted">{b.name}</Badge>
                 </Link>
               ))}
             </div>
@@ -706,18 +676,18 @@ function CentreOpenings({ propertyId }: { propertyId: string }) {
   const shown = more ? items : items.slice(0, 6);
   const fmt = (d: string | null) => d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" }).replace(/\bSept\b/, "Sep") : "";
   return (
-    <div data-testid="centre-openings">
+    <div className="border-t border-border pt-3" data-testid="centre-openings">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
-        <div className="text-[11px] font-semibold flex items-center gap-1.5">
+        <div className={`${SUB_LABEL} flex items-center gap-1.5`}>
           <Store className="w-3.5 h-3.5 text-muted-foreground" />
           New brands going in
         </div>
         <div className="flex gap-1">
           {(["here", "peers"] as const).map(key => (
-            <button key={key} onClick={() => { setTab(key); setMore(false); }}
-              className={`rounded-full border px-2.5 py-0.5 text-[11px] ${tab === key ? "bg-foreground text-background border-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-              {key === "here" ? `Here${data ? ` · ${data.here.length}` : ""}` : `${data?.peerLabel || "Top centres"}${data ? ` · ${data.peers.length}` : ""}`}
-            </button>
+            <Pill key={key} active={tab === key} onClick={() => { setTab(key); setMore(false); }}>
+              {key === "here" ? "Here" : data?.peerLabel || "Top centres"}
+              {data && <span className="font-mono tabular-nums">{key === "here" ? data.here.length : data.peers.length}</span>}
+            </Pill>
           ))}
         </div>
       </div>

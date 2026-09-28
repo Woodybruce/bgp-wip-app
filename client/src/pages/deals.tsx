@@ -104,6 +104,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
+import { usePropertySchemeList } from "@/components/property-schemes-panel";
 import { useRoute, Link, useLocation } from "wouter";
 import type { CrmDeal, CrmProperty, CrmCompany, CrmContact, DealFeeAllocation, AvailableUnit, PropertyUnit } from "@shared/schema";
 import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineLinkSelect } from "@/components/inline-edit";
@@ -451,6 +452,7 @@ interface DealFormData {
   poNumber: string;
   invoicingEmail: string;
   feePercentage: string;
+  scheme: string;
   // Per-counterparty Xero contact link — the formal legal/billing
   // entity for each role. ID is a Xero ContactID GUID; cached name lets
   // the picker render without a Xero round-trip. AML reads these to
@@ -516,6 +518,7 @@ const emptyForm: DealFormData = {
   poNumber: "",
   invoicingEmail: "",
   feePercentage: "",
+  scheme: "",
   landlordEntityId: "",
   landlordEntityName: "",
   tenantEntityId: "",
@@ -578,6 +581,7 @@ function dealToForm(deal: CrmDeal): DealFormData {
     poNumber: deal.poNumber || "",
     invoicingEmail: (deal as any).invoicingEmail || "",
     feePercentage: (deal as any).feePercentage != null ? String((deal as any).feePercentage) : "",
+    scheme: (deal as any).scheme || "",
     landlordEntityId: (deal as any).landlordEntityId || "",
     landlordEntityName: (deal as any).landlordEntityName || "",
     tenantEntityId: (deal as any).tenantEntityId || "",
@@ -642,6 +646,7 @@ function formToPayload(form: DealFormData, changeReason?: string): Record<string
     poNumber: form.poNumber || null,
     invoicingEmail: form.invoicingEmail || null,
     feePercentage: parseNum(form.feePercentage),
+    scheme: form.scheme || null,
     landlordEntityId: form.landlordEntityId || null,
     landlordEntityName: form.landlordEntityName || null,
     tenantEntityId: form.tenantEntityId || null,
@@ -1560,6 +1565,43 @@ function ConsultantCreateBody({
   );
 }
 
+// Scheme picker for a deal on an estate with schemes (Canary Wharf: Jubilee
+// Place, Cabot Place…). Picking one fills the invoice contact and inbox from
+// the scheme's landlord entity where the deal has none yet. Renders nothing
+// on a property without schemes.
+function DealSchemeField({ form, setForm }: { form: any; setForm: (updater: (p: any) => any) => void }) {
+  const { data } = usePropertySchemeList(form.propertyId);
+  const schemes = data?.schemes || [];
+  if (!form.propertyId || schemes.length === 0) return null;
+  const picked = schemes.find(s => s.name === form.scheme);
+  return (
+    <div>
+      <Label>Scheme</Label>
+      <Select
+        value={form.scheme || undefined}
+        onValueChange={(v) => {
+          const next = schemes.find(s => s.name === v);
+          setForm((p: any) => ({
+            ...p,
+            scheme: v === "__clear__" ? "" : v,
+            ...(next?.billingEntityName && !p.xeroContactId && !p.xeroContactName ? { xeroContactName: next.billingEntityName } : {}),
+            ...(next?.invoicingEmail && !p.invoicingEmail ? { invoicingEmail: next.invoicingEmail } : {}),
+          }));
+        }}
+      >
+        <SelectTrigger data-testid="select-deal-scheme"><SelectValue placeholder="Which scheme?" /></SelectTrigger>
+        <SelectContent>
+          {form.scheme && <SelectItem value="__clear__">No scheme</SelectItem>}
+          {schemes.map(s => <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      {picked?.billingEntityName && (
+        <p className="text-[11px] text-muted-foreground mt-1">Invoices go to {picked.billingEntityName}{picked.invoicingEmail ? ` · ${picked.invoicingEmail}` : ""}</p>
+      )}
+    </div>
+  );
+}
+
 function SimplifiedCreateBody({
   form, set, properties, propertyUnits, companies, users, toggleAgent, setForm,
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
@@ -1787,6 +1829,8 @@ function SimplifiedCreateBody({
         />
       </div>
       )}
+
+      {!isSecondment && <DealSchemeField form={form} setForm={setForm} />}
 
       <div>
         <Label>Deal Type *</Label>
@@ -2627,6 +2671,8 @@ export function DealFormDialog({
                 }}
               />
             </div>
+
+            <DealSchemeField form={form} setForm={setForm} />
 
             {(() => {
               const UNIT_LEVEL_TYPES = new Set([
@@ -4138,6 +4184,20 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
     queryKey: ["/api/xero/invoices", dealId],
   });
 
+  // "No PO No Pay" clients (Canary Wharf Group): say so before an invoice
+  // goes out without one.
+  const { data: poCheck } = useQuery<{ required: boolean; missing: boolean; message: string | null }>({
+    queryKey: ["/api/crm/deals", dealId, "po-check"],
+    queryFn: async () => {
+      const r = await fetch(`/api/crm/deals/${dealId}/po-check`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    },
+    retry: false,
+  });
+  const poStillMissing = !!poCheck?.required && !(poNumber || deal.poNumber || "").trim();
+  const [allowMissingPo, setAllowMissingPo] = useState(false);
+
   const connectMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("GET", "/api/xero/auth");
@@ -4156,6 +4216,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
         xeroContactId: xeroContactId || null,
         contactName: xeroContactName || deal.name,
         poNumber: poNumber || deal.poNumber || null,
+        allowMissingPo: allowMissingPo || undefined,
         // No AccountCode: the server applies the live sales nominal (4000 on
         // the Sept 2026 chart) so a stale client can't post to a retired code.
         lineItems: [{
@@ -4171,6 +4232,8 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
     onSuccess: () => {
       toast({ title: "Invoice created in Xero" });
       setCreating(false);
+      setAllowMissingPo(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId, "po-check"] });
       setReference("");
       setAmount(0);
       refetchInvoices();
@@ -4268,6 +4331,12 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
           </div>
         </div>
 
+        {poCheck?.missing && (
+          <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-900 px-3 py-2 text-xs text-amber-900 dark:text-amber-200" data-testid="deal-po-missing">
+            {poCheck.message}
+          </p>
+        )}
+
         {!creating && (
           <div className="mb-3">
             <XeroContactPicker
@@ -4324,11 +4393,17 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
                 />
               </div>
             </div>
+            {poStillMissing && (
+              <label className="flex items-start gap-2 text-xs text-amber-900 dark:text-amber-200" data-testid="label-allow-missing-po">
+                <input type="checkbox" className="mt-0.5" checked={allowMissingPo} onChange={(ev) => setAllowMissingPo(ev.target.checked)} data-testid="checkbox-allow-missing-po" />
+                <span>This client needs a PO number on the invoice. Tick to raise the draft without one.</span>
+              </label>
+            )}
             <div className="flex items-center gap-2">
               <Button
                 size="sm"
                 onClick={() => createInvoiceMutation.mutate()}
-                disabled={createInvoiceMutation.isPending}
+                disabled={createInvoiceMutation.isPending || (poStillMissing && !allowMissingPo)}
                 data-testid="button-confirm-xero-invoice"
               >
                 {createInvoiceMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />}
@@ -5727,6 +5802,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       invalidateDealCaches();
       if (data?.mirrorWarning) {
         toast({ title: "Cross-board sync warning", description: data.mirrorWarning, variant: "destructive" });
+      }
+      if (data?.poWarning) {
+        toast({ title: "PO number needed", description: data.poWarning });
       }
     },
     onError: (err: Error) => {
