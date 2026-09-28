@@ -21,8 +21,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Building2, Upload, Download, Plus, Trash2, Search, ChevronDown, ChevronRight,
   Link2, FileSpreadsheet, X, Loader2, Lock, ExternalLink, MapPin as MapPinIcon,
-  Eye, Filter, RefreshCw, Sparkles
+  Eye, Filter, RefreshCw, Sparkles, FolderSearch
 } from "lucide-react";
+import { SharePointFilePicker, candidateKey, type SharePointCandidate } from "@/components/sharepoint-file-picker";
 
 // Compact retail-tuned set of use labels we want the team to land on across
 // the tenancy schedules — chosen over the full UK planning class list
@@ -718,6 +719,8 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
   const [importReviewRows, setImportReviewRows] = useState<TenancyImportReviewRow[]>([]);
   useEffect(() => setImportReviewRows([]), [propertyId]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [spOpen, setSpOpen] = useState(false);
+  const [spImportingKey, setSpImportingKey] = useState<string | null>(null);
 
   // Import, Re-sync (all) and bulk-delete are staff-only server-side (the
   // client gateway only opens /unit row edits) — hide them from client
@@ -1026,6 +1029,46 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
     }
   };
 
+  // Same import as the Excel upload, with the workbook fetched from
+  // SharePoint by the server.
+  const handleSharePointImport = async (c: SharePointCandidate) => {
+    setImporting(true);
+    setSpImportingKey(candidateKey(c));
+    try {
+      const r = await fetch("/api/tenancy-schedule/import-excel-from-sharepoint", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+        body: JSON.stringify({ propertyId, driveId: c.driveId, itemId: c.itemId, webUrl: c.webUrl }),
+      });
+      const result = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(result.error || `HTTP ${r.status}`);
+      setImportReviewRows(result.reviewRows || []);
+      toast({ title: result.needsReview ? "Import needs review" : "Import complete", description: result.message });
+      setSpOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "asset-brief"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plan-pickable-units"] });
+    } catch (err: any) {
+      toast({ title: "Import failed", description: err.message, variant: "destructive" });
+    } finally {
+      setImporting(false);
+      setSpImportingKey(null);
+    }
+  };
+  const sharePointPicker = !isClientViewer && (
+    <SharePointFilePicker
+      open={spOpen}
+      onClose={() => setSpOpen(false)}
+      title="Import a tenancy schedule from SharePoint"
+      url={`/api/tenancy-schedule/property/${propertyId}/sharepoint-candidates`}
+      importLabel="Import"
+      importingKey={spImportingKey}
+      onImport={handleSharePointImport}
+    />
+  );
+
   const handleExport = async () => {
     try {
       const r = await fetch(`/api/tenancy-schedule/property/${propertyId}/export-excel`, { headers: getAuthHeaders() });
@@ -1181,6 +1224,11 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
               {importing ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Upload className="w-3 h-3 mr-1" />}Import Excel
             </Button>
             )}
+            {canEdit && !isClientViewer && (
+            <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={() => setSpOpen(true)} disabled={importing} title="Find this property's tenancy / leasing schedule in SharePoint and import it" data-testid="btn-import-tenancy-sharepoint">
+              <FolderSearch className="w-3 h-3 mr-1" />From SharePoint
+            </Button>
+            )}
             {canEdit && (
             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => UNIFIED_ADD_UNIT_ENABLED ? setUnifiedAddOpen(true) : setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
               <Plus className="w-3 h-3 mr-1" />Add Unit
@@ -1200,6 +1248,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
           <p className="text-xs">No tenancy schedule data</p>
           <p className="text-xs mt-1">Import an Excel tenancy schedule or add units manually</p>
         </div>
+        {sharePointPicker}
       </div>
     );
   }
@@ -1246,6 +1295,11 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
             {importing ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Upload className="w-3 h-3 mr-1" />}Import
           </Button>
           )}
+          {!readOnly && !isClientViewer && (
+          <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={() => setSpOpen(true)} disabled={importing} title="Find this property's tenancy / leasing schedule in SharePoint and import it. Existing information is kept; differences are flagged for review." data-testid="btn-import-tenancy-sharepoint">
+            <FolderSearch className="w-3 h-3 mr-1" />From SharePoint
+          </Button>
+          )}
           <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={handleExport} data-testid="btn-export-tenancy">
             <Download className="w-3 h-3 mr-1" />Excel
           </Button>
@@ -1281,6 +1335,11 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
               {!readOnly && !isClientViewer && (
                 <button type="button" className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-2" onClick={() => fileInputRef.current?.click()} disabled={importing}>
                   <Upload className="w-3 h-3" /> Import Excel
+                </button>
+              )}
+              {!readOnly && !isClientViewer && (
+                <button type="button" className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-2" onClick={() => setSpOpen(true)} disabled={importing}>
+                  <FolderSearch className="w-3 h-3" /> From SharePoint
                 </button>
               )}
               <button type="button" className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-2" onClick={handleExport}>
@@ -1393,6 +1452,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
         setStatusFilter(null);
         setExpandedZones(new Set(["__all__"]));
       }} />
+      {sharePointPicker}
 
       <div className="flex flex-wrap items-center gap-1.5" aria-label="Tenancy status filters">
         {[

@@ -1000,6 +1000,11 @@ installGoogleBudgetGuard();
        updated_at TIMESTAMPTZ DEFAULT NOW()
      )`,
     `CREATE INDEX IF NOT EXISTS idx_property_brochures_property ON property_brochures (property_id, type, archived)`,
+    // Brochures pulled in from SharePoint remember the file they came from,
+    // so the finder marks them imported and the same file isn't copied twice.
+    `ALTER TABLE property_brochures ADD COLUMN IF NOT EXISTS source_drive_id TEXT`,
+    `ALTER TABLE property_brochures ADD COLUMN IF NOT EXISTS source_item_id TEXT`,
+    `ALTER TABLE property_brochures ADD COLUMN IF NOT EXISTS source_web_url TEXT`,
 
     // Polygons drawn on a plan. unit_id (nullable) links to
     // leasing_schedule_units — that's where status / tenant / rent
@@ -3751,6 +3756,10 @@ app.use((req, res, next) => {
     // promote sweeps both run many UPDATEs in series — the default
     // 45s timeout cuts them off mid-pass, leaving partial state.
     timeoutMs = 180000;
+  } else if (req.path.includes('/sharepoint-candidates') || req.path.includes('/from-sharepoint')) {
+    // Walking a property's linked folder plus a Microsoft 365 search, and
+    // downloading a large brochure PDF from SharePoint.
+    timeoutMs = 120000;
   } else if (req.path === '/api/interactions/sync' || req.path === '/api/interactions/discover-contacts') {
     // Sync iterates ~18 BGP staff mailboxes × email + calendar via
     // paginated Graph API calls. Routinely 45s+. Don't 504 it mid-pass

@@ -6,7 +6,9 @@
 // Archive section.
 //
 // Storage: BGP file_storage table via /api/properties/:id/brochures
-// (same pattern as property_plans). No SharePoint dependency.
+// (same pattern as property_plans). Staff can also pull a PDF in from
+// SharePoint (SharePoint button) — it's copied in and ingested like an
+// upload.
 
 import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -17,10 +19,11 @@ import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import PDFViewer from "@/components/pdf-viewer";
+import { SharePointFilePicker, candidateKey, type SharePointCandidate } from "@/components/sharepoint-file-picker";
 import { useToast } from "@/hooks/use-toast";
 import {
   FileText, Download, Maximize2, Pencil, Archive, ChevronDown, ChevronRight,
-  Loader2, Trash2, Upload, Plus, Sparkles, AlertTriangle, CheckCircle2,
+  Loader2, Trash2, Upload, Plus, Sparkles, AlertTriangle, CheckCircle2, FolderSearch,
 } from "lucide-react";
 
 type IngestStatus = "pending" | "running" | "done" | "error" | "skipped" | null;
@@ -90,6 +93,9 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
   const [isDragging, setIsDragging] = useState(false);
   const dragDepth = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [spOpen, setSpOpen] = useState(false);
+  const [spType, setSpType] = useState<"leasing" | "investment">("leasing");
+  const openSharePoint = (type: "leasing" | "investment") => { setSpType(type); setSpOpen(true); };
 
   const { data, isLoading, isError } = useQuery<BrochureResponse>({
     queryKey: ["/api/properties", propertyId, "brochures"],
@@ -139,6 +145,32 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "brochures"] }),
     onError: (e: any) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
+  });
+
+  const spUrl = `/api/properties/${propertyId}/brochures/sharepoint-candidates?type=${spType}`;
+  const spImportMutation = useMutation({
+    mutationFn: async (c: SharePointCandidate) => {
+      const r = await fetch(`/api/properties/${propertyId}/brochures/from-sharepoint`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+        body: JSON.stringify({ driveId: c.driveId, itemId: c.itemId, webUrl: c.webUrl, type: spType }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      return body;
+    },
+    onSuccess: (j: any) => {
+      toast({
+        title: j.duplicate ? "Already on this property" : "Brochure imported from SharePoint",
+        description: j.duplicate ? j.brochure?.name : `${j.brochure?.name} — extracting images and details now.`,
+      });
+      qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "brochures"] });
+      qc.invalidateQueries({ queryKey: [spUrl] });
+      setTab(spType);
+      setSpOpen(false);
+    },
+    onError: (e: any) => toast({ title: "SharePoint import failed", description: e.message, variant: "destructive" }),
   });
 
   const archiveMutation = useMutation({
@@ -224,7 +256,7 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
           <button type="button" className="text-primary hover:underline" onClick={() => pick("leasing")} disabled={uploadMutation.isPending}>leasing</button>
           {" "}or{" "}
           <button type="button" className="text-primary hover:underline" onClick={() => pick("investment")} disabled={uploadMutation.isPending}>investment</button>
-          {" "}brochure.
+          {" "}brochure{pbIsClient ? "" : <>, or <button type="button" className="text-primary hover:underline" onClick={() => openSharePoint("leasing")} data-testid="brochures-empty-sharepoint">find one in SharePoint</button></>}.
         </p>
       );
     }
@@ -360,6 +392,18 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
                 <Plus className="w-3 h-3" />
                 Add
               </Button>
+              {!pbIsClient && (
+                <Button
+                  size="sm" variant="ghost"
+                  className="h-6 text-[11px] gap-1 px-1.5"
+                  onClick={() => openSharePoint(tab)}
+                  title="Find this property's brochures in SharePoint and import one"
+                  data-testid="brochure-sharepoint-button"
+                >
+                  <FolderSearch className="w-3 h-3" />
+                  SharePoint
+                </Button>
+              )}
             </span>
           </div>
           {renderBody()}
@@ -381,6 +425,23 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
         fileName={previewing?.name || "Brochure"}
         onClose={() => setPreviewing(null)}
       />
+      {!pbIsClient && (
+        <SharePointFilePicker
+          open={spOpen}
+          onClose={() => setSpOpen(false)}
+          title="Find a brochure in SharePoint"
+          url={spUrl}
+          importLabel={`Import as ${spType}`}
+          importingKey={spImportMutation.isPending && spImportMutation.variables ? candidateKey(spImportMutation.variables) : null}
+          onImport={(c) => spImportMutation.mutate(c)}
+          header={
+            <div className="flex items-center gap-1.5">
+              <Pill active={spType === "leasing"} onClick={() => setSpType("leasing")} data-testid="sharepoint-brochure-leasing">Leasing</Pill>
+              <Pill active={spType === "investment"} onClick={() => setSpType("investment")} data-testid="sharepoint-brochure-investment">Investment</Pill>
+            </div>
+          }
+        />
+      )}
       {editing && (
         <BrochureEditDialog
           brochure={editing}
