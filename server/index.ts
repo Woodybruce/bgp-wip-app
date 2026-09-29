@@ -4534,7 +4534,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   // Best-effort + idempotent; delayed so the column auto-migrate has landed.
   setTimeout(() => {
     import("./expense-approval")
-      .then(({ backfillApprovalStages }) => backfillApprovalStages())
+      .then(async ({ backfillApprovalStages, reassignMerchantRoutedStage2 }) => { await backfillApprovalStages(); await reassignMerchantRoutedStage2(); })
       .catch((err: any) => console.warn("[migrate] approval-stage backfill skipped:", err?.message));
   }, 15000);
 

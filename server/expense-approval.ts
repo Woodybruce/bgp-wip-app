@@ -46,6 +46,36 @@ const STAGE2_SLOTS: string[][] = [
   ["rupert@brucegillinghampollard.com"],
 ];
 
+// Stage-2 routes by merchant. Anthropic (Claude) spend goes to Woody for
+// sign-off whoever's card it is on, his own included (Woody, 2026-09-29:
+// "send all Anthropic invoices for approval to me instead of Charlotte").
+const STAGE2_MERCHANT_ROUTES: Array<{ match: RegExp; emails: string[] }> = [
+  { match: /\b(anthropic|claude\.ai)\b/i, emails: ["woody@brucegillinghampollard.com"] },
+];
+
+async function merchantStage2Approver(merchant: string | null | undefined): Promise<string | null> {
+  const route = merchant ? STAGE2_MERCHANT_ROUTES.find(r => r.match.test(merchant)) : null;
+  return route ? resolveUserIdByEmails(route.emails) : null;
+}
+
+// Move stage-2 items already waiting onto their merchant route, so a new
+// route covers the backlog too. Idempotent; runs on boot.
+export async function reassignMerchantRoutedStage2(): Promise<number> {
+  const rows = await db
+    .select({ id: expenses.id, merchant: expenses.merchant, approverUserId: expenses.approverUserId })
+    .from(expenses)
+    .where(and(eq(expenses.status, "pending_approval"), eq(expenses.approvalStage, 2)));
+  let n = 0;
+  for (const r of rows) {
+    const approver = await merchantStage2Approver(r.merchant);
+    if (!approver || approver === r.approverUserId) continue;
+    await db.update(expenses).set({ approverUserId: approver, updatedAt: new Date() }).where(eq(expenses.id, r.id));
+    n++;
+  }
+  if (n > 0) console.log(`[expense-approval] moved ${n} waiting stage-2 row(s) onto their merchant route`);
+  return n;
+}
+
 // Stage-1 routing. The initial HMRC/info pass goes to Wendy (accounts@) by
 // default — she does the first approvals, not a Wendy/Layla coin-flip. When
 // she's away or busy she flips "cover" on from the approvals page and both
@@ -148,10 +178,13 @@ async function resolvePool(slots: string[][]): Promise<string[]> {
 // Pick a random approver from the stage pool, excluding the submitter so
 // nobody approves their own spend. Falls back to the full pool if excluding
 // the submitter would empty it (shouldn't happen, but never strand a row).
-async function pickStageApprover(stage: 1 | 2, submitterUserId: string | null): Promise<string | null> {
+async function pickStageApprover(stage: 1 | 2, submitterUserId: string | null, merchant?: string | null): Promise<string | null> {
   // Stage 1 is a single named approver (Wendy, or Layla while covering), not
-  // a random pool. Stage 2 stays a random even split across the directors.
+  // a random pool. Stage 2 stays a random even split across the directors,
+  // except for merchants with a named route.
   if (stage === 1) return pickStage1Approver(submitterUserId);
+  const routed = await merchantStage2Approver(merchant);
+  if (routed) return routed;
   const fullPool = await resolvePool(STAGE2_SLOTS);
   if (fullPool.length === 0) return null;
   const eligible = submitterUserId ? fullPool.filter((id) => id !== submitterUserId) : fullPool;
@@ -326,7 +359,7 @@ export async function approveExpense(
 
   if (stage === 1) {
     // Info check passed → hand to a director for spend sign-off.
-    const nextApprover = await pickStageApprover(2, exp.submitterUserId || null);
+    const nextApprover = await pickStageApprover(2, exp.submitterUserId || null, exp.merchant);
     const changed = await db.update(expenses).set({
       approvalStage: 2,
       approverUserId: nextApprover,

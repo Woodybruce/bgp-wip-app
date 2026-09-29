@@ -114,7 +114,7 @@ Staff can text the BGP WhatsApp number directly — it's ChatBGP on WhatsApp. A 
 Automated Friday-afternoon job: ChatBGP compiles "BGP Insights — Leasing Week in Review" as a designed PDF (Bordeaux house style, scope 'bgp_insights' in document_design_preferences) and emails it to Woody to forward.
 
 ### Expenses flow
-Card spend (Revolut/Stripe) → receipt capture (photo/email) → stage 1 info check (Wendy, or Layla on cover) → stage 2 director sign-off (Woody/Charlotte/Jack/Rupert, random, never own spend) → posted to Xero as Spend Money on account 1230. Phone: My Card = own expenses; approvers get the home-screen banner.
+Card spend (Revolut/Stripe) → receipt capture (photo/email) → stage 1 info check (Wendy, or Layla on cover) → stage 2 director sign-off (Woody/Charlotte/Jack/Rupert, random, never own spend — except Anthropic/Claude spend, which always goes to Woody) → posted to Xero as Spend Money on account 1230. Phone: My Card = own expenses; approvers get the home-screen banner.
 
 ### WIP report (/deals/report; /wip-report also works)
 Deal form parties by deal type: only the CLIENT side is compulsory on investment deals — Purchase needs the Purchaser (vendor optional, add when under offer), Sale needs the Vendor (purchaser optional); leasing types need Landlord + Tenant, EXCEPT **Lease Acquisition** (tenant-rep — the tenant is the client and the one invoiced, so the landlord is optional and can be linked later, Woody 2026-09-16), **Consultancy** (tenant optional), **Secondment** (landlord only, fee 100% BGP House) and **Consultant** (no counterparty). AML/KYC runs on whichever parties are linked.
