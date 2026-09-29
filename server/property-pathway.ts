@@ -4811,7 +4811,7 @@ async function draftBusinessPlan(run: PropertyPathwayRun): Promise<{ plan: Busin
   const resp = await callClaude({
     // The highest-judgement call in the pathway — Fable 5 (refusal fallback
     // to Opus 4.8 is applied inside callClaude for claude-fable models).
-    model: "claude-sonnet-4-6",
+    model: "claude-opus-5-5",
     messages: [{
       role: "user",
       content: `You are a senior director at BGP (Bruce Gillingham Pollard) sitting down with Woody to agree a business plan for a live investment opportunity. You have done a final sweep of everything the pathway has gathered. Propose a concrete, opinionated plan — don't hedge, don't list options. Pick a strategy.

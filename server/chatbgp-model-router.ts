@@ -12,15 +12,17 @@
 
 import { pool } from "./db";
 
-const SONNET = "claude-sonnet-5-5";
-const OPUS = "claude-opus-4-8";
+const SONNET = "claude-sonnet-4-6";
+// Opus 5.5 is the default: Sonnet wasn't good enough (Woody, 2026-09-29),
+// Fable too expensive. /fable and /sonnet remain per-thread options.
+const OPUS_DEFAULT = "claude-opus-5-5";
+const OPUS = OPUS_DEFAULT;
 const FABLE = "claude-fable-5";
 
-// Sonnet is the default (Woody, 2026-09-29: "spending too much on AI —
-// massively reduce the costs"). Fable is ~3x Sonnet's price; /fable or
-// /opus remain available per thread when a job needs them.
+// Opus 5.5 by default (Woody, 2026-09-29: cut AI spend, but "not sonnet").
+// Fable is 2.5x Opus 5.5's price; /fable remains available per thread.
 const DEFAULTS = {
-  default: SONNET,
+  default: OPUS,
   fable: FABLE,
   opus: OPUS,
   sonnet: SONNET,
@@ -78,13 +80,13 @@ export async function setThreadModel(threadId: string | null | undefined, prefer
 // Resolve the model id for this thread. Order of precedence:
 //   1. explicit override (e.g. a slash command on the current message)
 //   2. thread.model_preference from the DB
-//   3. default (Sonnet) — only an explicit /fable or /opus goes up
+//   3. default (Opus 5.5) — /fable goes up, /sonnet down
 export async function resolveChatModel(args: {
   threadId?: string | null;
   override?: ModelCommand | null;
 }): Promise<{ model: string; label: ModelCommand }> {
   if (args.override) return { model: DEFAULTS[args.override], label: args.override };
-  if (!args.threadId) return { model: DEFAULTS.default, label: "sonnet" };
+  if (!args.threadId) return { model: DEFAULTS.default, label: "opus" };
   await ensureColumn();
   try {
     const { rows } = await pool.query<{ model_preference: string | null }>(
@@ -93,10 +95,10 @@ export async function resolveChatModel(args: {
     );
     const pref = rows[0]?.model_preference;
     if (pref === "fable") return { model: FABLE, label: "fable" };
-    if (pref === "opus") return { model: OPUS, label: "opus" };
-    return { model: SONNET, label: "sonnet" };
+    if (pref === "sonnet") return { model: SONNET, label: "sonnet" };
+    return { model: OPUS, label: "opus" };
   } catch {
-    return { model: DEFAULTS.default, label: "sonnet" };
+    return { model: DEFAULTS.default, label: "opus" };
   }
 }
 
@@ -105,11 +107,11 @@ export async function resolveChatModel(args: {
 // Claude call and respond with this.
 export function ackMessage(command: ModelCommand): string {
   if (command === "fable") {
-    return "🔀 Switched to Fable for this thread — the most capable and most expensive model. Type `/sonnet` to go back to the default.";
+    return "🔀 Switched to Fable for this thread — the most capable and most expensive model. Type `/opus` to go back to the default.";
   }
   return command === "opus"
-    ? "🔀 Switched to Opus for this thread. Type `/sonnet` to go back to the default."
-    : "🔀 Switched to Sonnet for this thread — the default, fastest and cheapest. Type `/opus` or `/fable` for harder jobs.";
+    ? "🔀 Switched to Opus for this thread — the default. Type `/fable` for the most capable model."
+    : "🔀 Switched to Sonnet for this thread — faster and cheaper. Type `/opus` to go back to the default.";
 }
 
 export const CHATBGP_DEFAULT_MODEL = FABLE;

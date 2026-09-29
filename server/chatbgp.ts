@@ -66,11 +66,12 @@ function applyFableParams(claudeParams: any): void {
   claudeParams.fallbacks = [{ model: CHATBGP_OPUS_MODEL }];
 }
 
-// Sonnet 5.x (the ChatBGP default since 2026-09-29, for cost): the API's
-// default refusal fallback, and if the request itself is rejected (400/404 —
-// a parameter this model doesn't take) one retry on Sonnet 4.6 so chat never
+// Opus 5.x / Sonnet 5.x (Opus 5.5 is the ChatBGP default since 2026-09-29,
+// for cost): the API's default refusal fallback, and if the request itself is
+// rejected (400/404 — a parameter this model doesn't take) one retry on
+// Opus 4.8 so chat never
 // breaks on the switch.
-const SONNET_SAFE_MODEL = "claude-sonnet-4-6";
+const SONNET_SAFE_MODEL = "claude-opus-4-8";
 
 // Cache the conversation, not just the system prompt: a chat turn runs the
 // tool loop several times, each re-sending the whole history + tool results.
@@ -98,7 +99,7 @@ function callerFeature(): string {
   return file ? `auto:${file}` : "chatbgp";
 }
 function isSonnet5Model(model: string): boolean {
-  return /^claude-sonnet-5/.test(model);
+  return /^claude-(sonnet|opus)-5/.test(model);
 }
 function usesBetaEndpoint(model: string): boolean {
   return isFableModel(model) || isSonnet5Model(model);
