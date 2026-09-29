@@ -7900,6 +7900,18 @@ These terms are indicative only and do not constitute a binding agreement.`;
       res.status(out.status).json(out.body);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
+  // Who BGP is emailing about this asset — suggests the client when the row
+  // has none or names someone else, and who is copied alongside them.
+  app.get("/api/investment-tracker/:id/correspondence", requireAuth, async (req, res) => {
+    try {
+      const { isClientRequestUser } = await import("./company-scope");
+      if (await isClientRequestUser(req)) return res.status(403).json({ message: "Not available for client accounts" });
+      const { trackerCorrespondence } = await import("./tracker-correspondence");
+      const out = await trackerCorrespondence(String(req.params.id));
+      if (!out) return res.status(404).json({ message: "Asset not found" });
+      res.json(out);
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
   app.delete("/api/investment-tracker/:id/clients/:companyId", requireAuth, async (req, res) => {
     try {
       const { removeTrackerClient } = await import("./investment-tracker-service");
