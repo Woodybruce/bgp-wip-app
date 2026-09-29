@@ -509,6 +509,7 @@ interface InteractionSyncOptions {
   captureSignals?: boolean;
   autoContactCap?: number;
   skipMailboxes?: Set<string>;
+  shouldStop?: () => boolean;
   onMailboxDone?: (email: string) => Promise<void>;
 }
 
@@ -544,6 +545,7 @@ async function runInteractionSync(daysBack = 30, daysForward = 60, opts: Interac
   const perUserStats: { email: string; emails: number; calendar: number }[] = [];
 
   for (const userEmail of bgpEmails) {
+    if (opts.shouldStop?.()) break;
     if (opts.skipMailboxes?.has(userEmail.toLowerCase())) continue;
     let emailCount = 0;
     let calCount = 0;
@@ -599,6 +601,7 @@ const EMAIL_CONTACTS_BACKFILL_DAYS = 150;
 // Mailboxes the backfill has finished, so a restart mid-run (any deploy)
 // carries on from the next mailbox instead of starting again.
 let backfillRetries = 0;
+const backfillStop = { requested: false };
 const EMAIL_CONTACTS_PROGRESS_KEY = `${EMAIL_CONTACTS_BACKFILL_KEY}:progress`;
 async function backfillProgress(daysBack: number): Promise<string[]> {
   const row = (await pool.query(`SELECT value FROM system_settings WHERE key = $1`, [EMAIL_CONTACTS_PROGRESS_KEY])).rows[0]?.value;
@@ -622,6 +625,7 @@ async function runEmailContactsBackfill(daysBack = EMAIL_CONTACTS_BACKFILL_DAYS)
       [EMAIL_CONTACTS_PROGRESS_KEY, JSON.stringify({ daysBack, done })]);
     const result = await runInteractionSync(daysBack, 0, {
       skipMailboxes: new Set(done.map(e => e.toLowerCase())),
+      shouldStop: () => backfillStop.requested,
       onMailboxDone: async (email) => { done.push(email.toLowerCase()); await saveProgress(); },
       emailsOnly: true,
       maxEmailPages: 200,        // up to 20,000 messages per mailbox
@@ -636,7 +640,7 @@ async function runEmailContactsBackfill(daysBack = EMAIL_CONTACTS_BACKFILL_DAYS)
     if (result.errors?.length) {
       backfillRetries++;
       backfillState.error = `${result.errors.length} mailbox(es) failed${backfillRetries <= 5 ? " — will retry" : ""}`;
-      if (backfillRetries <= 5) scheduleEmailContactsBackfill(10 * 60 * 1000);
+      if (backfillRetries <= 5 && !backfillStop.requested) scheduleEmailContactsBackfill(10 * 60 * 1000);
       return result;
     }
     await pool.query(
@@ -1156,10 +1160,8 @@ async function requireAdminCheck(req: Request): Promise<boolean> {
 
 export function registerInteractionRoutes(app: Express) {
   startAutoSync();
-  // A run cut off by a deploy picks up sooner.
-  backfillProgress(EMAIL_CONTACTS_BACKFILL_DAYS)
-    .then(done => scheduleEmailContactsBackfill(done.length ? 5 * 60 * 1000 : undefined))
-    .catch(() => scheduleEmailContactsBackfill());
+  // The 150-day backfill only runs when an admin starts it (Woody,
+  // 2026-09-29: stopped) — POST /api/interactions/backfill-contacts.
 
   // Re-run the email → contacts backfill (admin). Runs in the background;
   // GET reports progress and the last result.
@@ -1169,8 +1171,16 @@ export function registerInteractionRoutes(app: Express) {
       return res.status(202).json({ started: false, alreadyRunning: true, backfillRunning: backfillState.running, startedAt: backfillState.startedAt });
     }
     const daysBack = Math.min(365, Math.max(1, Number(req.query.daysBack) || EMAIL_CONTACTS_BACKFILL_DAYS));
+    backfillStop.requested = false;
     runEmailContactsBackfill(daysBack).catch((e: any) => console.error("[interactions] Email contacts backfill failed:", e?.message));
     res.status(202).json({ started: true, daysBack });
+  });
+
+  // Stop a running backfill after the mailbox it is on.
+  app.post("/api/interactions/backfill-contacts/stop", requireAuth, async (req: Request, res: Response) => {
+    if (!await requireAdminCheck(req)) return res.status(403).json({ error: "Admin access required" });
+    backfillStop.requested = true;
+    res.json({ stopping: backfillState.running });
   });
 
   app.get("/api/interactions/backfill-contacts", requireAuth, async (req: Request, res: Response) => {
