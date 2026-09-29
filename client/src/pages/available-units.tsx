@@ -171,38 +171,112 @@ function WebsitePill({ unit, property, code, onToggle, onEdit, onFiles }: { unit
     </Popover>
   );
 }
-// Files dialog — click-to-set focal point the website crops photos around.
-function FocalPicker({ file, loadUrl, onSave }: { file: UnitMarketingFile; loadUrl: (p: string) => Promise<string>; onSave: (x: number, y: number) => void }) {
+// Files dialog — iPhone-Photos-style framing. The website shows each photo
+// object-cover in fixed frames (16:10 on the property page, 4:3 on listing
+// cards) positioned by focalX/Y, so the draggable crop box maps exactly:
+// focalX = box left / (photo width − box width), likewise for Y. One saved
+// position serves both frames; the ratio pills preview each.
+const FRAME_RATIOS = [
+  { key: "page", label: "Property page", ratio: 16 / 10 },
+  { key: "card", label: "Listing card", ratio: 4 / 3 },
+] as const;
+function FocalPicker({ file, loadUrl, onSave, onClose }: { file: UnitMarketingFile; loadUrl: (p: string) => Promise<string>; onSave: (x: number, y: number) => void; onClose: () => void }) {
   const [url, setUrl] = useState<string | null>(null);
-  const fx = (file as any).focalX ?? 0.5;
-  const fy = (file as any).focalY ?? 0.5;
+  const [fx, setFx] = useState<number>((file as any).focalX ?? 0.5);
+  const [fy, setFy] = useState<number>((file as any).focalY ?? 0.5);
+  const [ratioKey, setRatioKey] = useState<(typeof FRAME_RATIOS)[number]["key"]>("page");
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const drag = useRef<{ id: number; dx: number; dy: number } | null>(null);
   useEffect(() => {
     let alive = true;
     loadUrl(file.filePath).then(u => { if (alive) setUrl(u); }).catch(() => {});
     return () => { alive = false; };
   }, [file.filePath, loadUrl]);
+  useEffect(() => {
+    const el = imgRef.current;
+    if (!el) return;
+    const measure = () => { if (el.clientWidth && el.clientHeight) setSize({ w: el.clientWidth, h: el.clientHeight }); };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [url]);
+
+  const ratio = FRAME_RATIOS.find(r => r.key === ratioKey)!.ratio;
+  const box = size ? (size.w / size.h > ratio ? { w: size.h * ratio, h: size.h } : { w: size.w, h: size.w / ratio }) : null;
+  const slackX = size && box ? size.w - box.w : 0;
+  const slackY = size && box ? size.h - box.h : 0;
+  const left = fx * slackX;
+  const top = fy * slackY;
+  const clamp = (v: number) => Math.min(1, Math.max(0, v));
+
+  // Box top-left follows the pointer, keeping the grab offset. A press outside
+  // the box first centres it on the pointer, then drags from there.
+  const moveTo = (clientX: number, clientY: number) => {
+    const r = imgRef.current?.getBoundingClientRect();
+    if (!r || !drag.current) return;
+    if (slackX > 0) setFx(clamp((clientX - r.left - drag.current.dx) / slackX));
+    if (slackY > 0) setFy(clamp((clientY - r.top - drag.current.dy) / slackY));
+  };
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!box) return;
+    const r = imgRef.current!.getBoundingClientRect();
+    const px = e.clientX - r.left, py = e.clientY - r.top;
+    const inside = px >= left && px <= left + box.w && py >= top && py <= top + box.h;
+    drag.current = { id: e.pointerId, dx: inside ? px - left : box.w / 2, dy: inside ? py - top : box.h / 2 };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    moveTo(e.clientX, e.clientY);
+  };
+
   return (
-    <div className="w-full mt-2" onClick={e => e.stopPropagation()}>
-      <p className="text-[11px] text-muted-foreground mb-1">Click the part of the photo the website should keep in frame.</p>
-      {url ? (
-        <div
-          className="relative inline-block max-w-full cursor-crosshair"
-          onClick={e => {
-            const r = e.currentTarget.getBoundingClientRect();
-            onSave(Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)));
-          }}
-          data-testid={`focal-picker-${file.id}`}
-        >
-          <img src={url} alt="" className="max-h-64 rounded border" />
-          <span
-            className="pointer-events-none absolute w-5 h-5 -ml-2.5 -mt-2.5 rounded-full border-2 border-white shadow ring-1 ring-black/30 bg-primary/85"
-            style={{ left: `${fx * 100}%`, top: `${fy * 100}%` }}
-          />
+    <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-5xl w-[calc(100vw-1rem)] max-h-[calc(100dvh-1rem)] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <DialogHeader>
+          <DialogTitle>Frame photo</DialogTitle>
+          <DialogDescription>Drag the frame to choose what the website shows. The dimmed area is cropped off.</DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-wrap gap-1.5">
+          {FRAME_RATIOS.map(r => (
+            <Pill key={r.key} active={ratioKey === r.key} aria-pressed={ratioKey === r.key} onClick={() => setRatioKey(r.key)} data-testid={`frame-ratio-${r.key}`}>
+              {r.label}
+            </Pill>
+          ))}
         </div>
-      ) : (
-        <div className="h-24 flex items-center justify-center text-xs text-muted-foreground">Loading photo…</div>
-      )}
-    </div>
+        {url ? (
+          <div className="flex justify-center bg-muted/40 rounded-md p-2">
+            <div
+              className="relative inline-block touch-none select-none cursor-move overflow-hidden"
+              onPointerDown={onPointerDown}
+              onPointerMove={e => { if (drag.current?.id === e.pointerId) moveTo(e.clientX, e.clientY); }}
+              onPointerUp={() => { drag.current = null; }}
+              onPointerCancel={() => { drag.current = null; }}
+              data-testid={`focal-picker-${file.id}`}
+            >
+              <img ref={imgRef} src={url} alt="" draggable={false} className="block max-w-full max-h-[65dvh] w-auto h-auto" onLoad={e => setSize({ w: e.currentTarget.clientWidth, h: e.currentTarget.clientHeight })} />
+              {box && (
+                <div
+                  className="pointer-events-none absolute border-2 border-white"
+                  style={{ left, top, width: box.w, height: box.h, boxShadow: "0 0 0 9999px rgba(0,0,0,0.55)" }}
+                >
+                  <div className="absolute inset-y-0 left-1/3 border-l border-white/50" />
+                  <div className="absolute inset-y-0 left-2/3 border-l border-white/50" />
+                  <div className="absolute inset-x-0 top-1/3 border-t border-white/50" />
+                  <div className="absolute inset-x-0 top-2/3 border-t border-white/50" />
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="h-64 flex items-center justify-center text-sm text-muted-foreground">Loading photo…</div>
+        )}
+        <DialogFooter className="gap-2 sm:gap-2">
+          <Button variant="ghost" onClick={() => { setFx(0.5); setFy(0.5); }} data-testid="button-frame-reset">Reset</Button>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => { onSave(fx, fy); onClose(); }} data-testid="button-frame-save">Save framing</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -4421,7 +4495,7 @@ function MarketingFilesDialog({
               are adding the photo"). */}
           {(section === "photo" || files.filter(f => catOf(f) === "photo").length === 0) && (
             <p className="text-[11px] text-muted-foreground -mt-2" data-testid="text-photo-website-hint">
-              <span className="font-medium text-foreground/80">Photos for the website are added here:</span> select the <span className="font-medium">Photos</span> pill, then Upload. The website uses these photos (tap one to set the crop focal point) — at least one is required before the unit can go live, along with address, rent or POA, size and lease terms.
+              <span className="font-medium text-foreground/80">Photos for the website are added here:</span> select the <span className="font-medium">Photos</span> pill, then Upload. The website uses these photos (tap Frame to choose how each is cropped) — at least one is required before the unit can go live, along with address, rent or POA, size and lease terms.
             </p>
           )}
           <div className="flex flex-wrap gap-2">
@@ -4511,7 +4585,7 @@ function MarketingFilesDialog({
                           size="sm"
                           className="h-7 px-2 text-[11px]"
                           onClick={(e) => { e.stopPropagation(); setFocalFor(focalFor === f.id ? null : f.id); }}
-                          title="Set the point the website crops this photo around"
+                          title="Choose how the website crops this photo"
                           data-testid={`button-frame-file-${f.id}`}
                         >
                           Frame
@@ -4562,7 +4636,7 @@ function MarketingFilesDialog({
                       </Button>
                     </div>
                     {focalFor === f.id && (
-                      <FocalPicker file={f} loadUrl={fetchFileBlobUrl} onSave={(x, y) => saveFocal(f.id, x, y)} />
+                      <FocalPicker file={f} loadUrl={fetchFileBlobUrl} onSave={(x, y) => saveFocal(f.id, x, y)} onClose={() => setFocalFor(null)} />
                     )}
                   </div>
                 ))}
