@@ -683,6 +683,59 @@ function SuggestedBuyers({ trackerId, open }: { trackerId: string; open: boolean
   );
 }
 
+// The client BGP is actually emailing on this asset, from the synced
+// mailboxes — the row's client came from imports and hand edits (Woody,
+// 2026-09-28: "purchase for Appley is Ares" — Jack's Royal Exchange work
+// is with Appley's team, and Ares, copied on Appley's threads, is the buyer).
+// Suggestions only: staff pick, the row changes on Save.
+function InboxClientHint({ trackerId, onMakeClient, onAddClient }: {
+  trackerId: string;
+  onMakeClient: (id: string, name: string) => void;
+  onAddClient?: (id: string) => void;
+}) {
+  const { data } = useQuery<any>({
+    queryKey: ["/api/investment-tracker", trackerId, "correspondence"],
+    queryFn: async () => {
+      const r = await fetch(`/api/investment-tracker/${trackerId}/correspondence`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return null;
+      return r.json();
+    },
+    staleTime: 5 * 60_000,
+  });
+  const s = data?.suggestion;
+  const copied: any[] = data?.copied || [];
+  if (!s && !copied.length) return null;
+  const who = (emails: string[]) => emails.map(e => e.split("@")[0].replace(/^\w/, c => c.toUpperCase())).slice(0, 3).join(", ");
+  const day = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return (
+    <div className="col-span-2 rounded-md border p-2.5 space-y-1.5 text-xs" data-testid="inbox-client-hint">
+      {s && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="min-w-0 flex-1">
+            From the inbox: {who(s.company.bgpUsers)}'s emails on this asset are with <span className="font-medium">{s.company.name}</span>
+            {" "}<span className="text-muted-foreground tabular-nums">({s.company.messages} emails and meetings, last {day(s.company.lastDate)})</span>
+            {s.kind === "partner" ? <>, who copy {s.currentClient || "the client"} on their own threads — buying for them?</>
+              : s.kind === "mismatch" && s.currentClient ? <> — not {s.currentClient}.</> : <> — no client set.</>}
+          </span>
+          {s.kind !== "partner" && <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => onMakeClient(s.company.companyId, s.company.name)} data-testid="button-inbox-make-client">Make client</Button>}
+          {onAddClient && s.kind !== "no_client" && <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onAddClient(s.company.companyId)} data-testid="button-inbox-add-client">Add as client</Button>}
+        </div>
+      )}
+      {copied.map((c: any) => (
+        <div key={c.companyId} className="flex flex-wrap items-center gap-2">
+          <span className="min-w-0 flex-1">
+            <span className="font-medium">{c.name}</span> is copied on <span className="tabular-nums">{c.messages}</span> of {data.copiedWith}'s emails
+            {c.subjects?.length ? <span className="text-muted-foreground"> ({c.subjects.slice(0, 2).join("; ")})</span> : null}
+            {c.companyType === "Investor" ? " — their capital partner, and the real client?" : "."}
+          </span>
+          <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => onMakeClient(c.companyId, c.name)} data-testid={`button-inbox-make-copied-${c.companyId}`}>Make client</Button>
+          {onAddClient && <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onAddClient(c.companyId)} data-testid={`button-inbox-add-copied-${c.companyId}`}>Add as client</Button>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function DistributionsDialog({ trackerId, assetName, open, onClose }: { trackerId: string; assetName: string; open: boolean; onClose: () => void }) {
   const { toast } = useToast();
   const [adding, setAdding] = useState(false);
@@ -2484,6 +2537,13 @@ export default function InvestmentTrackerPage() {
                 createKind="contact"
               />
             </div>
+            {editItem && (
+              <InboxClientHint
+                trackerId={editItem.id}
+                onMakeClient={(id, name) => setForm({ ...form, client: name, clientId: id, clientContact: "", clientContactId: "" })}
+                onAddClient={form.clientId ? (id) => withToast(() => changeClients(editItem.id, id, true)) : undefined}
+              />
+            )}
             {editItem && form.clientId && (() => {
               const live = items.find(i => i.id === editItem.id) as any;
               const extras: { companyId: string; name: string }[] = live?.extraClients || [];
