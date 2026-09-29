@@ -683,7 +683,7 @@ async function handleContactsCascade(companyId: string, res: Response, opts: { l
         sources: m.sources, bgpThreads: m.bgp?.threadCount || 0,
       }));
       const completion = await callClaude({
-        model: "claude-fable-5",
+        model: "claude-haiku-4-5-20251001",
         max_completion_tokens: 1800,
         messages: [
           {

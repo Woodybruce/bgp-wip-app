@@ -305,7 +305,7 @@ Record the plan with the save_target_plan tool: a 2-4 sentence strategy for thes
       } } },
     } } } };
   const completion = await callClaude({
-    model: "claude-fable-5", thinking: true, effort: "high", max_completion_tokens: 16000, feature: "target-tenants",
+    model: "claude-sonnet-4-6", thinking: true, effort: "medium", max_completion_tokens: 16000, feature: "target-tenants",
     messages: [{ role: "system", content: system }, { role: "user", content: prompt }], tools: [tool],
   });
   const call = (completion.choices?.[0]?.message?.tool_calls || []).find((c: any) => c.function?.name === "save_target_plan");

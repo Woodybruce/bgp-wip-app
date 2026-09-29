@@ -752,7 +752,7 @@ Important:
 // to fable") — the same id ChatBGP uses, through the beta endpoint with
 // Anthropic's server-side fallback to Opus, so a Fable-side blip never
 // breaks a model build. Every Studio call goes through here.
-const STUDIO_MODEL = process.env.MODEL_STUDIO_MODEL || "claude-fable-5";
+const STUDIO_MODEL = process.env.MODEL_STUDIO_MODEL || "claude-sonnet-4-6";
 const STUDIO_FALLBACK_MODEL = "claude-opus-4-8";
 async function studioCreate(anthropic: Anthropic, params: Record<string, any>): Promise<Anthropic.Messages.Message> {
   const model = params.model || STUDIO_MODEL;

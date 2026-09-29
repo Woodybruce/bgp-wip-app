@@ -18,7 +18,12 @@ import { requireEquityOrAdmin } from "./auth";
 
 // USD per million tokens. Matched by substring so dated variants map too.
 const RATE_CARD: Array<{ match: RegExp; in: number; out: number; cacheRead: number; cacheWrite: number }> = [
-  { match: /opus-4/i,   in: 5,  out: 25, cacheRead: 0.50, cacheWrite: 6.25 },
+  // Fable was unpriced here, so the dashboard showed ~$5/month while it ran
+  // most of ChatBGP (Woody, 2026-09-29).
+  { match: /fable-5|mythos-5/i, in: 10, out: 50, cacheRead: 1.00, cacheWrite: 12.50 },
+  { match: /opus-5-5/i, in: 4,  out: 20, cacheRead: 0.40, cacheWrite: 5.00 },
+  { match: /opus-5|opus-4/i, in: 5,  out: 25, cacheRead: 0.50, cacheWrite: 6.25 },
+  { match: /sonnet-5/i, in: 2,  out: 10, cacheRead: 0.20, cacheWrite: 2.50 },
   { match: /sonnet-4/i, in: 3,  out: 15, cacheRead: 0.30, cacheWrite: 3.75 },
   { match: /haiku-4/i,  in: 1,  out: 5,  cacheRead: 0.10, cacheWrite: 1.25 },
 ];
@@ -41,6 +46,12 @@ function ensureTable(): Promise<void> {
         cost_usd NUMERIC(12, 6)
       );
       CREATE INDEX IF NOT EXISTS api_usage_log_at_idx ON api_usage_log (at);
+      -- Fable calls were logged unpriced; price them at $10 / $50 per MTok
+      -- (cache reads $1, writes $12.50) so past months show the real spend.
+      UPDATE api_usage_log SET cost_usd = (
+          input_tokens * 10.0 + output_tokens * 50.0 + cache_read_tokens * 1.0 + cache_write_tokens * 12.5
+        ) / 1000000.0
+       WHERE model LIKE 'claude-fable-5%' AND coalesce(cost_usd, 0) = 0;
     `).then(() => undefined).catch((e) => {
       console.warn("[api-usage] table ensure failed:", e?.message);
       ensured = null; // retry on next call

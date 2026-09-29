@@ -362,7 +362,7 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
     // window), honouring any per-thread /opus or /sonnet preference. callClaude
     // applies the Fable safety-classifier params + Opus fallback automatically.
     const { resolveChatModel } = await import("./chatbgp-model-router");
-    const { model: groupModel } = await resolveChatModel({ threadId }).catch(() => ({ model: "claude-fable-5" }));
+    const { model: groupModel } = await resolveChatModel({ threadId }).catch(() => ({ model: "claude-sonnet-4-6" }));
 
     console.log(`[ai-group] Prepared in ${Date.now() - startTime}ms (${groupTools.length} tools, mention=${mentionsChatBGP}, model=${groupModel})`);
 

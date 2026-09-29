@@ -16,8 +16,11 @@ const SONNET = "claude-sonnet-4-6";
 const OPUS = "claude-opus-4-8";
 const FABLE = "claude-fable-5";
 
+// Sonnet is the default (Woody, 2026-09-29: "spending too much on AI —
+// massively reduce the costs"). Fable is ~3x Sonnet's price; /fable or
+// /opus remain available per thread when a job needs them.
 const DEFAULTS = {
-  default: FABLE,
+  default: SONNET,
   fable: FABLE,
   opus: OPUS,
   sonnet: SONNET,
@@ -75,13 +78,13 @@ export async function setThreadModel(threadId: string | null | undefined, prefer
 // Resolve the model id for this thread. Order of precedence:
 //   1. explicit override (e.g. a slash command on the current message)
 //   2. thread.model_preference from the DB
-//   3. default (Fable 5) — only an explicit /opus or /sonnet drops down
+//   3. default (Sonnet) — only an explicit /fable or /opus goes up
 export async function resolveChatModel(args: {
   threadId?: string | null;
   override?: ModelCommand | null;
 }): Promise<{ model: string; label: ModelCommand }> {
   if (args.override) return { model: DEFAULTS[args.override], label: args.override };
-  if (!args.threadId) return { model: DEFAULTS.default, label: "fable" };
+  if (!args.threadId) return { model: DEFAULTS.default, label: "sonnet" };
   await ensureColumn();
   try {
     const { rows } = await pool.query<{ model_preference: string | null }>(
@@ -89,11 +92,11 @@ export async function resolveChatModel(args: {
       [args.threadId],
     );
     const pref = rows[0]?.model_preference;
-    if (pref === "sonnet") return { model: SONNET, label: "sonnet" };
+    if (pref === "fable") return { model: FABLE, label: "fable" };
     if (pref === "opus") return { model: OPUS, label: "opus" };
-    return { model: FABLE, label: "fable" };
+    return { model: SONNET, label: "sonnet" };
   } catch {
-    return { model: DEFAULTS.default, label: "fable" };
+    return { model: DEFAULTS.default, label: "sonnet" };
   }
 }
 
@@ -102,11 +105,11 @@ export async function resolveChatModel(args: {
 // Claude call and respond with this.
 export function ackMessage(command: ModelCommand): string {
   if (command === "fable") {
-    return "🔀 Switched to Fable for this thread — the most capable model and the default. Type `/opus` or `/sonnet` for cheaper options.";
+    return "🔀 Switched to Fable for this thread — the most capable and most expensive model. Type `/sonnet` to go back to the default.";
   }
   return command === "opus"
-    ? "🔀 Switched to Opus for this thread. Type `/fable` for the most capable default, or `/sonnet` for the fastest, cheapest model."
-    : "🔀 Switched to Sonnet for this thread — fastest + cheapest. Type `/fable` to switch back to the default.";
+    ? "🔀 Switched to Opus for this thread. Type `/sonnet` to go back to the default."
+    : "🔀 Switched to Sonnet for this thread — the default, fastest and cheapest. Type `/opus` or `/fable` for harder jobs.";
 }
 
 export const CHATBGP_DEFAULT_MODEL = FABLE;

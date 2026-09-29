@@ -23,7 +23,7 @@ import fs from "node:fs";
 // The model used for all HTML design. One constant so a bump is one line.
 // Fable 5 — the most design-sensitive output in the product (Why Buy decks,
 // document briefs, designed PDFs) gets the strongest model.
-export const DESIGN_MODEL = "claude-fable-5";
+export const DESIGN_MODEL = "claude-sonnet-4-6";
 
 // House brand cues, injected into every design prompt. Single source of
 // truth — was previously duplicated verbatim in three files.

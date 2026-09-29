@@ -5282,7 +5282,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
       try {
         const { callClaude: callClaudeFable } = await import("./chatbgp");
         const completion = await callClaudeFable({
-          model: "claude-fable-5",
+          model: "claude-haiku-4-5-20251001",
           max_completion_tokens: 4000,
           messages: [
             {
