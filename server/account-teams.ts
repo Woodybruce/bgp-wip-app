@@ -71,10 +71,14 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
       distress_flag, distress_notes, investment_hunter_flag, investment_hunter_notes,
       mandate_asset_class, mandate_lot_size_min, mandate_lot_size_max, mandate_geographies, capital_source, aum
     FROM crm_companies WHERE id = $1`, [companyId]);
+  // Extra clients count as clients — BGP buying for Ares alongside Appley
+  // left the Royal Exchange off Ares's page (Woody, 2026-09-28).
   const tracker = await rows(q, `SELECT id, asset_name, board_type, status, guide_price, niy, property_id, deal_id,
-      client, client_id, vendor, vendor_id, buyer, buyer_id, bid_deadline, completion_date, updated_at
+      client, client_id, vendor, vendor_id, buyer, buyer_id, bid_deadline, completion_date, updated_at,
+      EXISTS (SELECT 1 FROM investment_tracker_clients tc WHERE tc.tracker_id = investment_tracker.id AND tc.company_id = ANY($1::text[])) AS extra_client
     FROM investment_tracker
     WHERE client_id = ANY($1::text[]) OR vendor_id = ANY($1::text[]) OR buyer_id = ANY($1::text[]) OR property_id = ANY($2::text[])
+       OR id IN (SELECT tracker_id FROM investment_tracker_clients WHERE company_id = ANY($1::text[]))
     ORDER BY updated_at DESC NULLS LAST LIMIT 40`, [entityIds, propertyIds]);
   const salesCandidates = await rows(q, `SELECT p.id, p.name, p.status, p.bgp_engagement, p.asset_class
     FROM crm_properties p
@@ -186,7 +190,7 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
   // on BGP's Purchases board with no parties) read as Ardent buying it
   // (Woody, 2026-09-28).
   const side = (t: any) => isUs(t.buyer_id, t.buyer) ? "buying" : isUs(t.vendor_id, t.vendor) ? "selling"
-    : isUs(t.client_id, t.client) ? (t.board_type === "Sales" ? "selling" : "buying")
+    : isUs(t.client_id, t.client) || t.extra_client ? (t.board_type === "Sales" ? "selling" : "buying")
     : "selling";
 
   // ── Agents across their estate: who represents them, who is instructed

@@ -30,6 +30,7 @@ async function computeTopBgpContacts(opts: {
   id: string;
   since90d: Date;
   email?: string | null;
+  domain?: string | null;
 }): Promise<Array<{ email: string; name: string; count90d: number; countAll: number }>> {
   try {
     const column = opts.scope === "contact" ? "contact_id" : "company_id";
@@ -38,6 +39,10 @@ async function computeTopBgpContacts(opts: {
     if (opts.scope === "contact" && opts.email) {
       params.push(opts.email);
       where = `(i.contact_id = $1 OR i.participants ? $3)`;
+    }
+    if (opts.scope === "company" && opts.domain) {
+      params.push(`%@${opts.domain.replace(/[\\%_]/g, (m) => `\\${m}`)}"%`);
+      where = `(i.company_id = $1 OR i.participants::text ILIKE $3)`;
     }
     const { rows } = await pool.query<{ bgp_user: string; count_90d: string; count_all: string; user_name: string | null }>(
       `SELECT
@@ -1135,18 +1140,43 @@ export function registerInteractionRoutes(app: Express) {
       // brands in their slice (the All-correspondence drawer is now client-
       // visible — Woody, 2026-08-04) — never other landlords' companies.
       const { isClientRequestUser, resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
-      if (await isClientRequestUser(req)) {
+      const clientViewer = await isClientRequestUser(req);
+      if (clientViewer) {
         const scope = await resolveCompanyScope(req);
         const allowed = scope === companyId || (await isClientVisibleBrand(companyId, scope));
         if (!allowed) return res.status(403).json({ error: "Not available for client accounts" });
       }
 
-      const interactions = await db
+      const filed = await db
         .select()
         .from(crmInteractions)
         .where(eq(crmInteractions.companyId, companyId))
         .orderBy(desc(crmInteractions.interactionDate))
         .limit(limit);
+
+      // Mail is filed under the saved contact it matched, so a firm whose
+      // people aren't saved yet — Ares copied on Appley's threads — read
+      // "no correspondence" (Woody, 2026-09-28). Staff also get every email
+      // with someone at the company's own domain.
+      let interactions = filed;
+      const [co] = await db.select({ domain: crmCompanies.domain, domainUrl: crmCompanies.domainUrl }).from(crmCompanies).where(eq(crmCompanies.id, companyId));
+      const { normaliseCompanyDomain, isExternalDomain } = await import("./tracker-correspondence");
+      const ownDomain = normaliseCompanyDomain(co?.domain) || normaliseCompanyDomain(co?.domainUrl);
+      const domain = !clientViewer && isExternalDomain(ownDomain) ? ownDomain : null;
+      if (domain) {
+        const { rows } = await pool.query(
+          `SELECT id, contact_id AS "contactId", company_id AS "companyId", type, direction, subject, preview, participants,
+                  microsoft_id AS "microsoftId", 'domain' AS "matchMethod", interaction_date AS "interactionDate", bgp_user AS "bgpUser", created_at AS "createdAt"
+             FROM crm_interactions
+            WHERE participants::text ILIKE $1 AND company_id IS DISTINCT FROM $2
+            ORDER BY interaction_date DESC LIMIT $3`,
+          [`%@${domain.replace(/[\\%_]/g, (m) => `\\${m}`)}"%`, companyId, limit]);
+        const seen = new Set(filed.map((i) => i.microsoftId || i.id));
+        const byDomain = rows.filter((r: any) => { const k = r.microsoftId || r.id; if (seen.has(k)) return false; seen.add(k); return true; });
+        interactions = [...filed, ...byDomain]
+          .sort((a: any, b: any) => new Date(b.interactionDate).getTime() - new Date(a.interactionDate).getTime())
+          .slice(0, limit);
+      }
 
       const now = new Date();
       const ninetyDaysAgo = new Date(now.getTime() - 90 * 86400000);
@@ -1164,7 +1194,7 @@ export function registerInteractionRoutes(app: Express) {
         .orderBy(crmInteractions.interactionDate)
         .limit(1);
 
-      const topBgpContacts = await computeTopBgpContacts({ scope: "company", id: companyId, since90d: ninetyDaysAgo });
+      const topBgpContacts = await computeTopBgpContacts({ scope: "company", id: companyId, since90d: ninetyDaysAgo, domain });
 
       res.json({
         interactions,
