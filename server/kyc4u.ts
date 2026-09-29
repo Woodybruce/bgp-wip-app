@@ -120,6 +120,17 @@ async function companyMatcher() {
   const byKey = new Map<string, Set<string>>();
   const byCh = new Map<string, Set<string>>();
   const put = (m: Map<string, Set<string>>, k: string, id: string) => { if (k.length >= 3) m.set(k, (m.get(k) || new Set()).add(id)); };
+  // Legal entities already tied to a brand / landlord elsewhere in the app:
+  // the entity names on deals and the tenant names on tenancy schedules.
+  const linked = (await pool.query(
+    `SELECT tenant_entity_name AS n, tenant_id AS id FROM crm_deals WHERE tenant_entity_name IS NOT NULL AND tenant_id IS NOT NULL
+     UNION SELECT landlord_entity_name, landlord_id FROM crm_deals WHERE landlord_entity_name IS NOT NULL AND landlord_id IS NOT NULL
+     UNION SELECT vendor_entity_name, vendor_id FROM crm_deals WHERE vendor_entity_name IS NOT NULL AND vendor_id IS NOT NULL
+     UNION SELECT purchaser_entity_name, purchaser_id FROM crm_deals WHERE purchaser_entity_name IS NOT NULL AND purchaser_id IS NOT NULL
+     UNION SELECT tenant_name, tenant_company_id FROM tenancy_schedule_units WHERE tenant_name IS NOT NULL AND tenant_company_id IS NOT NULL`,
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+  const live = new Set(companies.map((c: any) => c.id));
+  for (const l of linked) if (live.has(l.id) && l.n) put(byKey, buyerNameKey(l.n), l.id);
   for (const c of companies) {
     for (const n of [c.name, c.uk_entity_name, c.ch_name, ...(Array.isArray(c.trading_entities) ? c.trading_entities.map((t: any) => t?.name) : [])]) {
       if (n) put(byKey, buyerNameKey(n), c.id);
@@ -216,6 +227,22 @@ export function requestsFromLibrary(list: { id: string; name: string; items: Kyc
       };
     }),
   };
+}
+
+async function rememberEntity(listId: string, itemId: string, companyId: string) {
+  const row = (await pool.query(`SELECT entity_name FROM kyc4u_requests WHERE list_id = $1 AND item_id = $2`, [listId, itemId])).rows[0];
+  if (!row?.entity_name) return;
+  const { chNumber, names } = entityNameCandidates(row.entity_name);
+  const name = names[0];
+  if (!name) return;
+  const { buyerNameKey } = await import("./investment-buyers");
+  const c = (await pool.query(`SELECT name, uk_entity_name, trading_entities FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+  if (!c) return;
+  const entities = Array.isArray(c.trading_entities) ? c.trading_entities : [];
+  const key = buyerNameKey(name);
+  if ([c.name, c.uk_entity_name, ...entities.map((t: any) => t?.name)].some(n => n && buyerNameKey(n) === key)) return;
+  await pool.query(`UPDATE crm_companies SET trading_entities = $2::jsonb WHERE id = $1`,
+    [companyId, JSON.stringify([...entities, { name, ...(chNumber ? { companies_house_number: chNumber } : {}), notes: `From KYC4U ${itemId}` }])]);
 }
 
 // Pull every generic list on the site (the ViewRequestStatus grid reads one
@@ -406,11 +433,35 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
+  // Re-run the matcher over the saved requests (after the matching improves
+  // or new brands / entities land). Hand-set links are kept.
+  app.post("/api/kyc4u/rematch", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const match = await companyMatcher();
+      const rows = (await pool.query(`SELECT list_id, item_id, entity_name, company_id FROM kyc4u_requests WHERE company_id_manual IS NULL`)).rows;
+      let matched = 0, changed = 0;
+      for (const r of rows) {
+        const id = match(r.entity_name);
+        if (id) matched++;
+        if ((id || null) !== (r.company_id || null)) {
+          await pool.query(`UPDATE kyc4u_requests SET company_id = $3 WHERE list_id = $1 AND item_id = $2`, [r.list_id, r.item_id, id]);
+          changed++;
+        }
+      }
+      res.json({ requests: rows.length, matched, changed });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
   // Staff can fix a match by hand; later syncs keep it.
   app.patch("/api/kyc4u/requests/:listId/:itemId", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const companyId = typeof req.body?.companyId === "string" && req.body.companyId ? req.body.companyId : null;
       await pool.query(`UPDATE kyc4u_requests SET company_id = $3, company_id_manual = $3 WHERE list_id = $1 AND item_id = $2`, [req.params.listId, req.params.itemId, companyId]);
+      // KYC4U requests are legal entities of a brand or landlord: file the
+      // entity under the company it was linked to (never a new company), so
+      // the next import matches it by itself.
+      if (companyId) await rememberEntity(String(req.params.listId), String(req.params.itemId), companyId)
+        .catch((e: any) => console.warn("[kyc4u] saving the entity on the company failed:", e?.message));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
