@@ -194,10 +194,11 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
       const conn = await loadConnection();
       const counts = (await pool.query(`SELECT COUNT(*)::int AS n, COUNT(company_id)::int AS matched FROM kyc4u_requests`)).rows[0];
       const lastImport = (await pool.query(`SELECT value FROM system_settings WHERE key = 'kyc4u:last_import'`)).rows[0]?.value || null;
+      const lastDiag = (await pool.query(`SELECT value FROM system_settings WHERE key = 'kyc4u:last_diag'`)).rows[0]?.value || null;
       res.json({
         connected: !!conn, username: conn?.username || null, connectedAt: conn?.connectedAt || null,
         lastSyncAt: conn?.lastSyncAt || null, lastError: conn?.lastError || null,
-        site: `https://${SITE_HOST}${SITE_PATH}`, requests: counts.n, matched: counts.matched, lastImport,
+        site: `https://${SITE_HOST}${SITE_PATH}`, requests: counts.n, matched: counts.matched, lastImport, lastDiag,
       });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -251,7 +252,31 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
   app.post("/api/kyc4u/import", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const lists = Array.isArray(req.body?.lists) ? req.body.lists : [];
-      if (!lists.length) return res.status(400).json({ message: "No lists came through from KYC4U" });
+      if (!lists.length) {
+        // Keep what the bookmark saw so staff (and ChatBGP) can see where the
+        // requests actually live on KYC4U's site.
+        const diag = req.body?.diag && typeof req.body.diag === "object" ? req.body.diag : null;
+        if (diag) {
+          await pool.query(
+            `INSERT INTO system_settings (key, value) VALUES ('kyc4u:last_diag', $1::jsonb)
+             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+            [JSON.stringify({
+              at: new Date().toISOString(), site: req.body?.site || null,
+              webs: (Array.isArray(diag.webs) ? diag.webs : []).slice(0, 20).map((w: any) => ({ url: w?.url, error: w?.error || null, lists: (Array.isArray(w?.lists) ? w.lists : []).slice(0, 100) })),
+              links: (Array.isArray(diag.links) ? diag.links : []).slice(0, 80),
+            })],
+          ).catch((e: any) => console.warn("[kyc4u] saving diag failed:", e?.message));
+        }
+        const seen = (Array.isArray(diag?.webs) ? diag.webs : [])
+          .flatMap((w: any) => (Array.isArray(w?.lists) ? w.lists : []).map((l: any) => `${l.title} (${l.count})`))
+          .slice(0, 8);
+        const blocked = (Array.isArray(diag?.webs) ? diag.webs : []).filter((w: any) => w?.error).length;
+        return res.status(400).json({ message: seen.length
+          ? `Nothing with requests in it on KYC4U's site for your login — saw ${seen.join(", ")}. Saved for ChatBGP to look at.`
+          : blocked
+            ? "KYC4U's site wouldn't list its contents for your login. Saved for ChatBGP to look at."
+            : "No lists came through from KYC4U" });
+      }
       const clean = lists.map((l: any) => ({
         id: String(l.id || l.name || "list"), name: String(l.name || l.id || "KYC4U list").slice(0, 200),
         items: (Array.isArray(l.items) ? l.items : []).map((i: any) => ({ id: String(i.id ?? ""), fields: i.fields && typeof i.fields === "object" ? i.fields : {}, created: i.created || null, modified: i.modified || null, url: i.url || null })),

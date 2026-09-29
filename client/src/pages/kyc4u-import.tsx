@@ -24,7 +24,7 @@ export default function Kyc4uImport() {
       const count = lists.reduce((n: number, l: any) => n + (l.items?.length || 0), 0);
       setState({ phase: "saving", text: `Saving ${count} requests from ${lists.length} list${lists.length === 1 ? "" : "s"}…` });
       try {
-        const res = await apiRequest("POST", "/api/kyc4u/import", { lists });
+        const res = await apiRequest("POST", "/api/kyc4u/import", { lists, site: e.data.site || null, diag: e.data.diag || null });
         const r = await res.json();
         setState({ phase: "done", text: `Saved ${r.items} requests · ${r.matched} matched to CRM companies. You can close this window.` });
       } catch (err: any) {

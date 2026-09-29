@@ -12,15 +12,26 @@ import { useToast } from "@/hooks/use-toast";
 // them to ChatBGP's /kyc4u-import window. Opens the window first — a popup
 // opened after the reads would be blocked.
 function bookmarkletSource(app: string): string {
+  // Reads every visible list and document library with items on this site,
+  // its subsites and any site the page's links point into. When nothing has
+  // items it still reports what it saw, so ChatBGP can say where to look.
   const code = `(function(){var APP=${JSON.stringify(app)};var w=window.open(APP+'/kyc4u-import','chatbgp_kyc4u','width=520,height=560');if(!w){alert('ChatBGP: allow pop-ups for this site, then click again.');return;}
-var c=window._spPageContextInfo||{};var web=c.webAbsoluteUrl||(location.origin+location.pathname.split(/\\/(SitePages|Lists|_layouts|Shared%20Documents)\\//i)[0]);
-var H={Accept:'application/json;odata=nometadata'};
+var c=window._spPageContextInfo||{};var cut=/\\/(SitePages|Lists|_layouts|Forms|Shared%20Documents|Shared Documents)\\//i;var web=c.webAbsoluteUrl||(location.origin+location.pathname.split(cut)[0]);
+var H={Accept:'application/json;odata=nometadata'};var SYS=/^(Site Pages|Site Assets|Style Library|Form Templates|Site Collection Documents|Site Collection Images|Images|Pages)$/i;
 function get(u){return fetch(u,{headers:H,credentials:'include'}).then(function(r){if(!r.ok)throw new Error(r.status+' reading '+u);return r.json();});}
 function all(u,acc){return get(u).then(function(d){acc=acc.concat(d.value||[]);var n=d['odata.nextLink']||d['@odata.nextLink'];return n?all(n,acc):acc;});}
-get(web+"/_api/web/lists?$filter=Hidden eq false and BaseType eq 0&$select=Id,Title,ItemCount,DefaultViewUrl").then(function(d){
-var ls=(d.value||[]).filter(function(l){return l.ItemCount>0;});
-return Promise.all(ls.map(function(l){return all(web+"/_api/web/lists(guid'"+l.Id+"')/items?$top=500",[]).then(function(its){return{id:l.Id,name:l.Title,items:its.map(function(i){var f={};for(var k in i){if(k.indexOf('odata')<0&&(i[k]===null||typeof i[k]!=='object'))f[k]=i[k];}return{id:String(i.Id),fields:f,created:i.Created,modified:i.Modified,url:location.origin+(l.DefaultViewUrl||'')};})};});}));
-}).then(function(lists){var sent=false;window.addEventListener('message',function(e){if(e.origin===APP&&e.data&&e.data.type==='kyc4u-ready'&&!sent){sent=true;w.postMessage({type:'kyc4u-data',lists:lists,site:web},APP);}});
+var webs=[web];function addWeb(u){u=String(u||'').replace(/\\/+$/,'');if(u&&u.indexOf(location.origin)===0&&webs.indexOf(u)<0)webs.push(u);}
+var links=[].slice.call(document.querySelectorAll('a[href]')).map(function(a){return{text:(a.textContent||'').trim().slice(0,80),href:a.href};}).filter(function(l){return l.href.indexOf('javascript:')!==0;}).slice(0,80);
+links.forEach(function(l){if(cut.test(l.href))addWeb(l.href.split(cut)[0]);});
+var diag={webs:[],links:links};
+get(web+"/_api/web/webs?$select=Url").then(function(d){(d.value||[]).forEach(function(x){addWeb(x.Url);});}).catch(function(){}).then(function(){
+return Promise.all(webs.map(function(u){var info={url:u,lists:[]};diag.webs.push(info);
+return get(u+"/_api/web/lists?$filter=Hidden eq false&$select=Id,Title,ItemCount,BaseType,BaseTemplate,DefaultViewUrl").then(function(d){
+var ls=(d.value||[]);info.lists=ls.map(function(l){return{title:l.Title,count:l.ItemCount,type:l.BaseType,template:l.BaseTemplate};});
+ls=ls.filter(function(l){return l.ItemCount>0&&(l.BaseType===0||(l.BaseType===1&&l.BaseTemplate!==119&&!SYS.test(l.Title)));});
+return Promise.all(ls.map(function(l){return all(u+"/_api/web/lists(guid'"+l.Id+"')/items?$top=500",[]).then(function(its){return{id:l.Id,name:l.Title,items:its.map(function(i){var f={};for(var k in i){if(k.indexOf('odata')<0&&(i[k]===null||typeof i[k]!=='object'))f[k]=i[k];}return{id:String(i.Id),fields:f,created:i.Created,modified:i.Modified,url:location.origin+(l.DefaultViewUrl||'')};})};}).catch(function(e){info.error=e.message;return null;});}));
+}).catch(function(e){info.error=e.message;return [];});}));
+}).then(function(per){var lists=[].concat.apply([],per).filter(Boolean);var sent=false;window.addEventListener('message',function(e){if(e.origin===APP&&e.data&&e.data.type==='kyc4u-ready'&&!sent){sent=true;w.postMessage({type:'kyc4u-data',lists:lists,site:web,diag:diag},APP);}});
 }).catch(function(e){alert('ChatBGP could not read KYC4U: '+e.message);});})();`;
   return `javascript:${encodeURIComponent(code.replace(/\n/g, ""))}`;
 }
