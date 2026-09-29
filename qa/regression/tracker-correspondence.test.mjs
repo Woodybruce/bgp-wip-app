@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   assetTerms, subjectMatches, emailDomain, isExternalDomain, normaliseCompanyDomain,
-  rankCorrespondents, suggestClient, copiedAlongside, trackerCorrespondence,
+  rankCorrespondents, suggestClient, copiedAlongside, trackerCorrespondence, otherSideIds,
 } from '../../server/tracker-correspondence.ts';
 
 const NOW = new Date('2026-09-28T12:00:00Z');
@@ -95,44 +95,76 @@ test('the capital partner copied on the client’s own threads surfaces; a mass 
   assert.deepEqual(copiedAlongside(rows, 'appley.net', companies, { excludeCompanyIds: ['ares'] }), [], 'already a client');
 });
 
-test('an asset read end to end: Appley leads Jack’s threads and Ares is flagged beside them', async () => {
+test('on a purchase the whole ownership chain is the other side; on a sale, the buyer', () => {
+  const t = { vendor_id: 'reil', vendor_agent_company_id: 'cbre', buyer_id: 'everhome', property_landlord_id: 'ardent', property_freeholder_id: 'coL',
+    property_senior_lender_id: 'barclays', property_junior_lender_id: null, property_asset_manager_id: 'pave', property_competitor_agent_id: null,
+    other_side_group_ids: ['ardent', 'reil-2'] };
+  assert.deepEqual(otherSideIds(t, false).sort(), ['ardent', 'barclays', 'cbre', 'coL', 'pave', 'reil', 'reil-2']);
+  assert.deepEqual(otherSideIds(t, true), ['everhome']);
+});
+
+// The Royal Exchange as it sits in prod: client Appley, vendor REIL (an
+// Ardent SPV), Pave asset-manages it for Ardent and is on hundreds of its
+// threads, no "REX" alias on the property.
+function rexPool({ clientId = 'appley', client = 'Appley' } = {}) {
   const calls = [];
   const pool = {
     async query(sql, params = []) {
       calls.push({ sql, params });
-      if (/FROM investment_tracker t/.test(sql)) return { rows: [{ id: 't1', asset_name: 'The Royal Exchange', board_type: 'Purchases', client: 'Ardent', client_id: 'ardent-client', vendor_id: 'reil', buyer_id: null, property_name: 'Royal Exchange', property_aliases: ['The Royal Exchange', 'REX'], property_landlord_id: 'ardent', extra_client_ids: [] }] };
+      if (/FROM investment_tracker t/.test(sql)) return { rows: [{ id: 't1', asset_name: 'The Royal Exchange', board_type: 'Purchases', client, client_id: clientId, vendor_id: 'reil', buyer_id: null,
+        vendor_agent_company_id: null, property_name: 'Royal Exchange', property_aliases: ['The Royal Exchange'], property_landlord_id: 'ardent', property_freeholder_id: 'col',
+        property_long_leaseholder_id: null, property_senior_lender_id: 'barclays', property_junior_lender_id: null, property_asset_manager_id: 'pave', property_competitor_agent_id: null,
+        other_side_group_ids: ['ardent'], extra_client_ids: [] }] };
       if (/subject ILIKE ANY/.test(sql)) return { rows: [
-        row('Re: The Royal Exchange - Confidential', ['jack@brucegillinghampollard.com', 'tm@appley.net'], { age: 4 }),
-        row('REX - Inspection', ['jack@brucegillinghampollard.com', 'tm@appley.net'], { type: 'meeting', direction: 'past', age: 4 }),
+        row('Re: The Royal Exchange - Confidential', ['jack@brucegillinghampollard.com', 'tm@appley.net', 'cb@appley.net'], { age: 4 }),
+        row('RE: The Royal Exchange - Confidential', ['jack@brucegillinghampollard.com', 'tm@appley.net', 'cb@appley.net'], { direction: 'inbound', age: 3.9 }),
+        row('FW: The Royal Exchange, EC3 – Request for Offers – Subject to Contract', ['jack@brucegillinghampollard.com', 'tm@appley.net', 'sas@appley.net'], { age: 3 }),
         row('Fwd: Rex Comps', ['jack@brucegillinghampollard.com', 'tm@appley.net'], { age: 0 }),
-        row('Royal Exchange leasing', ['ahilston@theardentcompanies.com'], { age: 2 }),
+        ...Array.from({ length: 12 }, (_, i) => row(`The Royal Exchange - AM update ${i}`, ['peter@brucegillinghampollard.com', 'wood@pave.london', 'gm@theardentcompanies.com'], { age: i })),
+        ...Array.from({ length: 4 }, (_, i) => row(`REX: Monthly Meeting ${i}`, ['wood@pave.london', 'gm@theardentcompanies.com'], { type: 'meeting', direction: 'upcoming', age: -30 * i })),
         row('Prices', ['someone@appley.net'], { age: 2 }),
       ] };
       if (/participants::text ILIKE/.test(sql)) return { rows: [
-        row('1-3 Upper James St', ['tm@appley.net', 'mquek@aresmgmt.com'], { direction: 'inbound', age: 140 }),
-        row('1-3 Upper James St inspection', ['tm@appley.net', 'mquek@aresmgmt.com'], { type: 'meeting', direction: 'past', age: 137 }),
+        row('1-3 Upper James St', ['tm@appley.net', 'sas@appley.net', 'mjenkinson@aresmgmt.com', 'mquek@aresmgmt.com'], { direction: 'inbound', age: 150 }),
+        row('RE: 1-3 Upper James St', ['tm@appley.net', 'schambers@aresmgmt.com', 'mjenkinson@aresmgmt.com'], { direction: 'inbound', age: 146 }),
+        row('1-3 Upper James St inspection', ['tm@appley.net', 'schambers@aresmgmt.com', 'mquek@aresmgmt.com'], { type: 'meeting', direction: 'past', age: 137 }),
+        row('Re: The Royal Exchange - Confidential', ['tm@appley.net', 'cb@appley.net'], { age: 4 }),
       ] };
       if (/FROM crm_companies/.test(sql)) {
         const all = [
           { id: 'appley', name: 'Appley', company_type: 'Landlord', domain: 'appley.net', domain_url: 'https://appley.net', parent_company_id: null },
           { id: 'ares', name: 'Ares Management', company_type: 'Investor', domain: 'aresmgmt.com', domain_url: null, parent_company_id: null },
           { id: 'ardent', name: 'Ardent', company_type: 'Landlord', domain: 'theardentcompanies.com', domain_url: null, parent_company_id: null },
+          { id: 'pave', name: 'Pave', company_type: 'Asset Manager', domain: 'pave.london', domain_url: 'https://pave.london', parent_company_id: null },
         ];
         return { rows: all.filter(c => params[0].includes(c.domain)) };
       }
       return { rows: [] };
     },
   };
+  return { pool, calls };
+}
+
+test('the Royal Exchange: Appley leads Jack’s threads, Pave and Ardent never rank, and Ares surfaces beside Appley', async () => {
+  const { pool, calls } = rexPool();
   const out = await trackerCorrespondence('t1', { pool, now: NOW });
-  assert.deepEqual(out.terms, ['Royal Exchange', 'REX']);
-  assert.deepEqual(calls.find(c => /subject ILIKE ANY/.test(c.sql)).params[0], ['%Royal Exchange%', '%REX%']);
-  assert.equal(out.suggestion.kind, 'mismatch');
-  assert.equal(out.suggestion.company.companyId, 'appley');
-  assert.equal(out.suggestion.company.messages, 3, 'the "Prices" email is not about the asset');
-  assert.ok(!out.correspondents.some(c => c.companyId === 'ardent'), 'the building’s owner is the other side');
+  assert.deepEqual(out.terms, ['Royal Exchange']);
+  assert.deepEqual(calls.find(c => /subject ILIKE ANY/.test(c.sql)).params[0], ['%Royal Exchange%']);
+  assert.deepEqual(out.correspondents.map(c => c.companyId), ['appley'], 'the building’s owner and its asset manager are the other side');
+  assert.equal(out.correspondents[0].messages, 3, '"Rex Comps" and "Prices" are not matched to the asset');
+  assert.equal(out.suggestion, null, 'Appley is already on the row');
   assert.equal(calls.find(c => /participants::text ILIKE/.test(c.sql)).params[0], '%@appley.net"%');
   assert.equal(out.copiedWith, 'Appley');
-  assert.deepEqual(out.copied.map(c => c.companyId), ['ares']);
+  assert.deepEqual(out.copied.map(c => [c.companyId, c.messages]), [['ares', 3]]);
+});
+
+test('once Ares is the client, Appley’s threads read as a partner buying for them — not a different client', async () => {
+  const { pool } = rexPool({ clientId: 'ares', client: 'Ares Management' });
+  const out = await trackerCorrespondence('t1', { pool, now: NOW });
+  assert.equal(out.suggestion.kind, 'partner');
+  assert.equal(out.suggestion.company.companyId, 'appley');
+  assert.equal(out.suggestion.currentClient, 'Ares Management');
+  assert.deepEqual(out.copied, [], 'the client is not listed as copied');
 });
 
 test('an extra client on a Purchases-board asset reads as buying on that company’s Team view', async () => {

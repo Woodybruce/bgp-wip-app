@@ -685,7 +685,9 @@ function SuggestedBuyers({ trackerId, open }: { trackerId: string; open: boolean
 
 // The client BGP is actually emailing on this asset, from the synced
 // mailboxes — the row's client came from imports and hand edits (Woody,
-// 2026-09-28: Jack's Royal Exchange work was all with Appley, Ares behind them).
+// 2026-09-28: "purchase for Appley is Ares" — Jack's Royal Exchange work
+// is with Appley's team, and Ares, copied on Appley's threads, is the buyer).
+// Suggestions only: staff pick, the row changes on Save.
 function InboxClientHint({ trackerId, onMakeClient, onAddClient }: {
   trackerId: string;
   onMakeClient: (id: string, name: string) => void;
@@ -712,10 +714,11 @@ function InboxClientHint({ trackerId, onMakeClient, onAddClient }: {
           <span className="min-w-0 flex-1">
             From the inbox: {who(s.company.bgpUsers)}'s emails on this asset are with <span className="font-medium">{s.company.name}</span>
             {" "}<span className="text-muted-foreground tabular-nums">({s.company.messages} emails and meetings, last {day(s.company.lastDate)})</span>
-            {s.kind === "mismatch" && s.currentClient ? <> — not {s.currentClient}.</> : <> — no client set.</>}
+            {s.kind === "partner" ? <>, who copy {s.currentClient || "the client"} on their own threads — buying for them?</>
+              : s.kind === "mismatch" && s.currentClient ? <> — not {s.currentClient}.</> : <> — no client set.</>}
           </span>
-          <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => onMakeClient(s.company.companyId, s.company.name)} data-testid="button-inbox-make-client">Make client</Button>
-          {onAddClient && s.kind === "mismatch" && <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onAddClient(s.company.companyId)} data-testid="button-inbox-add-client">Add as client</Button>}
+          {s.kind !== "partner" && <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => onMakeClient(s.company.companyId, s.company.name)} data-testid="button-inbox-make-client">Make client</Button>}
+          {onAddClient && s.kind !== "no_client" && <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onAddClient(s.company.companyId)} data-testid="button-inbox-add-client">Add as client</Button>}
         </div>
       )}
       {copied.map((c: any) => (
@@ -723,8 +726,9 @@ function InboxClientHint({ trackerId, onMakeClient, onAddClient }: {
           <span className="min-w-0 flex-1">
             <span className="font-medium">{c.name}</span> is copied on <span className="tabular-nums">{c.messages}</span> of {data.copiedWith}'s emails
             {c.subjects?.length ? <span className="text-muted-foreground"> ({c.subjects.slice(0, 2).join("; ")})</span> : null}
-            {c.companyType === "Investor" ? " — their capital partner?" : "."}
+            {c.companyType === "Investor" ? " — their capital partner, and the real client?" : "."}
           </span>
+          <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => onMakeClient(c.companyId, c.name)} data-testid={`button-inbox-make-copied-${c.companyId}`}>Make client</Button>
           {onAddClient && <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onAddClient(c.companyId)} data-testid={`button-inbox-add-copied-${c.companyId}`}>Add as client</Button>}
         </div>
       ))}

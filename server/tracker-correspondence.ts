@@ -2,15 +2,16 @@
 // synced mailboxes (Woody, 2026-09-28: "Purchase for Appley is Ares — Jack is
 // doing a load of work for them … work out why the app hasn't"). The
 // tracker's client came from a spreadsheet import and hand edits; nothing
-// read the correspondence, so the row sat on the vendor, then a stale name,
-// while Jack was sending models, data-room access and inspections to Appley —
-// and Ares, Appley's capital partner copied on their threads, showed nothing.
+// read the correspondence. On the Royal Exchange Jack's models, data-room
+// access and inspections all go to Appley's team, and Ares — the capital
+// Appley buys for, copied on Appley's own threads — showed nothing at all.
 //
 // The organisation BGP writes to and meets on an asset outranks a name typed
 // into a row: this ranks the firms on the asset's recent threads (by their
 // email domain → CRM company), suggests the client when the row has none or
 // names someone else, and lists the firms copied alongside that client on
-// its own threads (a capital partner behind an operating partner).
+// its own threads (a capital partner behind an operating partner). It only
+// suggests — staff confirm from the edit dialog.
 import type { Querier } from "./account-resolver";
 
 export const GENERIC_EMAIL_DOMAINS = new Set([
@@ -147,7 +148,10 @@ export function rankCorrespondents(
 }
 
 export interface ClientSuggestion {
-  kind: "no_client" | "mismatch";
+  // partner: the work is with a firm that copies a current client on its
+  // own threads — an operating partner buying for that client, not a
+  // different client.
+  kind: "no_client" | "mismatch" | "partner";
   company: Correspondent;
   currentClient: string | null;
 }
@@ -228,11 +232,33 @@ async function companiesForDomains(q: Querier, domains: string[]): Promise<Map<s
   return map;
 }
 
+// The firms on the other side of the table. On a purchase that is the
+// vendor, its agent and everyone in the building's ownership chain — owner,
+// freeholder, lenders, and the owner's asset manager (Pave runs the Royal
+// Exchange for Ardent and is on hundreds of its threads) — plus the
+// vendor's and owner's group companies. On a sale, the buyer.
+export function otherSideIds(t: Record<string, any>, sale: boolean): string[] {
+  const ids = sale
+    ? [t.buyer_id]
+    : [t.vendor_id, t.vendor_agent_company_id, t.property_landlord_id, t.property_freeholder_id, t.property_long_leaseholder_id,
+       t.property_senior_lender_id, t.property_junior_lender_id, t.property_asset_manager_id, t.property_competitor_agent_id,
+       ...(t.other_side_group_ids || [])];
+  return [...new Set(ids.filter(Boolean).map(String))];
+}
+
 export async function trackerCorrespondence(trackerId: string, deps: { pool?: Querier; now?: Date } = {}) {
   const q = deps.pool ?? (await import("./db")).pool;
   const { rows: [t] } = await q.query(
     `SELECT t.id, t.asset_name, t.board_type, t.client, t.client_id, t.vendor_id, t.buyer_id,
+            (SELECT c.company_id FROM crm_contacts c WHERE c.id = t.vendor_agent_id) AS vendor_agent_company_id,
             p.name AS property_name, p.aliases AS property_aliases, p.landlord_id AS property_landlord_id,
+            p.freeholder_id AS property_freeholder_id, p.long_leaseholder_id AS property_long_leaseholder_id,
+            p.senior_lender_id AS property_senior_lender_id, p.junior_lender_id AS property_junior_lender_id,
+            p.asset_manager_id AS property_asset_manager_id, p.competitor_agent_id AS property_competitor_agent_id,
+            COALESCE((SELECT array_agg(g.id) FROM crm_companies g, crm_companies o
+                       WHERE o.id IN (t.vendor_id, p.landlord_id, p.freeholder_id)
+                         AND (g.id = o.parent_company_id OR g.parent_company_id = o.id
+                              OR (o.parent_company_id IS NOT NULL AND g.parent_company_id = o.parent_company_id))), '{}') AS other_side_group_ids,
             COALESCE((SELECT array_agg(tc.company_id) FROM investment_tracker_clients tc WHERE tc.tracker_id = t.id), '{}') AS extra_client_ids
        FROM investment_tracker t LEFT JOIN crm_properties p ON p.id = t.property_id
       WHERE t.id = $1`, [trackerId]);
@@ -252,13 +278,11 @@ export async function trackerCorrespondence(trackerId: string, deps: { pool?: Qu
   const domains = [...new Set(onAsset.flatMap(r => participantsOf(r).map(emailDomain).filter(isExternalDomain)))];
   const companies = await companiesForDomains(q, domains);
 
-  // On a purchase the other side is the vendor and the building's owner; on
-  // a sale, the buyer. Neither is who BGP acts for.
   const sale = (t.board_type || "Purchases") === "Sales";
-  const otherSide = (sale ? [t.buyer_id] : [t.vendor_id, t.property_landlord_id]).filter(Boolean);
+  const otherSide = otherSideIds(t, sale);
   const ranked = rankCorrespondents(onAsset, companies, { excludeCompanyIds: otherSide, now: deps.now });
-  const clientIds = [t.client_id, ...(t.extra_client_ids || [])].filter(Boolean);
-  const suggestion = suggestClient(ranked, clientIds, t.client || null, { now: deps.now });
+  const clientIds: string[] = [t.client_id, ...(t.extra_client_ids || [])].filter(Boolean);
+  let suggestion = suggestClient(ranked, clientIds, t.client || null, { now: deps.now });
 
   // The firm the work is with — the suggested client, else the current one.
   const anchor = suggestion?.company || ranked.find(c => clientIds.includes(c.companyId)) || null;
@@ -272,7 +296,11 @@ export async function trackerCorrespondence(trackerId: string, deps: { pool?: Qu
       [`%@${likeEscape(anchor.domain)}"%`]);
     const anchorDomains = [...new Set((anchorRows as CorrespondenceRow[]).flatMap(r => participantsOf(r).map(emailDomain).filter(isExternalDomain)))];
     const anchorCompanies = await companiesForDomains(q, anchorDomains);
-    copied = copiedAlongside(anchorRows as CorrespondenceRow[], anchor.domain, anchorCompanies, { excludeCompanyIds: [...otherSide, ...clientIds] });
+    const alongside = copiedAlongside(anchorRows as CorrespondenceRow[], anchor.domain, anchorCompanies, { excludeCompanyIds: otherSide });
+    // The row names Ares and the work is with Appley, who copy Ares on
+    // their own threads: Appley is buying for the client, not replacing it.
+    if (suggestion?.kind === "mismatch" && alongside.some(c => clientIds.includes(c.companyId))) suggestion = { ...suggestion, kind: "partner" };
+    copied = alongside.filter(c => !clientIds.includes(c.companyId));
   }
   return { ...empty, correspondents: ranked.slice(0, 6), suggestion, copied: copied.slice(0, 4), copiedWith: anchor?.name || null };
 }
