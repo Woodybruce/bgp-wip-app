@@ -66,6 +66,33 @@ function applyFableParams(claudeParams: any): void {
   claudeParams.fallbacks = [{ model: CHATBGP_OPUS_MODEL }];
 }
 
+// Sonnet 5.x (the ChatBGP default since 2026-09-29, for cost): the API's
+// default refusal fallback, and if the request itself is rejected (400/404 —
+// a parameter this model doesn't take) one retry on Sonnet 4.6 so chat never
+// breaks on the switch.
+const SONNET_SAFE_MODEL = "claude-sonnet-4-6";
+function isSonnet5Model(model: string): boolean {
+  return /^claude-sonnet-5/.test(model);
+}
+function usesBetaEndpoint(model: string): boolean {
+  return isFableModel(model) || isSonnet5Model(model);
+}
+function applyModelParams(claudeParams: any): void {
+  if (isFableModel(claudeParams.model)) applyFableParams(claudeParams);
+  else if (isSonnet5Model(claudeParams.model)) {
+    claudeParams.betas = ["server-side-fallback-2026-07-01"];
+    claudeParams.fallbacks = "default";
+  }
+}
+function downgradeFromSonnet5(claudeParams: any, err: any): boolean {
+  if (!isSonnet5Model(claudeParams.model) || ![400, 404].includes(err?.status)) return false;
+  console.warn(`[ChatBGP] ${claudeParams.model} rejected the request (${err?.status}: ${String(err?.message || "").slice(0, 200)}) — retrying on ${SONNET_SAFE_MODEL}`);
+  claudeParams.model = SONNET_SAFE_MODEL;
+  delete claudeParams.betas;
+  delete claudeParams.fallbacks;
+  return true;
+}
+
 const REFUSAL_REPLY = "I can't help with that particular request.";
 
 // PowerPoint/Excel reject XML-1.0-invalid control characters (common in text
@@ -994,10 +1021,11 @@ export async function callClaude(params: any): Promise<any> {
     claudeParams.tool_choice = { type: "auto" };
   }
 
-  if (isFableModel(model)) applyFableParams(claudeParams);
+  applyModelParams(claudeParams);
 
   const MAX_RETRIES = 3;
   const RETRY_DELAYS = [2000, 4000, 8000];
+  let downgraded = false;
 
   let response: any;
   let lastErr: any;
@@ -1005,8 +1033,8 @@ export async function callClaude(params: any): Promise<any> {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       const client = attempt === 0 ? anthropic : getAnthropicClient(false);
-      if (attempt > 0) claudeParams.model = model;
-      response = isFableModel(model)
+      if (attempt > 0 && !downgraded) claudeParams.model = model;
+      response = usesBetaEndpoint(claudeParams.model)
         ? await client.beta.messages.create(claudeParams)
         : await client.messages.create(claudeParams);
       // Spend metering — exact token usage from the response, priced
@@ -1024,6 +1052,7 @@ export async function callClaude(params: any): Promise<any> {
       if (attempt === 0) {
         console.error("Claude API error:", errStatus, err?.message, errMsg);
       }
+      if (!downgraded && downgradeFromSonnet5(claudeParams, err)) { downgraded = true; continue; }
 
       const isOverloaded = errStatus === 529 || errStatus === 429;
 
@@ -1123,24 +1152,25 @@ export async function callClaudeStreaming(
     claudeParams.tool_choice = { type: "auto" };
   }
 
-  if (isFableModel(model)) applyFableParams(claudeParams);
+  applyModelParams(claudeParams);
 
   const MAX_RETRIES = 2;
   const RETRY_DELAYS = [2000, 4000];
+  let downgraded = false;
 
   let lastErr: any;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       const client = attempt === 0 ? anthropic : getAnthropicClient(false);
-      if (attempt > 0) claudeParams.model = model;
+      if (attempt > 0 && !downgraded) claudeParams.model = model;
 
       let fullText = "";
       const toolCalls: any[] = [];
 
       // any: MessageStream and BetaMessageStream share the on/finalMessage
       // surface but don't unify as a callable type
-      const stream: any = isFableModel(model)
+      const stream: any = usesBetaEndpoint(claudeParams.model)
         ? client.beta.messages.stream(claudeParams)
         : client.messages.stream(claudeParams);
 
@@ -1193,6 +1223,7 @@ export async function callClaudeStreaming(
 
       // A user-initiated abort is final — never retry or fall back.
       if (shouldAbort?.()) throw err;
+      if (!downgraded && downgradeFromSonnet5(claudeParams, err)) { downgraded = true; continue; }
 
       if (attempt === 0 && useDirectApi) {
         console.log("[ChatBGP] Streaming: Direct API key failed (status " + errStatus + "), falling back");

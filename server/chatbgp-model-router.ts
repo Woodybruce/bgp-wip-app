@@ -12,7 +12,7 @@
 
 import { pool } from "./db";
 
-const SONNET = "claude-sonnet-4-6";
+const SONNET = "claude-sonnet-5-5";
 const OPUS = "claude-opus-4-8";
 const FABLE = "claude-fable-5";
 
