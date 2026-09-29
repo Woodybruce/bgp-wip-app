@@ -133,6 +133,47 @@ export async function ingestKyc4uLists(lists: Array<{ id: string; name: string; 
   return { lists: lists.length, items, matched };
 }
 
+// KYC4U keeps each request as a folder in its Documents library —
+// "REQ113355  Iris Ave Ltd" with numbered sections inside ("1.0 HOTs",
+// "2.0 KYC Entity", "5.0 UBOs"). Files come through one row each, so fold
+// them into one request per REQ folder: the entity name, which sections have
+// documents, and how many.
+const REQ_FOLDER = /^(REQ\d+)[\s_-]*(.*)$/i;
+export function requestsFromLibrary(list: { id: string; name: string; items: Kyc4uItem[] }, origin = ""): { id: string; name: string; items: Kyc4uItem[] } | null {
+  const groups = new Map<string, { ref: string; entity: string; path: string; files: number; sections: Map<string, number>; created: string | null; modified: string | null }>();
+  for (const item of list.items || []) {
+    const ref = String(item.fields?.FileRef || "");
+    if (!ref) continue;
+    const parts = ref.split("/");
+    const at = parts.findIndex(p => REQ_FOLDER.test(p));
+    if (at < 0) continue;
+    const [, reqRef, rest] = parts[at].match(REQ_FOLDER)!;
+    const key = reqRef.toUpperCase();
+    const g = groups.get(key) || { ref: key, entity: rest.replace(/\s+/g, " ").trim(), path: parts.slice(0, at + 1).join("/"), files: 0, sections: new Map<string, number>(), created: null, modified: null };
+    const isFile = Number(item.fields?.FSObjType ?? 0) === 0 && at < parts.length - 1;
+    if (isFile) {
+      g.files++;
+      const section = at < parts.length - 2 ? parts[at + 1].replace(/^\d+(\.\d+)*\s*/, "").trim() : "";
+      if (section) g.sections.set(section, (g.sections.get(section) || 0) + 1);
+    }
+    if (item.created && (!g.created || item.created < g.created)) g.created = item.created;
+    if (item.modified && (!g.modified || item.modified > g.modified)) g.modified = item.modified;
+    groups.set(key, g);
+  }
+  if (!groups.size) return null;
+  return {
+    id: `${list.id}:requests`, name: `${list.name} · requests`,
+    items: [...groups.values()].map(g => {
+      const sections = [...g.sections.entries()].map(([name, n]) => `${name} ${n}`);
+      return {
+        id: g.ref,
+        fields: { Reference: g.ref, Entity: g.entity || null, Title: `${g.ref} ${g.entity}`.trim(), Status: `${g.files} file${g.files === 1 ? "" : "s"}${sections.length ? ` · ${[...g.sections.keys()].join(", ")}` : ""}`, Sections: sections.join(" · ") || null, Files: g.files },
+        created: g.created, modified: g.modified, url: origin && g.path ? origin + encodeURI(g.path) : null,
+      };
+    }),
+  };
+}
+
 // Pull every generic list on the site (the ViewRequestStatus grid reads one
 // of them; system lists are skipped), upsert the items, and match each to a
 // CRM company by its client / entity name when exactly one fits.
@@ -252,11 +293,10 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
   app.post("/api/kyc4u/import", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const lists = Array.isArray(req.body?.lists) ? req.body.lists : [];
-      if (!lists.length) {
-        // Keep what the bookmark saw so staff (and ChatBGP) can see where the
-        // requests actually live on KYC4U's site.
-        const diag = req.body?.diag && typeof req.body.diag === "object" ? req.body.diag : null;
-        if (diag) {
+      // Keep what the bookmark saw so staff (and ChatBGP) can see where the
+      // requests actually live on KYC4U's site.
+      const diag = req.body?.diag && typeof req.body.diag === "object" ? req.body.diag : null;
+      if (diag) {
           await pool.query(
             `INSERT INTO system_settings (key, value) VALUES ('kyc4u:last_diag', $1::jsonb)
              ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
@@ -266,7 +306,8 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
               links: (Array.isArray(diag.links) ? diag.links : []).slice(0, 80),
             })],
           ).catch((e: any) => console.warn("[kyc4u] saving diag failed:", e?.message));
-        }
+      }
+      if (!lists.length) {
         const seen = (Array.isArray(diag?.webs) ? diag.webs : [])
           .flatMap((w: any) => (Array.isArray(w?.lists) ? w.lists : []).map((l: any) => `${l.title} (${l.count})`))
           .slice(0, 8);
@@ -277,10 +318,19 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
             ? "KYC4U's site wouldn't list its contents for your login. Saved for ChatBGP to look at."
             : "No lists came through from KYC4U" });
       }
+      const origin = (() => { try { return new URL(String(req.body?.site || "")).origin; } catch { return ""; } })();
       const clean = lists.map((l: any) => ({
         id: String(l.id || l.name || "list"), name: String(l.name || l.id || "KYC4U list").slice(0, 200),
         items: (Array.isArray(l.items) ? l.items : []).map((i: any) => ({ id: String(i.id ?? ""), fields: i.fields && typeof i.fields === "object" ? i.fields : {}, created: i.created || null, modified: i.modified || null, url: i.url || null })),
-      }));
+      })).flatMap((l: any) => {
+        // A document library is KYC4U's request folders — one row per request,
+        // replacing any file-by-file rows an earlier import left behind.
+        if (!l.items.some((i: any) => i.fields?.FileRef)) return l.items.length && !l.items.some((i: any) => "FileSystemObjectType" in (i.fields || {})) ? [l] : [];
+        const folded = requestsFromLibrary(l, origin);
+        return folded ? [{ ...folded, replaces: l.id }] : [];
+      });
+      for (const l of clean) if ((l as any).replaces) await pool.query(`DELETE FROM kyc4u_requests WHERE list_id = $1 AND company_id_manual IS NULL`, [(l as any).replaces]);
+      if (!clean.length) return res.status(400).json({ message: "KYC4U's files came through without their folder names — drag the new Send to ChatBGP bookmark from the KYC4U panel and try again." });
       res.json(await ingestKyc4uLists(clean, "bookmark", req.session.userId || (req as any).tokenUserId || null));
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
