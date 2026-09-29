@@ -547,19 +547,25 @@ async function runInteractionSync(daysBack = 30, daysForward = 60, opts: Interac
     if (opts.skipMailboxes?.has(userEmail.toLowerCase())) continue;
     let emailCount = 0;
     let calCount = 0;
+    let failed = false;
+    // App tokens last about an hour; a long run (the 150-day backfill) must
+    // take a fresh one per mailbox or every mailbox after the first hour 401s.
+    const mailboxToken = await getAppToken().catch(() => token);
+    autoContacts.token = mailboxToken;
     try {
       emailCount = await syncEmailsForUser(
-        token, userEmail, contacts, contactsByEmail, companiesRaw, daysBack, existingMsIds,
+        mailboxToken, userEmail, contacts, contactsByEmail, companiesRaw, daysBack, existingMsIds,
         { maxPages: opts.maxEmailPages, pageDelayMs: opts.pageDelayMs, captureSignals: opts.captureSignals, autoContacts }
       );
       totalEmails += emailCount;
     } catch (e: any) {
+      failed = true;
       errors.push(`${userEmail}: ${e.message}`);
     }
     if (!opts.emailsOnly) {
       try {
         calCount = await syncCalendarForUser(
-          token, userEmail, contactsByEmail, contacts, companiesRaw, daysBack, daysForward, existingMsIds
+          mailboxToken, userEmail, contactsByEmail, contacts, companiesRaw, daysBack, daysForward, existingMsIds
         );
         totalCalendar += calCount;
       } catch (e: any) {
@@ -568,7 +574,7 @@ async function runInteractionSync(daysBack = 30, daysForward = 60, opts: Interac
     }
     perUserStats.push({ email: userEmail, emails: emailCount, calendar: calCount });
     if (emailCount > 0 || calCount > 0) trackEmailActivity(userEmail, emailCount, calCount);
-    if (opts.onMailboxDone) await opts.onMailboxDone(userEmail).catch(() => {});
+    if (opts.onMailboxDone && !failed) await opts.onMailboxDone(userEmail).catch(() => {});
     if (opts.mailboxDelayMs) await new Promise(r => setTimeout(r, opts.mailboxDelayMs));
   }
 
@@ -592,6 +598,7 @@ const EMAIL_CONTACTS_BACKFILL_KEY = "email_auto_contacts_backfill_v1";
 const EMAIL_CONTACTS_BACKFILL_DAYS = 150;
 // Mailboxes the backfill has finished, so a restart mid-run (any deploy)
 // carries on from the next mailbox instead of starting again.
+let backfillRetries = 0;
 const EMAIL_CONTACTS_PROGRESS_KEY = `${EMAIL_CONTACTS_BACKFILL_KEY}:progress`;
 async function backfillProgress(daysBack: number): Promise<string[]> {
   const row = (await pool.query(`SELECT value FROM system_settings WHERE key = $1`, [EMAIL_CONTACTS_PROGRESS_KEY])).rows[0]?.value;
@@ -624,6 +631,14 @@ async function runEmailContactsBackfill(daysBack = EMAIL_CONTACTS_BACKFILL_DAYS)
       autoContactCap: 3000,
     });
     backfillState.lastResult = result;
+    // A mailbox that failed stays off the done list, so the next run picks
+    // it up; the run only counts as complete once every mailbox went through.
+    if (result.errors?.length) {
+      backfillRetries++;
+      backfillState.error = `${result.errors.length} mailbox(es) failed${backfillRetries <= 5 ? " — will retry" : ""}`;
+      if (backfillRetries <= 5) scheduleEmailContactsBackfill(10 * 60 * 1000);
+      return result;
+    }
     await pool.query(
       `INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2::jsonb, now())
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
@@ -648,8 +663,9 @@ function scheduleEmailContactsBackfill(delayMs = 15 * 60 * 1000) {
   // Well after boot so it doesn't compete with deploy start-up work.
   setTimeout(async () => {
     try {
-      const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [EMAIL_CONTACTS_BACKFILL_KEY]);
-      if (done.rows.length) return;
+      const done = await pool.query(`SELECT value FROM system_settings WHERE key = $1`, [EMAIL_CONTACTS_BACKFILL_KEY]);
+      // A run that ended with failed mailboxes isn't finished.
+      if (done.rows.length && !(Number(done.rows[0].value?.errors) > 0)) return;
       console.log(`[interactions] Email contacts backfill starting (one-time, ${EMAIL_CONTACTS_BACKFILL_DAYS} days)`);
       const r = await runEmailContactsBackfill();
       if (r?.alreadyRunning) { scheduleEmailContactsBackfill(delayMs); return; }
