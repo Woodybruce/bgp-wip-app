@@ -87,12 +87,54 @@ const pick = (fields: Record<string, any>, patterns: RegExp[]) => {
 
 type Kyc4uItem = { id: string; fields: Record<string, any>; created?: string | null; modified?: string | null; url?: string | null };
 
+// KYC4U names requests by the legal entity ("SPORTSWIFT LTD _Card Factory_",
+// "ENMEI CANARY WHARF LIMITED Company number 17152601") while the CRM holds
+// the brand — so try the Companies House number, then each name the entity
+// goes by, against every name a company is known by (brand, UK entity,
+// trading entities, Companies House name). Only a single fit counts.
+export function entityNameCandidates(entity: string): { chNumber: string | null; names: string[] } {
+  const raw = String(entity || "").replace(/\s+/g, " ").trim();
+  const chNumber = raw.match(/company (?:number|no\.?)\s*:?\s*([A-Z]{0,2}\d{6,8})/i)?.[1]?.toUpperCase() || null;
+  const base = raw.replace(/company (?:number|no\.?)\s*:?\s*[A-Z]{0,2}\d{6,8}/i, "").trim();
+  const names = new Set<string>();
+  const add = (v: string) => { const t = v.replace(/_/g, " ").replace(/\s+/g, " ").trim(); if (t) names.add(t); };
+  add(base);
+  add(base.replace(/_[^_]*_/g, " "));                              // "SPORTSWIFT LTD _Card Factory_" → "SPORTSWIFT LTD"
+  for (const m of base.matchAll(/_([^_]+)_/g)) add(m[1]);            // → "Card Factory"
+  const ta = base.match(/\bt\/a\s+(.+)$/i); if (ta) add(ta[1]);
+  // Drop trailing words ("Waterstones Booksellers Limited" → "Waterstones"),
+  // down to two words, or one long (8+ letter) word.
+  const words = base.replace(/_[^_]*_/g, " ").replace(/\b(ltd|limited|plc|llp)\b\.?/gi, " ").split(/\s+/).filter(Boolean);
+  for (let n = words.length - 1; n >= 1; n--) {
+    if (n === 1 && words[0].length < 8) break;
+    add(words.slice(0, n).join(" "));
+  }
+  return { chNumber: chNumber ? chNumber.padStart(8, "0") : null, names: [...names] };
+}
+
 async function companyMatcher() {
   const { buyerNameKey } = await import("./investment-buyers");
-  const companies = (await pool.query(`SELECT id, name FROM crm_companies WHERE merged_into_id IS NULL AND name IS NOT NULL`)).rows;
-  const byKey = new Map<string, string[]>();
-  for (const c of companies) { const k = buyerNameKey(c.name); if (k.length >= 3) byKey.set(k, [...(byKey.get(k) || []), c.id]); }
-  return (entity: string | null) => { const ids = entity ? byKey.get(buyerNameKey(entity)) : undefined; return ids?.length === 1 ? ids[0] : null; };
+  const companies = (await pool.query(
+    `SELECT id, name, uk_entity_name, trading_entities, companies_house_number, companies_house_data->>'company_name' AS ch_name
+       FROM crm_companies WHERE merged_into_id IS NULL AND name IS NOT NULL`)).rows;
+  const byKey = new Map<string, Set<string>>();
+  const byCh = new Map<string, Set<string>>();
+  const put = (m: Map<string, Set<string>>, k: string, id: string) => { if (k.length >= 3) m.set(k, (m.get(k) || new Set()).add(id)); };
+  for (const c of companies) {
+    for (const n of [c.name, c.uk_entity_name, c.ch_name, ...(Array.isArray(c.trading_entities) ? c.trading_entities.map((t: any) => t?.name) : [])]) {
+      if (n) put(byKey, buyerNameKey(n), c.id);
+    }
+    for (const n of [c.companies_house_number, ...(Array.isArray(c.trading_entities) ? c.trading_entities.map((t: any) => t?.companies_house_number) : [])]) {
+      if (n) put(byCh, String(n).trim().toUpperCase().padStart(8, "0"), c.id);
+    }
+  }
+  return (entity: string | null) => {
+    if (!entity) return null;
+    const { chNumber, names } = entityNameCandidates(entity);
+    if (chNumber) { const ids = byCh.get(chNumber); if (ids?.size === 1) return [...ids][0]; }
+    for (const n of names) { const ids = byKey.get(buyerNameKey(n)); if (ids?.size === 1) return [...ids][0]; }
+    return null;
+  };
 }
 
 async function upsertItem(match: (e: string | null) => string | null, list: { id: string; name: string }, item: Kyc4uItem): Promise<boolean> {
@@ -153,7 +195,9 @@ export function requestsFromLibrary(list: { id: string; name: string; items: Kyc
     const isFile = Number(item.fields?.FSObjType ?? 0) === 0 && at < parts.length - 1;
     if (isFile) {
       g.files++;
-      const section = at < parts.length - 2 ? parts[at + 1].replace(/^\d+(\.\d+)*\s*/, "").trim() : "";
+      // Some requests nest a folder named just the REQ number — look past it.
+      const inner = parts.slice(at + 1, -1).find(p => !REQ_FOLDER.test(p)) || "";
+      const section = inner.replace(/^\d+(\.\d+)*\s*/, "").trim();
       if (section) g.sections.set(section, (g.sections.get(section) || 0) + 1);
     }
     if (item.created && (!g.created || item.created < g.created)) g.created = item.created;

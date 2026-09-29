@@ -33,3 +33,25 @@ test('KYC4U request folders fold into one request each', () => {
 test('a library with no request folders gives nothing', () => {
   assert.equal(requestsFromLibrary({ id: 'lib', name: 'Documents', items: [f(1, 'Templates/x.docx')] }), null);
 });
+
+test('a nested REQ-number folder is not read as a section', () => {
+  const out = requestsFromLibrary({ id: 'lib', name: 'Documents', items: [
+    f(1, 'REQ113355  Iris Ave Ltd/REQ113355/1.0 HOTs/a.pdf'),
+    f(2, 'REQ113355  Iris Ave Ltd/REQ113355/5.0 UBOs/b.pdf'),
+  ] });
+  assert.equal(out.items[0].fields.Status, '2 files · HOTs, UBOs');
+});
+
+test('KYC4U entity names give the names a CRM company goes by', async () => {
+  const { entityNameCandidates } = await import('../../server/kyc4u.ts');
+  const enmei = entityNameCandidates('ENMEI CANARY WHARF LIMITED Company number 17152601');
+  assert.equal(enmei.chNumber, '17152601');
+  assert.ok(enmei.names.includes('ENMEI CANARY WHARF LIMITED'));
+  assert.ok(enmei.names.includes('ENMEI CANARY'));
+  const cf = entityNameCandidates('SPORTSWIFT LTD _Card Factory_');
+  assert.ok(cf.names.includes('SPORTSWIFT LTD'));
+  assert.ok(cf.names.includes('Card Factory'));
+  assert.ok(entityNameCandidates('Waterstones Booksellers Limited').names.includes('Waterstones'));
+  assert.ok(!entityNameCandidates('Amelia Vero Ltd').names.includes('Amelia'));
+  assert.ok(entityNameCandidates('Etta Health _London_ Limited').names.includes('Etta Health London Limited'));
+});
