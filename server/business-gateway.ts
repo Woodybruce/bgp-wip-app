@@ -258,7 +258,7 @@ export async function officialCopyByTitle(opts: OfficialCopyOpts): Promise<{ ok:
 }
 
 // Storage key for a title's Official Copy PDF in file_storage.
-function ocStorageKey(titleUpper: string): string {
+export function ocStorageKey(titleUpper: string): string {
   return `lr-bg/${titleUpper}-OC1-Register.pdf`;
 }
 
