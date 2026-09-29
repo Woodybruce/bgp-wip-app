@@ -508,6 +508,8 @@ interface InteractionSyncOptions {
   mailboxDelayMs?: number;
   captureSignals?: boolean;
   autoContactCap?: number;
+  skipMailboxes?: Set<string>;
+  onMailboxDone?: (email: string) => Promise<void>;
 }
 
 async function runInteractionSync(daysBack = 30, daysForward = 60, opts: InteractionSyncOptions = {}) {
@@ -542,6 +544,7 @@ async function runInteractionSync(daysBack = 30, daysForward = 60, opts: Interac
   const perUserStats: { email: string; emails: number; calendar: number }[] = [];
 
   for (const userEmail of bgpEmails) {
+    if (opts.skipMailboxes?.has(userEmail.toLowerCase())) continue;
     let emailCount = 0;
     let calCount = 0;
     try {
@@ -565,6 +568,7 @@ async function runInteractionSync(daysBack = 30, daysForward = 60, opts: Interac
     }
     perUserStats.push({ email: userEmail, emails: emailCount, calendar: calCount });
     if (emailCount > 0 || calCount > 0) trackEmailActivity(userEmail, emailCount, calCount);
+    if (opts.onMailboxDone) await opts.onMailboxDone(userEmail).catch(() => {});
     if (opts.mailboxDelayMs) await new Promise(r => setTimeout(r, opts.mailboxDelayMs));
   }
 
@@ -586,6 +590,13 @@ async function runInteractionSync(daysBack = 30, daysForward = 60, opts: Interac
 // database after a deploy; admins can re-run it from the endpoint below.
 const EMAIL_CONTACTS_BACKFILL_KEY = "email_auto_contacts_backfill_v1";
 const EMAIL_CONTACTS_BACKFILL_DAYS = 150;
+// Mailboxes the backfill has finished, so a restart mid-run (any deploy)
+// carries on from the next mailbox instead of starting again.
+const EMAIL_CONTACTS_PROGRESS_KEY = `${EMAIL_CONTACTS_BACKFILL_KEY}:progress`;
+async function backfillProgress(daysBack: number): Promise<string[]> {
+  const row = (await pool.query(`SELECT value FROM system_settings WHERE key = $1`, [EMAIL_CONTACTS_PROGRESS_KEY])).rows[0]?.value;
+  return row && row.daysBack === daysBack && Array.isArray(row.done) ? row.done : [];
+}
 const backfillState: { running: boolean; startedAt: string | null; finishedAt: string | null; lastResult: any; error: string | null } =
   { running: false, startedAt: null, finishedAt: null, lastResult: null, error: null };
 
@@ -597,7 +608,14 @@ async function runEmailContactsBackfill(daysBack = EMAIL_CONTACTS_BACKFILL_DAYS)
   backfillState.finishedAt = null;
   backfillState.error = null;
   try {
+    const done = await backfillProgress(daysBack);
+    const saveProgress = () => pool.query(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2::jsonb, now())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+      [EMAIL_CONTACTS_PROGRESS_KEY, JSON.stringify({ daysBack, done })]);
     const result = await runInteractionSync(daysBack, 0, {
+      skipMailboxes: new Set(done.map(e => e.toLowerCase())),
+      onMailboxDone: async (email) => { done.push(email.toLowerCase()); await saveProgress(); },
       emailsOnly: true,
       maxEmailPages: 200,        // up to 20,000 messages per mailbox
       pageDelayMs: 300,
@@ -610,6 +628,7 @@ async function runEmailContactsBackfill(daysBack = EMAIL_CONTACTS_BACKFILL_DAYS)
       `INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2::jsonb, now())
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
       [EMAIL_CONTACTS_BACKFILL_KEY, JSON.stringify({ at: new Date().toISOString(), daysBack, emails: result.synced.emails, ...result.autoContacts, recent: undefined, errors: result.errors?.length || 0 })]);
+    await pool.query(`DELETE FROM system_settings WHERE key = $1`, [EMAIL_CONTACTS_PROGRESS_KEY]);
     const { logActivity } = await import("./activity-logger");
     await logActivity("interaction-sync", "email_contacts_backfill",
       `${daysBack}-day email backfill: ${result.synced.emails} emails filed, ${result.autoContacts.contactsCreated} contacts and ${result.autoContacts.companiesCreated} companies added`,
@@ -625,7 +644,7 @@ async function runEmailContactsBackfill(daysBack = EMAIL_CONTACTS_BACKFILL_DAYS)
   }
 }
 
-function scheduleEmailContactsBackfill() {
+function scheduleEmailContactsBackfill(delayMs = 15 * 60 * 1000) {
   // Well after boot so it doesn't compete with deploy start-up work.
   setTimeout(async () => {
     try {
@@ -633,12 +652,12 @@ function scheduleEmailContactsBackfill() {
       if (done.rows.length) return;
       console.log(`[interactions] Email contacts backfill starting (one-time, ${EMAIL_CONTACTS_BACKFILL_DAYS} days)`);
       const r = await runEmailContactsBackfill();
-      if (r?.alreadyRunning) { scheduleEmailContactsBackfill(); return; }
+      if (r?.alreadyRunning) { scheduleEmailContactsBackfill(delayMs); return; }
       console.log(`[interactions] Email contacts backfill done: ${r.synced.emails} emails, ${r.autoContacts.contactsCreated} contacts, ${r.autoContacts.companiesCreated} companies`);
     } catch (e: any) {
       console.error("[interactions] Email contacts backfill failed:", e?.message);
     }
-  }, 15 * 60 * 1000);
+  }, delayMs);
 }
 
 interface EmailContactSuggestion {
@@ -1121,7 +1140,10 @@ async function requireAdminCheck(req: Request): Promise<boolean> {
 
 export function registerInteractionRoutes(app: Express) {
   startAutoSync();
-  scheduleEmailContactsBackfill();
+  // A run cut off by a deploy picks up sooner.
+  backfillProgress(EMAIL_CONTACTS_BACKFILL_DAYS)
+    .then(done => scheduleEmailContactsBackfill(done.length ? 5 * 60 * 1000 : undefined))
+    .catch(() => scheduleEmailContactsBackfill());
 
   // Re-run the email → contacts backfill (admin). Runs in the background;
   // GET reports progress and the last result.
@@ -1138,7 +1160,8 @@ export function registerInteractionRoutes(app: Express) {
   app.get("/api/interactions/backfill-contacts", requireAuth, async (req: Request, res: Response) => {
     if (!await requireAdminCheck(req)) return res.status(403).json({ error: "Admin access required" });
     const done = await pool.query(`SELECT value, updated_at FROM system_settings WHERE key = $1`, [EMAIL_CONTACTS_BACKFILL_KEY]).catch(() => ({ rows: [] as any[] }));
-    res.json({ ...backfillState, completed: done.rows[0] || null });
+    const mailboxesDone = await backfillProgress(EMAIL_CONTACTS_BACKFILL_DAYS).catch(() => [] as string[]);
+    res.json({ ...backfillState, completed: done.rows[0] || null, mailboxesDone: mailboxesDone.length });
   });
 
   // Interaction sync fans out across every BGP mailbox (emails + calendar),
