@@ -428,6 +428,8 @@ test('an email failure does not skip that mailbox’s calendar and both counts r
   const query = { from() { return this; }, where() { return Promise.resolve([]); }, then(resolve) { return Promise.resolve([]).then(resolve); } };
   const { runInteractionSync } = evaluate(`${fn('runInteractionSync')}\nexports.runInteractionSync = runInteractionSync;`, {
     getAppToken: async () => 'test', getAllContacts: async () => [], getBgpEmails: async () => ['a@example.test', 'b@example.test'],
+    indexContactsByEmail: () => new Map(), autoContactStaff: async () => ({ staffEmails: new Set(), creators: new Map() }),
+    newAutoContactRun: () => ({ stats: {}, created: [] }), pool: {},
     db: { select: () => query }, crmCompanies: {}, crmInteractions: {}, sql() {},
     syncEmailsForUser: async () => { throw new Error('Mailbox email unavailable'); },
     syncCalendarForUser: async (token, user) => { calendarUsers.push(user); return 3; }, trackEmailActivity() {},

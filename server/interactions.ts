@@ -8,6 +8,7 @@ import { eq, desc, and, gte, lte, sql, inArray } from "drizzle-orm";
 import { pool } from "./db";
 import { users as usersTable } from "@shared/schema";
 import { parseGraphDateTime } from "./viewing-matching";
+import { newAutoContactRun, resolveAutoContacts, type AutoContactRun } from "./email-auto-contacts";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
@@ -113,9 +114,17 @@ interface ContactMatch {
 }
 
 async function graphGet(token: string, url: string, headers: Record<string, string> = {}): Promise<any> {
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...headers },
-  });
+  let res: globalThis.Response | null = null;
+  // Graph throttles deep mailbox reads (429 / 503 + Retry-After): wait and retry.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...headers },
+    });
+    if ((res.status !== 429 && res.status !== 503) || attempt === 3) break;
+    const wait = Math.min(60, Number(res.headers.get("retry-after")) || 5 * (attempt + 1));
+    await new Promise(r => setTimeout(r, wait * 1000));
+  }
+  res = res!;
   const body = await res.text();
   if (!res.ok) {
     throw new Error(`Graph API error ${res.status}: ${body}`);
@@ -149,19 +158,23 @@ function normalizeEmail(email: string): string {
   return email.toLowerCase().trim();
 }
 
+function indexContactsByEmail(contacts: ContactMatch[]): Map<string, ContactMatch> {
+  const byEmail = new Map<string, ContactMatch>();
+  for (const c of contacts) {
+    if (c.email && !byEmail.has(normalizeEmail(c.email))) byEmail.set(normalizeEmail(c.email), c);
+  }
+  return byEmail;
+}
+
 function matchEmailToContact(
   emailAddress: string,
-  contacts: ContactMatch[]
+  contactsByEmail: Map<string, ContactMatch>
 ): { contact: ContactMatch; method: string } | null {
   const normalized = normalizeEmail(emailAddress);
   if (normalized.endsWith("@brucegillinghampollard.com")) return null;
 
-  for (const c of contacts) {
-    if (c.email && normalizeEmail(c.email) === normalized) {
-      return { contact: c, method: "email" };
-    }
-  }
-  return null;
+  const c = contactsByEmail.get(normalized);
+  return c ? { contact: c, method: "email" } : null;
 }
 
 function matchKeywordsToContacts(
@@ -195,12 +208,13 @@ function matchKeywordsToContacts(
   return matches;
 }
 
-async function graphGetPaged(token: string, url: string, maxPages: number = 5, options: { requireComplete?: boolean; headers?: Record<string, string> } = {}): Promise<any[]> {
+async function graphGetPaged(token: string, url: string, maxPages: number = 5, options: { requireComplete?: boolean; headers?: Record<string, string>; delayMs?: number } = {}): Promise<any[]> {
   const allItems: any[] = [];
   let nextUrl: string | null = url;
   let page = 0;
 
   while (nextUrl && page < maxPages) {
+    if (page > 0 && options.delayMs) await new Promise(r => setTimeout(r, options.delayMs));
     const data = await graphGet(token, nextUrl, options.headers);
     if (data.value) allItems.push(...data.value);
     nextUrl = data["@odata.nextLink"] || null;
@@ -214,44 +228,73 @@ async function graphGetPaged(token: string, url: string, maxPages: number = 5, o
   return allItems;
 }
 
+interface EmailSyncOptions {
+  maxPages?: number;
+  pageDelayMs?: number;
+  // Offer / interest capture from the inbox — off for the deep backfill so
+  // months-old threads don't land on the tracker as new activity.
+  captureSignals?: boolean;
+  autoContacts?: AutoContactRun | null;
+}
+
 async function syncEmailsForUser(
   token: string,
   userEmail: string,
   contacts: ContactMatch[],
+  contactsByEmail: Map<string, ContactMatch>,
   companies: { id: string; name: string }[],
   daysBack: number,
-  existingMsIds: Set<string>
+  existingMsIds: Set<string>,
+  options: EmailSyncOptions = {}
 ): Promise<number> {
   const since = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
   let count = 0;
 
   try {
-    const url = `${GRAPH_BASE}/users/${userEmail}/messages?$filter=receivedDateTime ge ${since}&$select=id,conversationId,subject,bodyPreview,from,toRecipients,ccRecipients,receivedDateTime&$top=100&$orderby=receivedDateTime desc`;
-    const messages = await graphGetPaged(token, url, 5);
+    const url = `${GRAPH_BASE}/users/${userEmail}/messages?$filter=receivedDateTime ge ${since}&$select=id,conversationId,subject,bodyPreview,from,toRecipients,ccRecipients,receivedDateTime,isDraft,parentFolderId&$top=100&$orderby=receivedDateTime desc`;
+    const messages = await graphGetPaged(token, url, options.maxPages ?? 5, { delayMs: options.pageDelayMs });
 
-    // Email → offers check: offer-looking emails anchored to a tracker unit
-    // from a known external contact become unconfirmed unit_offers rows
-    // (one per thread; skipped when the offer is already logged).
-    try {
-      const { syncOfferEmails } = await import("./viewing-sync");
-      await syncOfferEmails(messages, userEmail);
-    } catch (e: any) {
-      console.error(`[offer-check] ${userEmail}:`, e?.message);
+    if (options.captureSignals !== false) {
+      // Email → offers check: offer-looking emails anchored to a tracker unit
+      // from a known external contact become unconfirmed unit_offers rows
+      // (one per thread; skipped when the offer is already logged).
+      try {
+        const { syncOfferEmails } = await import("./viewing-sync");
+        await syncOfferEmails(messages, userEmail);
+      } catch (e: any) {
+        console.error(`[offer-check] ${userEmail}:`, e?.message);
+      }
+
+      // Email → interest check: the pre-offer signal ("keen on", "send
+      // particulars") becomes a unit_interest row — the tracker's third
+      // activity chip alongside viewings and offers.
+      try {
+        const { syncInterestEmails } = await import("./viewing-sync");
+        await syncInterestEmails(messages, userEmail);
+      } catch (e: any) {
+        console.error(`[interest-check] ${userEmail}:`, e?.message);
+      }
     }
 
-    // Email → interest check: the pre-offer signal ("keen on", "send
-    // particulars") becomes a unit_interest row — the tracker's third
-    // activity chip alongside viewings and offers.
-    try {
-      const { syncInterestEmails } = await import("./viewing-sync");
-      await syncInterestEmails(messages, userEmail);
-    } catch (e: any) {
-      console.error(`[interest-check] ${userEmail}:`, e?.message);
+    // Unknown external people on real correspondence become contacts
+    // (Woody, 2026-09-29) — including on emails already filed under someone
+    // else, so a firm copied on another contact's threads is picked up.
+    let autoMatches = new Map<string, ContactMatch[]>();
+    if (options.autoContacts) {
+      try {
+        autoMatches = await resolveAutoContacts(options.autoContacts, userEmail, messages);
+      } catch (e: any) {
+        console.error(`[email-auto-contacts] ${userEmail}:`, e?.message);
+      }
     }
 
     for (const msg of messages) {
       const msId = `email_${msg.id}`;
-      if (existingMsIds.has(msId)) continue;
+      const added = autoMatches.get(msg.id) || [];
+      if (existingMsIds.has(msId)) {
+        count += await fileAgainstAddedContacts(msg, msId, added, userEmail);
+        continue;
+      }
 
       const allAddresses: string[] = [];
       if (msg.from?.emailAddress?.address) allAddresses.push(msg.from.emailAddress.address);
@@ -268,7 +311,7 @@ async function syncEmailsForUser(
 
       const emailMatches: { contact: ContactMatch; method: string }[] = [];
       for (const addr of allAddresses) {
-        const m = matchEmailToContact(addr, contacts);
+        const m = matchEmailToContact(addr, contactsByEmail);
         if (m) emailMatches.push(m);
       }
 
@@ -321,9 +364,35 @@ async function syncEmailsForUser(
   return count;
 }
 
+// An email already filed under someone else, now also filed under the people
+// the auto-contact pass just added. One row per (email, contact).
+async function fileAgainstAddedContacts(msg: any, msId: string, added: ContactMatch[], userEmail: string): Promise<number> {
+  if (!added.length) return 0;
+  const participants = [msg.from, ...(msg.toRecipients || []), ...(msg.ccRecipients || [])]
+    .map((r: any) => r?.emailAddress?.address).filter(Boolean).map((a: string) => a.toLowerCase());
+  const isBgpSender = (msg.from?.emailAddress?.address || "").toLowerCase().endsWith("@brucegillinghampollard.com");
+  let count = 0;
+  for (const contact of added) {
+    try {
+      const r = await pool.query(
+        `INSERT INTO crm_interactions
+           (contact_id, company_id, type, direction, subject, preview, participants, microsoft_id, match_method, interaction_date, bgp_user)
+         SELECT $1, $2, 'email', $3, $4, $5, $6::jsonb, $7, 'email', $8, $9
+          WHERE NOT EXISTS (SELECT 1 FROM crm_interactions WHERE contact_id = $1 AND microsoft_id = $7)`,
+        [contact.id, contact.companyId, isBgpSender ? "outbound" : "inbound", msg.subject || "(No subject)",
+          (msg.bodyPreview || "").substring(0, 200), JSON.stringify(participants), msId, new Date(msg.receivedDateTime), userEmail]);
+      count += r.rowCount || 0;
+    } catch (e: any) {
+      console.error("Insert interaction error:", e.message);
+    }
+  }
+  return count;
+}
+
 async function syncCalendarForUser(
   token: string,
   userEmail: string,
+  contactsByEmail: Map<string, ContactMatch>,
   contacts: ContactMatch[],
   companies: { id: string; name: string }[],
   daysBack: number,
@@ -368,7 +437,7 @@ async function syncCalendarForUser(
 
       const emailMatches: { contact: ContactMatch; method: string }[] = [];
       for (const addr of allAddresses) {
-        const m = matchEmailToContact(addr, contacts);
+        const m = matchEmailToContact(addr, contactsByEmail);
         if (m) emailMatches.push(m);
       }
 
@@ -417,9 +486,34 @@ async function syncCalendarForUser(
   return count;
 }
 
-async function runInteractionSync(daysBack = 30, daysForward = 60) {
+// Only active staff mailboxes create contacts — never a client (Landsec)
+// login, which the sync would otherwise treat like any BGP-domain user.
+async function autoContactStaff(): Promise<{ staffEmails: Set<string>; creators: Map<string, string> }> {
+  const { rows } = await pool.query(`SELECT email, name, role, is_active FROM users WHERE email IS NOT NULL`);
+  const staffEmails = new Set<string>();
+  const creators = new Map<string, string>();
+  for (const u of rows) {
+    const email = String(u.email).trim().toLowerCase();
+    if (!email.endsWith("@brucegillinghampollard.com")) continue;
+    staffEmails.add(email);
+    if (u.role !== "Client" && u.is_active !== false) creators.set(email, u.name || prettifyBgpEmail(email));
+  }
+  return { staffEmails, creators };
+}
+
+interface InteractionSyncOptions {
+  emailsOnly?: boolean;
+  maxEmailPages?: number;
+  pageDelayMs?: number;
+  mailboxDelayMs?: number;
+  captureSignals?: boolean;
+  autoContactCap?: number;
+}
+
+async function runInteractionSync(daysBack = 30, daysForward = 60, opts: InteractionSyncOptions = {}) {
   const token = await getAppToken();
   const contacts = await getAllContacts();
+  const contactsByEmail = indexContactsByEmail(contacts);
   const companiesRaw = await db
     .select({ id: crmCompanies.id, name: crmCompanies.name })
     .from(crmCompanies);
@@ -431,6 +525,16 @@ async function runInteractionSync(daysBack = 30, daysForward = 60) {
   const existingMsIds = new Set(existing.map((e) => e.microsoftId!));
 
   const bgpEmails = await getBgpEmails();
+  const staff = await autoContactStaff();
+  const autoContacts = newAutoContactRun({
+    token,
+    pool: pool as any,
+    contactsByEmail,
+    staffEmails: staff.staffEmails,
+    creators: staff.creators,
+    capPerMailbox: opts.autoContactCap ?? 200,
+    delayMs: opts.pageDelayMs ?? 0,
+  });
 
   let totalEmails = 0;
   let totalCalendar = 0;
@@ -442,22 +546,26 @@ async function runInteractionSync(daysBack = 30, daysForward = 60) {
     let calCount = 0;
     try {
       emailCount = await syncEmailsForUser(
-        token, userEmail, contacts, companiesRaw, daysBack, existingMsIds
+        token, userEmail, contacts, contactsByEmail, companiesRaw, daysBack, existingMsIds,
+        { maxPages: opts.maxEmailPages, pageDelayMs: opts.pageDelayMs, captureSignals: opts.captureSignals, autoContacts }
       );
       totalEmails += emailCount;
     } catch (e: any) {
       errors.push(`${userEmail}: ${e.message}`);
     }
-    try {
-      calCount = await syncCalendarForUser(
-        token, userEmail, contacts, companiesRaw, daysBack, daysForward, existingMsIds
-      );
-      totalCalendar += calCount;
-    } catch (e: any) {
-      errors.push(`${userEmail}: ${e.message}`);
+    if (!opts.emailsOnly) {
+      try {
+        calCount = await syncCalendarForUser(
+          token, userEmail, contactsByEmail, contacts, companiesRaw, daysBack, daysForward, existingMsIds
+        );
+        totalCalendar += calCount;
+      } catch (e: any) {
+        errors.push(`${userEmail}: ${e.message}`);
+      }
     }
     perUserStats.push({ email: userEmail, emails: emailCount, calendar: calCount });
     if (emailCount > 0 || calCount > 0) trackEmailActivity(userEmail, emailCount, calCount);
+    if (opts.mailboxDelayMs) await new Promise(r => setTimeout(r, opts.mailboxDelayMs));
   }
 
   return {
@@ -465,8 +573,72 @@ async function runInteractionSync(daysBack = 30, daysForward = 60) {
     synced: { emails: totalEmails, calendar: totalCalendar },
     usersScanned: bgpEmails.length,
     perUserStats,
+    autoContacts: { ...autoContacts.stats, recent: autoContacts.created.slice(0, 50) },
     errors: errors.length > 0 ? errors : undefined,
   };
+}
+
+// One deep pass over the last 150 days of every staff mailbox so the emails
+// the old contact-only sync dropped (Jack ↔ aresmgmt.com on The Royal
+// Exchange — his Ares threads go back to May) are filed, with their people
+// added. Idempotent: already-filed
+// (email, contact) pairs and existing contacts are skipped. Runs once per
+// database after a deploy; admins can re-run it from the endpoint below.
+const EMAIL_CONTACTS_BACKFILL_KEY = "email_auto_contacts_backfill_v1";
+const EMAIL_CONTACTS_BACKFILL_DAYS = 150;
+const backfillState: { running: boolean; startedAt: string | null; finishedAt: string | null; lastResult: any; error: string | null } =
+  { running: false, startedAt: null, finishedAt: null, lastResult: null, error: null };
+
+async function runEmailContactsBackfill(daysBack = EMAIL_CONTACTS_BACKFILL_DAYS): Promise<any> {
+  if (backfillState.running || interactionSyncState.running) return { started: false, alreadyRunning: true };
+  backfillState.running = true;
+  interactionSyncState.running = true;
+  backfillState.startedAt = new Date().toISOString();
+  backfillState.finishedAt = null;
+  backfillState.error = null;
+  try {
+    const result = await runInteractionSync(daysBack, 0, {
+      emailsOnly: true,
+      maxEmailPages: 200,        // up to 20,000 messages per mailbox
+      pageDelayMs: 300,
+      mailboxDelayMs: 2000,
+      captureSignals: false,
+      autoContactCap: 3000,
+    });
+    backfillState.lastResult = result;
+    await pool.query(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2::jsonb, now())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+      [EMAIL_CONTACTS_BACKFILL_KEY, JSON.stringify({ at: new Date().toISOString(), daysBack, emails: result.synced.emails, ...result.autoContacts, recent: undefined, errors: result.errors?.length || 0 })]);
+    const { logActivity } = await import("./activity-logger");
+    await logActivity("interaction-sync", "email_contacts_backfill",
+      `${daysBack}-day email backfill: ${result.synced.emails} emails filed, ${result.autoContacts.contactsCreated} contacts and ${result.autoContacts.companiesCreated} companies added`,
+      result.synced.emails);
+    return result;
+  } catch (e: any) {
+    backfillState.error = e?.message || "backfill failed";
+    throw e;
+  } finally {
+    backfillState.running = false;
+    interactionSyncState.running = false;
+    backfillState.finishedAt = new Date().toISOString();
+  }
+}
+
+function scheduleEmailContactsBackfill() {
+  // Well after boot so it doesn't compete with deploy start-up work.
+  setTimeout(async () => {
+    try {
+      const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [EMAIL_CONTACTS_BACKFILL_KEY]);
+      if (done.rows.length) return;
+      console.log(`[interactions] Email contacts backfill starting (one-time, ${EMAIL_CONTACTS_BACKFILL_DAYS} days)`);
+      const r = await runEmailContactsBackfill();
+      if (r?.alreadyRunning) { scheduleEmailContactsBackfill(); return; }
+      console.log(`[interactions] Email contacts backfill done: ${r.synced.emails} emails, ${r.autoContacts.contactsCreated} contacts, ${r.autoContacts.companiesCreated} companies`);
+    } catch (e: any) {
+      console.error("[interactions] Email contacts backfill failed:", e?.message);
+    }
+  }, 15 * 60 * 1000);
 }
 
 interface EmailContactSuggestion {
@@ -910,6 +1082,10 @@ function startAutoSync() {
   const ONE_HOUR = 60 * 60 * 1000;
   console.log("[interactions] Auto-sync enabled — running every 1 hour");
   autoSyncInterval = setInterval(async () => {
+    // Overlapping sweeps (a slow run, a manual sync or the backfill) would
+    // file the same email twice.
+    if (interactionSyncState.running) return;
+    interactionSyncState.running = true;
     try {
       const result = await runInteractionSync(120, 90);
       console.log(`[interactions] Auto-sync complete: ${result.synced.emails} emails, ${result.synced.calendar} calendar events`);
@@ -921,8 +1097,13 @@ function startAutoSync() {
         const { logActivity } = await import("./activity-logger");
         await logActivity("interaction-sync", "interactions_synced", `${result.synced.emails} emails and ${result.synced.calendar} calendar events synced across ${result.usersScanned} users`, totalSynced);
       }
+      if (result.autoContacts.contactsCreated > 0) {
+        console.log(`[interactions] Auto-sync added ${result.autoContacts.contactsCreated} contacts and ${result.autoContacts.companiesCreated} companies from email`);
+      }
     } catch (e: any) {
       console.error("[interactions] Auto-sync failed:", e.message);
+    } finally {
+      interactionSyncState.running = false;
     }
   }, ONE_HOUR);
 }
@@ -940,6 +1121,25 @@ async function requireAdminCheck(req: Request): Promise<boolean> {
 
 export function registerInteractionRoutes(app: Express) {
   startAutoSync();
+  scheduleEmailContactsBackfill();
+
+  // Re-run the email → contacts backfill (admin). Runs in the background;
+  // GET reports progress and the last result.
+  app.post("/api/interactions/backfill-contacts", requireAuth, async (req: Request, res: Response) => {
+    if (!await requireAdminCheck(req)) return res.status(403).json({ error: "Admin access required" });
+    if (backfillState.running || interactionSyncState.running) {
+      return res.status(202).json({ started: false, alreadyRunning: true, backfillRunning: backfillState.running, startedAt: backfillState.startedAt });
+    }
+    const daysBack = Math.min(365, Math.max(1, Number(req.query.daysBack) || EMAIL_CONTACTS_BACKFILL_DAYS));
+    runEmailContactsBackfill(daysBack).catch((e: any) => console.error("[interactions] Email contacts backfill failed:", e?.message));
+    res.status(202).json({ started: true, daysBack });
+  });
+
+  app.get("/api/interactions/backfill-contacts", requireAuth, async (req: Request, res: Response) => {
+    if (!await requireAdminCheck(req)) return res.status(403).json({ error: "Admin access required" });
+    const done = await pool.query(`SELECT value, updated_at FROM system_settings WHERE key = $1`, [EMAIL_CONTACTS_BACKFILL_KEY]).catch(() => ({ rows: [] as any[] }));
+    res.json({ ...backfillState, completed: done.rows[0] || null });
+  });
 
   // Interaction sync fans out across every BGP mailbox (emails + calendar),
   // which routinely takes 2-3 minutes — well past Railway's gateway timeout
