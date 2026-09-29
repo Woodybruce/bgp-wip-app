@@ -64,7 +64,7 @@ export function normalizeLinkedIn(value: unknown): string | null {
 
 // enrichment_source values that mark an automatic (machine) creation. NULL
 // or anything else means a human made this row and it is never renamed.
-const AUTO_SOURCES = new Set(["promoted-from-email", "chatbgp_email", "rocketreach", "apollo"]);
+const AUTO_SOURCES = new Set(["promoted-from-email", "chatbgp_email", "rocketreach", "apollo", "email-sync"]);
 export function isAutoCreated(enrichmentSource: string | null | undefined): boolean {
   return !!enrichmentSource && AUTO_SOURCES.has(enrichmentSource);
 }
