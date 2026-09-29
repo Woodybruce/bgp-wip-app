@@ -57,6 +57,7 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
 import { PropertyCombobox } from "@/components/property-combobox";
+import { MonthYearSelect } from "@/components/month-year-select";
 import PDFViewer from "@/components/pdf-viewer";
 import { EntityCombobox } from "@/components/entity-combobox";
 import { XeroContactPicker } from "@/components/xero-contact-picker";
@@ -2639,11 +2640,10 @@ export default function AvailableUnitsPage() {
                             </div>
                             <div className="grid grid-cols-[100px_1fr] items-center gap-2">
                               <Label className="text-xs text-muted-foreground">Available from</Label>
-                              <input
-                                type="month"
-                                className="h-7 text-xs border rounded px-1.5 bg-background"
-                                defaultValue={u.availableDate ? String(u.availableDate).slice(0, 7) : ""}
-                                onBlur={e => { const v = e.target.value ? `${e.target.value}-01` : null; if ((v || "").slice(0, 7) !== (u.availableDate ? String(u.availableDate).slice(0, 7) : "")) inlineUpdate(u.id, "availableDate", v); }}
+                              <MonthYearSelect
+                                triggerClassName="h-7 text-xs px-1.5"
+                                value={u.availableDate ? String(u.availableDate).slice(0, 7) : ""}
+                                onChange={v => inlineUpdate(u.id, "availableDate", v ? `${v}-01` : null)}
                               />
                             </div>
                             <div className="grid grid-cols-[100px_1fr] items-center gap-2">
@@ -5072,7 +5072,7 @@ function UnitFormDialog({
             {/* Month granularity — "October 2026", not an exact day (Carly,
                 2026-09-21). Stored as the 1st of the month so existing
                 date-string sorting and the public feed keep working. */}
-            <Input type="month" className="min-w-0" value={form.availableDate.slice(0, 7)} onChange={e => upd("availableDate", e.target.value ? `${e.target.value}-01` : "")} />
+            <MonthYearSelect value={form.availableDate.slice(0, 7)} onChange={v => upd("availableDate", v ? `${v}-01` : "")} />
           </div>
           <div className="col-span-2">
             <Label>BGP Contact</Label>
