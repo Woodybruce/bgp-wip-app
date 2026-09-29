@@ -23,7 +23,7 @@ export function MonthYearSelect({ value, onChange, className, triggerClassName }
 
   const thisYear = new Date().getFullYear();
   const years: string[] = [];
-  for (let y = thisYear - 2; y <= thisYear + 8; y++) years.push(String(y));
+  for (let y = 2026; y <= thisYear + 8; y++) years.push(String(y));
   if (year && !years.includes(year)) years.unshift(year);
 
   const commit = (m: string, y: string) => {
