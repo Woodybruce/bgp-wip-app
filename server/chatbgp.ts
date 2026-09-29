@@ -71,6 +71,32 @@ function applyFableParams(claudeParams: any): void {
 // a parameter this model doesn't take) one retry on Sonnet 4.6 so chat never
 // breaks on the switch.
 const SONNET_SAFE_MODEL = "claude-sonnet-4-6";
+
+// Cache the conversation, not just the system prompt: a chat turn runs the
+// tool loop several times, each re-sending the whole history + tool results.
+// A breakpoint on the newest message lets every later call in the loop (and
+// the next message, within 5 minutes) read that prefix at 0.1x. The system
+// prompt keeps its own breakpoint, so this is 2 of the 4 allowed.
+function cacheConversationTail(messages: any[]): any[] {
+  if (!Array.isArray(messages) || !messages.length) return messages;
+  const last = messages[messages.length - 1];
+  const blocks = typeof last.content === "string"
+    ? [{ type: "text", text: last.content }]
+    : Array.isArray(last.content) ? last.content.map((b: any) => ({ ...b })) : null;
+  if (!blocks?.length) return messages;
+  const tail = blocks[blocks.length - 1];
+  if (!["text", "tool_result", "image", "document"].includes(tail.type) || (tail.type === "text" && !tail.text)) return messages;
+  tail.cache_control = { type: "ephemeral" };
+  return [...messages.slice(0, -1), { ...last, content: blocks }];
+}
+
+// Usage is logged per feature; calls that don't name one are tagged with the
+// server file that made them, so the cost board shows where spend comes from.
+function callerFeature(): string {
+  const line = (new Error().stack || "").split("\n").slice(3).find(l => /server[\\/][a-z0-9-]+\.(ts|js)/i.test(l) && !/chatbgp\.(ts|js)/.test(l));
+  const file = line?.match(/server[\\/]([a-z0-9-]+)\.(ts|js)/i)?.[1];
+  return file ? `auto:${file}` : "chatbgp";
+}
 function isSonnet5Model(model: string): boolean {
   return /^claude-sonnet-5/.test(model);
 }
@@ -994,7 +1020,7 @@ export async function callClaude(params: any): Promise<any> {
   const claudeParams: any = {
     model,
     max_tokens: params.max_completion_tokens || params.max_tokens || 16384,
-    messages,
+    messages: params.systemArray ? cacheConversationTail(messages) : messages,
   };
   // Extended thinking — let the model reason before responding.
   // Opt-in: only enabled when params.thinking === true, to avoid the token cost on helper calls.
@@ -1041,7 +1067,7 @@ export async function callClaude(params: any): Promise<any> {
       // server-side. Fire-and-forget; never blocks the call.
       try {
         const { logAiUsage } = await import("./api-usage");
-        logAiUsage({ provider: "anthropic", model: claudeParams.model, feature: params.feature || "chatbgp", usage: (response as any)?.usage });
+        logAiUsage({ provider: "anthropic", model: claudeParams.model, feature: params.feature || callerFeature(), usage: (response as any)?.usage });
       } catch {}
       break;
     } catch (err: any) {
@@ -1128,7 +1154,7 @@ export async function callClaudeStreaming(
   const claudeParams: any = {
     model,
     max_tokens: params.max_completion_tokens || params.max_tokens || 16384,
-    messages,
+    messages: params.systemArray ? cacheConversationTail(messages) : messages,
   };
   // Extended thinking — opt-in per callsite (see callClaude comment).
   if (params.thinking === true) {
@@ -15559,7 +15585,7 @@ export function setupChatBGPRoutes(app: Express) {
         { type: "text" as const, text: dynamicContext },
       ];
 
-      const MAX_AI_MESSAGES = 80;
+      const MAX_AI_MESSAGES = 40; // was 80 — history is re-sent on every tool-loop call (cost, 2026-09-29)
       const trimmedMessages = result.data.messages.length > MAX_AI_MESSAGES
         ? result.data.messages.slice(-MAX_AI_MESSAGES)
         : result.data.messages;
