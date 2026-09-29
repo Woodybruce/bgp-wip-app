@@ -130,7 +130,7 @@ const GROUP_CHAT_TOOLS = [
   "create_property", "create_available_unit", "update_available_unit",
   "update_investment_tracker", "create_investment_tracker",
   "log_viewing", "log_offer", "create_requirement", "create_diary_entry", "create_task",
-  "delete_record", "web_search", "ingest_url", "property_lookup", "property_data_lookup",
+  "delete_record", "web_search", "ingest_url", "property_lookup", "property_data_lookup", "order_hmlr_official_copy",
   "tfl_nearby", "search_green_street", "query_xero", "scan_duplicates",
   "navigate_to", "send_email", "query_leasing_schedule",
 ];
