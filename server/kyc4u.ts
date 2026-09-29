@@ -92,6 +92,10 @@ type Kyc4uItem = { id: string; fields: Record<string, any>; created?: string | n
 // the brand — so try the Companies House number, then each name the entity
 // goes by, against every name a company is known by (brand, UK entity,
 // trading entities, Companies House name). Only a single fit counts.
+// Words too common to stand for a business on their own ("Restaurant
+// Counter Limited" is not "Restaurant Property").
+const GENERIC_WORD = /^(restaurants?|property|properties|investments?|holdings?|management|international|london|british|national|retail|hospitality|kitchens?|coffee|bakery|fashion|beauty|clothing|jewellery|studios?|services|solutions|developments?|enterprises?|partners(hip)?|ventures?|trading|brands?|collective|company|foods?|drinks|leisure|fitness|wellness|health|healthcare|medical|dental|pharmacy|opticians?|boutique|gallery|creative|digital|global|european|premier|golden|royal|original)$/i;
+
 export function entityNameCandidates(entity: string): { chNumber: string | null; names: string[] } {
   const raw = String(entity || "").replace(/\s+/g, " ").trim();
   const chNumber = raw.match(/company (?:number|no\.?)\s*:?\s*([A-Z]{0,2}\d{6,8})/i)?.[1]?.toUpperCase() || null;
@@ -106,7 +110,7 @@ export function entityNameCandidates(entity: string): { chNumber: string | null;
   // down to two words, or one long (8+ letter) word.
   const words = base.replace(/_[^_]*_/g, " ").replace(/\b(ltd|limited|plc|llp)\b\.?/gi, " ").split(/\s+/).filter(Boolean);
   for (let n = words.length - 1; n >= 1; n--) {
-    if (n === 1 && words[0].length < 8) break;
+    if (n === 1 && (words[0].length < 8 || GENERIC_WORD.test(words[0]))) break;
     add(words.slice(0, n).join(" "));
   }
   return { chNumber: chNumber ? chNumber.padStart(8, "0") : null, names: [...names] };

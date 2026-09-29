@@ -53,5 +53,6 @@ test('KYC4U entity names give the names a CRM company goes by', async () => {
   assert.ok(cf.names.includes('Card Factory'));
   assert.ok(entityNameCandidates('Waterstones Booksellers Limited').names.includes('Waterstones'));
   assert.ok(!entityNameCandidates('Amelia Vero Ltd').names.includes('Amelia'));
+  assert.ok(!entityNameCandidates('Restaurant Counter Limited').names.includes('Restaurant'));
   assert.ok(entityNameCandidates('Etta Health _London_ Limited').names.includes('Etta Health London Limited'));
 });
