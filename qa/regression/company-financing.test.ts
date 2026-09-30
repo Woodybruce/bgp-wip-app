@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   getCompanyFinancingEvidence, readFinancingInstrument, normalizeFinancingCompanyNumber,
   financingFilingPath, financingCreationFiling, financingDocumentId, allowedFinancingDocumentUrl,
-  fetchFinancingPdf, financingSecurityKinds, type FinancingDependencies,
+  fetchFinancingPdf, financingSecurityKinds, transcribeFinancingPages, type FinancingDependencies,
 } from "../../server/company-financing";
 
 const number = "11473397";
@@ -73,6 +73,54 @@ test("scanned pages 5–6 are read despite a digital registration cover; figures
   assert.ok(!f.calls.some(call => String(call[1]).includes("release-")), "Must read the creation deed, not its later satisfaction filing");
   assert.match(result.warnings.join(" "), /do not add facility amounts together/);
   assert.match(result.warnings.join(" "), /does not establish a registered mortgage/);
+});
+
+test("single-image OCR assigns PDF page 5/6 on the server and ignores printed or model-returned page 3/4", async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const result = await transcribeFinancingPages(pdf, [5, 6, 7, 8], {
+    async render(_bytes, page) { return `data:image/jpeg;base64,page-${page}`; },
+    async complete(content) {
+      assert.equal(content.filter(part => part.type === "image_url").length, 1);
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      inFlight--;
+      const inputPage = Number(content[1].image_url.url.match(/page-(\d+)$/)[1]);
+      return JSON.stringify({ page: inputPage - 2, text: inputPage === 5 ? quote : inputPage === 6 ? property : "" });
+    },
+  });
+  assert.deepEqual(result, [{ page: 5, text: quote }, { page: 6, text: property }, { page: 7, text: "" }, { page: 8, text: "" }]);
+  assert.equal(maxInFlight, 2);
+});
+
+test("one failed page cannot discard successful sibling evidence or masquerade as an empty page", async () => {
+  const f = fixture({ count: 1 });
+  f.deps.vision = async (bytes, pages) => transcribeFinancingPages(bytes, pages, {
+    async render(_bytes, page) { return `page-${page}`; },
+    async complete(content) {
+      if (content[1].image_url.url === "page-5") throw new Error("OCR timeout");
+      return JSON.stringify({ page: 99, text: content[1].image_url.url === "page-6" ? property : "" });
+    },
+  });
+  const result = await readFinancingInstrument(pdf, f.deps);
+  assert.deepEqual(result.unreadPages, [5]);
+  assert.equal(result.retryable, true);
+  assert.equal(result.pages.find(page => page.page === 6)?.text, property);
+});
+
+test("v1 OCR with unreliable model-supplied page numbers is not reused", async () => {
+  const f = fixture({ count: 1 });
+  const cacheRoot = `ch-financing/${number}/doc-1`;
+  f.cache.set(`${cacheRoot}-v1.json`, Buffer.from(JSON.stringify({
+    version: "v1", companyNumber: number, documentId: "doc-1",
+    read: { pageCount: 8, pages: [{ page: 3, text: quote, method: "vision" }, { page: 4, text: property, method: "vision" }], unreadPages: [], retryable: false },
+  })));
+  const result = await getCompanyFinancingEvidence({ companyNumber: number, titleNumber: title }, f.deps);
+  assert.equal(result.charges[0].instrument.cached, false);
+  assert.deepEqual(result.charges[0].instrument.propertyTitlePages, [6]);
+  assert.equal(result.charges[0].instrument.evidence.find((page: any) => page.text === quote).page, 5);
+  assert.ok(f.cache.has(`${cacheRoot}-v2.json`));
 });
 
 test("immutable document evidence is reused but charge status is fetched fresh for every colleague", async () => {
