@@ -126,6 +126,7 @@ test('stored registers remain readable without HMLR access or any new purchase',
   assert.equal(out.success, true);
   assert.match(out.registerText, /Example Bank/);
   assert.match(out.note, /\[Download official register\]\(\/api\/lr-bg\/register\/NGL813653\)/);
+  assert.equal(out.downloadMarkdown, '[Download official register](/api/lr-bg/register/NGL813653)');
   assert.deepEqual(f.calls.map(c => c[0]), ['cached']);
   assert.equal(f.pdfs[0].destroyed, true);
 });
@@ -144,6 +145,8 @@ test('a confirmed purchase caps the fee and returns a link only after saving', a
   assert.equal(f.calls.find(c => c[0] === 'order')[1].expectedPrice, 7);
   assert.equal(f.calls.find(c => c[0] === 'save')[1].userId, 'staff-1');
   assert.equal(out.registerUrl, '/api/lr-bg/register/NGL813653');
+  assert.equal(out.downloadMarkdown, '[Download official register](/api/lr-bg/register/NGL813653)');
+  assert.equal(out.requestMessageId, 'request-1');
   assert.match(out.registerText, /Proprietor/);
   assert.equal(f.pdfs[0].destroyed, true);
 });
@@ -156,6 +159,7 @@ test('pending acknowledgements retain reference and do not claim a saved copy or
   assert.equal(out.requestMessageId, 'request-p');
   assert.match(out.note, /Do not order it again/);
   assert.equal(out.registerUrl, undefined);
+  assert.equal(out.downloadMarkdown, undefined);
   assert.equal(f.calls.some(c => c[0] === 'save'), false);
 });
 
@@ -165,6 +169,7 @@ test('failed persistence never returns a fabricated saved-register link', async 
   assert.equal(out.outcome, 'received_not_saved');
   assert.equal(out.success, false);
   assert.equal(out.registerUrl, undefined);
+  assert.equal(out.downloadMarkdown, undefined);
   assert.equal(out.reference, 'hmlr-1');
 });
 

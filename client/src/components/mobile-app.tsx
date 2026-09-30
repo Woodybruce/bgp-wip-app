@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useTypingIndicator } from "@/hooks/use-socket";
 import { emitMarkSeen } from "@/lib/socket";
 import * as voiceRecovery from "@/lib/voice-recovery";
+import { messageContentWithAttachments } from "@/lib/chat-attachments";
 import { AuthDownloadLink, ChatBGPMarkdown } from "@/components/chatbgp-markdown";
 import { useLocation } from "wouter";
 import { useTeam } from "@/lib/team-context";
@@ -1668,16 +1669,10 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     mutationFn: async ({ newMessages, files, tid, mentionedUserIds }: { newMessages: LocalChatMessage[]; files: File[]; tid: string | null; mentionedUserIds?: string[] }) => {
       inFlightEpochRef.current = chatEpochRef.current;
       stopRequestedRef.current = false;
-      const plainMessages = newMessages.map(m => {
-        let content = m.content;
-        if (m.attachments && m.attachments.length > 0) {
-          const attInfo = m.attachments.map(a => {
-            try { const p = JSON.parse(a); return p.url || a; } catch { return a; }
-          }).join("\n");
-          content = `${content}\n\n[Attached files]\n${attInfo}`;
-        }
-        return { role: m.role, content };
-      });
+      const plainMessages = newMessages.map(m => ({
+        role: m.role,
+        content: messageContentWithAttachments(m.content, m.attachments),
+      }));
       let currentThreadId = tid;
 
       if (!currentThreadId) {

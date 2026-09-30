@@ -191,7 +191,7 @@ function isAudioFile(name: string): boolean {
   return ["webm", "ogg", "mp3", "m4a", "wav", "aac", "mp4"].includes(ext);
 }
 
-import { ACCEPTED_EXTENSIONS, MAX_CHAT_FILES, isAcceptedChatFile, prepareChatFiles } from "@/lib/chat-attachments";
+import { ACCEPTED_EXTENSIONS, MAX_CHAT_FILES, isAcceptedChatFile, prepareChatFiles, messageContentWithAttachments } from "@/lib/chat-attachments";
 
 function isEmailFile(name: string): boolean {
   const ext = name.split(".").pop()?.toLowerCase() || "";
@@ -1797,16 +1797,10 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   const aiSendMutation = useMutation({
     mutationFn: async ({ newMessages, files, threadId }: { newMessages: LocalChatMessage[]; files: File[]; threadId: string | null }) => {
       stopRequestedRef.current = false;
-      const plainMessages = newMessages.map((m) => {
-        let content = m.content;
-        if (m.attachments && m.attachments.length > 0) {
-          const attInfo = m.attachments.map((a: string) => {
-            try { const p = JSON.parse(a); return p.url || a; } catch { return a; }
-          }).join("\n");
-          content = `${content}\n\n[Attached files]\n${attInfo}`;
-        }
-        return { role: m.role, content };
-      });
+      const plainMessages = newMessages.map((m) => ({
+        role: m.role,
+        content: messageContentWithAttachments(m.content, m.attachments),
+      }));
 
       const createFreshThread = async (): Promise<string> => {
         const firstMsg = newMessages[0]?.content || "New conversation";
@@ -1875,7 +1869,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
         if (buffer.startsWith("data: ")) handle(buffer.slice(6));
         if (lastData) {
           const data = JSON.parse(lastData);
-          if (data.error !== undefined) throw new Error(String(data.error));
+          if (data.error !== undefined && !(typeof data.reply === "string" && data.reply.trim())) {
+            throw new Error(typeof data.error === "string" ? data.error : "ChatBGP could not complete this response.");
+          }
           return data;
         }
         throw new Error("No response received");

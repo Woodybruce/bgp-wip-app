@@ -839,6 +839,12 @@ function getAnthropicClient(useDirect = false) {
   return new Anthropic(opts);
 }
 
+// Assistant text before a tool call is only a draft. An interrupted loop must
+// not publish it (or older history) as proof that an action completed.
+function incompleteChatReply(reason: string): string {
+  return `${reason}\n\nThis response is incomplete. Some actions may already have run; check their results before retrying, especially a paid order.`;
+}
+
 function convertToolsForClaude(tools: any[]): any[] {
   const converted = tools.map(t => ({
     name: t.function.name,
@@ -1364,7 +1370,7 @@ You are an active operational agent with full CRM read/write access, internet se
 
 ## HONESTY — never fabricate outcomes
 - Never say "Done", "Fixed", "Updated", "Rebuilt", or similar UNLESS you actually invoked a tool that performed the change and the tool result confirms success.
-- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`generate_word\`, \`generate_pptx\`, \`export_to_excel\`, \`generate_claude_designed_pdf\`, \`compile_brochure_from_pdfs\`, or \`sign_pdf\`. A made-up URL will 404 for the user.
+- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`generate_word\`, \`generate_pptx\`, \`export_to_excel\`, \`generate_claude_designed_pdf\`, \`compile_brochure_from_pdfs\`, \`sign_pdf\`, or a successful \`order_hmlr_official_copy\` call. A made-up URL will 404 for the user. An HMLR register is delivered only when that tool confirms a saved PDF; never repeat an earlier delivery claim without checking the stored copy.
 - **Signing documents**: **sign_pdf** stamps the user's signature + date (and Name/Title fields) onto a PDF they uploaded to chat. Read the document first, then pass the execution block's exact label texts as anchors. If they have no stored signature yet, either use style 'typed' (italic name) or ask them to upload a photo of their signature once and store it with **save_signature**. Always hand back the downloadMarkdown link and ask them to check placement before sending.
 - If the user asks you to modify something and no suitable tool exists, SAY SO plainly ("I can't edit the PDF renderer from here — that needs a code change"). Offer the closest alternative rather than inventing fake fixes.
 - For template edits, always call \`update_document_template\` with the existing templateId (from the docTemplates list). Don't just describe what you would change — actually change it. After the tool returns, report what the tool confirmed.
@@ -1433,7 +1439,7 @@ You CAN add BGP colleagues to the current chat thread — never claim you can't.
 The hmlr_proprietors table holds HMLR's corporate ownership register — CCOD (UK companies) + OCOD (overseas companies), millions of title rows already loaded. For ANY "who owns X", "all titles / freeholds owned by <company>", "what does <company> hold", or estate-assembly question, query it with sql_query — do NOT try to read raw Land Registry files for this. Match proprietor-name variants broadly (punctuation/suffixes differ) and prefix-style so the name index is used, e.g.:
   SELECT title_number, proprietor_name, property_address, postcode, tenure, proprietor_category, company_registration_no FROM hmlr_proprietors WHERE lower(proprietor_name) LIKE 'young%' ORDER BY proprietor_name;
 Run each plausible variant (e.g. 'young%', 'wellington pub%') plus any known subsidiaries / SPVs, then reconcile. Useful columns: title_number, proprietor_name, proprietor_category, company_registration_no, property_address, postcode, tenure, dataset. If a name returns no rows, say so — never invent titles.
-Identifying the owner/parcel for a title or address is ALWAYS this free register first. The paid property_data_lookup land-registry-documents endpoint is ONLY for buying the official stamped Title Plan/Register PDF (the legal pack) — and it's unreliable on regional/OCOD titles. When it returns delivered:false, don't retry or report "nothing happened": relay what our register already knows (registerKnown) and offer to order it direct from HMLR with order_hmlr_official_copy (BGP's Business Gateway account — first check availability/access without ordering, then confirm the £7 register fee with the user). For charges / lenders on a title, order_hmlr_official_copy is the direct route.
+Identifying the owner/parcel for a title or address is ALWAYS this free register first. The paid property_data_lookup land-registry-documents endpoint is ONLY for buying the official stamped Title Plan/Register PDF (the legal pack) — and it's unreliable on regional/OCOD titles. When it returns delivered:false, don't retry or report "nothing happened": relay what our register already knows (registerKnown) and check the existing order status and charges before offering any replacement order, including through another provider. Missing delivery does not prove nothing was ordered or charged. For charges / lenders on a title, order_hmlr_official_copy is the direct route (BGP's Business Gateway account — check availability/access without ordering, then confirm the £7 register fee with the user).
 
 ## CRITICAL Rules
 1. **ACT FIRST, REPORT AFTER.** Never ask "shall I proceed?" — just do it and confirm.
@@ -1824,9 +1830,10 @@ interface LandRegDocResult {
   files: Array<{ filename: string; text?: string; note?: string }>;
   proprietorData?: any;
   error?: string;
-  // True once PropertyData actually returns a document. When false the
-  // order didn't complete — never report that as a delivered plan/register.
+  // Delivery is confirmed only after downloading PDF bytes, not from a URL.
+  // Missing bytes do not establish the order or billing outcome.
   delivered?: boolean;
+  billingStatus?: "not_verified";
   // What our own ingested HMLR register knows about this title, filled in
   // when PropertyData yields nothing so the ownership question is still
   // answered (free, instant) instead of dead-ending.
@@ -1861,8 +1868,11 @@ async function fetchLandRegistryDocuments(
   // register (free, instant) and hand back the direct-HMLR order link for
   // the official stamped PDF.
   const finalize = async (out: LandRegDocResult) => {
-    out.delivered = !!out.documentUrl;
     if (out.delivered) return;
+    // A provider URL can be expired or return an error page. Do not advertise
+    // it as a download, or turn an uncertain delivery into another purchase.
+    out.documentUrl = null;
+    out.billingStatus = "not_verified";
     try {
       const { findProprietorsByTitle } = await import("./hmlr-direct");
       const props = await findProprietorsByTitle(out.title);
@@ -1882,14 +1892,14 @@ async function fetchLandRegistryDocuments(
     }
     out.manualOrder = {
       url: HMLR_ORDER_URL,
-      note: `PropertyData could not return a document for ${out.title}. Use HM Land Registry to locate title ${out.title}. For a statutory official copy, use the Business e-services portal or the in-app Official Copy (HMLR) route after checking account access and confirming the fee; the public search service provides information copies.`,
+      note: `No PDF delivery was verified for ${out.title}. This does not establish whether the order was accepted or charged. Do not retry the purchase or place a replacement order until the existing order status and charges have been checked. HM Land Registry's public search service can locate the title but provides information copies, not statutory official copies.`,
     };
   };
 
   for (const rawTitle of titles.slice(0, MAX_TITLES)) {
     const title = rawTitle.trim().toUpperCase();
     if (!title) continue;
-    const out: LandRegDocResult = { title, documentUrl: null, alreadyPurchased: false, files: [] };
+    const out: LandRegDocResult = { title, documentUrl: null, alreadyPurchased: false, delivered: false, files: [] };
     try {
       const params = new URLSearchParams({ key: apiKey, title, documents: documents || "both" });
       params.set("extract_proprietor_data", extractProprietor ? "true" : "false");
@@ -1913,36 +1923,46 @@ async function fetchLandRegistryDocuments(
       out.documentUrl = data.document_url || null;
       if (data.proprietor_data || data.extracted_data) out.proprietorData = data.proprietor_data || data.extracted_data;
 
-      // Download the ZIP and pull the text out of each PDF inside it.
+      // Download actual PDF bytes before confirming delivery. A plan can have
+      // no extractable text; that is distinct from a failed document download.
       if (out.documentUrl) {
         try {
           const zipRes = await fetch(out.documentUrl, { signal: AbortSignal.timeout(60000) });
           if (!zipRes.ok) throw new Error(`download HTTP ${zipRes.status}`);
           const zipBuffer = Buffer.from(await zipRes.arrayBuffer());
-          const AdmZip = (await import("adm-zip")).default;
           const { extractPdfText } = await import("./document-reader");
-          const zip = new AdmZip(zipBuffer);
-          for (const entry of zip.getEntries()) {
-            if (entry.isDirectory) continue;
-            if (/\.pdf$/i.test(entry.entryName)) {
-              try {
-                const text = (await extractPdfText(entry.getData())).trim();
-                out.files.push({
-                  filename: entry.entryName,
-                  text: text.length > MAX_TEXT_PER_PDF ? `${text.slice(0, MAX_TEXT_PER_PDF)}\n…[truncated]` : text,
-                  // Title PLANS are map images — pdf text extraction returns
-                  // little/nothing, which is expected, not a failure.
-                  note: text.length < 40 ? "No extractable text (likely a plan/map PDF — use the download link to view it)" : undefined,
-                });
-              } catch (pdfErr: any) {
-                out.files.push({ filename: entry.entryName, note: `PDF parse failed: ${pdfErr?.message}` });
-              }
-            } else {
-              out.files.push({ filename: entry.entryName, note: "non-PDF file — see download link" });
+          const readPdf = async (filename: string, bytes: Buffer) => {
+            if (bytes.subarray(0, 5).toString("ascii") !== "%PDF-") {
+              out.files.push({ filename, note: "The downloaded file is not a PDF." });
+              return;
+            }
+            out.delivered = true;
+            try {
+              const text = (await extractPdfText(bytes)).trim();
+              out.files.push({
+                filename,
+                text: text.length > MAX_TEXT_PER_PDF ? `${text.slice(0, MAX_TEXT_PER_PDF)}\n…[truncated]` : text,
+                note: text.length < 40 ? "No extractable text (likely a plan/map PDF — use the download link to view it)" : undefined,
+              });
+            } catch (pdfErr: any) {
+              out.files.push({ filename, note: `PDF received but text extraction failed: ${pdfErr?.message}` });
+            }
+          };
+          if (zipBuffer.subarray(0, 5).toString("ascii") === "%PDF-") {
+            await readPdf(`${title}-${documents || "both"}.pdf`, zipBuffer);
+          } else {
+            const AdmZip = (await import("adm-zip")).default;
+            const zip = new AdmZip(zipBuffer);
+            for (const entry of zip.getEntries()) {
+              if (entry.isDirectory || !/\.pdf$/i.test(entry.entryName)) continue;
+              await readPdf(entry.entryName, entry.getData());
             }
           }
+          if (!out.delivered) {
+            out.error = "The provider download contained no PDF document.";
+          }
         } catch (zipErr: any) {
-          out.files.push({ filename: "(zip)", note: `Couldn't download/extract: ${zipErr?.message}. Use the download link instead.` });
+          out.error = `Could not verify PDF delivery: ${zipErr?.message}`;
         }
       }
     } catch (err: any) {
@@ -4704,7 +4724,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           endpoint: {
             type: "string",
             enum: ["sold-prices", "prices", "prices-per-sqf", "sold-prices-per-sqf", "rents", "rents-commercial", "rents-hmo", "yields", "growth", "growth-psf", "planning-applications", "valuation-commercial-sale", "valuation-commercial-rent", "valuation-sale", "valuation-rent", "demand", "demand-rent", "demographics", "flood-risk", "floor-areas", "postcode-key-stats", "uprns", "energy-efficiency", "address-match-uprn", "uprn", "uprn-title", "analyse-buildings", "rebuild-cost", "ptal", "crime", "schools", "internet-speed", "restaurants", "conservation-area", "green-belt", "aonb", "national-park", "listed-buildings", "household-income", "population", "tenure-types", "property-types", "council-tax", "national-hmo-register", "freeholds", "politics", "agents", "area-type", "land-registry-documents"],
-            description: "Which data to retrieve. Market: sold-prices, prices, prices-per-sqf, sold-prices-per-sqf, rents-commercial, yields, growth, growth-psf, demand, demand-rent, demographics, postcode-key-stats. Residential: rents, rents-hmo, tenure-types, property-types, floor-areas. Valuations: valuation-commercial-sale/rent, valuation-sale/rent. Local: ptal, crime, schools, internet-speed, restaurants, agents, area-type, council-tax, household-income, population, politics. Planning: planning-applications, conservation-area, green-belt, aonb, national-park, listed-buildings, flood-risk, freeholds, national-hmo-register. Property Intelligence: uprns, energy-efficiency, address-match-uprn, uprn, uprn-title, analyse-buildings, rebuild-cost. Land Registry: land-registry-documents (purchase the official stamped Title Register and/or Title Plan PDF by title number — costs £7.50+VAT per document). NOTE: to IDENTIFY a title's owner/parcel, query the in-house hmlr_proprietors register with sql_query FIRST (free, instant) — only use land-registry-documents when the user needs the actual stamped PDF. This reseller is flaky on regional/OCOD titles; if a result comes back with delivered:false, relay its registerKnown + manualOrder.url (order direct from HMLR) instead of retrying."
+            description: "Which data to retrieve. Market: sold-prices, prices, prices-per-sqf, sold-prices-per-sqf, rents-commercial, yields, growth, growth-psf, demand, demand-rent, demographics, postcode-key-stats. Residential: rents, rents-hmo, tenure-types, property-types, floor-areas. Valuations: valuation-commercial-sale/rent, valuation-sale/rent. Local: ptal, crime, schools, internet-speed, restaurants, agents, area-type, council-tax, household-income, population, politics. Planning: planning-applications, conservation-area, green-belt, aonb, national-park, listed-buildings, flood-risk, freeholds, national-hmo-register. Property Intelligence: uprns, energy-efficiency, address-match-uprn, uprn, uprn-title, analyse-buildings, rebuild-cost. Land Registry: land-registry-documents (purchase the official stamped Title Register and/or Title Plan PDF by title number — costs £7.50+VAT per document). NOTE: to IDENTIFY a title's owner/parcel, query the in-house hmlr_proprietors register with sql_query FIRST (free, instant) — only use land-registry-documents when the user needs the actual stamped PDF. This reseller is flaky on regional/OCOD titles; if a result comes back with delivered:false, relay its registerKnown and exact delivery error. Check the existing order status and charges before offering any replacement order, including direct HMLR. Never automatically retry or infer no charge from missing delivery."
           },
           postcode: { type: "string", description: "UK postcode (full, district, or sector). e.g. W1K 3QB, SW1X, EC2A. Not required for 'uprn' endpoint." },
           address: { type: "string", description: "For address-match-uprn: the street address to match. e.g. '10 Lowndes Street'" },
@@ -8873,7 +8893,8 @@ export async function executeCrmToolRaw(
       } finally { await parser.destroy(); }
     };
     const registerUrl = `/api/lr-bg/register/${encodeURIComponent(titleUpper)}`;
-    const linkNote = `Include this clickable link: [Download official register](${registerUrl}). Only summarise registerText when present; otherwise say the PDF could not be read automatically.`;
+    const downloadMarkdown = `[Download official register](${registerUrl})`;
+    const linkNote = `Include this clickable link: ${downloadMarkdown}. Only summarise registerText when present; otherwise say the PDF could not be read automatically.`;
     if (!fnArgs.reorder && !fnArgs.check_only) {
       let onFile;
       try { onFile = await getFile(bg.ocStorageKey(titleUpper)); }
@@ -8881,7 +8902,7 @@ export async function executeCrmToolRaw(
         return { data: { success: false, outcome: "storage_unavailable", titleNumber: titleUpper, orderSubmitted: false, note: "The saved-copy check failed. No new order was submitted. Restore file storage before retrying so we do not buy a copy already held." } };
       }
       if (onFile?.data) {
-        return { data: { success: true, titleNumber: titleUpper, source: "Official Copy already on file (no new fee)", registerUrl, registerText: await readRegister(onFile.data).catch(() => null), note: `${linkNote} Say this copy was already on file; a newly dated copy needs fresh fee confirmation and reorder:true.` } };
+        return { data: { success: true, titleNumber: titleUpper, source: "Official Copy already on file (no new fee)", registerUrl, downloadMarkdown, registerText: await readRegister(onFile.data).catch(() => null), note: `${linkNote} Say this copy was already on file; a newly dated copy needs fresh fee confirmation and reorder:true.` } };
       }
     }
     // Availability is a separate, read-only REST service. Its failure must not
@@ -8925,7 +8946,7 @@ export async function executeCrmToolRaw(
       return { data: { success: false, outcome: "received_not_saved", titleNumber: titleUpper, fee: result.summary?.actualPrice ?? null, reference: result.summary?.reference ?? null, requestMessageId: result.requestMessageId, note: "HMLR returned the register but saving it failed. The order may have been charged. Do not provide a saved-file link or order another copy; recover this order using its reference." } };
     }
     const text = await readRegister(Buffer.from(result.document.base64, "base64")).catch(() => null);
-    return { data: { success: true, outcome: "delivered", titleNumber: titleUpper, source: "HM Land Registry Business Gateway (OC1)", fee: result.summary?.actualPrice ?? null, reference: result.summary?.reference ?? null, registerUrl, registerText: text, note: `${linkNote} Summarise the proprietor, price paid, charges/lenders and restrictions only from this register.` } };
+    return { data: { success: true, outcome: "delivered", titleNumber: titleUpper, source: "HM Land Registry Business Gateway (OC1)", fee: result.summary?.actualPrice ?? null, reference: result.summary?.reference ?? null, requestMessageId: result.requestMessageId, registerUrl, downloadMarkdown, registerText: text, note: `${linkNote} Summarise the proprietor, price paid, charges/lenders and restrictions only from this register.` } };
   }
 
   if (fnName === "property_data_lookup") {
@@ -8953,7 +8974,7 @@ export async function executeCrmToolRaw(
       const undelivered = docs.filter((d) => !d.delivered);
       const noteParts: string[] = [];
       if (docs.some((d) => d.delivered)) noteParts.push("Delivered documents include the extracted register text (files[].text) and a documentUrl download link — present documentUrl as a bare URL on its own line so the chat UI renders it clickable.");
-      if (undelivered.length) noteParts.push(`PropertyData returned NO document for ${undelivered.map((d) => d.title).join(", ")} — no document was delivered. This does not establish whether a fee was charged. For each, relay registerKnown (verified owner/parcel from our own HMLR register) if present, and offer to order the register direct from HMLR with order_hmlr_official_copy (confirm the fee with the user first). Do NOT retry this endpoint for those titles.`);
+      if (undelivered.length) noteParts.push(`No PDF delivery was verified for ${undelivered.map((d) => d.title).join(", ")}. This does not establish whether the order was accepted or a fee was charged. Relay registerKnown (verified owner/parcel from our own HMLR register) if present. Do NOT retry this endpoint or place a replacement order via another provider until the existing order status and charges have been checked.`);
       return { data: { success: docs.some((d) => d.delivered), source: "PropertyData.co.uk", endpoint, results: docs, note: noteParts.join(" ") } };
     }
     try {
@@ -14283,8 +14304,7 @@ export function setupChatBGPRoutes(app: Express) {
         }
       }
 
-      const lastAMsg = convMessages.filter((m: any) => m.role === "assistant" && m.content).pop();
-      fcSend({ reply: lastAMsg?.content || "I've processed your request. Please ask a follow-up for more details.", ...(lastActionFile ? { action: lastActionFile } : {}) });
+      fcSend({ reply: incompleteChatReply("The file-chat run ended before a final answer was completed."), partial: true, ...(lastActionFile ? { action: lastActionFile } : {}) });
     } catch (err: any) {
       console.error("ChatBGP file chat error:", err?.status, err?.message || err, err?.error || "");
       const errMsg = String(err?.message || err || "");
@@ -15769,7 +15789,7 @@ export function setupChatBGPRoutes(app: Express) {
           const timeoutMsg = clientDisconnected && !verifiedThreadId
             ? "Connection lost. Please refresh and try again."
             : "This is taking longer than expected — try breaking your request into smaller steps (e.g. ask me to check one category at a time).";
-          await sendResult({ reply: timeoutMsg, partial: true });
+          await sendResult({ reply: incompleteChatReply(timeoutMsg), partial: true });
           return;
         }
         loopCount++;
@@ -15919,9 +15939,7 @@ export function setupChatBGPRoutes(app: Express) {
         }
       }
 
-      const lastAssistantMsg = conversationMessages.filter((m: any) => m.role === "assistant" && m.content).pop();
-      const fallbackReply = lastAssistantMsg?.content || "I've processed your request. Please ask a follow-up for more details.";
-      await sendResult({ reply: fallbackReply, ...(lastAction ? { action: lastAction } : {}) });
+      await sendResult({ reply: incompleteChatReply("The chat run ended before a final answer was completed."), partial: true, ...(lastAction ? { action: lastAction } : {}) });
     } catch (err: any) {
       const errBodyRaw = JSON.stringify(err?.error || err?.body || "").slice(0, 2000);
       console.error("ChatBGP error:", err?.status, err?.message || err, errBodyRaw);
@@ -15944,10 +15962,7 @@ export function setupChatBGPRoutes(app: Express) {
         errorMsg = "Anthropic's API returned a server error. Please try again in a moment.";
       }
 
-      const lastAssistantContent = conversationMessages?.filter((m: any) => m.role === "assistant" && m.content).pop()?.content;
-      if (lastAssistantContent && lastAssistantContent.length > 30) {
-        errorMsg = lastAssistantContent;
-      }
+      errorMsg = incompleteChatReply(errorMsg);
 
       clearInterval(heartbeat);
       if (verifiedThreadId) activeChatRuns.delete(verifiedThreadId);
@@ -15966,7 +15981,7 @@ export function setupChatBGPRoutes(app: Express) {
             .catch(() => {});
         } catch {}
       }
-      safeSseWrite(`data: ${JSON.stringify({ reply: errorMsg, error: !lastAssistantContent, errorStatus: err?.status || 500 })}\n\n`);
+      safeSseWrite(`data: ${JSON.stringify({ reply: errorMsg, error: true, errorStatus: err?.status || 500 })}\n\n`);
       try { if (!res.writableEnded) res.end(); } catch {}
     }
   });

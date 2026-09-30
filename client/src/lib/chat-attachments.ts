@@ -13,6 +13,24 @@ export const ACCEPTED_EXTENSIONS = [
 // Matches the server's per-request file cap (chat-with-files / chat upload).
 export const MAX_CHAT_FILES = 30;
 
+// Persisted attachments must keep their image/document markup on later turns:
+// the chat endpoint uses these references to load the original stored bytes.
+export function messageContentWithAttachments(content: string, attachments?: readonly string[] | null): string {
+  if (!attachments?.length) return content;
+  const references = attachments.map(attachment => {
+    let file: { url?: unknown; name?: unknown; type?: unknown } = {};
+    try { file = JSON.parse(attachment) || {}; } catch { /* Legacy plain path or filename. */ }
+    const url = typeof file.url === "string" ? file.url : attachment;
+    if (!url.startsWith("/api/chat-media/")) return url;
+    const name = typeof file.name === "string" ? file.name : url.split("/").pop() || "Attached file";
+    const label = name.replace(/[\r\n]+/g, " ").replace(/\[/g, "(").replace(/\]/g, ")");
+    const image = (typeof file.type === "string" && file.type.startsWith("image/"))
+      || /\.(png|jpe?g|gif|webp|bmp|svg|heic|heif|avif)(?:[?#]|$)/i.test(url);
+    return `${image ? "!" : ""}[${label}](${url})`;
+  });
+  return `${content}\n\n[Attached files]\n${references.join("\n")}`;
+}
+
 // Zip entries arrive as raw bytes with no type, so a File rebuilt from one
 // needs its mime set from the extension or the server can't tell a plan from
 // a spreadsheet.
