@@ -56,6 +56,26 @@ function assertedText(reply: string): string {
     .join("\n");
 }
 
+function isCompaniesHouseDocumentStatement(line: string): boolean {
+  // A filed deed is a separate source, even when it names a land title. Only
+  // exclude an explicit CH document statement; mixed HMLR/CH delivery claims
+  // must still go through the register guard.
+  return /\bCompanies\s+House\b|\/api\/companies-house\/document\//i.test(line)
+    && /\b(?:deed|filing|document|PDF)\b/i.test(line)
+    && !/\b(?:HMLR|land\s+registry|official\s+copy|OC1|register)\b|\/api\/lr-bg\//i.test(line)
+    && !/\b(?:ordered|purchased|placed)\b/i.test(line)
+    && (line.match(/\b(?:ordered|purchased|placed|delivered|downloaded|saved)\b/gi) || []).length <= 1;
+}
+
+function assertsOrder(text: string): boolean {
+  return /(?:^|\n)\s*(?:[-*]\s*)?Ordered\b|\b(?:I|we)(?:['’]ve| have)?\s+(?:successfully\s+)?(?:ordered|purchased)\b|\b(?:order|official copy|register)\b.{0,45}\b(?:has been|was|is)\s+(?:ordered|purchased|placed)\b/i.test(text);
+}
+
+function assertsDelivery(text: string): boolean {
+  return assertsOrder(text)
+    || /(?:^|\n)\s*(?:[-*]\s*)?(?:Status\s*:\s*)?Delivered\b|\b(?:PDF|register|official copy|order)\b.{0,50}\b(?:delivered|downloaded|saved|on file)\b|\b(?:I|we)(?:['’]ve| have)?\s+(?:successfully\s+)?(?:downloaded|saved)\b.{0,50}\b(?:register|official copy|PDF)\b/i.test(text);
+}
+
 function titleNumbers(text: string): string[] {
   // Avoid treating postcodes (EC3, W1) as title numbers. Short/numeric titles
   // are still supported when they arrive in a canonical link or tool receipt.
@@ -101,17 +121,21 @@ export async function verifyHmlrChatDelivery(reply: string, options: Verificatio
   const receipts = options.receipts || [];
   const inContext = HMLR_CONTEXT.test(visible) || links.length > 0 || receipts.length > 0
     || shouldBufferHmlrDelivery(options.messages || []);
-  const positive = assertedText(reply).split("\n").filter(line =>
+  const positive = assertedText(reply).split("\n").filter(line => !isCompaniesHouseDocumentStatement(line)).filter(line =>
     receipts.length > 0 || HMLR_CONTEXT.test(line) || /\bregister\b/i.test(line)
     || titleNumbers(line).length > 0
     || (links.length > 0 && /\b(?:status|ordered|delivered)\b/i.test(line))
   ).join("\n");
-  const claimsOrder = inContext && /(?:^|\n)\s*(?:[-*]\s*)?Ordered\b|\b(?:I|we)(?:['’]ve| have)?\s+(?:successfully\s+)?(?:ordered|purchased)\b|\b(?:order|official copy|register)\b.{0,45}\b(?:has been|was|is)\s+(?:ordered|purchased|placed)\b/i.test(positive);
-  const claimsDelivery = inContext && (claimsOrder
-    || /(?:^|\n)\s*(?:[-*]\s*)?(?:Status\s*:\s*)?Delivered\b|\b(?:PDF|register|official copy|order)\b.{0,50}\b(?:delivered|downloaded|saved|on file)\b|\b(?:I|we)(?:['’]ve| have)?\s+(?:successfully\s+)?(?:downloaded|saved)\b.{0,50}\b(?:register|official copy|PDF)\b/i.test(positive));
+  const claimsOrder = inContext && assertsOrder(positive);
+  const claimsDelivery = inContext && assertsDelivery(positive);
   if (!links.length && !claimsDelivery) return { reply, verification: "not_applicable", changed: false };
 
-  const explicitTitles = [...new Set([...links.map(link => link.title).filter((title): title is string => !!title), ...titleNumbers(positive)])];
+  // A company registration such as Luxembourg B283305 looks like a land
+  // title. Ground checks in download links and actual delivery statements,
+  // not every identifier in a lender/charges analysis. Keep asserted titles
+  // as well as linked ones so a fabricated second delivery cannot slip past.
+  const deliveryStatements = positive.split("\n").filter(assertsDelivery).join("\n");
+  const explicitTitles = [...new Set([...links.map(link => link.title).filter((title): title is string => !!title), ...titleNumbers(deliveryStatements)])];
   const titles = explicitTitles.length ? explicitTitles : [...new Set(receipts.map(receiptTitle).filter((title): title is string => !!title))];
   const latestReceipts = new Map<string, HmlrDeliveryReceipt>();
   for (const receipt of receipts) { const title = receiptTitle(receipt); if (title) latestReceipts.set(title, receipt); }

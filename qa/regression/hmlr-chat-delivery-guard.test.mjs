@@ -175,3 +175,45 @@ test('prior HMLR context does not block saving a separate presentation PDF', asy
     assert.equal(f.reads.length, 0);
   }
 });
+
+test('Companies House deed delivery does not claim an HMLR register even when it identifies the title', async () => {
+  for (const reply of [
+    `I've downloaded the Companies House deed PDF for ${title}. [Insurance deed](/api/companies-house/document/deed123?filename=Royex-Insurance-Security.pdf)`,
+    `The Companies House filing PDF for ${title} has been saved. The facility limit is £8.3m; the current balance is unknown.`,
+  ]) {
+    const f = fixture();
+    const out = await f.run(reply);
+    assert.equal(out.verification, 'not_applicable');
+    assert.equal(out.reply, reply);
+    assert.equal(f.reads.length, 0);
+  }
+});
+
+test('Companies House wording cannot exempt a mixed HMLR delivery claim', async () => {
+  for (const reply of [
+    `I've downloaded the Companies House deed PDF and HMLR register for ${title}.`,
+    `The Companies House deed PDF has been saved; the register for ${title} has been delivered.`,
+    `I've downloaded the Companies House deed PDF for ${title}. I've ordered the HMLR register for ${title}.`,
+    `While reading the Companies House deed PDF, I've ordered ${title}.`,
+  ]) {
+    const out = await fixture().run(reply);
+    assert.equal(out.verification, 'blocked', reply);
+  }
+});
+
+test('a lender registration number is not checked as a title alongside a real saved register', async () => {
+  const f = fixture({ stored: { [`lr-bg/${title}-OC1-Register.pdf`]: pdf } });
+  const reply = `The facility limit is £8.3m; the current debt balance is unknown.\nLender: Infinity HAGIM Lenwood RED II S.à r.l., Luxembourg registration B283305.\n[Earlier official register](${canonical})\n[Insurance deed](/api/companies-house/document/deed123?filename=Royex-Insurance-Security.pdf)`;
+  const out = await f.run(reply);
+  assert.equal(out.verification, 'verified');
+  assert.equal(out.reply, reply);
+  assert.deepEqual(f.reads, [`lr-bg/${title}-OC1-Register.pdf`]);
+});
+
+test('one real register link does not excuse a claimed second register delivery', async () => {
+  const f = fixture({ stored: { [`lr-bg/${title}-OC1-Register.pdf`]: pdf } });
+  const out = await f.run(`The register for ${title} is saved. The register for NGL814693 is delivered. [Download](${canonical})`);
+  assert.equal(out.verification, 'blocked');
+  assert.equal(out.reason, 'missing_pdf');
+  assert.deepEqual(f.reads.sort(), [`lr-bg/${title}-OC1-Register.pdf`, 'lr-bg/NGL814693-OC1-Register.pdf'].sort());
+});

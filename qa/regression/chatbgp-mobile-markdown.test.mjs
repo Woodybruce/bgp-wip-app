@@ -12,7 +12,7 @@ const mobileFile = 'client/src/components/mobile-app.tsx';
 const tagFile = 'client/src/components/chat-tags.tsx';
 const icon = () => null;
 function compile(code, bindings = {}) {
-  const context = { exports: {}, React, Copy: icon, Check: icon, Download: icon, Loader2: icon,
+  const context = { exports: {}, React, URLSearchParams, Copy: icon, Check: icon, Download: icon, Loader2: icon,
     useState: initial => [initial, () => {}],
     TagChip: ({ name }) => React.createElement('button', { 'data-testid': 'tag-chip' }, name),
     ...bindings };
@@ -91,6 +91,42 @@ test('previously saved bare register paths get a download control without linkin
   assert.equal((html.match(/data-testid="link-download-file"/g) || []).length, 1);
   assert.match(html, /Download official register/);
   assert.match(html, /\/api\/lr-bg\/status/);
+});
+
+test('Companies House deed links use authenticated downloads while public filing links stay external', () => {
+  const html = render(`[Insurance security](/api/companies-house/document/doc_123-abc?filename=Royex-Insurance-Security.pdf#page=6)
+
+[Bank account security](/api/companies-house/document/doc456)
+
+[Official filing](https://find-and-update.company-information.service.gov.uk/company/11473397/filing-history/example/document?format=pdf)`);
+  assert.equal((html.match(/data-testid="link-download-file"/g) || []).length, 2);
+  assert.doesNotMatch(html, /href="\/api\/companies-house\/document/);
+  assert.match(html, /href="https:\/\/find-and-update.company-information.service.gov.uk/);
+});
+
+test('Companies House downloads get a sanitized PDF filename and keep token authentication', async () => {
+  for (const [suffix, expected] of [
+    ['?filename=Royex-Insurance-Security.pdf#page=6', 'Royex-Insurance-Security.pdf'],
+    ['?filename=..%2F..%5CRoyex%20Security%0A.pdf', 'Royex_Security_.pdf'],
+    ['?filename=%2F%5C', 'Companies-House-doc_123-abc.pdf'],
+    ['', 'Companies-House-doc_123-abc.pdf'],
+  ]) {
+    const requests = [], saved = [];
+    const context = compile(markdownCode, {
+      localStorage: { getItem: key => key === 'bgp_addin_token' ? 'qa-staff-token-only' : null },
+      fetch: async (url, options) => { requests.push({ url, options }); return { ok: true, blob: async () => ({ size: 20 }) }; },
+      URL: { createObjectURL: () => 'blob:qa-deed', revokeObjectURL() {} },
+      document: { body: { appendChild() {} }, createElement: () => ({ click() { saved.push({ href: this.href, download: this.download }); }, remove() {} }) },
+      setTimeout: fn => fn(),
+    });
+    const href = `/api/companies-house/document/doc_123-abc${suffix}`;
+    const tree = context.exports.AuthDownloadLink({ href, children: 'Deed' });
+    await nodes(tree).find(n => n.type === 'button').props.onClick({ preventDefault() {} });
+    assert.equal(requests[0].url, href);
+    assert.equal(requests[0].options.credentials, 'include');
+    assert.equal(requests[0].options.headers.Authorization, 'Bearer qa-staff-token-only');
+    assert.deepEqual(saved, [{ href: 'blob:qa-deed', download: expected }]);
+  }
 });
 
 test('official register saves as a PDF using the authenticated download flow', async () => {

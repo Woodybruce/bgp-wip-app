@@ -24,8 +24,16 @@ export function AuthDownloadLink({ href, children }: { href: string; children: R
       if (!href.startsWith("/api/") || href.includes("\\")) throw new Error("Download must use an app file link");
       const token = localStorage.getItem("bgp_addin_token") || localStorage.getItem("bgp_auth_token") || "";
       const registerTitle = href.match(/^\/api\/lr-bg\/register\/([A-Z]{0,3}\d{1,8})(?:\?|$)/i)?.[1];
+      const companyDocument = href.match(/^\/api\/companies-house\/document\/([A-Za-z0-9_-]+)(?:[?#]|$)/)?.[1];
+      const requestedFilename = companyDocument
+        ? new URLSearchParams(href.split("?")[1]?.split("#")[0] || "").get("filename") || ""
+        : "";
+      const companyFilename = requestedFilename.replace(/[^A-Za-z0-9._-]/g, "_")
+        .replace(/^[._-]+/, "").replace(/\.pdf$/i, "").slice(0, 160);
       const filename = registerTitle
         ? `${registerTitle.toUpperCase()}-OC1-Register.pdf`
+        : companyDocument
+          ? `${companyFilename || `Companies-House-${companyDocument}`}.pdf`
         : href.split("/").pop()?.split("?")[0] || "download";
       const res = await fetch(href, { credentials: "include", headers: token ? { Authorization: `Bearer ${token}` } : {} });
       if (!res.ok) {
@@ -139,7 +147,7 @@ function parseInline(text: string, keyPrefix: string): (string | JSX.Element)[] 
   const GAP = String.raw`\s*`;
   const tokenRegex = new RegExp(
     String.raw`!\[([^\]]*)\]` + GAP + String.raw`\((` + URL_CORE + String.raw`)\)` +                  // ![alt](url)
-    String.raw`|\[([^\]]+)\]` + GAP + String.raw`\((\/api\/(?:chat-media\/` + URL_CORE + String.raw`|lr-bg\/register\/[A-Za-z]{0,3}\d{1,8}))\)` + // authenticated document links
+    String.raw`|\[([^\]]+)\]` + GAP + String.raw`\((\/api\/(?:chat-media\/` + URL_CORE + String.raw`|lr-bg\/register\/[A-Za-z]{0,3}\d{1,8}|companies-house\/document\/[A-Za-z0-9_-]+(?:[?#]` + URL_CORE + String.raw`)?))\)` + // authenticated document links
     String.raw`|\[([^\]]+)\]` + GAP + String.raw`\((https?:\/\/` + URL_CORE + String.raw`)\)` +        // [t](https://…)
     String.raw`|\[([^\]]+)\]` + GAP + String.raw`\((\/` + URL_CORE + String.raw`)\)` +                 // [t](/path)
     String.raw`|\*\*(.+?)\*\*` +                                                  // **bold**
@@ -169,7 +177,7 @@ function parseInline(text: string, keyPrefix: string): (string | JSX.Element)[] 
         result.push(match[0]);
       }
     } else if (match[3] && match[4]) {
-      // Authenticated chat attachments and official register PDFs.
+      // Authenticated chat attachments, official registers and filed deeds.
       result.push(
         <AuthDownloadLink key={`${keyPrefix}-${key++}`} href={match[4]}>{match[3]}</AuthDownloadLink>
       );
