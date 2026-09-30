@@ -81,3 +81,23 @@ test("kimi base URL defaults to the Moonshot Anthropic endpoint", () => {
   delete process.env.MOONSHOT_BASE_URL;
   assert.equal(kimiBaseURL(), "https://api.moonshot.ai/anthropic");
 });
+
+test("OpenAI selection is explicit and never falls back to Claude without a key", async () => {
+  const { mapModelForOpenAI } = await import("./utils/ai-provider");
+  process.env.AI_PROVIDER = "openai";
+  delete process.env.CHATBGP_PROVIDER;
+  const saved = process.env.OPENAI_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+  assert.equal(globalProvider(), "openai");
+  assert.equal(chatProvider(), "openai");
+  assert.equal(mapModelForOpenAI("claude-fable-5"), "gpt-6.1-sol");
+  assert.equal(mapModelForOpenAI("claude-opus-5-5"), "gpt-6.1-sol");
+  assert.equal(mapModelForOpenAI("claude-haiku-4-5-20251001"), "gpt-6-luna");
+  assert.equal(mapModelForOpenAI("gpt-6-astra"), "gpt-6-astra");
+  process.env.CHATBGP_PROVIDER = "anthropic";
+  assert.equal(chatProvider(), "anthropic");
+  assert.equal(globalProvider(), "openai");
+  delete process.env.CHATBGP_PROVIDER;
+  delete process.env.AI_PROVIDER;
+  if (saved !== undefined) process.env.OPENAI_API_KEY = saved;
+});

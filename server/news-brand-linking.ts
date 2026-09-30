@@ -7,6 +7,7 @@ import { googleNewsRssUrl, createRssAppFeed, rssappHealth } from "./rssapp";
 import { BRAND_WEB_FEED_TYPES } from "../shared/brand-feed-types";
 import { isFeedEligibleCompany } from "./instagram-card-state";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
+import { hasGlobalAiKey } from "./utils/ai-provider";
 import { isBrandNewsRelevant } from "./brand-news-relevance";
 
 type SignalType = "opening" | "closure" | "funding" | "exec_change" | "sector_move" | "news" | "rumour";
@@ -18,8 +19,7 @@ type Sentiment = "positive" | "neutral" | "negative";
 async function classifySignal(brandName: string, title: string, summary: string | null): Promise<
   { signalType: SignalType; magnitude: Magnitude; sentiment: Sentiment; aboutBrand: boolean | null } | null
 > {
-  const haveKey = !!(process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY);
-  if (!haveKey) return null;
+  if (!hasGlobalAiKey()) return null;
 
   const prompt = `Classify this news headline about the brand "${brandName}" into a structured signal.
 
@@ -1088,8 +1088,7 @@ export async function backfillSignalClassifications(opts?: { limit?: number }): 
   { scanned: number; reclassified: number; skipped: number }
 > {
   const limit = opts?.limit || 50;
-  const haveKey = !!(process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY);
-  if (!haveKey) return { scanned: 0, reclassified: 0, skipped: 0 };
+  if (!hasGlobalAiKey()) return { scanned: 0, reclassified: 0, skipped: 0 };
 
   const brands = await db
     .select({ id: crmCompanies.id, name: crmCompanies.name })

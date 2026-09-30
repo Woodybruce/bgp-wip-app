@@ -1,16 +1,8 @@
-// Per-thread model toggle for ChatBGP.
-//
-// Default is Fable 5 (Anthropic's most capable model — the main chat is as
-// powerful as Claude out of the box). Users can switch a specific thread with
-// slash commands: `/opus` (heavy, cheaper than Fable), `/sonnet` (fastest +
-// cheapest), `/fable` (back to the default). The choice is remembered per chat
-// thread in chat_threads.model_preference until the user flips it again.
-//
-// Slash command alone (e.g. just "/sonnet") → return ack, don't call
-// Claude at all. Slash command followed by content (e.g. "/sonnet draft
-// the Why Buy") → strip the command, switch model, continue normally.
+// Per-thread model choices follow the configured provider. Legacy Claude
+// preferences map to Sol after an OpenAI switch; Astra always needs opt-in.
 
 import { pool } from "./db";
+import { chatProvider, mapModelForKimi, openaiChatModel, openaiHelperModel, openaiAdvancedModel } from "./utils/ai-provider";
 
 const SONNET = "claude-sonnet-4-6";
 // Opus 5.5 is the default: Sonnet wasn't good enough (Woody, 2026-09-29),
@@ -28,7 +20,18 @@ const DEFAULTS = {
   sonnet: SONNET,
 } as const;
 
-export type ModelCommand = "fable" | "opus" | "sonnet";
+export type ModelCommand = "fable" | "opus" | "sonnet" | "sol" | "luna" | "astra";
+
+export function selectChatModel(preference?: string | null): { model: string; label: ModelCommand } {
+  if (chatProvider() === "openai") {
+    if (preference === "luna") return { model: openaiHelperModel(), label: "luna" };
+    if (preference === "astra") return { model: openaiAdvancedModel(), label: "astra" };
+    return { model: openaiChatModel(), label: "sol" };
+  }
+  const label = preference === "fable" || preference === "sonnet" ? preference : "opus";
+  const model = DEFAULTS[label];
+  return { model: chatProvider() === "kimi" ? mapModelForKimi(model) : model, label };
+}
 
 let _columnReady = false;
 async function ensureColumn(): Promise<void> {
@@ -56,7 +59,7 @@ export function parseSlashCommand(content: string | undefined | null): SlashPars
     return { command: null, strippedContent: content || "", wasJustCommand: false };
   }
   const trimmed = content.trim();
-  const m = trimmed.match(/^\/(fable|opus|sonnet)\b\s*(.*)$/is);
+  const m = trimmed.match(/^\/(fable|opus|sonnet|sol|luna|astra)\b\s*(.*)$/is);
   if (!m) return { command: null, strippedContent: content, wasJustCommand: false };
   const command = m[1].toLowerCase() as ModelCommand;
   const rest = (m[2] || "").trim();
@@ -85,20 +88,17 @@ export async function resolveChatModel(args: {
   threadId?: string | null;
   override?: ModelCommand | null;
 }): Promise<{ model: string; label: ModelCommand }> {
-  if (args.override) return { model: DEFAULTS[args.override], label: args.override };
-  if (!args.threadId) return { model: DEFAULTS.default, label: "opus" };
+  if (args.override) return selectChatModel(args.override);
+  if (!args.threadId) return selectChatModel();
   await ensureColumn();
   try {
     const { rows } = await pool.query<{ model_preference: string | null }>(
       `SELECT model_preference FROM chat_threads WHERE id = $1 LIMIT 1`,
       [args.threadId],
     );
-    const pref = rows[0]?.model_preference;
-    if (pref === "fable") return { model: FABLE, label: "fable" };
-    if (pref === "sonnet") return { model: SONNET, label: "sonnet" };
-    return { model: OPUS, label: "opus" };
+    return selectChatModel(rows[0]?.model_preference);
   } catch {
-    return { model: DEFAULTS.default, label: "opus" };
+    return selectChatModel();
   }
 }
 
@@ -106,13 +106,17 @@ export async function resolveChatModel(args: {
 // user typed just the command with no body — we short-circuit the
 // Claude call and respond with this.
 export function ackMessage(command: ModelCommand): string {
-  if (command === "fable") {
-    return "🔀 Switched to Fable for this thread — the most capable and most expensive model. Type `/opus` to go back to the default.";
+  const { model, label } = selectChatModel(command);
+  if (chatProvider() === "openai") {
+    const detail = label === "astra" ? "the more expensive option for demanding tasks"
+      : label === "luna" ? "the lower-cost option for straightforward tasks" : "the default";
+    const mapped = command !== label ? " This app now uses OpenAI, so the old Claude choice maps to Sol." : "";
+    return `🔀 Using ${label[0].toUpperCase() + label.slice(1)} for this thread — ${detail}.${mapped} Use \`/sol\`, \`/luna\` or \`/astra\` to change it.`;
   }
-  return command === "opus"
-    ? "🔀 Switched to Opus for this thread — the default. Type `/fable` for the most capable model."
-    : "🔀 Switched to Sonnet for this thread — faster and cheaper. Type `/opus` to go back to the default.";
+  if (chatProvider() === "kimi") return `🔀 Using ${model} for this thread.`;
+  return `🔀 Using ${label === "fable" ? "Fable — the more expensive option" : label === "sonnet" ? "Sonnet" : "Opus — the default"} for this thread. Use \`/opus\`, \`/sonnet\` or \`/fable\` to change it.`;
 }
 
-export const CHATBGP_DEFAULT_MODEL = FABLE;
+// Legacy callers go through provider dispatch, which maps this model to Sol.
+export const CHATBGP_DEFAULT_MODEL = OPUS;
 export const CHATBGP_OPUS_MODEL = OPUS;

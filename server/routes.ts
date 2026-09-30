@@ -376,6 +376,7 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       ],
       max_completion_tokens: 2048,
       tools: groupTools.length > 0 ? groupTools : undefined,
+      parallel_tool_calls: false,
     };
 
     const withTimeout = <T>(p: Promise<T>): Promise<T> => {
@@ -398,47 +399,49 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
 
     while (currentMessage?.tool_calls && currentMessage.tool_calls.length > 0 && loopCount < maxLoops) {
       loopCount++;
-      const toolCall = currentMessage.tool_calls[0];
-      const fnName = toolCall.function.name;
-      let fnArgs: any;
-      try {
-        fnArgs = JSON.parse(toolCall.function.arguments || "{}");
-      } catch (parseErr: any) {
-        console.error("[ai-group] Bad tool args JSON:", parseErr?.message);
-        completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
-        completionOptions.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "Invalid JSON in tool arguments" }) });
-        claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
-        currentMessage = claudeResponse.choices?.[0]?.message;
-        continue;
+      // Preserve the entire provider message once, including encrypted
+      // reasoning and loaded tool definitions needed by stateless Responses.
+      const toolIds = currentMessage.tool_calls.map((call: any) => call.id);
+      if (toolIds.some((id: any) => !id) || new Set(toolIds).size !== toolIds.length) {
+        throw new Error("Invalid or duplicate group tool call IDs");
       }
-
-      try {
-        const result = await chatbgp.handleCrmToolCall(fnName, fnArgs, req, completionOptions, currentMessage, toolCall);
-        if (result?.handled && result.response) {
-          lastAction = result.response.action || lastAction;
-          lastHandledReply = result.response.reply || lastHandledReply;
-          completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
-          completionOptions.messages.push({
-            role: "tool",
-            tool_call_id: toolCall.id,
-            content: JSON.stringify({ result: result.response.reply || "done", action: result.response.action || null }),
-          });
-          claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
-          currentMessage = claudeResponse.choices?.[0]?.message;
-          continue;
+      completionOptions.messages.push(currentMessage);
+      // Ask for serial calls, but handle every call if a provider still returns
+      // a batch. Every requested call must receive exactly one outcome.
+      for (const toolCall of currentMessage.tool_calls) {
+        const fnName = toolCall.function?.name;
+        let outcome: any;
+        if (!groupTools.some((tool: any) => tool.function?.name === fnName)) {
+          outcome = { error: "This tool is not available in this group conversation" };
+        } else {
+          let fnArgs: any;
+          try {
+            fnArgs = JSON.parse(toolCall.function.arguments || "{}");
+            if (!fnArgs || typeof fnArgs !== "object" || Array.isArray(fnArgs)) throw new Error("Arguments must be an object");
+          } catch (parseErr: any) {
+            console.error("[ai-group] Bad tool args JSON:", parseErr?.message);
+            outcome = { error: "Invalid JSON object in tool arguments" };
+          }
+          if (!outcome) {
+            try {
+              const result = await chatbgp.handleCrmToolCall(fnName, fnArgs, req, completionOptions, currentMessage, toolCall);
+              if (result?.handled && result.response) {
+                lastAction = result.response.action || lastAction;
+                lastHandledReply = result.response.reply || lastHandledReply;
+                outcome = { result: result.response.reply || "done", action: result.response.action || null };
+              } else {
+                outcome = { error: "Tool not handled" };
+              }
+            } catch (toolErr: any) {
+              console.error("[ai-group] Tool call error:", toolErr?.message);
+              outcome = { error: toolErr?.message || "Tool execution failed" };
+            }
+          }
         }
-
-        completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
-        completionOptions.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "Tool not handled" }) });
-        claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
-        currentMessage = claudeResponse.choices?.[0]?.message;
-      } catch (toolErr: any) {
-        console.error("[ai-group] Tool call error:", toolErr?.message);
-        completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
-        completionOptions.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: toolErr?.message || "Tool execution failed" }) });
-        claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
-        currentMessage = claudeResponse.choices?.[0]?.message;
+        completionOptions.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(outcome) });
       }
+      claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
+      currentMessage = claudeResponse.choices?.[0]?.message;
     }
 
     if (io) io.to(`thread:${threadId}`).emit("stop_typing", { threadId, userId: "__chatbgp__" });

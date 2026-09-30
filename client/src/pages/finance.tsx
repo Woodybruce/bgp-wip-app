@@ -250,8 +250,9 @@ function AppCostsSection() {
   const { data } = useQuery<{
     monthUsd: number; fytdUsd: number; monthCalls: number; monthTokens: number;
     monthUnpricedImages: number;
-    byProvider: Array<{ provider: string; model: string; calls: number; input_tokens: number; output_tokens: number; images: number; usd: number }>;
-    byFeature: Array<{ feature: string; calls: number; usd: number }>;
+    monthUnpricedCalls?: number; fytdUnpricedCalls?: number;
+    byProvider: Array<{ provider: string; model: string; calls: number; unpriced_calls?: number; input_tokens: number; output_tokens: number; images: number; usd: number }>;
+    byFeature: Array<{ feature: string; calls: number; unpriced_calls?: number; usd: number }>;
     scraperapi: { requestCount: number | null; requestLimit: number | null; subscriptionName: string | null } | null;
     meteredFrom: string;
   }>({
@@ -261,6 +262,9 @@ function AppCostsSection() {
 
   if (!data) return null;
   const usd = (n: number) => `$${(n || 0).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const costLabel = (row: { calls: number; unpriced_calls?: number; usd: number }) =>
+    row.unpriced_calls && row.unpriced_calls >= row.calls ? "Unpriced" :
+      `${usd(row.usd)}${row.unpriced_calls ? ` + ${row.unpriced_calls} unpriced` : ""}`;
 
   return (
     <Card>
@@ -268,11 +272,16 @@ function AppCostsSection() {
         <CardTitle className="text-base flex items-center justify-between">
           <span>App &amp; AI running costs</span>
           <span className="text-xs font-normal text-muted-foreground">
-            {usd(data.monthUsd)} this month · {usd(data.fytdUsd)} FYTD
+            Estimated subtotal: {usd(data.monthUsd)} this month · {usd(data.fytdUsd)} FYTD
           </span>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
+        {!!(data.monthUnpricedCalls || data.fytdUnpricedCalls) && (
+          <p className="text-xs text-amber-700 dark:text-amber-400">
+            Costs are incomplete: {data.monthUnpricedCalls || 0} unpriced call(s) this month; {data.fytdUnpricedCalls || 0} FYTD. These calls are excluded from the subtotals below.
+          </p>
+        )}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>
             <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">By provider (this month)</p>
@@ -283,7 +292,7 @@ function AppCostsSection() {
                   <span className="truncate pr-3">
                     {p.provider} <span className="text-muted-foreground text-xs">· {p.model} · {p.calls.toLocaleString()} call(s){p.images ? ` · ${p.images} image(s)` : ""}</span>
                   </span>
-                  <span className="font-mono shrink-0">{usd(p.usd)}</span>
+                  <span className="font-mono shrink-0">{costLabel(p)}</span>
                 </div>
               ))}
             </div>
@@ -294,7 +303,7 @@ function AppCostsSection() {
               {data.byFeature.map((f, i) => (
                 <div key={i} className="flex items-center justify-between text-sm py-0.5">
                   <span className="truncate pr-3">{f.feature} <span className="text-muted-foreground text-xs">· {f.calls.toLocaleString()} call(s)</span></span>
-                  <span className="font-mono shrink-0">{usd(f.usd)}</span>
+                  <span className="font-mono shrink-0">{costLabel(f)}</span>
                 </div>
               ))}
             </div>
@@ -308,7 +317,7 @@ function AppCostsSection() {
         </div>
         <p className="text-[11px] text-muted-foreground border-t pt-2">
           {data.meteredFrom}
-          {data.monthUnpricedImages > 0 ? ` ${data.monthUnpricedImages} image generation(s) this month aren't priced — set AI_IMAGE_COST_USD_GEMINI / AI_IMAGE_COST_USD_OPENAI to include them.` : ""}
+          {data.monthUnpricedImages > 0 ? ` ${data.monthUnpricedImages} image generation(s) this month have no price configured.` : ""}
           {" "}{data.monthTokens > 0 ? `${(data.monthTokens / 1_000_000).toFixed(1)}M tokens this month.` : ""}
         </p>
       </CardContent>
@@ -608,4 +617,3 @@ export default function FinancePage() {
     </div>
   );
 }
-

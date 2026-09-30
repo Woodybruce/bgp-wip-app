@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { globalProvider, getKimiClient, mapModelForKimi, sanitizeParamsForKimi } from "./ai-provider";
+import { globalProvider, getKimiClient, mapModelForKimi, mapModelForOpenAI, sanitizeParamsForKimi } from "./ai-provider";
+import { callOpenAI } from "./openai-client";
 
 export const CHATBGP_MODEL = "claude-sonnet-4-6";
 export const CHATBGP_HELPER_MODEL = "claude-haiku-4-5-20251001";
@@ -151,6 +152,9 @@ function parseClaudeResponse(response: any) {
 }
 
 export async function callClaude(opts: any) {
+  if (globalProvider() === "openai") {
+    return callOpenAI({ ...opts, model: mapModelForOpenAI(opts.model || CHATBGP_MODEL), feature: opts.feature || "shared-helper" });
+  }
   const tools = opts.tools ? convertToolsForClaude(opts.tools) : undefined;
   const { system, messages } = convertMessagesForClaude(opts.messages);
 

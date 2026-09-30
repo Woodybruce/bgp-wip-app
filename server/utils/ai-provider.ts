@@ -1,31 +1,18 @@
 import Anthropic from "@anthropic-ai/sdk";
 
-// Provider switch for the app's AI calls (Woody, 2026-09-30: "swap the
-// Claude API to the Kimi API for ChatBGP... move the whole app across").
-//
-// Kimi's platform speaks the Anthropic Messages wire format, so the official
-// Anthropic SDK works unchanged — only apiKey + baseURL + model name differ:
-//   https://api.moonshot.ai/anthropic  (platform.kimi.ai, MOONSHOT_API_KEY)
-//
-// Switches (env):
-//   CHATBGP_PROVIDER=kimi   → ChatBGP chat loop only
-//   AI_PROVIDER=kimi        → everything routed through the shared
-//                             utils/anthropic-client.ts helpers as well
-//   MOONSHOT_API_KEY        → required for kimi; without it we stay on
-//                             Anthropic (loudly) rather than crash
-//   MOONSHOT_BASE_URL       → defaults to https://api.moonshot.ai/anthropic
-//   KIMI_CHAT_MODEL         → flagship tier (fable/opus), default kimi-k3
-//   KIMI_FAST_MODEL         → sonnet tier, default kimi-k2.6
-//   KIMI_HELPER_MODEL       → haiku background tier, default kimi-k2.6
-//
-// Deliberately NOT migrated by these flags: files constructing
-// `new Anthropic()` directly (~50 call sites — PDF document blocks,
-// brochure/plan vision pipelines etc.). Those stay on Claude until each is
-// moved onto the shared helper and verified against Kimi.
+// CHATBGP_PROVIDER selects the chat loop; AI_PROVIDER selects shared helpers.
+// OpenAI uses Responses (OPENAI_API_KEY); Kimi uses the Anthropic-compatible
+// endpoint (MOONSHOT_API_KEY); Anthropic remains available for rollback.
+// OPENAI_CHAT_MODEL defaults to Sol 6.1, OPENAI_HELPER_MODEL to Luna, and
+// OPENAI_ADVANCED_MODEL to Astra (only explicitly selected per thread).
+// Direct Anthropic SDK pipelines are intentionally unchanged by these flags.
 
-export type AiProvider = "anthropic" | "kimi";
+export type AiProvider = "anthropic" | "kimi" | "openai";
 
 function resolveProvider(raw: string | undefined): AiProvider {
+  // An explicitly selected provider must fail visibly if its key is missing;
+  // never silently move OpenAI traffic onto a more expensive Claude model.
+  if ((raw || "").trim().toLowerCase() === "openai") return "openai";
   if ((raw || "").trim().toLowerCase() !== "kimi") return "anthropic";
   if (!process.env.MOONSHOT_API_KEY) {
     console.warn("[ai-provider] kimi selected but MOONSHOT_API_KEY is not set — staying on Anthropic");
@@ -40,6 +27,32 @@ export function chatProvider(): AiProvider {
 
 export function globalProvider(): AiProvider {
   return resolveProvider(process.env.AI_PROVIDER);
+}
+
+export function hasGlobalAiKey(): boolean {
+  const provider = globalProvider();
+  if (provider === "openai") return !!process.env.OPENAI_API_KEY;
+  if (provider === "kimi") return !!process.env.MOONSHOT_API_KEY;
+  return !!(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY);
+}
+
+export function openaiChatModel(): string {
+  return process.env.OPENAI_CHAT_MODEL || "gpt-6.1-sol";
+}
+
+export function openaiHelperModel(): string {
+  return process.env.OPENAI_HELPER_MODEL || "gpt-6-luna";
+}
+
+export function openaiAdvancedModel(): string {
+  return process.env.OPENAI_ADVANCED_MODEL || "gpt-6-astra";
+}
+
+export function mapModelForOpenAI(model: string): string {
+  if (/^gpt-/i.test(model || "")) return model;
+  if ((model || "").includes("haiku")) return openaiHelperModel();
+  // Saved Claude preferences must not silently opt a thread into Astra.
+  return openaiChatModel();
 }
 
 export function kimiBaseURL(): string {
