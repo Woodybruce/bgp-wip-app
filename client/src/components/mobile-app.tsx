@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useTypingIndicator } from "@/hooks/use-socket";
 import { emitMarkSeen } from "@/lib/socket";
 import * as voiceRecovery from "@/lib/voice-recovery";
-import { AuthDownloadLink } from "@/components/chatbgp-markdown";
+import { AuthDownloadLink, ChatBGPMarkdown } from "@/components/chatbgp-markdown";
 import { useLocation } from "wouter";
 import { useTeam } from "@/lib/team-context";
 import { TagChip, TAG_TOKEN_SOURCE, TAG_META, buildTagToken, type TagType } from "@/components/chat-tags";
@@ -361,7 +361,7 @@ function renderFormattedText(text: string, isUserBubble?: boolean): (string | JS
   return result;
 }
 
-function RenderMessageContent({ content, onCheckboxClick, isUserBubble, selectedCheckboxes }: { content: string; onCheckboxClick?: (text: string) => void; isUserBubble?: boolean; selectedCheckboxes?: string[] }) {
+function RenderMessageContent({ content, onCheckboxClick, isUserBubble, selectedCheckboxes, markdown = false }: { content: string; onCheckboxClick?: (text: string) => void; isUserBubble?: boolean; selectedCheckboxes?: string[]; markdown?: boolean }) {
   const lines = content.split("\n");
   const parts: Array<{ type: "text" | "checkbox" | "image"; text: string; alt?: string; url?: string }> = [];
   let textBuffer: string[] = [];
@@ -393,6 +393,7 @@ function RenderMessageContent({ content, onCheckboxClick, isUserBubble, selected
 
   const hasSpecial = parts.some(p => p.type !== "text");
   if (!hasSpecial) {
+    if (markdown) return <ChatBGPMarkdown content={content} />;
     const formatted = renderFormattedText(content, isUserBubble);
     const hasFormatting = formatted.length !== 1 || typeof formatted[0] !== "string";
     if (hasFormatting) return <>{formatted}</>;
@@ -410,6 +411,7 @@ function RenderMessageContent({ content, onCheckboxClick, isUserBubble, selected
           );
         }
         if (part.type === "text") {
+          if (markdown) return <ChatBGPMarkdown key={i} content={part.text} />;
           const formatted = renderFormattedText(part.text, isUserBubble);
           const hasFormatting = formatted.length !== 1 || typeof formatted[0] !== "string";
           if (hasFormatting) return <span key={i}>{formatted}{i < parts.length - 1 ? "\n" : ""}</span>;
@@ -621,7 +623,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
               onTouchCancel={handleTouchEnd}
             >
               <div className="text-[15px] leading-[1.7] text-foreground whitespace-pre-wrap break-words select-text">
-                <RenderMessageContent content={message.content} onCheckboxClick={onCheckboxClick} isUserBubble={false} selectedCheckboxes={selectedCheckboxes} />
+                <RenderMessageContent content={message.content} onCheckboxClick={onCheckboxClick} isUserBubble={false} selectedCheckboxes={selectedCheckboxes} markdown />
               </div>
             </div>
           )}
@@ -665,7 +667,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
                 ? "bg-[#F6E3DA] text-[#292524] rounded-br-md"
                 : "bg-white text-[#292524] rounded-bl-md"
             }`}>
-              <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} isUserBubble={false} selectedCheckboxes={!isUser ? selectedCheckboxes : undefined} />
+              <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} isUserBubble={false} selectedCheckboxes={!isUser ? selectedCheckboxes : undefined} markdown={!isUser} />
               {message.createdAt && (
                 <span className="float-right flex items-center gap-0.5 ml-2 mt-2 -mb-0.5 translate-y-1">
                   <span className="text-[10.5px] text-[#8A8177] leading-none">{formatMsgTime(message.createdAt)}</span>

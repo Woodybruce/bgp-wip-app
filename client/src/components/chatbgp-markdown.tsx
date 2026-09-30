@@ -21,16 +21,18 @@ export function AuthDownloadLink({ href, children }: { href: string; children: R
     setBusy(true);
     setErr(null);
     try {
+      if (!href.startsWith("/api/") || href.includes("\\")) throw new Error("Download must use an app file link");
       const token = localStorage.getItem("bgp_addin_token") || localStorage.getItem("bgp_auth_token") || "";
-      const sep = href.includes("?") ? "&" : "?";
-      const url = token ? `${href}${sep}token=${token}` : href;
-      const filename = href.split("/").pop()?.split("?")[0] || "download";
-      const res = await fetch(url, { credentials: "include" });
+      const registerTitle = href.match(/^\/api\/lr-bg\/register\/([A-Z]{0,3}\d{1,8})(?:\?|$)/i)?.[1];
+      const filename = registerTitle
+        ? `${registerTitle.toUpperCase()}-OC1-Register.pdf`
+        : href.split("/").pop()?.split("?")[0] || "download";
+      const res = await fetch(href, { credentials: "include", headers: token ? { Authorization: `Bearer ${token}` } : {} });
       if (!res.ok) {
         // Try to surface the server-side reason — chat-media returns JSON
         // with { message } on 401, useful for diagnosing token issues.
         let detail = `HTTP ${res.status}`;
-        try { const j = await res.json(); if (j?.message) detail = `${detail}: ${j.message}`; } catch {}
+        try { const j = await res.json(); if (j?.message || j?.error) detail = `${detail}: ${j.message || j.error}`; } catch {}
         throw new Error(detail);
       }
       const blob = await res.blob();
@@ -58,14 +60,14 @@ export function AuthDownloadLink({ href, children }: { href: string; children: R
         type="button"
         onClick={onClick}
         disabled={busy}
-        className="inline-flex items-center gap-1.5 px-3 py-2.5 my-1 rounded-lg bg-green-50 border border-green-200 text-green-700 hover:bg-green-100 active:bg-green-200 disabled:opacity-60 transition-colors text-sm font-medium no-underline cursor-pointer min-h-[44px]"
+        className="inline-flex items-center gap-1.5 px-3 py-2.5 my-1 rounded-lg bg-muted border border-border text-foreground hover:bg-accent active:bg-accent disabled:opacity-60 transition-colors text-sm font-medium no-underline cursor-pointer min-h-[44px]"
         data-testid="link-download-file"
       >
         {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
         {children}
       </button>
       {err && (
-        <span className="text-[11px] text-red-600 mt-0.5 max-w-[280px] break-words" data-testid="download-error">
+        <span className="text-[11px] text-destructive mt-0.5 max-w-[280px] break-words" data-testid="download-error">
           Download failed — {err}
         </span>
       )}
@@ -137,13 +139,14 @@ function parseInline(text: string, keyPrefix: string): (string | JSX.Element)[] 
   const GAP = String.raw`\s*`;
   const tokenRegex = new RegExp(
     String.raw`!\[([^\]]*)\]` + GAP + String.raw`\((` + URL_CORE + String.raw`)\)` +                  // ![alt](url)
-    String.raw`|\[([^\]]+)\]` + GAP + String.raw`\((\/api\/chat-media\/` + URL_CORE + String.raw`)\)` + // [t](/api/chat-media/…)
+    String.raw`|\[([^\]]+)\]` + GAP + String.raw`\((\/api\/(?:chat-media\/` + URL_CORE + String.raw`|lr-bg\/register\/[A-Za-z]{0,3}\d{1,8}))\)` + // authenticated document links
     String.raw`|\[([^\]]+)\]` + GAP + String.raw`\((https?:\/\/` + URL_CORE + String.raw`)\)` +        // [t](https://…)
     String.raw`|\[([^\]]+)\]` + GAP + String.raw`\((\/` + URL_CORE + String.raw`)\)` +                 // [t](/path)
     String.raw`|\*\*(.+?)\*\*` +                                                  // **bold**
     "|`([^`]+)`" +                                                                // `code`
     String.raw`|(https?:\/\/[^\s<>)\]]+)` +                                       // bare url
-    `|${TAG_TOKEN_SOURCE}`,                                                       // @[Name](tag:type/id) smart tag
+    `|${TAG_TOKEN_SOURCE}` +                                                      // @[Name](tag:type/id) smart tag
+    String.raw`|(\/api\/lr-bg\/register\/[A-Za-z]{0,3}\d{1,8})(?=$|[\s.,;!?])`,  // saved replies with a bare register path
     "g",
   );
   const result: (string | JSX.Element)[] = [];
@@ -166,7 +169,7 @@ function parseInline(text: string, keyPrefix: string): (string | JSX.Element)[] 
         result.push(match[0]);
       }
     } else if (match[3] && match[4]) {
-      // [text](/api/chat-media/...) — download link
+      // Authenticated chat attachments and official register PDFs.
       result.push(
         <AuthDownloadLink key={`${keyPrefix}-${key++}`} href={match[4]}>{match[3]}</AuthDownloadLink>
       );
@@ -187,6 +190,8 @@ function parseInline(text: string, keyPrefix: string): (string | JSX.Element)[] 
     } else if (match[12] && match[13] && match[14]) {
       // @[Name](tag:type/id) — smart tag chip
       result.push(<TagChip key={`${keyPrefix}-${key++}`} type={match[13] as TagType} id={match[14]} name={match[12]} />);
+    } else if (match[15]) {
+      result.push(<AuthDownloadLink key={`${keyPrefix}-${key++}`} href={match[15]}>Download official register</AuthDownloadLink>);
     } else if (match[11]) {
       // bare https://url
       const url = match[11].replace(/[.,;:!?]+$/, "");
@@ -373,5 +378,5 @@ export function ChatBGPMarkdown({ content }: { content: string }) {
     }
   }
 
-  return <div className="chatbgp-markdown">{elements}</div>;
+  return <div className="chatbgp-markdown min-w-0 max-w-full whitespace-normal">{elements}</div>;
 }

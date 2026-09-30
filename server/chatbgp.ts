@@ -1415,7 +1415,7 @@ You CAN add BGP colleagues to the current chat thread — never claim you can't.
 The hmlr_proprietors table holds HMLR's corporate ownership register — CCOD (UK companies) + OCOD (overseas companies), millions of title rows already loaded. For ANY "who owns X", "all titles / freeholds owned by <company>", "what does <company> hold", or estate-assembly question, query it with sql_query — do NOT try to read raw Land Registry files for this. Match proprietor-name variants broadly (punctuation/suffixes differ) and prefix-style so the name index is used, e.g.:
   SELECT title_number, proprietor_name, property_address, postcode, tenure, proprietor_category, company_registration_no FROM hmlr_proprietors WHERE lower(proprietor_name) LIKE 'young%' ORDER BY proprietor_name;
 Run each plausible variant (e.g. 'young%', 'wellington pub%') plus any known subsidiaries / SPVs, then reconcile. Useful columns: title_number, proprietor_name, proprietor_category, company_registration_no, property_address, postcode, tenure, dataset. If a name returns no rows, say so — never invent titles.
-Identifying the owner/parcel for a title or address is ALWAYS this free register first. The paid property_data_lookup land-registry-documents endpoint is ONLY for buying the official stamped Title Plan/Register PDF (the legal pack) — and it's unreliable on regional/OCOD titles. When it returns delivered:false, don't retry or report "nothing happened": relay what our register already knows (registerKnown) and offer to order it direct from HMLR with order_hmlr_official_copy (BGP's Business Gateway account — reliable, about £7, confirm with the user first). For charges / lenders on a title, order_hmlr_official_copy is the direct route.
+Identifying the owner/parcel for a title or address is ALWAYS this free register first. The paid property_data_lookup land-registry-documents endpoint is ONLY for buying the official stamped Title Plan/Register PDF (the legal pack) — and it's unreliable on regional/OCOD titles. When it returns delivered:false, don't retry or report "nothing happened": relay what our register already knows (registerKnown) and offer to order it direct from HMLR with order_hmlr_official_copy (BGP's Business Gateway account — first check availability/access without ordering, then confirm the £7 register fee with the user). For charges / lenders on a title, order_hmlr_official_copy is the direct route.
 
 ## CRITICAL Rules
 1. **ACT FIRST, REPORT AFTER.** Never ask "shall I proceed?" — just do it and confirm.
@@ -1833,7 +1833,7 @@ async function fetchLandRegistryDocuments(
 ): Promise<LandRegDocResult[]> {
   const MAX_TITLES = 4;          // cost guard — each title is a paid purchase
   const MAX_TEXT_PER_PDF = 15000; // keep tool results inside sane token budgets
-  const HMLR_ORDER_URL = "https://search-property-information.service.gov.uk/"; // gov.uk official-copy ordering (£3/doc)
+  const HMLR_ORDER_URL = "https://search-property-information.service.gov.uk/"; // Public title-information service; official copies use Business e-services.
   const results: LandRegDocResult[] = [];
 
   // PropertyData's land-registry-documents reseller is flaky on regional /
@@ -1864,7 +1864,7 @@ async function fetchLandRegistryDocuments(
     }
     out.manualOrder = {
       url: HMLR_ORDER_URL,
-      note: `PropertyData could not return a document for ${out.title}. Order the official title plan/register direct from HMLR (£3 each) at the link, searching by title number ${out.title}.`,
+      note: `PropertyData could not return a document for ${out.title}. Use HM Land Registry to locate title ${out.title}. For a statutory official copy, use the Business e-services portal or the in-app Official Copy (HMLR) route after checking account access and confirming the fee; the public search service provides information copies.`,
     };
   };
 
@@ -4661,11 +4661,12 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "order_hmlr_official_copy",
-      description: "Order the Official Copy of the Register (OC1) for a title DIRECT from HM Land Registry via BGP's Business Gateway account — the same order as the 'Official Copy (HMLR)' button on the Land Registry page. Reliable where the PropertyData reseller returns delivered:false. Returns the register text (proprietors, price paid, charges/lenders, restrictions) and a link to the saved PDF. It is a paid statutory order (about £7 per title), so: only when the user asks for the official copy / register / charges on a title, and first tell them the title number and fee and get a yes in this conversation — then call again with confirmed:true. A copy already on file is re-read for free unless reorder:true.",
+      description: "Check availability or order the Official Copy of the Register (OC1) for a title from HM Land Registry via BGP's Business Gateway account. Use check_only:true for a read-only access/availability check. Before any order this checks account access; it can report an authentication or user-role/organisation problem. A successful connection is not proof that an order will succeed. For a paid order, first tell the user the exact title and £7 maximum register fee and get their yes in this conversation, then call with confirmed:true. A copy already on file is read for free unless reorder:true. Orders a register only, not a title plan or the underlying lease/deed. Report pending/rejected/unknown outcomes accurately; never invent a password settings screen or claim no charge from a missing document.",
       parameters: {
         type: "object",
         properties: {
           title_number: { type: "string", description: "HM Land Registry title number, e.g. NGL813653" },
+          check_only: { type: "boolean", description: "Check account access and document availability only; never submits an order, even if confirmed is also true." },
           confirmed: { type: "boolean", description: "true only after the user has said yes to ordering this title at the stated fee in this conversation" },
           reorder: { type: "boolean", description: "Order a fresh copy even if one is already on file (e.g. the register has changed). Default false." },
         },
@@ -8844,30 +8845,68 @@ export async function executeCrmToolRaw(
     const { getFile } = await import("./file-storage");
     const readRegister = async (buffer: Buffer) => {
       const { PDFParse } = await import("pdf-parse");
-      const parser = new PDFParse(new Uint8Array(buffer));
-      const text = (await parser.getText()).pages.map((p: any) => p.text || "").join("\n\n");
-      return text.replace(/\n{3,}/g, "\n\n").slice(0, 20000);
+      const parser = new PDFParse({ data: new Uint8Array(buffer) });
+      try {
+        const text = (await parser.getText()).pages.map((p: any) => p.text || "").join("\n\n");
+        return text.replace(/\n{3,}/g, "\n\n").slice(0, 20000);
+      } finally { await parser.destroy(); }
     };
     const registerUrl = `/api/lr-bg/register/${encodeURIComponent(titleUpper)}`;
-    if (!fnArgs.reorder) {
-      const onFile = await getFile(bg.ocStorageKey(titleUpper)).catch(() => null);
+    const linkNote = `Include this clickable link: [Download official register](${registerUrl}). Only summarise registerText when present; otherwise say the PDF could not be read automatically.`;
+    if (!fnArgs.reorder && !fnArgs.check_only) {
+      let onFile;
+      try { onFile = await getFile(bg.ocStorageKey(titleUpper)); }
+      catch {
+        return { data: { success: false, outcome: "storage_unavailable", titleNumber: titleUpper, orderSubmitted: false, note: "The saved-copy check failed. No new order was submitted. Restore file storage before retrying so we do not buy a copy already held." } };
+      }
       if (onFile?.data) {
-        return { data: { success: true, titleNumber: titleUpper, source: "Official Copy already on file (no new fee)", registerUrl, registerText: await readRegister(onFile.data).catch(() => null), note: "Present registerUrl as a bare URL on its own line. Say this copy was already on file; offer reorder:true if they need it re-dated." } };
+        return { data: { success: true, titleNumber: titleUpper, source: "Official Copy already on file (no new fee)", registerUrl, registerText: await readRegister(onFile.data).catch(() => null), note: `${linkNote} Say this copy was already on file; a newly dated copy needs fresh fee confirmation and reorder:true.` } };
       }
     }
-    if (fnArgs.confirmed !== true) {
-      return { data: { needsConfirmation: true, titleNumber: titleUpper, fee: "about £7 (HMLR statutory fee)", note: "Nothing ordered yet. Ask the user to confirm ordering the Official Copy of the Register for this title at this fee, then call again with confirmed:true." } };
+    // This GET checks the account and title without purchasing anything. A TLS
+    // connection alone does not prove that HMLR permits this account to order.
+    const availability = await bg.bgOfficialCopyAvailability(titleUpper);
+    if (!availability.ok) {
+      const action = availability.authentication === "forbidden"
+        ? "HMLR refused this user role or organisation. BGP's HMLR Business Unit Administrator or HMLR support must check the account's service role and organisation access. Do not call this a bad password."
+        : availability.authentication === "rejected"
+          ? "HMLR rejected authentication. BGP's HMLR administrator must check the active Business Gateway user account. Do not assume the password alone is wrong."
+          : availability.authentication === "not_configured"
+            ? "The server's Business Gateway configuration is incomplete. The deployment administrator must check it."
+            : "Report the availability error as returned; it does not establish that the login is invalid. Do not submit or retry a paid order while this check is unresolved.";
+      return { data: { success: false, outcome: "preflight_blocked", titleNumber: titleUpper, orderSubmitted: false, availability, note: `${action} No paid order was submitted by this call. Credentials are deployment settings, not an editable ChatBGP settings screen; never ask anyone to paste a password into chat. This check says nothing about charges from earlier attempts.` } };
     }
-    if (!bg.bgConfigured() || !bg.bgCredentials()) return { data: { error: "HMLR Business Gateway isn't configured on this server (certificate or LR_BG_USERNAME / LR_BG_PASSWORD missing)." } };
-    const result = await bg.officialCopyByTitle({ titleNumber: titleUpper });
+    if (fnArgs.check_only === true) {
+      return { data: { success: true, outcome: "availability_checked", titleNumber: titleUpper, orderSubmitted: false, availability, note: "This read-only check succeeded. No official copy was ordered. Availability success does not prove that a paid order has completed." } };
+    }
+    if (availability.registerAvailability === "UNAVAILABLE" || availability.registerBackdated || !["IMMEDIATE", "MANUAL"].includes(availability.registerAvailability || "")) {
+      return { data: { success: false, outcome: "register_unavailable", titleNumber: titleUpper, orderSubmitted: false, availability, note: availability.registerBackdated
+        ? "HMLR only offers a backdated register on this check. No copy was ordered. Explain that it is not a current register and ask the user to use the HMLR portal to review the available edition."
+        : "The availability check did not confirm a register that this tool can order. No paid order was submitted. Relay the title status and any continued-under title number; do not silently buy a different title or infer an authentication problem." } };
+    }
+    if (fnArgs.confirmed !== true) {
+      return { data: { needsConfirmation: true, titleNumber: titleUpper, orderSubmitted: false, fee: "£7 maximum for one Official Copy of the Register", availability, note: "Nothing ordered yet. Ask the user to confirm this title and £7 fee, then call again with confirmed:true. A plan or lease/deed is a different document; this tool orders only the register. If availability is MANUAL, explain that it may be delayed and a fee above £7 will be rejected." } };
+    }
+    let result;
+    try { result = await bg.officialCopyByTitle({ titleNumber: titleUpper, expectedPrice: 7 }); }
+    catch {
+      return { data: { success: false, outcome: "unknown", titleNumber: titleUpper, note: "The order request did not return a confirmed outcome. HMLR may have received it. Do not claim nothing was charged or automatically place another order; check HMLR's order history first." } };
+    }
     if (!result.ok || !result.document?.base64) {
-      return { data: { success: false, titleNumber: titleUpper, status: result.status, fault: result.summary?.fault || null, note: "HMLR didn't return the register — relay the fault plainly. Don't retry straight away; if it's a title that doesn't exist or is closed, say so." } };
+      return { data: { success: false, outcome: result.outcome, titleNumber: titleUpper, status: result.status, summary: result.summary, requestMessageId: result.requestMessageId, fault: result.summary?.fault || null, note: result.outcome === "pending"
+        ? "HMLR acknowledged this order and the document is pending. Keep the reference and expected response time. Do not order it again or say nothing was charged; follow up the existing order."
+        : result.outcome === "unknown"
+          ? "The order outcome is unknown. HMLR may have received it. Keep the request message ID and check HMLR order history before any further purchase; do not claim nothing was charged."
+        : "HMLR did not deliver the register. Relay its code and message without guessing. An authentication fault does not prove the password alone is wrong; an access fault may be a user-role or organisation issue. Credentials are managed on the server, not through an app login settings screen. Do not retry automatically or claim a charge was reversed / never made unless explicitly confirmed." } };
     }
     const userId = (req as any)?.session?.userId || (req as any)?.tokenUserId || null;
-    await bg.persistOfficialCopy({ titleNumber: titleUpper, base64: result.document.base64, summary: result.summary, userId })
-      .catch((e: any) => console.error("[chatbgp] persist official copy failed:", e?.message));
+    try {
+      await bg.persistOfficialCopy({ titleNumber: titleUpper, base64: result.document.base64, summary: result.summary, userId });
+    } catch {
+      return { data: { success: false, outcome: "received_not_saved", titleNumber: titleUpper, fee: result.summary?.actualPrice ?? null, reference: result.summary?.reference ?? null, requestMessageId: result.requestMessageId, note: "HMLR returned the register but saving it failed. The order may have been charged. Do not provide a saved-file link or order another copy; recover this order using its reference." } };
+    }
     const text = await readRegister(Buffer.from(result.document.base64, "base64")).catch(() => null);
-    return { data: { success: true, titleNumber: titleUpper, source: "HM Land Registry Business Gateway (OC1)", fee: result.summary?.actualPrice ?? null, reference: result.summary?.reference ?? null, registerUrl, registerText: text, note: "Summarise what the register shows (proprietor, price paid, charges and lenders, restrictions) from registerText, then give registerUrl as a bare URL on its own line." } };
+    return { data: { success: true, outcome: "delivered", titleNumber: titleUpper, source: "HM Land Registry Business Gateway (OC1)", fee: result.summary?.actualPrice ?? null, reference: result.summary?.reference ?? null, registerUrl, registerText: text, note: `${linkNote} Summarise the proprietor, price paid, charges/lenders and restrictions only from this register.` } };
   }
 
   if (fnName === "property_data_lookup") {
@@ -8895,7 +8934,7 @@ export async function executeCrmToolRaw(
       const undelivered = docs.filter((d) => !d.delivered);
       const noteParts: string[] = [];
       if (docs.some((d) => d.delivered)) noteParts.push("Delivered documents include the extracted register text (files[].text) and a documentUrl download link — present documentUrl as a bare URL on its own line so the chat UI renders it clickable.");
-      if (undelivered.length) noteParts.push(`PropertyData returned NO document for ${undelivered.map((d) => d.title).join(", ")} — this is the known flakiness on regional/OCOD titles, NOT a 'nothing happened' result and nothing was charged. For each, relay registerKnown (verified owner/parcel from our own HMLR register) if present, and offer to order the register direct from HMLR with order_hmlr_official_copy (confirm the fee with the user first). Do NOT retry this endpoint for those titles.`);
+      if (undelivered.length) noteParts.push(`PropertyData returned NO document for ${undelivered.map((d) => d.title).join(", ")} — no document was delivered. This does not establish whether a fee was charged. For each, relay registerKnown (verified owner/parcel from our own HMLR register) if present, and offer to order the register direct from HMLR with order_hmlr_official_copy (confirm the fee with the user first). Do NOT retry this endpoint for those titles.`);
       return { data: { success: docs.some((d) => d.delivered), source: "PropertyData.co.uk", endpoint, results: docs, note: noteParts.join(" ") } };
     }
     try {
