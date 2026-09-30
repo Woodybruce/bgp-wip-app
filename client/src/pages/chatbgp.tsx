@@ -381,6 +381,18 @@ function RenderMessageContent({ content, onActionClick }: { content: string; onA
   return <ChatBGPMarkdown content={content} />;
 }
 
+function isFailedChatResponse(message: Pick<LocalMessage, "role" | "content">): boolean {
+  if (message.role !== "assistant") return false;
+  const content = message.content.trim();
+  // Match the failure envelopes emitted by sendMutation / the chat server.
+  // A completed answer can accurately mention a failed ancillary lookup;
+  // words such as "timed out" or "try again" alone do not make it a failure.
+  return content.startsWith("Sorry, I couldn't respond:")
+    || content.startsWith("Sorry, I couldn't process that request.")
+    || content === "Failed to get AI response. Please try again."
+    || content.endsWith("\n\nThis response is incomplete. Some actions may already have run; check their results before retrying, especially a paid order.");
+}
+
 function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, completedActions, onRetry }: {
   message: LocalMessage;
   isOwn?: boolean;
@@ -466,16 +478,7 @@ function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, comple
 
   const { textParts, actionParts } = splitContentParts(message.content);
 
-  // Detect error messages for retry button
-  const isErrorMessage = message.role === "assistant" && (
-    message.content.startsWith("Sorry, I couldn't respond:") ||
-    message.content.includes("couldn't process") ||
-    message.content.includes("ran into an issue") ||
-    message.content.includes("Connection lost") ||
-    message.content.includes("AI service is busy") ||
-    message.content.includes("timed out") ||
-    message.content.includes("try again")
-  );
+  const isErrorMessage = isFailedChatResponse(message);
 
   return (
     <div className="flex gap-3" data-testid={`message-${message.role}`}>
