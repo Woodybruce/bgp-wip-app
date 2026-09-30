@@ -4716,6 +4716,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           title_number: { type: "string", description: "HM Land Registry title number, e.g. NGL813653" },
           check_only: { type: "boolean", description: "Check access to the REST document-availability service only; never submits an order, even if confirmed is also true. This does not verify the separate SOAP ordering service." },
           confirmed: { type: "boolean", description: "true only after the user has said yes to ordering this title at the stated fee in this conversation" },
+          allow_backdated: { type: "boolean", description: "true only after the user explicitly accepts an earlier/backdated register which omits pending registration changes. This is separate from fee confirmation. Default false; never substitute an earlier edition silently." },
           reorder: { type: "boolean", description: "Order a fresh copy even if one is already on file (e.g. the register has changed). Default false." },
         },
         required: ["title_number"],
@@ -8919,7 +8920,8 @@ export async function executeCrmToolRaw(
         return { data: { success: false, outcome: "storage_unavailable", titleNumber: titleUpper, orderSubmitted: false, note: "The saved-copy check failed. No new order was submitted. Restore file storage before retrying so we do not buy a copy already held." } };
       }
       if (onFile?.data) {
-        return { data: { success: true, titleNumber: titleUpper, source: "Official Copy already on file (no new fee)", registerUrl, downloadMarkdown, registerText: await readRegister(onFile.data).catch(() => null), note: `${linkNote} Say this copy was already on file; a newly dated copy needs fresh fee confirmation and reorder:true.` } };
+        const savedSummary = await bg.getStoredOfficialCopySummary(titleUpper).catch(() => null);
+        return { data: { success: true, titleNumber: titleUpper, source: "Official Copy already on file (no new fee)", registerBackdated: savedSummary?.registerBackdated ?? null, registerUrl, downloadMarkdown, registerText: await readRegister(onFile.data).catch(() => null), note: `${linkNote} Say this copy was already on file; a newly dated copy needs fresh fee confirmation and reorder:true. ${savedSummary?.registerBackdated ? "This is a backdated register and omits pending registration changes. Label the download as an earlier edition, not a current register." : "Report the edition date from the PDF; a saved copy is not proof of the current register."}` } };
       }
     }
     // Availability is a separate, read-only REST service. Its failure must not
@@ -8935,17 +8937,19 @@ export async function executeCrmToolRaw(
       return { data: { success: false, outcome: "preflight_blocked", titleNumber: titleUpper, orderSubmitted: false, availability,
         note: "The server's Business Gateway certificate or account credentials are not configured, so no order was submitted. The deployment administrator must check the server configuration. Never ask anyone to paste a password into chat." } };
     }
-    if (availability.ok && (availability.registerAvailability === "UNAVAILABLE" || availability.registerBackdated || !["IMMEDIATE", "MANUAL"].includes(availability.registerAvailability || ""))) {
-      return { data: { success: false, outcome: "register_unavailable", titleNumber: titleUpper, orderSubmitted: false, availability, note: availability.registerBackdated
-        ? "HMLR only offers a backdated register on this check. No copy was ordered. Explain that it is not a current register and ask the user to use the HMLR portal to review the available edition."
-        : "The availability check did not confirm a register that this tool can order. No paid order was submitted. Relay the title status and any continued-under title number; do not silently buy a different title or infer an authentication problem." } };
+    if (availability.ok && !["IMMEDIATE", "MANUAL"].includes(availability.registerAvailability || "")) {
+      return { data: { success: false, outcome: "register_unavailable", titleNumber: titleUpper, orderSubmitted: false, availability, note: "The availability check did not confirm a register that this tool can order. No paid order was submitted. Relay the title status and any continued-under title number; do not silently buy a different title or infer an authentication problem." } };
+    }
+    const isBackdated = availability.ok && availability.registerBackdated === true;
+    if (isBackdated && fnArgs.allow_backdated !== true) {
+      return { data: { success: false, needsConfirmation: true, outcome: "backdated_confirmation_required", titleNumber: titleUpper, orderSubmitted: false, availability, fee: "£7 maximum for one Official Copy of the Register", note: "HMLR offers an earlier/backdated register while registration applications are pending. No order was submitted. Explain that it omits the pending changes and ask whether the user accepts that edition at the £7 maximum fee. Only after they accept, call with confirmed:true and allow_backdated:true. Do not edit code or restart the app to bypass this confirmation." } };
     }
     if (fnArgs.confirmed !== true) {
       return { data: { needsConfirmation: true, titleNumber: titleUpper, orderSubmitted: false, fee: "£7 maximum for one Official Copy of the Register", availability, warning: availabilityWarning,
         note: `${availabilityWarning ? `${availabilityWarning} Explain this warning before asking for confirmation. ` : ""}Nothing ordered yet. Ask the user to confirm this title and £7 fee, then call again with confirmed:true. A plan or lease/deed is a different document; this tool orders only the register. If availability is MANUAL, explain that it may be delayed and a fee above £7 will be rejected.` } };
     }
     let result;
-    try { result = await bg.officialCopyByTitle({ titleNumber: titleUpper, expectedPrice: 7 }); }
+    try { result = await bg.officialCopyByTitle({ titleNumber: titleUpper, expectedPrice: 7, allowBackdated: isBackdated && fnArgs.allow_backdated === true }); }
     catch {
       return { data: { success: false, outcome: "unknown", titleNumber: titleUpper, note: "The order request did not return a confirmed outcome. HMLR may have received it. Do not claim nothing was charged or automatically place another order; check HMLR's order history first." } };
     }
@@ -8963,7 +8967,7 @@ export async function executeCrmToolRaw(
       return { data: { success: false, outcome: "received_not_saved", titleNumber: titleUpper, fee: result.summary?.actualPrice ?? null, reference: result.summary?.reference ?? null, requestMessageId: result.requestMessageId, note: "HMLR returned the register but saving it failed. The order may have been charged. Do not provide a saved-file link or order another copy; recover this order using its reference." } };
     }
     const text = await readRegister(Buffer.from(result.document.base64, "base64")).catch(() => null);
-    return { data: { success: true, outcome: "delivered", titleNumber: titleUpper, source: "HM Land Registry Business Gateway (OC1)", fee: result.summary?.actualPrice ?? null, reference: result.summary?.reference ?? null, requestMessageId: result.requestMessageId, registerUrl, downloadMarkdown, registerText: text, note: `${linkNote} Summarise the proprietor, price paid, charges/lenders and restrictions only from this register.` } };
+    return { data: { success: true, outcome: "delivered", titleNumber: titleUpper, source: "HM Land Registry Business Gateway (OC1)", registerBackdated: isBackdated, fee: result.summary?.actualPrice ?? null, reference: result.summary?.reference ?? null, requestMessageId: result.requestMessageId, registerUrl, downloadMarkdown, registerText: text, note: `${linkNote} ${isBackdated ? "This is a backdated register and omits pending registration changes. Label the download as an earlier edition, not a current register. " : ""}Summarise the proprietor, price paid, charges/lenders and restrictions only from this register.` } };
   }
 
   if (fnName === "property_data_lookup") {

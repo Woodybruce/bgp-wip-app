@@ -69,6 +69,19 @@ test('order envelope enforces the advertised fee ceiling and escapes credentials
   assert.match(buildOfficialCopyEnvelope({ titleNumber: 'NGL813653', expectedPrice: 6.25 }, { username: 'test', password: 'test' }), /<ns1:GrossPriceAmount>6.25</);
 });
 
+test('backdated copies require a literal true opt-in without changing the product or fee ceiling', () => {
+  const { buildOfficialCopyEnvelope } = evaluate(variable('xmlEscape') + '\n' + fn('buildOfficialCopyEnvelope'), { randomUUID: () => 'abcdef1234567890' });
+  for (const allowBackdated of [undefined, false, true, 'true', 'false', 1, null]) {
+    const xml = buildOfficialCopyEnvelope({ titleNumber: 'NGL813653', allowBackdated }, { username: 'test', password: 'test' });
+    assert.match(xml, new RegExp(`<ns1:SendBackDatedIndicator>${allowBackdated === true}</ns1:SendBackDatedIndicator>`));
+    assert.match(xml, /<ns1:GrossPriceAmount>7<\/ns1:GrossPriceAmount>/);
+    assert.match(xml, /<ns1:RequestedOfficialCopyCode>10<\/ns1:RequestedOfficialCopyCode>/);
+    assert.match(xml, /<ns1:OfficialCopyTypeCode>10<\/ns1:OfficialCopyTypeCode>/);
+    assert.match(xml, /ContinueIfActualFeeExceedsExpectedFeeIndicator>false</);
+    assert.match(xml, /ContinueIfTitleIsClosedAndContinuedIndicator>false</);
+  }
+});
+
 // Relevant fields from HMLR's published V2 GR514442/GR514443/DT501578/GR519468
 // fixtures. Referred-to documents are unrelated to this OC1 register check.
 // https://landregistry.github.io/bgtechdoc/services/official_copy_document_availability_v2/
@@ -168,8 +181,54 @@ function orderFixture({ status = 200, body = delivered, fail } = {}) {
     bgCredentials: () => ({ username: 'test', password: 'test' }), bgOfficialCopyPath: () => '/official-copy',
     bgRequest: async opts => { calls.push(opts); if (fail) throw new Error(fail); return { status, body }; },
   });
-  return { run: () => compiled.officialCopyByTitle({ titleNumber: 'NGL813653' }), calls };
+  return { run: (opts = {}) => compiled.officialCopyByTitle({ titleNumber: 'NGL813653', ...opts }), calls };
 }
+
+test('order summaries retain only the explicit backdated choice for delivery, rejection and unknown outcomes', async () => {
+  for (const provider of [{ body: delivered }, { body: pending }, { body: rejected }, { fail: 'socket timeout' }]) {
+    for (const allowBackdated of [undefined, false, true, 'true']) {
+      const fixture = orderFixture(provider);
+      const received = await fixture.run({ allowBackdated });
+      assert.equal(received.summary.registerBackdated, allowBackdated === true);
+      assert.equal(fixture.calls.length, 1);
+      assert.match(fixture.calls[0].body, new RegExp(`<ns1:SendBackDatedIndicator>${allowBackdated === true}</ns1:SendBackDatedIndicator>`));
+      assert.match(fixture.calls[0].body, /ContinueIfActualFeeExceedsExpectedFeeIndicator>false</);
+    }
+  }
+});
+
+test('persisted register metadata retains the confirmed backdated nature', async () => {
+  const writes = [];
+  const { persistOfficialCopy } = evaluate(fn('ocStorageKey') + '\n' + fn('persistOfficialCopy'), {
+    saveFile: async () => {}, pool: { query: async (_sql, params) => { writes.push(params); } },
+  });
+  const received = await orderFixture().run({ allowBackdated: true });
+  await persistOfficialCopy({ titleNumber: 'NGL813653', base64: received.document.base64, summary: received.summary, userId: 'test-user' });
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0][2].registerBackdated, true);
+  assert.equal(writes[0][2].source, 'hmlr_business_gateway');
+  assert.equal(writes[0][3], 7);
+});
+
+test('cached register summary reads the matching Business Gateway record and returns only its backdated flag', async () => {
+  for (const stored of [true, false, 'true', undefined]) {
+    let query, params;
+    const { getStoredOfficialCopySummary } = evaluate(fn('getStoredOfficialCopySummary'), {
+      pool: { query: async (sql, args) => {
+        query = sql; params = args;
+        return { rows: [{ raw_response: { source: 'hmlr_business_gateway', registerBackdated: stored, privateData: 'not for chat' } }] };
+      } },
+    });
+    const summary = await getStoredOfficialCopySummary('ngl813653');
+    assert.equal(summary.registerBackdated, stored === true);
+    assert.deepEqual(Object.keys(summary), ['registerBackdated']);
+    assert.deepEqual(Array.from(params), ['NGL813653']);
+    assert.match(query, /title_number = \$1 AND documents = 'register'/);
+    assert.match(query, /raw_response->>'source' = 'hmlr_business_gateway'/);
+  }
+  const { getStoredOfficialCopySummary } = evaluate(fn('getStoredOfficialCopySummary'), { pool: { query: async () => ({ rows: [] }) } });
+  assert.equal(await getStoredOfficialCopySummary('NGL813653'), null);
+});
 
 test('order request distinguishes delivered, pending and rejected while retaining its request ID', async () => {
   for (const [body, expected] of [[delivered, 'delivered'], [pending, 'pending'], [rejected, 'rejected']]) {
@@ -231,13 +290,14 @@ test('HTTP order route returns pending without claiming delivery or trying to pe
   assert.equal(response.body.summary.uniqueId, 'queued-42');
 });
 
-test('register route validates the title and never allows a caller to override the confirmed product or fee', async () => {
+test('register route validates the title and never allows a caller to override the confirmed product, fee or backdated choice', async () => {
   const provider = await orderFixture().run();
-  const valid = await routeFixture(provider, { requestBody: { titleNumber: ' ngl 813653 ', expectedPrice: 100, requestedOfficialCopyCode: '30', officialCopyTypeCode: '20' } }).run();
+  const valid = await routeFixture(provider, { requestBody: { titleNumber: ' ngl 813653 ', expectedPrice: 100, requestedOfficialCopyCode: '30', officialCopyTypeCode: '20', allowBackdated: true } }).run();
   assert.equal(valid.orderOptions.titleNumber, 'NGL813653');
   assert.equal(valid.orderOptions.expectedPrice, 7);
   assert.equal(valid.orderOptions.requestedOfficialCopyCode, undefined);
   assert.equal(valid.orderOptions.officialCopyTypeCode, undefined);
+  assert.equal(valid.orderOptions.allowBackdated, undefined);
   const invalid = await routeFixture(provider, { requestBody: { titleNumber: '../../other' } }).run();
   assert.equal(invalid.status, 400);
   assert.equal(invalid.orderOptions, undefined);

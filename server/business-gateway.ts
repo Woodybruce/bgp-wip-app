@@ -207,6 +207,7 @@ export interface OfficialCopyOpts {
   expectedPrice?: number;       // £, fee you expect (gateway proceeds if actual ≤ this, see indicator)
   requestedOfficialCopyCode?: string; // 10 = register (default)
   officialCopyTypeCode?: string;       // 10 = OC1 official copy (default)
+  allowBackdated?: boolean;            // only after explicit confirmation of a known-backdated register
 }
 
 // Build the full SOAP envelope (WS-Security UsernameToken + i18n locale header
@@ -269,7 +270,7 @@ export function buildOfficialCopyEnvelope(opts: OfficialCopyOpts, creds: { usern
             <ns1:ContinueIfTitleIsClosedAndContinuedIndicator>false</ns1:ContinueIfTitleIsClosedAndContinuedIndicator>
             <ns1:NotifyIfPendingFirstRegistrationIndicator>false</ns1:NotifyIfPendingFirstRegistrationIndicator>
             <ns1:NotifyIfPendingApplicationIndicator>false</ns1:NotifyIfPendingApplicationIndicator>
-            <ns1:SendBackDatedIndicator>false</ns1:SendBackDatedIndicator>
+            <ns1:SendBackDatedIndicator>${opts.allowBackdated === true}</ns1:SendBackDatedIndicator>
             <ns1:ContinueIfActualFeeExceedsExpectedFeeIndicator>false</ns1:ContinueIfActualFeeExceedsExpectedFeeIndicator>
           </ns1:TitleKnownOfficialCopy>
         </ns1:Product>
@@ -284,6 +285,7 @@ export interface OcSummary {
   typeCode?: string; actualPrice?: string; documentFormat?: string; hasDocument?: boolean;
   code?: string; reason?: string; message?: string; expectedResponseDateTime?: string;
   uniqueId?: string; resultTypeCode?: string;
+  registerBackdated?: boolean; // retains the confirmed backdated nature for delivery/recovery
 }
 
 // Read the small, known response fields; never evaluate DTDs/entities or expose
@@ -368,10 +370,11 @@ export async function officialCopyByTitle(opts: OfficialCopyOpts): Promise<{ ok:
     });
   } catch (e: any) {
     return { ok: false, outcome: "unknown", requestMessageId, status: 0, body: "", document: null,
-      summary: { messageId: requestMessageId, message: `${e?.message || "Business Gateway request failed"}. The order outcome is unknown; do not submit a new order automatically.` } };
+      summary: { messageId: requestMessageId, registerBackdated: opts.allowBackdated === true, message: `${e?.message || "Business Gateway request failed"}. The order outcome is unknown; do not submit a new order automatically.` } };
   }
   const summary = summariseOcResponse(r.body);
   summary.messageId ||= requestMessageId;
+  summary.registerBackdated = opts.allowBackdated === true;
   const document = extractOcDocument(r.body);
   const outcome = classifyOfficialCopyResponse(r.status, summary, !!document);
   return { ok: outcome === "delivered", outcome, requestMessageId, status: r.status, summary, body: r.body, location: r.location, document };
@@ -380,6 +383,20 @@ export async function officialCopyByTitle(opts: OfficialCopyOpts): Promise<{ ok:
 // Storage key for a title's Official Copy PDF in file_storage.
 export function ocStorageKey(titleUpper: string): string {
   return `lr-bg/${titleUpper}-OC1-Register.pdf`;
+}
+
+// Read only the delivery metadata needed to label a cached register; never
+// expose the stored provider response or personal data to the chat caller.
+export async function getStoredOfficialCopySummary(titleUpper: string): Promise<OcSummary | null> {
+  const { rows } = await pool.query(
+    `SELECT raw_response FROM land_registry_title_purchases
+      WHERE title_number = $1 AND documents = 'register'
+        AND raw_response->>'source' = 'hmlr_business_gateway'
+      LIMIT 1`,
+    [titleUpper.trim().toUpperCase()],
+  );
+  const raw = rows[0]?.raw_response;
+  return raw ? { registerBackdated: raw.registerBackdated === true } : null;
 }
 
 // Persist a fetched Official Copy PDF into file_storage and badge the title on
@@ -504,6 +521,7 @@ export function setupBusinessGatewayRoutes(app: Express) {
     try {
       // This route is specifically the £7 OC1 register quoted by the button.
       // Other product codes or higher caller-provided fees must not override it.
+      // Backdated copies need the separate confirmed chat workflow, not a body flag.
       const result = await officialCopyByTitle({ titleNumber, expectedPrice: 7,
         externalReference: typeof req.body?.externalReference === "string" ? req.body.externalReference : undefined,
         customerReference: typeof req.body?.customerReference === "string" ? req.body.customerReference : undefined,

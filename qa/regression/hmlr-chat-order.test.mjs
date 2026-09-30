@@ -11,6 +11,7 @@ function fixture(overrides = {}) {
   const result = { ok: true, outcome: 'delivered', status: 200, requestMessageId: 'request-1', summary: { actualPrice: '7', reference: 'hmlr-1' }, document: { base64: Buffer.from('register').toString('base64') } };
   const bg = {
     ocStorageKey: title => `lr-bg/${title}-OC1-Register.pdf`,
+    getStoredOfficialCopySummary: async () => { if (overrides.summaryError) throw new Error('metadata unavailable'); return overrides.savedSummary ?? null; },
     bgOfficialCopyAvailability: async title => { calls.push(['check', title]); return overrides.availability ?? availability; },
     officialCopyByTitle: async opts => { calls.push(['order', opts]); if (overrides.orderError) throw new Error('timeout'); return overrides.result ?? result; },
     persistOfficialCopy: async opts => { calls.push(['save', opts]); if (overrides.saveError) throw new Error('disk failure'); },
@@ -138,6 +139,79 @@ test('a failed cache read cannot silently cause a duplicate purchase', async () 
   assert.deepEqual(f.calls.map(c => c[0]), ['cached']);
 });
 
+const backdatedAvailability = { ok: true, authentication: 'verified', status: 200, titleStatus: 'PENDING_APPLICATIONS', registerAvailability: 'IMMEDIATE', registerBackdated: true };
+
+test('earlier editions need explicit consent in addition to fee confirmation', async () => {
+  for (const allow_backdated of [undefined, false, 'true', 1]) {
+    const f = fixture({ availability: backdatedAvailability });
+    const out = await f.run({ confirmed: true, allow_backdated });
+    assert.equal(out.outcome, 'backdated_confirmation_required');
+    assert.equal(out.needsConfirmation, true);
+    assert.equal(out.orderSubmitted, false);
+    assert.match(out.note, /omits the pending changes/);
+    assert.match(out.fee, /£7 maximum/);
+    assert.deepEqual(f.calls.map(c => c[0]), ['cached', 'check']);
+  }
+});
+
+test('backdated consent alone cannot spend money', async () => {
+  const f = fixture({ availability: backdatedAvailability });
+  const out = await f.run({ allow_backdated: true });
+  assert.equal(out.needsConfirmation, true);
+  assert.equal(out.orderSubmitted, false);
+  assert.deepEqual(f.calls.map(c => c[0]), ['cached', 'check']);
+});
+
+test('consented earlier edition orders once at £7 and labels the saved result', async () => {
+  const f = fixture({ availability: backdatedAvailability });
+  const out = await f.run({ confirmed: true, allow_backdated: true });
+  assert.equal(out.outcome, 'delivered');
+  assert.equal(out.registerBackdated, true);
+  assert.match(out.note, /earlier edition, not a current register/);
+  assert.deepEqual(f.calls.map(c => c[0]), ['cached', 'check', 'order', 'save']);
+  assert.deepEqual({ ...f.calls.find(c => c[0] === 'order')[1] }, { titleNumber: 'NGL813653', expectedPrice: 7, allowBackdated: true });
+});
+
+test('consent never overrides unavailable titles or enables backdating without availability evidence', async () => {
+  for (const registerAvailability of ['UNAVAILABLE', 'UNKNOWN', undefined]) {
+    const f = fixture({ availability: { ...backdatedAvailability, registerAvailability } });
+    const out = await f.run({ confirmed: true, allow_backdated: true });
+    assert.equal(out.outcome, 'register_unavailable');
+    assert.equal(out.orderSubmitted, false);
+    assert.equal(f.calls.some(c => c[0] === 'order'), false);
+  }
+  for (const availability of [undefined, ...failedAvailabilityChecks]) {
+    const f = fixture({ availability });
+    await f.run({ confirmed: true, allow_backdated: true });
+    assert.equal(f.calls.find(c => c[0] === 'order')[1].allowBackdated, false);
+  }
+});
+
+test('check-only stays free with both consent flags', async () => {
+  const f = fixture({ availability: backdatedAvailability });
+  const out = await f.run({ confirmed: true, allow_backdated: true, check_only: true, reorder: true });
+  assert.equal(out.outcome, 'availability_checked');
+  assert.deepEqual(f.calls.map(c => c[0]), ['check']);
+});
+
+test('saved earlier editions keep their warning without a new availability check or charge', async () => {
+  const f = fixture({ cached: { data: Buffer.from('cached-pdf') }, savedSummary: { registerBackdated: true } });
+  const out = await f.run();
+  assert.equal(out.success, true);
+  assert.equal(out.registerBackdated, true);
+  assert.match(out.note, /omits pending registration changes/);
+  assert.deepEqual(f.calls.map(c => c[0]), ['cached']);
+});
+
+test('missing saved-copy metadata cannot trigger a replacement purchase', async () => {
+  const f = fixture({ cached: { data: Buffer.from('cached-pdf') }, summaryError: true });
+  const out = await f.run({ confirmed: true });
+  assert.equal(out.success, true);
+  assert.equal(out.registerBackdated, null);
+  assert.match(out.note, /not proof of the current register/);
+  assert.deepEqual(f.calls.map(c => c[0]), ['cached']);
+});
+
 test('a confirmed purchase caps the fee and returns a link only after saving', async () => {
   const f = fixture();
   const out = await f.run({ confirmed: true });
@@ -227,13 +301,13 @@ test('closed or unavailable title never becomes a paid order; continuation is re
   assert.equal(f.calls.some(c => c[0] === 'order'), false);
 });
 
-test('missing availability fields and backdated editions require review before a purchase', async () => {
+test('missing availability fields and backdated editions remain blocked without review', async () => {
   for (const availability of [
     { ok: true, authentication: 'verified', status: 200 },
     { ok: true, authentication: 'verified', status: 200, registerAvailability: 'IMMEDIATE', registerBackdated: true },
   ]) {
     const f = fixture({ availability });
-    assert.equal((await f.run({ confirmed: true })).outcome, 'register_unavailable');
+    assert.equal((await f.run({ confirmed: true })).outcome, availability.registerBackdated ? 'backdated_confirmation_required' : 'register_unavailable');
     assert.equal(f.calls.some(c => c[0] === 'order'), false);
   }
 });
