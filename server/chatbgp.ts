@@ -46,6 +46,7 @@ async function buildDeckPptxFromArgs(fnArgs: any): Promise<{ buffer: Buffer; saf
 }
 import { escapeLike } from "./utils/escape-like";
 import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
+import { chatProvider, getKimiClient, mapModelForKimi, sanitizeParamsForKimi } from "./utils/ai-provider";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schema";
 import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
@@ -121,6 +122,13 @@ function downgradeFromSonnet5(claudeParams: any, err: any): boolean {
 }
 
 const REFUSAL_REPLY = "I can't help with that particular request.";
+
+// Key guard for the chat endpoints — honours the provider switch, so a
+// Kimi-only deployment (MOONSHOT_API_KEY set, no Anthropic key) still serves.
+function hasChatKeyConfigured(): boolean {
+  if (chatProvider() === "kimi") return true; // resolveProvider already verified MOONSHOT_API_KEY
+  return !!(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY);
+}
 
 // PowerPoint/Excel reject XML-1.0-invalid control characters (common in text
 // extracted from PDFs) with a "repair this file?" prompt that strips content.
@@ -1013,9 +1021,10 @@ function convertMessagesForClaude(messages: any[]): { system: string; messages: 
 }
 
 export async function callClaude(params: any): Promise<any> {
+  const useKimi = chatProvider() === "kimi";
   const model = params.model || CHATBGP_MODEL;
-  const useDirectApi = model === CHATBGP_MODEL && process.env.ANTHROPIC_API_KEY;
-  const anthropic = getAnthropicClient(!!useDirectApi);
+  const useDirectApi = !useKimi && model === CHATBGP_MODEL && process.env.ANTHROPIC_API_KEY;
+  const anthropic = useKimi ? getKimiClient() : getAnthropicClient(!!useDirectApi);
   const { system, messages } = convertMessagesForClaude(params.messages);
 
   const claudeParams: any = {
@@ -1049,6 +1058,10 @@ export async function callClaude(params: any): Promise<any> {
   }
 
   applyModelParams(claudeParams);
+  if (useKimi) {
+    claudeParams.model = mapModelForKimi(model);
+    sanitizeParamsForKimi(claudeParams);
+  }
 
   const MAX_RETRIES = 3;
   const RETRY_DELAYS = [2000, 4000, 8000];
@@ -1059,16 +1072,16 @@ export async function callClaude(params: any): Promise<any> {
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const client = attempt === 0 ? anthropic : getAnthropicClient(false);
-      if (attempt > 0 && !downgraded) claudeParams.model = model;
-      response = usesBetaEndpoint(claudeParams.model)
+      const client = useKimi ? anthropic : (attempt === 0 ? anthropic : getAnthropicClient(false));
+      if (attempt > 0 && !useKimi && !downgraded) claudeParams.model = model;
+      response = (!useKimi && usesBetaEndpoint(claudeParams.model))
         ? await client.beta.messages.create(claudeParams)
         : await client.messages.create(claudeParams);
       // Spend metering — exact token usage from the response, priced
       // server-side. Fire-and-forget; never blocks the call.
       try {
         const { logAiUsage } = await import("./api-usage");
-        logAiUsage({ provider: "anthropic", model: claudeParams.model, feature: params.feature || callerFeature(), usage: (response as any)?.usage });
+        logAiUsage({ provider: useKimi ? "kimi" : "anthropic", model: claudeParams.model, feature: params.feature || callerFeature(), usage: (response as any)?.usage });
       } catch {}
       break;
     } catch (err: any) {
@@ -1147,9 +1160,10 @@ export async function callClaudeStreaming(
   // stream is aborted so the run can wind down instead of composing on.
   shouldAbort?: () => boolean,
 ): Promise<any> {
+  const useKimi = chatProvider() === "kimi";
   const model = params.model || CHATBGP_MODEL;
-  const useDirectApi = model === CHATBGP_MODEL && process.env.ANTHROPIC_API_KEY;
-  const anthropic = getAnthropicClient(!!useDirectApi);
+  const useDirectApi = !useKimi && model === CHATBGP_MODEL && process.env.ANTHROPIC_API_KEY;
+  const anthropic = useKimi ? getKimiClient() : getAnthropicClient(!!useDirectApi);
   const { system, messages } = convertMessagesForClaude(params.messages);
 
   const claudeParams: any = {
@@ -1180,6 +1194,10 @@ export async function callClaudeStreaming(
   }
 
   applyModelParams(claudeParams);
+  if (useKimi) {
+    claudeParams.model = mapModelForKimi(model);
+    sanitizeParamsForKimi(claudeParams);
+  }
 
   const MAX_RETRIES = 2;
   const RETRY_DELAYS = [2000, 4000];
@@ -1189,15 +1207,15 @@ export async function callClaudeStreaming(
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const client = attempt === 0 ? anthropic : getAnthropicClient(false);
-      if (attempt > 0 && !downgraded) claudeParams.model = model;
+      const client = useKimi ? anthropic : (attempt === 0 ? anthropic : getAnthropicClient(false));
+      if (attempt > 0 && !useKimi && !downgraded) claudeParams.model = model;
 
       let fullText = "";
       const toolCalls: any[] = [];
 
       // any: MessageStream and BetaMessageStream share the on/finalMessage
       // surface but don't unify as a callable type
-      const stream: any = usesBetaEndpoint(claudeParams.model)
+      const stream: any = (!useKimi && usesBetaEndpoint(claudeParams.model))
         ? client.beta.messages.stream(claudeParams)
         : client.messages.stream(claudeParams);
 
@@ -1214,7 +1232,7 @@ export async function callClaudeStreaming(
       // Spend metering — same as callClaude, on the streamed final message.
       try {
         const { logAiUsage } = await import("./api-usage");
-        logAiUsage({ provider: "anthropic", model: (finalMessage as any)?.model, feature: "chatbgp-stream", usage: (finalMessage as any)?.usage });
+        logAiUsage({ provider: useKimi ? "kimi" : "anthropic", model: (finalMessage as any)?.model, feature: "chatbgp-stream", usage: (finalMessage as any)?.usage });
       } catch {}
 
       // Also extract any tool_use blocks (shouldn't happen for final response, but handle gracefully)
@@ -8391,11 +8409,14 @@ export async function executeCrmToolRaw(
       };
       const prompt = taskPrompts[task] + (customPrompt ? `\n\nAdditional context: ${customPrompt}` : "");
 
-      // ── Call Claude vision (single shot, or tiled OCR) ────────────────
-      const anthropic = getAnthropicClient(false);
+      // ── Call vision (single shot, or tiled OCR) — follows the chat
+      // provider switch; Kimi K3/K2.6 accept the same base64 image blocks.
+      const useKimiVision = chatProvider() === "kimi";
+      const anthropic = useKimiVision ? getKimiClient() : getAnthropicClient(false);
+      const visionModel = useKimiVision ? mapModelForKimi("claude-sonnet-4-6") : "claude-sonnet-4-6";
       const askVision = async (img: { data: string; media: "image/png" | "image/jpeg" }, text: string, maxTokens = 1500): Promise<string> => {
         const resp = await anthropic.messages.create({
-          model: "claude-sonnet-4-6",
+          model: visionModel,
           max_tokens: maxTokens,
           messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: img.media, data: img.data } }, { type: "text", text }] }],
         });
@@ -13879,8 +13900,11 @@ export function setupChatBGPRoutes(app: Express) {
   });
 
   app.get("/api/chatbgp/status", requireAuth, (_req: Request, res: Response) => {
-    const hasKey = !!(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY);
-    res.json({ connected: hasKey });
+    const provider = chatProvider();
+    const hasKey = provider === "kimi"
+      ? !!process.env.MOONSHOT_API_KEY
+      : !!(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY);
+    res.json({ connected: hasKey, provider });
   });
 
   app.post("/api/chatbgp/chat-with-files", requireAuth, chatUpload.array("files", 30), async (req: Request, res: Response) => {
@@ -13903,7 +13927,7 @@ export function setupChatBGPRoutes(app: Express) {
       } catch {}
     };
     try {
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+      if (!hasChatKeyConfigured()) {
         return res.status(503).json({ message: "AI API key not configured" });
       }
 
@@ -15236,7 +15260,7 @@ export function setupChatBGPRoutes(app: Express) {
   });
 
   app.post("/api/chatbgp/chat", requireAuth, async (req: Request, res: Response) => {
-    if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+    if (!hasChatKeyConfigured()) {
       return res.status(503).json({ message: "AI API key not configured" });
     }
 
@@ -15930,7 +15954,7 @@ export function setupChatBGPRoutes(app: Express) {
 
   // /addin-chat is the same brain for the Outlook pane (host=outlook).
   app.post(["/api/chatbgp/excel-chat", "/api/chatbgp/addin-chat"], requireAuth, chatUpload.array("files", 20), async (req: Request, res: Response) => {
-    if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+    if (!hasChatKeyConfigured()) {
       return res.status(503).json({ message: "AI API key not configured" });
     }
 
@@ -16332,7 +16356,7 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
   // bits are the supplement and the `insertText` action (client-parsed, same
   // way Excel parses writeFormula/writeValue out of the reply).
   app.post("/api/chatbgp/powerpoint-chat", requireAuth, chatUpload.array("files", 20), async (req: Request, res: Response) => {
-    if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+    if (!hasChatKeyConfigured()) {
       return res.status(503).json({ message: "AI API key not configured" });
     }
 
@@ -16623,7 +16647,7 @@ ${safePptContext ? `**Current slide / selection (read live from the open PowerPo
         return res.status(400).json({ message: "Microsoft 365 not connected. Please connect via SharePoint page first." });
       }
 
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+      if (!hasChatKeyConfigured()) {
         return res.status(503).json({ message: "AI API key not configured" });
       }
 

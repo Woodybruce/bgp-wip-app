@@ -294,3 +294,35 @@ never commit it — set it in the Claude Code environment so future sessions can
 use it). Project/environment/service IDs live in `script/railway.config.json`
 (not secret — useless without the token). Talks to the Railway GraphQL API
 (`backboard.railway.app/graphql/v2`) via the `Project-Access-Token` header.
+
+## AI provider switch (Anthropic ↔ Kimi, Sept 2026)
+
+ChatBGP (and optionally the whole app) can run on Moonshot's Kimi models
+instead of Anthropic Claude. Kimi's platform speaks the Anthropic Messages
+wire format, so the official SDK is reused — only endpoint/key/model change.
+
+Switching is env-driven (`server/utils/ai-provider.ts`):
+
+- `MOONSHOT_API_KEY` — Kimi platform key (platform.kimi.ai). Required for
+  kimi mode; without it the app stays on Anthropic (with a startup warning).
+- `MOONSHOT_BASE_URL` — defaults to `https://api.moonshot.ai/anthropic`.
+- `CHATBGP_PROVIDER=kimi` — flips ChatBGP (chat loop, streaming, in-chat
+  vision tool) only.
+- `AI_PROVIDER=kimi` — flips ChatBGP **plus** every feature routed through
+  `server/utils/anthropic-client.ts` (`callClaude`/`getAnthropicClient`,
+  ~29 modules). Files constructing `new Anthropic()` directly (PDF document
+  blocks, brochure/plan vision pipelines, etc.) stay on Anthropic until each
+  is moved onto the shared helper and verified.
+- Model tiers: `KIMI_CHAT_MODEL` (fable/opus tier, default `kimi-k3`),
+  `KIMI_FAST_MODEL` (sonnet tier, default `kimi-k2.6`),
+  `KIMI_HELPER_MODEL` (haiku background tier, default `kimi-k2.6`).
+
+Anthropic-only request fields (`betas`, `fallbacks`, extended `thinking`,
+`output_config.effort`) are stripped automatically on the Kimi path; prompt
+caching (`cache_control`) is kept — Kimi caches automatically and returns
+cache token usage. The per-thread `/fable` `/opus` `/sonnet` toggles keep
+working and map onto the Kimi tiers above. Spend metering (`api-usage`)
+records `provider: "kimi"` so cost reports stay accurate per provider.
+
+Set on Railway with: `npm run railway -- set MOONSHOT_API_KEY <key>` then
+`npm run railway -- set CHATBGP_PROVIDER kimi`.

@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { globalProvider, getKimiClient, mapModelForKimi, sanitizeParamsForKimi } from "./ai-provider";
 
 export const CHATBGP_MODEL = "claude-sonnet-4-6";
 export const CHATBGP_HELPER_MODEL = "claude-haiku-4-5-20251001";
@@ -161,6 +162,22 @@ export async function callClaude(opts: any) {
   };
   if (system) params.system = system;
   if (tools && tools.length > 0) params.tools = tools;
+
+  // Whole-app provider switch (AI_PROVIDER=kimi): Kimi's platform speaks the
+  // Anthropic Messages format, so only endpoint + key + model name change.
+  // K3 has always-on thinking; the temperature/effort knobs below are
+  // Anthropic-only and get stripped.
+  if (globalProvider() === "kimi") {
+    params.model = mapModelForKimi(params.model);
+    sanitizeParamsForKimi(params);
+    delete params.temperature;
+    const response = await getKimiClient().messages.create(params);
+    try {
+      const { logAiUsage } = await import("../api-usage");
+      logAiUsage({ provider: "kimi", model: params.model, feature: opts.feature || "shared-helper", usage: (response as any)?.usage });
+    } catch {}
+    return parseClaudeResponse(response);
+  }
 
   // Fable models reject a temperature param, and their safety classifiers
   // can refuse — opt into the server-side fallback so a false positive is
