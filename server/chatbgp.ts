@@ -4679,12 +4679,12 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "order_hmlr_official_copy",
-      description: "Check availability or order the Official Copy of the Register (OC1) for a title from HM Land Registry via BGP's Business Gateway account. Use check_only:true for a read-only access/availability check. Before any order this checks account access; it can report an authentication or user-role/organisation problem. A successful connection is not proof that an order will succeed. For a paid order, first tell the user the exact title and £7 maximum register fee and get their yes in this conversation, then call with confirmed:true. A copy already on file is read for free unless reorder:true. Orders a register only, not a title plan or the underlying lease/deed. Report pending/rejected/unknown outcomes accurately; never invent a password settings screen or claim no charge from a missing document.",
+      description: "Check availability or order the Official Copy of the Register (OC1) for a title from HM Land Registry via BGP's Business Gateway account. Use check_only:true for a read-only REST document-availability check. Its authentication/access result is specific to that service and does not establish whether the separate SOAP ordering service will work. If the availability check fails, explain the warning; an explicitly confirmed order can still use the existing SOAP route. For a paid order, first tell the user the exact title and £7 maximum register fee and get their yes in this conversation, then call with confirmed:true. A copy already on file is read for free unless reorder:true. Orders a register only, not a title plan or the underlying lease/deed. Report pending/rejected/unknown outcomes accurately; never invent a password settings screen, automatically retry an order, or claim no charge from a missing document.",
       parameters: {
         type: "object",
         properties: {
           title_number: { type: "string", description: "HM Land Registry title number, e.g. NGL813653" },
-          check_only: { type: "boolean", description: "Check account access and document availability only; never submits an order, even if confirmed is also true." },
+          check_only: { type: "boolean", description: "Check access to the REST document-availability service only; never submits an order, even if confirmed is also true. This does not verify the separate SOAP ordering service." },
           confirmed: { type: "boolean", description: "true only after the user has said yes to ordering this title at the stated fee in this conversation" },
           reorder: { type: "boolean", description: "Order a fresh copy even if one is already on file (e.g. the register has changed). Default false." },
         },
@@ -8884,29 +8884,27 @@ export async function executeCrmToolRaw(
         return { data: { success: true, titleNumber: titleUpper, source: "Official Copy already on file (no new fee)", registerUrl, registerText: await readRegister(onFile.data).catch(() => null), note: `${linkNote} Say this copy was already on file; a newly dated copy needs fresh fee confirmation and reorder:true.` } };
       }
     }
-    // This GET checks the account and title without purchasing anything. A TLS
-    // connection alone does not prove that HMLR permits this account to order.
+    // Availability is a separate, read-only REST service. Its failure must not
+    // disable the existing SOAP ordering route after explicit fee confirmation.
     const availability = await bg.bgOfficialCopyAvailability(titleUpper);
-    if (!availability.ok) {
-      const action = availability.authentication === "forbidden"
-        ? "HMLR refused this user role or organisation. BGP's HMLR Business Unit Administrator or HMLR support must check the account's service role and organisation access. Do not call this a bad password."
-        : availability.authentication === "rejected"
-          ? "HMLR rejected authentication. BGP's HMLR administrator must check the active Business Gateway user account. Do not assume the password alone is wrong."
-          : availability.authentication === "not_configured"
-            ? "The server's Business Gateway configuration is incomplete. The deployment administrator must check it."
-            : "Report the availability error as returned; it does not establish that the login is invalid. Do not submit or retry a paid order while this check is unresolved.";
-      return { data: { success: false, outcome: "preflight_blocked", titleNumber: titleUpper, orderSubmitted: false, availability, note: `${action} No paid order was submitted by this call. Credentials are deployment settings, not an editable ChatBGP settings screen; never ask anyone to paste a password into chat. This check says nothing about charges from earlier attempts.` } };
-    }
+    const availabilityWarning = availability.ok ? undefined
+      : "The read-only REST document-availability check failed. Relay its returned error as specific to that service. This does not establish whether the separate SOAP ordering service can accept an order. Do not diagnose a bad password or require an administrator change from this check alone.";
     if (fnArgs.check_only === true) {
-      return { data: { success: true, outcome: "availability_checked", titleNumber: titleUpper, orderSubmitted: false, availability, note: "This read-only check succeeded. No official copy was ordered. Availability success does not prove that a paid order has completed." } };
+      return { data: { success: availability.ok, outcome: availability.ok ? "availability_checked" : "availability_check_failed", titleNumber: titleUpper, orderSubmitted: false, availability,
+        note: `${availabilityWarning || "This read-only REST document-availability check succeeded. It does not prove that a paid order has completed."} No official copy was ordered by this call. This check says nothing about charges from earlier attempts.` } };
     }
-    if (availability.registerAvailability === "UNAVAILABLE" || availability.registerBackdated || !["IMMEDIATE", "MANUAL"].includes(availability.registerAvailability || "")) {
+    if (availability.authentication === "not_configured") {
+      return { data: { success: false, outcome: "preflight_blocked", titleNumber: titleUpper, orderSubmitted: false, availability,
+        note: "The server's Business Gateway certificate or account credentials are not configured, so no order was submitted. The deployment administrator must check the server configuration. Never ask anyone to paste a password into chat." } };
+    }
+    if (availability.ok && (availability.registerAvailability === "UNAVAILABLE" || availability.registerBackdated || !["IMMEDIATE", "MANUAL"].includes(availability.registerAvailability || ""))) {
       return { data: { success: false, outcome: "register_unavailable", titleNumber: titleUpper, orderSubmitted: false, availability, note: availability.registerBackdated
         ? "HMLR only offers a backdated register on this check. No copy was ordered. Explain that it is not a current register and ask the user to use the HMLR portal to review the available edition."
         : "The availability check did not confirm a register that this tool can order. No paid order was submitted. Relay the title status and any continued-under title number; do not silently buy a different title or infer an authentication problem." } };
     }
     if (fnArgs.confirmed !== true) {
-      return { data: { needsConfirmation: true, titleNumber: titleUpper, orderSubmitted: false, fee: "£7 maximum for one Official Copy of the Register", availability, note: "Nothing ordered yet. Ask the user to confirm this title and £7 fee, then call again with confirmed:true. A plan or lease/deed is a different document; this tool orders only the register. If availability is MANUAL, explain that it may be delayed and a fee above £7 will be rejected." } };
+      return { data: { needsConfirmation: true, titleNumber: titleUpper, orderSubmitted: false, fee: "£7 maximum for one Official Copy of the Register", availability, warning: availabilityWarning,
+        note: `${availabilityWarning ? `${availabilityWarning} Explain this warning before asking for confirmation. ` : ""}Nothing ordered yet. Ask the user to confirm this title and £7 fee, then call again with confirmed:true. A plan or lease/deed is a different document; this tool orders only the register. If availability is MANUAL, explain that it may be delayed and a fee above £7 will be rejected.` } };
     }
     let result;
     try { result = await bg.officialCopyByTitle({ titleNumber: titleUpper, expectedPrice: 7 }); }

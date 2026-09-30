@@ -31,23 +31,75 @@ function fixture(overrides = {}) {
   return { calls, pdfs, async run(args = {}) { return (await handle({ title_number: ' ngl813653 ', ...args }, { session: { userId: 'staff-1' } })).data; } };
 }
 
-test('live-style 403 role rejection stops the purchase and identifies HMLR administration', async () => {
-  const f = fixture({ availability: { ok: false, status: 403, authentication: 'forbidden', error: 'Incorrect user role or organisation is not permitted', code: 'BG40005' } });
+const failedAvailabilityChecks = [
+  { ok: false, status: 403, authentication: 'forbidden', error: 'Incorrect user role or organisation is not permitted', code: 'BG40005' },
+  { ok: false, status: 401, authentication: 'rejected', error: 'Unauthorised', code: 'BG40004' },
+  { ok: false, authentication: 'unverified', error: 'Business Gateway request timed out' },
+];
+
+test('failed availability checks remain read-only even when confirmation and reorder are supplied', async () => {
+  for (const availability of failedAvailabilityChecks) {
+    const f = fixture({ availability });
+    const out = await f.run({ check_only: true, confirmed: true, reorder: true });
+    assert.equal(out.success, false);
+    assert.equal(out.outcome, 'availability_check_failed');
+    assert.equal(out.orderSubmitted, false);
+    assert.equal(out.availability.error, availability.error);
+    assert.equal(out.availability.status, availability.status);
+    assert.match(out.note, /REST document-availability check failed/);
+    assert.match(out.note, /does not establish whether the separate SOAP ordering service/);
+    assert.deepEqual(f.calls.map(c => c[0]), ['check']);
+  }
+});
+
+test('failed availability checks require explicit fee confirmation and an endpoint-specific warning', async () => {
+  for (const availability of failedAvailabilityChecks) {
+    for (const confirmed of [undefined, false, 'true']) {
+      const f = fixture({ availability });
+      const out = await f.run({ confirmed });
+      assert.equal(out.needsConfirmation, true);
+      assert.equal(out.orderSubmitted, false);
+      assert.equal(out.availability.error, availability.error);
+      assert.match(out.fee, /£7 maximum/);
+      assert.match(out.warning, /REST document-availability check failed/);
+      assert.match(out.note, /Explain this warning before asking for confirmation/);
+      assert.match(out.note, /Do not diagnose a bad password or require an administrator change from this check alone/);
+      assert.deepEqual(f.calls.map(c => c[0]), ['cached', 'check']);
+    }
+  }
+});
+
+test('an explicitly confirmed SOAP order can deliver despite a separate availability service failure', async () => {
+  for (const availability of failedAvailabilityChecks) {
+    const f = fixture({ availability });
+    const out = await f.run({ confirmed: true });
+    assert.equal(out.outcome, 'delivered');
+    assert.equal(out.registerUrl, '/api/lr-bg/register/NGL813653');
+    assert.deepEqual(f.calls.map(c => c[0]), ['cached', 'check', 'order', 'save']);
+    assert.equal(f.calls.find(c => c[0] === 'order')[1].expectedPrice, 7);
+  }
+});
+
+test('after a REST 403, an explicitly confirmed order reports the actual SOAP rejection without retrying', async () => {
+  const result = { ok: false, outcome: 'rejected', status: 500, requestMessageId: 'soap-rejected-1', summary: { fault: 'Login details are invalid.', code: 'soap:Client' }, document: null };
+  const f = fixture({ availability: failedAvailabilityChecks[0], result });
+  const out = await f.run({ confirmed: true });
+  assert.equal(out.outcome, 'rejected');
+  assert.equal(out.status, 500);
+  assert.equal(out.fault, result.summary.fault);
+  assert.equal(out.requestMessageId, 'soap-rejected-1');
+  assert.equal(out.registerUrl, undefined);
+  assert.match(out.note, /Do not retry automatically/);
+  assert.deepEqual(f.calls.map(c => c[0]), ['cached', 'check', 'order']);
+});
+
+test('missing local gateway configuration still blocks a confirmed order', async () => {
+  const f = fixture({ availability: { ok: false, authentication: 'not_configured', error: 'Certificate or credentials missing' } });
   const out = await f.run({ confirmed: true });
   assert.equal(out.outcome, 'preflight_blocked');
   assert.equal(out.orderSubmitted, false);
-  assert.equal(out.availability.status, 403);
-  assert.match(out.note, /Business Unit Administrator/);
-  assert.match(out.note, /Do not call this a bad password/);
+  assert.match(out.note, /not configured/);
   assert.deepEqual(f.calls.map(c => c[0]), ['cached', 'check']);
-});
-
-test('401 is reported separately from forbidden and does not trigger paid retries', async () => {
-  const f = fixture({ availability: { ok: false, status: 401, authentication: 'rejected' } });
-  const out = await f.run({ confirmed: true });
-  assert.match(out.note, /rejected authentication/);
-  assert.match(out.note, /Do not assume the password alone/);
-  assert.equal(f.calls.some(c => c[0] === 'order'), false);
 });
 
 test('read-only access check never orders, even with confirmed true and reorder true', async () => {
