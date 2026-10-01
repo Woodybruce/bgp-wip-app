@@ -156,6 +156,7 @@ export const DEAL_TYPE_COLORS: Record<string, string> = {
   "New Letting": "bg-lime-600",
   "Sub-Letting": "bg-sky-600",
   "Temp Lease": "bg-cyan-600",
+  "Licence": "bg-pink-600",
   "Assignment": "bg-slate-600",
 };
 
@@ -1918,7 +1919,7 @@ function SimplifiedCreateBody({
           // those are tenant-rep deals where BGP is acting for the tenant
           // and the property is a candidate, not something we manage.
           "Lease Renewal", "Rent Review", "Regear", "Lease Disposal",
-          "New Letting", "Temp Lease", "Dilapidations", "Service Charge",
+          "New Letting", "Temp Lease", "Licence", "Dilapidations", "Service Charge",
         ]);
         if (!UNIT_LEVEL_TYPES.has(form.dealType)) return null;
         const unitOptions = propertyUnits.filter(pu => !form.propertyId || pu.propertyId === form.propertyId);
@@ -2520,7 +2521,7 @@ export function DealFormDialog({
     // tenant-rep, property-level, unit not required.
     const UNIT_LEVEL_TYPES = new Set([
       "Lease Renewal", "Rent Review", "Regear", "Lease Disposal",
-      "New Letting", "Temp Lease",
+      "New Letting", "Temp Lease", "Licence",
     ]);
     if (UNIT_LEVEL_TYPES.has(form.dealType) && !form.unitId) {
       toast({ title: `${form.dealType} needs a unit`, description: "Pick or add a unit on this property — leasing deals can't be unit-less.", variant: "destructive" });
@@ -2677,7 +2678,7 @@ export function DealFormDialog({
             {(() => {
               const UNIT_LEVEL_TYPES = new Set([
                 "Lease Renewal", "Rent Review", "Regear", "Lease Disposal",
-                "Sub-Letting", "New Letting", "Temp Lease", "Lease Acquisition",
+                "Sub-Letting", "New Letting", "Temp Lease", "Licence", "Lease Acquisition",
                 "Dilapidations", "Service Charge",
               ]);
               const needsUnit = UNIT_LEVEL_TYPES.has(form.dealType);

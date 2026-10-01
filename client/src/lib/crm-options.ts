@@ -152,6 +152,7 @@ export const CRM_OPTIONS = {
     "New Letting",
     "Sub-Letting",
     "Temp Lease",
+    "Licence",
     "Consultancy",
     "Consultant",
     "Secondment",

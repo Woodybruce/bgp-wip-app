@@ -31,6 +31,7 @@ const DEAL_TYPE_COLORS: Record<string, string> = {
   "New Letting": "bg-lime-600 text-white",
   "Sub-Letting": "bg-sky-600 text-white",
   "Temp Lease": "bg-cyan-600 text-white",
+  "Licence": "bg-pink-600 text-white",
   "Assignment": "bg-slate-600 text-white",
 };
 
