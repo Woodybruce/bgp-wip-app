@@ -977,26 +977,81 @@ router.delete("/api/evidence-plans/entries/:entryId", requireAuth, async (req: R
 
 const unitEvidenceUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 1 } }).single("file");
 
+// A TAF PDF dropped on one unit (Pete, 2026-10-01: "upload pdf as well as
+// excel to the evidence section"). Read with the same vision prompt as the
+// plan-wide Add TAFs job, but synchronously and capped at 8 pages so the
+// preview returns inside Railway's ~45s edge limit. The preview result is
+// cached by file digest so Save doesn't pay for (or vary from) a second read.
+const pdfPreviewCache = new Map<string, { at: number; parsed: { candidates: any[]; warnings: string[] } }>();
+async function parseEvidencePdf(buffer: Buffer, digest: string): Promise<{ candidates: any[]; warnings: string[] }> {
+  const hit = pdfPreviewCache.get(digest);
+  if (hit && Date.now() - hit.at < 30 * 60 * 1000) return hit.parsed;
+  if (!process.env.ANTHROPIC_API_KEY) throw new EvidencePlanError(503, "PDF reading is not configured. Upload the Excel version or add the evidence by hand");
+  const MAX_PAGES = 8;
+  const pages: Buffer[] = [];
+  for (let p = 1; p <= MAX_PAGES + 1; p++) {
+    const buf = await rasterisePdfPage({ pdfBuffer: buffer, page: p, dpi: 150 });
+    if (!buf) break;
+    pages.push(buf);
+  }
+  if (!pages.length) throw new EvidencePlanError(400, "This PDF could not be opened. Check it isn't password-protected and try again");
+  const warnings: string[] = [];
+  if (pages.length > MAX_PAGES) { pages.length = MAX_PAGES; warnings.push(`Only the first ${MAX_PAGES} pages were read. For a longer tranche, use Add TAFs at the top of the plan.`); }
+  const content: any[] = pages.map(buf => ({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: buf.toString("base64") } }));
+  content.push({ type: "text", text: TAF_PROMPT });
+  const msg = await anthropic.messages.create({ model: "claude-sonnet-4-6", max_tokens: 8000, messages: [{ role: "user", content }] });
+  const text = msg.content.filter((blk: any) => blk.type === "text").map((blk: any) => blk.text).join("");
+  const parsedJson = extractJsonObject(text);
+  const tafs: any[] = Array.isArray(parsedJson?.tafs) ? parsedJson.tafs : [];
+  const num = (v: any) => { const n = Number(String(v ?? "").replace(/[£,\s]/g, "")); return v != null && v !== "" && Number.isFinite(n) ? n : null; };
+  const date = (v: any) => { const d = new Date(String(v || "")); return v && !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : null; };
+  const str = (v: any) => (v == null || v === "" ? null : String(v).slice(0, 4000));
+  const candidates = tafs.filter(t => t && (t.unitRef || t.tenant || t.headlineRent || t.zoneA)).map((t, i) => ({
+    sheetName: tafs.length > 1 ? `Analysis ${i + 1}${t.tenant ? ` · ${t.tenant}` : ""}` : "PDF",
+    unitRef: t.unitRef ? String(t.unitRef).replace(/^unit\s+/i, "").slice(0, 40) : null,
+    tenant: str(t.tenant), transactionType: str(t.transactionType), transactionDate: date(t.transactionDate),
+    sizeSqft: num(t.sizeSqft), zoneA: num(t.zoneA), itza: num(t.itza), headlineRent: num(t.headlineRent),
+    netEffective: num(t.netEffective), term: str(t.term), concession: str(t.concession), notes: str(t.notes),
+  }));
+  if (!candidates.length) {
+    warnings.push("No transaction analysis could be read from this PDF. Fill in the figures below from the document before saving.");
+    candidates.push({ sheetName: "PDF", unitRef: null, tenant: null, transactionType: null, transactionDate: null, sizeSqft: null,
+      zoneA: null, itza: null, headlineRent: null, netEffective: null, term: null, concession: null, notes: null });
+  }
+  const parsed = { candidates, warnings };
+  pdfPreviewCache.set(digest, { at: Date.now(), parsed });
+  if (pdfPreviewCache.size > 200) pdfPreviewCache.delete(pdfPreviewCache.keys().next().value as string);
+  return parsed;
+}
+
 export async function importUnitEvidence(req: Request): Promise<any> {
   const planId = String(req.params.id || ""), unitId = String(req.params.unitId || "");
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!uuid.test(planId) || !uuid.test(unitId)) throw new EvidencePlanError(400, "Choose a valid evidence plan and unit");
   const action = String(req.body?.action || "preview");
   if (!["preview", "save"].includes(action)) throw new EvidencePlanError(400, "Choose preview or save for this upload");
-  if (!req.file) throw new EvidencePlanError(400, "Choose an Excel analysis sheet (.xls or .xlsx)");
+  if (!req.file) throw new EvidencePlanError(400, "Choose an Excel analysis sheet (.xls or .xlsx) or a PDF");
   const file = req.file;
-  if (file.buffer.length > 20 * 1024 * 1024) throw new EvidencePlanError(413, "The Excel file is too large. Choose a file under 20 MB");
-  const extension = /\.(xlsx|xls)$/i.exec(file.originalname || "")?.[1]?.toLowerCase();
-  if (!extension) throw new EvidencePlanError(400, "Choose an Excel analysis sheet (.xls or .xlsx)");
+  if (file.buffer.length > 20 * 1024 * 1024) throw new EvidencePlanError(413, "The file is too large. Choose a file under 20 MB");
+  const extension = /\.(xlsx|xls|pdf)$/i.exec(file.originalname || "")?.[1]?.toLowerCase();
+  if (!extension) throw new EvidencePlanError(400, "Choose an Excel analysis sheet (.xls or .xlsx) or a PDF");
+  const isPdf = extension === "pdf";
+  if (isPdf && file.buffer.subarray(0, 5).toString("latin1") !== "%PDF-") throw new EvidencePlanError(400, "This file isn't a readable PDF. Save it as PDF again and retry");
   const { rows: [unit] } = await pool.query(`SELECT u.id, u.unit_ref, p.property_id FROM evidence_plan_units u
     JOIN evidence_plans p ON p.id = u.plan_id WHERE u.id = $1 AND u.plan_id = $2`, [unitId, planId]);
   if (!unit) throw new EvidencePlanError(404, "This unit was not found in the selected evidence plan. Reload the plan and try again");
   const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
   const scope = await resolveCompanyScope(req as any);
   if (scope && (!unit.property_id || !await isPropertyInScope(scope, unit.property_id))) throw new EvidencePlanError(403, "You do not have access to this property's evidence plan");
+  const digest = crypto.createHash("sha256").update(file.buffer).digest("hex");
   let parsed;
-  try { parsed = parseEvidenceWorkbook(file.buffer, file.originalname); }
-  catch (error: any) { throw new EvidencePlanError(400, error.message || "The workbook could not be read. Save it as .xls or .xlsx and try again"); }
+  if (isPdf) {
+    try { parsed = await parseEvidencePdf(file.buffer, digest); }
+    catch (error: any) { if (error instanceof EvidencePlanError) throw error; throw new EvidencePlanError(502, "The PDF could not be read just now. Try again, or add the evidence by hand"); }
+  } else {
+    try { parsed = parseEvidenceWorkbook(file.buffer, file.originalname); }
+    catch (error: any) { throw new EvidencePlanError(400, error.message || "The workbook could not be read. Save it as .xls or .xlsx and try again"); }
+  }
   const candidates = parsed.candidates.map(candidate => ({ ...candidate,
     unitMismatch: Boolean(candidate.unitRef && normaliseUnitRef(candidate.unitRef) !== normaliseUnitRef(unit.unit_ref)) }));
   if (action === "preview") return { candidates, warnings: parsed.warnings, fileName: file.originalname, unit: { id: unit.id, unit_ref: unit.unit_ref } };
@@ -1011,7 +1066,6 @@ export async function importUnitEvidence(req: Request): Promise<any> {
   if (!fields || typeof fields !== "object" || Array.isArray(fields)) throw new EvidencePlanError(400, "Review the evidence details before saving");
   const reviewed = Object.fromEntries(Object.keys(ENTRY_FIELDS).filter(key => !["unitId", "unitRef"].includes(key) && key in fields).map(key => [key, fields[key]]));
   const patch = validateEvidenceEntryPatch({ ...reviewed, unitId, unitRef: unit.unit_ref });
-  const digest = crypto.createHash("sha256").update(file.buffer).digest("hex");
   const sourceKey = `evidence-plans/${planId}/unit-evidence/${unitId}/${digest}-${index}`;
   const db = await pool.connect();
   try {
@@ -1024,7 +1078,7 @@ export async function importUnitEvidence(req: Request): Promise<any> {
     if (!currentPlan || currentPlan.property_id !== unit.property_id) throw new EvidencePlanError(409, "The plan's property link changed while uploading. Reload it and review the sheet again");
     const duplicate = (await db.query(`SELECT * FROM evidence_plan_entries WHERE plan_id = $1 AND unit_id = $2 AND source_key = $3 LIMIT 1`, [planId, unitId, sourceKey])).rows[0];
     if (duplicate) { await db.query("COMMIT"); return { entry: duplicate, duplicate: true }; }
-    const mime = extension === "xls" ? "application/vnd.ms-excel" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    const mime = isPdf ? "application/pdf" : extension === "xls" ? "application/vnd.ms-excel" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     await db.query(`INSERT INTO file_storage (storage_key, data, content_type, original_name, size)
       VALUES ($1, $2, $3, $4, $5) ON CONFLICT (storage_key) DO NOTHING`, [sourceKey, file.buffer, mime, file.originalname, file.buffer.length]);
     const keys = Object.keys(patch), values = keys.map(key => patch[key]);
@@ -1041,7 +1095,7 @@ export async function importUnitEvidence(req: Request): Promise<any> {
 router.post("/api/evidence-plans/:id/units/:unitId/import-evidence", requireAuth,
   (req: Request, res: Response, next) => unitEvidenceUpload(req, res, error => {
     if (error) { res.status(error.code === "LIMIT_FILE_SIZE" ? 413 : 400).json({ error: error.code === "LIMIT_FILE_SIZE"
-      ? "The Excel file is too large. Choose a file under 20 MB" : "Upload one Excel analysis sheet at a time" }); return; }
+      ? "The file is too large. Choose a file under 20 MB" : "Upload one Excel analysis sheet or PDF at a time" }); return; }
     next();
   }), async (req: Request, res: Response) => {
     try { res.json(await importUnitEvidence(req)); }

@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { FileSpreadsheet, Loader2, Upload } from "lucide-react";
+import { FileSpreadsheet, FileText, Loader2, Upload } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,7 @@ export function EvidenceUnitUpload({ planId, unitId, unitRef, onSaved }: {
   const [error, setError] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const candidate = preview?.candidates[candidateIndex];
+  const isPdf = /\.pdf$/i.test(file?.name || preview?.fileName || "");
   const endpoint = `/api/evidence-plans/${planId}/units/${unitId}/import-evidence`;
 
   const send = async (body: FormData) => {
@@ -44,17 +45,17 @@ export function EvidenceUnitUpload({ planId, unitId, unitRef, onSaved }: {
   const chooseFile = async (files: File[]) => {
     if (inFlight.current) return;
     setError("");
-    if (files.length !== 1) { setError("Choose one Excel workbook at a time."); return; }
+    if (files.length !== 1) { setError("Choose one Excel workbook or PDF at a time."); return; }
     const selected = files[0];
-    if (!/\.(xls|xlsx)$/i.test(selected.name)) { setError("Choose an Excel workbook (.xls or .xlsx). Use Add TAFs above for PDFs."); return; }
-    if (selected.size > 20 * 1024 * 1024) { setError("This workbook is too large. The limit is 20 MB."); return; }
+    if (!/\.(xls|xlsx|pdf)$/i.test(selected.name)) { setError("Choose an Excel workbook (.xls or .xlsx) or a PDF."); return; }
+    if (selected.size > 20 * 1024 * 1024) { setError("This file is too large. The limit is 20 MB."); return; }
     inFlight.current = true; setBusy("preview"); setFile(selected); setPreview(null); setConfirmed(false);
     try {
       const body = new FormData(); body.append("file", selected); body.append("action", "preview");
       const result: Preview = await send(body);
-      if (!result.candidates?.length) throw new Error("No sheets could be read. Try saving the workbook again in Excel.");
+      if (!result.candidates?.length) throw new Error(/\.pdf$/i.test(selected.name) ? "Nothing could be read from this PDF." : "No sheets could be read. Try saving the workbook again in Excel.");
       setPreview(result); setCandidateIndex(0); setDraft(result.candidates[0]); setOpen(true);
-    } catch (e: any) { setError(e.message || "Could not read this workbook."); }
+    } catch (e: any) { setError(e.message || "Could not read this file."); }
     finally { inFlight.current = false; setBusy(null); }
   };
   const save = async () => {
@@ -67,7 +68,7 @@ export function EvidenceUnitUpload({ planId, unitId, unitRef, onSaved }: {
       const result = await send(body);
       onSaved(); setOpen(false); setPreview(null); setFile(null);
       toast({ title: result.duplicate ? "Workbook already linked" : `Evidence added to unit ${unitRef}`,
-        description: result.duplicate ? "This sheet is already attached to this unit. Open its evidence entry to make changes." : "The original workbook is available from the evidence entry." });
+        description: result.duplicate ? "This file is already attached to this unit. Open its evidence entry to make changes." : `The original ${isPdf ? "PDF" : "workbook"} is available from the evidence entry.` });
     } catch (e: any) { setError(e.message || "Could not save. Your reviewed details are kept here."); }
     finally { inFlight.current = false; setBusy(null); }
   };
@@ -85,42 +86,44 @@ export function EvidenceUnitUpload({ planId, unitId, unitRef, onSaved }: {
       onDragOver={event => { if (event.dataTransfer.types.includes("Files")) { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = busy ? "none" : "copy"; setDragOver(!busy); } }}
       onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOver(false); }}
       onDrop={event => { event.preventDefault(); event.stopPropagation(); setDragOver(false); void chooseFile(Array.from(event.dataTransfer.files)); }}>
-      <p className="text-sm font-medium">Excel evidence for unit {unitRef}</p>
-      <p className="text-xs text-muted-foreground mt-1">Drop a TAS here, or choose a workbook. Review its figures before saving them to this unit.</p>
-      <input ref={input} type="file" accept=".xls,.xlsx" hidden data-testid="unit-evidence-file"
+      <p className="text-sm font-medium">Evidence for unit {unitRef}</p>
+      <p className="text-xs text-muted-foreground mt-1">Drop a TAS or TAF here, Excel or PDF. Review its figures before saving them to this unit.</p>
+      <input ref={input} type="file" accept=".xls,.xlsx,.pdf,application/pdf" hidden data-testid="unit-evidence-file"
         onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ""; if (files.length) void chooseFile(files); }} />
       <Button variant="outline" size="sm" className="mt-2 min-h-11" disabled={!!busy} onClick={() => input.current?.click()} data-testid="button-upload-unit-evidence">
         {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-        {busy === "preview" ? "Reading workbook…" : "Upload Excel"}
+        {busy === "preview" ? (/\.pdf$/i.test(file?.name || "") ? "Reading PDF… (up to 30s)" : "Reading workbook…") : "Upload Excel or PDF"}
       </Button>
-      <p className="text-[11px] text-muted-foreground mt-1">.xls or .xlsx · up to 20 MB</p>
+      <p className="text-[11px] text-muted-foreground mt-1">.xls, .xlsx or .pdf · up to 20 MB</p>
       {error && !open && <p role="alert" className="mt-2 text-sm text-destructive">{error}</p>}
     </div>
     <Dialog open={open} onOpenChange={value => { if (!busy) { setOpen(value); setError(""); } }}>
       <DialogContent className="max-w-2xl max-h-[85dvh] overflow-y-auto pb-0 max-md:top-auto max-md:bottom-0 max-md:translate-y-0 max-md:rounded-b-none" data-testid="unit-evidence-preview" onOpenAutoFocus={event => { event.preventDefault(); title.current?.focus(); }}>
         <DialogHeader>
           <DialogTitle ref={title} tabIndex={-1} className="outline-none">Add evidence to unit {unitRef}</DialogTitle>
-          <DialogDescription>Check the values read from the workbook. Saving adds an evidence entry and keeps the original Excel file.</DialogDescription>
+          <DialogDescription>{isPdf
+            ? "These values were read from the PDF by AI. Check each one against the document before saving. Saving adds an evidence entry and keeps the original PDF."
+            : "Check the values read from the workbook. Saving adds an evidence entry and keeps the original Excel file."}</DialogDescription>
         </DialogHeader>
-        <p className="flex items-start gap-2 text-sm break-all"><FileSpreadsheet className="h-4 w-4 shrink-0 mt-0.5" />{preview?.fileName}</p>
+        <p className="flex items-start gap-2 text-sm break-all">{isPdf ? <FileText className="h-4 w-4 shrink-0 mt-0.5" /> : <FileSpreadsheet className="h-4 w-4 shrink-0 mt-0.5" />}{preview?.fileName}</p>
         {preview && preview.candidates.length > 1 ? <div>
-          <label htmlFor="upload-evidence-sheet" className="text-xs font-medium">Worksheet</label>
+          <label htmlFor="upload-evidence-sheet" className="text-xs font-medium">{isPdf ? "Analysis" : "Worksheet"}</label>
           <select id="upload-evidence-sheet" className="mt-1 w-full min-h-11 rounded-md border border-input bg-background px-2 text-sm" value={candidateIndex} disabled={!!busy}
             onChange={event => { const index = Number(event.target.value); setCandidateIndex(index); setDraft(preview.candidates[index]); setConfirmed(false); setError(""); }}>
             {preview.candidates.map((item, index) => <option key={index} value={index}>{item.sheetName}{item.unitRef ? ` · Unit ${item.unitRef}` : ""}</option>)}
           </select>
-        </div> : <p className="text-xs text-muted-foreground">Worksheet: {candidate?.sheetName}</p>}
+        </div> : !isPdf && <p className="text-xs text-muted-foreground">Worksheet: {candidate?.sheetName}</p>}
         {!!preview?.warnings.length && <div className="rounded-lg border border-border bg-muted p-3 text-sm space-y-1" data-testid="unit-evidence-warnings">
           {preview.warnings.map((warning, index) => <p key={index}>{warning}</p>)}
         </div>}
         {candidate?.unitMismatch && <div className="rounded-lg border border-destructive/50 p-3 text-sm" data-testid="unit-evidence-mismatch">
-          <p>The worksheet names unit <strong>{candidate.unitRef}</strong>. You selected <strong>{unitRef}</strong>.</p>
+          <p>The {isPdf ? "PDF" : "worksheet"} names unit <strong>{candidate.unitRef}</strong>. You selected <strong>{unitRef}</strong>.</p>
           <label className="mt-2 flex min-h-11 items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={confirmed} disabled={!!busy} onChange={event => setConfirmed(event.target.checked)} data-testid="confirm-unit-evidence-mismatch" />
             <span>Link this evidence to unit {unitRef}. Keep its saved unit reference.</span>
           </label>
         </div>}
-        {!candidate?.unitRef && <p className="text-sm text-muted-foreground">No unit reference was found in the sheet. This evidence will be linked to the selected unit, {unitRef}.</p>}
+        {!candidate?.unitRef && <p className="text-sm text-muted-foreground">No unit reference was found in the {isPdf ? "PDF" : "sheet"}. This evidence will be linked to the selected unit, {unitRef}.</p>}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {field("tenant", "Tenant")}{field("transactionType", "Transaction type")}
           {field("transactionDate", "Transaction date", "date")}{field("sizeSqft", "Size sq ft", "number")}

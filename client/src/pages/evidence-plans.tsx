@@ -1550,7 +1550,7 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
         )}
 
         {entries.length === 0 && !addingEvidence ? (
-          <p className="text-xs text-muted-foreground">No evidence yet — upload Excel above or use Add evidence to enter details. Add TAFs at the top imports PDFs for the whole plan.</p>
+          <p className="text-xs text-muted-foreground">No evidence yet — upload an Excel or PDF above, or use Add evidence to enter details. Add TAFs at the top imports a whole tranche of PDFs for the plan.</p>
         ) : (
           <div className="space-y-1.5">
             {entries.map(e => (
