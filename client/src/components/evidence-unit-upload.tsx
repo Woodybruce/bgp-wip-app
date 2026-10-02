@@ -15,8 +15,11 @@ type EvidenceDraft = {
 type Candidate = EvidenceDraft & { sheetName: string; unitRef: string | null; unitMismatch: boolean };
 type Preview = { fileName: string; candidates: Candidate[]; warnings: string[] };
 
-export function EvidenceUnitUpload({ planId, unitId, unitRef, onSaved }: {
+export function EvidenceUnitUpload({ planId, unitId, unitRef, onSaved, onZip }: {
   planId: string; unitId: string; unitRef: string; onSaved: () => void;
+  /** A zip (e.g. a OneDrive folder download) or several PDFs go to the
+   *  plan-wide TAF reader; each analysis links to its own unit. */
+  onZip?: (files: File[]) => void;
 }) {
   const { toast } = useToast();
   const input = useRef<HTMLInputElement>(null);
@@ -45,9 +48,16 @@ export function EvidenceUnitUpload({ planId, unitId, unitRef, onSaved }: {
   const chooseFile = async (files: File[]) => {
     if (inFlight.current) return;
     setError("");
-    if (files.length !== 1) { setError("Choose one Excel workbook or PDF at a time."); return; }
+    // Pete, 2026-10-02: the OneDrive zip of the Hammerson folder didn't show
+    // in this picker (it only offered Excel/PDF). A zip — or a multi-PDF
+    // pick — is a tranche, so hand it to the plan-wide TAF reader.
+    if (onZip && (files.some(f => /\.zip$/i.test(f.name)) || (files.length > 1 && files.every(f => /\.pdf$/i.test(f.name))))) {
+      onZip(files);
+      return;
+    }
+    if (files.length !== 1) { setError("Choose one Excel workbook or PDF at a time, or a zip of PDFs."); return; }
     const selected = files[0];
-    if (!/\.(xls|xlsx|pdf)$/i.test(selected.name)) { setError("Choose an Excel workbook (.xls or .xlsx) or a PDF."); return; }
+    if (!/\.(xls|xlsx|pdf)$/i.test(selected.name)) { setError("Choose an Excel workbook (.xls or .xlsx), a PDF, or a zip of PDFs."); return; }
     if (selected.size > 20 * 1024 * 1024) { setError("This file is too large. The limit is 20 MB."); return; }
     inFlight.current = true; setBusy("preview"); setFile(selected); setPreview(null); setConfirmed(false);
     try {
@@ -87,14 +97,14 @@ export function EvidenceUnitUpload({ planId, unitId, unitRef, onSaved }: {
       onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOver(false); }}
       onDrop={event => { event.preventDefault(); event.stopPropagation(); setDragOver(false); void chooseFile(Array.from(event.dataTransfer.files)); }}>
       <p className="text-sm font-medium">Evidence for unit {unitRef}</p>
-      <p className="text-xs text-muted-foreground mt-1">Drop a TAS or TAF here, Excel or PDF. Review its figures before saving them to this unit.</p>
-      <input ref={input} type="file" accept=".xls,.xlsx,.pdf,application/pdf" hidden data-testid="unit-evidence-file"
+      <p className="text-xs text-muted-foreground mt-1">Drop a TAS or TAF here, Excel or PDF. Review its figures before saving them to this unit. A zip of TAFs reads every PDF inside and files each one under its own unit.</p>
+      <input ref={input} type="file" accept={onZip ? ".xls,.xlsx,.pdf,application/pdf,.zip,application/zip,application/x-zip-compressed" : ".xls,.xlsx,.pdf,application/pdf"} multiple={!!onZip} hidden data-testid="unit-evidence-file"
         onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ""; if (files.length) void chooseFile(files); }} />
       <Button variant="outline" size="sm" className="mt-2 min-h-11" disabled={!!busy} onClick={() => input.current?.click()} data-testid="button-upload-unit-evidence">
         {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-        {busy === "preview" ? (/\.pdf$/i.test(file?.name || "") ? "Reading PDF… (up to 30s)" : "Reading workbook…") : "Upload Excel or PDF"}
+        {busy === "preview" ? (/\.pdf$/i.test(file?.name || "") ? "Reading PDF… (up to 30s)" : "Reading workbook…") : onZip ? "Upload Excel, PDF or zip" : "Upload Excel or PDF"}
       </Button>
-      <p className="text-[11px] text-muted-foreground mt-1">.xls, .xlsx or .pdf · up to 20 MB</p>
+      <p className="text-[11px] text-muted-foreground mt-1">{onZip ? ".xls, .xlsx or .pdf up to 20 MB · a .zip of TAFs up to 250 MB" : ".xls, .xlsx or .pdf · up to 20 MB"}</p>
       {error && !open && <p role="alert" className="mt-2 text-sm text-destructive">{error}</p>}
     </div>
     <Dialog open={open} onOpenChange={value => { if (!busy) { setOpen(value); setError(""); } }}>
