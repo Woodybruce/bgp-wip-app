@@ -9,6 +9,7 @@ export type EvidenceWorkbookCandidate = {
   transactionDate: string | null;
   sizeSqft: number | null;
   zoneA: number | null;
+  netZoneA: number | null;
   itza: number | null;
   headlineRent: number | null;
   netEffective: number | null;
@@ -20,11 +21,11 @@ export type EvidenceWorkbookCandidate = {
 type Field = Exclude<keyof EvidenceWorkbookCandidate, "sheetName">;
 const fieldLabels: Record<Field, string> = {
   unitRef: "unit reference", tenant: "tenant", transactionType: "transaction type",
-  transactionDate: "transaction date", sizeSqft: "area in sq ft", zoneA: "Zone A rate",
+  transactionDate: "transaction date", sizeSqft: "area in sq ft", zoneA: "headline Zone A rate", netZoneA: "net Zone A rate",
   itza: "ITZA", headlineRent: "headline rent", netEffective: "net rent",
   term: "lease term", concession: "concessions", notes: "notes",
 };
-const numericFields = new Set<Field>(["sizeSqft", "zoneA", "itza", "headlineRent", "netEffective"]);
+const numericFields = new Set<Field>(["sizeSqft", "zoneA", "netZoneA", "itza", "headlineRent", "netEffective"]);
 const MAX_BYTES = 20 * 1024 * 1024;
 const MAX_ROWS = 1000;
 const MAX_COLUMNS = 256;
@@ -44,7 +45,8 @@ function labelField(value: string): Field | null {
     ["transactionDate", /^(transaction date|date of transaction|evidence date|commencement date|lease start date)$/],
     ["sizeSqft", /^(gia|nia|gross internal area|net internal area|total area|size|size sqft|size sq ft|area sqft|area sq ft)(?: sqft| sq ft| square feet)?$/],
     ["itza", /^(itza|itza area|area itza|total itza)(?: sqft| sq ft| square feet)?$/],
-    ["zoneA", /^(zone a rate|zone a psf|zone a rent psf|zone a rent|psf itza|rate psf itza|rent psf itza|itza rate|itza psf)$/],
+    ["netZoneA", /^(net zone a|net zone a rate|net zone a psf|net zone a rent psf|net rate psf itza|net psf itza|net itza rate|zone a net|net effective zone a|net effective zone a rate)$/],
+    ["zoneA", /^(zone a rate|zone a psf|zone a rent psf|zone a rent|psf itza|rate psf itza|rent psf itza|itza rate|itza psf|headline zone a|headline zone a rate|headline zone a psf|headline rate psf itza|zone a headline)$/],
     ["headlineRent", /^(base headline rent|headline rent|base rent|annual headline rent|headline rent pa|headline rent p a)$/],
     ["netEffective", /^(net rent|net effective|net effective rent|net rent pa|net effective rent pa|net rent p a|net effective rent p a)$/],
     ["term", /^(term|lease term|proposed term)$/],
@@ -92,7 +94,7 @@ function dateValue(cell: XLSX.CellObject): string | null {
 
 function emptyCandidate(sheetName: string): EvidenceWorkbookCandidate {
   return { sheetName, unitRef: null, tenant: null, transactionType: null, transactionDate: null,
-    sizeSqft: null, zoneA: null, itza: null, headlineRent: null, netEffective: null,
+    sizeSqft: null, zoneA: null, netZoneA: null, itza: null, headlineRent: null, netEffective: null,
     term: null, concession: null, notes: null };
 }
 
@@ -212,7 +214,10 @@ export function parseEvidenceWorkbook(buffer: Buffer, fileName: string): {
           .filter((kind): kind is "headlineRent" | "netEffective" => kind === "headlineRent" || kind === "netEffective"));
         if (rentKinds.size === 1 && unitsColumn !== undefined) {
           const rentKind = [...rentKinds][0];
-          if (rentKind === "headlineRent") record("zoneA", readValue("zoneA", XLSX.utils.encode_cell({ r: position.r, c: unitsColumn + 1 })));
+          // The net row carries the net Zone A rate (Pete, 2026-10-02: keep
+          // headline and net Zone A separately).
+          const rateField = rentKind === "headlineRent" ? "zoneA" : "netZoneA";
+          record(rateField, readValue(rateField, XLSX.utils.encode_cell({ r: position.r, c: unitsColumn + 1 })));
           record(rentKind, readValue(rentKind, XLSX.utils.encode_cell({ r: position.r, c: unitsColumn + 2 })));
         }
       }
@@ -224,7 +229,7 @@ export function parseEvidenceWorkbook(buffer: Buffer, fileName: string): {
         if (present(sheet[target]) && !separator(sheet[target])) { valueCell = sheet[target]; valueAddress = target; break; }
       }
       // Some TAS forms put the rate before the "psf ITZA" suffix.
-      if (field === "zoneA" && (!valueCell || labelField(String(valueCell.v ?? "")))) {
+      if ((field === "zoneA" || field === "netZoneA") && (!valueCell || labelField(String(valueCell.v ?? "")))) {
         const target = XLSX.utils.encode_cell({ r: position.r, c: Math.max(0, position.c - 1) });
         if (position.c > 0 && present(sheet[target]) && !separator(sheet[target])) { valueCell = sheet[target]; valueAddress = target; }
       }

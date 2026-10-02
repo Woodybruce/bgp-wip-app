@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 
 type EvidenceDraft = {
   tenant?: string | null; transactionType?: string | null; transactionDate?: string | null;
-  sizeSqft?: number | string | null; zoneA?: number | string | null; itza?: number | string | null;
+  sizeSqft?: number | string | null; zoneA?: number | string | null; netZoneA?: number | string | null; itza?: number | string | null;
   headlineRent?: number | string | null; netEffective?: number | string | null;
   term?: string | null; concession?: string | null; notes?: string | null;
 };
@@ -216,7 +216,8 @@ export function EvidenceUnitUpload({ planId, unitId, unitRef, onSaved }: {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {field("tenant", "Tenant")}{field("transactionType", "Transaction type")}
           {field("transactionDate", "Transaction date", "date")}{field("sizeSqft", "Size sq ft", "number")}
-          {field("zoneA", "Zone A £psf", "number")}{field("itza", "ITZA sq ft", "number")}
+          {field("zoneA", "Headline Zone A £psf", "number")}{field("netZoneA", "Net Zone A £psf", "number")}
+          {field("itza", "ITZA sq ft", "number")}
           {field("headlineRent", "Headline £pa", "number")}{field("netEffective", "Net effective £pa", "number")}
           {field("term", "Term")}{field("concession", "Concessions")}
         </div>

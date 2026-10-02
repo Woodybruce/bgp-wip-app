@@ -114,7 +114,7 @@ pool.query(`
     source_key TEXT,
     created_by VARCHAR,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  )`).catch(() => {});
+  )`).then(() => pool.query(`ALTER TABLE evidence_plan_entries ADD COLUMN IF NOT EXISTS net_zone_a NUMERIC`)).catch(() => {});
 
 // ── Unit-ref normalisation ────────────────────────────────────────────────
 // The TS says "Unit A01", the plan says "A1", a TAF says "Unit E7A". One
@@ -895,7 +895,7 @@ router.delete("/api/evidence-plans/units/:unitId", requireAuth, async (req: Requ
 const ENTRY_FIELDS: Record<string, string> = {
   unitId: "unit_id", unitRef: "unit_ref", tenant: "tenant",
   transactionType: "transaction_type", transactionDate: "transaction_date",
-  sizeSqft: "size_sqft", zoneA: "zone_a", itza: "itza",
+  sizeSqft: "size_sqft", zoneA: "zone_a", netZoneA: "net_zone_a", itza: "itza",
   headlineRent: "headline_rent", netEffective: "net_effective",
   term: "term", concession: "concession", notes: "notes",
 };
@@ -907,7 +907,7 @@ export function validateEvidenceEntryPatch(body: any): Record<string, any> {
     if (!(key in body)) continue;
     const raw = body[key];
     if (raw === "" || raw === null) { patch[key] = null; continue; }
-    if (["sizeSqft", "zoneA", "itza", "headlineRent", "netEffective"].includes(key)) {
+    if (["sizeSqft", "zoneA", "netZoneA", "itza", "headlineRent", "netEffective"].includes(key)) {
       patch[key] = validateEvidenceUnitPatch({ erv: raw }).erv;
     } else if (key === "transactionDate") {
       patch[key] = validateEvidenceUnitPatch({ leaseExpiry: raw }).leaseExpiry;
@@ -1016,13 +1016,13 @@ async function parseEvidencePdf(buffer: Buffer, digest: string): Promise<{ candi
     sheetName: tafs.length > 1 ? `Analysis ${i + 1}${t.tenant ? ` · ${t.tenant}` : ""}` : "PDF",
     unitRef: t.unitRef ? String(t.unitRef).replace(/^unit\s+/i, "").slice(0, 40) : null,
     tenant: str(t.tenant), transactionType: str(t.transactionType), transactionDate: date(t.transactionDate),
-    sizeSqft: num(t.sizeSqft), zoneA: num(t.zoneA), itza: num(t.itza), headlineRent: num(t.headlineRent),
+    sizeSqft: num(t.sizeSqft), zoneA: num(t.zoneA), netZoneA: num(t.netZoneA), itza: num(t.itza), headlineRent: num(t.headlineRent),
     netEffective: num(t.netEffective), term: str(t.term), concession: str(t.concession), notes: str(t.notes),
   }));
   if (!candidates.length) {
     warnings.push("No transaction analysis could be read from this PDF. Fill in the figures below from the document before saving.");
     candidates.push({ sheetName: "PDF", unitRef: null, tenant: null, transactionType: null, transactionDate: null, sizeSqft: null,
-      zoneA: null, itza: null, headlineRent: null, netEffective: null, term: null, concession: null, notes: null });
+      zoneA: null, netZoneA: null, itza: null, headlineRent: null, netEffective: null, term: null, concession: null, notes: null });
   }
   const parsed = { candidates, warnings };
   pdfPreviewCache.set(digest, { at: Date.now(), parsed });
@@ -1245,7 +1245,8 @@ Extract EVERY analysis sheet visible across these pages as JSON:
   "term": "5 years",
   "sizeSqft": 221,                      // Total Area (NIA sq ft)
   "itza": 221,                          // Zone A area (ITZA) where stated
-  "zoneA": 294.12,                      // headline £ Zone A rate psf where stated (or headline rate psf overall)
+  "zoneA": 294.12,                      // HEADLINE £ Zone A rate psf where stated (or headline rate psf overall)
+  "netZoneA": 279.41,                   // NET (effective) £ Zone A rate psf after concessions where stated; null if absent
   "headlineRent": 65000,                // headline rent £pa
   "netEffective": 61750,                // net rent £pa after concessions where stated; null if absent
   "concession": "3 months rent free",
@@ -1326,12 +1327,12 @@ async function runTafJob(planId: string, jobId: string, pdfs: { name: string; ge
         await pool.query(
           `INSERT INTO evidence_plan_entries
              (plan_id, unit_id, unit_ref, tenant, transaction_type, transaction_date, size_sqft, zone_a, itza,
-              headline_rent, net_effective, term, concession, notes, source_key, created_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+              headline_rent, net_effective, term, concession, notes, source_key, created_by, net_zone_a)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
           [planId, unit?.id || null, t.unitRef ? String(t.unitRef).slice(0, 40) : null,
            t.tenant || null, t.transactionType || null, date(t.transactionDate),
            num(t.sizeSqft), num(t.zoneA), num(t.itza), num(t.headlineRent), num(t.netEffective),
-           t.term || null, t.concession || null, t.notes || null, sourceKey, userId]);
+           t.term || null, t.concession || null, t.notes || null, sourceKey, userId, num(t.netZoneA)]);
         created++;
         if (unit) linked++;
       }

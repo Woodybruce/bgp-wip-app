@@ -59,7 +59,7 @@ type Matter = { id: string; matter_type: string; status: string; acting_for: str
 type Entry = {
   id: string; unit_id: string | null; unit_ref: string | null; tenant: string | null;
   transaction_type: string | null; transaction_date: string | null; size_sqft: string | null;
-  zone_a: string | null; itza: string | null; headline_rent: string | null; net_effective: string | null;
+  zone_a: string | null; net_zone_a?: string | null; itza: string | null; headline_rent: string | null; net_effective: string | null;
   term: string | null; concession: string | null; notes: string | null; source_key: string | null;
   created_at?: string | null;
 };
@@ -398,6 +398,16 @@ function PlanView({ planId }: { planId: string }) {
     for (const e of entries) {
       if (!e.unit_id || e.zone_a == null || String(e.zone_a).trim() === "" || !Number.isFinite(Number(e.zone_a))) continue;
       if (!m.has(e.unit_id)) m.set(e.unit_id, Number(e.zone_a)); // entries arrive newest-first
+    }
+    return m;
+  }, [entries]);
+  // Net Zone A from the newest entry that has one — shown beside the
+  // headline figure in the hover card (Pete, 2026-10-02).
+  const latestNetZaByUnit = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const e of entries) {
+      if (!e.unit_id || e.net_zone_a == null || String(e.net_zone_a).trim() === "" || !Number.isFinite(Number(e.net_zone_a))) continue;
+      if (!m.has(e.unit_id)) m.set(e.unit_id, Number(e.net_zone_a));
     }
     return m;
   }, [entries]);
@@ -1091,13 +1101,14 @@ function PlanView({ planId }: { planId: string }) {
             if (!u) return null;
             const latest = latestEntryByUnit.get(u.id);
             const za = latestZaByUnit.get(u.id);
+            const netZa = latestNetZaByUnit.get(u.id);
             const tk = evidenceTypeKey(latest?.transaction_type);
             const evCount = evidenceCountByUnit.get(u.id) || 0;
             return (
-              <div className="absolute z-20 pointer-events-none rounded-xl border border-border bg-card shadow-lg px-3 py-2.5 w-[230px]"
+              <div className="absolute z-20 pointer-events-none rounded-xl border border-border bg-card shadow-lg px-3 py-2.5 w-[250px]"
                 style={{
-                  left: Math.max(8, Math.min(hover.x + 14, (canvasRef.current?.clientWidth || 400) - 240)),
-                  top: Math.max(8, Math.min(hover.y + 14, (canvasRef.current?.clientHeight || 300) - 160)),
+                  left: Math.max(8, Math.min(hover.x + 14, (canvasRef.current?.clientWidth || 400) - 260)),
+                  top: Math.max(8, Math.min(hover.y + 14, (canvasRef.current?.clientHeight || 300) - 190)),
                 }}>
                 <div className="flex items-center gap-1.5">
                   {latest && (
@@ -1109,12 +1120,20 @@ function PlanView({ planId }: { planId: string }) {
                   <span className="text-sm font-bold truncate">{u.unit_ref}</span>
                 </div>
                 {u.tenant_name && u.tenant_name !== u.unit_ref && <div className="text-[11px] text-muted-foreground truncate">{u.tenant_name}</div>}
-                {za != null ? (
-                  <div className="mt-1">
-                    <span className="text-lg font-bold tabular-nums" style={{ color: colourOf(tk) }}>
-                      £{za.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>{" "}
-                    <span className="text-[11px] text-muted-foreground">Zone A</span>
+                {za != null || netZa != null ? (
+                  <div className="mt-1 grid grid-cols-2 gap-x-2">
+                    <div>
+                      <div className="text-lg font-bold tabular-nums leading-tight" style={{ color: colourOf(tk) }}>
+                        {za != null ? `£${za.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">Headline Zone A</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-bold tabular-nums leading-tight">
+                        {netZa != null ? `£${netZa.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">Net Zone A</div>
+                    </div>
                   </div>
                 ) : (
                   <div className="mt-1 text-[11px] text-muted-foreground">No evidence yet</div>
@@ -1123,6 +1142,7 @@ function PlanView({ planId }: { planId: string }) {
                   {latest?.transaction_date && <><span>Evidence date</span><span className="text-foreground">{fmtDate(latest.transaction_date)}</span></>}
                   {latest?.size_sqft != null && <><span>Size</span><span className="text-foreground">{Number(latest.size_sqft).toLocaleString("en-GB")} sq ft</span></>}
                   {u.lease_expiry && <><span>Lease expiry</span><span className="text-foreground">{fmtDate(u.lease_expiry)}</span></>}
+                  {u.review_date && <><span>Next rent review</span><span className="text-foreground">{fmtDate(u.review_date)}</span></>}
                   {evCount > 1 && <><span>Evidence entries</span><span className="text-foreground">{evCount}</span></>}
                 </div>
               </div>
@@ -1413,7 +1433,7 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
   };
   const startEvidence = (entry?: Entry) => {
     setEditingEvidenceId(entry?.id || null); setEvidenceError("");
-    setEv(entry ? { tenant: entry.tenant || "", transactionType: entry.transaction_type || "", transactionDate: entry.transaction_date?.slice(0, 10) || "", sizeSqft: entry.size_sqft ?? "", zoneA: entry.zone_a ?? "", itza: entry.itza ?? "", headlineRent: entry.headline_rent ?? "", netEffective: entry.net_effective ?? "", term: entry.term || "", concession: entry.concession || "", notes: entry.notes || "" } : {});
+    setEv(entry ? { tenant: entry.tenant || "", transactionType: entry.transaction_type || "", transactionDate: entry.transaction_date?.slice(0, 10) || "", sizeSqft: entry.size_sqft ?? "", zoneA: entry.zone_a ?? "", netZoneA: entry.net_zone_a ?? "", itza: entry.itza ?? "", headlineRent: entry.headline_rent ?? "", netEffective: entry.net_effective ?? "", term: entry.term || "", concession: entry.concession || "", notes: entry.notes || "" } : {});
     setAddingEvidence(true);
   };
   const addEvidence = async () => {
@@ -1482,7 +1502,8 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
           {fact("Headline £pa", fmtMoney(summaryEntry.headline_rent))}
           {fact("Net effective £pa", fmtMoney(summaryEntry.net_effective))}
           {fact("Size sq ft", evidenceHasNumber(summaryEntry.size_sqft) ? Number(summaryEntry.size_sqft).toLocaleString("en-GB") : "—")}
-          {fact("Zone A £psf", fmtMoney(summaryEntry.zone_a))}
+          {fact("Headline Zone A £psf", fmtMoney(summaryEntry.zone_a))}
+          {fact("Net Zone A £psf", fmtMoney(summaryEntry.net_zone_a))}
           {evidenceHasNumber(summaryEntry.itza) && fact("ITZA sq ft", Number(summaryEntry.itza).toLocaleString("en-GB"))}
           {summaryEntry.term && fact("Term", summaryEntry.term)}
         </div>
@@ -1631,7 +1652,8 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
                 </select></div>
               {evField("Date", "transactionDate", "date")}
               {evField("Size sq ft", "sizeSqft", "number")}
-              {evField("Zone A £psf", "zoneA", "number")}
+              {evField("Headline Zone A £psf", "zoneA", "number")}
+              {evField("Net Zone A £psf", "netZoneA", "number")}
               {evField("ITZA", "itza", "number")}
               {evField("Headline £pa", "headlineRent", "number")}
               {evField("Net effective £pa", "netEffective", "number")}
