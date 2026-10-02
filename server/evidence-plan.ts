@@ -758,6 +758,12 @@ export async function saveEvidenceUnit(
       WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE`, [levelIds])).rows : [];
     const unit = (await db.query(`SELECT * FROM evidence_plan_units WHERE id = $1 FOR UPDATE`, [unitId])).rows[0];
     if (!unit || unit.level_id !== before.level_id) throw new EvidencePlanError(409, "The unit moved to another level. Reload the plan before saving.");
+    if ("expectedPlanId" in body && body.expectedPlanId !== unit.plan_id) {
+      throw new EvidencePlanError(409, "The unit is no longer on this evidence plan. Reload it before saving.");
+    }
+    if ("expectedUnitUpdatedAt" in body && String(body.expectedUnitUpdatedAt || "") !== (unit.updated_at ? new Date(unit.updated_at).toISOString() : "")) {
+      throw new EvidencePlanError(409, "The unit was edited after you read it. Reload it before saving.");
+    }
     if (patch.levelId && !levels.some((level: any) => level.id === patch.levelId && level.plan_id === unit.plan_id)) {
       throw new EvidencePlanError(400, "Choose a level from this evidence plan");
     }

@@ -19,6 +19,7 @@ import { containedMarker, isValidPolygon, moveMarkerInside } from "@shared/plan-
 import { planOutlineDisplay, planOutlinePoints, type OutlinePlacement } from "@shared/plan-outline-display";
 import { layoutPlanMarkers, parsePlanMarkerMode, type PlanMarkerMode } from "@shared/plan-marker-layout";
 import type { ScanReviewResponse } from "@shared/plan-scan-review";
+import { orderedUnitEvidence, evidenceSummaryIsFuture, evidenceUnitFactDraft, evidenceHasNumber } from "@shared/evidence-unit-summary";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,6 +61,7 @@ type Entry = {
   transaction_type: string | null; transaction_date: string | null; size_sqft: string | null;
   zone_a: string | null; itza: string | null; headline_rent: string | null; net_effective: string | null;
   term: string | null; concession: string | null; notes: string | null; source_key: string | null;
+  created_at?: string | null;
 };
 
 const fmtMoney = (v: any) => {
@@ -1320,6 +1322,29 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
   const [editScheduleId, setEditScheduleId] = useState<string | null>(null);
   const [editScheduleVersion, setEditScheduleVersion] = useState<string | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(unit.ts_link_status === "ambiguous" || unit.ts_link_status === "stale-link");
+  const orderedEvidence = useMemo(() => orderedUnitEvidence(entries, unit.id), [entries, unit.id]);
+  const [summaryEntryId, setSummaryEntryId] = useState("");
+  const summaryEntry = orderedEvidence.find(entry => entry.id === summaryEntryId) || orderedEvidence[0];
+  const [reviewEntryId, setReviewEntryId] = useState<string | null>(null);
+  const reviewEntry = orderedEvidence.find(entry => entry.id === reviewEntryId);
+  const [useEvidenceSize, setUseEvidenceSize] = useState(false);
+  const [useEvidencePassingRent, setUseEvidencePassingRent] = useState(false);
+  const [draftEvidenceName, setDraftEvidenceName] = useState<string | null>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!orderedEvidence.some(entry => entry.id === summaryEntryId)) setSummaryEntryId(orderedEvidence[0]?.id || "");
+  }, [orderedEvidence, summaryEntryId]);
+  useEffect(() => {
+    setUseEvidenceSize(false); setUseEvidencePassingRent(false);
+  }, [reviewEntryId, reviewEntry?.size_sqft, reviewEntry?.headline_rent]);
+  useEffect(() => {
+    if (!editing) return;
+    const frame = requestAnimationFrame(() => {
+      editorRef.current?.focus({ preventScroll: true });
+      editorRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [editing]);
   const scheduleChoice = scheduleRows.find(row => row.id === scheduleId);
   const suggestedScheduleRows = scheduleRows.filter(row => unit.ts_candidate_ids?.includes(row.id));
   const ambiguousSchedule = unit.ts_link_status === "ambiguous";
@@ -1333,18 +1358,32 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
     return typeof value === "number" ? value.toLocaleString("en-GB") : String(value);
   };
 
-  const startEdit = () => {
+  const startEdit = (prefill: { sqft?: string; passingRent?: string } = {}, evidenceName: string | null = null) => {
     const values = {
       unitRef: unit.unit_ref, tenantName: unit.tenant_name || "",
       leaseExpiry: unit.lease_expiry?.slice(0, 10) || "", breakDate: unit.break_date?.slice(0, 10) || "",
       reviewDate: unit.review_date?.slice(0, 10) || "", erv: unit.erv ?? "", passingRent: unit.passing_rent ?? "",
       sqft: unit.sqft ?? "", notes: unit.notes || "",
     };
-    setForm(values); setOriginalForm(values);
+    setForm({ ...values, ...prefill }); setOriginalForm(values);
+    setDraftEvidenceName(evidenceName);
     setEditScheduleId(unit.ts_row_id || null);
     setEditScheduleVersion(unit.ts_row_updated_at || null);
     setSaveError("");
     setEditing(true);
+  };
+  const cancelEdit = () => {
+    setEditing(false); setForm({}); setOriginalForm({}); setDraftEvidenceName(null); setSaveError("");
+  };
+  const closeEvidenceReview = () => {
+    setReviewEntryId(null); setUseEvidenceSize(false); setUseEvidencePassingRent(false);
+  };
+  const reviewEvidenceFacts = () => {
+    if (!reviewEntry) return;
+    const prefill = evidenceUnitFactDraft(reviewEntry, { size: useEvidenceSize, passingRent: useEvidencePassingRent });
+    if (!Object.keys(prefill).length) return;
+    startEdit(prefill, [reviewEntry.tenant, reviewEntry.transaction_type, reviewEntry.transaction_date ? fmtDate(reviewEntry.transaction_date) : "Undated evidence"].filter(Boolean).join(" · "));
+    closeEvidenceReview();
   };
 
   const removeUnit = async () => {
@@ -1413,21 +1452,77 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
       <div className="flex items-start justify-between gap-2">
         <div>
           <h2 className="text-lg font-bold tracking-tight break-words">{unit.unit_ref}</h2>
-          <p className="text-[11px] text-muted-foreground">{unit.tenant_name || "No tenant on record"}{unit.sqft ? ` · ${Number(unit.sqft).toLocaleString("en-GB")} sq ft` : ""}</p>
+          <p className="text-[11px] text-muted-foreground">{unit.tenant_name || "No tenant on record"}{evidenceHasNumber(unit.sqft) ? ` · ${Number(unit.sqft).toLocaleString("en-GB")} sq ft` : ""}</p>
         </div>
         <div className="flex items-center gap-1">
-          {!editing && <Button variant="ghost" size="sm" className="min-h-11 px-2" onClick={startEdit} data-testid="button-edit-unit">Edit</Button>}
+          {!editing && <Button variant="ghost" size="sm" className="min-h-11 px-2" onClick={() => startEdit()} data-testid="button-edit-unit">Edit</Button>}
           <Button aria-label="Delete unit" variant="ghost" size="icon" className="h-11 w-11 text-muted-foreground" onClick={removeUnit} data-testid="button-delete-unit"><Trash2 className="w-4 h-4" /></Button>
           <Button aria-label="Close unit" variant="ghost" size="icon" className="h-11 w-11" onClick={onClose} data-testid="button-close-unit"><X className="w-4 h-4" /></Button>
         </div>
       </div>
+
+      {summaryEntry && <section className="rounded-xl border border-border bg-card p-3 space-y-3" data-testid="unit-evidence-summary">
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wider">Saved evidence summary</h3>
+          <p className="text-xs text-muted-foreground mt-1">Figures from one saved transaction. Current tenancy details are shown separately below.</p>
+        </div>
+        {orderedEvidence.length > 1 && <div>
+          <label htmlFor="unit-summary-evidence" className="text-xs font-medium">Evidence entry</label>
+          <select id="unit-summary-evidence" data-testid="select-unit-summary-evidence" className="mt-1 w-full min-h-11 rounded-md border border-input bg-background px-2 text-sm" value={summaryEntry.id} onChange={event => setSummaryEntryId(event.target.value)}>
+            {orderedEvidence.map(entry => <option key={entry.id} value={entry.id}>{[entry.tenant || "Tenant not entered", entry.transaction_type, entry.transaction_date ? fmtDate(entry.transaction_date) : "Undated", fmtMoney(entry.headline_rent)].filter(Boolean).join(" · ")}</option>)}
+          </select>
+        </div>}
+        <div>
+          <p className="text-sm font-medium break-words" data-testid="summary-evidence-tenant">{summaryEntry.tenant || "Tenant not entered"}</p>
+          <p className="text-xs text-muted-foreground break-words">{[summaryEntry.transaction_type || "Transaction type not recorded", summaryEntry.transaction_date ? fmtDate(summaryEntry.transaction_date) : "Date not recorded"].join(" · ")}</p>
+        </div>
+        {evidenceSummaryIsFuture(summaryEntry) && <p className="text-xs rounded-md border border-border bg-muted p-2" data-testid="summary-evidence-future">Future-dated evidence. These terms may not be in effect yet and do not establish the current passing rent.</p>}
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+          {fact("Headline £pa", fmtMoney(summaryEntry.headline_rent))}
+          {fact("Net effective £pa", fmtMoney(summaryEntry.net_effective))}
+          {fact("Size sq ft", evidenceHasNumber(summaryEntry.size_sqft) ? Number(summaryEntry.size_sqft).toLocaleString("en-GB") : "—")}
+          {fact("Zone A £psf", fmtMoney(summaryEntry.zone_a))}
+          {evidenceHasNumber(summaryEntry.itza) && fact("ITZA sq ft", Number(summaryEntry.itza).toLocaleString("en-GB"))}
+          {summaryEntry.term && fact("Term", summaryEntry.term)}
+        </div>
+        {summaryEntry.source_key && <a href={`/api/evidence-plans/source?key=${encodeURIComponent(summaryEntry.source_key)}`} target="_blank" rel="noreferrer" className="block text-xs underline underline-offset-2">Download source document</a>}
+        {!editing && (evidenceHasNumber(summaryEntry.size_sqft) || evidenceHasNumber(summaryEntry.headline_rent)) && <Button variant="outline" size="sm" className="min-h-11 whitespace-normal" onClick={() => { setUseEvidenceSize(false); setUseEvidencePassingRent(false); setReviewEntryId(summaryEntry.id); }} data-testid="button-review-evidence-facts">Review for unit details</Button>}
+      </section>}
+
+      <Dialog open={reviewEntryId !== null} onOpenChange={open => { if (!open) closeEvidenceReview(); }}>
+        <DialogContent className="max-w-lg max-h-[85dvh] overflow-y-auto" data-testid="evidence-facts-review" onCloseAutoFocus={event => { if (editing) event.preventDefault(); }}>
+          <DialogHeader>
+            <DialogTitle>Review evidence for unit {unit.unit_ref}</DialogTitle>
+            <DialogDescription>Choose the figures to bring into the unit editor. Nothing changes until you review the editor and press Save.</DialogDescription>
+          </DialogHeader>
+          {reviewEntry ? <>
+            <p className="text-sm break-words">{[reviewEntry.tenant, reviewEntry.transaction_type, reviewEntry.transaction_date ? fmtDate(reviewEntry.transaction_date) : "Undated evidence"].filter(Boolean).join(" · ")}</p>
+            {evidenceSummaryIsFuture(reviewEntry) && <p className="text-sm rounded-lg border border-border bg-muted p-3">This evidence is future-dated. Do not use an expected renewal rent as the current passing rent.</p>}
+            {evidenceHasNumber(reviewEntry.size_sqft) && <label className="block rounded-lg border border-border p-3 cursor-pointer">
+              <span className="flex items-start gap-2 text-sm"><input type="checkbox" checked={useEvidenceSize} onChange={event => setUseEvidenceSize(event.target.checked)} className="mt-1" data-testid="confirm-evidence-size" /><span>Use evidence size for this unit</span></span>
+              <span className="block ml-5 mt-2 text-xs text-muted-foreground">Current: {evidenceHasNumber(unit.sqft) ? `${Number(unit.sqft).toLocaleString("en-GB")} sq ft` : "Not recorded"} → Evidence: {Number(reviewEntry.size_sqft).toLocaleString("en-GB")} sq ft</span>
+            </label>}
+            {evidenceHasNumber(reviewEntry.headline_rent) && <label className="block rounded-lg border border-border p-3 cursor-pointer">
+              <span className="flex items-start gap-2 text-sm"><input type="checkbox" checked={useEvidencePassingRent} onChange={event => setUseEvidencePassingRent(event.target.checked)} className="mt-1" data-testid="confirm-evidence-passing-rent" /><span>I confirm this headline rent is the current passing rent for this unit.</span></span>
+              <span className="block ml-5 mt-2 text-xs text-muted-foreground">Current passing rent: {evidenceHasNumber(unit.passing_rent) ? `${fmtMoney(unit.passing_rent)} pa` : "Not recorded"} → Evidence headline: {fmtMoney(reviewEntry.headline_rent)} pa</span>
+            </label>}
+            <p className="text-xs text-muted-foreground">Check that this transaction applies to the current tenancy. Lease expiry, breaks, review dates and ERV will stay unchanged. {unit.ts_linked ? "Saving the unit editor updates the linked tenancy-schedule row." : "Saving the unit editor updates the plan's unit details."}</p>
+          </> : <p role="alert" className="text-sm">This evidence is no longer attached to this unit. Close this review and select another entry.</p>}
+          <DialogFooter>
+            <Button variant="outline" onClick={closeEvidenceReview}>Cancel</Button>
+            <Button disabled={!reviewEntry || !Object.keys(evidenceUnitFactDraft(reviewEntry, { size: useEvidenceSize, passingRent: useEvidencePassingRent })).length} onClick={reviewEvidenceFacts} data-testid="button-prefill-unit-facts">Continue to unit editor</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {(placement === "needs_review" || placement === "unplaced") && <div className="rounded-lg border border-border bg-muted/40 p-3 space-y-2" data-testid="unit-placement-review">
         <p className="text-sm">{placement === "needs_review" ? "This old outline needs review. The dashed shape is an inspection preview; it is not used to position a label." : "This unit has no placed outline."} You can edit all its information and evidence below.</p>
         <Button variant="outline" size="sm" onClick={onReviewScan}>Review scan to place unit</Button>
       </div>}
       {editing ? (
-        <div className="space-y-2">
+        <div className="space-y-2 outline-none" ref={editorRef} tabIndex={-1} data-testid="unit-facts-editor">
+          <h3 className="text-xs font-semibold uppercase tracking-wider">Current tenancy details</h3>
+          {draftEvidenceName && <p className="text-xs text-muted-foreground rounded-lg border border-border p-3" data-testid="unit-evidence-draft-notice">Selected figures copied from {draftEvidenceName}. Review the current tenancy details below, then Save to apply them.</p>}
           <div className="grid grid-cols-2 gap-2">
             {field("Unit ref", "unitRef")}
             <>
@@ -1443,21 +1538,23 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
           {unit.ts_linked && <p className="text-sm text-muted-foreground">Saving these lease facts updates this unit's linked tenancy-schedule row.</p>}
           {field("Notes", "notes")}
           <div className="flex justify-end gap-2 pt-1">
-            <Button variant="outline" size="sm" disabled={saving} onClick={() => setEditing(false)}>Cancel</Button>
+            <Button variant="outline" size="sm" disabled={saving} onClick={cancelEdit} data-testid="button-cancel-unit-edit">Cancel</Button>
             <Button size="sm" disabled={saving} onClick={saveFacts} data-testid="button-save-unit">{saving ? "Saving…" : "Save"}</Button>
           </div>
         </div>
       ) : (
-        <div className="rounded-xl border border-border bg-card p-3">
+        <div className="rounded-xl border border-border bg-card p-3" data-testid="unit-current-tenancy">
+          <h3 className="text-xs font-semibold uppercase tracking-wider mb-3">Current tenancy details</h3>
           <div className="grid grid-cols-2 gap-x-3 gap-y-2">
             {fact("Lease expiry", fmtDate(unit.lease_expiry))}
             {fact("Break", fmtDate(unit.break_date))}
             {fact("Next review", fmtDate(unit.review_date))}
             {fact("ERV", fmtMoney(unit.erv))}
             {fact("Passing rent", fmtMoney(unit.passing_rent))}
-            {fact("Size", unit.sqft ? `${Number(unit.sqft).toLocaleString("en-GB")} sq ft` : "—")}
+            {fact("Size", evidenceHasNumber(unit.sqft) ? `${Number(unit.sqft).toLocaleString("en-GB")} sq ft` : "—")}
           </div>
           {unit.ts_linked && <p className="text-[11px] text-muted-foreground mt-2">Live from the property's tenancy schedule</p>}
+          {[unit.lease_expiry, unit.break_date, unit.review_date, unit.erv, unit.passing_rent, unit.sqft].some(value => value == null || value === "") && <p className="text-xs text-muted-foreground mt-2">A dash means the current tenancy detail has not been recorded. {summaryEntry ? "Saved evidence is shown above; use Review for unit details or Edit to confirm the current figures." : "Use Edit to enter the current figures, or link the matching tenancy-schedule row below."}</p>}
         </div>
       )}
       {saveError && <p role="alert" className="text-sm text-destructive" data-testid="unit-save-error">{saveError}</p>}
@@ -1570,7 +1667,7 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
                 <div className="flex items-center gap-2 mt-1">
                   <Button variant="ghost" size="sm" onClick={() => startEvidence(e)} data-testid={`button-edit-evidence-${e.id}`}>Edit evidence</Button>
                   {e.source_key && (
-                    <a href={`/api/evidence-plans/source?key=${encodeURIComponent(e.source_key)}`} target="_blank" rel="noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground hover:underline">{e.source_key.includes("/unit-evidence/") ? "Download Excel source" : "Open source TAF"}</a>
+                    <a href={`/api/evidence-plans/source?key=${encodeURIComponent(e.source_key)}`} target="_blank" rel="noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground hover:underline">Download source document</a>
                   )}
                   <button
                     className="text-[11px] text-muted-foreground hover:text-destructive ml-auto"

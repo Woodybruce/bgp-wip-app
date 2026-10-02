@@ -159,45 +159,89 @@ export function parseEvidenceWorkbook(buffer: Buffer, fileName: string): {
       if (value !== null) values.set(field, [...(values.get(field) || []), value]);
     };
     const present = (cell: XLSX.CellObject | undefined) => cell && (cell.f || (cell.v !== undefined && cell.v !== null && String(cell.v).trim()));
+    const separator = (cell: XLSX.CellObject | undefined) => cell && !cell.f && typeof cell.v === "string" && /^\s*[:：]\s*$/.test(cell.v);
+    const readValue = (field: Field, address: string): string | number | null => {
+      const cell = sheet[address];
+      if (!present(cell)) return null;
+      if (cell.f && (cell.v === undefined || cell.v === null || cell.v === "" || cell.t === "e" || cell.t === "z")) {
+        warnings.add(`${name}!${address}: ${fieldLabels[field]} has no saved calculation result. Open and save the workbook in Excel, or enter this value manually.`);
+        return null;
+      }
+      const value = numericFields.has(field) ? numericValue(cell)
+        : field === "transactionDate" ? dateValue(cell) : textValue(cell);
+      if (value === null) warnings.add(`${name}!${address}: ${fieldLabels[field]} could not be read reliably. Check or enter this value manually.`);
+      return value;
+    };
     for (const [address, cell] of cells) {
       if (typeof cell.v !== "string" || cell.f) continue;
-      const field = labelField(cell.v);
+      const position = XLSX.utils.decode_cell(address);
+      let field = labelField(cell.v);
+      // A zoned-area table can label its total simply TOTAL. Require an
+      // immediately preceding zone and a following ITZA row explicitly in
+      // square feet, rather than treating every spreadsheet total as area.
+      if (!field && normaliseLabel(cell.v) === "total") {
+        const above = position.r > 0 ? sheet[XLSX.utils.encode_cell({ r: position.r - 1, c: position.c })] : undefined;
+        const next = sheet[XLSX.utils.encode_cell({ r: position.r + 1, c: position.c })];
+        const followingUnits = [1, 2, 3, 4].map(offset => sheet[XLSX.utils.encode_cell({ r: position.r + 1, c: position.c + offset })]?.v);
+        if (position.r > 0 && /^zone\s+[a-d]$/i.test(String(above?.v || "").trim())
+          && labelField(String(next?.v || "")) === "itza"
+          && followingUnits.some(value => /^\s*(?:sq\.?\s*ft\.?|sqft|square feet)\s*@?\s*$/i.test(String(value || "")))) field = "sizeSqft";
+      }
       if (!field) {
         const title = cell.v.trim().match(/^unit\s+(.+?)(?:\s+[-–—]\s+(.+))?$/i);
         if (title && title[1].length <= 40 && /^[a-z0-9 /&,.-]+$/i.test(title[1]) && (/\d/.test(title[1]) || /^[a-z]{1,2}$/i.test(title[1]))) {
-          record("unitRef", title[1].trim());
+          // "Unit B6, Brent Cross - Hotel Chocolat" contains a centre name,
+          // while "Unit B6, B7 - ..." genuinely identifies multiple units.
+          const located = /^([a-z]{0,4}\d{1,5}[a-z]?),\s*(.+)$/i.exec(title[1]);
+          const nextUnit = located && /^(?:(?:units?|shops?|stores?)\s+)?[a-z]{0,4}\d{1,5}[a-z]?\b/i.test(located[2]);
+          const unitRef = located && !nextUnit ? located[1] : title[1];
+          record("unitRef", unitRef.trim());
           if (title[2]) record("tenant", title[2].trim());
         }
         continue;
       }
-      const position = XLSX.utils.decode_cell(address);
+      if (field === "itza") {
+        // Formatted TAS calculation: Headline rent | ITZA | 559 | sq ft @
+        // | 241.50 | 135000. Read saved rate/amount cells only; do not derive
+        // a rate from the rent or confuse the area of Zone A with its rate.
+        const unitsColumn = [2, 3, 4].filter(offset => position.c + offset <= range.e.c)
+          .map(offset => position.c + offset).find(column => /^\s*(?:sq\.?\s*ft\.?|sqft|square feet)\s*@\s*$/i
+            .test(String(sheet[XLSX.utils.encode_cell({ r: position.r, c: column })]?.v || "")));
+        const rentKinds = new Set([1, 2, 3, 4].filter(offset => position.c - offset >= 0)
+          .map(offset => labelField(String(sheet[XLSX.utils.encode_cell({ r: position.r, c: position.c - offset })]?.v || "")))
+          .filter((kind): kind is "headlineRent" | "netEffective" => kind === "headlineRent" || kind === "netEffective"));
+        if (rentKinds.size === 1 && unitsColumn !== undefined) {
+          const rentKind = [...rentKinds][0];
+          if (rentKind === "headlineRent") record("zoneA", readValue("zoneA", XLSX.utils.encode_cell({ r: position.r, c: unitsColumn + 1 })));
+          record(rentKind, readValue(rentKind, XLSX.utils.encode_cell({ r: position.r, c: unitsColumn + 2 })));
+        }
+      }
       let valueCell: XLSX.CellObject | undefined;
       let valueAddress = "";
-      // Values may be separated from their label by empty cells in a formatted TAS.
+      // Empty cells and standalone colons are formatting, not field values.
       for (let offset = 1; offset <= 4 && position.c + offset <= range.e.c; offset++) {
         const target = XLSX.utils.encode_cell({ r: position.r, c: position.c + offset });
-        if (present(sheet[target])) { valueCell = sheet[target]; valueAddress = target; break; }
+        if (present(sheet[target]) && !separator(sheet[target])) { valueCell = sheet[target]; valueAddress = target; break; }
       }
       // Some TAS forms put the rate before the "psf ITZA" suffix.
       if (field === "zoneA" && (!valueCell || labelField(String(valueCell.v ?? "")))) {
         const target = XLSX.utils.encode_cell({ r: position.r, c: Math.max(0, position.c - 1) });
-        if (position.c > 0 && present(sheet[target])) { valueCell = sheet[target]; valueAddress = target; }
+        if (position.c > 0 && present(sheet[target]) && !separator(sheet[target])) { valueCell = sheet[target]; valueAddress = target; }
       }
       if (!valueCell) {
         const target = XLSX.utils.encode_cell({ r: position.r + 1, c: position.c });
-        if (position.r < range.e.r && present(sheet[target])) { valueCell = sheet[target]; valueAddress = target; }
+        if (position.r < range.e.r && present(sheet[target]) && !separator(sheet[target])) { valueCell = sheet[target]; valueAddress = target; }
       }
       if (!valueCell || (typeof valueCell.v === "string" && labelField(valueCell.v))) continue;
-      if (valueCell.f && (valueCell.v === undefined || valueCell.v === null || valueCell.v === "" || valueCell.t === "e" || valueCell.t === "z")) {
-        warnings.add(`${name}!${valueAddress}: ${fieldLabels[field]} has no saved calculation result. Open and save the workbook in Excel, or enter this value manually.`);
-        continue;
-      }
-      const value = numericFields.has(field) ? numericValue(valueCell)
-        : field === "transactionDate" ? dateValue(valueCell) : textValue(valueCell);
-      if (value === null) {
-        warnings.add(`${name}!${valueAddress}: ${fieldLabels[field]} could not be read reliably. Check or enter this value manually.`);
-      } else {
+      const value = readValue(field, valueAddress);
+      if (value !== null) {
         record(field, field === "unitRef" && typeof value === "string" ? value.replace(/^unit\s+/i, "").trim() : value);
+        if (field === "term" && typeof value === "string") {
+          // An explicitly written commencement date is transaction evidence;
+          // it does not imply any expiry, break or rent-review date.
+          const statedStart = /\b(?:from|commencing(?:\s+on)?)\s+(.+)$/i.exec(value);
+          if (statedStart) record("transactionDate", dateValue({ t: "s", v: statedStart[1].trim() }));
+        }
         if (numericFields.has(field)) {
           const valuePosition = XLSX.utils.decode_cell(valueAddress);
           const annotation = sheet[XLSX.utils.encode_cell({ r: valuePosition.r, c: valuePosition.c + 1 })];

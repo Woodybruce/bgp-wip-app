@@ -2290,7 +2290,12 @@ export default function ChatBGP() {
     },
   });
 
-  const invalidateCrmEntity = (entityType: string) => {
+  const invalidateCrmEntity = (entityType: string, changed?: { planId?: string; propertyId?: string }) => {
+    if (entityType === "evidence_plan_unit") {
+      queryClient.invalidateQueries({ queryKey: changed?.planId ? ["/api/evidence-plans", changed.planId] : ["/api/evidence-plans"] });
+      if (changed?.propertyId) queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", changed.propertyId] });
+      return;
+    }
     const entityKeyMap: Record<string, string[]> = {
       deal: ["deals"],
       contact: ["contacts"],
@@ -2326,14 +2331,14 @@ export default function ChatBGP() {
       case "crm_created":
       case "crm_updated": {
         if (action.entityType) {
-          invalidateCrmEntity(action.entityType);
-          toast({ title: `${action.entityType} ${action.type === "crm_created" ? "created" : "updated"}`, description: action.name || `ID: ${action.id?.slice(0, 8)}` });
+          invalidateCrmEntity(action.entityType, action);
+          toast({ title: `${action.entityType === "evidence_plan_unit" ? "Unit" : action.entityType} ${action.type === "crm_created" ? "created" : "updated"}`, description: action.name || `ID: ${action.id?.slice(0, 8)}` });
         }
         break;
       }
       case "crm_deleted": {
         if (action.entityType) {
-          invalidateCrmEntity(action.entityType);
+          invalidateCrmEntity(action.entityType, action);
           toast({ title: `${action.entityType} deleted` });
         }
         break;

@@ -53,6 +53,7 @@ import { trimChatHistory } from "./utils/chat-history";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schema";
 import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
+import { EVIDENCE_PLAN_CHAT_TOOL } from "./evidence-plan-chat";
 
 const CHATBGP_MODEL = "claude-sonnet-4-6";      // Also the main chat default via chatbgp-model-router (Fable / Opus only on /fable, /opus).
 const CHATBGP_OPUS_MODEL = "claude-opus-4-8";   // Heavy reasoning fallback tier.
@@ -1423,6 +1424,9 @@ When the user drops a file in chat — brochure, HoT, lease, tenancy schedule, K
 Don't ask permission for any of this. Don't dump the raw extracted text back to the user — that's noise; the action is what matters. If you can't tell what the document is, say so honestly and ask one specific question rather than guessing.
 
 Brochures uploaded directly to a property page already run through a bespoke pipeline (see brochure-ingest.ts). For everything else, this is the path.
+
+## Evidence-plan unit facts
+Use **manage_evidence_plan_unit** to read a plan unit and its evidence, then apply user-authorized current facts with the returned revision. Staff and clients can edit units on properties they can access; admin is not required. Never use sql_write for evidence-plan tables. Transaction/headline rent is not necessarily passing rent; do not derive expiry, break or review dates from a transaction date and term.
 
 ## Direct database access (sql_query, sql_write, describe_schema)
 You have read AND write access to almost every operational table in the BGP database. Use these whenever the standard tools don't cover what the user is asking — bulk image cleanups, recategorising, archiving stale rows, fixing data, pinning property imagery, anything ad-hoc.
@@ -4422,6 +4426,8 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
       },
     },
   });
+
+  tools.push(EVIDENCE_PLAN_CHAT_TOOL as any);
 
   tools.push({
     type: "function",
@@ -8644,6 +8650,23 @@ export async function executeCrmToolRaw(
     } catch (err: any) {
       return { data: { error: err?.message || String(err) } };
     }
+  }
+
+  if (fnName === "manage_evidence_plan_unit") {
+    const userId = req.session?.userId || (req as any).tokenUserId;
+    if (!userId) return { data: { success: false, error: "Sign in before accessing an evidence plan." } };
+    const scope = await resolveCompanyScope(req);
+    const { manageEvidencePlanUnit } = await import("./evidence-plan-chat");
+    const { evidenceScheduleRows, presentEvidenceUnit, normaliseUnitRef, saveEvidenceUnit } = await import("./evidence-plan");
+    const { logAudit } = await import("./sql-tools");
+    const result = await manageEvidencePlanUnit(fnArgs, {
+      query: (sql, values) => pool.query(sql, values),
+      canAccessProperty: async propertyId => !scope || !!propertyId && await isPropertyInScope(scope, propertyId),
+      scheduleRows: evidenceScheduleRows, presentUnit: presentEvidenceUnit, normaliseUnitRef, saveUnit: saveEvidenceUnit,
+      audit: entry => logAudit({ ...entry, userId, threadId: req.body?.threadId }),
+    });
+    return { data: result, ...(result.success && fnArgs.action === "update"
+      ? { action: { type: "crm_updated", entityType: "evidence_plan_unit", id: result.unit.id, name: `Unit ${result.unit.unit_ref}`, planId: result.planId, propertyId: result.propertyId } } : {}) };
   }
 
   // ─── General-purpose database tools ─────────────────────────────────────

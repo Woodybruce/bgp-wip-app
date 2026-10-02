@@ -89,6 +89,8 @@ type ChatAction = {
 } | {
   type: "crm_created" | "crm_updated" | "crm_deleted";
   entityType?: string;
+  planId?: string;
+  propertyId?: string;
   id?: string;
   name?: string;
 } | {
@@ -1770,7 +1772,12 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
     }
   }, [pendingDeleteMsgId, deleteMessageMutation]);
 
-  const invalidateCrmEntity = (entityType: string) => {
+  const invalidateCrmEntity = (entityType: string, changed?: { planId?: string; propertyId?: string }) => {
+    if (entityType === "evidence_plan_unit") {
+      queryClient.invalidateQueries({ queryKey: changed?.planId ? ["/api/evidence-plans", changed.planId] : ["/api/evidence-plans"] });
+      if (changed?.propertyId) queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", changed.propertyId] });
+      return;
+    }
     const entityKeyMap: Record<string, string[]> = {
       deal: ["deals"],
       contact: ["contacts"],
@@ -1962,15 +1969,15 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
           case "crm_updated": {
             const et = data.action.entityType;
             if (et) {
-              invalidateCrmEntity(et);
-              toast({ title: `${et} ${data.action.type === "crm_created" ? "created" : "updated"}`, description: data.action.name || "" });
+              invalidateCrmEntity(et, data.action);
+              toast({ title: `${et === "evidence_plan_unit" ? "Unit" : et} ${data.action.type === "crm_created" ? "created" : "updated"}`, description: data.action.name || "" });
             }
             break;
           }
           case "crm_deleted": {
             const et2 = data.action.entityType;
             if (et2) {
-              invalidateCrmEntity(et2);
+              invalidateCrmEntity(et2, data.action);
               toast({ title: `${et2} deleted` });
             }
             break;

@@ -14,6 +14,7 @@
 import { pool } from "./db";
 import * as schema from "@shared/schema";
 import type { PoolClient } from "pg";
+import { EVIDENCE_PLAN_READ_TABLES } from "./evidence-plan-chat";
 
 // ── Tables Claude is NOT allowed to read or write ─────────────────────────
 // Sessions / token caches / file blobs / audit logs are off-limits even via
@@ -118,6 +119,11 @@ function buildSchemaDigest(): TableInfo[] {
       });
     }
     if (cols.length > 0) tables.push({ name: tableName, columns: cols });
+  }
+  // These operational tables are initialized by the evidence-plan module,
+  // rather than Drizzle. Describe them for read discovery only.
+  for (const table of EVIDENCE_PLAN_READ_TABLES) {
+    if (!tables.some(existing => existing.name === table.name)) tables.push(table);
   }
   return tables.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -269,7 +275,7 @@ async function ensureAuditTable() {
 }
 let _auditEnsured = false;
 
-async function logAudit(entry: {
+export async function logAudit(entry: {
   tableName: string;
   op: string;
   data?: any;
@@ -324,7 +330,11 @@ export async function executeSqlWrite(
     return { success: false, error: 'op must be one of "insert", "update", "delete"' };
   }
 
-  // Verify table exists in our Drizzle schema (prevents typos / SQL injection)
+  if (EVIDENCE_PLAN_READ_TABLES.some(item => item.name === table.toLowerCase())) {
+    return { success: false, error: "Evidence plan tables must be edited through their validated editor. For current unit facts, use manage_evidence_plan_unit: read the unit, then update with its returned revision. Do not use raw SQL or add columns." };
+  }
+
+  // Verify table exists in our schema digest (prevents typos / SQL injection)
   const digest = getSchemaDigest();
   const tableInfo = digest.find(t => t.name === table);
   if (!tableInfo) {

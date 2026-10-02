@@ -145,3 +145,112 @@ test('invalid, oversized, macro-enabled and out-of-range workbooks are rejected'
   macro.addFile('xl/vbaProject.bin', Buffer.from('not-executable'));
   assert.throws(() => parseEvidenceWorkbook(macro.toBuffer(), 'tas.xlsx'), /Macro-enabled/);
 });
+
+// Reproduces the uploaded B6 TAS layout: separate colon cells, a location in
+// the title and a calculation row whose Zone A figure is an explicit rate.
+function zonedRenewalSheet() {
+  const sheet = XLSX.utils.aoa_to_sheet([]);
+  const rows = {
+    1: ['Transaction Analysis'], 4: ['Unit B6, Brent Cross - Hotel Chocolat'],
+    8: ['Transaction', null, null, ':', 'LR'],
+    10: ['Proposed Term', null, null, ':', '5 years from 3 August 2027', null, null, 'Outside Act'],
+    12: ['Headline Rent', null, null, ':', 135000, 'pa '],
+    14: ['Incentives', null, null, ':', '3m rent free'],
+    18: ['Rent Review ', null, 'Date', ':', 'N/A'],
+    26: ['Areas', null, null, ':', 'Zone A', 295],
+    27: [null, null, null, null, 'Zone B', 296],
+    28: [null, null, null, null, 'Zone C', 295],
+    29: [null, null, null, null, 'Zone D', 341],
+    30: [null, null, null, null, 'TOTAL', 1227],
+    31: ['Headline rent', null, null, null, 'ITZA', 559, 'sq ft @', 241.5026833631485, 135000],
+  };
+  for (const [row, cells] of Object.entries(rows)) XLSX.utils.sheet_add_aoa(sheet, [cells], { origin: `A${row}` });
+  sheet.F30 = { t: 'n', f: 'SUM(F26:F29)', v: 1227 };
+  sheet.I31 = { t: 'n', f: 'H31*F31', v: 135000 };
+  sheet['!ref'] = 'A1:I43';
+  return sheet;
+}
+
+for (const format of ['xls', 'xlsx']) {
+  test(`${format} reads B6 formatted renewal evidence without swallowing separators or confusing Zone A area with rent`, () => {
+    const source = Buffer.from(workbook({ '2024 RR': zonedRenewalSheet() }, format));
+    const original = Buffer.from(source);
+    const result = parseEvidenceWorkbook(source, `Hotel Chocolat B6.${format}`);
+    assert.deepEqual(result.candidates[0], {
+      sheetName: '2024 RR', unitRef: 'B6', tenant: 'Hotel Chocolat', transactionType: 'LR',
+      transactionDate: '2027-08-03', term: '5 years from 3 August 2027', sizeSqft: 1227,
+      itza: 559, zoneA: 241.5026833631485, headlineRent: 135000, netEffective: null,
+      concession: '3m rent free', notes: null,
+    });
+    assert.equal(result.warnings.length, 1, 'no warning for formatting colon or duplicate identical rent');
+    assert.deepEqual(source, original, 'the original source remains unchanged');
+    assert.equal(Object.hasOwn(result.candidates[0], 'passingRent'), false);
+    assert.equal(Object.hasOwn(result.candidates[0], 'leaseExpiry'), false);
+  });
+}
+
+test('a blank rate does not shift the annual rent into Zone A and calculated totals are not recomputed', () => {
+  const sheet = zonedRenewalSheet();
+  delete sheet.H31;
+  sheet.F30 = { t: 'n', f: 'SUM(F26:F29)', v: 1227 };
+  const zip = new AdmZip(workbook({ TAS: sheet }));
+  const xml = zip.readAsText('xl/worksheets/sheet1.xml');
+  zip.updateFile('xl/worksheets/sheet1.xml', Buffer.from(xml.replace(/(<c r="F30"[^>]*>.*?<f>.*?<\/f>)<v>1227<\/v>/, '$1')));
+  const result = parseEvidenceWorkbook(zip.toBuffer(), 'tas.xlsx');
+  assert.equal(result.candidates[0].zoneA, null);
+  assert.equal(result.candidates[0].headlineRent, 135000);
+  assert.equal(result.candidates[0].sizeSqft, null);
+  assert.ok(result.warnings.some(warning => /F30: area in sq ft has no saved calculation result/.test(warning)));
+});
+
+test('formatted calculation rows preserve conflict warnings and do not reinterpret net rates as headline Zone A', () => {
+  const sheet = zonedRenewalSheet();
+  sheet.I31.v = 140000;
+  XLSX.utils.sheet_add_aoa(sheet, [['Zone A rate', 300]], { origin: 'A35' });
+  const result = parseEvidenceWorkbook(workbook({ TAS: sheet }), 'tas.xlsx');
+  assert.equal(result.candidates[0].headlineRent, null);
+  assert.equal(result.candidates[0].zoneA, null);
+  assert.ok(result.warnings.some(warning => /conflicting headline rent/.test(warning)));
+  assert.ok(result.warnings.some(warning => /conflicting Zone A rate/.test(warning)));
+  const net = XLSX.utils.aoa_to_sheet([['Net rent', null, null, null, 'ITZA', 500, 'sq ft @', 100, 50000]]);
+  const netResult = parseEvidenceWorkbook(workbook({ TAS: net }), 'tas.xlsx').candidates[0];
+  assert.equal(netResult.netEffective, 50000);
+  assert.equal(netResult.headlineRent, null);
+  assert.equal(netResult.zoneA, null);
+});
+
+test('unlabelled totals and metric calculation rows are not accepted as square-foot area or Zone A rates', () => {
+  const sheet = zonedRenewalSheet();
+  sheet.G31.v = 'sq m @';
+  const metric = parseEvidenceWorkbook(workbook({ TAS: sheet }), 'tas.xlsx').candidates[0];
+  assert.equal(metric.sizeSqft, null);
+  assert.equal(metric.zoneA, null);
+  const unrelated = XLSX.utils.aoa_to_sheet([['Total', 999], ['Zone A', 295]]);
+  const other = parseEvidenceWorkbook(workbook({ TAS: unrelated }), 'tas.xlsx').candidates[0];
+  assert.equal(other.sizeSqft, null); assert.equal(other.zoneA, null);
+});
+
+test('multiple coded unit references remain intact and explicit term dates retain conflict checks', () => {
+  const sheet = zonedRenewalSheet();
+  sheet.A4.v = 'Unit B6, B7 - Hotel Chocolat';
+  XLSX.utils.sheet_add_aoa(sheet, [['Transaction date', ':', '2026-01-01']], { origin: 'A36' });
+  const result = parseEvidenceWorkbook(workbook({ TAS: sheet }), 'tas.xlsx');
+  assert.equal(result.candidates[0].unitRef, 'B6, B7');
+  assert.equal(result.candidates[0].transactionDate, null);
+  assert.ok(result.warnings.some(warning => /conflicting transaction date/.test(warning)));
+  sheet.E10.v = '5 years from 31 February 2027';
+  delete sheet.A36; delete sheet.B36; delete sheet.C36;
+  assert.equal(parseEvidenceWorkbook(workbook({ TAS: sheet }), 'tas.xlsx').candidates[0].transactionDate, null);
+});
+
+test('comma-separated unit groups with words or repeated Unit and Shop prefixes are never stripped as locations', () => {
+  for (const references of ['B6, B7 and B8', 'B6, Unit B7', 'B6, Shop B7', 'B6, Shops B7 and B8',
+    'B6, B7/B8', 'B6, B7-B9', 'B6, B7 & B8', 'B6, 7 and 8']) {
+    const sheet = XLSX.utils.aoa_to_sheet([[`Unit ${references} - Example tenant`]]);
+    const result = parseEvidenceWorkbook(workbook({ TAS: sheet }), 'tas.xlsx').candidates[0];
+    assert.equal(result.unitRef, references, references);
+    assert.equal(result.tenant, 'Example tenant');
+  }
+  const located = XLSX.utils.aoa_to_sheet([['Unit B6, Brent Cross - Example tenant']]);
+  assert.equal(parseEvidenceWorkbook(workbook({ TAS: located }), 'tas.xlsx').candidates[0].unitRef, 'B6');
+});
