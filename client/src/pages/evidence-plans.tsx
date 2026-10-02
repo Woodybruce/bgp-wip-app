@@ -1136,7 +1136,7 @@ function PlanView({ planId }: { planId: string }) {
           <SheetContent side="bottom" hideClose={!!selected} className="max-h-[80dvh] overflow-y-auto p-0 rounded-t-2xl pb-[env(safe-area-inset-bottom)]">
             <SheetHeader className={selected ? "sr-only" : "px-4 pt-4"}><SheetTitle>{selected ? `Unit ${selected.unit_ref}` : "Units & evidence"}</SheetTitle></SheetHeader>
             {selected ? <UnitPanel key={selected.id} unit={selected} entries={selectedEntries} planId={planId} scheduleRows={data?.schedule_rows || []}
-              placement={outlineDisplay.placement.get(selected.id)} onReviewScan={() => { setDetailsOpen(false); setScanReviewOpen(true); }} onUploadTafs={uploadTafs}
+              placement={outlineDisplay.placement.get(selected.id)} onReviewScan={() => { setDetailsOpen(false); setScanReviewOpen(true); }}
               matters={matters.filter(m => m.unit_norm && m.unit_norm === (selected.unit_norm || normRef(selected.unit_ref)))}
               onClose={() => { setSelectedId(null); setDetailsOpen(false); }}
               onSave={patch => saveUnit.mutateAsync({ id: selected.id, patch })}
@@ -1158,7 +1158,7 @@ function PlanView({ planId }: { planId: string }) {
             </div>
           ) : (
             <UnitPanel key={selected.id} unit={selected} entries={selectedEntries} planId={planId} scheduleRows={data?.schedule_rows || []}
-              placement={outlineDisplay.placement.get(selected.id)} onReviewScan={() => setScanReviewOpen(true)} onUploadTafs={uploadTafs}
+              placement={outlineDisplay.placement.get(selected.id)} onReviewScan={() => setScanReviewOpen(true)}
               matters={matters.filter(m => m.unit_norm && m.unit_norm === (selected.unit_norm || normRef(selected.unit_ref)))}
               onClose={() => setSelectedId(null)}
               onSave={(patch) => saveUnit.mutateAsync({ id: selected.id, patch })}
@@ -1302,9 +1302,9 @@ function UnitList({ units, entries, placement, search, onSearch, onSelect }: {
 }
 
 // ── Unit side panel ───────────────────────────────────────────────────────
-function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placement, onReviewScan, onClose, onSave, onDeleted, onRedraw, onUploadTafs }: {
+function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placement, onReviewScan, onClose, onSave, onDeleted, onRedraw }: {
   unit: PlanUnit; entries: Entry[]; planId: string; matters?: Matter[]; scheduleRows: any[];
-  placement?: OutlinePlacement; onReviewScan: () => void; onUploadTafs?: (files: File[]) => void;
+  placement?: OutlinePlacement; onReviewScan: () => void;
   onClose: () => void; onSave: (patch: any) => Promise<unknown>; onDeleted: () => void; onRedraw: (mode: "draw" | "trace") => void;
 }) {
   const { toast } = useToast();
@@ -1617,7 +1617,7 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
           </Button>
         </div>
 
-        <EvidenceUnitUpload key={unit.id} planId={planId} unitId={unit.id} unitRef={unit.unit_ref} onZip={onUploadTafs}
+        <EvidenceUnitUpload key={unit.id} planId={planId} unitId={unit.id} unitRef={unit.unit_ref}
           onSaved={() => { queryClient.invalidateQueries({ queryKey: ["/api/evidence-plans", planId] }); }} />
 
         {addingEvidence && (
