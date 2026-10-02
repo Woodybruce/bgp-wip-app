@@ -1365,20 +1365,25 @@ router.post("/api/evidence-plans/:id/ingest-taf", requireAuth, uploadLarge.array
     // lazily (one document in memory at a time inside the job), so the cap
     // is about job length, not memory. Woody's first real zip held 60+
     // TAFs and hit the old cap of 60.
+    // 2026-10-02: Pete's Hammerson OneDrive zip — a folder of tranches.
+    // Past the cap PDFs used to be dropped silently; now they are counted
+    // and reported so nobody thinks the whole folder went in.
+    const MAX_TAF_DOCS = 400;
+    let foundPdfs = 0;
     const pdfs: { name: string; get: () => Buffer }[] = [];
     for (const file of files) {
-      if (pdfs.length >= 150) break;
       const isZip = /zip/i.test(file.mimetype || "") || /\.zip$/i.test(file.originalname || "");
       if (isZip) {
         const AdmZip = (await import("adm-zip")).default;
         const zip = new AdmZip(file.buffer);
         for (const entry of zip.getEntries()) {
-          if (entry.isDirectory || !/\.pdf$/i.test(entry.entryName) || /__MACOSX|^\./.test(entry.entryName)) continue;
-          pdfs.push({ name: entry.entryName.split("/").pop() || entry.entryName, get: () => entry.getData() });
-          if (pdfs.length >= 150) break;
+          if (entry.isDirectory || !/\.pdf$/i.test(entry.entryName) || /(^|\/)(__MACOSX|\.)/.test(entry.entryName)) continue;
+          foundPdfs++;
+          if (pdfs.length < MAX_TAF_DOCS) pdfs.push({ name: entry.entryName.split("/").pop() || entry.entryName, get: () => entry.getData() });
         }
       } else if (/\.pdf$/i.test(file.originalname || "") || /pdf/i.test(file.mimetype || "")) {
-        pdfs.push({ name: file.originalname || "taf.pdf", get: () => file.buffer });
+        foundPdfs++;
+        if (pdfs.length < MAX_TAF_DOCS) pdfs.push({ name: file.originalname || "taf.pdf", get: () => file.buffer });
       }
     }
     if (pdfs.length === 0) return res.status(400).json({ error: "No PDFs found in that upload" });
@@ -1387,7 +1392,7 @@ router.post("/api/evidence-plans/:id/ingest-taf", requireAuth, uploadLarge.array
       `INSERT INTO evidence_plan_jobs (plan_id, status, total_docs, created_by) VALUES ($1, 'running', $2, $3) RETURNING id`,
       [plan.id, pdfs.length, (req as any).session?.userId || null]);
     const jobId = rows[0].id;
-    res.json({ jobId, docs: pdfs.length });
+    res.json({ jobId, docs: pdfs.length, found: foundPdfs, skipped: foundPdfs - pdfs.length });
     // Detached — the extraction outlives this request on purpose.
     void runTafJob(plan.id, jobId, pdfs, (req as any).session?.userId || null);
   } catch (e: any) { res.status(500).json({ error: e.message }); }

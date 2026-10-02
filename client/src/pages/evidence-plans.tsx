@@ -609,7 +609,8 @@ function PlanView({ planId }: { planId: string }) {
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Upload failed");
       setTafJob({ status: "running", done_docs: 0, total_docs: j.docs });
-      toast({ title: "TAF extraction started", description: `${j.docs} document${j.docs === 1 ? "" : "s"} uploaded — evidence appears as each one is read.` });
+      toast({ title: "TAF extraction started", description: `${j.docs} document${j.docs === 1 ? "" : "s"} uploaded — evidence appears as each one is read.`
+        + (j.skipped > 0 ? ` ${j.skipped} more PDF${j.skipped === 1 ? " was" : "s were"} over the ${j.docs}-document limit — upload them in a second batch.` : "") });
       const poll = async () => {
         try {
           const jr = await fetch(`/api/evidence-plans/jobs/${j.jobId}`, { credentials: "include", headers: getAuthHeaders() });
