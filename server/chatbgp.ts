@@ -16106,13 +16106,19 @@ export function setupChatBGPRoutes(app: Express) {
       if (!m || !["user", "assistant"].includes(m.role)) {
         return res.status(400).json({ message: "Each message must have role (user/assistant)" });
       }
-      const contentLen = typeof m.content === "string" ? m.content.length : 0;
-      if (contentLen > 50000) {
-        return res.status(400).json({ message: "Message content too long (max 50000 chars)" });
+      // A long earlier turn (a pasted schedule, a big reply) used to reject
+      // the whole request; trim it instead so the chat keeps working.
+      if (typeof m.content === "string" && m.content.length > 50000) {
+        m.content = m.content.slice(0, 50000) + "\n… (trimmed for length)";
       }
     }
-    if (excelContext && (typeof excelContext !== "string" || excelContext.length > 100000)) {
-      return res.status(400).json({ message: "excelContext must be a string under 100000 chars" });
+    // The pane sends the whole workbook. A big one (or a long selection on
+    // top) went over 100k chars and the request was refused outright, even
+    // though only the first 25k is ever used below (Woody, 2026-10-02:
+    // "the add-in rejects workbook context"). Keep a snapshot instead.
+    if (excelContext != null && typeof excelContext !== "string") excelContext = undefined;
+    if (excelContext && excelContext.length > 100000) {
+      excelContext = excelContext.slice(0, 100000);
     }
 
     // /opus or /sonnet slash-command interception (excel-chat).
@@ -16322,7 +16328,13 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
       try { msToken = await getValidMsToken(req); } catch {}
 
       // Run the agentic loop — same pattern as /api/chatbgp/chat-with-files
-      const excelResolved = await resolveChatModel({ threadId: excelThreadId, override: excelSlashOverride });
+      // The Excel pane runs on Fable 5 — the same model as Claude's own Excel
+      // add-in (Woody, 2026-10-02). Elsewhere Opus 5.5 stays the default for
+      // cost; /opus or /sonnet in the pane still switches for that message.
+      const excelResolved = await resolveChatModel({
+        threadId: excelThreadId,
+        override: excelSlashOverride || (host === "excel" ? "fable" : null),
+      });
       let convMessages: any[] = [
         { role: "system", content: systemContent },
         ...messages.slice(-20),
