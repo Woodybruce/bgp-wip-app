@@ -672,10 +672,13 @@ router.post("/api/properties/:id/bgp-commentary/regenerate", requireAuth, async 
     if (!briefRes.ok) return res.status(briefRes.status).json({ error: "Couldn't load asset brief" });
     const brief = await briefRes.json();
     const required = ["deals", "lettings", "activity", "schedule", "risks"];
-    // Missing or failed data blocks a rewrite; partial data doesn't — on a
-    // 191-unit centre something is always partial, which froze Bluewater's
-    // commentary at 4 Aug. The caveats go into the prompt instead.
-    if (required.some(section => !["ready", "partial"].includes(brief.data_quality?.[section]))) {
+    // Only data that FAILED to load blocks a rewrite. Partial data doesn't —
+    // on a 191-unit centre something is always partial, which froze
+    // Bluewater's commentary at 4 Aug — and neither does data that simply
+    // isn't recorded yet: a property with no tenancy schedule (The Outernet,
+    // 2026-10-05) could never get a take at all. The caveats ("No tenancy
+    // schedule is recorded…") go into the prompt instead.
+    if (required.some(section => !["ready", "partial", "missing"].includes(brief.data_quality?.[section]))) {
       return res.status(409).json({ error: "Commentary was kept unchanged. Complete or reload the property data before regenerating it.", data_warnings: brief.data_warnings || [] });
     }
 
