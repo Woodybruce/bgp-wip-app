@@ -437,6 +437,135 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
+  // ── New service requests (Woody, 2026-10-05) ───────────────────────────
+  // KYC4U raise requests through a custom "Raise New Service Request" page
+  // on BGP's site. The app prepares the request from the deal; the Send to
+  // ChatBGP bookmark, clicked on that page, fills the form in the user's
+  // own browser and leaves Submit to them — so KYC4U's page does whatever it
+  // normally does on submit (their notifications) and no tenant admin
+  // approval is needed. Their status then comes back on the grid sync.
+  const userIdOf = (req: Request) => (req as any).session?.userId || (req as any).tokenUserId || null;
+  const staffOnly = async (req: Request, res: Response) => {
+    const { resolveCompanyScope } = await import("./company-scope");
+    if (await resolveCompanyScope(req as any)) { res.status(403).json({ message: "Staff only" }); return false; }
+    return true;
+  };
+
+  app.get("/api/kyc4u/drafts/prefill", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (!await staffOnly(req, res)) return;
+      const dealId = String(req.query.dealId || ""), companyId = String(req.query.companyId || ""), role = String(req.query.role || "");
+      const company = (await pool.query(`SELECT id, name, uk_entity_name FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+      if (!company) return res.status(404).json({ message: "Company not found" });
+      const deal = dealId ? (await pool.query(
+        `SELECT d.id, d.name, d.deal_ref, d.deal_type, d.target_date, d.internal_agent, d.internal_agent_ids, d.client_contact_id,
+                d.joint_agent_id, d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id, p.name AS property_name, p.address AS property_address
+           FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id WHERE d.id = $1`, [dealId])).rows[0] : null;
+      const addr = (() => {
+        const a = deal?.property_address;
+        if (!a) return deal?.property_name || "";
+        if (typeof a === "string") return a;
+        const parts = [a.street, a.street2, a.city || a.town, a.county, a.postcode].filter((x: any) => typeof x === "string" && x.trim());
+        return [deal?.property_name, ...parts].filter(Boolean).join(", ");
+      })();
+      const dt = String(deal?.deal_type || "");
+      const clientRole = dt === "Sale" ? "vendor" : dt === "Purchase" ? "purchaser"
+        : /Lease Acquisition|Lease Disposal/.test(dt) ? "tenant" : "landlord";
+      const isClient = !role || role === clientRole;
+      const contact = deal?.client_contact_id ? (await pool.query(`SELECT name, role, email FROM crm_contacts WHERE id = $1`, [deal.client_contact_id])).rows[0] : null;
+      const agentIds: string[] = Array.isArray(deal?.internal_agent_ids) ? deal.internal_agent_ids : [];
+      const agents = agentIds.length ? (await pool.query(`SELECT email FROM users WHERE id = ANY($1::varchar[]) AND email IS NOT NULL`, [agentIds])).rows : [];
+      const me = (await pool.query(`SELECT email FROM users WHERE id = $1`, [userIdOf(req)])).rows[0];
+      const feeEarners = [...new Set([...agents.map((a: any) => a.email), me?.email].filter(Boolean))];
+      const jointAgent = deal?.joint_agent_id ? (await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [deal.joint_agent_id])).rows[0]?.name : "";
+      const docs = (await pool.query(
+        `SELECT id, doc_type, file_name, file_size FROM kyc_documents WHERE company_id = $1 AND deleted_at IS NULL ORDER BY uploaded_at DESC LIMIT 20`, [companyId])).rows;
+      res.json({
+        fields: {
+          partyType: isClient ? "Client" : "Counterparty",
+          partyName: company.uk_entity_name || company.name,
+          propertyAddress: addr,
+          requestType: "",
+          metFaceToFace: "",
+          howLongKnown: "",
+          instructorName: isClient ? (contact?.name || "") : "",
+          instructorDesignation: isClient ? (contact?.role || "") : "",
+          jointAgent: jointAgent || "",
+          feeEarnerEmails: feeEarners.join("; "),
+          clientEmails: isClient && contact?.email ? contact.email : "",
+          expectedCompletion: deal?.target_date ? new Date(deal.target_date).toISOString().slice(0, 10) : "",
+          note: [deal ? `BGP deal ${deal.deal_ref ? "#" + deal.deal_ref + " " : ""}${deal.name || ""}`.trim() : "", dt ? `Deal type: ${dt}` : "", role ? `Role: ${role}${isClient ? " (BGP's client)" : " (counterparty)"}` : ""].filter(Boolean).join("\n"),
+        },
+        docs,
+      });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  const DRAFT_KEYS = ["partyType", "partyName", "propertyAddress", "requestType", "metFaceToFace", "howLongKnown", "instructorName",
+    "instructorDesignation", "jointAgent", "feeEarnerEmails", "clientEmails", "expectedCompletion", "note"];
+  app.post("/api/kyc4u/drafts", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (!await staffOnly(req, res)) return;
+      const b = req.body || {};
+      if (!b.companyId) return res.status(400).json({ message: "Choose the party" });
+      const fields: Record<string, string> = {};
+      for (const k of DRAFT_KEYS) if (typeof b.fields?.[k] === "string") fields[k] = b.fields[k].slice(0, 4000);
+      if (!fields.partyName?.trim()) return res.status(400).json({ message: "Party name is required" });
+      const docIds = Array.isArray(b.docIds) ? b.docIds.filter((x: any) => typeof x === "string").slice(0, 10) : [];
+      const r = await pool.query(
+        `INSERT INTO kyc4u_drafts (deal_id, company_id, role, fields, doc_ids, created_by) VALUES ($1,$2,$3,$4::jsonb,$5,$6) RETURNING *`,
+        [b.dealId || null, b.companyId, b.role || null, JSON.stringify(fields), docIds, userIdOf(req)]);
+      res.json(r.rows[0]);
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  app.get("/api/kyc4u/drafts", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (!await staffOnly(req, res)) return;
+      const r = await pool.query(
+        `SELECT d.*, u.name AS created_by_name FROM kyc4u_drafts d LEFT JOIN users u ON u.id = d.created_by
+          WHERE ($1::varchar IS NULL OR d.deal_id = $1) AND ($2::varchar IS NULL OR d.company_id = $2)
+          ORDER BY d.created_at DESC LIMIT 50`, [req.query.dealId || null, req.query.companyId || null]);
+      res.json(r.rows);
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // The bookmark's helper window asks for the next request to fill: the
+  // caller's own oldest queued one first, then anyone's.
+  app.get("/api/kyc4u/drafts/next", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (!await staffOnly(req, res)) return;
+      const r = await pool.query(
+        `SELECT d.*, c.name AS company_name FROM kyc4u_drafts d LEFT JOIN crm_companies c ON c.id = d.company_id
+          WHERE d.status = 'queued' ORDER BY (d.created_by = $1) DESC, d.created_at ASC LIMIT 1`, [userIdOf(req)]);
+      const draft = r.rows[0] || null;
+      const docs = draft?.doc_ids?.length ? (await pool.query(
+        `SELECT id, file_name, mime_type, file_url, file_size FROM kyc_documents WHERE id = ANY($1::varchar[]) AND deleted_at IS NULL`, [draft.doc_ids])).rows : [];
+      const waiting = (await pool.query(`SELECT COUNT(*)::int AS n FROM kyc4u_drafts WHERE status = 'queued'`)).rows[0].n;
+      res.json({ draft, docs, waiting });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  app.post("/api/kyc4u/drafts/:id/filled", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (!await staffOnly(req, res)) return;
+      await pool.query(`UPDATE kyc4u_drafts SET status = 'filled', filled_at = now(), fill_report = $2::jsonb WHERE id = $1`,
+        [String(req.params.id), JSON.stringify(req.body?.report || null)]);
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // Back to the queue (the form wasn't submitted) or cancel outright.
+  app.patch("/api/kyc4u/drafts/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (!await staffOnly(req, res)) return;
+      const status = ["queued", "cancelled", "submitted"].includes(req.body?.status) ? req.body.status : null;
+      if (!status) return res.status(400).json({ message: "Unknown status" });
+      await pool.query(`UPDATE kyc4u_drafts SET status = $2 WHERE id = $1`, [String(req.params.id), status]);
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
   // One company's KYC4U requests, for the Compliance & KYC board and the
   // deal KYC panel (Woody, 2026-10-05: KYC4U does the checks; the app shows
   // their result where people look, rather than only on the KYC hub).

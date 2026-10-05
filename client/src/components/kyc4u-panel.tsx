@@ -4,6 +4,7 @@ import { Link } from "wouter";
 import { Loader2, RefreshCw, ExternalLink, Plug, Unplug, Bookmark, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -15,7 +16,34 @@ function bookmarkletSource(app: string): string {
   // Reads every visible list and document library with items on this site,
   // its subsites and any site the page's links point into. When nothing has
   // items it still reports what it saw, so ChatBGP can say where to look.
-  const code = `(function(){var APP=${JSON.stringify(app)};var w=window.open(APP+'/kyc4u-import','chatbgp_kyc4u','width=520,height=560');if(!w){alert('ChatBGP: allow pop-ups for this site, then click again.');return;}
+  const code = `(function(){var APP=${JSON.stringify(app)};if(/Raise-New-Service-Request/i.test(location.pathname)){var fw=window.open(APP+'/kyc4u-import?fill=1','chatbgp_kyc4u','width=520,height=560');if(!fw){alert('ChatBGP: allow pop-ups for this site, then click again.');return;}
+function nrm(t){return String(t||'').replace(/\\*/g,'').replace(/\\s+/g,' ').trim().toLowerCase();}
+function slp(ms){return new Promise(function(r){setTimeout(r,ms);});}
+function lab(text){var t=nrm(text);var els=[].slice.call(document.querySelectorAll('label,span,p,div'));for(var i=0;i<els.length;i++){var el=els[i];if(el.querySelector('input,textarea,[role=combobox]'))continue;var n=nrm(el.textContent);if(n&&n.indexOf(t)===0&&n.length<t.length+60)return el;}return null;}
+function ctl(l){if(l.htmlFor){var x=document.getElementById(l.htmlFor);if(x)return x;}if(l.id){var y=document.querySelector('[aria-labelledby~="'+l.id+'"]');if(y)return y;}var b=l.parentElement;for(var u=0;u<4&&b;u++){var cs=b.querySelectorAll('input:not([type=hidden]):not([type=file]):not([type=checkbox]),textarea,[role=combobox]');if(cs.length===1)return cs[0];if(cs.length>1)break;b=b.parentElement;}return null;}
+function txt(el,v){var pr=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;var d=Object.getOwnPropertyDescriptor(pr,'value');el.focus();d.set.call(el,v);el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));el.dispatchEvent(new Event('blur',{bubbles:true}));return el.value===v;}
+function dd(el,v,rep,label){el.click();return slp(450).then(function(){var os=[].slice.call(document.querySelectorAll('[role=option]'));rep.options[label]=os.map(function(o){return (o.textContent||'').trim();}).slice(0,30);var t=nrm(v);var o=os.filter(function(x){return nrm(x.textContent)===t;})[0]||os.filter(function(x){return nrm(x.textContent).indexOf(t)===0;})[0]||os.filter(function(x){return t&&nrm(x.textContent).indexOf(t)>=0;})[0];if(o){o.click();return slp(250).then(function(){return true;});}var k={key:'Escape',code:'Escape',keyCode:27,bubbles:true};el.dispatchEvent(new KeyboardEvent('keydown',k));document.body.dispatchEvent(new KeyboardEvent('keydown',k));return slp(150).then(function(){return false;});});}
+var MAP=[['partyType','Party Type'],['partyName','Party Name'],['propertyAddress','Property Address'],['requestType','Request Type'],['metFaceToFace','Have you met the party face to face'],['howLongKnown','How long have you known the party'],['instructorName','Name the individual who has instructed you'],['instructorDesignation','Designation of the above mentioned person'],['jointAgent','If joint agent provide the name'],['feeEarnerEmails','Fee Earner Email'],['clientEmails','Client Email'],['expectedCompletion','Expected Completion Date'],['note','Note']];
+var REQ={partyType:1,partyName:1,propertyAddress:1,requestType:1,metFaceToFace:1,howLongKnown:1,instructorName:1,instructorDesignation:1};
+function mark(el){if(el){el.style.outline='3px solid #f59e0b';el.style.outlineOffset='2px';}}
+function fillAll(dr,files){var f=dr.fields||{};var rep={filled:[],missed:[],check:[],options:{}};var i=0;
+function step(){if(i>=MAP.length)return Promise.resolve();var m=MAP[i++];var key=m[0],name=m[1];var v=String(f[key]||'').trim();var l=lab(name);var el=l&&ctl(l);
+if(!v){if(REQ[key]){rep.missed.push(name);mark(el||l);}return step();}
+if(!el){rep.missed.push(name);mark(l);return step();}
+el.scrollIntoView({block:'center'});
+if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){var val=v;if(key==='expectedCompletion'){var q=v.split('-');if(q.length===3)val=q[2]+'/'+q[1]+'/'+q[0];}
+if(el.readOnly){el.click();rep.check.push(name);mark(el);return slp(200).then(step);}
+var ok=txt(el,val);if(/Email/.test(name)){el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,bubbles:true}));rep.check.push(name);}
+(ok?rep.filled:rep.missed).push(name);if(!ok)mark(el);return slp(120).then(step);}
+return dd(el,v,rep,name).then(function(ok){(ok?rep.filled:rep.missed).push(name);if(!ok)mark(el);return slp(200);}).then(step);}
+return step().then(function(){if(!files.length)return;var inp=document.querySelector('input[type=file]');if(!inp){rep.missed.push('Attachments');return;}
+try{var dt=new DataTransfer();files.forEach(function(x){dt.items.add(new File([x.data],x.name,{type:x.type}));});inp.files=dt.files;inp.dispatchEvent(new Event('change',{bubbles:true}));rep.filled.push('Attachments ('+files.length+')');}catch(e){rep.missed.push('Attachments');}
+}).then(function(){var bx=document.createElement('div');bx.style.cssText='position:fixed;right:16px;bottom:16px;z-index:999999;max-width:360px;background:#fff;color:#1c1917;border:1px solid #d6d3d1;border-radius:12px;padding:14px 16px;font:14px/1.45 system-ui,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.18)';
+bx.innerHTML='<b>ChatBGP filled the form</b><div style="margin-top:6px">Filled: '+rep.filled.length+'</div>'+(rep.missed.length?'<div style="margin-top:6px;color:#b45309">Please complete (outlined): '+rep.missed.join(', ')+'</div>':'')+(rep.check.length?'<div style="margin-top:6px">Please check: '+rep.check.join(', ')+'</div>':'')+'<div style="margin-top:8px">Check everything, then press <b>Submit</b>. ChatBGP never submits for you.</div><button style="margin-top:10px;border:1px solid #d6d3d1;border-radius:999px;padding:4px 12px;background:#fff;cursor:pointer">Close</button>';
+bx.querySelector('button').onclick=function(){bx.remove();};document.body.appendChild(bx);return rep;});}
+var got=false;window.addEventListener('message',function(e){if(e.origin!==APP||!e.data||e.data.type!=='kyc4u-fill'||got)return;got=true;fw.postMessage({type:'kyc4u-fill-ack'},APP);fillAll(e.data.draft||{},e.data.files||[]).then(function(rep){fw.postMessage({type:'kyc4u-filled',id:(e.data.draft||{}).id,report:rep},APP);}).catch(function(err){alert('ChatBGP could not fill the form: '+err.message);});});
+return;}
+var w=window.open(APP+'/kyc4u-import','chatbgp_kyc4u','width=520,height=560');if(!w){alert('ChatBGP: allow pop-ups for this site, then click again.');return;}
 var c=window._spPageContextInfo||{};var cut=/\\/(SitePages|Lists|_layouts|Forms|Shared%20Documents|Shared Documents)\\//i;var web=c.webAbsoluteUrl||(location.origin+location.pathname.split(cut)[0]);
 var H={Accept:'application/json;odata=nometadata'};var SYS=/^(Site Pages|Site Assets|Style Library|Form Templates|Site Collection Documents|Site Collection Images|Images|Pages)$/i;
 function get(u){return fetch(u,{headers:H,credentials:'include'}).then(function(r){if(!r.ok)throw new Error(r.status+' reading '+u);return r.json();});}
@@ -240,6 +268,116 @@ export function Kyc4uStatusStrip({ companyId }: { companyId: string }) {
         ))}
       </ul>
       {requests.length > 4 && <p className="text-xs text-muted-foreground mt-1">+{requests.length - 4} more on the KYC hub</p>}
+    </div>
+  );
+}
+
+// ── Request a KYC4U check (Woody, 2026-10-05) ───────────────────────────
+// Prepares KYC4U's "Raise New Service Request" form from the deal. The
+// Send to ChatBGP bookmark, clicked on that page, fills it in; the user
+// checks it and presses Submit there. KYC4U's status then shows above.
+const KYC4U_FORM_URL = "https://kyc4ultd.sharepoint.com/sites/customers/CST1092/SitePages/Raise-New-Service-Request.aspx";
+type DraftFields = Record<string, string>;
+const DRAFT_FIELDS: Array<{ key: string; label: string; required?: boolean; long?: boolean; hint?: string; type?: string }> = [
+  { key: "partyType", label: "Party type", required: true, hint: "As KYC4U's dropdown words it — usually Client or Counterparty" },
+  { key: "partyName", label: "Party name", required: true },
+  { key: "propertyAddress", label: "Property address", required: true, long: true },
+  { key: "requestType", label: "Request type", required: true, hint: "As KYC4U's dropdown words it. Leave blank to pick it on their form" },
+  { key: "metFaceToFace", label: "Have you met the party face to face?", required: true },
+  { key: "howLongKnown", label: "How long have you known the party?", required: true, hint: "e.g. 1 year 3 months" },
+  { key: "instructorName", label: "Name the individual who has instructed you", required: true },
+  { key: "instructorDesignation", label: "Their designation in the organisation", required: true },
+  { key: "jointAgent", label: "Joint agent (if any)" },
+  { key: "feeEarnerEmails", label: "Fee earner email(s)" },
+  { key: "clientEmails", label: "Client email(s)" },
+  { key: "expectedCompletion", label: "Expected completion date", type: "date" },
+  { key: "note", label: "Note", long: true },
+];
+
+export function Kyc4uRequestButton({ dealId, companyId, role, partyName }: { dealId?: string; companyId: string; role?: string; partyName: string }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [fields, setFields] = useState<DraftFields>({});
+  const [docIds, setDocIds] = useState<string[]>([]);
+  const prefill = useQuery<{ fields: DraftFields; docs: Array<{ id: string; doc_type: string; file_name: string; file_size: number | null }> }>({
+    queryKey: ["/api/kyc4u/drafts/prefill", dealId, companyId, role],
+    queryFn: async () => (await apiRequest("GET", `/api/kyc4u/drafts/prefill?${new URLSearchParams({ dealId: dealId || "", companyId, role: role || "" })}`)).json(),
+    enabled: open,
+  });
+  useEffect(() => { if (open && prefill.data) { setFields(prefill.data.fields); setDocIds([]); } }, [open, prefill.data]);
+  const drafts = useQuery<any[]>({
+    queryKey: ["/api/kyc4u/drafts", dealId, companyId],
+    queryFn: async () => (await apiRequest("GET", `/api/kyc4u/drafts?${new URLSearchParams({ ...(dealId ? { dealId } : {}), companyId })}`)).json(),
+  });
+  const save = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/kyc4u/drafts", { dealId, companyId, role, fields, docIds })).json(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/kyc4u/drafts", dealId, companyId] });
+      setOpen(false);
+      toast({ title: "Ready to send to KYC4U", description: "Open KYC4U's Raise New Service Request page and click your Send to ChatBGP bookmark. Check the form, then press Submit there." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't prepare the request", description: e?.message, variant: "destructive" }),
+  });
+  const setStatus = useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: string }) => apiRequest("PATCH", `/api/kyc4u/drafts/${id}`, { status }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/kyc4u/drafts", dealId, companyId] }),
+  });
+  const latest = (drafts.data || []).find(d => d.status !== "cancelled");
+  const missingRequired = DRAFT_FIELDS.filter(f => f.required && f.key !== "requestType" && !(fields[f.key] || "").trim()).map(f => f.label);
+
+  return (
+    <div className="space-y-1" data-testid={`kyc4u-request-${companyId}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="outline" className="h-8 rounded-full" onClick={() => setOpen(true)} data-testid="button-kyc4u-request">
+          <Upload className="w-3.5 h-3.5 mr-1.5" />Request KYC4U check
+        </Button>
+        {latest?.status === "queued" && <span className="text-xs text-muted-foreground">Waiting to be filled on KYC4U's form · <a href={KYC4U_FORM_URL} target="_blank" rel="noopener noreferrer" className="underline">open the form</a> · <button type="button" className="underline" onClick={() => setStatus.mutate({ id: latest.id, status: "cancelled" })}>cancel</button></span>}
+        {latest?.status === "filled" && <span className="text-xs text-muted-foreground">Filled on KYC4U's form {when(latest.filled_at)} — once submitted there, their status shows here after the next sync · <button type="button" className="underline" onClick={() => setStatus.mutate({ id: latest.id, status: "queued" })}>fill again</button></span>}
+      </div>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-2xl max-h-[85dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Request a KYC4U check — {partyName}</DialogTitle>
+            <DialogDescription>These go into KYC4U's Raise New Service Request form. Check them here; the Send to ChatBGP bookmark fills the form on their site and you press Submit there.</DialogDescription>
+          </DialogHeader>
+          {prefill.isLoading ? <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />Filling from the deal…</p> : <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {DRAFT_FIELDS.map(f => (
+              <div key={f.key} className={f.long || f.key === "propertyAddress" || f.key === "note" ? "sm:col-span-2" : ""}>
+                <label className="text-xs font-medium" htmlFor={`kyc4u-${f.key}`}>{f.label}{f.required ? " *" : ""}</label>
+                {f.key === "metFaceToFace" ? (
+                  <select id={`kyc4u-${f.key}`} className="mt-1 w-full min-h-11 rounded-md border border-input bg-background px-2 text-sm" value={fields[f.key] || ""} onChange={e => setFields(v => ({ ...v, [f.key]: e.target.value }))}>
+                    <option value="">Choose…</option><option value="Yes">Yes</option><option value="No">No</option>
+                  </select>
+                ) : f.long ? (
+                  <textarea id={`kyc4u-${f.key}`} className="mt-1 w-full min-h-20 rounded-md border border-input bg-background p-2 text-sm" value={fields[f.key] || ""} onChange={e => setFields(v => ({ ...v, [f.key]: e.target.value }))} />
+                ) : (
+                  <Input id={`kyc4u-${f.key}`} type={f.type || "text"} className="mt-1 min-h-11" value={fields[f.key] || ""} onChange={e => setFields(v => ({ ...v, [f.key]: e.target.value }))} />
+                )}
+                {f.hint && <p className="text-[11px] text-muted-foreground mt-0.5">{f.hint}</p>}
+              </div>
+            ))}
+            {!!prefill.data?.docs?.length && <div className="sm:col-span-2">
+              <p className="text-xs font-medium">Attach KYC documents (up to 10 MB each)</p>
+              <div className="mt-1 space-y-1">
+                {prefill.data.docs.map(d => (
+                  <label key={d.id} className="flex items-center gap-2 text-sm min-h-9">
+                    <input type="checkbox" checked={docIds.includes(d.id)} disabled={(d.file_size || 0) > 10 * 1024 * 1024}
+                      onChange={e => setDocIds(ids => e.target.checked ? [...ids, d.id] : ids.filter(x => x !== d.id))} />
+                    <span className="truncate">{d.file_name}</span><span className="text-xs text-muted-foreground shrink-0">{d.doc_type}{(d.file_size || 0) > 10 * 1024 * 1024 ? " · over 10 MB" : ""}</span>
+                  </label>
+                ))}
+              </div>
+            </div>}
+          </div>}
+          {missingRequired.length > 0 && <p className="text-xs text-muted-foreground">Still to fill: {missingRequired.join(", ")}. You can also complete these on KYC4U's form.</p>}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button onClick={() => save.mutate()} disabled={save.isPending || !(fields.partyName || "").trim()} data-testid="button-kyc4u-request-save">
+              {save.isPending ? "Saving…" : "Ready for KYC4U"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

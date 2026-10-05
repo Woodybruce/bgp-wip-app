@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, TrendingUp, TrendingDown, FolderOpen } from "lucide-react";
 import { Link } from "wouter";
 import { KycPanel } from "@/components/kyc-panel";
+import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
 import { legacyToCode } from "@shared/deal-status";
 import { getAuthHeaders, queryClient, apiRequest } from "@/lib/queryClient";
 import { useRef, useState } from "react";
@@ -140,6 +141,9 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
                     {isOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                     {isOpen ? "Close" : "Manage"}
                   </Button>
+                </div>
+                <div className="mt-2">
+                  <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={cp.name} />
                 </div>
                 {isOpen && (
                   <div className="mt-3 pt-3 border-t border-current/10">

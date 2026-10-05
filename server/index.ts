@@ -1237,6 +1237,18 @@ installGoogleBudgetGuard();
        synced_at TIMESTAMP DEFAULT now(),
        PRIMARY KEY (list_id, item_id)
      )`,
+    // KYC4U new-service-request drafts: prepared on a deal party in the app,
+    // filled into KYC4U's "Raise New Service Request" page by the Send to
+    // ChatBGP bookmark, submitted there by the user (server/kyc4u.ts).
+    `CREATE TABLE IF NOT EXISTS kyc4u_drafts (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       deal_id VARCHAR, company_id VARCHAR, role TEXT,
+       fields JSONB NOT NULL DEFAULT '{}'::jsonb,
+       doc_ids TEXT[] NOT NULL DEFAULT '{}',
+       status TEXT NOT NULL DEFAULT 'queued',
+       fill_report JSONB,
+       created_by VARCHAR, created_at TIMESTAMP DEFAULT now(), filled_at TIMESTAMP
+     )`,
     // Digital business cards (Woody, 2026-09-28, "like blinq"): one public
     // slug per staff member, and everyone who shares their details back.
     `CREATE TABLE IF NOT EXISTS business_cards (
