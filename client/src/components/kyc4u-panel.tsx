@@ -199,3 +199,47 @@ export default function Kyc4uPanel() {
     </div>
   );
 }
+
+
+// KYC4U's own verdict, shown on the Compliance & KYC board and the deal KYC
+// panel. KYC4U runs the checks; this only reports what their grid says and
+// links to their record. Renders nothing when they hold no request for the
+// company (or for client logins — the server returns an empty list).
+interface Kyc4uCompanyRequest { listId: string; itemId: string; listName: string | null; title: string | null; status: string | null; entityName: string | null; modifiedAt: string | null; createdAt: string | null; webUrl: string | null }
+function kyc4uTone(status: string | null): string {
+  const s = (status || "").toLowerCase();
+  if (/(fail|reject|declin|refer|escalat|high risk|do not)/.test(s)) return "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300";
+  if (/(complete|approv|pass|clear|signed off|done|verified)/.test(s)) return "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300";
+  if (s) return "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300";
+  return "bg-muted text-muted-foreground";
+}
+export function Kyc4uStatusStrip({ companyId }: { companyId: string }) {
+  const { data } = useQuery<{ requests: Kyc4uCompanyRequest[]; lastSyncAt: string | null }>({
+    queryKey: ["/api/kyc4u/company", companyId],
+    enabled: !!companyId,
+    staleTime: 5 * 60_000,
+  });
+  const requests = data?.requests || [];
+  if (!requests.length) return null;
+  return (
+    <div data-testid="kyc4u-status-strip">
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center justify-between gap-2">
+        <span>KYC4U</span>
+        {data?.lastSyncAt && <span className="normal-case tracking-normal">synced {when(data.lastSyncAt)}</span>}
+      </div>
+      <ul className="space-y-1">
+        {requests.slice(0, 4).map(r => (
+          <li key={`${r.listId}:${r.itemId}`} className="flex items-start gap-2 text-sm">
+            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${kyc4uTone(r.status)}`}>{r.status || "No status"}</span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate" title={r.entityName || r.title || ""}>{r.entityName || r.title || "Request"}</span>
+              {r.modifiedAt && <span className="block text-xs text-muted-foreground">Updated {when(r.modifiedAt)}</span>}
+            </span>
+            {r.webUrl && <a href={r.webUrl} target="_blank" rel="noopener noreferrer" className="shrink-0 text-xs text-primary hover:underline">Open</a>}
+          </li>
+        ))}
+      </ul>
+      {requests.length > 4 && <p className="text-xs text-muted-foreground mt-1">+{requests.length - 4} more on the KYC hub</p>}
+    </div>
+  );
+}

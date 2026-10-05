@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { Kyc4uStatusStrip } from "@/components/kyc4u-panel";
 import { AiCommentary } from "@/components/ai-commentary";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
@@ -363,6 +364,7 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
+          <Kyc4uStatusStrip companyId={companyId} />
           <KycCommentaryStrip companyId={companyId} />
           {/* Risk + PEP — auto-derived from sweep (CH + sanctions + country risk + ComplyAdvantage) */}
           <div className="grid grid-cols-2 gap-3">

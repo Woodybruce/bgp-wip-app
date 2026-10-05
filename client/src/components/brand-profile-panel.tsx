@@ -1,4 +1,5 @@
 import { aboutText } from "@/lib/about-text";
+import { Kyc4uStatusStrip } from "@/components/kyc4u-panel";
 import { formatSizeList } from "@/lib/format-size";
 import { snippetAddsNothing } from "@shared/news-snippet";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
@@ -4107,6 +4108,7 @@ export function BrandComplianceCard({
   const inner = (
     <div className="space-y-2.5">
       {prefix}
+      {!bcIsClient && <Kyc4uStatusStrip companyId={companyId} />}
       <div>
         <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
           UK trading entity

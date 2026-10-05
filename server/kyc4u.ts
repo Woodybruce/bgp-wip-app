@@ -437,6 +437,24 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
+  // One company's KYC4U requests, for the Compliance & KYC board and the
+  // deal KYC panel (Woody, 2026-10-05: KYC4U does the checks; the app shows
+  // their result where people look, rather than only on the KYC hub).
+  // Staff only — these are BGP's own compliance records.
+  app.get("/api/kyc4u/company/:companyId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { resolveCompanyScope } = await import("./company-scope");
+      if (await resolveCompanyScope(req as any)) return res.json({ requests: [], lastSyncAt: null });
+      const r = await pool.query(
+        `SELECT q.list_id AS "listId", q.item_id AS "itemId", q.list_name AS "listName", q.title, q.status,
+                q.entity_name AS "entityName", q.modified_at_source AS "modifiedAt", q.created_at_source AS "createdAt", q.web_url AS "webUrl"
+           FROM kyc4u_requests q WHERE q.company_id = $1
+          ORDER BY q.modified_at_source DESC NULLS LAST LIMIT 20`, [String(req.params.companyId)]);
+      const conn = await loadConnection().catch(() => null);
+      res.json({ requests: r.rows, lastSyncAt: conn?.lastSyncAt || null });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
   // Re-run the matcher over the saved requests (after the matching improves
   // or new brands / entities land). Hand-set links are kept.
   app.post("/api/kyc4u/rematch", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
