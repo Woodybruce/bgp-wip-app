@@ -81,7 +81,6 @@ import {
   DealFormDialog,
   FeeAllocationCard,
   XeroInvoiceSection,
-  DealKYCPanel,
   DealTimeline,
   DealAuditLog,
 } from "@/pages/deals";
@@ -499,24 +498,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const handlePartySave = async (field: "tenantId" | "landlordId" | "vendorId" | "purchaserId", value: string | null) => {
     await apiRequest("PUT", `/api/crm/deals/${id}`, { [field]: value });
     invalidateDealCaches(id);
-    // AML screening is a staff-only endpoint — a client linking a party on
-    // their own deal must not fire it (403) or see the "Running AML checks"
-    // toast for a run that never happens.
-    if (value && !isClientDeal) {
-      const co = companies.find(c => c.id === value);
-      toast({ title: "Running AML checks", description: `Screening ${co?.name || "party"}...` });
-      try {
-        await fetch(`/api/kyc/run-all-checks`, {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-          body: JSON.stringify({ dealId: id, bothSides: true }),
-        });
-        queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-      } catch (err: any) {
-        console.error("[AML] auto-run failed:", err.message);
-      }
-    }
+    // No in-app AML run on linking a party any more — KYC4U is BGP's MLRO
+    // (2026-10-05); raise the party with Request KYC4U check on the KYC card.
   };
 
   // Inline create for the party pickers. Mirrors the deal-form's
@@ -1260,10 +1243,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       <div className={sec("compliance")}>
       <CollapsibleCard open={mainSections.kyc} onToggle={() => toggleMain("kyc")} icon={ShieldCheck} title="KYC" testId="toggle-deal-kyc">
         <div className="space-y-3">
-          <DealKYCPanel deal={deal} companies={companies} hidePartyList={(amlStatus?.counterparties.length ?? 0) >= 2} />
-          {/* AML AI augments — MLR scope, AI triage, SoF analyser, MLRO PDF.
-              Sits below the existing per-counterparty KYC pack so MLRO has the
-              full toolset on one screen. Renders even with <2 counterparties. */}
+          {/* KYC4U is BGP's MLRO (2026-10-05): each party's KYC4U status and
+              the Request KYC4U check button. The in-app KYC pack is retired. */}
           <DealAmlStatusCard dealId={id} dealStatus={deal.status} />
         </div>
       </CollapsibleCard>

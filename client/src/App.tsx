@@ -105,9 +105,6 @@ const QaAccess = lazy(() => import("@/pages/qa-access"));
 const TasksPage = lazy(() => import("@/pages/tasks"));
 const CadMeasure = lazy(() => import("@/pages/cad-measure"));
 const LeaseEvents = lazy(() => import("@/pages/lease-events"));
-const AmlCompliance = lazy(() => import("@/pages/aml-compliance"));
-const ComplianceBoard = lazy(() => import("@/pages/compliance-board"));
-const AmlTraining = lazy(() => import("@/pages/aml-training"));
 const KycHub = lazy(() => import("@/pages/kyc-hub"));
 const PropertyIntelligence = lazy(() => import("@/pages/property-intelligence"));
 const MapBgp = lazy(() => import("@/pages/map-bgp"));
@@ -124,7 +121,6 @@ const WestminsterRestaurants = lazy(() => import("@/pages/westminster-restaurant
 const DocumentBriefs = lazy(() => import("@/pages/document-briefs"));
 const DocumentStudioV2 = lazy(() => import("@/pages/document-studio"));
 const HRPage = lazy(() => import("@/pages/hr"));
-const KycUploadPage = lazy(() => import("@/pages/kyc-upload"));
 const FinancePage = lazy(() => import("@/pages/finance"));
 const CashflowPage = lazy(() => import("@/pages/cashflow"));
 
@@ -133,7 +129,7 @@ function PublicKycUploadRoute() {
     <ErrorBoundary>
       <Suspense fallback={<PageLoader />}>
         <Switch>
-          <Route path="/kyc-upload/:token" component={KycUploadPage} />
+          <Route path="/kyc-upload/:token">{() => <div className="min-h-screen flex items-center justify-center p-6 text-center text-sm text-muted-foreground">This upload link is no longer in use. Please send documents to your Bruce Gillingham Pollard contact.</div>}</Route>
         </Switch>
       </Suspense>
     </ErrorBoundary>
@@ -381,15 +377,14 @@ function Router() {
       <Route path="/map-bgp">{() => <PropertyIntelligenceTabRedirect tab="map" />}</Route>
       <Route path="/land-registry">{() => <PropertyIntelligenceTabRedirect tab="land-registry" />}</Route>
       <Route path="/business-rates">{() => <PropertyIntelligenceTabRedirect tab="business-rates" />}</Route>
-      {/* AML / KYC hub — compliance-focused tabs (board, training, settings).
-          The Investigator tool has moved to Property Intelligence. */}
+      {/* KYC4U (BGP's MLRO) — in-app AML/KYC retired 2026-10-05; the old
+          hub paths all land on the KYC4U page. */}
       <Route path="/kyc-clouseau" component={KycHub} />
       <Route path="/covenant-watch" component={CovenantWatch} />
       <Route path="/aml-compliance" component={KycHub} />
       <Route path="/compliance-board" component={KycHub} />
       <Route path="/aml-training" component={KycHub} />
-      {/* Deep-link for a specific training module needs the legacy component */}
-      <Route path="/aml-training/:id" component={AmlTraining} />
+      <Route path="/aml-training/:id" component={KycHub} />
       <Route path="/brands" component={BrandsHub} />
       <Route path="/brand-websites" component={WebsiteCheck} />
       <Route path="/qa-access" component={QaAccess} />
@@ -653,9 +648,9 @@ function AuthenticatedApp() {
               // Clouseau", "Hr", "Sharepoint"; design review 2026-08-23).
               const ROUTE_TITLES: Record<string, string> = {
                 "wip-report": "WIP Report", pla: "PLA Matters",
-                "kyc-clouseau": "KYC Clouseau", hr: "People & HR",
-                sharepoint: "SharePoint", "aml-compliance": "AML Compliance",
-                "aml-training": "AML Training", "cad-measure": "Cann CAD",
+                "kyc-clouseau": "KYC4U", hr: "People & HR",
+                sharepoint: "SharePoint", "aml-compliance": "KYC4U",
+                "aml-training": "KYC4U", "cad-measure": "Cann CAD",
                 edozo: "Properties", available: "Letting Tracker",
                 contacts: "CRM", companies: "CRM", chatbgp: "ChatBGP",
                 "map-bgp": "Map", "westminster-restaurants": "London Restaurants",

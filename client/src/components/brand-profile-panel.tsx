@@ -4099,7 +4099,6 @@ export function BrandComplianceCard({
     { key: "accounts", label: "Latest accounts", done: !!company.last_accounts_storage_key },
     { key: "annual_report", label: "Annual report (PLC)", done: !!company.annual_report_storage_key },
     { key: "covenant", label: "Covenant grade (CH + Gazette)", done: !!covReport?.grade },
-    { key: "aml", label: "AML PEP / adverse media", done: !!company.aml_pep_status },
   ];
   // Annual reports do not apply to every entity.
   const amlMissing = downstreamChecks.filter((r) => !r.done && r.key !== "annual_report");
@@ -4283,7 +4282,7 @@ export function BrandComplianceCard({
             <p className="text-[11px] text-muted-foreground italic mt-2 leading-snug">
               {bcIsClient
                 ? "BGP is compiling these checks — covenant, accounts and AML screening appear here as they complete."
-                : "Confirm the UK trading entity above, then we'll work out which APIs to pull (CH, Red Flag, AML PEP) against the right registered name."}
+                : "Confirm the UK trading entity above, then we'll pull Companies House, accounts and covenant against the right registered name. AML/KYC is KYC4U's — raise a request from the deal."}
             </p>
           )}
           {/* The unticked rows above already say what's still to collect —
@@ -4309,11 +4308,11 @@ export function BrandComplianceCard({
           </CardTitle>
           {!bcIsClient && (
           <Link
-            href={`/kyc-clouseau?company=${companyId}`}
+            href="/kyc-clouseau"
             className="text-[11px] text-primary hover:underline inline-flex items-center gap-0.5"
-            title="Open in KYC Hub"
+            title="KYC4U — BGP's MLRO"
           >
-            KYC Hub <ChevronRight className="w-2.5 h-2.5" />
+            KYC4U <ChevronRight className="w-2.5 h-2.5" />
           </Link>
           )}
         </div>

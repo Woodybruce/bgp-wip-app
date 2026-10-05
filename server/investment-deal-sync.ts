@@ -146,6 +146,8 @@ export async function completeInvestmentDeal(dealId: string, deps: { pool?: Quer
 const AML_START = new Set(["HOT", "SOL"]);
 export async function startAmlOnStatus(dealId: string, fromStatus: string | null | undefined, toStatus: string | null | undefined,
   actor: { id?: string | null; name?: string | null } = {}, deps: { pool?: Querier; launch?: (dealId: string, actorId: string | null, actorName: string | null) => Promise<void> } = {}) {
+  // Retired 2026-10-05 — KYC4U is BGP's MLRO; the app starts no AML of its own.
+  if (!process.env.IN_APP_AML_ENABLED) return { started: false, reason: "AML/KYC is raised with KYC4U from the deal's AML panel" };
   const to = legacyToCode(toStatus);
   if (!to || !AML_START.has(to) || legacyToCode(fromStatus) === to) return { started: false, reason: "not a HOTs / Solicitors move" };
   const q = deps.pool ?? (await import("./db")).pool;

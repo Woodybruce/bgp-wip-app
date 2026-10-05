@@ -409,9 +409,8 @@ function EntityReview({
   const documents: any[] = kycState.data?.documents || [];
   const investigations = history.data?.investigations || [];
   const latestInvestigation = investigations[0] || null;
-  const kycHubHref = latestInvestigation
-    ? `/kyc-clouseau?tab=investigator&investigation=${encodeURIComponent(latestInvestigation.id)}`
-    : isCompany ? `/kyc-clouseau?company=${encodeURIComponent(id)}` : null;
+  // The in-app investigator is retired (KYC4U is BGP's MLRO, 2026-10-05).
+  const kycHubHref: string | null = latestInvestigation ? null : null;
   const loadingRegister = (isCompany && company.isLoading) || (needLive && liveProfile.isLoading);
   const canDecide = isMlro && !!entity.entityId && bucket !== "current";
   const canReject = canDecide && bucket !== "rejected";
@@ -546,62 +545,8 @@ function EntityReview({
         </Section>
       )}
 
-      <Section title="KYC record" testId="entity-review-kyc">
-        <div className="space-y-1">
-          <Field label="Status"><KycChip bucket={bucket} expiresAt={kyc?.expiresAt} /></Field>
-          <Field label="Last checked">{fmtDate(kyc?.lastCheckedAt)}</Field>
-          <Field label="Approved">{kyc?.approvedBy || kyc?.approvedAt ? [kyc?.approvedBy, fmtDate(kyc?.approvedAt)].filter(Boolean).join(" · ") : null}</Field>
-          <Field label="Re-check due">{fmtDate(kyc?.nextReviewAt || kyc?.expiresAt)}</Field>
-          <Field label="Record">{kyc ? (kyc.source === "crm_entity_kyc" ? "Per-entity sign-off" : "The company's own KYC record") : "No KYC recorded yet"}</Field>
-          <Field label="PEP">{k?.aml_pep_status ? words(k.aml_pep_status) : null}</Field>
-          <Field label="EDD">{k?.aml_edd_required ? (k.aml_edd_reason || "Required") : null}</Field>
-        </div>
-        {k?.aml_notes && (
-          <div className="rounded-md border border-border bg-muted/40 p-2.5 text-sm whitespace-pre-line break-words" data-testid="entity-review-notes">{k.aml_notes}</div>
-        )}
-        {kyc && kyc.outstanding.length > 0 && (
-          <div>
-            <div className="text-[11px] text-muted-foreground mb-0.5">Outstanding on this entity's sign-off</div>
-            <ShowAllList items={kyc.outstanding} cap={6} render={(o, i) => <li key={`${o.key}-${i}`} className="text-sm leading-snug">• {o.label}</li>} />
-          </div>
-        )}
-        {checklistOpen.length > 0 && (
-          <div data-testid="entity-review-checklist">
-            <div className="text-[11px] text-muted-foreground mb-0.5">
-              Checklist items not ticked on the company's Compliance &amp; KYC (<span className="font-mono tabular-nums">{checklistOpen.length}</span>)
-            </div>
-            <ShowAllList items={checklistOpen} cap={5} render={(o, i) => <li key={`${o.id}-${i}`} className="text-sm leading-snug">• {o.label}</li>} />
-          </div>
-        )}
-      </Section>
-
-      <Section title={<>Evidence <span className="font-mono tabular-nums normal-case">{documents.length + investigations.length}</span></>} testId="entity-review-evidence">
-        {documents.length === 0 && investigations.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No KYC documents or KYC Hub checks saved for this entity yet.</p>
-        ) : (
-          <ul className="space-y-1">
-            {documents.map((doc: any) => (
-              <li key={doc.id} className="text-sm flex items-center gap-1.5 min-w-0">
-                <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="min-w-0 truncate text-primary hover:underline">{doc.file_name}</a>
-                <span className="text-[11px] text-muted-foreground shrink-0">{DOC_TYPE_LABELS[doc.doc_type] || words(doc.doc_type)} · {fmtDate(doc.uploaded_at)}</span>
-              </li>
-            ))}
-            {investigations.slice(0, 5).map((inv: any) => (
-              <li key={inv.id} className="text-sm flex items-center gap-1.5 min-w-0">
-                <ShieldCheck className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                <Link href={`/kyc-clouseau?tab=investigator&investigation=${encodeURIComponent(inv.id)}`} className="min-w-0 truncate text-primary hover:underline">
-                  KYC Hub check · {fmtDate(inv.conducted_at)}
-                </Link>
-                <span className="text-[11px] text-muted-foreground shrink-0">
-                  {words(inv.risk_level)} risk{inv.risk_score != null ? <> · <span className="font-mono tabular-nums">{inv.risk_score}</span></> : null}{inv.sanctions_match ? " · sanctions match" : ""}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
-
+      {/* KYC record + evidence retired 2026-10-05 — KYC4U is BGP's MLRO;
+          the entity's status shows in the header chip. */}
       <Section title="Why it's in this group" testId="entity-review-relation">
         <p className="text-sm">{relationLine}{entity.relationConfidence && entity.relationConfidence !== "confirmed" ? ` (${words(entity.relationConfidence).toLowerCase()})` : ""}.</p>
         <ul className="space-y-0.5">
@@ -634,47 +579,14 @@ function EntityReview({
     </div>
   );
 
+  // In-app approve / reject retired 2026-10-05 — KYC4U is BGP's MLRO.
   const actions = (
     <div className="shrink-0 border-t border-border pt-3 space-y-2">
-      {rejecting && canReject ? (
-        <>
-          <label htmlFor="entity-reject-reason" className={sectionLabel}>Reason for rejecting</label>
-          <Textarea
-            id="entity-reject-reason"
-            autoFocus
-            rows={3}
-            value={reason}
-            onChange={(ev) => setReason(ev.target.value)}
-            placeholder="e.g. Beneficial owners not verified — no UBO declaration received"
-            data-testid="entity-reject-reason"
-          />
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button variant="ghost" onClick={() => onRejectingChange(false)} disabled={rejectPending}>Back</Button>
-            <Button variant="destructive" disabled={!reason.trim() || rejectPending} onClick={() => onReject(entity, reason.trim())} data-testid="entity-review-reject-confirm">
-              {rejectPending ? "Rejecting…" : "Reject KYC"}
-            </Button>
-          </div>
-        </>
-      ) : canDecide ? (
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {checklistOpen.length > 0 && (
-            <p className="mr-auto text-[11px] text-muted-foreground">
-              <span className="font-mono tabular-nums">{checklistOpen.length}</span> checklist items still open.
-            </p>
-          )}
-          {canReject && <Button variant="outline" onClick={() => onRejectingChange(true)} disabled={approving} data-testid="entity-review-reject">Reject</Button>}
-          <Button onClick={() => onApprove(entity)} disabled={approving || rejectPending} data-testid="entity-review-approve">
-            {approving ? "Approving…" : "Approve KYC"}
-          </Button>
-        </div>
-      ) : (
-        <p className="text-[11px] text-muted-foreground">
-          {bucket === "current"
-            ? `Approved${kyc?.approvedBy ? ` by ${kyc.approvedBy}` : ""}${kyc?.nextReviewAt ? ` — re-check due ${fmtDate(kyc.nextReviewAt)}` : ""}.`
-            : !entity.entityId ? "Resolve the representation conflict before KYC can be recorded on this entity."
-            : "Only the MLRO can approve or reject."}
-        </p>
-      )}
+      <p className="text-[11px] text-muted-foreground">
+        {bucket === "current"
+          ? `Approved${kyc?.approvedBy ? ` by ${kyc.approvedBy}` : ""}${kyc?.nextReviewAt ? ` — re-check due ${fmtDate(kyc.nextReviewAt)}` : ""}.`
+          : "KYC is run by KYC4U, BGP's MLRO — raise a request from the deal's AML panel."}
+      </p>
     </div>
   );
 

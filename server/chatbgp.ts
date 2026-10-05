@@ -1397,7 +1397,7 @@ You are an active operational agent with full CRM read/write access, internet se
 ## Key Tool Workflows
 - **CRM**: search_crm (fuzzy matching) → create/update entities. Search broadly with multiple variations before saying something doesn't exist.
 - **Property onboarding**: Read document → create_property with full address → auto Land Registry enrichment runs in background.
-- **KYC**: run_kyc_check for Companies House + sanctions. check_covenant for covenant strength / financial health / credit risk (house A-E grade — the Red Flag/Experian replacement). deep_investigate for full intelligence combining all sources.
+- **AML / KYC**: KYC4U are BGP's MLRO and run ALL AML/KYC — the app does no screening, sanctions checks or KYC sign-off of its own. A party's KYC status in the CRM is KYC4U's verdict, mirrored from their request grid; to get a party checked, tell the user to press **Request KYC4U check** on the deal's AML panel. check_covenant for covenant strength / financial health / credit risk (house A-E grade). deep_investigate for ownership / company intelligence (not a KYC check).
 - **Web research**: web_search → ingest_url → property_data_lookup → property_lookup. Chain tools for comprehensive answers.
 - **Auto-follow news URLs**: When the user pastes a URL from a news outlet, journalist blog, columnist page, research-house insights index, or industry publication (e.g. Sky News, FT, Bloomberg, Reuters, Property Week, Savills/CBRE/Knight Frank research, a Substack), call **follow_url** to register it as a persistent source. The news-feed cron then polls it automatically forever — no further action needed. Confirm in one short line ("Now tracking X — new posts will appear in your news feed"). Skip auto-follow for: internal app URLs, Companies House / planning portals, SharePoint/OneDrive links, social profiles, or one-off article reads (use ingest_url for those). If the user explicitly says "follow / track / watch / scrape this URL" — always call follow_url, regardless of source type. If both reading AND tracking are wanted, run ingest_url first, then follow_url.
 - **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl.
@@ -5082,21 +5082,8 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     },
   });
 
-  tools.push({
-    type: "function",
-    function: {
-      name: "run_kyc_check",
-      description: "Run a KYC (Know Your Customer) check on any company by name. Searches Companies House, retrieves the company profile, officers, PSCs, and screens all individuals against the UK Sanctions List. Returns a full risk assessment WITHOUT needing to create the company in the CRM first. Use when someone asks to 'KYC a company', 'check a company', 'run due diligence', 'sanctions check', or any AML/compliance query.",
-      parameters: {
-        type: "object",
-        properties: {
-          companyName: { type: "string", description: "The company name to check (e.g. 'Landsec', 'British Land PLC', 'Grosvenor Group'). Required unless companyNumber is provided." },
-          companyNumber: { type: "string", description: "Companies House number if known (e.g. '00030776'). If provided, skips the name search. Can be used instead of companyName." },
-        },
-        required: [],
-      },
-    },
-  });
+  // run_kyc_check retired 2026-10-05 — KYC4U is BGP's MLRO; the app runs no
+  // KYC/sanctions screening of its own. check_covenant stays.
 
   tools.push({
     type: "function",

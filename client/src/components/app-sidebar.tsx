@@ -136,7 +136,7 @@ const microsoftNav = [
 // matches the list Woody dictated (AML → Enrichment Hub).
 const unfinishedNav = [
   { title: "Portfolios", url: "/portfolios", icon: Layers },
-  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
+  { title: "KYC4U", url: "/kyc-clouseau", icon: ShieldCheck },
   { title: "Tenant Rep", url: "/tenant-rep", icon: Target },
   { title: "Letting Hunter", url: "/hunters/letting", icon: Target },
   { title: "Investment Hunter", url: "/hunters/investment", icon: Target },
@@ -657,7 +657,7 @@ export const mobileOverlayItems = [
   { title: "Leads", url: "/leads", icon: UserPlus, adminOnly: true },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
-  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck, adminOnly: true },
+  { title: "KYC4U", url: "/kyc-clouseau", icon: ShieldCheck, adminOnly: true },
   { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles, adminOnly: true },
   { title: "Office Add-ins", url: "/addins", icon: Puzzle, adminOnly: true },
   { title: "Settings", url: "/settings", icon: Settings, adminOnly: true },

@@ -42,6 +42,7 @@ export async function autoLaunchAmlForDeal(
   actorId: string | null,
   actorName: string | null,
 ): Promise<void> {
+  if (!process.env.IN_APP_AML_ENABLED) return; // retired 2026-10-05 — KYC4U is BGP's MLRO
   // Pull all four counterparty ids — leasing deals carry tenant + landlord,
   // investment deals carry vendor + purchaser. The form now requires both
   // sides for every deal type, so both should fire AML.

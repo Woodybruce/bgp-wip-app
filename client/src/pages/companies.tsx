@@ -545,9 +545,9 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
       setKycResult(data);
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", company.id] });
 
-      await runSanctionsScreening(data.officers || [], data.pscs || []);
-
-      toast({ title: "KYC Report Generated", description: `Status: ${data.kycStatus === "approved" ? "Passed" : data.kycStatus === "in_review" ? "Needs Review" : "Failed"}` });
+      // No in-app sanctions screening or KYC verdict (KYC4U is BGP's MLRO,
+      // 2026-10-05) — this only refreshes the Companies House record.
+      toast({ title: "Companies House details updated" });
     } catch (err: any) {
       toast({ title: "KYC Error", description: err.message, variant: "destructive" });
     } finally {
@@ -658,7 +658,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
 
         {!expanded ? null : !displayNumber ? (
           <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">Link to Companies House to run KYC checks, or click "Run KYC" to auto-match by name.</p>
+            <p className="text-xs text-muted-foreground">Link to Companies House, or click "Look up" to auto-match by name. AML/KYC is KYC4U's.</p>
             <div className="flex gap-2">
               <Button
                 variant="default"
@@ -669,7 +669,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
                 data-testid="button-run-kyc-auto"
               >
                 {runningKyc ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />}
-                Run KYC
+                Look up
               </Button>
             </div>
             <div className="border-t pt-2 mt-2">
@@ -723,7 +723,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
                 {!kycStatus && <ShieldCheck className="w-5 h-5 text-muted-foreground shrink-0" />}
                 <div>
                   <p className="text-sm font-semibold">
-                    {kycStatus === "approved" ? "KYC Passed" : kycStatus === "in_review" ? "Needs Review" : kycStatus === "rejected" ? "KYC Failed" : "Linked — Run KYC to verify"}
+                    {kycStatus === "approved" ? "KYC4U approved" : kycStatus === "in_review" ? "With KYC4U" : kycStatus === "rejected" ? "KYC4U rejected" : "Linked to Companies House"}
                   </p>
                   <p className="text-[11px] text-muted-foreground">
                     {checkedAt ? `Checked ${new Date(checkedAt).toLocaleDateString("en-GB")}` : "Not yet checked"}
@@ -734,7 +734,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
               <div className="flex gap-1">
                 <Button variant="default" size="sm" className="h-6 text-[11px] gap-1" onClick={runKyc} disabled={runningKyc} data-testid="button-run-kyc">
                   {runningKyc ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />}
-                  Run KYC
+                  Look up
                 </Button>
                 {profile && (
                   <Button variant="outline" size="sm" className="h-6 text-[11px] gap-1" onClick={copyKycReport} data-testid="button-copy-kyc">
@@ -844,93 +844,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
                 </KycSection>
               )}
 
-              <KycSection title="Sanctions Screening (UK Sanctions List)" icon={ShieldCheck} defaultOpen={!!screeningResults}>
-                {screeningResults ? (
-                  <div className="space-y-2">
-                    <div className={`flex items-center gap-2 p-2 rounded ${
-                      screeningResults.overallStatus === "clear" ? "bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200" :
-                      screeningResults.overallStatus === "review" ? "bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200" :
-                      "bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200"
-                    }`}>
-                      {screeningResults.overallStatus === "clear" ? <CheckCircle2 className="w-4 h-4 shrink-0" /> :
-                       screeningResults.overallStatus === "review" ? <AlertCircle className="w-4 h-4 shrink-0" /> :
-                       <XCircle className="w-4 h-4 shrink-0" />}
-                      <span className="font-semibold">
-                        {screeningResults.overallStatus === "clear" ? "All Clear — No sanctions matches" :
-                         screeningResults.overallStatus === "review" ? "Review Required — Potential matches found" :
-                         "ALERT — Strong sanctions matches found"}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-muted-foreground">
-                      Screened {screeningResults.results?.length || 0} name(s) against {screeningResults.totalEntries?.toLocaleString() || "N/A"} entries · {screeningResults.screenedAt ? new Date(screeningResults.screenedAt).toLocaleDateString("en-GB") : ""}
-                    </p>
-                    {screeningResults.results?.map((r: any, i: number) => (
-                      <div key={i} className="p-2 bg-muted/30 rounded space-y-0.5">
-                        <div className="flex items-center justify-between">
-                          <span className="font-semibold">{r.name}</span>
-                          <div className="flex items-center gap-1">
-                            <Badge variant="outline" className="text-[11px]">{r.role}</Badge>
-                            {r.status === "clear" && <Badge className="text-[11px] bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">Clear</Badge>}
-                            {r.status === "potential_match" && <Badge className="text-[11px] bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">Review</Badge>}
-                            {r.status === "strong_match" && <Badge className="text-[11px] bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">Match</Badge>}
-                          </div>
-                        </div>
-                        {r.matches?.length > 0 && r.matches.map((m: any, j: number) => (
-                          <div key={j} className="ml-2 mt-1 p-1.5 bg-red-50 dark:bg-red-900/10 rounded text-[11px]">
-                            <p className="font-medium">→ {m.sanctionedName} ({m.matchScore}% match)</p>
-                            <p className="text-muted-foreground">{m.regime}</p>
-                            <p className="text-muted-foreground">{m.sanctionsImposed}</p>
-                          </div>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <p className="text-muted-foreground text-[11px]">Screen all PSCs, officers and the company against the official UK Sanctions List (FCDO).</p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full text-xs gap-1"
-                      onClick={() => runSanctionsScreening(activeOfficers, activePscs)}
-                      disabled={runningScreening}
-                      data-testid="button-run-screening"
-                    >
-                      {runningScreening ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />}
-                      Run Sanctions Screening
-                    </Button>
-                  </div>
-                )}
-              </KycSection>
 
-              {profile && (() => {
-                const risk = computeRiskFactors();
-                const riskColor = risk.level === "low" ? "green" : risk.level === "medium" ? "yellow" : risk.level === "high" ? "orange" : "red";
-                return (
-                  <KycSection title={`Risk Assessment — ${risk.level.toUpperCase()} (${risk.score}/100)`} icon={AlertCircle} defaultOpen>
-                    <div className="space-y-2">
-                      <div className="w-full h-3 bg-muted rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all ${
-                            risk.level === "low" ? "bg-green-500" : risk.level === "medium" ? "bg-yellow-500" : risk.level === "high" ? "bg-orange-500" : "bg-red-500"
-                          }`}
-                          style={{ width: `${risk.score}%` }}
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        {risk.factors.map((f, i) => (
-                          <div key={i} className="flex items-center gap-1.5">
-                            {f.impact === "positive" ? <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" /> :
-                             f.impact === "negative" ? <XCircle className="w-3 h-3 text-red-500 shrink-0" /> :
-                             <Circle className="w-3 h-3 text-muted-foreground shrink-0" />}
-                            <span>{f.factor}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </KycSection>
-                );
-              })()}
 
               <div className="border-t pt-2 flex gap-2">
                 <Button variant="outline" size="sm" className="text-xs flex-1" onClick={unlinkCompany} data-testid="button-unlink-ch">
@@ -943,7 +857,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
         ) : (
           <div className="text-center py-4 text-muted-foreground text-xs">
             <ShieldCheck className="w-6 h-6 mx-auto mb-2 opacity-30" />
-            <p>Click "Run KYC" to generate a report</p>
+            <p>Click "Look up" to pull the Companies House record</p>
           </div>
         )}
       </CardContent>

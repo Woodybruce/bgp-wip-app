@@ -8,7 +8,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { PropertyProvider, usePropertySetter } from "@/lib/property-context";
 
 const EdozoMap = lazy(() => import("@/pages/edozo-map"));
-const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
 const LandRegistry = lazy(() => import("@/pages/land-registry"));
 const VoaRatings = lazy(() => import("@/pages/voa-ratings"));
 const PropertyPathway = lazy(() => import("@/pages/property-pathway"));
@@ -18,7 +17,6 @@ type TabId = "pathway" | "map" | "investigator" | "land-registry" | "business-ra
 const TABS: Array<{ id: TabId; label: string; icon: any }> = [
   { id: "pathway", label: "Pathway", icon: Sparkles },
   { id: "map", label: "Map", icon: Map },
-  { id: "investigator", label: "Investigator", icon: ShieldCheck },
   { id: "land-registry", label: "Land Registry", icon: Landmark },
   { id: "business-rates", label: "Business Rates", icon: Receipt },
 ];
@@ -219,14 +217,6 @@ export default function PropertyIntelligence() {
                 }}
               />
             </TabsContent>
-            {/* Not mounted for clients — a ?tab=investigator deep link would
-                otherwise mount KYC Clouseau for one render before the
-                redirect effect runs, firing its (client-blocked) queries. */}
-            {!piIsClient && (
-            <TabsContent value="investigator" className="m-0 h-full">
-              <KycClouseau />
-            </TabsContent>
-            )}
             <TabsContent value="land-registry" className="m-0">
               <LandRegistry />
             </TabsContent>

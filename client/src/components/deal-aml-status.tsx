@@ -68,10 +68,12 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
           <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-md text-sm" data-testid="deal-aml-status-incomplete">
             <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
             <span>
-              {data.counterparties.length === 0 ? "No counterparties linked" : "Only 1 counterparty linked"} to this deal — both sides need to be set on the deal record before AML can clear. The AML tools below still work.
+              {data.counterparties.length === 0 ? "No counterparties linked" : "Only 1 counterparty linked"} to this deal — set the parties on the deal record, then raise each with KYC4U.
             </span>
           </div>
-          <AmlAiPanel dealId={dealId} dealName={data.dealName} />
+          {data.counterparties.map(cp => (
+            <Kyc4uRequestButton key={cp.id} dealId={dealId} companyId={cp.id} role={cp.role} partyName={cp.name} />
+          ))}
         </CardContent>
       </Card>
     );
@@ -131,25 +133,10 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
                       </div>
                     )}
                   </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 px-2"
-                    onClick={() => setExpanded(isOpen ? null : cp.id)}
-                    data-testid={`button-expand-counterparty-${cp.id}`}
-                  >
-                    {isOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                    {isOpen ? "Close" : "Manage"}
-                  </Button>
                 </div>
                 <div className="mt-2">
                   <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={cp.name} />
                 </div>
-                {isOpen && (
-                  <div className="mt-3 pt-3 border-t border-current/10">
-                    <KycPanel companyId={cp.id} dealId={dealId} />
-                  </div>
-                )}
               </div>
             );
           })}
@@ -163,12 +150,11 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <div>
               <span className="font-medium">{dealStatus && ["INV", "COM"].includes(legacyToCode(dealStatus) || "") ? "AML sign-off still outstanding" : "AML approval needed"}</span> for {data.missing.join(", ")}.
-              Open each counterparty above, complete the checklist and upload supporting documents, then click MLRO Approve.
+              KYC4U are BGP's MLRO — raise each party with Request KYC4U check above; their approval clears it here after the next sync.
             </div>
           </div>
         )}
 
-        <AmlAiPanel dealId={dealId} dealName={data.dealName} />
       </CardContent>
     </Card>
   );
