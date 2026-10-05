@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getAuthHeaders } from "@/lib/queryClient";
+import { getAuthHeaders, startXeroConnect } from "@/lib/queryClient";
 import { formatDate } from "@/lib/format";
 import { RefreshCw, AlertTriangle, ExternalLink } from "lucide-react";
 
@@ -397,7 +397,7 @@ export default function FinancePage() {
               <p className="text-sm font-medium">{data.needsReconnect ? "Xero needs reconnecting" : "Xero isn't connected"}</p>
             </div>
             <p className="text-sm text-muted-foreground">{data.message}</p>
-            <Button onClick={() => { window.location.href = "/api/xero/connect"; }} data-testid="button-finance-connect-xero">
+            <Button onClick={() => { void startXeroConnect(); }} data-testid="button-finance-connect-xero">
               <ExternalLink className="w-4 h-4 mr-2" />
               {data.needsReconnect ? "Reconnect Xero" : "Connect Xero"}
             </Button>

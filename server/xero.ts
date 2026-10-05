@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { xeroInvoices, crmDeals } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 import { z } from "zod";
@@ -36,23 +36,38 @@ const XERO_BASE_SCOPES =
 const pendingOAuthStates = new Map<string, { createdAt: number; sid: string }>();
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
-function issueOAuthState(sid: string): string {
+// The consent state is also kept in the database (2026-10-05, Woody: "the
+// xero log in not working?"). In memory only, a deploy mid-consent — or
+// the second container during a deploy — lost it and the callback refused
+// the approval; and requiring the SAME browser session failed on the
+// installed phone app, which drops the cookie on the hop out to Xero and
+// back. The state is 256-bit random, single-use, 10-minute, issued only to
+// a signed-in user, so it is sufficient proof on its own.
+function issueOAuthState(sid: string, userId?: string | null): string {
   const now = Date.now();
   for (const [k, v] of pendingOAuthStates) {
     if (now - v.createdAt > OAUTH_STATE_TTL_MS) pendingOAuthStates.delete(k);
   }
   const state = crypto.randomBytes(32).toString("hex");
   pendingOAuthStates.set(state, { createdAt: now, sid });
+  pool.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+    [`xero_oauth_state:${state}`, JSON.stringify({ createdAt: now, sid, userId: userId || null })])
+    .catch((e: any) => console.warn("[Xero] persisting consent state failed:", e?.message));
+  pool.query(`DELETE FROM system_settings WHERE key LIKE 'xero_oauth_state:%' AND (value->>'createdAt')::bigint < $1`, [now - 24 * 3600_000]).catch(() => {});
   return state;
 }
 
-function consumeOAuthState(state: unknown, sid: string): { ok: boolean; reason?: string } {
+async function consumeOAuthState(state: unknown, sid: string): Promise<{ ok: boolean; reason?: string }> {
   if (typeof state !== "string" || !state) return { ok: false, reason: "no state param on the callback" };
-  const entry = pendingOAuthStates.get(state);
-  if (!entry) return { ok: false, reason: "state unknown or already used (server restarted mid-consent?)" };
+  let entry: { createdAt: number; sid: string } | undefined = pendingOAuthStates.get(state);
   pendingOAuthStates.delete(state);
+  try {
+    const r = await pool.query(`DELETE FROM system_settings WHERE key = $1 RETURNING value`, [`xero_oauth_state:${state}`]);
+    if (!entry && r.rows[0]?.value) entry = { createdAt: Number(r.rows[0].value.createdAt), sid: String(r.rows[0].value.sid || "") };
+  } catch {}
+  if (!entry) return { ok: false, reason: "state unknown or already used" };
   if (Date.now() - entry.createdAt > OAUTH_STATE_TTL_MS) return { ok: false, reason: "state expired (>10 min between Connect and approval)" };
-  if (entry.sid !== sid) return { ok: false, reason: "consent was started in a different browser session" };
+  if (entry.sid !== sid) console.log("[Xero] consent returned in a different browser session (phone app or cookie loss) — accepted on the single-use state");
   return { ok: true };
 }
 
@@ -445,7 +460,7 @@ export function setupXeroRoutes(app: Express) {
         return res.redirect("/finance?xero_error=" + encodeURIComponent("XERO_CLIENT_ID not set in environment"));
       }
 
-      const state = issueOAuthState(req.sessionID);
+      const state = issueOAuthState(req.sessionID, req.session?.userId || (req as any).tokenUserId || null);
       req.session.xeroOAuthState = state; // fallback only — survives a deploy mid-consent
       const redirectUri = getRedirectUri(req);
       console.log("[Xero] /connect — redirect_uri:", redirectUri);
@@ -519,7 +534,7 @@ export function setupXeroRoutes(app: Express) {
       return res.status(500).json({ message: "Xero Client ID not configured. Add XERO_CLIENT_ID and XERO_CLIENT_SECRET to your environment." });
     }
 
-    const state = issueOAuthState(req.sessionID);
+    const state = issueOAuthState(req.sessionID, req.session?.userId || (req as any).tokenUserId || null);
     req.session.xeroOAuthState = state; // fallback only — survives a deploy mid-consent
 
     const redirectUri = getRedirectUri(req);
@@ -570,7 +585,7 @@ export function setupXeroRoutes(app: Express) {
       return res.redirect("/finance?xero_error=no_code_received");
     }
 
-    const stateVerdict = consumeOAuthState(state, req.sessionID);
+    const stateVerdict = await consumeOAuthState(state, req.sessionID);
     const sessionStateMatch = typeof state === "string" && !!state && state === req.session.xeroOAuthState;
     if (!stateVerdict.ok && !sessionStateMatch) {
       console.error(

@@ -1,7 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeaders, startXeroConnect } from "@/lib/queryClient";
 import { mobileOverlayItems } from "@/components/app-sidebar";
 import { MemberAvatar } from "@/components/ClientTeamOrgChart";
 import { PortfolioContactsBoard } from "@/components/portfolio-contacts-board";
@@ -498,7 +498,7 @@ export default function MobileHome() {
                   </div>
                   <span
                     role="link"
-                    onClick={(e) => { e.stopPropagation(); window.location.href = "/api/xero/connect"; }}
+                    onClick={(e) => { e.stopPropagation(); void startXeroConnect(); }}
                     className="shrink-0 rounded-full bg-white/90 text-[hsl(var(--mobile-chrome))] px-3 py-1.5 text-xs font-semibold"
                     data-testid="button-mobile-reconnect-xero"
                   >

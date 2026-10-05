@@ -240,3 +240,18 @@ export function invalidateDealCaches(dealId?: string) {
     queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "timeline"] });
   }
 }
+
+// Start the Xero consent with the app's login token (2026-10-05). A plain
+// link to /api/xero/connect only carried the cookie, which the installed
+// phone app often doesn't have — the sign-in then stopped at "Not
+// authenticated". Ask for the consent link first, then go to it.
+export async function startXeroConnect(opts: { payroll?: boolean } = {}): Promise<void> {
+  try {
+    const res = await fetch(`/api/xero/auth${opts.payroll ? "?payroll=1" : ""}`, { credentials: "include", headers: getAuthHeaders() });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok && body?.url) { window.location.href = body.url; return; }
+    throw new Error(body?.message || `Xero sign-in could not start (${res.status})`);
+  } catch (e: any) {
+    window.location.href = "/finance?xero_error=" + encodeURIComponent(e?.message || "Xero sign-in could not start");
+  }
+}
