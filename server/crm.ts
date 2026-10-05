@@ -10375,7 +10375,7 @@ export async function computeWipHealth(): Promise<any> {
            d.tenant_id AS "tenantId", d.vendor_id AS "vendorId", d.purchaser_id AS "purchaserId",
            d.internal_agent AS "internalAgent",
            d.target_date AS "targetDate", d.exchanged_at AS "exchangedAt",
-           d.completed_at AS "completedAt", d.invoiced_at AS "invoicedAt",
+           d.completed_at AS "completedAt", d.invoiced_at AS "invoicedAt", d.created_at AS "createdAt",
            (SELECT COUNT(*) FROM deal_fee_allocations a WHERE a.deal_id = d.id)::int AS "allocCount",
            (SELECT COUNT(*) FROM xero_invoices xi WHERE xi.deal_id = d.id AND COALESCE(xi.status,'') <> 'ERROR')::int AS "invoiceCount",
            (SELECT p.landlord_id FROM crm_properties p WHERE p.id = d.property_id) AS "propLandlordId",
@@ -10416,6 +10416,24 @@ export async function computeWipHealth(): Promise<any> {
     return ["NEG", "SOL", "EXC", "COM", "INV"].includes(c as string);
   });
 
+  // KYC4U is BGP's MLRO (Woody, 2026-10-05): every NEW deal's parties must
+  // be raised with KYC4U, or flagged here. Older deals are covered where the
+  // company already has a KYC4U request; they're not flagged.
+  const KYC4U_FROM = new Date("2026-10-05T00:00:00Z");
+  let kyc4uCovered = new Set<string>();
+  try {
+    const cov = await pool.query(
+      `SELECT company_id FROM kyc4u_requests WHERE company_id IS NOT NULL
+        UNION SELECT company_id FROM kyc4u_drafts WHERE company_id IS NOT NULL AND status <> 'cancelled'`);
+    kyc4uCovered = new Set(cov.rows.map((r: any) => r.company_id));
+  } catch { /* tables not created yet */ }
+  const noKyc4u = wipDeals.filter((r: any) => {
+    if (!r.createdAt || new Date(r.createdAt) < KYC4U_FROM) return false;
+    if (["WIT"].includes(legacyToCode(r.status) as string)) return false;
+    const parties = [r.landlordId, r.tenantId, r.vendorId, r.purchaserId].filter(Boolean);
+    return parties.length > 0 && parties.some((id: string) => !kyc4uCovered.has(id));
+  });
+
   const bucket = (list: any[]) => ({
     count: list.length,
     fee: Math.round(list.reduce((s, r) => s + (r.fee || 0), 0)),
@@ -10440,6 +10458,7 @@ export async function computeWipHealth(): Promise<any> {
       invNoXero: bucket(invNoXero),
       noFee: bucket(noFee),
       noPo: bucket(noPo),
+      noKyc4u: bucket(noKyc4u),
     },
     affected: { count: affectedIds.size, fee: affectedFee },
     totalWipDeals: wipDeals.length,

@@ -1249,6 +1249,8 @@ installGoogleBudgetGuard();
        fill_report JSONB,
        created_by VARCHAR, created_at TIMESTAMP DEFAULT now(), filled_at TIMESTAMP
      )`,
+    `ALTER TABLE kyc4u_drafts ADD COLUMN IF NOT EXISTS request_list_id VARCHAR, ADD COLUMN IF NOT EXISTS request_item_id VARCHAR`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS kyc4u_request_key TEXT`,
     // Digital business cards (Woody, 2026-09-28, "like blinq"): one public
     // slug per staff member, and everyone who shares their details back.
     `CREATE TABLE IF NOT EXISTS business_cards (

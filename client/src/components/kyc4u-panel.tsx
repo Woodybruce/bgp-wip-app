@@ -323,6 +323,8 @@ export function Kyc4uRequestButton({ dealId, companyId, role, partyName }: { dea
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/kyc4u/drafts", dealId, companyId] }),
   });
   const latest = (drafts.data || []).find(d => d.status !== "cancelled");
+  const companyReqs = useQuery<{ requests: Kyc4uCompanyRequest[] }>({ queryKey: ["/api/kyc4u/company", companyId], enabled: !!companyId, staleTime: 5 * 60_000 });
+  const req = companyReqs.data?.requests?.[0];
   const missingRequired = DRAFT_FIELDS.filter(f => f.required && f.key !== "requestType" && !(fields[f.key] || "").trim()).map(f => f.label);
 
   return (
@@ -331,7 +333,10 @@ export function Kyc4uRequestButton({ dealId, companyId, role, partyName }: { dea
         <Button size="sm" variant="outline" className="h-8 rounded-full" onClick={() => setOpen(true)} data-testid="button-kyc4u-request">
           <Upload className="w-3.5 h-3.5 mr-1.5" />Request KYC4U check
         </Button>
+        {!latest && req && <span className="text-xs text-muted-foreground">KYC4U · <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${kyc4uTone(req.status)}`}>{req.status || "No status yet"}</span>{req.webUrl && <> · <a href={req.webUrl} target="_blank" rel="noopener noreferrer" className="underline">open their record</a></>}</span>}
+        {!latest && !req && companyReqs.isFetched && <span className="rounded-full px-2 py-0.5 text-[11px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" data-testid="flag-not-raised-kyc4u">Not raised with KYC4U</span>}
         {latest?.status === "queued" && <span className="text-xs text-muted-foreground">Waiting to be filled on KYC4U's form · <a href={KYC4U_FORM_URL} target="_blank" rel="noopener noreferrer" className="underline">open the form</a> · <button type="button" className="underline" onClick={() => setStatus.mutate({ id: latest.id, status: "cancelled" })}>cancel</button></span>}
+        {latest?.status === "submitted" && <span className="text-xs text-muted-foreground">Raised with KYC4U · <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${kyc4uTone(latest.request_status)}`}>{latest.request_status || "No status yet"}</span>{latest.request_url && <> · <a href={latest.request_url} target="_blank" rel="noopener noreferrer" className="underline">open their record</a></>}</span>}
         {latest?.status === "filled" && <span className="text-xs text-muted-foreground">Filled on KYC4U's form {when(latest.filled_at)} — once submitted there, their status shows here after the next sync · <button type="button" className="underline" onClick={() => setStatus.mutate({ id: latest.id, status: "queued" })}>fill again</button></span>}
       </div>
       <Dialog open={open} onOpenChange={setOpen}>

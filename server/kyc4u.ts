@@ -187,6 +187,7 @@ export async function ingestKyc4uLists(lists: Array<{ id: string; name: string; 
   await pool.query(`INSERT INTO system_settings (key, value) VALUES ('kyc4u:last_import', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     [JSON.stringify({ at: new Date().toISOString(), source, userId, lists: lists.length, items, matched })]);
   console.log(`[kyc4u] imported ${items} requests from ${lists.length} lists via ${source} (${matched} matched)`);
+  await mirrorKyc4uStatuses().catch((e: any) => console.warn("[kyc4u] status mirror failed:", e?.message));
   return { lists: lists.length, items, matched };
 }
 
@@ -252,6 +253,98 @@ async function rememberEntity(listId: string, itemId: string, companyId: string)
 // Pull every generic list on the site (the ViewRequestStatus grid reads one
 // of them; system lists are skipped), upsert the items, and match each to a
 // CRM company by its client / entity name when exactly one fits.
+// ── KYC4U is BGP's MLRO (Woody, 2026-10-05) ────────────────────────────
+// "KYC4U are the MLRO, we pay for that service … once they approve, that's
+// the MLRO sign-off." Their request grid is the source of truth: after
+// every sync/import each matched company takes the status of its latest
+// KYC4U request, like a deal following its Xero invoice.
+//   complete / approved / passed / cleared → approved by "KYC4U (MLRO)",
+//     dated by KYC4U, re-check on the AML settings cycle, deals re-derived
+//   failed / rejected / declined / do not proceed → rejected
+//   anything else → in_review — but a still-valid approval is kept while a
+//     re-check is in progress, so a renewal never blocks live deals
+// Idempotent: a company only changes when its latest request or that
+// request's status changes (kyc4u_request_key).
+export const KYC4U_APPROVER = "KYC4U (MLRO)";
+export function kyc4uVerdict(status: string | null): "approved" | "rejected" | "in_review" {
+  const s = String(status || "").toLowerCase();
+  if (/(fail|reject|declin|do not proceed|not approved|unable to verify)/.test(s)) return "rejected";
+  if (/(complete|approv|pass|clear|signed off|verified|done|closed)/.test(s)) return "approved";
+  return "in_review";
+}
+export async function mirrorKyc4uStatuses(): Promise<{ approved: number; rejected: number; inReview: number; linkedDrafts: number }> {
+  const out = { approved: 0, rejected: 0, inReview: 0, linkedDrafts: 0 };
+  const { rows } = await pool.query(
+    `SELECT DISTINCT ON (q.company_id) q.company_id, q.list_id, q.item_id, q.status, q.entity_name,
+            COALESCE(q.modified_at_source, q.created_at_source, q.synced_at) AS at,
+            c.name, c.kyc_status, c.kyc_expires_at, c.kyc4u_request_key
+       FROM kyc4u_requests q JOIN crm_companies c ON c.id = q.company_id
+      WHERE q.company_id IS NOT NULL
+      ORDER BY q.company_id, COALESCE(q.modified_at_source, q.created_at_source, q.synced_at) DESC NULLS LAST`);
+  let intervalDays = 182;
+  try {
+    const st = await pool.query("SELECT recheck_interval_days FROM aml_settings ORDER BY id LIMIT 1");
+    const n = parseInt(st.rows[0]?.recheck_interval_days, 10);
+    if (Number.isFinite(n) && n > 0) intervalDays = n;
+  } catch {}
+  const { recomputeDealKycApproved } = await import("./deal-gates");
+  const audit = (companyId: string, action: string, notes: string) =>
+    pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, $2, $3, $4)`, [companyId, action, KYC4U_APPROVER, notes]).catch(() => {});
+  for (const r of rows) {
+    const verdict = kyc4uVerdict(r.status);
+    const key = `${r.list_id}:${r.item_id}:${verdict}:${String(r.status || "").toLowerCase()}`;
+    if (r.kyc4u_request_key === key) continue;
+    const at = r.at ? new Date(r.at) : new Date();
+    const stillValid = r.kyc_status === "approved" && r.kyc_expires_at && new Date(r.kyc_expires_at) > new Date();
+    try {
+      if (verdict === "approved") {
+        const expires = new Date(at); expires.setDate(expires.getDate() + intervalDays);
+        await pool.query(
+          `UPDATE crm_companies SET kyc_status = 'approved', kyc_checked_at = $2, kyc_approved_by = $3, kyc_expires_at = $4,
+                  kyc4u_request_key = $5, updated_at = NOW() WHERE id = $1`, [r.company_id, at, KYC4U_APPROVER, expires, key]);
+        await pool.query(`UPDATE aml_recheck_reminders SET completed_at = NOW(), completed_by = $2 WHERE company_id = $1 AND completed_at IS NULL`, [r.company_id, KYC4U_APPROVER]).catch(() => {});
+        await pool.query(`INSERT INTO aml_recheck_reminders (company_id, entity_name, recheck_type, due_date, notes) VALUES ($1, $2, 'periodic_cdd', $3, $4)`,
+          [r.company_id, r.name, expires, `KYC4U approval — ${intervalDays}-day re-check`]).catch(() => {});
+        await audit(r.company_id, "kyc_approved", `Approved by KYC4U (BGP's outsourced MLRO): "${r.status}" on ${r.entity_name || "their request"} · re-check due ${expires.toISOString().slice(0, 10)}`);
+        out.approved++;
+      } else if (verdict === "rejected") {
+        await pool.query(`UPDATE crm_companies SET kyc_status = 'rejected', kyc_checked_at = $2, kyc_approved_by = $3, kyc4u_request_key = $4, updated_at = NOW() WHERE id = $1`,
+          [r.company_id, at, KYC4U_APPROVER, key]);
+        await audit(r.company_id, "kyc_rejected", `KYC4U (BGP's outsourced MLRO): "${r.status}" on ${r.entity_name || "their request"}`);
+        out.rejected++;
+      } else {
+        if (stillValid) {
+          await pool.query(`UPDATE crm_companies SET kyc4u_request_key = $2 WHERE id = $1`, [r.company_id, key]);
+        } else {
+          await pool.query(`UPDATE crm_companies SET kyc_status = 'in_review', kyc4u_request_key = $2, updated_at = NOW() WHERE id = $1`, [r.company_id, key]);
+          await audit(r.company_id, "kyc_in_review", `With KYC4U: "${r.status || "no status yet"}" on ${r.entity_name || "their request"}`);
+        }
+        out.inReview++;
+      }
+      await recomputeDealKycApproved(r.company_id, verdict === "approved" ? KYC4U_APPROVER : null).catch((e: any) => console.warn("[kyc4u] deal recompute failed:", e?.message));
+    } catch (e: any) { console.warn(`[kyc4u] mirroring status for ${r.company_id} failed:`, e?.message); }
+  }
+  // Requests raised from a deal: once KYC4U's grid shows a request for that
+  // party created after the form was filled, link the two (Xero-style).
+  try {
+    const filled = (await pool.query(
+      `SELECT id, company_id, filled_at FROM kyc4u_drafts WHERE status = 'filled' AND request_item_id IS NULL AND filled_at IS NOT NULL ORDER BY filled_at`)).rows;
+    for (const d of filled) {
+      const q = (await pool.query(
+        `SELECT q.list_id, q.item_id FROM kyc4u_requests q
+          WHERE q.company_id = $1 AND COALESCE(q.created_at_source, q.modified_at_source) >= $2::timestamp - interval '1 day'
+            AND NOT EXISTS (SELECT 1 FROM kyc4u_drafts o WHERE o.request_list_id = q.list_id AND o.request_item_id = q.item_id)
+          ORDER BY COALESCE(q.created_at_source, q.modified_at_source) ASC LIMIT 1`, [d.company_id, d.filled_at])).rows[0];
+      if (!q) continue;
+      await pool.query(`UPDATE kyc4u_drafts SET request_list_id = $2, request_item_id = $3, status = 'submitted' WHERE id = $1`, [d.id, q.list_id, q.item_id]);
+      out.linkedDrafts++;
+    }
+  } catch (e: any) { console.warn("[kyc4u] linking deal requests failed:", e?.message); }
+  if (out.approved || out.rejected || out.inReview || out.linkedDrafts)
+    console.log(`[kyc4u] mirrored KYC4U statuses: ${out.approved} approved, ${out.rejected} rejected, ${out.inReview} with KYC4U, ${out.linkedDrafts} deal requests linked`);
+  return out;
+}
+
 export async function syncKyc4u(): Promise<{ lists: number; items: number; matched: number }> {
   const auth = await token();
   if (!auth) throw new Error("KYC4U is not connected");
@@ -274,6 +367,7 @@ export async function syncKyc4u(): Promise<{ lists: number; items: number; match
     }
     await saveConnection({ ...auth.conn, lastSyncAt: new Date().toISOString(), lastError: null, listIds: wanted.map((l: any) => l.id) });
     console.log(`[kyc4u] synced ${items} requests from ${wanted.length} lists (${matched} matched to CRM)`);
+    await mirrorKyc4uStatuses().catch((e: any) => console.warn("[kyc4u] status mirror failed:", e?.message));
     return { lists: wanted.length, items, matched };
   } catch (e: any) {
     await saveConnection({ ...auth.conn, lastError: String(e?.message || e).slice(0, 500) });
@@ -523,7 +617,9 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
     try {
       if (!await staffOnly(req, res)) return;
       const r = await pool.query(
-        `SELECT d.*, u.name AS created_by_name FROM kyc4u_drafts d LEFT JOIN users u ON u.id = d.created_by
+        `SELECT d.*, u.name AS created_by_name, q.status AS request_status, q.web_url AS request_url, q.modified_at_source AS request_modified_at
+           FROM kyc4u_drafts d LEFT JOIN users u ON u.id = d.created_by
+           LEFT JOIN kyc4u_requests q ON q.list_id = d.request_list_id AND q.item_id = d.request_item_id
           WHERE ($1::varchar IS NULL OR d.deal_id = $1) AND ($2::varchar IS NULL OR d.company_id = $2)
           ORDER BY d.created_at DESC LIMIT 50`, [req.query.dealId || null, req.query.companyId || null]);
       res.json(r.rows);
@@ -599,6 +695,7 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
           changed++;
         }
       }
+      await mirrorKyc4uStatuses().catch(() => {});
       res.json({ requests: rows.length, matched, changed });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -613,6 +710,7 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
       // the next import matches it by itself.
       if (companyId) await rememberEntity(String(req.params.listId), String(req.params.itemId), companyId)
         .catch((e: any) => console.warn("[kyc4u] saving the entity on the company failed:", e?.message));
+      await mirrorKyc4uStatuses().catch(() => {});
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });

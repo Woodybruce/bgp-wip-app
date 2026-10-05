@@ -259,6 +259,7 @@ function HealthTab() {
     { key: "noAgent", title: "No BGP agent", why: "Invisible in the Agent Summary and earns nobody commission — add the agent or a fee allocation.", data: b.noAgent },
     { key: "noDate", title: "No date at all", why: "No target, exchange or completion date — the deal lands in no month and skews the year view.", data: b.noDate },
     ...(b.noPo ? [{ key: "noPo", title: "Needs a PO number", why: "The client only pays invoices quoting a PO (Canary Wharf Group: No PO No Pay) — add the PO number to the deal before the invoice goes out.", data: b.noPo }] : []),
+    ...(b.noKyc4u ? [{ key: "noKyc4u", title: "Not raised with KYC4U", why: "KYC4U are our MLRO — every party on a new deal needs a KYC4U request. Open the deal → AML panel → Request KYC4U check on each party.", data: b.noKyc4u }] : []),
     { key: "invNoXero", title: "Invoiced with no Xero invoice", why: "Status says Invoiced but no Xero invoice is linked — raise or link the invoice so cash tracking works.", data: b.invNoXero },
     { key: "noFee", title: "Live deal with no fee", why: "In the pipeline but fee is blank — it's excluded from the WIP report entirely (invisible money).", data: b.noFee },
     { key: "noProperty", title: "No property linked", why: "Fine for consultancy mandates; worth linking for everything else.", data: b.noProperty },
