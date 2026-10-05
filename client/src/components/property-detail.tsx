@@ -50,7 +50,6 @@ import { PROPERTY_VIEW_LABELS, suggestPropertyView, propertyOverviewFacts, type 
 import { POSITIONING_PROFILES, exactPositioningTag, withPositioningTag, type SchemePositioning } from "@shared/scheme-positioning";
 import { bgpTeamsOnly, displayAliases } from "@shared/property-labels";
 import { BrandGapPanel } from "@/components/brand-gap-panel";
-import { NotesPanel } from "@/components/notes-panel";
 import { TrackerSummary } from "@/components/tracker-summary";
 import { ActivitySummary } from "@/components/activity-summary";
 import { BrandComplianceCard } from "@/components/brand-profile-panel";
@@ -1022,20 +1021,9 @@ export function PropertyDetail({ id }: { id: string }) {
             </ErrorBoundary>
             </PropertySection>
 
-            <PropertySection name={simpleLayout ? "activity" : "boards"} active={phoneSection} simple={simpleLayout}>
-            {/* Brand Gap — full-width board (Woody, 2026-08-04: "gap
-                analysis display needs a proper rework, full width to
-                start"). Renders for clients too — the server slices the
-                analysis to their brand categories + self-adds, so Landsec
-                sees the hospitality/leisure view. */}
-            {/* No Notes card on shopping centres — their actions go into This
-                week's focus (Woody, 2026-09-28). */}
-            {!isClientViewer && propertyView !== "centre" && (
-              <ErrorBoundary compact name="Notes">
-                <NotesPanel propertyId={property.id} />
-              </ErrorBoundary>
-            )}
-            </PropertySection>
+            {/* No Notes card on any property — actions go into This week's
+                focus (Woody, 2026-09-28 for centres; 2026-10-05 for every
+                property, OneNote import included). */}
             <PropertySection name={simpleLayout ? "research" : "boards"} active={phoneSection} simple={simpleLayout}>
             {simpleLayout && <>
               <ErrorBoundary compact name="Property news"><PropertyNewsPanel propertyId={property.id} propertyName={property.name} /></ErrorBoundary>
