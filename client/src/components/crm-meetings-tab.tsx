@@ -30,7 +30,7 @@ interface CrmInterview {
   updated_at: string;
 }
 
-const TEAMS = ["Leasing", "Investment", "Tenant Rep", "Lease Advisory"];
+const TEAMS = ["Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Development"];
 
 // Identity dot per team (docs/DESIGN.md — identity palettes as dots, never
 // full fills). Everything else stays on theme tokens.
@@ -39,6 +39,7 @@ const TEAM_DOT: Record<string, string> = {
   "Investment": "bg-violet-500",
   "Tenant Rep": "bg-emerald-500",
   "Lease Advisory": "bg-amber-500",
+  "Development": "bg-rose-500",
 };
 
 // The Phase 1 question set, verbatim from the strategy doc.

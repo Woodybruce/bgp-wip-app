@@ -1489,12 +1489,13 @@ export function setupCrmRoutes(app: Express) {
   // question set lives client-side (crm-meetings-tab.tsx), responses are a
   // jsonb map keyed by question id so per-question autosaves merge instead
   // of clobbering each other. BGP-internal: client logins get nothing.
-  const INTERVIEW_TEAMS = ["Leasing", "Investment", "Tenant Rep", "Lease Advisory"];
+  const INTERVIEW_TEAMS = ["Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Development"];
 
   app.get("/api/crm/interviews", async (req, res) => {
     try {
       if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
-      // Seed the four Head of Team interviews on first open.
+      // Seed the Head of Team interviews on first open. Development was added
+      // after the first four were seeded, so give existing boards its card too.
       const count = await pool.query(`SELECT COUNT(*)::int AS n FROM crm_interviews`);
       if (count.rows[0].n === 0) {
         for (const team of INTERVIEW_TEAMS) {
@@ -1503,6 +1504,12 @@ export function setupCrmRoutes(app: Express) {
             [team, (req as any).session?.userId || null],
           );
         }
+      } else {
+        await pool.query(
+          `INSERT INTO crm_interviews (team, created_by)
+           SELECT 'Development', $1 WHERE NOT EXISTS (SELECT 1 FROM crm_interviews WHERE team = 'Development')`,
+          [(req as any).session?.userId || null],
+        );
       }
       const rows = await pool.query(`SELECT * FROM crm_interviews ORDER BY created_at ASC`);
       res.json(rows.rows);
