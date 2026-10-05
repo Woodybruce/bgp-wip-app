@@ -4091,6 +4091,29 @@ app.use("/api/branding/assets", express.static(
     /^\/api\/properties\/[^/]+\/(360|orphan-deals|instructions|project-files|duplicate-units|unresolved-tenants|linkage-audit)\b/,
     /^\/api\/image-studio\/orphans/,
   ];
+  // In-app AML/KYC retired (Woody, 2026-10-05: "KYC4U are the MLRO, we pay
+  // for that service … we just won't AML or KYC in the app itself;
+  // covenant still needs to work"). One switch: the in-app screening,
+  // checklists, CDD form, ID checks, documents, sign-off, training and
+  // registers answer 410. Kept: KYC4U (/api/kyc4u/*), the deal's KYC status
+  // read (/api/kyc/deal/:id/status — KYC4U's mirrored verdict drives the
+  // gate), Companies House lookups and covenant. Stored AML records are
+  // untouched (MLR 2017 record keeping). IN_APP_AML_ENABLED=1 restores it.
+  const RETIRED_AML = [
+    /^\/api\/(aml|kyc-clouseau|veriff|sanctions|kyc-upload|comply-advantage)(\/|$)/,
+    /^\/api\/kyc\/(?!deal\/[^/]+\/status$)/,
+    /^\/api\/accounts\/[^/]+\/entity-checks/,
+    /^\/api\/entities\/[^/]+\/[^/]+\/kyc(\/|$)/,
+    /^\/api\/companies-house\/(property-kyc|batch-rekyc)(\/|$)/,
+  ];
+  app.use("/api", (req: any, res, next) => {
+    if (process.env.IN_APP_AML_ENABLED) return next();
+    const path = (req.originalUrl || req.url || "").split("?")[0].replace(/\/+$/, "");
+    if (RETIRED_AML.some(r => r.test(path))) {
+      return res.status(410).json({ message: "AML/KYC is handled by KYC4U, BGP's MLRO. Raise or check a request from the deal's AML panel (Request KYC4U check)." });
+    }
+    next();
+  });
   app.use("/api", async (req: any, res, next) => {
     // NB: inside app.use("/api", …) the mount path is stripped from req.path,
     // so match on the full originalUrl (minus query string).

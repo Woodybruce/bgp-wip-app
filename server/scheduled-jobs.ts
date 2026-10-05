@@ -205,6 +205,9 @@ async function runAction(job: JobRow): Promise<{ status: "ok" | "error"; output:
       await pool.query(`UPDATE chat_threads SET updated_at = now() WHERE id = $1`, [threadId]).catch(() => {});
       return { status: "ok", output: `digest posted to thread ${threadId}` };
     }
+    if (job.action_kind === "aml_rescreen" && !process.env.IN_APP_AML_ENABLED) {
+      return { status: "ok", output: "skipped — in-app AML retired; KYC4U (BGP's MLRO) does ongoing monitoring" };
+    }
     if (job.action_kind === "aml_rescreen") {
       // Ongoing AML monitoring — re-screens every subject KYC'd in the last
       // 12 months against ComplyAdvantage and reports anyone whose position

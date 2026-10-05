@@ -356,10 +356,10 @@ router.get("/api/companies-house/document/:id", requireAuth, async (req, res) =>
   }
 });
 
-// A parked lookup stamps the attempt but never overwrites an MLRO decision.
-function parkedKycFields(company: any): Record<string, unknown> {
-  const human = ["approved", "rejected"].includes(String(company?.kycStatus || "")) && !!company?.kycApprovedBy;
-  return human ? { kycCheckedAt: new Date() } : { kycStatus: "not_found", kycCheckedAt: new Date() };
+// A parked lookup only stamps the attempt. KYC status is set by KYC4U
+// alone (BGP's MLRO, 2026-10-05) — a Companies House lookup never writes it.
+function parkedKycFields(_company: any): Record<string, unknown> {
+  return { kycCheckedAt: new Date() };
 }
 
 // ─── Core KYC logic — shared between the single-company route and batch runner ──
@@ -894,7 +894,8 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
     companiesHouseNumber: chNumber,
     companiesHouseData: kycReport,
     companiesHouseOfficers: officers,
-    kycStatus,
+    // kyc_status is KYC4U's (BGP's MLRO) — the CH lookup identifies the
+    // entity for covenant and the board; it no longer parks it in review.
     kycCheckedAt: new Date(),
     // Backfill the registered name when the row has none — a CH number
     // resolved via Perplexity/Claude/exact-match left uk_entity_name NULL,

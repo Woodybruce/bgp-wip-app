@@ -5231,7 +5231,8 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
   const shownAbove = stripImages.length;
   const covenantReport = useCovenantReport((c as any)?.companies_house_number);
   const covenantRun = useMutation({
-    mutationFn: async () => apiRequest("POST", `/api/kyc/run-all-checks`, { companyId }),
+    // Covenant only (in-app AML retired 2026-10-05; KYC4U is BGP's MLRO).
+    mutationFn: async () => apiRequest("POST", `/api/brand/${companyId}/credit-check`, {}),
     onSettled: () => { void covenantReport.refetch(); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); },
   });
 

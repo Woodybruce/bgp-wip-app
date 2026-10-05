@@ -109,7 +109,6 @@ export async function tickChecklistItems(
   await pool.query(
     `UPDATE crm_companies
         SET aml_checklist = $1::jsonb,
-            kyc_status = COALESCE(NULLIF(kyc_status, 'approved'), 'in_review'),
             updated_at = NOW()
       WHERE id = $2`,
     [JSON.stringify(merged), companyId],
@@ -310,6 +309,17 @@ export async function runAllAmlChecks(
   checklistTicked: string[];
   warnings: string[];
 }> {
+  // Retired (Woody, 2026-10-05: "KYC4U are the MLRO … we just won't AML or
+  // KYC in the app itself"). Every automatic sweep — deal stage moves, the
+  // investment tracker, property enrichment, Companies House lookups,
+  // entity checks — called this; it now stands down, so nothing in the app
+  // screens, ticks checklists or moves a company's KYC status. KYC4U's grid
+  // (server/kyc4u.ts) is the only source of KYC status.
+  if (!process.env.IN_APP_AML_ENABLED) {
+    return { companyId, companyName: null, investigationId: null, risk: null, sanctionsMatch: false,
+      veriffLaunched: [], veriffSkipped: [], adverseMedia: { ran: false }, historicalKyc: [], marketData: null,
+      checklistTicked: [], warnings: ["In-app AML is retired — KYC4U (BGP's MLRO) runs all AML/KYC"] };
+  }
   const warnings: string[] = [];
   const companyRow = await pool.query(
     `SELECT id, name, companies_house_number FROM crm_companies WHERE id = $1`,
@@ -817,6 +827,7 @@ export async function runPeriodicAmlReScreening(options: { maxCompanies?: number
   errors: number;
   reminderIds: number[];
 }> {
+  if (!process.env.IN_APP_AML_ENABLED) return { scanned: 0, processed: 0, errors: 0, reminderIds: [] }; // retired 2026-10-05 — KYC4U is the MLRO
   const MAX = options.maxCompanies ?? 25;
   console.log("[kyc-orch] Starting periodic AML re-screening...");
 
