@@ -337,6 +337,11 @@ export default function FinancePage() {
     queryKey: ["/api/xero/financials"],
     staleTime: 5 * 60 * 1000,
   });
+  const { data: revolut } = useQuery<{ configured: boolean; asAt?: string; gbpTotal?: number; accounts: Array<{ id: string; name: string | null; currency: string; balance: number }> }>({
+    queryKey: ["/api/revolut/balances"],
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
 
 
   // The Xero OAuth callback lands back here with ?xero=connected or
@@ -486,12 +491,26 @@ export default function FinancePage() {
         </ExpandableStat>
         <ExpandableStat label="Cash at bank" value={money(data.cashTotal)} sub={`${data.bankAccounts?.length || 0} account(s) — tap to list`}>
           <div className="space-y-1">
-            {(data.bankAccounts || []).map((a, i) => (
-              <div key={i} className="flex items-center justify-between text-sm py-0.5">
-                <span className="truncate pr-3">{a.name}</span>
-                <span className="font-mono shrink-0">{money(a.balance)}</span>
-              </div>
-            ))}
+            {(data.bankAccounts || []).map((a, i) => {
+              // Xero's figure only moves as the bank feed is reconciled; show
+              // what Revolut itself says beside its account(s).
+              const live = i === (data.bankAccounts || []).findIndex(b => /revolut/i.test(b.name)) && revolut?.configured && revolut.gbpTotal != null ? revolut.gbpTotal : null;
+              const gap = live != null ? live - a.balance : 0;
+              return (
+                <div key={i} className="py-0.5">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="truncate pr-3">{a.name}{live != null && <span className="text-xs text-muted-foreground"> · in Xero</span>}</span>
+                    <span className="font-mono shrink-0">{money(a.balance)}</span>
+                  </div>
+                  {live != null && (
+                    <div className="flex items-center justify-between text-xs text-muted-foreground" data-testid="revolut-live-balance">
+                      <span className="truncate pr-3">Revolut today (GBP){Math.abs(gap) >= 1 ? ` · ${money(Math.abs(gap))} ${gap > 0 ? "more" : "less"} than Xero — unreconciled in Xero` : " · matches Xero"}</span>
+                      <span className="font-mono shrink-0">{money(live)}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             <div className="flex items-center justify-between text-sm font-semibold border-t mt-1 pt-1.5">
               <span>Total cash</span>
               <span className="font-mono">{money(data.cashTotal)}</span>

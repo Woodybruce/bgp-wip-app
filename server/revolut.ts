@@ -1136,6 +1136,26 @@ export function setupRevolutRoutes(app: Express): void {
   });
 
   // List cards (for mapping to BGP users)
+  // Live balances straight from Revolut. Finance's "Cash at bank" is Xero's
+  // balance-sheet figure, which only moves as the Revolut feed is reconciled
+  // in Xero — so it can sit far from what's really in the account (Woody,
+  // 2026-10-06: "says £107k?"). Shown beside it so the gap is visible.
+  let balancesCache: { at: number; data: any } | null = null;
+  app.get("/api/revolut/balances", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!getConfig()) return res.json({ configured: false, accounts: [] });
+      if (balancesCache && Date.now() - balancesCache.at < 5 * 60_000 && req.query.refresh !== "1") return res.json(balancesCache.data);
+      const accounts = await api<any[]>(`/accounts`);
+      const live = (Array.isArray(accounts) ? accounts : [])
+        .filter((a: any) => a?.state !== "inactive")
+        .map((a: any) => ({ id: a.id, name: a.name || null, currency: a.currency, balance: Number(a.balance) || 0, updatedAt: a.updated_at || null }));
+      const data = { configured: true, asAt: new Date().toISOString(), accounts: live,
+        gbpTotal: live.filter(a => a.currency === "GBP").reduce((t, a) => t + a.balance, 0) };
+      balancesCache = { at: Date.now(), data };
+      res.json(data);
+    } catch (e: any) { res.status(502).json({ message: e?.message || "Revolut balances unavailable" }); }
+  });
+
   app.get("/api/revolut/cards", requireAdmin, async (_req: Request, res: Response) => {
     try {
       const cards = await api<any[]>(`/cards`);
