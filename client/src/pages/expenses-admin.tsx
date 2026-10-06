@@ -182,9 +182,11 @@ export default function ExpensesAdmin() {
       const r = await apiRequest("PATCH", `/api/expenses/cardholders/${args.id}/status`, { status: args.status });
       return r.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: { revolut?: "updated" | "no_card" }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/cardholders"] });
-      toast({ title: "Card status updated" });
+      toast(data?.revolut === "no_card"
+        ? { title: "Card status updated", description: "No Revolut card is mapped to this cardholder, so Revolut wasn't changed." }
+        : { title: "Card status updated in the app and Revolut" });
     },
     onError: (e: any) => toast({ title: "Update failed", description: e?.message, variant: "destructive" }),
   });
