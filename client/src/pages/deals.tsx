@@ -4246,6 +4246,20 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
     },
   });
 
+  // An invoice deleted or voided in Xero stays on the deal until someone
+  // takes it off — the Xero record itself is untouched.
+  const removeMutation = useMutation({
+    mutationFn: async (invoiceId: string) => apiRequest("DELETE", `/api/xero/invoices/${invoiceId}`),
+    onSuccess: () => {
+      toast({ title: "Invoice removed from this deal" });
+      refetchInvoices();
+      invalidateDealCaches();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Couldn't remove it", description: err.message, variant: "destructive" });
+    },
+  });
+
   const syncMutation = useMutation({
     mutationFn: async (invoiceId: string) => {
       const res = await apiRequest("POST", `/api/xero/invoices/${invoiceId}/sync`);
@@ -4462,6 +4476,19 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
                       data-testid={`button-xero-sync-${inv.id}`}
                     >
                       <RefreshCw className={`w-3.5 h-3.5 ${syncMutation.isPending ? "animate-spin" : ""}`} />
+                    </Button>
+                  )}
+                  {(inv.status === "DELETED" || inv.status === "VOIDED") && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      title="Remove from this deal"
+                      onClick={() => { if (confirm(`Remove this ${inv.status === "DELETED" ? "deleted" : "voided"} invoice from the deal? Xero is not changed.`)) removeMutation.mutate(inv.id); }}
+                      disabled={removeMutation.isPending}
+                      data-testid={`button-xero-remove-${inv.id}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
                     </Button>
                   )}
                 </div>

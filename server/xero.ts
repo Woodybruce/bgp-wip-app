@@ -154,8 +154,13 @@ function getRedirectUri(req: Request): string {
   // Explicit override wins — must match a URL registered in the Xero
   // developer app exactly. Set XERO_REDIRECT_URI if the app is reachable
   // under a custom domain (e.g. https://chatbgp.app/api/xero/callback).
-  const override = process.env.XERO_REDIRECT_URI;
-  if (override && override.trim()) return override.trim();
+  // Only the callback URL itself is used: a value pasted with extra text
+  // around it (a shell command, quotes, a second line) once sent Xero an
+  // "Invalid redirect_uri" — take the first https …/api/xero/callback in it,
+  // and ignore the setting entirely when there isn't one.
+  const override = (process.env.XERO_REDIRECT_URI || "").match(/https:\/\/[^\s"'<>]+?\/api\/xero\/callback(?![\w/-])/i)?.[0];
+  if (override) return override;
+  if (process.env.XERO_REDIRECT_URI?.trim()) console.warn("[Xero] XERO_REDIRECT_URI has no https …/api/xero/callback URL in it — ignoring it");
 
   // Otherwise derive from the incoming request so every trusted host works
   // automatically, as long as each one is registered in the Xero app.
