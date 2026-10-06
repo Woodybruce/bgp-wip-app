@@ -1397,7 +1397,7 @@ You are an active operational agent with full CRM read/write access, internet se
 ## Key Tool Workflows
 - **CRM**: search_crm (fuzzy matching) → create/update entities. Search broadly with multiple variations before saying something doesn't exist.
 - **Property onboarding**: Read document → create_property with full address → auto Land Registry enrichment runs in background.
-- **AML / KYC**: KYC4U are BGP's MLRO and run ALL AML/KYC — the app does no screening, sanctions checks or KYC sign-off of its own. A party's KYC status in the CRM is KYC4U's verdict, mirrored from their request grid; to get a party checked, tell the user to press **Request KYC4U check** on the deal's AML panel. check_covenant for covenant strength / financial health / credit risk (house A-E grade). deep_investigate for ownership / company intelligence (not a KYC check).
+- **AML / KYC**: KYC4U are BGP's MLRO and run ALL AML/KYC — the app does no screening, sanctions checks or KYC sign-off of its own. A party's KYC status in the CRM is KYC4U's verdict, mirrored from their request grid; to get a party checked, call prepare_kyc4u_request (same as the deal's **Request KYC4U check** → Ready for KYC4U) — it prepares, it does not submit: then tell the user to click the Send to ChatBGP bookmark on KYC4U's Raise New Service Request page and press Submit there. check_covenant for covenant strength / financial health / credit risk (house A-E grade). deep_investigate for ownership / company intelligence (not a KYC check).
 - **Web research**: web_search → ingest_url → property_data_lookup → property_lookup. Chain tools for comprehensive answers.
 - **Auto-follow news URLs**: When the user pastes a URL from a news outlet, journalist blog, columnist page, research-house insights index, or industry publication (e.g. Sky News, FT, Bloomberg, Reuters, Property Week, Savills/CBRE/Knight Frank research, a Substack), call **follow_url** to register it as a persistent source. The news-feed cron then polls it automatically forever — no further action needed. Confirm in one short line ("Now tracking X — new posts will appear in your news feed"). Skip auto-follow for: internal app URLs, Companies House / planning portals, SharePoint/OneDrive links, social profiles, or one-off article reads (use ingest_url for those). If the user explicitly says "follow / track / watch / scrape this URL" — always call follow_url, regardless of source type. If both reading AND tracking are wanted, run ingest_url first, then follow_url.
 - **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl.
@@ -5085,6 +5085,29 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
   // run_kyc_check retired 2026-10-05 — KYC4U is BGP's MLRO; the app runs no
   // KYC/sanctions screening of its own. check_covenant stays.
 
+  // Same as the deal's "Request KYC4U check" → Ready for KYC4U (Woody,
+  // 2026-10-06: "chat needs ability to do this"). Submitting stays with the
+  // user on KYC4U's form, via the Send to ChatBGP bookmark.
+  tools.push({
+    type: "function",
+    function: {
+      name: "prepare_kyc4u_request",
+      description: "Prepare KYC4U service request(s) for a deal's parties — exactly what the deal's AML panel 'Request KYC4U check' → 'Ready for KYC4U' does. Fields (party type client/counterparty, legal entity, property address, instructing contact, joint agent, fee earner emails, expected completion, note with the deal ref) are prefilled from the deal. Use when the user asks to raise / start / request a KYC4U (AML/KYC) check on a deal's landlord, tenant, vendor or purchaser. It does NOT submit to KYC4U: afterwards tell the user to open KYC4U's Raise New Service Request page and click the Send to ChatBGP bookmark, which fills the form for them to check and Submit. Parties that already have a queued or filled request are skipped.",
+      parameters: {
+        type: "object",
+        properties: {
+          deal_id: { type: "string", description: "The deal's ID (UUID) or its deal number / ref" },
+          parties: { type: "array", items: { type: "string", enum: ["landlord", "tenant", "vendor", "purchaser"] }, description: "Which parties to raise. Omit for every party set on the deal." },
+          request_type: { type: "string", description: "KYC4U request type, if the user said (e.g. Standard, Enhanced)" },
+          met_face_to_face: { type: "string", description: "Yes / No, if known" },
+          how_long_known: { type: "string", description: "How long BGP has known the party, if known" },
+          note: { type: "string", description: "Anything extra to add to the request's note" },
+        },
+        required: ["deal_id"],
+      },
+    },
+  });
+
   tools.push({
     type: "function",
     function: {
@@ -6730,6 +6753,39 @@ export async function executeCrmToolRaw(
     if (out.status === 404) return { data: { success: false, error: `No investment tracker item found with ID "${id}"` } };
     if (out.status !== 200) return { data: { success: false, error: out.body?.message || "Update refused" } };
     return { data: { success: true, action: "updated", entity: "investment tracker item", name: out.body.assetName, fields: Object.keys(cleanUpdates), amlStarted: !!out.body.amlStarted, amlWarning: out.body.amlWarning || null }, action: { type: "crm_updated", entityType: "investment", id } };
+  }
+
+  if (fnName === "prepare_kyc4u_request") {
+    if (await resolveCompanyScope(req).catch(() => null)) return { data: { success: false, error: "KYC4U requests are BGP staff only" } };
+    const ref = String(fnArgs.deal_id || "").replace(/^#/, "").trim();
+    const deal = (await pool.query(
+      `SELECT id, name, deal_ref, landlord_id, tenant_id, vendor_id, purchaser_id FROM crm_deals WHERE id = $1 OR deal_ref::text = $1 LIMIT 1`, [ref])).rows[0];
+    if (!deal) return { data: { success: false, error: `No deal found for "${ref}"` } };
+    const wanted: string[] = Array.isArray(fnArgs.parties) && fnArgs.parties.length ? fnArgs.parties : ["landlord", "tenant", "vendor", "purchaser"];
+    const userId = (req as any)?.session?.userId || (req as any)?.tokenUserId || null;
+    const { kyc4uPrefill, createKyc4uDraft } = await import("./kyc4u");
+    const prepared: any[] = [], skipped: any[] = [];
+    for (const role of wanted) {
+      const companyId = deal[`${role}_id`];
+      if (!companyId) { if (fnArgs.parties?.length) skipped.push({ role, reason: `no ${role} on the deal` }); continue; }
+      const open = (await pool.query(`SELECT status FROM kyc4u_drafts WHERE deal_id = $1 AND company_id = $2 AND status IN ('queued','filled') LIMIT 1`, [deal.id, companyId])).rows[0];
+      const pre = await kyc4uPrefill(deal.id, companyId, role, userId);
+      if (open) { skipped.push({ role, party: pre.fields.partyName, reason: `already ${open.status === "queued" ? "waiting to be filled on KYC4U's form" : "filled on KYC4U's form"}` }); continue; }
+      const fields: Record<string, string> = { ...pre.fields };
+      if (fnArgs.request_type) fields.requestType = String(fnArgs.request_type);
+      if (fnArgs.met_face_to_face) fields.metFaceToFace = String(fnArgs.met_face_to_face);
+      if (fnArgs.how_long_known) fields.howLongKnown = String(fnArgs.how_long_known);
+      if (fnArgs.note) fields.note = [fields.note, String(fnArgs.note)].filter(Boolean).join("\n");
+      await createKyc4uDraft({ dealId: deal.id, companyId, role, fields, userId });
+      prepared.push({ role, party: fields.partyName, partyType: fields.partyType, stillToFillOnKyc4uForm: ["requestType", "metFaceToFace", "howLongKnown"].filter(k => !fields[k]) });
+    }
+    return {
+      data: {
+        success: prepared.length > 0, deal: { id: deal.id, ref: deal.deal_ref, name: deal.name }, prepared, skipped,
+        nextStep: prepared.length ? "Prepared, NOT submitted. Open KYC4U's Raise New Service Request page (https://kyc4ultd.sharepoint.com/sites/customers/CST1092/SitePages/Raise-New-Service-Request.aspx) and click the Send to ChatBGP bookmark once per request — it fills the form; check it (add any ID documents), then press Submit. The deal then shows 'Filled on KYC4U's form'." : undefined,
+      },
+      action: prepared.length ? { type: "crm_updated", entityType: "deal", id: deal.id } : undefined,
+    };
   }
 
   if (fnName === "update_deal") {
