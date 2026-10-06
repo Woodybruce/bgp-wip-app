@@ -58,6 +58,7 @@ import { Pill } from "@/components/ui/pill";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import { PropertyCombobox } from "@/components/property-combobox";
 import { apiRequest, queryClient, invalidateDealCaches, getAuthHeaders } from "@/lib/queryClient";
 import { Link, useLocation } from "wouter";
 import type { CrmDeal, CrmProperty, CrmCompany, CrmContact } from "@shared/schema";
@@ -167,6 +168,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [unitEditOpen, setUnitEditOpen] = useState(false);
   const [unitEditForm, setUnitEditForm] = useState({
+    propertyId: "",
     switchToUnitId: "",
     unitAddress: "",
     unitPostcode: "",
@@ -305,8 +307,9 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const linkedUnit = (deal as any)?.unitId
     ? propertyUnits.find((u) => u.id === (deal as any).unitId)
     : null;
-  const unitsOnThisProperty = (deal as any)?.propertyId
-    ? propertyUnits.filter(u => u.propertyId === (deal as any).propertyId)
+  const unitPickPropertyId = (unitEditOpen && unitEditForm.propertyId) || (deal as any)?.propertyId;
+  const unitsOnThisProperty = unitPickPropertyId
+    ? propertyUnits.filter(u => u.propertyId === unitPickPropertyId)
     : [];
   const userColorMap = useMemo(() => buildUserColorMap(users as any), [users]);
 
@@ -397,6 +400,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   // Open the unit-edit overlay, pre-filling from the currently linked unit.
   const openUnitEdit = () => {
     setUnitEditForm({
+      propertyId: (deal as any)?.propertyId || "",
       switchToUnitId: linkedUnit?.id || "",
       unitAddress: linkedUnit?.unitAddress || "",
       unitPostcode: linkedUnit?.unitPostcode || "",
@@ -418,15 +422,22 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           unitAddressFreeText: unitEditForm.unitAddressFreeText || null,
         });
       }
-      if (unitEditForm.switchToUnitId && unitEditForm.switchToUnitId !== linkedUnit?.id) {
-        await apiRequest("PUT", `/api/crm/deals/${id}`, { unitId: unitEditForm.switchToUnitId });
-      }
+      // A deal with no property had nowhere to pick a unit from and the
+      // save did nothing visible (Woody, 2026-10-06) — the property is
+      // set here too.
+      const dealPatch: Record<string, string> = {};
+      if (unitEditForm.propertyId && unitEditForm.propertyId !== (deal as any)?.propertyId) dealPatch.propertyId = unitEditForm.propertyId;
+      if (unitEditForm.switchToUnitId && unitEditForm.switchToUnitId !== linkedUnit?.id) dealPatch.unitId = unitEditForm.switchToUnitId;
+      if (Object.keys(dealPatch).length) await apiRequest("PUT", `/api/crm/deals/${id}`, dealPatch);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", id] });
       queryClient.invalidateQueries({ queryKey: ["/api/property-units"] });
+      invalidateDealCaches();
       setUnitEditOpen(false);
+      toast({ title: "Saved" });
     },
+    onError: (e: any) => toast({ title: "Couldn't save", description: e?.message, variant: "destructive" }),
   });
 
   const updateAgentsMutation = useMutation({
@@ -1311,17 +1322,29 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           <DialogHeader>
             <DialogTitle>Unit</DialogTitle>
             <DialogDescription>
-              Switch to a different unit on this property, or edit this unit's address details. The address feeds business-rates and EPC lookups.
+              Set the property, switch to a different unit on it, or edit this unit's address details. The address feeds business-rates and EPC lookups.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            <div>
+              <Label className="text-xs">Property</Label>
+              <PropertyCombobox
+                testId="select-unit-dialog-property"
+                placeholder="Select property or paste an address"
+                value={unitEditForm.propertyId}
+                items={properties.map((p) => ({ id: p.id, label: p.name, subLabel: p.postcode || undefined, keywords: [p.postcode || ""] }))}
+                onChange={(v) => setUnitEditForm(f => ({ ...f, propertyId: v, switchToUnitId: v === f.propertyId ? f.switchToUnitId : "" }))}
+                onCreated={() => queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] })}
+              />
+              {!(deal as any)?.propertyId && <p className="text-xs text-muted-foreground mt-1">This deal isn't linked to a property yet — pick or create one here.</p>}
+            </div>
             <div>
               <Label className="text-xs">Switch unit</Label>
               <Select
                 value={unitEditForm.switchToUnitId || undefined}
                 onValueChange={(v) => setUnitEditForm(f => ({ ...f, switchToUnitId: v }))}
               >
-                <SelectTrigger><SelectValue placeholder="Pick a unit on this property" /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder={unitsOnThisProperty.length ? "Pick a unit on this property" : unitPickPropertyId ? "No units on this property yet" : "Pick a property first"} /></SelectTrigger>
                 <SelectContent>
                   {unitsOnThisProperty.map((u) => (
                     <SelectItem key={u.id} value={u.id}>{u.unitName}</SelectItem>
