@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Loader2, RefreshCw, ExternalLink, Plug, Unplug, Bookmark, Upload } from "lucide-react";
+import { Loader2, ExternalLink, Bookmark, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -52,6 +52,8 @@ var webs=[web];function addWeb(u){u=String(u||'').replace(/\\/+$/,'');if(u&&u.in
 var links=[].slice.call(document.querySelectorAll('a[href]')).map(function(a){return{text:(a.textContent||'').trim().slice(0,80),href:a.href};}).filter(function(l){return l.href.indexOf('javascript:')!==0;}).slice(0,80);
 links.forEach(function(l){if(cut.test(l.href))addWeb(l.href.split(cut)[0]);});
 var diag={webs:[],links:links};
+function txt(el){return (el.textContent||'').replace(/\\s+/g,' ').trim();}
+function pageGrid(){var grids=[].slice.call(document.querySelectorAll('table,[role=grid]'));var items=[];grids.forEach(function(g,gi){var isT=g.tagName==='TABLE';var hs=[].slice.call(g.querySelectorAll(isT?'th':'[role=columnheader]')).map(txt);if(!hs.some(function(h){return /status/i.test(h);}))return;var rows=[].slice.call(g.querySelectorAll(isT?'tr':'[role=row]'));rows.forEach(function(r,ri){var cs=[].slice.call(r.querySelectorAll(isT?'td':'[role=gridcell],[role=rowheader]'));if(cs.length<2)return;var f={};cs.forEach(function(c,ci){f[hs[ci]||('Column '+(ci+1))]=txt(c).slice(0,300);});var m=txt(r).match(/REQ[- ]?\\d+/i);var a=r.querySelector('a[href]');items.push({id:m?m[0].toUpperCase().replace(/[- ]/,''):('row-'+gi+'-'+ri),fields:f,created:null,modified:null,url:a?a.href:location.href});});});diag.page={url:location.href,rows:items.length};return items.length?{id:'page:'+location.pathname,name:(document.title||'KYC4U status page').slice(0,120),items:items}:null;}
 get(web+"/_api/web/webs?$select=Url").then(function(d){(d.value||[]).forEach(function(x){addWeb(x.Url);});}).catch(function(){}).then(function(){
 return Promise.all(webs.map(function(u){var info={url:u,lists:[]};diag.webs.push(info);
 return get(u+"/_api/web/lists?$filter=Hidden eq false&$select=Id,Title,ItemCount,BaseType,BaseTemplate,DefaultViewUrl").then(function(d){
@@ -59,7 +61,7 @@ var ls=(d.value||[]);info.lists=ls.map(function(l){return{title:l.Title,count:l.
 ls=ls.filter(function(l){return l.ItemCount>0&&(l.BaseType===0||(l.BaseType===1&&l.BaseTemplate!==119&&!SYS.test(l.Title)));});
 return Promise.all(ls.map(function(l){var lib=l.BaseType===1;return all(u+"/_api/web/lists(guid'"+l.Id+"')/items?$top=500"+(lib?"&$select=Id,Title,FileLeafRef,FileRef,FileDirRef,FSObjType,Created,Modified":""),[]).then(function(its){return{id:l.Id,name:l.Title,library:lib,items:its.map(function(i){var f={};for(var k in i){if(k.indexOf('odata')<0&&(i[k]===null||typeof i[k]!=='object'))f[k]=i[k];}return{id:String(i.Id),fields:f,created:i.Created,modified:i.Modified,url:location.origin+(lib&&i.FileRef?i.FileRef:(l.DefaultViewUrl||''))};})};}).catch(function(e){info.error=e.message;return null;});}));
 }).catch(function(e){info.error=e.message;return [];});}));
-}).then(function(per){var lists=[].concat.apply([],per).filter(Boolean);var sent=false;window.addEventListener('message',function(e){if(e.origin===APP&&e.data&&e.data.type==='kyc4u-ready'&&!sent){sent=true;w.postMessage({type:'kyc4u-data',lists:lists,site:web,diag:diag},APP);}});
+}).then(function(per){var lists=[].concat.apply([],per).filter(Boolean);var pg=pageGrid();if(pg)lists.push(pg);var sent=false;window.addEventListener('message',function(e){if(e.origin===APP&&e.data&&e.data.type==='kyc4u-ready'&&!sent){sent=true;w.postMessage({type:'kyc4u-data',lists:lists,site:web,diag:diag},APP);}});
 }).catch(function(e){alert('ChatBGP could not read KYC4U: '+e.message);});})();`;
   return `javascript:${encodeURIComponent(code.replace(/\n/g, ""))}`;
 }
@@ -100,37 +102,10 @@ export default function Kyc4uPanel() {
     }
   };
 
-  useEffect(() => {
-    const note = new URLSearchParams(window.location.search).get("kyc4u");
-    if (!note) return;
-    toast(note === "connected"
-      ? { title: "KYC4U connected", description: "The first sync is running — requests appear here in a minute." }
-      : /has approved/.test(note)
-        ? { title: "Approved", description: note }
-        : { title: "KYC4U sign-in didn't finish", description: note, variant: "destructive" });
-    const url = new URL(window.location.href);
-    url.searchParams.delete("kyc4u");
-    window.history.replaceState(null, "", url.pathname + url.search);
-  }, []);
-
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/kyc4u/status"] });
     queryClient.invalidateQueries({ queryKey: ["/api/kyc4u/requests"] });
   };
-  const connect = useMutation({
-    mutationFn: async () => (await apiRequest("GET", "/api/kyc4u/connect")).json(),
-    onSuccess: (r: any) => { if (r?.authUrl) window.location.href = r.authUrl; },
-    onError: (e: any) => toast({ title: "Couldn't start the sign-in", description: e?.message, variant: "destructive" }),
-  });
-  const sync = useMutation({
-    mutationFn: async () => (await apiRequest("POST", "/api/kyc4u/sync")).json(),
-    onSuccess: (r: any) => { refresh(); toast({ title: "KYC4U synced", description: `${r.items} requests from ${r.lists} list${r.lists === 1 ? "" : "s"} · ${r.matched} matched to CRM` }); },
-    onError: (e: any) => { refresh(); toast({ title: "Sync failed", description: e?.message, variant: "destructive" }); },
-  });
-  const disconnect = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/kyc4u/disconnect"),
-    onSuccess: () => { refresh(); toast({ title: "KYC4U disconnected" }); },
-  });
 
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -148,28 +123,12 @@ export default function Kyc4uPanel() {
   return (
     <div className="p-4 lg:p-6 space-y-4 max-w-[1400px]" data-testid="kyc4u-panel">
       <section className="rounded-xl border bg-card p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[11px] uppercase tracking-widest text-muted-foreground">KYC4U requests</p>
-            {status.connected ? (
-              <p className="text-sm mt-1">Connected as <strong>{status.username}</strong> · last sync {when(status.lastSyncAt)} · <span className="tabular-nums">{status.requests}</span> requests, <span className="tabular-nums">{status.matched}</span> matched to CRM</p>
-            ) : (
-              <p className="text-sm mt-1 text-muted-foreground">Not connected. Sign in once with your BGP email (your guest access to KYC4U's SharePoint); the grid then syncs every six hours.</p>
-            )}
-            {status.lastError && <p className="text-xs text-destructive mt-1 break-words">Last sync error: {status.lastError}</p>}
-            <a href={status.site} target="_blank" rel="noopener" className="text-xs text-primary inline-flex items-center gap-1 mt-1">KYC4U site <ExternalLink className="w-3 h-3" /></a>
-          </div>
-          {isAdmin && (
-            <div className="flex items-center gap-2 shrink-0">
-              {status.connected && <Button size="sm" variant="outline" className="rounded-full" onClick={() => sync.mutate()} disabled={sync.isPending}>{sync.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1.5" />}Sync now</Button>}
-              <Button size="sm" className="rounded-full" onClick={() => connect.mutate()} disabled={connect.isPending} data-testid="button-kyc4u-connect"><Plug className="w-4 h-4 mr-1.5" />{status.connected ? "Reconnect" : "Connect KYC4U"}</Button>
-              {status.connected && <Button size="sm" variant="ghost" className="rounded-full" onClick={() => disconnect.mutate()}><Unplug className="w-4 h-4 mr-1.5" />Disconnect</Button>}
-            </div>
-          )}
-        </div>
-        {!status.connected && isAdmin && (
-          <p className="text-xs text-muted-foreground mt-3">Press Connect and sign in with your BGP email. If Microsoft says "Need admin approval", KYC4U's IT admin has to approve BGP Dashboard once for their organisation first.</p>
-        )}
+        <p className="text-[11px] uppercase tracking-widest text-muted-foreground">KYC4U requests</p>
+        <p className="text-sm mt-1">
+          {status.lastImport ? <>Last sent {when(status.lastImport.at)} · </> : <>Nothing sent from KYC4U yet · </>}
+          <span className="tabular-nums">{status.requests}</span> requests, <span className="tabular-nums">{status.matched}</span> matched to CRM
+        </p>
+        <a href={status.site} target="_blank" rel="noopener" className="text-xs text-primary inline-flex items-center gap-1 mt-1">KYC4U site <ExternalLink className="w-3 h-3" /></a>
       </section>
 
       {isAdmin && (
@@ -247,28 +206,69 @@ export function Kyc4uStatusStrip({ companyId }: { companyId: string }) {
     enabled: !!companyId,
     staleTime: 5 * 60_000,
   });
+  const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isAdmin = !!me?.isAdmin;
   const requests = data?.requests || [];
-  if (!requests.length) return null;
+  if (!requests.length && !isAdmin) return null;
   return (
     <div data-testid="kyc4u-status-strip">
       <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center justify-between gap-2">
         <span>KYC4U</span>
         {data?.lastSyncAt && <span className="normal-case tracking-normal">synced {when(data.lastSyncAt)}</span>}
       </div>
+      {!requests.length && <p className="text-sm text-muted-foreground">No KYC4U request matched to this company yet.</p>}
       <ul className="space-y-1">
         {requests.slice(0, 4).map(r => (
           <li key={`${r.listId}:${r.itemId}`} className="flex items-start gap-2 text-sm">
             <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${kyc4uTone(r.status)}`}>{r.status || "No status"}</span>
             <span className="min-w-0 flex-1">
               <span className="block truncate" title={r.entityName || r.title || ""}>{r.entityName || r.title || "Request"}</span>
-              {r.modifiedAt && <span className="block text-xs text-muted-foreground">Updated {when(r.modifiedAt)}</span>}
+              {r.modifiedAt && <span className="block text-xs text-muted-foreground">{r.listId === "manual" ? "Recorded in the app" : "Updated"} {when(r.modifiedAt)}</span>}
             </span>
             {r.webUrl && <a href={r.webUrl} target="_blank" rel="noopener noreferrer" className="shrink-0 text-xs text-primary hover:underline">Open</a>}
           </li>
         ))}
       </ul>
       {requests.length > 4 && <p className="text-xs text-muted-foreground mt-1">+{requests.length - 4} more on the KYC hub</p>}
+      {isAdmin && <Kyc4uSignoffButton companyId={companyId} />}
     </div>
+  );
+}
+
+function Kyc4uSignoffButton({ companyId }: { companyId: string }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [note, setNote] = useState("");
+  const save = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/kyc4u/company/${companyId}/signoff`, { date, note })).json(),
+    onSuccess: () => {
+      setOpen(false); setNote("");
+      queryClient.invalidateQueries();
+      toast({ title: "KYC4U sign-off recorded", description: "Approved by KYC4U (MLRO) — the company's deals update now." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't record it", description: e?.message, variant: "destructive" }),
+  });
+  return (
+    <>
+      <button type="button" className="mt-1 text-xs text-primary hover:underline" onClick={() => setOpen(true)} data-testid="button-kyc4u-signoff">Record KYC4U sign-off</button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Record KYC4U sign-off</DialogTitle>
+            <DialogDescription>Only when KYC4U have signed this company off (e.g. by email) and it isn't on their request status page yet. It shows as Approved by KYC4U (MLRO), noted with your name.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <label className="block text-sm">Signed off on<Input type="date" value={date} onChange={e => setDate(e.target.value)} className="mt-1" /></label>
+            <label className="block text-sm">Note<Input value={note} onChange={e => setNote(e.target.value)} placeholder="e.g. KYC4U email from Parul, 6 Oct" className="mt-1" /></label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" className="rounded-full" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button className="rounded-full" onClick={() => save.mutate()} disabled={save.isPending || !date}>{save.isPending && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}Record sign-off</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

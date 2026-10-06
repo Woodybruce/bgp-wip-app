@@ -274,12 +274,23 @@ export function kyc4uVerdict(status: string | null): "approved" | "rejected" | "
 }
 export async function mirrorKyc4uStatuses(): Promise<{ approved: number; rejected: number; inReview: number; linkedDrafts: number }> {
   const out = { approved: 0, rejected: 0, inReview: 0, linkedDrafts: 0 };
+  // A row read off KYC4U's status page takes the company its REQ folder is
+  // already matched (or hand-linked) to.
+  await pool.query(
+    `UPDATE kyc4u_requests p SET company_id = f.company_id
+       FROM kyc4u_requests f
+      WHERE p.list_id LIKE 'page:%' AND p.company_id_manual IS NULL AND p.item_id LIKE 'REQ%'
+        AND f.list_id LIKE '%:requests' AND f.item_id = p.item_id AND f.company_id IS NOT NULL
+        AND p.company_id IS DISTINCT FROM f.company_id`).catch((e: any) => console.warn("[kyc4u] linking status rows failed:", e?.message));
   const { rows } = await pool.query(
-    `SELECT DISTINCT ON (q.company_id) q.company_id, q.list_id, q.item_id, q.status, q.entity_name,
+    `SELECT DISTINCT ON (q.company_id) q.company_id, q.list_id, q.item_id, q.status, q.entity_name, q.fields,
             COALESCE(q.modified_at_source, q.created_at_source, q.synced_at) AS at,
             c.name, c.kyc_status, c.kyc_expires_at, c.kyc4u_request_key
        FROM kyc4u_requests q JOIN crm_companies c ON c.id = q.company_id
       WHERE q.company_id IS NOT NULL
+        -- Rows folded from document-library folders carry a file count, not a
+        -- KYC4U decision — only their request-status list can sign off.
+        AND q.list_id NOT LIKE '%:requests'
       ORDER BY q.company_id, COALESCE(q.modified_at_source, q.created_at_source, q.synced_at) DESC NULLS LAST`);
   let intervalDays = 182;
   try {
@@ -305,7 +316,7 @@ export async function mirrorKyc4uStatuses(): Promise<{ approved: number; rejecte
         await pool.query(`UPDATE aml_recheck_reminders SET completed_at = NOW(), completed_by = $2 WHERE company_id = $1 AND completed_at IS NULL`, [r.company_id, KYC4U_APPROVER]).catch(() => {});
         await pool.query(`INSERT INTO aml_recheck_reminders (company_id, entity_name, recheck_type, due_date, notes) VALUES ($1, $2, 'periodic_cdd', $3, $4)`,
           [r.company_id, r.name, expires, `KYC4U approval — ${intervalDays}-day re-check`]).catch(() => {});
-        await audit(r.company_id, "kyc_approved", `Approved by KYC4U (BGP's outsourced MLRO): "${r.status}" on ${r.entity_name || "their request"} · re-check due ${expires.toISOString().slice(0, 10)}`);
+        await audit(r.company_id, "kyc_approved", `Approved by KYC4U (BGP's outsourced MLRO): "${r.status}" on ${r.entity_name || "their request"}${r.list_id === "manual" ? ` · recorded in the app by ${r.fields?.["Recorded by"] || "an admin"}${r.fields?.Note ? ` — ${r.fields.Note}` : ""}` : ""} · re-check due ${expires.toISOString().slice(0, 10)}`);
         out.approved++;
       } else if (verdict === "rejected") {
         await pool.query(`UPDATE crm_companies SET kyc_status = 'rejected', kyc_checked_at = $2, kyc_approved_by = $3, kyc4u_request_key = $4, updated_at = NOW() WHERE id = $1`,
@@ -677,6 +688,28 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
           ORDER BY q.modified_at_source DESC NULLS LAST LIMIT 20`, [String(req.params.companyId)]);
       const conn = await loadConnection().catch(() => null);
       res.json({ requests: r.rows, lastSyncAt: conn?.lastSyncAt || null });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // KYC4U signed off but it isn't on anything the bookmark can read (e.g. an
+  // email from them): an admin records it, and the mirror applies it like
+  // any KYC4U approval — "Approved by KYC4U (MLRO)", audited with who
+  // recorded it. A later KYC4U status for the company replaces it.
+  app.post("/api/kyc4u/company/:companyId/signoff", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const companyId = String(req.params.companyId);
+      const c = (await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+      if (!c) return res.status(404).json({ message: "Company not found" });
+      const on = validDate(req.body?.date) || new Date().toISOString();
+      const note = String(req.body?.note || "").trim().slice(0, 500);
+      const u = (await pool.query(`SELECT name FROM users WHERE id = $1`, [req.session.userId || (req as any).tokenUserId || null]).catch(() => ({ rows: [] as any[] }))).rows[0];
+      const by = u?.name || "an admin";
+      await pool.query(
+        `INSERT INTO kyc4u_requests (list_id, item_id, list_name, title, status, entity_name, company_id, company_id_manual, fields, created_at_source, modified_at_source, synced_at)
+         VALUES ('manual', $1, 'Recorded in the app', $2, 'Approved', $2, $3, $3, $4::jsonb, $5, $5, NOW())`,
+        [`${companyId}:${Date.now()}`, c.name, companyId, JSON.stringify({ "Recorded by": by, Note: note || null }), on]);
+      const r = await mirrorKyc4uStatuses();
+      res.json({ ok: true, ...r });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
