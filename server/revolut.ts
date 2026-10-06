@@ -857,6 +857,24 @@ export async function backfillRecentRevolutTransactions(opts: { lookbackMinutes?
   };
 }
 
+// Live balances straight from Revolut (5-minute cache). Xero's balance for
+// the Revolut account only moves as its bank feed is reconciled, so Finance
+// and the cashflow board use this instead (Woody, 2026-10-06: "ignore the
+// Revolut feed from Xero and pull directly from Revolut").
+let balancesCache: { at: number; data: any } | null = null;
+export async function revolutBalances(force = false): Promise<{ configured: boolean; asAt?: string; gbpTotal?: number; accounts: Array<{ id: string; name: string | null; currency: string; balance: number }> }> {
+  if (!getConfig()) return { configured: false, accounts: [] };
+  if (!force && balancesCache && Date.now() - balancesCache.at < 5 * 60_000) return balancesCache.data;
+  const accounts = await api<any[]>(`/accounts`);
+  const live = (Array.isArray(accounts) ? accounts : [])
+    .filter((a: any) => a?.state !== "inactive")
+    .map((a: any) => ({ id: a.id, name: a.name || null, currency: a.currency, balance: Number(a.balance) || 0 }));
+  const data = { configured: true, asAt: new Date().toISOString(), accounts: live,
+    gbpTotal: live.filter(a => a.currency === "GBP").reduce((t, a) => t + a.balance, 0) };
+  balancesCache = { at: Date.now(), data };
+  return data;
+}
+
 export function setupRevolutRoutes(app: Express): void {
   ensureColumns().catch(err => console.warn("[revolut] init:", err?.message));
 
@@ -1140,20 +1158,9 @@ export function setupRevolutRoutes(app: Express): void {
   // balance-sheet figure, which only moves as the Revolut feed is reconciled
   // in Xero — so it can sit far from what's really in the account (Woody,
   // 2026-10-06: "says £107k?"). Shown beside it so the gap is visible.
-  let balancesCache: { at: number; data: any } | null = null;
   app.get("/api/revolut/balances", requireAdmin, async (req: Request, res: Response) => {
-    try {
-      if (!getConfig()) return res.json({ configured: false, accounts: [] });
-      if (balancesCache && Date.now() - balancesCache.at < 5 * 60_000 && req.query.refresh !== "1") return res.json(balancesCache.data);
-      const accounts = await api<any[]>(`/accounts`);
-      const live = (Array.isArray(accounts) ? accounts : [])
-        .filter((a: any) => a?.state !== "inactive")
-        .map((a: any) => ({ id: a.id, name: a.name || null, currency: a.currency, balance: Number(a.balance) || 0, updatedAt: a.updated_at || null }));
-      const data = { configured: true, asAt: new Date().toISOString(), accounts: live,
-        gbpTotal: live.filter(a => a.currency === "GBP").reduce((t, a) => t + a.balance, 0) };
-      balancesCache = { at: Date.now(), data };
-      res.json(data);
-    } catch (e: any) { res.status(502).json({ message: e?.message || "Revolut balances unavailable" }); }
+    try { res.json(await revolutBalances(req.query.refresh === "1")); }
+    catch (e: any) { res.status(502).json({ message: e?.message || "Revolut balances unavailable" }); }
   });
 
   app.get("/api/revolut/cards", requireAdmin, async (_req: Request, res: Response) => {
