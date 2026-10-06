@@ -258,7 +258,7 @@ async function rememberEntity(listId: string, itemId: string, companyId: string)
 // the MLRO sign-off." Their request grid is the source of truth: after
 // every sync/import each matched company takes the status of its latest
 // KYC4U request, like a deal following its Xero invoice.
-//   complete / approved / passed / cleared → approved by "KYC4U (MLRO)",
+//   approved / passed / cleared / signed off → approved by "KYC4U (MLRO)",
 //     dated by KYC4U, re-check on the AML settings cycle, deals re-derived
 //   failed / rejected / declined / do not proceed → rejected
 //   anything else → in_review — but a still-valid approval is kept while a
@@ -269,7 +269,10 @@ export const KYC4U_APPROVER = "KYC4U (MLRO)";
 export function kyc4uVerdict(status: string | null): "approved" | "rejected" | "in_review" {
   const s = String(status || "").toLowerCase();
   if (/(fail|reject|declin|do not proceed|not approved|unable to verify)/.test(s)) return "rejected";
-  if (/(complete|approv|pass|clear|signed off|verified|done|closed)/.test(s)) return "approved";
+  // "Complete and ready for review" is KYC4U handing the check back for the
+  // fee earner to approve (their Service Desk email) — not a sign-off.
+  if (/(not approv|unapprov|awaiting approv|pending approv)/.test(s)) return "in_review";
+  if (/(approv|passed|cleared|signed off)/.test(s)) return "approved";
   return "in_review";
 }
 export async function mirrorKyc4uStatuses(): Promise<{ approved: number; rejected: number; inReview: number; linkedDrafts: number }> {
