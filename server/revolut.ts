@@ -652,6 +652,13 @@ export async function unfreezeRevolutCard(cardId: string): Promise<void> {
   await api<unknown>(`/cards/${encodeURIComponent(cardId)}/unfreeze`, { method: "POST" });
 }
 
+// Revolut's own card state ("active", "frozen", "locked", …) — lets the
+// admin button tell "already in that state" apart from a real failure.
+export async function getRevolutCardState(cardId: string): Promise<string | null> {
+  const card = await api<any>(`/cards/${encodeURIComponent(cardId)}`);
+  return typeof card?.state === "string" ? card.state : null;
+}
+
 // ─── Card ↔ cardholder resolver ──────────────────────────────────────────
 //
 // The Revolut card id lives in two places — stripe_cardholders.revolut_card_id

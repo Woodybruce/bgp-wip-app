@@ -21,6 +21,7 @@ import { eq, desc, and, gte, sql, inArray, or } from "drizzle-orm";
 import crypto from "crypto";
 import multer from "multer";
 import { saveFile, getFile } from "./file-storage";
+import { freezeRevolutCard, unfreezeRevolutCard, getRevolutCardState, resolveRevolutCardIdForCardholder } from "./revolut";
 
 const STRIPE_API = "https://api.stripe.com/v1";
 
@@ -224,17 +225,34 @@ export async function updateCardholderLimits(args: {
 
 // ─── FREEZE / UNFREEZE ─────────────────────────────────────────────────────
 
-export async function setCardholderStatus(cardholderId: string, status: "active" | "inactive") {
+export async function setCardholderStatus(cardholderId: string, status: "active" | "inactive"): Promise<{ revolut: "updated" | "no_card" }> {
   const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.id, cardholderId)).limit(1);
   if (!ch) throw new Error("Cardholder not found");
   // Revolut-mapped cardholders have no Stripe id — skip the Stripe call
-  // (it would hit /issuing/cardholders/null → 404). Freeze/unfreeze for a
-  // Revolut card is done in the Revolut app; we keep the local status flag
-  // in sync for the dashboard either way.
+  // (it would hit /issuing/cardholders/null → 404).
   if (ch.stripeCardholderId) {
     await stripeRequest("POST", `/issuing/cardholders/${ch.stripeCardholderId}`, { status });
   }
+  // Freeze/unfreeze the Revolut card too, so the dashboard flag never says
+  // "active" while Revolut still declines. If Revolut refuses, the local
+  // flag is left alone and the error goes back to the admin.
+  let revolut: "updated" | "no_card" = "no_card";
+  const cardId = await resolveRevolutCardIdForCardholder(cardholderId);
+  if (cardId) {
+    try {
+      if (status === "inactive") await freezeRevolutCard(cardId);
+      else await unfreezeRevolutCard(cardId);
+    } catch (e: any) {
+      // Revolut rejects freezing a frozen card / unfreezing an active one;
+      // that's fine as long as it ends up in the state we asked for.
+      const state = await getRevolutCardState(cardId).catch(() => null);
+      const reached = status === "inactive" ? state === "frozen" : state === "active";
+      if (!reached) throw new Error(`Revolut didn't ${status === "inactive" ? "freeze" : "unfreeze"} the card: ${e?.message || e}`);
+    }
+    revolut = "updated";
+  }
   await db.update(stripeCardholders).set({ status, updatedAt: new Date() }).where(eq(stripeCardholders.id, cardholderId));
+  return { revolut };
 }
 
 // ─── XERO CATEGORY MAPPING ─────────────────────────────────────────────────
@@ -433,8 +451,8 @@ export function setupStripeIssuingRoutes(app: Express) {
     try {
       const { status } = req.body;
       if (status !== "active" && status !== "inactive") return res.status(400).json({ error: "status must be active or inactive" });
-      await setCardholderStatus(String(req.params.id), status);
-      res.json({ success: true });
+      const { revolut } = await setCardholderStatus(String(req.params.id), status);
+      res.json({ success: true, revolut });
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
