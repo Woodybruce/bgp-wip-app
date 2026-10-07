@@ -3112,6 +3112,11 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
   const { data: reviews = [], isLoading } = useQuery<StaffReview[]>({ queryKey: [`/api/hr/reviews/${userId}`] });
   const { data: goals = [] } = useQuery<ReviewGoal[]>({ queryKey: [`/api/hr/goals/${userId}`] });
 
+  // The form opens below the reviews list, which on a fee earner's page
+  // (deals card above) is off-screen — tapping 1:1 looked like it did
+  // nothing (Carly / Emily, 2026-10-07). Scroll the form into view on open.
+  const editorRef = useRef<HTMLDivElement>(null);
+  const [scrollTick, setScrollTick] = useState(0);
   const startReview = useMutation({
     mutationFn: async ({ kind }: { kind: string }) => {
       const period = kind === "annual" ? `annual_${new Date().getFullYear()}`
@@ -3122,7 +3127,9 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: [`/api/hr/reviews/${userId}`] });
       setEditingId(data.id);
+      setScrollTick(t => t + 1);
     },
+    onError: (e: any) => toast({ title: "Couldn't start the review", description: e?.message?.slice(0, 240) || "", variant: "destructive" }),
   });
 
   const updateReview = useMutation({
@@ -3352,6 +3359,10 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
 
   const editing = reviews.find(r => r.id === editingId);
   const isMonthly = editing?.kind === "monthly";
+  useEffect(() => {
+    if (scrollTick && editing) editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollTick, editing?.id]);
 
   // The numbers on a 1:1 are all derived — the fee target is 3× salary pro
   // rata and the actuals/stage summaries come off the WIP report — so they
@@ -3454,7 +3465,10 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
               {reviews.map(r => (
                 <button
                   key={r.id}
-                  onClick={() => setEditingId(editingId === r.id ? null : r.id)}
+                  onClick={() => {
+                    setEditingId(editingId === r.id ? null : r.id);
+                    if (editingId !== r.id) setScrollTick(t => t + 1);
+                  }}
                   className={`w-full flex items-center gap-3 p-2.5 rounded-md border text-left transition-colors hover:bg-accent/40 ${editingId === r.id ? "border-primary bg-primary/5" : ""}`}
                 >
                   <div className="flex-1 min-w-0">
@@ -3474,7 +3488,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
 
       {/* Editor */}
       {editing && (
-        <Card>
+        <Card ref={editorRef} className="scroll-mt-4">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center justify-between">
               <span>{reviewTitle(editing)}</span>
