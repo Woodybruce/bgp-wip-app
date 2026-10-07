@@ -1489,13 +1489,22 @@ export function setupCrmRoutes(app: Express) {
   // question set lives client-side (crm-meetings-tab.tsx), responses are a
   // jsonb map keyed by question id so per-question autosaves merge instead
   // of clobbering each other. BGP-internal: client logins get nothing.
-  const INTERVIEW_TEAMS = ["Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Development"];
+  const INTERVIEW_TEAMS = [
+    "London Leasing Retail", "London Leasing F&B and Leisure", "National",
+    "Investment", "Tenant Rep", "Lease Advisory", "Development",
+  ];
+  // Teams added after the first four were seeded — existing boards get a
+  // card for each one they're missing, with the named Head of Team.
+  const LATER_INTERVIEWS: { team: string; interviewee: string | null }[] = [
+    { team: "Development", interviewee: null },
+    { team: "National", interviewee: "Victoria Broadhead" },
+    { team: "London Leasing F&B and Leisure", interviewee: "Rupert Bentley Smith" },
+  ];
 
   app.get("/api/crm/interviews", async (req, res) => {
     try {
       if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
-      // Seed the Head of Team interviews on first open. Development was added
-      // after the first four were seeded, so give existing boards its card too.
+      // Seed the Head of Team interviews on first open.
       const count = await pool.query(`SELECT COUNT(*)::int AS n FROM crm_interviews`);
       if (count.rows[0].n === 0) {
         for (const team of INTERVIEW_TEAMS) {
@@ -1505,10 +1514,18 @@ export function setupCrmRoutes(app: Express) {
           );
         }
       } else {
+        for (const { team, interviewee } of LATER_INTERVIEWS) {
+          await pool.query(
+            `INSERT INTO crm_interviews (team, interviewee, created_by)
+             SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_interviews WHERE team = $1)`,
+            [team, interviewee, (req as any).session?.userId || null],
+          );
+        }
+        // Leasing split into London Retail / London F&B and Leisure / National;
+        // Charlotte's interview is the London Leasing Retail one.
         await pool.query(
-          `INSERT INTO crm_interviews (team, created_by)
-           SELECT 'Development', $1 WHERE NOT EXISTS (SELECT 1 FROM crm_interviews WHERE team = 'Development')`,
-          [(req as any).session?.userId || null],
+          `UPDATE crm_interviews SET team = 'London Leasing Retail', updated_at = now()
+           WHERE team = 'Leasing' AND interviewee ILIKE 'charlotte%'`,
         );
       }
       const rows = await pool.query(`SELECT * FROM crm_interviews ORDER BY created_at ASC`);
