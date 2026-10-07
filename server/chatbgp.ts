@@ -1168,6 +1168,18 @@ export async function callClaude(params: any): Promise<any> {
  * Each token is sent as: data: {"delta":"word "}\n\n
  * Full text sent at end as: data: {"reply":"full text"}\n\n
  */
+// Last 30 chat failures, kept where a session without Railway log access can
+// read them (GET /api/admin/chat-errors) — "the server logs have the
+// details" was a dead end from a screenshot (Woody, 2026-10-07).
+export function recordChatError(e: Record<string, any>) {
+  pool.query(
+    `INSERT INTO system_settings (key, value, updated_at) VALUES ('chatbgp:recent_errors', jsonb_build_array($1::jsonb), NOW())
+     ON CONFLICT (key) DO UPDATE SET value = (
+       SELECT COALESCE(jsonb_agg(x ORDER BY n), '[]'::jsonb) FROM (
+         SELECT x, n FROM jsonb_array_elements(jsonb_build_array($1::jsonb) || system_settings.value) WITH ORDINALITY t(x, n) ORDER BY n LIMIT 30) s
+     ), updated_at = NOW()`, [JSON.stringify(e)]).catch(() => {});
+}
+
 export async function callClaudeStreaming(
   params: any,
   onDelta: (token: string) => void,
@@ -1223,6 +1235,7 @@ export async function callClaudeStreaming(
 
   let lastErr: any;
 
+  let textSent = false;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       const client = useKimi ? anthropic : (attempt === 0 ? anthropic : getAnthropicClient(false));
@@ -1239,6 +1252,7 @@ export async function callClaudeStreaming(
 
       stream.on("text", (text: string) => {
         fullText += text;
+        textSent = true;
         onDelta(text);
         if (shouldAbort?.()) {
           try { stream.abort(); } catch {}
@@ -1293,10 +1307,17 @@ export async function callClaudeStreaming(
         continue;
       }
 
-      const isOverloaded = errStatus === 529 || errStatus === 429;
+      // An overload or dropped connection mid-stream arrives as an error
+      // EVENT with no HTTP status, and used to surface as the generic
+      // "technical glitch" (Woody, 2026-10-07). Retry it too — but only
+      // before any text reached the user, so nothing is shown twice.
+      const errType = String(err?.error?.error?.type || err?.error?.type || "");
+      const midStreamTransient = !errStatus && !textSent &&
+        (/overloaded_error|api_error/.test(errType) || /overloaded|terminated|ECONNRESET|socket hang up|fetch failed|premature close|other side closed/i.test(String(err?.message || "")));
+      const isOverloaded = errStatus === 529 || errStatus === 429 || midStreamTransient;
       if (isOverloaded && attempt < MAX_RETRIES) {
         const delay = RETRY_DELAYS[attempt] || 4000;
-        console.log(`[ChatBGP] Streaming overloaded (attempt ${attempt + 1}), retrying in ${delay}ms`);
+        console.log(`[ChatBGP] Streaming overloaded/interrupted (attempt ${attempt + 1}, status ${errStatus ?? "none"}, ${errType || err?.message}), retrying in ${delay}ms`);
         await new Promise(r => setTimeout(r, delay));
         continue;
       }
@@ -16076,7 +16097,9 @@ export function setupChatBGPRoutes(app: Express) {
     } catch (err: any) {
       const errBodyRaw = JSON.stringify(err?.error || err?.body || "").slice(0, 2000);
       console.error("ChatBGP error:", err?.status, err?.message || err, errBodyRaw);
-      let errorMsg = "I ran into a technical glitch — the server logs have the details. Please try again, or rephrase if it keeps happening.";
+      const errDetail = String(err?.error?.error?.message || err?.message || err || "").replace(/\s+/g, " ").slice(0, 160);
+      recordChatError({ at: new Date().toISOString(), userId: req.session?.userId || null, status: err?.status ?? null, message: errDetail, stack: String(err?.stack || "").split("\n").slice(0, 6).join(" | ").slice(0, 800) });
+      let errorMsg = `I ran into a technical glitch${errDetail ? ` (${errDetail})` : ""}. Please try again, or rephrase if it keeps happening.`;
       if (err?.status === 529) errorMsg = "The AI service is overloaded right now. Please try again in a moment.";
       else if (err?.status === 401) errorMsg = "AI authentication issue — the API key may be missing or invalid. Please contact support.";
       else if (err?.status === 429) errorMsg = "Hit the API rate limit. Please wait a minute and try again.";

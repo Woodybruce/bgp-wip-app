@@ -2813,6 +2813,13 @@ export async function registerRoutes(
   // Schema drift: what shared/schema.ts expects that the live DB lacks.
   // GET is a dry run; POST adds the missing columns (nullable). The same
   // heal runs automatically at boot — see server/schema-drift.ts.
+  app.get("/api/admin/chat-errors", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const r = await pool.query(`SELECT value FROM system_settings WHERE key = 'chatbgp:recent_errors'`);
+      res.json(r.rows[0]?.value || []);
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
   app.get("/api/admin/schema-drift", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const { listSchemaDrift } = await import("./schema-drift");
