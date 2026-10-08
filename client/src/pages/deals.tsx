@@ -424,6 +424,7 @@ interface DealFormData {
   yieldPercent: string;
   feeAgreement: string;
   fee: string;
+  feeCurrency: string;
   totalAreaSqft: string;
   basementAreaSqft: string;
   gfAreaSqft: string;
@@ -490,6 +491,7 @@ const emptyForm: DealFormData = {
   yieldPercent: "",
   feeAgreement: "",
   fee: "",
+  feeCurrency: "GBP",
   totalAreaSqft: "",
   basementAreaSqft: "",
   gfAreaSqft: "",
@@ -550,6 +552,7 @@ function dealToForm(deal: CrmDeal): DealFormData {
     yieldPercent: deal.yieldPercent != null ? String(deal.yieldPercent) : "",
     feeAgreement: deal.feeAgreement || "",
     fee: deal.fee != null ? String(deal.fee) : "",
+    feeCurrency: deal.feeCurrency === "USD" ? "USD" : "GBP",
     totalAreaSqft: deal.totalAreaSqft != null ? String(deal.totalAreaSqft) : "",
     basementAreaSqft: deal.basementAreaSqft != null ? String(deal.basementAreaSqft) : "",
     gfAreaSqft: deal.gfAreaSqft != null ? String(deal.gfAreaSqft) : "",
@@ -615,6 +618,7 @@ function formToPayload(form: DealFormData, changeReason?: string): Record<string
     yieldPercent: parseNum(form.yieldPercent),
     feeAgreement: form.feeAgreement || null,
     fee: parseNum(form.fee),
+    feeCurrency: form.feeCurrency === "USD" ? "USD" : "GBP",
     basementAreaSqft: parseNum(form.basementAreaSqft),
     gfAreaSqft: parseNum(form.gfAreaSqft),
     ffAreaSqft: parseNum(form.ffAreaSqft),
@@ -1149,7 +1153,7 @@ function FeeCombinedCell({
           <InlineNumber
             value={deal.fee}
             onSave={(v) => onSave("fee", v)}
-            prefix="£"
+            prefix={deal.feeCurrency === "USD" ? "$" : "£"}
           />
         </div>
         <div className="grid grid-cols-[100px_1fr] items-center gap-2">
@@ -3052,7 +3056,14 @@ export function DealFormDialog({
                   {!isClientCreate && (
                     <>
                       <div>
-                        <Label>Fee ({"\u00A3"})</Label>
+                        <div className="flex items-center justify-between gap-2">
+                          <Label>Fee ({form.feeCurrency === "USD" ? "$" : "\u00A3"})</Label>
+                          <div className="flex gap-1" data-testid="toggle-deal-fee-currency">
+                            {(["GBP", "USD"] as const).map((c) => (
+                              <Pill key={c} active={(form.feeCurrency || "GBP") === c} onClick={() => set("feeCurrency", c)} data-testid={`pill-fee-currency-${c}`}>{c}</Pill>
+                            ))}
+                          </div>
+                        </div>
                         <Input type="number" min="0" step="0.01" value={form.fee} onChange={(e) => set("fee", e.target.value)} data-testid="input-deal-fee" />
                       </div>
 
@@ -4142,6 +4153,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
   const [creating, setCreating] = useState(false);
   const [reference, setReference] = useState("");
   const [amount, setAmount] = useState<number>(0);
+  const [currency, setCurrency] = useState<"GBP" | "USD">(deal.feeCurrency === "USD" ? "USD" : "GBP");
   const [poNumber, setPoNumber] = useState(deal.poNumber || "");
 
   const xeroContactId = (deal as any).xeroContactId || null;
@@ -4218,6 +4230,8 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
         contactName: xeroContactName || deal.name,
         poNumber: poNumber || deal.poNumber || null,
         allowMissingPo: allowMissingPo || undefined,
+        // USD invoices go out on Xero's "USD BGP" template.
+        currency,
         // No AccountCode: the server applies the live sales nominal (4000 on
         // the Sept 2026 chart) so a stale client can't post to a retired code.
         lineItems: [{
@@ -4336,7 +4350,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => { setCreating(true); setAmount(deal.fee || 0); setReference(deal.name || ""); }}
+                onClick={() => { setCreating(true); setAmount(deal.fee || 0); setCurrency(deal.feeCurrency === "USD" ? "USD" : "GBP"); setReference(deal.name || ""); }}
                 data-testid="button-create-xero-invoice"
               >
                 <Send className="w-3.5 h-3.5 mr-1" />
@@ -4389,7 +4403,14 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <Label className="text-xs mb-1 block">Amount (excl. VAT)</Label>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <Label className="text-xs block">Amount ({currency === "USD" ? "$" : "£"}, excl. VAT)</Label>
+                  <div className="flex gap-1" data-testid="toggle-xero-currency">
+                    {(["GBP", "USD"] as const).map((c) => (
+                      <Pill key={c} active={currency === c} onClick={() => setCurrency(c)} data-testid={`pill-xero-currency-${c}`}>{c}</Pill>
+                    ))}
+                  </div>
+                </div>
                 <Input
                   type="number"
                   value={amount || ""}
@@ -4450,7 +4471,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
                       <span className="font-mono tabular-nums truncate">{inv.invoiceNumber || inv.reference || "Draft"}</span>
                       {inv.totalAmount != null && (
                         <span className="text-muted-foreground font-mono tabular-nums shrink-0">
-                          £{inv.totalAmount.toLocaleString("en-GB", { minimumFractionDigits: 2 })}
+                          {inv.currency === "USD" ? "$" : "£"}{inv.totalAmount.toLocaleString("en-GB", { minimumFractionDigits: 2 })}
                           {/* Xero totals include VAT — say so beside a net fee. */}
                           {deal.fee != null && inv.totalAmount > Number(deal.fee) * 1.1 ? <span className="font-sans"> inc. VAT</span> : ""}
                         </span>

@@ -38,7 +38,7 @@ import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { contentDispositionFor } from "./utils/http-headers";
 import { searchPipnetRequirements } from "./pipnet";
-import { xeroApi, refreshXeroToken, SALES_ACCOUNT_CODE } from "./xero";
+import { xeroApi, refreshXeroToken, SALES_ACCOUNT_CODE, feeCurrencyOf, invoiceCurrencyFields } from "./xero";
 import { scrapeTrlPage, KNOWN_TRL_PAGES, discoverTrlPages, scrapeTrlOccupierDirectory, scrapeTrlAgencyDirectory, scrapeTrlAgencyListing, scrapeTrlAgencyDetailPage, scrapeTrlRequirementSearch } from "./trl";
 import { getPlanningSummary } from "./planning-summary";
 import { parseRequirementBrochure } from "./requirement-vision-parser";
@@ -1171,6 +1171,7 @@ export function setupCrmRoutes(app: Express) {
   // added manually in prod, so /api/crm/landlords 500'd on fresh databases.
   pool.query(`ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS last_interaction_at TIMESTAMP`).catch(() => {});
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS area_basis TEXT`).catch(() => {});
+  pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS fee_currency TEXT`).catch(() => {});
   // Activity curator cache — see server/ai-activity-curator.ts. One row per
   // (subject_type, subject_id). Each curate call costs ~30s and 50k+ tokens
   // so we cache aggressively; clients pass `refresh: true` to bypass.
@@ -3757,7 +3758,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (editScope) {
         const inScope = !!oldDeal && (await isDealInScope(editScope, req.params.id));
         if (!inScope) return res.status(403).json({ error: "Not available for client accounts" });
-        for (const f of ["fee", "feePercentage", "feeNotes", "feeAgreement", "feeAgreementUrl", "commission", "bgpActingFor"]) {
+        for (const f of ["fee", "feeCurrency", "feePercentage", "feeNotes", "feeAgreement", "feeAgreementUrl", "commission", "bgpActingFor"]) {
           delete (req.body as any)[f];
         }
       }
@@ -4329,6 +4330,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
                   }
                 }
 
+                const currency = feeCurrencyOf(deal.feeCurrency);
+                const currencyFields = await invoiceCurrencyFields(req.session, currency);
                 const invoicePayload = {
                   Invoices: [{
                     Type: "ACCREC",
@@ -4344,7 +4347,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
                     // No DueDate: Xero applies the org's default terms (by return).
                     Reference: deal.poNumber ? `${deal.name} | PO: ${deal.poNumber}` : deal.name,
                     Status: "DRAFT",
-                    CurrencyCode: "GBP",
+                    ...currencyFields,
                     LineAmountTypes: "Exclusive",
                   }],
                 };
@@ -4363,7 +4366,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
                   reference: deal.name,
                   status: xeroInvoice?.Status || "DRAFT",
                   totalAmount: xeroInvoice?.Total || deal.fee || 0,
-                  currency: "GBP",
+                  currency,
                   dueDate: null,
                   sentToXero: true,
                   xeroUrl: xeroInvoice?.InvoiceID
@@ -4403,7 +4406,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   // clients — the same families stripDealFees hides on the deal itself
   // (fee/invoicing), plus the staff-only AML/KYC and Xero trail.
   const CLIENT_HIDDEN_AUDIT_FIELDS = new Set([
-    "fee", "feePercentage", "feeAgreement", "feeAgreementUrl", "feeNotes",
+    "fee", "feeCurrency", "feePercentage", "feeAgreement", "feeAgreementUrl", "feeNotes",
     "commission", "poNumber", "invoicedAt", "invoicingNotes",
     "xeroContactId", "xeroContactName", "kycApproved", "amlCheckCompleted",
     "amlRiskLevel", "amlSourceOfFunds", "amlSourceOfWealth", "amlPepStatus",

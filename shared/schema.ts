@@ -956,6 +956,9 @@ export const crmDeals = pgTable("crm_deals", {
   feeAgreement: text("fee_agreement"),
   feeAgreementUrl: text("fee_agreement_url"),
   fee: real("fee"),
+  // "GBP" (null = GBP) or "USD". USD fees invoice in dollars on the
+  // "USD BGP" Xero branding theme.
+  feeCurrency: text("fee_currency"),
   amlCheckCompleted: text("aml_check_completed"),
   areaBasis: text("area_basis"),  // "NIA" | "GIA" — derived from asset class, overridable
   totalAreaSqft: real("total_area_sqft"),

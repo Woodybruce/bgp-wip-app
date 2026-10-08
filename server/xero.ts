@@ -118,6 +118,24 @@ export function salesAccountCode(requested?: string | null): string {
   return !code || LEGACY_SALES_CODES.has(code) ? SALES_ACCOUNT_CODE : code;
 }
 
+// Dollar fees invoice in USD on the "USD BGP" branding theme Accounts set
+// up in Xero. Sterling invoices keep Xero's default theme.
+export type FeeCurrency = "GBP" | "USD";
+export const USD_BRANDING_THEME_NAME = process.env.XERO_USD_BRANDING_THEME || "USD BGP";
+export function feeCurrencyOf(value?: string | null): FeeCurrency {
+  return String(value || "").toUpperCase() === "USD" ? "USD" : "GBP";
+}
+export async function invoiceCurrencyFields(session: any, currency: FeeCurrency): Promise<Record<string, string>> {
+  if (currency !== "USD") return { CurrencyCode: "GBP" };
+  const data = await xeroApi(session, "/BrandingThemes");
+  const wanted = USD_BRANDING_THEME_NAME.trim().toLowerCase();
+  const theme = (data.BrandingThemes || []).find((t: any) => String(t.Name || "").trim().toLowerCase() === wanted);
+  if (!theme?.BrandingThemeID) {
+    throw new Error(`Couldn't find the "${USD_BRANDING_THEME_NAME}" invoice template in Xero — check its name under Invoice Settings.`);
+  }
+  return { CurrencyCode: "USD", BrandingThemeID: theme.BrandingThemeID };
+}
+
 const createInvoiceSchema = z.object({
   dealId: z.string().min(1),
   xeroContactId: z.string().nullable().optional(),
@@ -129,6 +147,7 @@ const createInvoiceSchema = z.object({
   reference: z.string().optional(),
   dueDate: z.string().optional(),
   accountCode: z.string().optional(),
+  currency: z.enum(["GBP", "USD"]).optional(),
   lineItems: z.array(z.object({
     Description: z.string(),
     Quantity: z.number().positive(),
@@ -798,10 +817,12 @@ export function setupXeroRoutes(app: Express) {
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid request", errors: parsed.error.flatten().fieldErrors });
       }
-      const { dealId, xeroContactId: bodyContactId, contactName, contactEmail, poNumber, lineItems, reference, dueDate, accountCode } = parsed.data;
+      const { dealId, xeroContactId: bodyContactId, contactName, contactEmail, poNumber, lineItems, reference, dueDate, accountCode, currency: bodyCurrency } = parsed.data;
 
       const [deal] = await db.select().from(crmDeals).where(eq(crmDeals.id, dealId));
       if (!deal) return res.status(404).json({ message: "Deal not found" });
+      const currency = feeCurrencyOf(bodyCurrency || deal.feeCurrency);
+      const currencyFields = await invoiceCurrencyFields(req.session, currency);
 
       // "No PO No Pay" clients (Canary Wharf Group): stop a PO-less invoice
       // unless the user has explicitly chosen to raise it anyway.
@@ -860,7 +881,7 @@ export function setupXeroRoutes(app: Express) {
         Date: new Date().toISOString().split("T")[0],
         Reference: reference || deal.name,
         Status: "DRAFT",
-        CurrencyCode: "GBP",
+        ...currencyFields,
         LineAmountTypes: "Exclusive",
       };
       // No DueDate unless the user set one: Xero then applies the
@@ -892,7 +913,7 @@ export function setupXeroRoutes(app: Express) {
         reference: reference || deal.name,
         status: xeroInvoice?.Status || "DRAFT",
         totalAmount: xeroInvoice?.Total || deal.fee || 0,
-        currency: "GBP",
+        currency,
         dueDate: xeroInvoice?.DueDateString ? String(xeroInvoice.DueDateString).slice(0, 10) : (dueDate || null),
         sentToXero: true,
         xeroUrl: xeroInvoice?.InvoiceID ? `https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${xeroInvoice.InvoiceID}` : null,
