@@ -1122,17 +1122,18 @@ function PlanView({ planId }: { planId: string }) {
                 {u.tenant_name && u.tenant_name !== u.unit_ref && <div className="text-[11px] text-muted-foreground truncate">{u.tenant_name}</div>}
                 {za != null || netZa != null ? (
                   <div className="mt-1 grid grid-cols-2 gap-x-2">
+                    {/* Net first, in the colour; Headline after in black (Pete, 2026-10-08). */}
                     <div>
                       <div className="text-lg font-bold tabular-nums leading-tight" style={{ color: colourOf(tk) }}>
-                        {za != null ? `£${za.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
-                      </div>
-                      <div className="text-[11px] text-muted-foreground">Headline Zone A</div>
-                    </div>
-                    <div>
-                      <div className="text-lg font-bold tabular-nums leading-tight">
                         {netZa != null ? `£${netZa.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
                       </div>
                       <div className="text-[11px] text-muted-foreground">Net Zone A</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-bold tabular-nums leading-tight">
+                        {za != null ? `£${za.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">Headline Zone A</div>
                     </div>
                   </div>
                 ) : (
