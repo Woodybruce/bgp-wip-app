@@ -228,6 +228,7 @@ export function presentEvidenceUnit(unit: any, scheduleRows: any[]): any {
   // Canonical blank values stay blank; a deleted schedule fact must not be
   // resurrected from an old local import on the next load.
   return { ...unit, ...metadata, tenant_name: schedule.trading_name || schedule.tenant_name || null,
+    lease_start: schedule.lease_start, outside_lt_act: schedule.outside_lt_act,
     lease_expiry: schedule.lease_expiry, break_date: schedule.break_date,
     review_date: schedule.next_review_date, erv: schedule.erv_pa, passing_rent: schedule.passing_rent_pa,
     sqft: schedule.nia_sqft ?? schedule.gia_sqft ?? null };

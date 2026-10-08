@@ -49,6 +49,7 @@ type PlanUnit = {
   id: string; unit_ref: string; unit_norm?: string; ts_linked?: boolean; ts_row_id?: string | null;
   tenant_name: string | null; level_id: string | null; polygon: Pt[] | null; dot?: Pt | null;
   lease_expiry: string | null; break_date: string | null; review_date: string | null;
+  lease_start?: string | null; outside_lt_act?: string | null;
   erv: string | null; passing_rent: string | null; sqft: string | null; notes: string | null;
   source?: string | null; ts_link_status?: string; ts_link_reason?: string | null;
   tenancy_unit_id?: string | null; ts_row_updated_at?: string | null; ts_candidate_ids?: string[];
@@ -1142,8 +1143,12 @@ function PlanView({ planId }: { planId: string }) {
                 <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
                   {latest?.transaction_date && <><span>Evidence date</span><span className="text-foreground">{fmtDate(latest.transaction_date)}</span></>}
                   {latest?.size_sqft != null && <><span>Size</span><span className="text-foreground">{Number(latest.size_sqft).toLocaleString("en-GB")} sq ft</span></>}
-                  {u.lease_expiry && <><span>Lease expiry</span><span className="text-foreground">{fmtDate(u.lease_expiry)}</span></>}
+                  {/* Lease facts from the tenancy schedule (Pete, 2026-10-08). */}
+                  {u.lease_start && <><span>Lease start</span><span className="text-foreground">{fmtDate(u.lease_start)}</span></>}
+                  {u.break_date && <><span>Next break</span><span className="text-foreground">{fmtDate(u.break_date)}</span></>}
                   {u.review_date && <><span>Next rent review</span><span className="text-foreground">{fmtDate(u.review_date)}</span></>}
+                  {u.outside_lt_act && <><span>1954 Act</span><span className="text-foreground">{ltActLabel(u.outside_lt_act)}</span></>}
+                  {u.lease_expiry && <><span>Lease expiry</span><span className="text-foreground">{fmtDate(u.lease_expiry)}</span></>}
                   {evCount > 1 && <><span>Evidence entries</span><span className="text-foreground">{evCount}</span></>}
                 </div>
               </div>
@@ -1709,6 +1714,15 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
       </div>
     </div>
   );
+}
+
+// The schedule's L&T Act column holds whatever the import said — "Inside",
+// "Outside", "Contracted out"… — so only those words are translated.
+function ltActLabel(raw: string): string {
+  const v = raw.trim();
+  if (/\binside\b/i.test(v)) return "Inside the Act";
+  if (/\b(outside|contracted out|excluded)\b/i.test(v)) return "Outside the Act";
+  return v;
 }
 
 export default function EvidencePlansPage() {
