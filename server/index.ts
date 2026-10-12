@@ -2942,6 +2942,26 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     console.warn("[schema-drift] guard failed:", e?.message);
   }
 
+  // Beth Emmens's headshot (Woody, 2026-10-12) for bgp.uk.com, served from
+  // the dashboard so it doesn't wait on a website redeploy. Only fills a
+  // blank photo, so a later change on the website stands.
+  await pool.query(
+    `UPDATE website_team SET photo_url = 'https://chatbgp.app/headshots/beth-emmens-web.jpg', updated_at = NOW()
+      WHERE lower(name) = 'beth emmens' AND COALESCE(photo_url, '') = ''`).catch((e: any) => console.warn("[website-team] Beth photo:", e?.message));
+
+  // 2026-10 team structure: Woody asked for it to be applied rather than
+  // waiting on the Settings button ("can you just add all of these",
+  // 2026-10-12). Runs once (flagged in system_settings), backs every old
+  // value up to team_structure_backup_2026_10 first; Settings → New team
+  // structure still previews / re-runs it.
+  try {
+    const { applyTeamStructure } = await import("./team-structure-migration");
+    const r = await applyTeamStructure();
+    if (!r.skipped) console.log("[team-structure] applied on boot:", JSON.stringify(r));
+  } catch (e: any) {
+    console.warn("[team-structure] migration failed:", e?.message);
+  }
+
   // ── October 2026 team structure (Woody, 2026-10-12: "can't you just do
   // it?"). Same one-shot the Settings → New team structure dialog runs:
   // flag-guarded so it applies exactly once, transactional, and every

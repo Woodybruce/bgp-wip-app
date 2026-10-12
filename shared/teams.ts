@@ -107,6 +107,7 @@ export function staffGroupFor(name: string | null | undefined, team: string | nu
 // 2026-10-12: "change my photo, I hate it"). Paths are app-served files.
 export const APP_PHOTO_OVERRIDES: Record<string, string> = {
   "Woody Bruce": "/headshots/woody-bruce.jpg",
+  "Beth Emmens": "/headshots/beth-emmens.jpg",
 };
 export function appPhotoOverride(name: string | null | undefined): string | null {
   const hit = Object.entries(APP_PHOTO_OVERRIDES).find(([n]) => samePerson(n, name));
