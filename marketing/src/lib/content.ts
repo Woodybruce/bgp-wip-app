@@ -8,7 +8,7 @@ export const SERVICES = [
     name: "Leasing",
     image: "/images/clients/nova-hero.jpg",
     intro:
-      "Creating neighbourhoods that people love. Retail, restaurant and leisure leasing across London's leading estates and the UK's landmark destinations — acting for landlords including The Portman Estate, Grosvenor, The Crown Estate and Landsec.",
+      "Creating neighbourhoods that people love. We let shops, restaurants, bars and leisure together, so a street or scheme works as one place — across London's leading estates, the UK's landmark shopping centres and the high streets in between, for landlords including The Portman Estate, Grosvenor, The Crown Estate, Landsec and Hammerson.",
   },
   {
     slug: "investment",
@@ -516,7 +516,7 @@ export const CONSULTANCY_SERVICES = [
 
 export const BRAND_REP_SERVICES = [
   {
-    name: "Global gatekeepers",
+    name: "International market entry",
     detail: "First-to-market UK retail locations for the world's most talked-about international brands, from a single flagship to a considered roll-out.",
   },
   {
@@ -736,7 +736,7 @@ export interface LeasingSector {
   approved: boolean;
   approvedBy?: string;
   image?: string;
-  gallery?: string[];
+  gallery?: GalleryImage[];
   headline: string;
   body: string[];
   howWeHelp?: string[];
@@ -751,6 +751,8 @@ export const LEASING_INTRO = {
     "As trusted advisors to London Estates and institutional landlords, we have led the evolution of flagship shopping centres, built celebrated independent brand hubs, and created world renowned leisure and hospitality destinations.",
   ],
 };
+
+export interface GalleryImage { src: string; caption: string }
 
 export const LEASING_SECTORS: LeasingSector[] = [
   {
@@ -778,7 +780,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
     name: "London Estates",
     approved: true,
     image: "/images/sectors/london-estates.jpg",
-    gallery: ["/images/gallery/mayfair-1.jpg", "/images/gallery/mayfair-2.jpg", "/images/gallery/belgravia-1.jpg"],
+    gallery: [{ src: "/images/gallery/mayfair-1.jpg", caption: "Roka, North Audley Street, Mayfair — for Grosvenor" }, { src: "/images/gallery/mayfair-2.jpg", caption: "North Audley Street, Mayfair — for Grosvenor" }, { src: "/images/gallery/belgravia-1.jpg", caption: "Pimlico Road, Belgravia — for Grosvenor" }],
     headline: "We are proud to have worked across many of London's most prestigious estates for more than 15 years.",
     body: [
       "We believe that building destinations across London's estates requires a highly considered approach. Our Leasing team works with estate owners and landlords to identify opportunities, attract the right occupiers and deliver strategies that enhance the character and commercial performance of their portfolios.",
@@ -791,7 +793,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
     name: "The City",
     approved: true,
     image: "/images/sectors/city.jpg",
-    gallery: ["/images/gallery/onc-1.jpg", "/images/gallery/gpe-1.jpg", "/images/gallery/gpe-2.jpg"],
+    gallery: [{ src: "/images/gallery/onc-1.jpg", caption: "Retail at One New Change — for Landsec" }, { src: "/images/gallery/gpe-1.jpg", caption: "2 Aldermanbury Square, City of London — for GPE" }, { src: "/images/gallery/gpe-2.jpg", caption: "The Corner Collective, Medici Courtyard — for GPE" }],
     headline:
       "We act on a range of destinations within the Square Mile, and understand the unique opportunities and considerations that come with leasing this part of London.",
     body: [
@@ -804,7 +806,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
     name: "High Streets",
     approved: true,
     image: "/images/sectors/high-streets.jpg",
-    gallery: ["/images/gallery/belgravia-2.jpg", "/images/gallery/coin-street-1.jpg", "/images/gallery/coin-street-2.jpg"],
+    gallery: [{ src: "/images/gallery/chiltern-street.jpg", caption: "Chiltern Street, Marylebone — for The Portman Estate" }, { src: "/images/gallery/mayfair-3.jpg", caption: "Pavement dining in North Mayfair — for Grosvenor" }, { src: "/images/gallery/coin-street-1.jpg", caption: "Gabriel's Wharf, South Bank — for Coin Street" }],
     headline:
       "Our High Street Leasing team works on a diverse range of High Streets throughout London and across the UK.",
     body: [
@@ -820,14 +822,14 @@ export interface ShoppingCentre {
   location: string;
   contacts: string[];
   image?: string;
-  gallery?: string[];
+  gallery?: GalleryImage[];
   blurb: string;
 }
 
 // From the "BGP shopping centres" table in Emmy's copy document.
 export const SHOPPING_CENTRES: ShoppingCentre[] = [
-  { slug: "one-new-change", name: "One New Change", location: "London", image: "/images/centres/one-new-change.jpg", gallery: ["/images/gallery/onc-2.jpg", "/images/gallery/onc-3.jpg", "/images/gallery/onc-4.jpg"], contacts: ["Charlotte Roberts", "Emily Cann"], blurb: "Landsec's mixed-use destination beside St Paul's Cathedral, with a rooftop terrace and strong City lunch and after-work trade." },
-  { slug: "cardinal-place", name: "Cardinal Place", location: "London", image: "/images/centres/cardinal-place.jpg", gallery: ["/images/gallery/cardinal-1.jpg", "/images/clients/victoria-street.jpg"], contacts: ["Charlotte Roberts", "Emily Cann"], blurb: "Retail and dining at the heart of Victoria, serving the office and commuter catchment around Victoria Station." },
+  { slug: "one-new-change", name: "One New Change", location: "London", image: "/images/centres/one-new-change.jpg", gallery: [{ src: "/images/gallery/onc-2.jpg", caption: "Rooftop dining at One New Change — for Landsec" }, { src: "/images/gallery/onc-3.jpg", caption: "One New Change, Cheapside — for Landsec" }, { src: "/images/gallery/onc-4.jpg", caption: "One New Change, Cheapside — for Landsec" }], contacts: ["Charlotte Roberts", "Emily Cann"], blurb: "Landsec's mixed-use destination beside St Paul's Cathedral, with a rooftop terrace and strong City lunch and after-work trade." },
+  { slug: "cardinal-place", name: "Cardinal Place", location: "London", image: "/images/centres/cardinal-place.jpg", gallery: [{ src: "/images/gallery/cardinal-1.jpg", caption: "Cardinal Place, Victoria — for Landsec" }, { src: "/images/clients/victoria-street.jpg", caption: "Victoria Street — for Landsec" }], contacts: ["Charlotte Roberts", "Emily Cann"], blurb: "Retail and dining at the heart of Victoria, serving the office and commuter catchment around Victoria Station." },
   { slug: "o2-finchley-road", name: "O2 Finchley Road", location: "London", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "A leisure-led north London centre anchored by cinema and gym, serving a dense residential catchment." },
   { slug: "lewisham-shopping-centre", name: "Lewisham Shopping Centre", location: "London", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "The retail heart of Lewisham town centre, at the centre of a major south-east London regeneration area." },
   { slug: "brent-cross", name: "Brent Cross", location: "London", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "One of the UK's first major shopping centres, in north London, with a new town centre rising alongside it." },
@@ -835,7 +837,7 @@ export const SHOPPING_CENTRES: ShoppingCentre[] = [
   { slug: "oracle", name: "The Oracle", location: "Reading", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "Reading's riverside shopping and dining destination along the Kennet." },
   { slug: "westgate", name: "Westgate", location: "Oxford", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "Oxford's city-centre shopping and dining destination, with a rooftop restaurant terrace." },
   { slug: "gunwharf-quays", name: "Gunwharf Quays", location: "Portsmouth", contacts: ["Victoria Broadhead", "Emily Dumbell"], blurb: "Portsmouth's waterfront outlet shopping and leisure destination beneath the Spinnaker Tower." },
-  { slug: "bullring", name: "Bullring", location: "Birmingham", image: "/images/centres/bullring.jpg", gallery: ["/images/gallery/bullring-1.jpg", "/images/gallery/bullring-2.jpg", "/images/gallery/bullring-3.jpg"], contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "Birmingham's flagship city-centre shopping destination, home to Selfridges." },
+  { slug: "bullring", name: "Bullring", location: "Birmingham", image: "/images/centres/bullring.jpg", gallery: [{ src: "/images/gallery/bullring-1.jpg", caption: "The Bull, Bullring, Birmingham — for Hammerson" }, { src: "/images/gallery/bullring-2.jpg", caption: "Inside Bullring — for Hammerson" }, { src: "/images/gallery/bullring-3.jpg", caption: "St Martin's Square, Bullring — for Hammerson" }], contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "Birmingham's flagship city-centre shopping destination, home to Selfridges." },
   { slug: "grand-central", name: "Grand Central", location: "Birmingham", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "The dining and retail destination above Birmingham New Street station." },
   { slug: "trinity-leeds", name: "Trinity Leeds", location: "Leeds", contacts: ["Emily Dumbell", "Alex Todd"], blurb: "The Leeds city-centre destination mixing retail with dining and leisure under its glass roof." },
   { slug: "white-rose", name: "White Rose", location: "Leeds", contacts: ["Emily Dumbell", "Alex Todd"], blurb: "Leeds' out-of-town shopping and leisure centre, with cinema and dining." },

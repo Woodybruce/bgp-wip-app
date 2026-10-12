@@ -68,10 +68,11 @@ export default function LeasingSector() {
       {sector.gallery && (
         <section className="mx-auto max-w-6xl px-4 pb-14">
           <div className="card-strip sm:grid-cols-3">
-            {sector.gallery.map((src) => (
-              <div key={src} className="img-frame">
-                <Placeholder className="aspect-[4/3] w-full" src={src} alt="" />
-              </div>
+            {sector.gallery.map((g) => (
+              <figure key={g.src}>
+                <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={g.src} alt={g.caption} /></div>
+                <figcaption className="mt-2 label-caps text-bgp-ink/55">{g.caption}</figcaption>
+              </figure>
             ))}
           </div>
         </section>
@@ -146,10 +147,11 @@ export function ShoppingCentrePage() {
             </p>
             {centre.gallery && (
               <div className="card-strip sm:grid-cols-3 mt-8">
-                {centre.gallery.map((src) => (
-                  <div key={src} className="img-frame">
-                    <Placeholder className="aspect-[4/3] w-full" src={src} alt="" />
-                  </div>
+                {centre.gallery.map((g) => (
+                  <figure key={g.src}>
+                    <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={g.src} alt={g.caption} /></div>
+                    <figcaption className="mt-2 label-caps text-bgp-ink/55">{g.caption}</figcaption>
+                  </figure>
                 ))}
               </div>
             )}

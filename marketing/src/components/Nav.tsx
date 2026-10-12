@@ -16,7 +16,7 @@ export default function Nav() {
         {/* Phone bar */}
         <div className="flex md:hidden items-center justify-between h-14">
           <Link href="/" aria-label="Bruce Gillingham Pollard home" onClick={() => setOpen(false)}>
-            <img src="/brand/bgp-logo-burgundy.svg" alt="bgp" className="h-7 w-auto" />
+            <img src="/brand/bgp-logo-burgundy.svg?v=block" alt="bgp" className="h-7 w-auto" />
           </Link>
           <button
             className="label-caps text-bgp-wine px-2 py-2 -mr-2"
@@ -52,7 +52,7 @@ export default function Nav() {
         {/* Desktop bar */}
         <div className="hidden md:flex items-center justify-between h-16">
           <Link href="/" aria-label="Bruce Gillingham Pollard home" className="shrink-0">
-            <img src="/brand/bgp-logo-burgundy.svg" alt="bgp" className="h-8 w-auto" />
+            <img src="/brand/bgp-logo-burgundy.svg?v=block" alt="bgp" className="h-8 w-auto" />
           </Link>
           <nav className="flex items-center">
             {NAV_ITEMS.map((item, i) => {

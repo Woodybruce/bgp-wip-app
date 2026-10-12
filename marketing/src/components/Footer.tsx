@@ -24,7 +24,7 @@ export default function Footer() {
     <footer id="contact" className="mt-24 bg-bgp-wine text-bgp-cream">
       <div className="mx-auto max-w-6xl px-4 pt-16 pb-10 grid grid-cols-1 md:grid-cols-4 gap-10">
         <div>
-          <img src="/brand/bgp-logo-white.svg" alt="bgp" className="h-14 w-auto" />
+          <img src="/brand/bgp-logo-white.svg?v=block" alt="bgp" className="h-14 w-auto" />
           <p className="mt-5 font-display italic text-bgp-cream/80 text-lg leading-snug max-w-[16ch]">
             {HERO_STATEMENT}
           </p>
