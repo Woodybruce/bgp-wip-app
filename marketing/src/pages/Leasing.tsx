@@ -182,7 +182,7 @@ export default function Leasing() {
       </section>
 
       <div className="mt-16">
-        <CaseStudyStrip caseStudy={findCaseStudy(content, "lucent-piccadilly")} />
+        <CaseStudyStrip caseStudies={["lucent-piccadilly", "st-christophers-place", "south-molton-triangle", "canary-wharf"].map((slug) => findCaseStudy(content, slug))} />
       </div>
       <KeyContacts people={content.contacts.leasing} />
     </div>

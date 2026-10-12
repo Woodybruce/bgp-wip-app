@@ -208,6 +208,42 @@ export const CASE_STUDIES: CaseStudy[] = [
       "The letting followed BGP's long-standing work with GPE across its West End portfolio, drawing on the Leasing and Brand Representation teams' relationships with the restaurant operators best placed for the space.",
     ],
   },
+  // Leasing strip now carries four (Woody, 2026-10-12). Copy below is a
+  // first draft for the leasing team to confirm; photos to follow.
+  {
+    slug: "st-christophers-place",
+    title: "St Christopher's Place",
+    service: "Leasing",
+    image: "/images/st-christophers-place.jpg",
+    blurb: "Retail and restaurant leasing across the pedestrian lanes between Oxford Street and Wigmore Street, for Columbia Threadneedle.",
+    facts: [["Service", "Leasing"], ["Client", "Columbia Threadneedle"], ["Sector", "Retail & restaurant"], ["Location", "Marylebone, W1"]],
+    body: [
+      "St Christopher's Place is a village of independent shops, restaurants and cafés a few steps from Oxford Street. BGP advises Columbia Threadneedle on the leasing strategy and tenant mix for the estate.",
+      "The work draws on the Leasing team's occupier relationships and the Brand Representation team's pipeline of emerging brands looking for their first West End address.",
+    ],
+  },
+  {
+    slug: "south-molton-triangle",
+    title: "South Molton Triangle",
+    service: "Leasing",
+    blurb: "Retail and restaurant leasing at Grosvenor's new mixed-use quarter between Bond Street and Oxford Street.",
+    facts: [["Service", "Leasing"], ["Client", "Grosvenor"], ["Sector", "Retail & restaurant"], ["Location", "Mayfair, W1"]],
+    body: [
+      "South Molton Triangle is Grosvenor's largest mixed-use development in the West End, bringing new shops, restaurants and public space to the streets beside the Elizabeth line at Bond Street.",
+      "BGP advises Grosvenor on the retail and restaurant leasing, building on the firm's long relationship across the Mayfair and Belgravia estates.",
+    ],
+  },
+  {
+    slug: "canary-wharf",
+    title: "Canary Wharf",
+    service: "Leasing",
+    blurb: "More than twenty years advising Canary Wharf Group on the retail, restaurant and leisure mix across the estate's malls and streets.",
+    facts: [["Service", "Leasing"], ["Client", "Canary Wharf Group"], ["Sector", "Retail, restaurant & leisure"], ["Location", "Canary Wharf, E14"]],
+    body: [
+      "Canary Wharf is one of the largest retail and leisure estates in London, with shopping malls, waterside restaurants and a growing residential population. BGP has advised Canary Wharf Group for more than twenty years.",
+      "The instruction spans leasing strategy, tenant mix and the introduction of new restaurant, leisure and lifestyle operators as the estate has broadened from a working district into a seven-day destination.",
+    ],
+  },
   {
     slug: "the-royal-exchange",
     title: "The Royal Exchange",
@@ -337,6 +373,7 @@ export const CASE_STUDIES: CaseStudy[] = [
       "We acquired The Frankie Shop's London flagship on Davies Street, bringing the New York and Paris label to Mayfair.",
       "A first-to-market UK location secured through our relationships with the estate and a clear view of where the brand's customer already shops.",
     ],
+    image: "/images/case-studies/the-frankie-shop-davies-street.jpg",
   },
   {
     slug: "percival-neal-street",
