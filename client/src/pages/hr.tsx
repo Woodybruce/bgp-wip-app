@@ -1,3 +1,4 @@
+import { HrScheduleImportDialog } from "@/components/hr-schedule-import-dialog";
 import { BGP_TEAM_NAMES } from "@shared/teams";
 import { useState, useMemo, useRef, useEffect, lazy, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -6414,6 +6415,7 @@ export default function HRPage() {
   const [deptFilter, setDeptFilter] = useState("all");
   const [addStaffOpen, setAddStaffOpen] = useState(false);
   const [importSalariesOpen, setImportSalariesOpen] = useState(false);
+  const [importScheduleOpen, setImportScheduleOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"org" | "grid">("org");
 
   // Honour ?person=:id (and optional &tab=:name) from the URL on first
@@ -6535,6 +6537,9 @@ export default function HRPage() {
           <Badge variant="secondary" className="sm:ml-2">{allStaff.length} staff</Badge>
           {isAdmin && (
             <div className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="outline" className="h-8" onClick={() => setImportScheduleOpen(true)} data-testid="button-import-hr-schedule">
+                <Upload className="w-3.5 h-3.5 mr-1.5" /> Import HR schedule
+              </Button>
               <Button size="sm" variant="outline" className="h-8" onClick={() => setImportSalariesOpen(true)} data-testid="button-import-salaries">
                 <Upload className="w-3.5 h-3.5 mr-1.5" /> Import salaries
               </Button>
@@ -6629,6 +6634,7 @@ export default function HRPage() {
 
       {isAdmin && <AddStaffDialog allStaff={allStaff} open={addStaffOpen} onClose={() => setAddStaffOpen(false)} />}
       {isAdmin && <ImportSalariesDialog open={importSalariesOpen} onClose={() => setImportSalariesOpen(false)} />}
+      {isAdmin && <HrScheduleImportDialog open={importScheduleOpen} onClose={() => setImportScheduleOpen(false)} />}
     </div>
   );
 }

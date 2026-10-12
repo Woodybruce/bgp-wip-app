@@ -61,12 +61,15 @@ export const TEAM_ROSTER_2026: Array<{ name: string; teams: BgpTeamName[] }> = [
   { name: "Carly Cunliffe", teams: ["Tenant Rep"] },
   { name: "Beth Emmens", teams: ["Tenant Rep"] },
 ];
-export const NO_TEAM_ROSTER_2026 = ["Woody Bruce", "Rupert Bentley Smith", "Charlotte Roberts", "Layla O'Driscoll", "Cara Milligan", "Harriette Walker Clark", "Nick Goodman"];
-// Woody, 2026-10-12: "Daisy and Emily are not part of BGP; Nick Goodman
-// should be, and report to me as a consultant."
-export const LEFT_BGP_2026 = ["Daisy Driscoll", "Emily Mitchell"];
+export const NO_TEAM_ROSTER_2026 = ["Woody Bruce", "Rupert Bentley Smith", "Charlotte Roberts", "Layla O'Driscoll", "Cara Milligan", "Harriette Walker Clark", "Nick Goodman", "Emily Mitchell"];
+// Woody, 2026-10-12: "Board is Woody and then Charlotte, Rupert, Jack and
+// Layla, with Cara and Harriette as support and Nick as consultant … add
+// Emily Mitchell as consultant too." Daisy is not part of BGP.
+export const BOARD_2026 = ["Woody Bruce", "Charlotte Roberts", "Rupert Bentley Smith", "Jack Barratt", "Layla O'Driscoll"];
+export const LEFT_BGP_2026 = ["Daisy Driscoll"];
 export const CONSULTANTS_2026: Array<{ name: string; role: string; reportsTo: string }> = [
   { name: "Nick Goodman", role: "Consultant", reportsTo: "Woody Bruce" },
+  { name: "Emily Mitchell", role: "Consultant", reportsTo: "Woody Bruce" },
 ];
 
 const normPerson = (s: string) => String(s || "").toLowerCase().replace(/[^a-z ]+/g, " ").replace(/\s+/g, " ").trim();

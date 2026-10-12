@@ -22,7 +22,7 @@
 // Fee allocations per agent are not touched.
 
 import { pool } from "./db";
-import { BGP_TEAM_NAMES, CONSULTANTS_2026, LEASING_TEAMS, LEFT_BGP_2026, RETIRED_TEAM_NAMES, isLeasingTeam, rosterTeamsFor, samePerson, type BgpTeamName } from "@shared/teams";
+import { BGP_TEAM_NAMES, BOARD_2026, CONSULTANTS_2026, LEASING_TEAMS, LEFT_BGP_2026, RETIRED_TEAM_NAMES, isLeasingTeam, rosterTeamsFor, samePerson, type BgpTeamName } from "@shared/teams";
 
 const FLAG = "team_structure_2026_10";
 const KEPT = new Set(["Investment", "Tenant Rep", "Lease Advisory", "Landsec", ...LEASING_TEAMS]);
@@ -30,8 +30,8 @@ const RETIRED = new Set<string>(RETIRED_TEAM_NAMES.map(t => t.toLowerCase()));
 const isRetired = (t: string) => RETIRED.has(String(t || "").trim().toLowerCase());
 const LONDON_RETIRED = /london|f&b/i;
 
-export type MigUser = { id: string; name: string; email: string | null; team: string | null; additional_teams: string[] | null; active_team: string | null; is_active: boolean | null; role?: string | null; manager_id?: string | null };
-type UserState = { team: string | null; additional_teams: string[] | null; active_team: string | null; is_active: boolean; role: string | null; manager_id: string | null };
+export type MigUser = { id: string; name: string; email: string | null; team: string | null; additional_teams: string[] | null; active_team: string | null; is_active: boolean | null; role?: string | null; manager_id?: string | null; board_member?: boolean | null };
+type UserState = { team: string | null; additional_teams: string[] | null; active_team: string | null; is_active: boolean; role: string | null; manager_id: string | null; board_member: boolean };
 export type MigDeal = { id: string; team: string[] | null; property_id: string | null; internal_agent: string[] | null; internal_agent_ids: string[] | null; deal_type: string | null };
 export type MigProperty = { id: string; name: string; postcode: string | null; address: any; asset_class: string | null; bgp_engagement: string[] | null };
 export type MigWip = { id: string; team: string | null; deal_id: string | null; property_id: string | null; agent: string | null; agent_user_id: string | null };
@@ -72,7 +72,7 @@ export function planTeamStructure(input: { users: MigUser[]; deals: MigDeal[]; p
   for (const u of input.users) {
     const isStaff = String(u.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
     if (!isStaff) continue;
-    const from: UserState = { team: u.team, additional_teams: u.additional_teams, active_team: u.active_team, is_active: u.is_active !== false, role: u.role ?? null, manager_id: u.manager_id ?? null };
+    const from: UserState = { team: u.team, additional_teams: u.additional_teams, active_team: u.active_team, is_active: u.is_active !== false, role: u.role ?? null, manager_id: u.manager_id ?? null, board_member: !!u.board_member };
     const roster = rosterTeamsFor(u.name);
     const to: UserState = { ...from };
     let note: string | undefined;
@@ -83,6 +83,7 @@ export function planTeamStructure(input: { users: MigUser[]; deals: MigDeal[]; p
     }
     to.active_team = u.active_team && isRetired(u.active_team) ? null : u.active_team;
     if (LEFT_BGP_2026.some(n => samePerson(n, u.name))) { to.team = null; to.additional_teams = []; to.is_active = false; note = "Not part of BGP — login made inactive"; }
+    to.board_member = BOARD_2026.some(n => samePerson(n, u.name));
     const consultant = CONSULTANTS_2026.find(c => samePerson(c.name, u.name));
     if (consultant) {
       const boss = input.users.find(x => samePerson(x.name, consultant.reportsTo));
@@ -90,7 +91,9 @@ export function planTeamStructure(input: { users: MigUser[]; deals: MigDeal[]; p
       note = `${consultant.role}, reports to ${consultant.reportsTo}`;
     }
     const same = to.team === from.team && JSON.stringify(to.additional_teams || []) === JSON.stringify(from.additional_teams || [])
-      && to.active_team === from.active_team && to.is_active === from.is_active && to.role === from.role && to.manager_id === from.manager_id;
+      && to.active_team === from.active_team && to.is_active === from.is_active && to.role === from.role && to.manager_id === from.manager_id && to.board_member === from.board_member;
+    if (!note && to.board_member !== from.board_member) note = to.board_member ? "Board" : "Off the board";
+    else if (note && to.board_member && !from.board_member) note += " · Board";
     if (!same) userChanges.push({ id: u.id, name: u.name, note, from, to });
   }
 
@@ -176,7 +179,8 @@ export function planTeamStructure(input: { users: MigUser[]; deals: MigDeal[]; p
 }
 
 async function loadInput() {
-  const users = (await pool.query(`SELECT id, name, email, team, additional_teams, active_team, is_active, role, manager_id FROM users`)).rows;
+  const users = (await pool.query(`SELECT u.id, u.name, u.email, u.team, u.additional_teams, u.active_team, u.is_active, u.role, u.manager_id, sp.board_member
+    FROM users u LEFT JOIN staff_profiles sp ON sp.user_id = u.id`)).rows;
   const deals = (await pool.query(`SELECT id, team, property_id, internal_agent, internal_agent_ids, deal_type FROM crm_deals`)).rows;
   const properties = (await pool.query(`SELECT id, name, postcode, address, asset_class, bgp_engagement FROM crm_properties`)).rows;
   // SELECT * — agent_user_id may be missing on older databases.
@@ -208,6 +212,11 @@ export async function applyTeamStructure(opts: { force?: boolean } = {}): Promis
         await client.query(
           `INSERT INTO staff_profiles (user_id, title, manager_id, status) VALUES ($1, $2, $3, 'active')
            ON CONFLICT (user_id) DO UPDATE SET title = EXCLUDED.title, manager_id = EXCLUDED.manager_id`, [c.id, c.to.role, c.to.manager_id]);
+      }
+      if (c.to.board_member !== c.from.board_member) {
+        await client.query(
+          `INSERT INTO staff_profiles (user_id, board_member, status) VALUES ($1, $2, 'active')
+           ON CONFLICT (user_id) DO UPDATE SET board_member = EXCLUDED.board_member`, [c.id, c.to.board_member]);
       }
     }
     for (const c of plan.propChanges) {
