@@ -20,6 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import { ProfilePhotoCard } from "@/components/profile-photo-card";
 import { TeamStructureDialog } from "@/components/team-structure-dialog";
+import { XeroFillDialog } from "@/components/xero-fill-dialog";
 
 interface TeamMember {
   id: string;
@@ -1044,6 +1045,7 @@ function DataHealthSection() {
   const [numberingUnits, setNumberingUnits] = useState(false);
   const [splitTeamOpen, setSplitTeamOpen] = useState(false);
   const [teamStructureOpen, setTeamStructureOpen] = useState(false);
+  const [xeroFillOpen, setXeroFillOpen] = useState(false);
 
   const runScan = async () => {
     setScanning(true);
@@ -1169,6 +1171,9 @@ function DataHealthSection() {
             <Button size="sm" variant="outline" onClick={runNumberUnits} disabled={numberingUnits} data-testid="button-number-units">
               {numberingUnits ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
               {numberingUnits ? "Renaming..." : "Renumber Units (test)"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setXeroFillOpen(true)} data-testid="button-xero-fill">
+              <RefreshCw className="w-4 h-4 mr-2" />Fill from Xero
             </Button>
             <Button size="sm" onClick={() => setTeamStructureOpen(true)} data-testid="button-team-structure">
               <Users className="w-4 h-4 mr-2" />New team structure
@@ -1298,6 +1303,7 @@ function DataHealthSection() {
       </CardContent>
       <SortTeamsDialog open={splitTeamOpen} onClose={() => setSplitTeamOpen(false)} />
       <TeamStructureDialog open={teamStructureOpen} onClose={() => setTeamStructureOpen(false)} />
+      <XeroFillDialog open={xeroFillOpen} onClose={() => setXeroFillOpen(false)} />
     </Card>
   );
 }

@@ -2840,6 +2840,20 @@ export async function registerRoutes(
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
+  // Fill blanks from Xero (server/xero-contact-fill.ts): preview, then apply.
+  app.get("/api/admin/xero-fill/:kind/preview", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const m = await import("./xero-contact-fill");
+      res.json(req.params.kind === "staff" ? await m.planStaffFill() : await m.planCompanyFill());
+    } catch (e: any) { res.status(e.status || 500).json({ message: e.message }); }
+  });
+  app.post("/api/admin/xero-fill/:kind/apply", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const m = await import("./xero-contact-fill");
+      res.json(req.params.kind === "staff" ? await m.applyStaffFill() : await m.applyCompanyFill());
+    } catch (e: any) { res.status(e.status || 500).json({ message: e.message }); }
+  });
+
   app.get("/api/admin/chat-errors", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const r = await pool.query(`SELECT value FROM system_settings WHERE key = 'chatbgp:recent_errors'`);
