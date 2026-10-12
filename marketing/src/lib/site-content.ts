@@ -11,6 +11,7 @@ import {
   TEAM,
   type Article,
   type CaseStudy,
+  isDirectorLevel,
   type Person,
 } from "./content";
 
@@ -34,11 +35,11 @@ const BUNDLED: SiteContent = {
   caseStudies: CASE_STUDIES,
   articles: ARTICLES.filter((a) => !!a.body),
   contacts: {
-    leasing: LEASING_CONTACTS,
-    investment: INVESTMENT_CONTACTS,
-    lease_advisory: LEASE_ADVISORY_CONTACTS,
-    brand_representation: BRAND_REP_CONTACTS,
-    consultancy: CONSULTANCY_CONTACTS,
+    leasing: LEASING_CONTACTS.filter(isDirectorLevel),
+    investment: INVESTMENT_CONTACTS.filter(isDirectorLevel),
+    lease_advisory: LEASE_ADVISORY_CONTACTS.filter(isDirectorLevel),
+    brand_representation: BRAND_REP_CONTACTS.filter(isDirectorLevel),
+    consultancy: CONSULTANCY_CONTACTS.filter(isDirectorLevel),
   },
   live: false,
 };
@@ -52,7 +53,7 @@ function fromApi(j: any): SiteContent {
     photo: r.photoUrl || undefined,
     groups: r.groups || [],
   }));
-  const byGroup = (g: ContactGroup): Person[] => team.filter((p) => p.groups.includes(g)).map(({ groups, ...p }) => p);
+  const byGroup = (g: ContactGroup): Person[] => team.filter((p) => p.groups.includes(g) && isDirectorLevel(p)).map(({ groups, ...p }) => p);
   return {
     team: team.map(({ groups, ...p }) => p),
     caseStudies: (j.caseStudies || []).map((r: any) => ({

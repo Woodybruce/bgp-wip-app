@@ -820,3 +820,7 @@ export const teamPagesFor = (name: string): Array<{ label: string; href: string 
   if (!out.length && LEASING_CONTACTS.some((p) => p.name === name)) out.push({ label: "Leasing", href: "/leasing" });
   return out;
 };
+
+// Key contacts are directors only (Woody, 2026-10-12): Director grade and
+// heads of teams. Associate Directors and below stay on the Team page.
+export const isDirectorLevel = (p: { title: string }) => /\b(director|head)\b/i.test(p.title) && !/associate/i.test(p.title);

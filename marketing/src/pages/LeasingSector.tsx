@@ -1,11 +1,11 @@
 import { Link, useRoute } from "wouter";
 import KeyContacts from "../components/KeyContacts";
 import Placeholder from "../components/Placeholder";
-import { LEASING_SECTORS, SHOPPING_CENTRES, type Person } from "../lib/content";
+import { LEASING_SECTORS, SHOPPING_CENTRES, isDirectorLevel, type Person } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
 
 export const peopleNamed = (team: Person[], names: string[]): Person[] =>
-  names.map((n) => team.find((p) => p.name === n)).filter((p): p is Person => !!p);
+  names.map((n) => team.find((p) => p.name === n)).filter((p): p is Person => !!p && isDirectorLevel(p));
 
 function NotFound() {
   return (
