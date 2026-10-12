@@ -1146,9 +1146,12 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       {(numericFields.some((f) => f.value != null) || [deal.gfAreaSqft, deal.ffAreaSqft, deal.basementAreaSqft, deal.itzaAreaSqft].some((v) => v != null)) && (
       <Card>
         <CardContent className="p-3">
-          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-x-4 gap-y-1.5">
+          {/* Columns fit the space, not a fixed six: with ChatBGP open the
+              page is narrow and £1,233,036 ran into the next figure
+              (Woody, 2026-10-12). */}
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(7.5rem,1fr))] gap-x-4 gap-y-1.5">
             {numericFields.filter((f) => f.value != null).map((field) => (
-              <div key={field.label} className="flex flex-col py-1">
+              <div key={field.label} className="flex flex-col py-1 min-w-0">
                 <p className="text-[10px] text-muted-foreground leading-tight">{field.label}</p>
                 <p className="text-xs font-mono font-medium" data-testid={`text-deal-${field.label.toLowerCase().replace(/[\s()\/]+/g, "-")}`}>
                   {field.format === "currency"
