@@ -2942,6 +2942,18 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     console.warn("[schema-drift] guard failed:", e?.message);
   }
 
+  // ── October 2026 team structure (Woody, 2026-10-12: "can't you just do
+  // it?"). Same one-shot the Settings → New team structure dialog runs:
+  // flag-guarded so it applies exactly once, transactional, and every
+  // changed row is backed up to team_structure_backup_2026_10 first.
+  try {
+    const { applyTeamStructure } = await import("./team-structure-migration");
+    const r = await applyTeamStructure();
+    if (!r.skipped) console.log(`[team-structure] boot apply: ${r.users} users, ${r.properties} properties, ${r.deals} deals, ${r.wip} WIP rows`);
+  } catch (e: any) {
+    console.warn("[team-structure] boot apply failed:", e?.message);
+  }
+
   // ── One-off (per Woody, 2026-09-28): Canary Wharf Group runs "No PO No
   // Pay", so its invoices need a PO number. Guarded on requires_po never
   // having been set (NULL), so it applies once and a later change on the
