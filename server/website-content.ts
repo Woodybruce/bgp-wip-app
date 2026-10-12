@@ -9,6 +9,7 @@ import path from "path";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { db } from "./db";
 import { requireAuth } from "./auth";
+import { scrapeLogoFromWebsite } from "./website-logo-scraper";
 import {
   insertWebsiteCaseStudySchema,
   insertWebsiteNewsSchema,
@@ -201,6 +202,118 @@ router.get("/api/public/website/:kind", async (req, res) => {
     console.error("[website-content] public list failed:", err?.message);
     res.status(500).json({ message: "Failed to load website content" });
   }
+});
+
+// ─── Brand assets for the site, through the dashboard's own keys ─────────
+// bgp.uk.com's client rows and Brand Rep case studies need logos and shop
+// photos the marketing team never had to hand. logo.dev (LOGO_DEV_TOKEN)
+// and Google Places (GOOGLE_API_KEY) are already paid for here, so the
+// site pulls through this proxy. Both lists are allowlists: an open
+// endpoint must not be able to spend credits on arbitrary lookups.
+const WEBSITE_LOGO_DOMAINS = new Set([
+  "aberdeeninvestments.com", "ardentcompanies.com", "atisfood.com", "axa-im.com", "bangerslondon.com", "barrys.com",
+  "beautypie.com", "bloomberg.com", "brookfield.com", "capitalrealestatepartners.com", "cityoflondon.gov.uk",
+  "columbiathreadneedle.com", "danielladraper.com", "dintaifung.co.uk", "earlofeast.com", "hammerson.com", "jabgym.com",
+  "johnstonsofelgin.com", "karvestudio.com", "landsec.com", "masaj.london", "oldspike.co.uk", "percivalclo.com", "rains.com",
+  "ronning.co", "schroders.com", "stanhopeplc.com", "thecrownestate.co.uk", "thefrankieshop.com", "thenorthbank.london",
+  "yolklondon.com",
+]);
+const WEBSITE_PLACE_QUERIES: Record<string, string> = {
+  "the-frankie-shop-davies-street": "The Frankie Shop, Davies Street, Mayfair, London",
+  "percival-neal-street": "Percival, Neal Street, Seven Dials, London",
+  "atis-loxton-walk": "Atis, Loxton Walk, London",
+  "masaj-islington-square": "Masaj, Islington Square, London",
+};
+const websiteAssetCache = new Map<string, { at: number; buf: Buffer; mime: string; source: string }>();
+const WEBSITE_ASSET_TTL = 6 * 3600 * 1000;
+
+router.get("/api/public/website/logo/:domain", async (req, res) => {
+  const domain = str(req.params.domain).toLowerCase();
+  if (!WEBSITE_LOGO_DOMAINS.has(domain)) return res.status(404).json({ message: "Not a website client" });
+  const key = `logo:${domain}`;
+  let hit = websiteAssetCache.get(key);
+  if (!hit || Date.now() - hit.at > WEBSITE_ASSET_TTL) {
+    hit = undefined;
+    const token = process.env.LOGO_DEV_TOKEN;
+    if (token) {
+      try {
+        const r = await fetch(`https://img.logo.dev/${encodeURIComponent(domain)}?token=${token}&size=512&format=png`, { signal: AbortSignal.timeout(10_000) });
+        const mime = r.headers.get("content-type") || "";
+        if (r.ok && mime.startsWith("image/")) {
+          const buf = Buffer.from(await r.arrayBuffer());
+          if (buf.length > 800) hit = { at: Date.now(), buf, mime, source: "logo.dev" };
+        }
+      } catch { /* fall through to the website scrape */ }
+    }
+    if (!hit) {
+      const scraped = await scrapeLogoFromWebsite(domain).catch(() => null);
+      if (scraped) hit = { at: Date.now(), buf: scraped.buffer, mime: scraped.mime, source: `website-${scraped.source}` };
+    }
+    if (!hit) return res.status(404).json({ message: "No logo found" });
+    websiteAssetCache.set(key, hit);
+  }
+  res.header("Content-Type", hit.mime);
+  res.header("X-Logo-Source", hit.source);
+  res.header("Cache-Control", "public, max-age=3600");
+  res.send(hit.buf);
+});
+
+async function websitePlacePhotos(slug: string): Promise<{ place: any; photos: any[] } | null> {
+  const query = WEBSITE_PLACE_QUERIES[slug];
+  const googleKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
+  if (!query || !googleKey) return null;
+  const search: any = await (await fetch(
+    `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&region=uk&key=${googleKey}`,
+    { signal: AbortSignal.timeout(10_000) },
+  )).json();
+  const first = search?.results?.[0];
+  if (!first?.place_id) return null;
+  const details: any = await (await fetch(
+    `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(first.place_id)}&fields=name,formatted_address,photos&key=${googleKey}`,
+    { signal: AbortSignal.timeout(10_000) },
+  )).json();
+  const result = details?.result || {};
+  return {
+    place: { placeId: first.place_id, name: result.name || first.name, address: result.formatted_address || first.formatted_address },
+    photos: (result.photos || []).map((p: any, i: number) => ({ i, width: p.width, height: p.height, attribution: (p.html_attributions || []).join(" "), ref: p.photo_reference })),
+  };
+}
+
+router.get("/api/public/website/place-photos/:slug", async (req, res) => {
+  try {
+    const found = await websitePlacePhotos(str(req.params.slug));
+    if (!found) return res.status(404).json({ message: "No place photos" });
+    res.json({ place: found.place, photos: found.photos.map(({ ref: _ref, ...p }) => p) });
+  } catch (err: any) {
+    res.status(502).json({ message: err?.message || "Places lookup failed" });
+  }
+});
+
+router.get("/api/public/website/place-photos/:slug/:i", async (req, res) => {
+  const slug = str(req.params.slug);
+  const i = Math.max(0, parseInt(str(req.params.i), 10) || 0);
+  const key = `place:${slug}:${i}`;
+  let hit = websiteAssetCache.get(key);
+  if (!hit || Date.now() - hit.at > WEBSITE_ASSET_TTL) {
+    try {
+      const found = await websitePlacePhotos(slug);
+      const photo = found?.photos[i];
+      const googleKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
+      if (!photo || !googleKey) return res.status(404).json({ message: "No such photo" });
+      const r = await fetch(
+        `https://maps.googleapis.com/maps/api/place/photo?maxwidth=1800&photo_reference=${encodeURIComponent(photo.ref)}&key=${googleKey}`,
+        { redirect: "follow", signal: AbortSignal.timeout(15_000) },
+      );
+      if (!r.ok) return res.status(502).json({ message: `Photo fetch ${r.status}` });
+      hit = { at: Date.now(), buf: Buffer.from(await r.arrayBuffer()), mime: r.headers.get("content-type") || "image/jpeg", source: photo.attribution };
+      websiteAssetCache.set(key, hit);
+    } catch (err: any) {
+      return res.status(502).json({ message: err?.message || "Places photo failed" });
+    }
+  }
+  res.header("Content-Type", hit.mime);
+  res.header("Cache-Control", "public, max-age=3600");
+  res.send(hit.buf);
 });
 
 // Staff CRUD for the dashboard Website page.
