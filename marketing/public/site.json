@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-12T09:44:42.013Z",
+  "generatedAt": "2026-10-12T10:54:15.134Z",
   "site": "https://www.bgp.uk.com",
   "note": "Content of bgp.uk.com. Pages are rendered client-side; use this file rather than fetching HTML. Live availability comes from listingsFeed.",
   "heroStatement": "Great places are built through connected thinking.",
@@ -42,13 +42,13 @@
       "name": "Leasing",
       "url": "https://www.bgp.uk.com/leasing",
       "intro": "Creating neighbourhoods that people love. Retail, restaurant and leisure leasing across London's leading estates and the UK's landmark destinations — acting for landlords including The Portman Estate, Grosvenor, The Crown Estate and Landsec.",
-      "image": "https://www.bgp.uk.com/images/stills-preview-regent-street.jpg"
+      "image": "https://www.bgp.uk.com/images/clients/nova-hero.jpg"
     },
     {
       "name": "Investment",
       "url": "https://www.bgp.uk.com/investment",
       "intro": "Acquisition and disposal advice across retail, leisure and mixed-use investments — from single assets to portfolios, acting for private clients, property companies and institutions including Aviva Investors, Legal & General and LondonMetric.",
-      "image": "https://www.bgp.uk.com/images/stills-preview-city-night.jpg"
+      "image": "https://www.bgp.uk.com/images/clients/city-st-pauls.jpg"
     },
     {
       "name": "Brand Representation",
@@ -350,7 +350,7 @@
         "Partners": "Aldgate Connect, Cheapside Business Alliance, Culture Mile BID, Eastern City BID, Fleet Street Quarter",
         "Location": "The Square Mile"
       },
-      "image": "https://www.bgp.uk.com/images/city-towers.jpg"
+      "image": "https://www.bgp.uk.com/images/clients/city-street.jpg"
     },
     {
       "title": "The Crown Estate — Retail Strategy, Cambridge Business Park",
@@ -386,7 +386,7 @@
         "Service": "Lease Advisory",
         "Client": "Hammerson"
       },
-      "image": null
+      "image": "https://www.bgp.uk.com/images/clients/bullring-interior.jpg"
     },
     {
       "title": "Land Securities",
@@ -397,7 +397,7 @@
         "Service": "Lease Advisory",
         "Client": "Land Securities"
       },
-      "image": null
+      "image": "https://www.bgp.uk.com/images/clients/victoria-street.jpg"
     },
     {
       "title": "Bloomberg",

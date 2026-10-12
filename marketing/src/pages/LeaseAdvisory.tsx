@@ -16,7 +16,7 @@ export default function LeaseAdvisory() {
   return (
     <div>
       <section className="relative">
-        <Placeholder className="h-72 md:h-96 w-full" src="/images/lease-signing.jpg" alt="Signing a lease" />
+        <Placeholder className="h-72 md:h-96 w-full" src="/images/clients/birmingham-st-martins.jpg" alt="St Martin's Square, Birmingham" />
         <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/70 via-bgp-ink/10 to-transparent" />
         <div className="absolute inset-0 flex items-end">
           <div className="mx-auto max-w-6xl px-4 pb-10 w-full">

@@ -6,14 +6,14 @@ export const SERVICES = [
   {
     slug: "leasing",
     name: "Leasing",
-    image: "/images/stills-preview-regent-street.jpg",
+    image: "/images/clients/nova-hero.jpg",
     intro:
       "Creating neighbourhoods that people love. Retail, restaurant and leisure leasing across London's leading estates and the UK's landmark destinations — acting for landlords including The Portman Estate, Grosvenor, The Crown Estate and Landsec.",
   },
   {
     slug: "investment",
     name: "Investment",
-    image: "/images/stills-preview-city-night.jpg",
+    image: "/images/clients/city-st-pauls.jpg",
     intro:
       "Acquisition and disposal advice across retail, leisure and mixed-use investments — from single assets to portfolios, acting for private clients, property companies and institutions including Aviva Investors, Legal & General and LondonMetric.",
   },
@@ -236,7 +236,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "city-of-london-ground-floor-study",
     title: "City of London Corporation — Ground Floor Study",
     service: "Consultancy",
-    image: "/images/city-towers.jpg",
+    image: "/images/clients/city-street.jpg",
     blurb:
       "A strategic study defining what makes a vibrant, consistently lively ground-floor experience across the Square Mile.",
     facts: [
@@ -287,7 +287,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     title: client,
     service: "Lease Advisory",
     blurb: `Lease advisory instruction for ${client} — rent reviews, renewals and restructuring aligned to the asset strategy.`,
-    image: client === "The Royal Exchange" ? "/images/stills-preview-royal-exchange.jpg" : undefined,
+    image: { Hammerson: "/images/clients/bullring-interior.jpg", "Land Securities": "/images/clients/victoria-street.jpg", "The Royal Exchange": "/images/stills-preview-royal-exchange.jpg" }[client as string],
     facts: [["Service", "Lease Advisory"], ["Client", client]] as Array<[string, string]>,
     body: [
       `BGP's Lease Advisory team acts for ${client}, providing evidence-led advice across rent reviews, renewals and lease restructuring.`,
