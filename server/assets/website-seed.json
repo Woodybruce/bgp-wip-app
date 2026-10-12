@@ -232,7 +232,7 @@
     },
     {
       "name": "Beth Emmens",
-      "title": "Co-Head Brand Representation",
+      "title": "Director, Co-Head Brand Representation",
       "phone": "+44 (0)20 3551 5260",
       "email": null,
       "photoUrl": null,
@@ -715,7 +715,7 @@
           "Neal Street, Seven Dials"
         ]
       ],
-      "imageUrl": null,
+      "imageUrl": "https://www.bgp.uk.com/images/case-studies/percival-neal-street.jpg",
       "sortOrder": 12,
       "published": true
     },
@@ -742,7 +742,7 @@
           "Loxton Walk"
         ]
       ],
-      "imageUrl": null,
+      "imageUrl": "https://www.bgp.uk.com/images/case-studies/atis-loxton-walk.jpg",
       "sortOrder": 13,
       "published": true
     },
@@ -769,7 +769,7 @@
           "Islington Square"
         ]
       ],
-      "imageUrl": null,
+      "imageUrl": "https://www.bgp.uk.com/images/case-studies/masaj-islington-square.jpg",
       "sortOrder": 14,
       "published": true
     }

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-12T17:06:05.225Z",
+  "generatedAt": "2026-10-12T17:14:20.110Z",
   "site": "https://www.bgp.uk.com",
   "note": "Content of bgp.uk.com. Pages are rendered client-side; use this file rather than fetching HTML. Live availability comes from listingsFeed.",
   "heroStatement": "Great places are built through connected thinking.",
@@ -47,7 +47,7 @@
     {
       "name": "Investment",
       "url": "https://www.bgp.uk.com/investment",
-      "intro": "Acquisition and disposal advice across retail, leisure and mixed-use investments — from single assets to portfolios, acting for private clients, property companies and institutions including Aviva Investors, Legal & General and LondonMetric.",
+      "intro": "Acquisition and disposal advice across retail, leisure and mixed-use investments, from single assets to portfolios, for private clients, property companies and institutions.",
       "image": "https://www.bgp.uk.com/images/investment/royal-exchange-street.jpg"
     },
     {
@@ -212,7 +212,7 @@
     },
     {
       "name": "Beth Emmens",
-      "title": "Co-Head Brand Representation",
+      "title": "Director, Co-Head Brand Representation",
       "phone": "+44 (0)20 3551 5260",
       "email": "TBC",
       "photo": null
@@ -487,7 +487,7 @@
         "Pillar": "Hospitality",
         "Location": "Loxton Walk"
       },
-      "image": null
+      "image": "https://www.bgp.uk.com/images/case-studies/atis-loxton-walk.jpg"
     },
     {
       "title": "Masaj, Islington Square",

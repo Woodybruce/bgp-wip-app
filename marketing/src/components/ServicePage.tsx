@@ -75,12 +75,10 @@ export default function ServicePage({ hero, intro, body, clients, clientsBlurb, 
           <div className={`card-strip ${cols} mt-6`}>
             {caseStudies.map((cs) => (
               <Link key={cs.slug} href={`/case-studies/${cs.slug}`} className="group block">
-                {cs.image && (
-                  <div className="img-frame">
-                    <Placeholder className="aspect-[4/3] w-full" src={cs.image} alt={cs.title} />
-                  </div>
-                )}
-                <p className={`label-caps group-hover:text-bgp-burgundy transition-colors ${cs.image ? "mt-4" : "border-t border-bgp-wine/30 pt-4"}`}>{cs.title}</p>
+                <div className="img-frame">
+                  <Placeholder className="aspect-[4/3] w-full" src={cs.image} alt={cs.title} label="Photo to follow" />
+                </div>
+                <p className="label-caps mt-4 group-hover:text-bgp-burgundy transition-colors">{cs.title}</p>
                 <p className="mt-2 text-base md:text-lg text-bgp-ink/90 leading-relaxed">{cs.blurb}</p>
                 <p className="mt-3"><span className="explore-link">Read more</span></p>
               </Link>
