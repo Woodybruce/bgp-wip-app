@@ -18,7 +18,7 @@ export default function BrandRepresentation() {
           {BRAND_REP_PILLARS.map((pillar) => (
             <div key={pillar.name}>
               <p className="label-caps border-b border-bgp-ink pb-2 mb-6">{pillar.name}</p>
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 {pillar.clients.map((c) => <ClientCircle key={c.name} client={c} />)}
               </div>
             </div>

@@ -12,12 +12,12 @@ export default function Investment() {
   const service = SERVICES.find((s) => s.slug === "investment")!;
   return (
     <div>
-      <section className="relative">
-        <Placeholder className="h-72 md:h-96 w-full" src={service.image} alt="The Royal Exchange, City of London" />
+      <section className="relative min-h-[18rem] md:min-h-[24rem] flex items-end">
+        <Placeholder className="absolute inset-0 h-full w-full" src={service.image} alt="The Royal Exchange, City of London" />
         <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/70 via-bgp-ink/10 to-transparent" />
-        <div className="absolute inset-0 flex items-end">
-          <div className="mx-auto max-w-6xl px-4 pb-10 w-full">
-            <p className="max-w-xl text-3xl md:text-4xl leading-snug font-display italic text-white" style={{ textShadow: "0 2px 16px rgba(0,0,0,0.45)" }}>{service.intro}</p>
+        <div className="relative w-full">
+          <div className="mx-auto max-w-6xl px-4 pt-28 pb-8 md:pb-10 w-full">
+            <p className="max-w-xl text-2xl md:text-4xl leading-snug font-display italic text-white" style={{ textShadow: "0 2px 16px rgba(0,0,0,0.45)" }}>{service.intro}</p>
           </div>
         </div>
       </section>
