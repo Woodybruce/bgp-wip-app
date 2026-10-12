@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-12T13:24:17.029Z",
+  "generatedAt": "2026-10-12T13:26:41.122Z",
   "site": "https://www.bgp.uk.com",
   "note": "Content of bgp.uk.com. Pages are rendered client-side; use this file rather than fetching HTML. Live availability comes from listingsFeed.",
   "heroStatement": "Great places are built through connected thinking.",
@@ -66,7 +66,7 @@
       "name": "Consultancy",
       "url": "https://www.bgp.uk.com/consultancy",
       "intro": "Placemaking is central to our business philosophy. As such, we've evolved from traditional leasing to offering clients bespoke reporting, long-term consultancy, and strategic asset management services.",
-      "image": "https://www.bgp.uk.com/images/55-bishopsgate.jpg"
+      "image": "https://www.bgp.uk.com/images/clients/city-street.jpg"
     }
   ],
   "team": [
