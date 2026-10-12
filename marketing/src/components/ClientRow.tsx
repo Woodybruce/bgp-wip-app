@@ -1,22 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import type { Client } from "../lib/content";
-import { LOGOKIT_TOKEN, logoKitEnabled } from "../lib/logokit";
 
 // "A snapshot of clients" — LogoKit (fallback=404 so misses fail honestly),
 // then self-hosted PNGs in public/brand-logos/, then the client name.
 // A load timeout skips any source that hangs (ad-blockers, firewalls).
 // Logos show in their own colours (Woody, 2026-10-12).
-function ClientCircle({ client }: { client: Client }) {
+export function ClientCircle({ client }: { client: Client }) {
   const [step, setStep] = useState(0);
   const loadedRef = useRef(false);
 
-  const sources: string[] = [];
-  if (client.domain) {
-    if (logoKitEnabled) {
-      sources.push(`https://img.logokit.com/${client.domain}?token=${LOGOKIT_TOKEN}&size=128&fallback=404`);
-    }
-    sources.push(`/brand-logos/${client.domain}.png`);
-  }
+  // Only logos we hold as clean files (public/brand-logos, 640px, from the
+  // client's own site). Anything else is typeset — a crisp name beats a
+  // favicon or a scraped photo (Woody / Harry, 2026-10-12).
+  const sources: string[] = client.domain ? [`/brand-logos/${client.domain}.png`] : [];
   const src = sources[step];
 
   useEffect(() => {
@@ -38,12 +34,12 @@ function ClientCircle({ client }: { client: Client }) {
           src={src}
           alt={`${client.name} logo`}
           loading="lazy"
-          className="h-3/5 w-3/5 object-contain"
+          className="h-3/5 w-[72%] object-contain"
           onLoad={() => { loadedRef.current = true; }}
           onError={() => setStep((s) => s + 1)}
         />
       ) : (
-        <span className="px-3 text-center text-[10px] font-semibold uppercase tracking-widest text-bgp-ink/60">
+        <span className="px-3 text-center font-display text-lg leading-tight text-bgp-wine">
           {client.name}
         </span>
       )}

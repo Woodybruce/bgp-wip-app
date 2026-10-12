@@ -110,7 +110,7 @@ export const TEAM: Person[] = [
   { photo: "/images/team/ben-sykes.jpg", name: "Ben Sykes", title: "Surveyor, Shopping Centres", phone: OFFICE_PHONE, email: "TBC" },
   { photo: "/images/team/kate-martin.jpg", name: "Kate Martin", title: "Surveyor, Shopping Centres", phone: OFFICE_PHONE, email: "TBC" },
   { name: "Beth Emmens", title: "Co-Head Brand Representation", phone: OFFICE_PHONE, email: "TBC" },
-  { photo: "/images/team/carly-cunliffe.jpg", name: "Carly Cunliffe", title: "Brand Representation", phone: OFFICE_PHONE, email: "TBC" },
+  { photo: "/images/team/carly-cunliffe.jpg", name: "Carly Cunliffe", title: "Graduate Surveyor, Brand Representation", phone: OFFICE_PHONE, email: "TBC" },
   { photo: "/images/team/emily-cann.jpg", name: "Emily Cann", title: "Graduate Surveyor, London Estates", phone: "+44 (0)7516 660 791", email: "emilyc@brucegillinghampollard.com" },
   { photo: "/images/team/will-penfold.jpg", name: "Will Penfold", title: "Graduate Surveyor, London Estates", phone: "+44 (0)7760 881 270", email: "willp@brucegillinghampollard.com" },
   { photo: "/images/team/luke-donohoe.jpg", name: "Luke Donohoe", title: "Graduate Surveyor, Shopping Centres", phone: "+44 (0)7983 855 926", email: "luke@brucegillinghampollard.com" },
@@ -142,7 +142,7 @@ export const INVESTMENT_CONTACTS = byName(
 
 export const LEASE_ADVISORY_CONTACTS = byName("Peter Wood", "Tom Cater");
 
-export const BRAND_REP_CONTACTS = byName("Harry Elliott", "Beth Emmens", "Carly Cunliffe");
+export const BRAND_REP_CONTACTS = byName("Harry Elliott", "Evie North", "Beth Emmens", "Carly Cunliffe");
 
 // Tracey, 2026-09-11: Pete Wood replaces Alex on the consultancy page.
 export const CONSULTANCY_CONTACTS = byName("Tracey Pollard", "Peter Wood", "Libby Evans");
@@ -303,73 +303,50 @@ export const CASE_STUDIES: CaseStudy[] = [
       "Every negotiation starts from the asset strategy and is grounded in live leasing evidence from BGP's agency teams.",
     ],
   })),
+  // Brand Representation — Harry's four, one per pillar (2026-10-12).
+  // Photos of the actual shops to follow from Harry.
   {
-    slug: "atis",
-    title: "ATIS",
+    slug: "the-frankie-shop-davies-street",
+    title: "The Frankie Shop, Davies Street",
     service: "Brand Representation",
-    image: "/images/cafe.jpg",
-    blurb:
-      "A new healthy grab & go lifestyle restaurant offering seriously tasty bowls and salads. We acquired their first site on City Road in the Atlas Building.",
-    facts: [
-      ["Service", "Brand Representation"],
-      ["Client", "ATIS"],
-      ["Sector", "F&B — healthy grab & go"],
-      ["First site", "City Road, Atlas Building"],
-    ],
+    blurb: "International / DTC — the New York and Paris label's London home on Davies Street, Mayfair.",
+    facts: [["Service", "Brand Representation"], ["Pillar", "International / DTC"], ["Location", "Davies Street, Mayfair"]],
     body: [
-      "A new healthy grab & go lifestyle restaurant offering seriously tasty bowls and salads. We acquired their first site on City Road in the Atlas Building, also serving cold press juices, artisanal coffees and kombucha on tap.",
+      "We acquired The Frankie Shop's London flagship on Davies Street, bringing the New York and Paris label to Mayfair.",
+      "A first-to-market UK location secured through our relationships with the estate and a clear view of where the brand's customer already shops.",
     ],
   },
   {
-    slug: "fred-perry",
-    title: "Fred Perry",
+    slug: "percival-neal-street",
+    title: "Percival, Neal Street, Seven Dials",
     service: "Brand Representation",
-    image: "/images/shop-menswear.jpg",
-    blurb:
-      "One of the UK's most iconic brands, steeped in a rich history of music, sport and culture.",
-    facts: [
-      ["Service", "Brand Representation"],
-      ["Client", "Fred Perry"],
-      ["Sector", "Fashion retail"],
-      ["Coverage", "UK & international"],
-    ],
+    blurb: "Independent / Lifestyle — the London menswear label's store on Neal Street in Seven Dials.",
+    facts: [["Service", "Brand Representation"], ["Pillar", "Independent / Lifestyle"], ["Location", "Neal Street, Seven Dials"]],
     body: [
-      "One of the UK's most iconic brands, steeped in a rich history of music, sport and culture. With stores worldwide and a cult following, Fred Perry continues to increase its presence in key locations.",
+      "We acquired Percival's Seven Dials store on Neal Street, placing an independent London menswear label at the heart of Covent Garden's best pitch for its customer.",
+      "Independent brands need the right street more than the biggest one; our estate relationships put Percival where its audience walks every day.",
     ],
   },
   {
-    slug: "barrys-bootcamp",
-    title: "Barry's Bootcamp",
+    slug: "atis-loxton-walk",
+    title: "Atis, Loxton Walk",
     service: "Brand Representation",
-    image: "/images/gym.jpg",
-    blurb:
-      "Described as the 'hardest workout in the world' — acquisition strategy throughout London.",
-    facts: [
-      ["Service", "Brand Representation"],
-      ["Client", "Barry's Bootcamp"],
-      ["Sector", "Fitness & wellness"],
-      ["Coverage", "London & UK"],
-    ],
+    blurb: "Hospitality — the healthy grab-and-go restaurant's site at Loxton Walk.",
+    facts: [["Service", "Brand Representation"], ["Pillar", "Hospitality"], ["Location", "Loxton Walk"]],
     body: [
-      "Described as the 'hardest workout in the world', BGP have been working with Barry's Bootcamp for several years to help with their acquisition strategy throughout London.",
+      "We acquired Atis's Loxton Walk site as part of its London roll-out — seriously tasty bowls and salads for a lunchtime office crowd.",
+      "Atis has grown from a single City Road site to a network across London with BGP acquiring each one.",
     ],
   },
   {
-    slug: "yolk",
-    title: "YOLK",
+    slug: "masaj-islington-square",
+    title: "Masaj, Islington Square",
     service: "Brand Representation",
-    image: "/images/food-hall.jpg",
-    blurb:
-      "Fine fast food, freshly prepared — from a 2014 pop-up to ten permanent locations across London.",
-    facts: [
-      ["Service", "Brand Representation"],
-      ["Client", "YOLK"],
-      ["Sector", "F&B — fine fast food"],
-      ["Locations", "10+ across London"],
-    ],
+    blurb: "Wellness — the massage studio's site at Islington Square.",
+    facts: [["Service", "Brand Representation"], ["Pillar", "Wellness"], ["Location", "Islington Square"]],
     body: [
-      "Fine fast food, freshly prepared. From a 2014 pop-up to ten permanent locations across London — most recently Holborn, launched under the brand's refreshed 'Good Bites Only' identity.",
-      "The brand team focuses on visible, high footfall areas. For expansion opportunities, contact Jamie Orme or Evie North.",
+      "We acquired Masaj's studio at Islington Square, extending the wellness brand into a new north London neighbourhood.",
+      "Wellness operators want neighbourhoods with daily footfall and a residential catchment; Islington Square gives Masaj both.",
     ],
   },
 ];
@@ -411,17 +388,35 @@ export interface Client {
   domain?: string;
 }
 
-export const BRAND_REP_CLIENTS: Client[] = [
-  { name: "Fred Perry", domain: "fredperry.com" },
-  { name: "Barry's Bootcamp", domain: "barrys.com" },
-  { name: "YOLK", domain: "yolklondon.com" },
-  { name: "ATIS", domain: "atisfood.com" },
-  { name: "Ted's Grooming Room", domain: "tedsgroomingroom.com" },
-  { name: "Borough Kitchen", domain: "boroughkitchen.com" },
-  { name: "The Black Penny", domain: "theblackpenny.com" },
-  { name: "Little Houses Group", domain: "littlehousesgroup.com" },
-  { name: "Related", domain: "related.com" },
+// Harry's four pillars (2026-10-12) — three or four brands each, showing
+// the depth of the client mix. Jamie's clients are deliberately not listed.
+export const BRAND_REP_PILLARS: Array<{ name: string; clients: Client[] }> = [
+  { name: "International / DTC", clients: [
+    { name: "The Frankie Shop", domain: "thefrankieshop.com" },
+    { name: "Rains", domain: "rains.com" },
+    { name: "Beauty Pie", domain: "beautypie.com" },
+    { name: "Johnstons of Elgin", domain: "johnstonsofelgin.com" },
+  ] },
+  { name: "Independent / Lifestyle", clients: [
+    { name: "Percival", domain: "percivalclo.com" },
+    { name: "Earl of East", domain: "earlofeast.com" },
+    { name: "Daniella Draper", domain: "danielladraper.com" },
+    { name: "Rønning", domain: "ronning.co" },
+  ] },
+  { name: "Hospitality", clients: [
+    { name: "Atis", domain: "atisfood.com" },
+    { name: "Bangers", domain: "bangerslondon.com" },
+    { name: "Old Spike", domain: "oldspike.co.uk" },
+    { name: "Yolk", domain: "yolklondon.com" },
+  ] },
+  { name: "Wellness", clients: [
+    { name: "Masaj", domain: "masaj.london" },
+    { name: "Barry's Bootcamp", domain: "barrys.com" },
+    { name: "Jab", domain: "jabgym.com" },
+    { name: "Karve", domain: "karvestudio.com" },
+  ] },
 ];
+export const BRAND_REP_CLIENTS: Client[] = BRAND_REP_PILLARS.flatMap((p) => p.clients);
 
 // Per Pete Wood (2026-09-04) — his edit of the first draft list.
 export const LEASE_ADVISORY_CLIENTS: Client[] = [

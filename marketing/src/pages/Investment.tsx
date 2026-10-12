@@ -12,7 +12,7 @@ export default function Investment() {
   return (
     <div>
       <section className="relative">
-        <Placeholder className="h-72 md:h-96 w-full" src="/images/skyline-night.jpg" alt="London skyline at night" />
+        <Placeholder className="h-72 md:h-96 w-full" src="/images/royal-exchange.jpg" alt="The Royal Exchange, City of London" />
         <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/70 via-bgp-ink/10 to-transparent" />
         <div className="absolute inset-0 flex items-end">
           <div className="mx-auto max-w-6xl px-4 pb-10 w-full">

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-12T14:21:23.232Z",
+  "generatedAt": "2026-10-12T14:38:38.746Z",
   "site": "https://www.bgp.uk.com",
   "note": "Content of bgp.uk.com. Pages are rendered client-side; use this file rather than fetching HTML. Live availability comes from listingsFeed.",
   "heroStatement": "Great places are built through connected thinking.",
@@ -219,7 +219,7 @@
     },
     {
       "name": "Carly Cunliffe",
-      "title": "Brand Representation",
+      "title": "Graduate Surveyor, Brand Representation",
       "phone": "+44 (0)20 3551 5260",
       "email": "TBC",
       "photo": "https://www.bgp.uk.com/images/team/carly-cunliffe.jpg"
@@ -303,6 +303,7 @@
     ],
     "brandRepresentation": [
       "Harry Elliott",
+      "Evie North",
       "Beth Emmens",
       "Carly Cunliffe"
     ],
@@ -453,56 +454,52 @@
       "image": "https://www.bgp.uk.com/images/royal-exchange.jpg"
     },
     {
-      "title": "ATIS",
+      "title": "The Frankie Shop, Davies Street",
       "service": "Brand Representation",
-      "url": "https://www.bgp.uk.com/case-studies/atis",
-      "blurb": "A new healthy grab & go lifestyle restaurant offering seriously tasty bowls and salads. We acquired their first site on City Road in the Atlas Building.",
+      "url": "https://www.bgp.uk.com/case-studies/the-frankie-shop-davies-street",
+      "blurb": "International / DTC — the New York and Paris label's London home on Davies Street, Mayfair.",
       "facts": {
         "Service": "Brand Representation",
-        "Client": "ATIS",
-        "Sector": "F&B — healthy grab & go",
-        "First site": "City Road, Atlas Building"
+        "Pillar": "International / DTC",
+        "Location": "Davies Street, Mayfair"
       },
-      "image": "https://www.bgp.uk.com/images/cafe.jpg"
+      "image": null
     },
     {
-      "title": "Fred Perry",
+      "title": "Percival, Neal Street, Seven Dials",
       "service": "Brand Representation",
-      "url": "https://www.bgp.uk.com/case-studies/fred-perry",
-      "blurb": "One of the UK's most iconic brands, steeped in a rich history of music, sport and culture.",
+      "url": "https://www.bgp.uk.com/case-studies/percival-neal-street",
+      "blurb": "Independent / Lifestyle — the London menswear label's store on Neal Street in Seven Dials.",
       "facts": {
         "Service": "Brand Representation",
-        "Client": "Fred Perry",
-        "Sector": "Fashion retail",
-        "Coverage": "UK & international"
+        "Pillar": "Independent / Lifestyle",
+        "Location": "Neal Street, Seven Dials"
       },
-      "image": "https://www.bgp.uk.com/images/shop-menswear.jpg"
+      "image": null
     },
     {
-      "title": "Barry's Bootcamp",
+      "title": "Atis, Loxton Walk",
       "service": "Brand Representation",
-      "url": "https://www.bgp.uk.com/case-studies/barrys-bootcamp",
-      "blurb": "Described as the 'hardest workout in the world' — acquisition strategy throughout London.",
+      "url": "https://www.bgp.uk.com/case-studies/atis-loxton-walk",
+      "blurb": "Hospitality — the healthy grab-and-go restaurant's site at Loxton Walk.",
       "facts": {
         "Service": "Brand Representation",
-        "Client": "Barry's Bootcamp",
-        "Sector": "Fitness & wellness",
-        "Coverage": "London & UK"
+        "Pillar": "Hospitality",
+        "Location": "Loxton Walk"
       },
-      "image": "https://www.bgp.uk.com/images/gym.jpg"
+      "image": null
     },
     {
-      "title": "YOLK",
+      "title": "Masaj, Islington Square",
       "service": "Brand Representation",
-      "url": "https://www.bgp.uk.com/case-studies/yolk",
-      "blurb": "Fine fast food, freshly prepared — from a 2014 pop-up to ten permanent locations across London.",
+      "url": "https://www.bgp.uk.com/case-studies/masaj-islington-square",
+      "blurb": "Wellness — the massage studio's site at Islington Square.",
       "facts": {
         "Service": "Brand Representation",
-        "Client": "YOLK",
-        "Sector": "F&B — fine fast food",
-        "Locations": "10+ across London"
+        "Pillar": "Wellness",
+        "Location": "Islington Square"
       },
-      "image": "https://www.bgp.uk.com/images/food-hall.jpg"
+      "image": null
     }
   ],
   "contact": {
