@@ -66,7 +66,9 @@ export const NO_TEAM_ROSTER_2026 = ["Woody Bruce", "Rupert Bentley Smith", "Char
 // Layla, with Cara and Harriette as support and Nick as consultant … add
 // Emily Mitchell as consultant too." Daisy is not part of BGP.
 export const BOARD_2026 = ["Woody Bruce", "Charlotte Roberts", "Rupert Bentley Smith", "Jack Barratt", "Layla O'Driscoll"];
-export const LEFT_BGP_2026 = ["Daisy Driscoll"];
+// Daisy Driscoll: leave as she is (Woody, 2026-10-12 "daisy ignore").
+export const LEFT_BGP_2026: string[] = [];
+export const SUPPORT_2026 = ["Cara Milligan", "Harriette Walker Clark"];
 export const CONSULTANTS_2026: Array<{ name: string; role: string; reportsTo: string }> = [
   { name: "Nick Goodman", role: "Consultant", reportsTo: "Woody Bruce" },
   { name: "Emily Mitchell", role: "Consultant", reportsTo: "Woody Bruce" },
@@ -89,3 +91,14 @@ export function rosterTeamsFor(name: string | null | undefined): BgpTeamName[] |
 
 /** Same person by name, ignoring case, punctuation and hyphens. */
 export const samePerson = (a: string | null | undefined, b: string | null | undefined) => !!normPerson(a || "") && normPerson(a || "") === normPerson(b || "");
+
+/** Where a person sits on the HR org chart / directory: Board, Support or
+ *  Consultants (Woody, 2026-10-12), else their team. */
+export type StaffGroup = "Board" | "Support" | "Consultants" | string;
+export const STAFF_GROUP_ORDER = ["Board", ...BGP_TEAM_NAMES, "Support", "Consultants"];
+export function staffGroupFor(name: string | null | undefined, team: string | null | undefined): StaffGroup | null {
+  if (BOARD_2026.some(n => samePerson(n, name))) return "Board";
+  if (CONSULTANTS_2026.some(c => samePerson(c.name, name))) return "Consultants";
+  if (SUPPORT_2026.some(n => samePerson(n, name))) return "Support";
+  return team || null;
+}
