@@ -26,7 +26,8 @@ export default function LeasingSector() {
   const sector = LEASING_SECTORS.find((s) => s.slug === params?.slug);
   if (!sector || (!sector.approved && !draft)) return <NotFound />;
   const contacts = peopleNamed(team, sector.contacts);
-  const centres = sector.slug === "shopping-centres" ? SHOPPING_CENTRES : [];
+  // Photographed centres lead the grid so the image tiles sit together.
+  const centres = sector.slug === "shopping-centres" ? [...SHOPPING_CENTRES].sort((a, b) => Number(!!b.image) - Number(!!a.image)) : [];
 
   return (
     <div>

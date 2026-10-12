@@ -696,7 +696,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
     name: "Shopping Centres",
     approved: true,
     approvedBy: "VB & ED",
-    image: "/images/stills-preview-central-cafe.jpg",
+    image: "/images/sectors/shopping-centres.jpg",
     headline:
       "We advise on 21 shopping centres across the UK; from some of London's leading mixed-use destinations and major regional shopping centres to new developments under construction.",
     body: [
@@ -713,7 +713,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
     slug: "london-estates",
     name: "London Estates",
     approved: false,
-    image: "/images/grosvenor-square.jpg",
+    image: "/images/sectors/london-estates.jpg",
     headline: "We are proud to have worked across many of London's most prestigious estates for more than 15 years.",
     body: [
       "We believe that building destinations across London's estates requires a highly considered approach. Our Leasing team works with estate owners and landlords to identify opportunities, attract the right occupiers and deliver strategies that enhance the character and commercial performance of their portfolios.",
@@ -726,7 +726,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
     slug: "city",
     name: "The City",
     approved: false,
-    image: "/images/city-towers.jpg",
+    image: "/images/sectors/city.jpg",
     headline:
       "We act on a range of destinations within the Square Mile, and understand the unique opportunities and considerations that come with leasing this part of London.",
     body: [
@@ -739,7 +739,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
     slug: "high-streets",
     name: "High Streets",
     approved: false,
-    image: "/images/shop-browse.jpg",
+    image: "/images/sectors/high-streets.jpg",
     headline:
       "Our High Street Leasing team works on a diverse range of High Streets throughout London and across the UK.",
     body: [
@@ -762,8 +762,8 @@ export interface ShoppingCentre {
 
 // From the "BGP shopping centres" table in Emmy's copy document.
 export const SHOPPING_CENTRES: ShoppingCentre[] = [
-  { slug: "one-new-change", name: "One New Change", location: "London", contacts: ["Charlotte Roberts", "Emily Cann"], draftBlurb: "Landsec's mixed-use destination beside St Paul's Cathedral, with a rooftop terrace and strong City lunch and after-work trade." },
-  { slug: "cardinal-place", name: "Cardinal Place", location: "London", contacts: ["Charlotte Roberts", "Emily Cann"], draftBlurb: "Retail and dining at the heart of Victoria, serving the office and commuter catchment around Victoria Station." },
+  { slug: "one-new-change", name: "One New Change", location: "London", image: "/images/centres/one-new-change.jpg", contacts: ["Charlotte Roberts", "Emily Cann"], draftBlurb: "Landsec's mixed-use destination beside St Paul's Cathedral, with a rooftop terrace and strong City lunch and after-work trade." },
+  { slug: "cardinal-place", name: "Cardinal Place", location: "London", image: "/images/centres/cardinal-place.jpg", contacts: ["Charlotte Roberts", "Emily Cann"], draftBlurb: "Retail and dining at the heart of Victoria, serving the office and commuter catchment around Victoria Station." },
   { slug: "o2-finchley-road", name: "O2 Finchley Road", location: "London", contacts: ["Victoria Broadhead", "Ben Sykes"], draftBlurb: "A leisure-led north London centre anchored by cinema and gym, serving a dense residential catchment." },
   { slug: "lewisham-shopping-centre", name: "Lewisham Shopping Centre", location: "London", contacts: ["Victoria Broadhead", "Ben Sykes"], draftBlurb: "The retail heart of Lewisham town centre, at the centre of a major south-east London regeneration area." },
   { slug: "brent-cross", name: "Brent Cross", location: "London", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], draftBlurb: "One of the UK's first major shopping centres, in north London, with a new town centre rising alongside it." },
@@ -771,7 +771,7 @@ export const SHOPPING_CENTRES: ShoppingCentre[] = [
   { slug: "oracle", name: "The Oracle", location: "Reading", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], draftBlurb: "Reading's riverside shopping and dining destination along the Kennet." },
   { slug: "westgate", name: "Westgate", location: "Oxford", contacts: ["Victoria Broadhead", "Ben Sykes"], draftBlurb: "Oxford's city-centre shopping and dining destination, with a rooftop restaurant terrace." },
   { slug: "gunwharf-quays", name: "Gunwharf Quays", location: "Portsmouth", contacts: ["Victoria Broadhead", "Emily Dumbell"], draftBlurb: "Portsmouth's waterfront outlet shopping and leisure destination beneath the Spinnaker Tower." },
-  { slug: "bullring", name: "Bullring", location: "Birmingham", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], draftBlurb: "Birmingham's flagship city-centre shopping destination, home to Selfridges." },
+  { slug: "bullring", name: "Bullring", location: "Birmingham", image: "/images/centres/bullring.jpg", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], draftBlurb: "Birmingham's flagship city-centre shopping destination, home to Selfridges." },
   { slug: "grand-central", name: "Grand Central", location: "Birmingham", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], draftBlurb: "The dining and retail destination above Birmingham New Street station." },
   { slug: "trinity-leeds", name: "Trinity Leeds", location: "Leeds", contacts: ["Emily Dumbell", "Alex Todd"], draftBlurb: "The Leeds city-centre destination mixing retail with dining and leisure under its glass roof." },
   { slug: "white-rose", name: "White Rose", location: "Leeds", contacts: ["Emily Dumbell", "Alex Todd"], draftBlurb: "Leeds' out-of-town shopping and leisure centre, with cinema and dining." },
