@@ -1,6 +1,7 @@
+import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
-import { HERO_STATEMENT, HOME_INTRO, SERVICES, TESTIMONIAL } from "../lib/content";
+import { HERO_SLIDES, HERO_STATEMENT, HOME_INTRO, SERVICES, TESTIMONIAL } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
 
 // Per-section stats per the v2c layout. All figures real: transactions/brands
@@ -20,16 +21,33 @@ export default function Home() {
     .map((slug) => articles.find((x) => x.slug === slug))
     .filter((a): a is NonNullable<typeof a> => !!a);
   const homeArticles = featured.length === 3 ? featured : articles.slice(0, 3);
+  const [slideIndex, setSlideIndex] = useState(0);
+  useEffect(() => {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const id = setInterval(() => setSlideIndex((i) => (i + 1) % HERO_SLIDES.length), 5000);
+    return () => clearInterval(id);
+  }, []);
   return (
     <div>
-      {/* Hero — full-bleed photo, giant wordmark */}
-      <section className="relative">
-        <img
-          src="/images/home-hero.jpg"
-          alt="Independent shopfronts on Chiltern Street, Marylebone"
-          className="h-[70vh] min-h-[480px] w-full object-cover"
-        />
+      {/* Hero — rotating flagship instructions, giant wordmark */}
+      <section className="relative h-[70vh] min-h-[480px] overflow-hidden">
+        {HERO_SLIDES.map((slide, i) => (
+          <img
+            key={slide.src}
+            src={slide.src}
+            alt={slide.alt}
+            loading={i === 0 ? "eager" : "lazy"}
+            className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-[1500ms] ease-in-out ${i === slideIndex ? "opacity-100" : "opacity-0"}`}
+          />
+        ))}
         <div className="absolute inset-0 bg-bgp-wine/30" />
+        <p
+          className="absolute bottom-5 left-4 md:left-8 label-caps text-white/90"
+          style={{ textShadow: "0 1px 8px rgba(0,0,0,0.6)" }}
+          aria-live="polite"
+        >
+          {HERO_SLIDES[slideIndex].place} <span className="text-bgp-nectar mx-1" aria-hidden>/</span> {HERO_SLIDES[slideIndex].capability}
+        </p>
         <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-4">
           <h1>
             <img
