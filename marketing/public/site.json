@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-12T18:13:20.805Z",
+  "generatedAt": "2026-10-12T18:22:36.487Z",
   "site": "https://www.bgp.uk.com",
   "note": "Content of bgp.uk.com. Pages are rendered client-side; use this file rather than fetching HTML. Live availability comes from listingsFeed.",
   "heroStatement": "Great places are built through connected thinking.",
@@ -215,7 +215,7 @@
       "title": "Director, Co-Head Brand Representation",
       "phone": "+44 (0)20 3551 5260",
       "email": "TBC",
-      "photo": null
+      "photo": "https://www.bgp.uk.com/images/team/beth-emmens.jpg"
     },
     {
       "name": "Carly Cunliffe",
