@@ -63,7 +63,7 @@ export function CompPdfTemplateEditor({ scope = "leasing" }: { scope?: "leasing"
   });
 
   const userTeam = (currentUser?.team || "").toLowerCase();
-  const leasingTeams = ["lease advisory", "london leasing", "national leasing"];
+  const leasingTeams = ["lease advisory", "shopping centre", "london estate", "high street", "city"];
   const canEdit = currentUser?.isAdmin ||
     (scope === "investment" ? userTeam === "investment" : leasingTeams.includes(userTeam));
 

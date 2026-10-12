@@ -1,3 +1,4 @@
+import { BGP_TEAM_NAMES, rosterTeamsFor } from "@shared/teams";
 import type { Express } from "express";
 import { pool } from "./db";
 import { requireAuth, requireAdmin } from "./auth";
@@ -1436,7 +1437,7 @@ export function setupHrRoutes(app: Express) {
   // active deals. Used as the rich card content on the new dashboard landing.
   app.get("/api/hr/team-summary", requireAuth, async (_req, res) => {
     try {
-      const TEAM_ORDER = ["Office / Corporate", "Investment", "Lease Advisory", "National Leasing", "Development", "Tenant Rep", "London Retail", "London F&B"];
+      const TEAM_ORDER: string[] = [...BGP_TEAM_NAMES];
 
       const { rows: staff } = await pool.query(`
         SELECT u.id, u.name, u.email, u.team, u.profile_pic_url,
@@ -1955,7 +1956,10 @@ export function setupHrRoutes(app: Express) {
 
     // Pass 1: resolve every roster name. Auto-create when missing so the chart
     // is complete on first run; admin can edit emails / titles later.
-    for (const [name, role, team] of ROSTER) {
+    // Teams come from the 2026-10 structure (One to Ones tab), not this
+    // May 2026 roster — re-running the seed must not restore old teams.
+    for (const [name, role] of ROSTER) {
+      const team = rosterTeamsFor(name)?.[0] ?? null;
       const key = norm(name);
       let userId = userIndex.get(key);
       if (!userId) {
@@ -1986,7 +1990,8 @@ export function setupHrRoutes(app: Express) {
 
     // Pass 2: write title/team/manager/board/mgt to staff_profiles + users.
     let updated = 0;
-    for (const [name, role, team, reportsTo, board, mgt] of ROSTER) {
+    for (const [name, role, , reportsTo, board, mgt] of ROSTER) {
+      const team = rosterTeamsFor(name)?.[0] ?? null;
       const userId = nameToId.get(name);
       if (!userId) continue;
       const managerId = reportsTo ? nameToId.get(reportsTo) ?? null : null;
@@ -4933,7 +4938,7 @@ Use the language and tone of BGP's review docs.`,
 
   app.post("/api/hr/team-ai-summaries/refresh", requireAdmin, async (_req, res) => {
     try {
-      const TEAMS = ["Office / Corporate", "Investment", "Lease Advisory", "National Leasing", "Development", "Tenant Rep", "London Retail", "London F&B"];
+      const TEAMS: string[] = [...BGP_TEAM_NAMES];
 
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
       

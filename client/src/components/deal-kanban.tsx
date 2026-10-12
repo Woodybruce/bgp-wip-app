@@ -46,14 +46,13 @@ const ASSET_CLASS_COLORS: Record<string, string> = {
 };
 
 const TEAM_COLORS: Record<string, string> = {
-  "Development": "bg-orange-100 text-orange-800",
-  "London F&B": "bg-rose-100 text-rose-800",
-  "London Retail": "bg-teal-100 text-teal-800",
-  "National Leasing": "bg-emerald-100 text-emerald-800",
+  "City": "bg-orange-100 text-orange-800",
+  "High Street": "bg-rose-100 text-rose-800",
+  "London Estate": "bg-teal-100 text-teal-800",
+  "Shopping Centre": "bg-emerald-100 text-emerald-800",
   "Investment": "bg-purple-100 text-purple-800",
   "Tenant Rep": "bg-rose-100 text-rose-800",
   "Lease Advisory": "bg-cyan-100 text-cyan-800",
-  "Office / Corporate": "bg-slate-100 text-slate-800",
   "Landsec": "bg-sky-100 text-sky-800",
 };
 

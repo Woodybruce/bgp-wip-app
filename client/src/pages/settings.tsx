@@ -1,3 +1,4 @@
+import { BGP_TEAM_NAMES, RETIRED_TEAM_NAMES, TEAM_DOT_CLASSES } from "@shared/teams";
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -18,6 +19,7 @@ import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import { ProfilePhotoCard } from "@/components/profile-photo-card";
+import { TeamStructureDialog } from "@/components/team-structure-dialog";
 
 interface TeamMember {
   id: string;
@@ -29,31 +31,12 @@ interface TeamMember {
   isActive?: boolean;
 }
 
-const TEAM_GROUPS = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"] as const;
+const TEAM_GROUPS = [...BGP_TEAM_NAMES, "Landsec"] as const;
 
-const TEAM_GROUP_MEMBERS: Record<string, string[]> = {
-  Investment: ["Investment"],
-  "London F&B": ["London F&B"],
-  "London Retail": ["London Retail"],
-  "Lease Advisory": ["Lease Advisory"],
-  "Office / Corporate": ["Office / Corporate"],
-  "National Leasing": ["National Leasing"],
-  "Tenant Rep": ["Tenant Rep"],
-  Development: ["Development"],
-  Landsec: ["Landsec"],
-};
+// One group per team (shared/teams.ts, the 2026-10 structure).
+const TEAM_GROUP_MEMBERS: Record<string, string[]> = Object.fromEntries(TEAM_GROUPS.map(t => [t, [t]]));
 
-const teamDotColors: Record<string, string> = {
-  Investment: "bg-blue-500",
-  "London F&B": "bg-rose-500",
-  "London Retail": "bg-teal-500",
-  "Lease Advisory": "bg-indigo-500",
-  "Office / Corporate": "bg-slate-500",
-  "National Leasing": "bg-emerald-500",
-  "Tenant Rep": "bg-purple-500",
-  Development: "bg-amber-500",
-  Landsec: "bg-rose-500",
-};
+const teamDotColors: Record<string, string> = TEAM_DOT_CLASSES;
 
 function getTeamGroup(memberTeam: string | null): string | null {
   if (!memberTeam) return null;
@@ -66,8 +49,8 @@ function getTeamGroup(memberTeam: string | null): string | null {
 export default function SettingsPage() {
   const { toast } = useToast();
   const [expandedTeams, setExpandedTeams] = useState<Record<string, boolean>>({
-    Investment: true, "Lease Advisory": true,
-    "Office / Corporate": true, "National Leasing": true, "Tenant Rep": true, Development: true,
+    "Shopping Centre": true, "London Estate": true, "High Street": true, City: true,
+    Investment: true, "Lease Advisory": true, "Tenant Rep": true,
   });
 
   const { data: currentUser } = useQuery<{ isAdmin?: boolean; is_admin?: boolean }>({
@@ -1060,6 +1043,7 @@ function DataHealthSection() {
   const [syncingLeasingSchedule, setSyncingLeasingSchedule] = useState(false);
   const [numberingUnits, setNumberingUnits] = useState(false);
   const [splitTeamOpen, setSplitTeamOpen] = useState(false);
+  const [teamStructureOpen, setTeamStructureOpen] = useState(false);
 
   const runScan = async () => {
     setScanning(true);
@@ -1186,6 +1170,9 @@ function DataHealthSection() {
               {numberingUnits ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
               {numberingUnits ? "Renaming..." : "Renumber Units (test)"}
             </Button>
+            <Button size="sm" onClick={() => setTeamStructureOpen(true)} data-testid="button-team-structure">
+              <Users className="w-4 h-4 mr-2" />New team structure
+            </Button>
             <Button size="sm" variant="outline" onClick={() => setSplitTeamOpen(true)} data-testid="button-split-teams">
               <ShieldCheck className="w-4 h-4 mr-2" />Sort Teams
             </Button>
@@ -1310,6 +1297,7 @@ function DataHealthSection() {
         )}
       </CardContent>
       <SortTeamsDialog open={splitTeamOpen} onClose={() => setSplitTeamOpen(false)} />
+      <TeamStructureDialog open={teamStructureOpen} onClose={() => setTeamStructureOpen(false)} />
     </Card>
   );
 }
@@ -1317,7 +1305,7 @@ function DataHealthSection() {
 // ── Sort Teams dialog ────────────────────────────────────────────────────────
 function SortTeamsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { toast } = useToast();
-  const TEAMS = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate"];
+  const TEAMS: string[] = [...BGP_TEAM_NAMES];
   const [filterTeam, setFilterTeam] = useState<string>("__all__"); // default: show everyone
   const [pending, setPending] = useState<Record<string, string>>({});
 
@@ -1328,7 +1316,7 @@ function SortTeamsDialog({ open, onClose }: { open: boolean; onClose: () => void
       if (!r.ok) return [];
       // Endpoint returns unassigned when team is empty; fetch everyone in a second pass.
       const unassigned = await r.json();
-      const teams = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec", "London Leasing"];
+      const teams = [...BGP_TEAM_NAMES, "Landsec", ...RETIRED_TEAM_NAMES];
       const perTeam = await Promise.all(teams.map(t =>
         fetch(`/api/admin/users-by-team?team=${encodeURIComponent(t)}`, { credentials: "include" }).then(r2 => r2.ok ? r2.json() : [])
       ));
@@ -2083,7 +2071,7 @@ function TeamFoldersSection() {
     if (isAdmin) return true;
     const ut = userTeam.toLowerCase();
     const fl = folderName.toLowerCase();
-    return ut === fl || (fl === "office corporate" && ut === "office / corporate");
+    return ut === fl || (fl === "office corporate" && (ut === "office / corporate" || !ut));
   };
 
   const handleUpload = async (folderName: string, file: File) => {

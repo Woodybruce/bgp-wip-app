@@ -1078,17 +1078,8 @@ export default function Dashboard() {
   const allProperties = crmProperties || [];
   const allDeals = crmDeals || [];
 
-  const TEAM_ALIASES: Record<string, string[]> = useMemo(() => ({
-    "London F&B": ["London F&B"],
-    "London Retail": ["London Retail"],
-    "National Leasing": ["National Leasing", "National"],
-    "Investment": ["Investment"],
-    "Tenant Rep": ["Tenant Rep"],
-    "Development": ["Development"],
-    "Lease Advisory": ["Lease Advisory"],
-    "Office / Corporate": ["Office / Corporate", "Office", "Corporate"],
-    "Landsec": ["Landsec"],
-  }), []);
+  // Each team matches its own name (2026-10 team structure).
+  const TEAM_ALIASES: Record<string, string[]> = useMemo(() => ({}), []);
 
   const matchesTeam = useCallback((teamField: string | string[] | null | undefined) => {
     if (isAllTeams) return true;

@@ -1,15 +1,16 @@
 import type { Request, Response, NextFunction } from "express";
 import { pool } from "./db";
 import { CLIENT_CRM_CATEGORIES, isClientCrmCategory } from "@shared/tenant-categories";
+import { BGP_TEAM_NAMES, RETIRED_TEAM_NAMES } from "@shared/teams";
 
 const BGP_EMAIL_DOMAIN = "@brucegillinghampollard.com";
 
 const CLIENT_TEAM_COMPANY_CACHE = new Map<string, string>();
 
-const INTERNAL_TEAMS = new Set([
-  "london leasing", "national leasing", "investment", "tenant rep",
-  "development", "lease advisory", "office / corporate"
-]);
+// BGP's own teams, current and retired — never mistaken for a client
+// company's name (a company called "City" must not flip staff into a client
+// view).
+const INTERNAL_TEAMS = new Set([...BGP_TEAM_NAMES, ...RETIRED_TEAM_NAMES].map(t => t.toLowerCase()));
 
 // Sentinel scope for client users whose team can't be mapped to a company —
 // matches no rows anywhere, so an unresolvable client fails CLOSED (sees

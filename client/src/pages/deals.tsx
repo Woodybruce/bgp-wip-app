@@ -1,3 +1,4 @@
+import { isBgpTeam } from "@shared/teams";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { XeroContactPicker, type XeroContact } from "@/components/xero-contact-picker";
@@ -161,14 +162,13 @@ export const DEAL_TYPE_COLORS: Record<string, string> = {
 };
 
 export const DEAL_TEAM_COLORS: Record<string, string> = {
-  "Development": "bg-orange-600",
-  "London F&B": "bg-rose-600",
-  "London Retail": "bg-teal-600",
-  "National Leasing": "bg-emerald-600",
+  "City": "bg-orange-600",
+  "High Street": "bg-rose-600",
+  "London Estate": "bg-teal-600",
+  "Shopping Centre": "bg-emerald-600",
   "Investment": "bg-purple-600",
   "Tenant Rep": "bg-rose-600",
   "Lease Advisory": "bg-cyan-600",
-  "Office / Corporate": "bg-slate-600",
   "Landsec": "bg-sky-700",
 };
 
@@ -1803,6 +1803,13 @@ function SimplifiedCreateBody({
             const propLandlordId = (prop as any)?.landlordId || "";
             const investType = form.dealType === "Sale" || form.dealType === "Purchase";
             const patch: any = { propertyId: val };
+            // Each property sits in one team and its fees count there (2026-10
+            // team structure): a new deal takes the property's team unless it
+            // is already an Investment / Tenant Rep / Lease Advisory deal.
+            const propTeam = ((prop as any)?.bgpEngagement || []).find((t: string) => isBgpTeam(t));
+            if (propTeam && !form.team.some((t: string) => ["Investment", "Tenant Rep", "Lease Advisory"].includes(t))) {
+              patch.team = [propTeam, ...form.team.filter((t: string) => t === "Landsec")];
+            }
             if (propLandlordId) {
               if (investType && !form.vendorId) patch.vendorId = propLandlordId;
               if (!investType && !form.landlordId) patch.landlordId = propLandlordId;

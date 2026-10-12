@@ -1585,14 +1585,17 @@ export async function registerRoutes(
 
       const { id } = req.params;
       const { team } = req.body;
-      if (!team || typeof team !== "string") {
+      // null / "" = no team (MD, heads of department, support staff — they
+      // see all teams).
+      if (team !== null && team !== "" && typeof team !== "string") {
         return res.status(400).json({ message: "Team is required" });
       }
-      const validTeams = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"];
-      if (!validTeams.includes(team)) {
+      const { BGP_TEAM_NAMES } = await import("@shared/teams");
+      const validTeams: string[] = [...BGP_TEAM_NAMES, "Landsec"];
+      if (team && !validTeams.includes(team)) {
         return res.status(400).json({ message: "Invalid team" });
       }
-      await db.update(users).set({ team }).where(eq(users.id, id as string));
+      await db.update(users).set({ team: team || null }).where(eq(users.id, id as string));
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to update team" });
@@ -2819,6 +2822,24 @@ export async function registerRoutes(
   // Schema drift: what shared/schema.ts expects that the live DB lacks.
   // GET is a dry run; POST adds the missing columns (nullable). The same
   // heal runs automatically at boot — see server/schema-drift.ts.
+  // 2026-10 team structure (server/team-structure-migration.ts): preview what
+  // the one-time migration would change / changed, and re-run it on demand.
+  app.get("/api/admin/team-structure/preview", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { previewTeamStructure } = await import("./team-structure-migration");
+      const plan = await previewTeamStructure();
+      const applied = (await pool.query(`SELECT value FROM system_settings WHERE key = 'team_structure_2026_10'`)).rows[0]?.value || null;
+      const backup = await pool.query(`SELECT kind, row_id, old_value, new_value, basis FROM team_structure_backup_2026_10 ORDER BY kind, row_id`).catch(() => ({ rows: [] as any[] }));
+      res.json({ applied, pending: plan, appliedChanges: backup.rows });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+  app.post("/api/admin/team-structure/apply", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { applyTeamStructure } = await import("./team-structure-migration");
+      res.json(await applyTeamStructure({ force: req.body?.force === true }));
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
   app.get("/api/admin/chat-errors", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const r = await pool.query(`SELECT value FROM system_settings WHERE key = 'chatbgp:recent_errors'`);
@@ -5979,8 +6000,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.post("/api/admin/rename-teams", requireAuth, async (req, res) => {
     try {
       const renames: Record<string, string> = {
-        "London Leasing Hospitality": "London F&B",
-        "London Leasing Retail": "London Retail",
+        "London Leasing Hospitality": "London Estate",
+        "London Leasing Retail": "London Estate",
       };
       let updated = 0;
       for (const [oldName, newName] of Object.entries(renames)) {
@@ -6977,6 +6998,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // Contract type so HR views skip them. Safe to re-run — uses name lookups
   // so it does nothing on rows that already match.
   app.post("/api/admin/apply-may-2026-team-tidy", requireAuth, requireAdmin, async (_req, res) => {
+    // Superseded by the 2026-10 team structure — re-running it would put
+    // people back on the retired teams.
+    if (Date.now() > 0) return res.status(410).json({ message: "Replaced by the October 2026 team structure" });
     try {
       const remap: Array<{ names: string[]; team: string }> = [
         { team: "London Retail",      names: ["Charlotte Roberts", "Lizzie Knights", "Lucy Cope", "Emily Cann"] },
@@ -8823,9 +8847,12 @@ These terms are indicative only and do not constitute a binding agreement.`;
     }
   });
 
+  // New-structure team folders first (2026-10); the retired teams' folders
+  // stay listed so their files are still reachable.
   const TEAM_FOLDERS = [
-    "London F&B", "London Retail", "National Leasing", "Investment",
-    "Tenant Rep", "Development", "Lease Advisory", "Office Corporate", "Admin"
+    "Shopping Centre", "London Estate", "High Street", "City", "Investment",
+    "Tenant Rep", "Lease Advisory", "Office Corporate", "Admin",
+    "London F&B", "London Retail", "National Leasing", "Development",
   ];
   const CHATBGP_BASE = path.join(process.cwd(), "ChatBGP");
 
@@ -8892,7 +8919,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
       const folderLower = folderName.toLowerCase();
 
       const canWrite = isAdmin || userTeam === folderLower ||
-        (folderLower === "office corporate" && userTeam === "office / corporate");
+        (folderLower === "office corporate" && (userTeam === "office / corporate" || !userTeam));
 
       if (!canWrite) return res.status(403).json({ error: "You can only upload to your own team folder" });
 
@@ -8937,7 +8964,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
       const folderLower = folderName.toLowerCase();
 
       const canDelete = isAdmin || userTeam === folderLower ||
-        (folderLower === "office corporate" && userTeam === "office / corporate");
+        (folderLower === "office corporate" && (userTeam === "office / corporate" || !userTeam));
 
       if (!canDelete) return res.status(403).json({ error: "You can only delete files from your own team folder" });
 

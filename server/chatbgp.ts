@@ -1582,12 +1582,11 @@ const PERSONALISATION_CACHE = new Map<string, { ctx: string; expires: number }>(
 const DEPARTMENT_FOCUS: Record<string, string> = {
   "Investment": "Investment-led: deal pipeline, yields, vendor dynamics, off-market opportunities, capital sources. Lead with investment_tracker, comps with capital values, recent transactions. Suggest matched buyer mandates when properties come up.",
   "Lease Advisory": "Lease Advisory-led: rent reviews, lease renewals, dilapidations, ITZA, net effective. Lead with PLA matters and lease_events. Comps default to leasing — Zone A rents, deal incentives, recent lettings.",
-  "London Retail": "Retail leasing-led: West End / City retail flow, requirements vs available units, target tenants, brand activity. Lead with brand intel and active requirements. Tenant mix recommendations should focus on physical retail / F&B / leisure.",
-  "London F&B": "F&B-led: restaurant operators, café concepts, premium licences, anchor tenants. Lead with brand stores, FHRS data, and recent F&B lettings. Target new entrants to UK and expanding operators.",
-  "National Leasing": "National retail leasing — multi-site mandates, schemes, anchor strategy. Cross-reference brand_stores for footprint, target tenants for expansion intent.",
+  "London Estate": "London estate leasing-led: West End retail / F&B / leisure flow across the London estates, requirements vs available units, target tenants, brand activity, restaurant operators and new entrants. Lead with brand intel and active requirements.",
+  "City": "City leasing-led: Square Mile and City-fringe retail, F&B and leisure, office-led schemes' ground floors, occupier amenity. Lead with active requirements, brand intel and recent City lettings.",
+  "Shopping Centre": "Shopping centre leasing-led: centre and retail-park mandates, anchor strategy, tenant mix, footfall, multi-site brand footprints. Cross-reference brand_stores for footprint and target tenants for expansion intent.",
+  "High Street": "High street leasing-led: regional towns and cities, multi-site rollouts, high street repositioning. Cross-reference brand_stores for footprint and target tenants for expansion intent.",
   "Tenant Rep": "Tenant rep-led: requirements vs market, broker briefs, viewing programmes. Lead with crm_requirements and matched units. Push proactive options.",
-  "Office / Corporate": "Office-led: corporate occupier requirements, rent affordability, lease structuring. Comps focused on office rents and incentives.",
-  "Development": "Development-led: planning, scheme viability, ERV walks, GDV. Lead with planning_apps and OS/HMLR data.",
 };
 
 async function getUserPersonalisationContext(userId: string): Promise<string> {
@@ -2762,7 +2761,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           tenantId: { type: "string", description: "CRM company UUID of the tenant. The client on Tenant Rep / Lease Acquisition / Lease Disposal deals." },
           vendorId: { type: "string", description: "CRM company UUID of the vendor. The client on Sale deals." },
           purchaserId: { type: "string", description: "CRM company UUID of the purchaser. The client on Purchase deals." },
-          team: { type: "array", items: { type: "string" }, description: "Team(s): London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
+          team: { type: "array", items: { type: "string" }, description: "Team(s): Shopping Centre, London Estate, High Street, City, Investment, Tenant Rep, Lease Advisory" },
           groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc." },
           dealType: { type: "string", description: "Type: New Letting, Lease Acquisition, Lease Disposal, Lease Renewal, Rent Review, Sale, Purchase" },
           status: { type: "string", description: "Status of the deal" },
@@ -4852,7 +4851,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
       parameters: {
         type: "object",
         properties: {
-          team: { type: "string", description: "Filter by team: London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
+          team: { type: "string", description: "Filter by team: Shopping Centre, London Estate, High Street, City, Investment, Tenant Rep, Lease Advisory" },
           status: { type: "string", description: "Filter by status/stage e.g. Under Offer, Exchanged, Completed, New Instructions" },
           dealType: { type: "string", description: "Filter by deal type: Letting, Acquisition, Sale, Lease Renewal, Rent Review" },
           summaryOnly: { type: "boolean", description: "If true, return just totals and counts. If false, return deal details." },

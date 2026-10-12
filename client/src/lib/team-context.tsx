@@ -3,17 +3,10 @@ import type { ReactNode } from "react";
 import { apiRequest, queryClient, isSessionVerified, refreshSession } from "./queryClient";
 import { useToast } from "@/hooks/use-toast";
 
-export const TEAMS = [
-  "Development",
-  "London F&B",
-  "London Retail",
-  "National Leasing",
-  "Investment",
-  "Tenant Rep",
-  "Lease Advisory",
-  "Office / Corporate",
-  "Landsec",
-] as const;
+import { BGP_TEAM_NAMES } from "@shared/teams";
+
+// BGP's teams (shared/teams.ts) plus the Landsec client view.
+export const TEAMS = [...BGP_TEAM_NAMES, "Landsec"] as const;
 
 export type TeamName = (typeof TEAMS)[number];
 
@@ -110,8 +103,8 @@ export function TeamProvider({ children }: { children: ReactNode }) {
   const [serverActiveTeam, setServerActiveTeam] = useState<TeamName | "all" | null | undefined>();
 
   useEffect(() => {
-    if (!userId || !userTeam) { setActiveTeamState(null); return; }
-    if (teamLocked) { setActiveTeamState(userTeam); return; }
+    if (!userId) { setActiveTeamState(null); return; }
+    if (teamLocked && userTeam) { setActiveTeamState(userTeam); return; }
 
     const key = `bgp_active_team_${userId}`;
     if (serverActiveTeam !== undefined) {
@@ -128,7 +121,9 @@ export function TeamProvider({ children }: { children: ReactNode }) {
     // Bookkeepers) had their team filter defaulted to their own team, which
     // wiped the WIP report. Force them to 'all' once, then leave their
     // choice alone going forward.
-    if (!migrated && userTeam === "Office / Corporate") {
+    // Staff with no team (MD, heads of department, support staff since the
+    // 2026-10 team structure) start on all teams, as Office / Corporate did.
+    if (!migrated && !userTeam) {
       localStorage.setItem(migratedKey, "1");
       localStorage.setItem(key, "all");
       setActiveTeamState("all");
@@ -140,9 +135,7 @@ export function TeamProvider({ children }: { children: ReactNode }) {
     } else if (stored && TEAMS.includes(stored as TeamName)) {
       setActiveTeamState(stored as TeamName);
     } else {
-      setActiveTeamState(userTeam);
-      localStorage.setItem(key, userTeam);
-      const initial: TeamName | "all" = userTeam === "Office / Corporate" ? "all" : userTeam;
+      const initial: TeamName | "all" = userTeam || "all";
       setActiveTeamState(initial);
       localStorage.setItem(key, initial);
     }

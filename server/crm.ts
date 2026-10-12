@@ -875,16 +875,17 @@ function wipFuzzyMatch(wipName: string, nameMap: Map<string, string>): string | 
 
 // Sage WIP exports use legacy team labels. Normalize them on the way in so the
 // rest of the app sees the canonical team set (matches the filter dropdowns).
-//   "London Leasing Hospitality"        → "London F&B"
-//   "London Leasing Hospitality & USA"  → "London F&B"
-//   "London Leasing Retail"             → "London Retail"
+//   "London Leasing Hospitality"        → "London Estate"
+//   "London Leasing Hospitality & USA"  → "London Estate"
+//   "London Leasing Retail"             → "London Estate"
+// (2026-10 team structure: London retail and F&B are now London Estate.)
 export function normalizeTeamName(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const trimmed = String(raw).trim();
   if (!trimmed) return null;
   const lower = trimmed.toLowerCase();
-  if (lower.includes("hospitality")) return "London F&B";
-  if (lower.includes("london") && lower.includes("retail")) return "London Retail";
+  if (lower.includes("hospitality")) return "London Estate";
+  if (lower.includes("london") && (lower.includes("retail") || lower.includes("f&b"))) return "London Estate";
   return trimmed;
 }
 
@@ -4157,7 +4158,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const dealTeams: string[] = bgpTeamsOnly(Array.isArray(deal.team) ? deal.team : []);
         if (dealTeams.length > 0) {
           const [prop] = await db.select().from(crmProperties).where(eq(crmProperties.id, deal.propertyId)).limit(1);
-          if (prop) {
+          // Each property sits in ONE team (2026-10 team structure): a deal
+          // only sets the team of a property that has none yet.
+          if (prop && bgpTeamsOnly(prop.bgpEngagement || []).length === 0) {
             const existing = new Set(prop.bgpEngagement || []);
             let changed = false;
             for (const t of dealTeams) {

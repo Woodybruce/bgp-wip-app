@@ -1,3 +1,4 @@
+import { BGP_TEAM_NAMES } from "@shared/teams";
 import { Router, Request } from "express";
 import { requireAuth } from "./auth";
 
@@ -440,15 +441,7 @@ router.get("/api/client-teams/:clientCompanyId/candidates", requireAuth, async (
 
 // Default kanban column list, applied for any client that hasn't yet
 // customised theirs. Mirrors the /team org chart columns.
-const DEFAULT_COLUMNS = [
-  "Office / Corporate",
-  "Investment",
-  "Lease Advisory",
-  "National Leasing",
-  "Development",
-  "Tenant Rep",
-  "London Leasing",
-];
+const DEFAULT_COLUMNS: string[] = [...BGP_TEAM_NAMES];
 
 // GET /api/client-teams/:clientCompanyId/columns — returns the column
 // list this client renders. Falls back to DEFAULT_COLUMNS when the row
