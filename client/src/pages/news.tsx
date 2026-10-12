@@ -1,3 +1,4 @@
+import { BGP_TEAM_NAMES } from "@shared/teams";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -54,13 +55,7 @@ import type { NewsArticle, EmailIngest, NewsLead } from "@shared/schema";
 const TEAMS = [
   "For You",
   "All",
-  "London F&B",
-  "London Retail",
-  "Investment",
-  "Lease Advisory",
-  "National Leasing",
-  "Tenant Rep",
-  "Development",
+  ...BGP_TEAM_NAMES,
   "Landsec",
   "Saved",
 ];

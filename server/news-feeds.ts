@@ -81,29 +81,30 @@ const TEAM_PROFILES: Record<string, { focus: string; keywords: string[] }> = {
     focus: "Property investment, capital markets, transactions, yields, returns, acquisitions, disposals",
     keywords: ["investment", "acquisition", "yield", "capital", "transaction", "portfolio", "fund", "IRR", "disposal", "buyer", "seller", "REIT", "valuation"],
   },
-  "London F&B": {
-    focus: "London food & beverage leasing, restaurant and hospitality lettings, new openings, rent reviews in Belgravia, Mayfair, Chelsea, Knightsbridge, West End. Also: new F&B operators, restaurant concepts, café chains, wellness and hospitality brands expanding into London.",
-    keywords: ["restaurant", "café", "bar", "hospitality", "F&B", "food and beverage", "letting", "lease", "tenant", "rent", "Belgravia", "Mayfair", "Chelsea", "Knightsbridge", "West End", "Kensington", "flagship", "new opening", "new restaurant", "first UK restaurant", "brand expansion", "wellness", "operator"],
+  // Leasing is four teams from 2026-10 (shared/teams.ts).
+  "London Estate": {
+    focus: "London estate leasing — retail, food & beverage and leisure lettings, new openings and rent reviews across the West End estates (Belgravia, Mayfair, Chelsea, Knightsbridge, Marylebone, St Christopher's Place, Kensington). Also: brand expansion, new store and restaurant openings, flagships, new UK operators, DTC brands opening physical retail, wellness and hospitality brands entering London — prospective tenants for London instructions.",
+    keywords: ["letting", "lease", "tenant", "rent", "Belgravia", "Mayfair", "Chelsea", "Knightsbridge", "West End", "Kensington", "Marylebone", "restaurant", "café", "bar", "hospitality", "F&B", "retail unit", "prime pitch", "flagship", "new opening", "new store", "new restaurant", "first UK store", "London flagship", "DTC", "direct to consumer", "brand expansion", "new operator", "fashion brand", "wellness", "operator"],
   },
-  "London Retail": {
-    focus: "London retail leasing, new lettings and rent reviews for retail units in Belgravia, Mayfair, Chelsea, Knightsbridge, West End. Also: brand expansion, new store openings, flagships, new UK operators, DTC brands opening physical retail, fashion expansion, high street repositioning — these identify prospective tenants for London retail instructions.",
-    keywords: ["letting", "lease", "tenant", "rent", "Belgravia", "Mayfair", "Chelsea", "Knightsbridge", "West End", "Kensington", "retail unit", "prime pitch", "flagship", "new opening", "new store", "first UK store", "London flagship", "DTC", "direct to consumer", "digital native", "brand expansion", "new operator", "fashion brand", "brand performance", "global retail"],
+  "City": {
+    focus: "City of London leasing — retail, F&B and leisure in the Square Mile and City fringe (Bank, Liverpool Street, Moorgate, Bishopsgate, Cheapside, Canary Wharf), office-led schemes with ground-floor retail, City occupier and workplace amenity trends.",
+    keywords: ["City of London", "Square Mile", "Bank", "Liverpool Street", "Moorgate", "Bishopsgate", "Cheapside", "Canary Wharf", "EC2", "EC3", "EC4", "office-led", "ground floor", "amenity", "letting", "lease", "tenant", "rent", "restaurant", "café", "new opening"],
+  },
+  "Shopping Centre": {
+    focus: "Shopping centre and retail park leasing across the UK and London — mall lettings, centre repositioning, footfall, anchor stores, leisure and F&B in centres, owners and asset managers (Landsec, British Land, Hammerson, Westfield/URW, Capital & Regional). Also: brand rollouts and new store openings that need centre space.",
+    keywords: ["shopping centre", "shopping center", "mall", "retail park", "outlet", "anchor", "footfall", "repositioning", "Westfield", "Bluewater", "Brent Cross", "Hammerson", "British Land", "Landsec", "letting", "new store", "rollout", "brand expansion", "new operator", "flagship", "leisure"],
+  },
+  "High Street": {
+    focus: "High street leasing in towns and cities across the UK — regional retail, F&B and leisure lettings, high street repositioning, local authority regeneration, brand rollouts into regional towns.",
+    keywords: ["high street", "town centre", "regional", "national", "Birmingham", "Manchester", "Leeds", "Bristol", "Edinburgh", "regeneration", "provincial", "letting", "new opening", "new store", "rollout", "brand expansion", "new operator", "fashion"],
   },
   "Lease Advisory": {
     focus: "Lease consultancy, rent reviews, lease renewals, dilapidations, break options, service charges",
     keywords: ["rent review", "lease renewal", "dilapidation", "break clause", "service charge", "arbitration", "lease term", "covenant"],
   },
-  "National Leasing": {
-    focus: "UK-wide commercial leasing outside London, regional retail and office markets, out-of-town, shopping centres. Also: brand expansion into regional cities, new store openings, flagships, new UK operators, rollout programmes, high street brand activity — these identify prospective tenants for regional instructions.",
-    keywords: ["regional", "national", "Birmingham", "Manchester", "Leeds", "Bristol", "Edinburgh", "shopping centre", "retail park", "high street", "provincial", "new opening", "new store", "rollout", "brand expansion", "new operator", "flagship", "global retail", "fashion"],
-  },
   "Tenant Rep": {
     focus: "Tenant representation, occupier requirements, search and acquisition, fit-out, relocations. Primary angle: spotting brands that are expanding, opening new stores or flagships, entering new markets (UK / London / US), DTC brands moving into physical retail, strong brand performance, wellness operators, high street repositioning — all are signals of brands who may need an acquiring agent.",
     keywords: ["occupier", "tenant requirement", "relocation", "fit-out", "requirement", "search", "representation", "workspace", "office move", "new opening", "new store", "flagship", "first UK store", "expansion", "entering UK", "DTC", "direct to consumer", "digital native", "brand expansion", "new operator", "wellness", "fashion", "global retail", "brand performance", "high street", "US expansion", "opening in London", "opening in Paris", "opening in New York", "rollout"],
-  },
-  "Development": {
-    focus: "Property development, repurposing, planning applications, construction, change of use, mixed-use schemes",
-    keywords: ["development", "planning", "construction", "repurposing", "change of use", "mixed-use", "regeneration", "refurbishment", "conversion"],
   },
 };
 
@@ -875,7 +876,7 @@ Respond in JSON format:
   "articles": [
     {
       "index": 1,
-      "relevanceScores": { "Investment": 85, "London Retail": 60, "London F&B": 55, "Lease Advisory": 30, "National Leasing": 20, "Tenant Rep": 45, "Development": 10 },
+      "relevanceScores": { "Investment": 85, "London Estate": 60, "City": 40, "Shopping Centre": 55, "High Street": 20, "Lease Advisory": 30, "Tenant Rep": 45 },
       "tags": ["retail", "new openings", "Mayfair"],
       "aiSummary": "Brief 1-2 sentence summary highlighting why this matters for property professionals"
     }
@@ -941,9 +942,10 @@ async function extractCompsFromArticles(): Promise<{ extracted: number; created:
     const tags = (a.aiTags || []).map((t: string) => t.toLowerCase());
     const scores = a.aiRelevanceScores as Record<string, number> | null;
     const leasingScore = Math.max(
-      (scores?.["London F&B"] || 0),
-      (scores?.["London Retail"] || 0),
-      (scores?.["National Leasing"] || 0),
+      (scores?.["London Estate"] || 0),
+      (scores?.["City"] || 0),
+      (scores?.["Shopping Centre"] || 0),
+      (scores?.["High Street"] || 0),
       (scores?.["Lease Advisory"] || 0),
       (scores?.["Tenant Rep"] || 0)
     );

@@ -112,16 +112,16 @@ const COLOR_PALETTE: Record<string, { bg: string; border: string; chip: string }
   yellow:  { bg: "bg-yellow-50/50 dark:bg-yellow-950/20", border: "border-yellow-200 dark:border-yellow-800", chip: "bg-yellow-500" },
   slate:   { bg: "bg-muted/40", border: "border-border", chip: "bg-gray-400" },
 };
-// Fallback colour for the 7 default column names — keeps the look
+// Fallback colour for the 7 default column names (2026-10 teams) — keeps the look
 // consistent across clients that haven't customised yet.
 const DEFAULT_COLOUR_BY_NAME: Record<string, string> = {
-  "Office / Corporate": "purple",
+  "Shopping Centre": "orange",
+  "London Estate": "yellow",
+  "High Street": "pink",
+  "City": "purple",
   "Investment": "emerald",
   "Lease Advisory": "amber",
-  "National Leasing": "orange",
-  "Development": "pink",
   "Tenant Rep": "sky",
-  "London Leasing": "yellow",
 };
 
 function styleForColumn(col: ColumnDef) {

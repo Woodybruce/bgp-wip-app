@@ -1,3 +1,4 @@
+import { BGP_TEAM_NAMES } from "@shared/teams";
 import { useState, useMemo, useRef, useEffect, lazy, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -2244,7 +2245,10 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
   // commission scheme and aren't RICS surveyors, so we hide those tabs/cards
   // for them. Once a surveyor qualifies (APC completed), we still show their
   // RICS member number but drop the in-progress APC fields.
-  const isOfficeStaff = (person.team || "").toLowerCase().includes("office") || (person.team || "").toLowerCase().includes("corporate");
+  // Support staff have no team since the 2026-10 structure, so their title
+  // decides it (consultant / COO included); the old team still counts.
+  const isOfficeStaff = (person.team || "").toLowerCase().includes("office") || (person.team || "").toLowerCase().includes("corporate")
+    || (!person.team && (!isFeeEarner(person.title) || /\b(consultant|coo|chief operating|marketing)\b/i.test(person.title || "")));
   const isQualifiedSurveyor = person.apc_status === "completed";
   const showRicsCard = !isOfficeStaff && (person.rics_number || person.rics_pathway || (person.apc_status && person.apc_status !== "not_started"));
 
@@ -4137,7 +4141,7 @@ function MarketingTrendsPanel({ isAdmin }: { isAdmin: boolean }) {
     enabled: false,
   });
 
-  const TEAMS = ["", "Lease Advisory", "London Leasing", "National Leasing", "Investment", "Tenant Rep", "Development"];
+  const TEAMS = ["", ...BGP_TEAM_NAMES];
 
   return (
     <Card>
@@ -5744,17 +5748,18 @@ function HolidayApprovals() {
 
 // Card colours mirror Layla's May 2026 organigram. Keyed off `users.team`.
 const TEAM_STYLES: Record<string, { bg: string; border: string; text: string; pip: string }> = {
-  "Office / Corporate": { bg: "bg-purple-50 dark:bg-purple-950/30", border: "border-purple-300 dark:border-purple-700", text: "text-purple-900 dark:text-purple-100", pip: "bg-purple-500" },
   "Investment":          { bg: "bg-emerald-50 dark:bg-emerald-950/30", border: "border-emerald-300 dark:border-emerald-700", text: "text-emerald-900 dark:text-emerald-100", pip: "bg-emerald-500" },
   "Lease Advisory":      { bg: "bg-amber-50 dark:bg-amber-950/30", border: "border-amber-300 dark:border-amber-700", text: "text-amber-900 dark:text-amber-100", pip: "bg-amber-500" },
-  "National Leasing":    { bg: "bg-orange-50 dark:bg-orange-950/30", border: "border-orange-300 dark:border-orange-700", text: "text-orange-900 dark:text-orange-100", pip: "bg-orange-500" },
-  "Development":         { bg: "bg-pink-50 dark:bg-pink-950/30", border: "border-pink-300 dark:border-pink-700", text: "text-pink-900 dark:text-pink-100", pip: "bg-pink-500" },
+  "Shopping Centre":    { bg: "bg-orange-50 dark:bg-orange-950/30", border: "border-orange-300 dark:border-orange-700", text: "text-orange-900 dark:text-orange-100", pip: "bg-orange-500" },
+  "City":         { bg: "bg-pink-50 dark:bg-pink-950/30", border: "border-pink-300 dark:border-pink-700", text: "text-pink-900 dark:text-pink-100", pip: "bg-pink-500" },
   "Tenant Rep":          { bg: "bg-sky-50 dark:bg-sky-950/30", border: "border-sky-300 dark:border-sky-700", text: "text-sky-900 dark:text-sky-100", pip: "bg-sky-500" },
-  "London Retail":       { bg: "bg-yellow-50 dark:bg-yellow-950/30", border: "border-yellow-300 dark:border-yellow-700", text: "text-yellow-900 dark:text-yellow-100", pip: "bg-yellow-500" },
-  "London F&B":          { bg: "bg-rose-50 dark:bg-rose-950/30", border: "border-rose-300 dark:border-rose-700", text: "text-rose-900 dark:text-rose-100", pip: "bg-rose-500" },
+  "London Estate":       { bg: "bg-yellow-50 dark:bg-yellow-950/30", border: "border-yellow-300 dark:border-yellow-700", text: "text-yellow-900 dark:text-yellow-100", pip: "bg-yellow-500" },
+  "High Street":          { bg: "bg-rose-50 dark:bg-rose-950/30", border: "border-rose-300 dark:border-rose-700", text: "text-rose-900 dark:text-rose-100", pip: "bg-rose-500" },
 };
 const DEFAULT_TEAM_STYLE = { bg: "bg-muted", border: "border-border", text: "text-foreground", pip: "bg-gray-500" };
-const TEAM_ORDER = ["Office / Corporate", "Investment", "Lease Advisory", "National Leasing", "Development", "Tenant Rep", "London Retail", "London F&B"];
+// The 2026-10 team structure (shared/teams.ts). People with no team (MD,
+// heads of department, support staff) sit outside the team columns.
+const TEAM_ORDER: string[] = [...BGP_TEAM_NAMES];
 
 function styleForTeam(team: string | null | undefined) {
   if (!team) return DEFAULT_TEAM_STYLE;

@@ -270,13 +270,12 @@ export const TEAM_OPTIONS: string[] = [...CRM_OPTIONS.dealTeam];
 
 export const TEAM_COLORS: Record<string, string> = {
   "Investment": "bg-sky-600",
-  "London F&B": "bg-rose-500",
-  "London Retail": "bg-teal-500",
-  "National Leasing": "bg-violet-500",
+  "High Street": "bg-rose-500",
+  "London Estate": "bg-teal-500",
+  "Shopping Centre": "bg-violet-500",
   "Lease Advisory": "bg-indigo-500",
   "Tenant Rep": "bg-pink-500",
-  "Development": "bg-orange-500",
-  "Office / Corporate": "bg-slate-500",
+  "City": "bg-orange-500",
   "Landsec": "bg-amber-500",
 };
 

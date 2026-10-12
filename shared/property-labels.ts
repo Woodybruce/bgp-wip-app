@@ -2,10 +2,16 @@
 // exchange board — what a mess"), shared by the page and the server routes
 // that feed it.
 
+import { BGP_TEAM_NAMES, RETIRED_TEAM_NAMES } from "./teams";
+
 // BGP's own teams — the values crm_properties.bgp_engagement and
-// crm_deals.team should hold. Imports and deal edits let other words in
-// ("Landlord" from acting-for columns, "BGP", the retired "London Leasing").
-export const BGP_TEAMS = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"] as const;
+// crm_deals.team should hold (shared/teams.ts, the 2026-10 structure).
+// Imports and deal edits let other words in ("Landlord" from acting-for
+// columns, "BGP", retired team names).
+export const BGP_TEAMS = [...BGP_TEAM_NAMES, "Landsec"] as const;
+// SharePoint folder labels: the real folders are still named after the
+// retired teams, so those names stay recognised as team folders.
+const FOLDER_TEAMS: readonly string[] = [...BGP_TEAMS, ...RETIRED_TEAM_NAMES];
 
 export function bgpTeamsOnly(values: string[] | string | null | undefined): string[] {
   const list = Array.isArray(values) ? values : values ? [values] : [];
@@ -20,7 +26,7 @@ export function bgpTeamsOnly(values: string[] | string | null | undefined): stri
 // sharepoint_folder_url stays the default for team tabs without their own.
 export type PropertyFolderTab = { label: string; url: string | null; kind: "team" | "extra"; own: boolean };
 
-const bgpTeamName = (label: string) => BGP_TEAMS.find(t => t.toLowerCase() === label.trim().toLowerCase());
+const bgpTeamName = (label: string) => FOLDER_TEAMS.find(t => t.toLowerCase() === label.trim().toLowerCase());
 
 /** A folder label as stored: trimmed, team names in their canonical form. */
 export function folderLinkLabel(label: unknown): string | null {
@@ -56,7 +62,7 @@ export function propertyFolderTabs(folderTeams: string[] | null | undefined, lin
   const labels: string[] = [];
   const add = (label: string) => { if (!labels.some(l => l.toLowerCase() === label.toLowerCase())) labels.push(label); };
   teams.forEach(add);
-  BGP_TEAMS.filter(t => own(t)).forEach(add);
+  FOLDER_TEAMS.filter(t => own(t)).forEach(add);
   Object.keys(linked).filter(l => !bgpTeamName(l)).sort((a, b) => a.localeCompare(b)).forEach(add);
   return labels.map(label => {
     const url = own(label);

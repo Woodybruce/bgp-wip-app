@@ -368,7 +368,7 @@ export function AppSidebar() {
     ? [...coreNavFiltered, { title: "Approvals", url: "/expenses/approvals", icon: ClipboardCheck, badge: String(approvalCount) }]
     : coreNavFiltered;
   // Read-only "Team Expenses" for designated team overseers — non-admin team
-  // leads (e.g. Victoria → National Leasing). Admins use the full Expenses
+  // leads (e.g. Victoria → Shopping Centre). Admins use the full Expenses
   // console instead, so this is only for non-admins. The overseer flag rides
   // on /api/auth/me (server: expenseOverseerTeams).
   const isExpenseOverseer =

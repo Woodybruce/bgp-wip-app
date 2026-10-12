@@ -63,7 +63,7 @@ export function CompPdfTemplateEditor({ scope = "leasing" }: { scope?: "leasing"
   });
 
   const userTeam = (currentUser?.team || "").toLowerCase();
-  const leasingTeams = ["lease advisory", "london leasing", "national leasing"];
+  const leasingTeams = ["lease advisory", "shopping centre", "london estate", "high street", "city"];
   const canEdit = currentUser?.isAdmin ||
     (scope === "investment" ? userTeam === "investment" : leasingTeams.includes(userTeam));
 
@@ -437,7 +437,7 @@ export function CompPdfTemplateEditor({ scope = "leasing" }: { scope?: "leasing"
                 </div>
                 <div className="flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 text-green-600" />
-                  <span>National Leasing</span>
+                  <span>Leasing teams (Shopping Centre, London Estate, High Street, City)</span>
                   <Badge variant="default" className="text-[10px] ml-auto">Can Edit</Badge>
                 </div>
                 <div className="flex items-center gap-2">

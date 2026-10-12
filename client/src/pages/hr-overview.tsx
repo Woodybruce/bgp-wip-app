@@ -29,14 +29,13 @@ const fmtMoney = (pence: number) => {
 const fmtFull = (pence: number) => `£${(pence / 100).toLocaleString("en-GB", { maximumFractionDigits: 0 })}`;
 
 const TEAM_STYLES: Record<string, { bg: string; border: string; accent: string; ring: string; edge: string }> = {
-  "Office / Corporate": { bg: "from-purple-50 to-purple-100/50 dark:from-purple-950/40 dark:to-purple-900/20", border: "border-purple-200 dark:border-purple-800", accent: "text-purple-700 dark:text-purple-300", ring: "ring-purple-500/30", edge: "border-l-purple-500" },
   "Investment":         { bg: "from-emerald-50 to-emerald-100/50 dark:from-emerald-950/40 dark:to-emerald-900/20", border: "border-emerald-200 dark:border-emerald-800", accent: "text-emerald-700 dark:text-emerald-300", ring: "ring-emerald-500/30", edge: "border-l-emerald-500" },
   "Lease Advisory":     { bg: "from-amber-50 to-amber-100/50 dark:from-amber-950/40 dark:to-amber-900/20", border: "border-amber-200 dark:border-amber-800", accent: "text-amber-700 dark:text-amber-300", ring: "ring-amber-500/30", edge: "border-l-amber-500" },
-  "National Leasing":   { bg: "from-orange-50 to-orange-100/50 dark:from-orange-950/40 dark:to-orange-900/20", border: "border-orange-200 dark:border-orange-800", accent: "text-orange-700 dark:text-orange-300", ring: "ring-orange-500/30", edge: "border-l-orange-500" },
-  "Development":        { bg: "from-pink-50 to-pink-100/50 dark:from-pink-950/40 dark:to-pink-900/20", border: "border-pink-200 dark:border-pink-800", accent: "text-pink-700 dark:text-pink-300", ring: "ring-pink-500/30", edge: "border-l-pink-500" },
+  "Shopping Centre":   { bg: "from-orange-50 to-orange-100/50 dark:from-orange-950/40 dark:to-orange-900/20", border: "border-orange-200 dark:border-orange-800", accent: "text-orange-700 dark:text-orange-300", ring: "ring-orange-500/30", edge: "border-l-orange-500" },
+  "City":        { bg: "from-pink-50 to-pink-100/50 dark:from-pink-950/40 dark:to-pink-900/20", border: "border-pink-200 dark:border-pink-800", accent: "text-pink-700 dark:text-pink-300", ring: "ring-pink-500/30", edge: "border-l-pink-500" },
   "Tenant Rep":         { bg: "from-sky-50 to-sky-100/50 dark:from-sky-950/40 dark:to-sky-900/20", border: "border-sky-200 dark:border-sky-800", accent: "text-sky-700 dark:text-sky-300", ring: "ring-sky-500/30", edge: "border-l-sky-500" },
-  "London Retail":      { bg: "from-yellow-50 to-yellow-100/50 dark:from-yellow-950/40 dark:to-yellow-900/20", border: "border-yellow-200 dark:border-yellow-800", accent: "text-yellow-700 dark:text-yellow-300", ring: "ring-yellow-500/30", edge: "border-l-yellow-500" },
-  "London F&B":         { bg: "from-rose-50 to-rose-100/50 dark:from-rose-950/40 dark:to-rose-900/20", border: "border-rose-200 dark:border-rose-800", accent: "text-rose-700 dark:text-rose-300", ring: "ring-rose-500/30", edge: "border-l-rose-500" },
+  "London Estate":      { bg: "from-yellow-50 to-yellow-100/50 dark:from-yellow-950/40 dark:to-yellow-900/20", border: "border-yellow-200 dark:border-yellow-800", accent: "text-yellow-700 dark:text-yellow-300", ring: "ring-yellow-500/30", edge: "border-l-yellow-500" },
+  "High Street":         { bg: "from-rose-50 to-rose-100/50 dark:from-rose-950/40 dark:to-rose-900/20", border: "border-rose-200 dark:border-rose-800", accent: "text-rose-700 dark:text-rose-300", ring: "ring-rose-500/30", edge: "border-l-rose-500" },
 };
 const DEFAULT_TEAM_STYLE = { bg: "from-muted to-muted/50", border: "border-border", accent: "text-foreground", ring: "ring-muted", edge: "border-l-border" };
 const teamStyle = (t: string) => TEAM_STYLES[t] || DEFAULT_TEAM_STYLE;

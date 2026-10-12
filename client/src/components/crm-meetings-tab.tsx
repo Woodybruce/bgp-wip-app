@@ -1,3 +1,4 @@
+import { BGP_TEAM_NAMES, TEAM_DOT_CLASSES } from "@shared/teams";
 // CRM Meetings — Phase 1 "Heads of Team" interviews from the BGP CRM
 // Strategy doc (Sept 2026). A card grid of interviews (one per team, plus
 // any extras); opening a card shows the strategy doc's question set grouped
@@ -30,23 +31,12 @@ interface CrmInterview {
   updated_at: string;
 }
 
-const TEAMS = [
-  "London Leasing Retail", "London Leasing F&B and Leisure", "National",
-  "Investment", "Tenant Rep", "Lease Advisory", "Development",
-];
+// The 2026-10 team structure (shared/teams.ts).
+const TEAMS: string[] = [...BGP_TEAM_NAMES];
 
 // Identity dot per team (docs/DESIGN.md — identity palettes as dots, never
 // full fills). Everything else stays on theme tokens.
-const TEAM_DOT: Record<string, string> = {
-  "Leasing": "bg-sky-500",
-  "London Leasing Retail": "bg-sky-500",
-  "London Leasing F&B and Leisure": "bg-orange-500",
-  "National": "bg-indigo-500",
-  "Investment": "bg-violet-500",
-  "Tenant Rep": "bg-emerald-500",
-  "Lease Advisory": "bg-amber-500",
-  "Development": "bg-rose-500",
-};
+const TEAM_DOT: Record<string, string> = TEAM_DOT_CLASSES;
 
 // The Phase 1 question set, verbatim from the strategy doc.
 const SECTIONS: { title: string; note?: string; questions: { id: string; text: string }[] }[] = [

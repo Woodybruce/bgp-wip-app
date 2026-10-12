@@ -89,7 +89,7 @@ export function propertyBgpTeam(
     const t = teams.map(x => String(x || "").toLowerCase());
     if (t.includes("investment")) return "Investment";
     if (t.includes("lease advisory")) return "Lease advisory";
-    if (t.some(x => /retail|f&b|leasing|landsec/.test(x))) return "Leasing";
+    if (t.some(x => /retail|f&b|leasing|landsec|shopping centre|london estate|high street|^city$/.test(x))) return "Leasing";
     if (t.includes("development")) return "Development";
     if (t.includes("tenant rep")) return "Tenant rep";
     return "On deals";

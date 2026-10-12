@@ -36,6 +36,7 @@ import { apiRequest, getAuthHeaders, invalidateDealCaches, queryClient } from "@
 import { RefreshCw } from "lucide-react";
 import { legacyToCode, WIP_STATUSES, DEAL_STATUS_LABELS, DEAL_STATUS_DOT_COLORS, DEAL_PAGE_STATUSES } from "@shared/deal-status";
 import { InlineLabelSelect } from "@/components/inline-edit";
+import { BGP_TEAM_NAMES, TEAM_DOT_CLASSES } from "@shared/teams";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SortableTableHead } from "@/components/sortable-table-head";
 import { useTableSort } from "@/hooks/use-table-sort";
@@ -1419,6 +1420,17 @@ export default function WipReport() {
     }
   };
 
+  const handleTeamChange = async (dealId: string, team: string, keepLandsec: boolean) => {
+    try {
+      await apiRequest("PUT", `/api/crm/deals/${dealId}`, { team: keepLandsec ? [team, "Landsec"] : [team] });
+      toast({ title: "Team updated", description: `The deal's fee now counts to ${team}.` });
+      invalidateDealCaches();
+      queryClient.invalidateQueries({ queryKey: ["/api/wip"] });
+    } catch (err: any) {
+      toast({ title: "Couldn't change the team", description: err?.message || "Please try again.", variant: "destructive" });
+    }
+  };
+
   const handlePrint = () => window.print();
 
   const handleExportExcel = async () => {
@@ -2302,7 +2314,22 @@ export default function WipReport() {
                       </td>
                       )}
                       {colVisible("billingEntity") && <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[150px]">{e.billingEntity || "—"}</td>}
-                      {colVisible("team") && <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[150px]">{e.team || "—"}</td>}
+                      {colVisible("team") && (
+                      <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[150px]">
+                        {/* One team per deal — the team its fee counts to (2026-10
+                            team structure); the Landsec client tag is kept. */}
+                        {e.dealId ? (
+                          <InlineLabelSelect
+                            value={(e.team || "").split(",").map((t: string) => t.trim()).find((t: string) => t !== "Landsec") || ""}
+                            options={[...BGP_TEAM_NAMES]}
+                            colorMap={TEAM_DOT_CLASSES}
+                            onSave={(v) => { if (v) handleTeamChange(e.dealId, v, (e.team || "").includes("Landsec")); }}
+                            allowClear={false}
+                            compact
+                          />
+                        ) : (e.team || "—")}
+                      </td>
+                      )}
                       {colVisible("amtWip") && (
                       <td className="px-2 py-1.5 text-foreground font-mono">
                         {(e.amtWip || 0) + (e.amtInvoice || 0) ? formatFullCurrency((e.amtWip || 0) + (e.amtInvoice || 0)) : "—"}

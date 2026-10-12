@@ -3400,7 +3400,7 @@ RULES:
   });
 
   const COMP_PDF_TEMPLATE_KEY = "comp_pdf_template";
-  const LEASE_ADVISORY_TEAMS = ["lease advisory", "london leasing", "national leasing"];
+  const LEASE_ADVISORY_TEAMS = ["lease advisory", "shopping centre", "london estate", "high street", "city"];
 
   const DEFAULT_COMP_PDF_TEMPLATE = {
     headerTitle: "BRUCE GILLINGHAM POLLARD",

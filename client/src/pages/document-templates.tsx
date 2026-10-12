@@ -1,3 +1,4 @@
+import { BGP_TEAM_NAMES } from "@shared/teams";
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
@@ -4762,11 +4763,7 @@ function LegalDDTab() {
                     onChange={(e) => setDdTeam(e.target.value)}
                     data-testid="select-dd-team"
                   >
-                    <option value="Investment">Investment</option>
-                    <option value="Lease Advisory">Lease Advisory</option>
-                    <option value="National Leasing">National Leasing</option>
-                    <option value="Tenant Rep">Tenant Rep</option>
-                    <option value="Development">Development</option>
+                    {BGP_TEAM_NAMES.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </div>
               </div>
