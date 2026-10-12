@@ -13,6 +13,8 @@ import Team from "./pages/Team";
 import News from "./pages/News";
 import ArticlePage from "./pages/Article";
 import CaseStudyPage from "./pages/CaseStudyPage";
+import LeasingSector, { ShoppingCentrePage } from "./pages/LeasingSector";
+import DraftBanner from "./components/DraftBanner";
 
 // SPA navigation keeps the previous scroll position — every page change
 // should land at the top. Plain #hash anchors don't change the route, so
@@ -29,11 +31,14 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col">
       <ScrollToTop />
+      <DraftBanner />
       <Nav />
       <main className="flex-1">
         <Switch>
           <Route path="/" component={Home} />
           <Route path="/leasing" component={Leasing} />
+          <Route path="/leasing/sectors/shopping-centres/:slug" component={ShoppingCentrePage} />
+          <Route path="/leasing/sectors/:slug" component={LeasingSector} />
           <Route path="/leasing/:id" component={ListingDetail} />
           <Route path="/investment" component={Investment} />
           <Route path="/brand-representation" component={BrandRepresentation} />

@@ -4296,6 +4296,85 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Website imagery from the share drive — "Marketing / BGP Rebrand" and its
+  // subfolders (Images for website / <client>, Headshots 2026). The site and
+  // the Website admin page read the tree here; files are served web-sized.
+  const SITE_IMAGES_ROOT = process.env.SITE_IMAGES_FOLDER || "Bruce Gillingham Pollard - Share Drive/Marketing/BGP Rebrand";
+  const SITE_IMAGE_FOLDERS = ["Images for website", "Headshots 2026"];
+  type SiteImage = { id: string; folder: string; file: string; size: number; modified: string };
+  let siteImageList: { at: number; rows: SiteImage[] } | null = null;
+  const siteImageBytes = new Map<string, { at: number; buf: Buffer }>();
+  const listSiteImages = async (): Promise<SiteImage[]> => {
+    if (siteImageList && Date.now() - siteImageList.at < 10 * 60_000) return siteImageList.rows;
+    const { getAppGraphToken } = await import("./microsoft");
+    const token = await getAppGraphToken();
+    if (!token) return siteImageList?.rows || [];
+    const headers = { Authorization: `Bearer ${token}` };
+    const rows: SiteImage[] = [];
+    const walk = async (rel: string, depth: number) => {
+      const path = encodeURIComponent(`${SITE_IMAGES_ROOT}/${rel}`).replace(/%2F/g, "/");
+      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${TEAM_PHOTOS_DRIVE_ID}/root:/${path}:/children?$top=500&$select=id,name,file,folder,size,lastModifiedDateTime`, { headers });
+      if (!r.ok) {
+        console.warn("[site-images] Graph list failed:", rel, r.status);
+        return;
+      }
+      const j: any = await r.json();
+      for (const it of j.value || []) {
+        if (it.folder && depth < 2) await walk(`${rel}/${it.name}`, depth + 1);
+        else if (it.file && /^image\//.test(it.file.mimeType || "") && (it.size || 0) >= 40 * 1024) {
+          rows.push({ id: it.id, folder: rel, file: it.name, size: it.size, modified: it.lastModifiedDateTime });
+        }
+      }
+    };
+    for (const f of SITE_IMAGE_FOLDERS) await walk(f, 0);
+    siteImageList = { at: Date.now(), rows };
+    return rows;
+  };
+
+  app.get("/api/public/site-images", async (_req, res) => {
+    try {
+      const rows = await listSiteImages();
+      res.header("Cache-Control", "public, max-age=600");
+      res.json(rows.map(r => ({ folder: r.folder, file: r.file, size: r.size, modified: r.modified, url: `/api/public/site-images/${r.folder.split("/").map(encodeURIComponent).join("/")}/${encodeURIComponent(r.file)}` })));
+    } catch (err: any) {
+      console.error("[site-images] list error:", err?.message);
+      res.json([]);
+    }
+  });
+
+  app.get(/^\/api\/public\/site-images\/(.+)$/, async (req, res) => {
+    try {
+      const rel = decodeURIComponent(String((req.params as any)[0] || ""));
+      const cut = rel.lastIndexOf("/");
+      const folder = rel.slice(0, cut), file = rel.slice(cut + 1);
+      const rows = await listSiteImages();
+      const hit = rows.find(r => r.folder === folder && r.file === file);
+      if (!hit) return res.status(404).end();
+      const width = Math.min(Math.max(Number(req.query.w) || 1800, 200), 2400);
+      const key = `${hit.id}:${width}`;
+      const cached = siteImageBytes.get(key);
+      if (cached && Date.now() - cached.at < 6 * 60 * 60_000) {
+        res.header("Content-Type", "image/jpeg");
+        res.header("Cache-Control", "public, max-age=3600");
+        return res.send(cached.buf);
+      }
+      const { getAppGraphToken } = await import("./microsoft");
+      const token = await getAppGraphToken();
+      if (!token) return res.status(503).end();
+      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${TEAM_PHOTOS_DRIVE_ID}/items/${hit.id}/content`, { headers: { Authorization: `Bearer ${token}` }, redirect: "follow" });
+      if (!r.ok) return res.status(404).end();
+      const sharp = (await import("sharp")).default;
+      const buf = await sharp(Buffer.from(await r.arrayBuffer())).rotate().resize(width, width, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82, mozjpeg: true }).toBuffer();
+      siteImageBytes.set(key, { at: Date.now(), buf });
+      res.header("Content-Type", "image/jpeg");
+      res.header("Cache-Control", "public, max-age=3600");
+      res.send(buf);
+    } catch (err: any) {
+      console.error("[site-images] fetch error:", err?.message);
+      res.status(500).end();
+    }
+  });
+
   app.get("/api/public/leasing-listings", async (_req, res) => {
     try {
       const { availableUnits, crmProperties, propertyUnits, unitMarketingFiles } = await import("@shared/schema");
