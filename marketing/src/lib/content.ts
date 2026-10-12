@@ -51,6 +51,14 @@ export const NAV_ITEMS = [
 
 export const HERO_STATEMENT = "Great places are built through connected thinking.";
 
+// Home hero rotates through flagship instructions, one per capability
+// (Woody, 2026-10-12). Crossfades every five seconds.
+export const HERO_SLIDES: Array<{ src: string; alt: string; place: string; capability: string }> = [
+  { src: "/images/hero/portman-chiltern-street.jpg", alt: "Independent shopfronts on Chiltern Street, Marylebone", place: "The Portman Estate", capability: "Leasing" },
+  { src: "/images/hero/royal-exchange.jpg", alt: "The Royal Exchange, City of London", place: "The Royal Exchange", capability: "Investment and asset management" },
+  { src: "/images/hero/bullring.jpg", alt: "The bull at Bullring, Birmingham", place: "Bullring, Birmingham", capability: "Shopping centre leasing" },
+];
+
 // From Emmy's "Website copy 7 Oct" — Website: Homepage
 export const HOME_INTRO = {
   lead: "We are bgp.",
