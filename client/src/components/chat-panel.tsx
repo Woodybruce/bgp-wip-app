@@ -58,6 +58,7 @@ import {
 import type { User as UserType } from "@shared/schema";
 import { TagChip, TAG_TOKEN_SOURCE, TAG_META, buildTagToken, type TagType } from "@/components/chat-tags";
 import { useChatBGPState } from "@/contexts/chatbgp-context";
+import { GossipStrip, isGossipThread } from "@/components/gossip-summary";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -3014,6 +3015,8 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
           </Button>
         </div>
       </div>
+
+      {view !== "threads" && activeThreadId && isGossipThread(activeThread) && <GossipStrip />}
 
       {showSidebar && view === "chat" && !activeThreadId && (() => {
         const aiThreads = (threads || []).filter(t => t.isAiChat);

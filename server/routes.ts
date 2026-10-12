@@ -132,7 +132,7 @@ const GROUP_CHAT_TOOLS = [
   "log_viewing", "log_offer", "create_requirement", "create_diary_entry", "create_task",
   "delete_record", "web_search", "ingest_url", "property_lookup", "property_data_lookup", "order_hmlr_official_copy",
   "tfl_nearby", "search_green_street", "query_xero", "scan_duplicates",
-  "navigate_to", "send_email", "query_leasing_schedule",
+  "navigate_to", "send_email", "query_leasing_schedule", "summarise_gossip",
 ];
 
 // ── Smart tags ──────────────────────────────────────────────────────────
@@ -2472,6 +2472,8 @@ export async function registerRoutes(
       if (thread.createdBy !== req.session.userId) {
         return res.status(403).json({ message: "Only the thread creator can delete it" });
       }
+      const { isGossipThread } = await import("./gossip-channel");
+      if (isGossipThread(thread as any)) return res.status(409).json({ message: "The firm-wide gossip channel can't be deleted" });
       await storage.deleteChatThread(id);
       res.json({ success: true });
     } catch (err: any) {
@@ -2533,10 +2535,14 @@ export async function registerRoutes(
         const members = await storage.getChatThreadMembers(thread.id);
         const preview = content?.substring(0, 80) || "New message";
         const threadTitle = thread.title || "Chat";
+        // The all-staff gossip channel shows as unread but never pushes to
+        // every phone in the firm on each post.
+        const { isGossipThread } = await import("./gossip-channel");
+        const quietChannel = isGossipThread(thread as any);
         for (const m of members) {
           if (m.userId !== userId) {
             emitNotification(m.userId, { type: "new_message", threadId: thread.id, senderName, preview });
-            sendPushNotification(m.userId, {
+            if (!quietChannel) sendPushNotification(m.userId, {
               title: senderName,
               body: preview,
               tag: `chat-${thread.id}`,
@@ -4243,6 +4249,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   registerBusinessCardRoutes(app, requireAuth);
   registerExcelAgentRoutes(app, requireAuth);
   registerKyc4uRoutes(app, requireAuth, requireAdmin);
+  {
+    const { setupGossipChannel } = await import("./gossip-channel");
+    setupGossipChannel(app, requireAuth);
+  }
 
   app.get("/api/public/team-photos", async (_req, res) => {
     try {

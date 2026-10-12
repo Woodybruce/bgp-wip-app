@@ -2,6 +2,7 @@
 // panels, and navigation into separate components. The bottom nav system provides an
 // alternative mobile navigation path. Be careful: this is deeply coupled and risky to refactor.
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { GossipStrip, isGossipThread } from "@/components/gossip-summary";
 import { CRM_OPTIONS } from "@/lib/crm-options";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getQueryFn, apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
@@ -2775,7 +2776,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                   </div>
                 </div>
               )}
-              {activeThread?.linkedName && activeThread?.linkedType && activeThread?.linkedId && (
+              {activeThread?.linkedName && activeThread?.linkedType && activeThread?.linkedId && activeThread.linkedType !== "channel" && (
                 <div className="flex items-center gap-1 mt-1 max-w-full">
                   <button
                     onClick={() => {
@@ -2807,6 +2808,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           </div>
         </div>
       )}
+      {!isAiChat && isGossipThread(activeThread) && <GossipStrip />}
 
       {searchInChat && (
         <div className="px-3 py-2 border-b bg-white flex items-center gap-2">
@@ -4008,7 +4010,8 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     // main ones") — ChatBGP keeps its single pinned row; the full AI
     // history lives under the AI chip.
     else base = teamThreads;
-    base = [...base].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    // The all-staff gossip channel stays pinned at the top (Woody, 2026-10-12).
+    base = [...base].sort((a, b) => Number(isGossipThread(b)) - Number(isGossipThread(a)) || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     if (!chatSearch.trim()) return base;
     const q = chatSearch.toLowerCase();
     return base.filter(t =>
