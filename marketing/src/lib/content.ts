@@ -217,6 +217,19 @@ export const CASE_STUDIES: CaseStudy[] = [
     ],
   },
   {
+    slug: "the-royal-exchange",
+    title: "The Royal Exchange",
+    service: "Investment",
+    blurb: "BGP has been Ardent's partner at The Royal Exchange since the very beginning: from the off-market acquisition in 2022, through leasing and asset management, to a successful exit in 2026.",
+    body: [
+      "One of the most prestigious and recognisable assets in the City of London, The Royal Exchange is a Grade I listed luxury retail destination of exceptional quality. BGP advised Ardent on the off-market acquisition, formulated the business plan, acted as incumbent leasing agents and carried the ongoing asset management responsibilities.",
+      "New lettings included Hagen, Trotters, Rosslyn Coffee, Baudoin & Lange, Georg Jensen, Inception, Searle Jewellery, Kiani Tea, Dei Duchi and Elevate; Bremont, Omega, Tiffany and Jo Malone were regeared or renewed and Ladurée upsized. New entrances, senior and mezzanine debt and year-on-year footfall growth of 20 to 25% followed.",
+      "By exit the scheme was fully let, the business plan had been exceeded and target returns achieved: occupancy up from 75% to 100%, WAULT from four to seven years, and annual footfall from 500,000 to 800,000.",
+    ],
+    facts: [["Service", "Investment"], ["Client", "Ardent"], ["Occupancy", "75% to 100%"], ["WAULT", "4 to 7 years"], ["Annual footfall", "500,000 to 800,000"]],
+    image: "/images/investment/royal-exchange-courtyard.jpg",
+  },
+  {
     slug: "19-golden-square",
     title: "19 Golden Square, Soho",
     service: "Investment",
@@ -388,17 +401,20 @@ export interface InvestmentDeal {
   image?: string;
 }
 
+// The pitch's track record (Royal Exchange disposal pitch, February 2026)
+// replaces the old transactions list (Woody, 2026-10-12). Photos are the
+// deck's until the high-res set arrives.
 export const INVESTMENT_DEALS: InvestmentDeal[] = [
-  { image: "/images/supermarket.jpg", name: "LondonMetric Waitrose Portfolio", client: "LondonMetric PLC", price: "£62,000,000", capRate: null, sold: true, wide: true },
-  { image: "/images/shop-rails.jpg", name: "St Peters & Four Pools", client: "Brydell Partners", price: "£16,900,000", capRate: null, sold: true, wide: false },
-  { image: "/images/cinema.jpg", name: "Robin Leisure Park", client: "Otium Real Estate", price: "£12,480,000", capRate: "8.30%", sold: true, wide: false },
-  { image: "/images/city-towers.jpg", name: "19 Golden Square, Soho", client: "Vectis Property Group", price: "£10,500,000", capRate: null, sold: true, wide: false },
-  { image: "/images/restaurant.jpg", name: "The Ivy, 39 Milsom Street, Bath", client: "Legal & General", price: "£8,050,000", capRate: null, sold: true, wide: false },
-  { image: "/images/shop-browse.jpg", name: "52–55 Friar Street, Reading", client: "Aviva Investors", price: "£6,500,000", capRate: null, sold: true, wide: false },
-  { image: "/images/apartments.jpg", name: "Riverlight, Nine Elms", client: "St James / Berkeley", price: "£5,800,000", capRate: "4.22%", sold: true, wide: false },
-  { image: "/images/shop-boutique.jpg", name: "213–214 Upper Street", client: "Private Client", price: "£5,350,000", capRate: "3.62%", sold: true, wide: false },
-  { image: "/images/grocery-aisle.jpg", name: "Tesco, Fulham Reach", client: "St George PLC", price: "£2,325,000", capRate: "4.60%", sold: true, wide: false },
+  { image: "/images/investment/royal-exchange-corner.jpg", name: "The Royal Exchange, London", client: "Ardent", price: "Acquisition, leasing and asset management through to exit", capRate: null, sold: true, wide: true },
+  { image: "/images/investment/one-tower-bridge.jpg", name: "One Tower Bridge", client: "Redevco", price: "£70,000,000 acquisition", capRate: null, sold: true, wide: false },
+  { name: "Brixton Market", client: "Hondo Enterprises / Angelo Gordon", price: "£47,000,000 purchase and subsequent sale", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/16-conduit-street.jpg", name: "16 Conduit Street, Mayfair", client: "Japanese private investor", price: "Prime West End retail acquisition", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/wimbledon-bridge-house.jpg", name: "Wimbledon Bridge House", client: "Sheet Anchor Evolve", price: "Mixed-use investment", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/oxam-house-oxford.jpg", name: "Oxam House, Oxford", client: "Charles Street", price: "City-centre retail investment", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/filmworks-ealing.jpg", name: "Filmworks, Ealing", client: "St George", price: "Cinema-led town-centre retail and leisure", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/grants-leisure-croydon.jpg", name: "Grants Leisure, Croydon", client: "Hermes", price: "Leisure investment", capRate: null, sold: true, wide: false },
 ];
+
 
 // Real client rosters from the projects page. Logos resolve via the Clearbit
 // logo API (same source as the dashboard); unresolved domains fall back to the
@@ -536,6 +552,13 @@ export const BRAND_REP_SERVICES = [
     name: "Lease negotiation",
     detail: "Terms that protect a brand as it grows — rent, incentives, breaks and flexibility negotiated alongside our Lease Advisory team.",
   },
+];
+
+// Lease Advisory body copy so the page matches Brand Rep and Consultancy
+// (Woody, 2026-10-12). Drawn from the team's own description of the work.
+export const LEASE_ADVISORY_BODY = [
+  "Rent reviews, lease renewals, re-gears and restructuring for landlords and occupiers, across shopping centres, London estates and the high street. At The Royal Exchange the team sits inside the asset management mandate, protecting and enhancing value lease by lease.",
+  "Because we work alongside BGP's leasing and investment teams, our advice is grounded in live market evidence: what occupiers are paying, what they can afford, and where value can be protected or released.",
 ];
 
 export const CONSULTANCY_BODY = [
@@ -853,59 +876,11 @@ export const SHOPPING_CENTRES: ShoppingCentre[] = [
 ];
 
 // Investment and Brand Representation page copy from Emmy's document.
-// Investment page — built from the February 2026 Royal Exchange disposal
-// pitch (Woody, 2026-10-12). Only the public-safe parts: approach, the
-// Royal Exchange journey and headline metrics, track record, City
-// coverage. Pricing, buyers, comparables and fees stay in the deck.
-export const INVESTMENT_APPROACH = [
-  "Crucial interaction with our leasing and lease advisory teams.",
-  "We understand affordability and translate that into our advice.",
-  "Thorough due diligence: title, planning, leases and covenants.",
-  "A rigorous financial and market review.",
-  "A detailed marketing strategy and timeline.",
-  "A spread of pricing outcomes and incentive fees to achieve the best result.",
-  "Above all, honest and accurate advice. We value long-term relationships.",
-];
-
-export const ROYAL_EXCHANGE_FEATURE = {
-  title: "The Royal Exchange",
-  client: "Ardent",
-  intro:
-    "BGP has been Ardent's partner at The Royal Exchange since the very beginning: a Grade I listed luxury retail destination in the heart of the City, taken from an off-market acquisition in 2022 to a successful exit in 2026.",
-  journey: [
-    { year: "2022", step: "Advised on the off-market acquisition and formulated the business plan" },
-    { year: "2023–25", step: "Incumbent leasing agents: Hagen, Trotters, Rosslyn Coffee, Baudoin & Lange, Georg Jensen, Inception, Searle Jewellery and more" },
-    { year: "2023–25", step: "Ongoing asset management: Bremont, Omega, Tiffany and Jo Malone regears and renewals, Ladurée upsize, new entrances, debt secured" },
-    { year: "2026", step: "Business plan exceeded, 100% occupancy reached, target returns achieved and a successful exit advised" },
-  ],
-  kpis: [
-    { label: "Occupancy", before: "75%", after: "100%" },
-    { label: "WAULT", before: "4 years", after: "7 years" },
-    { label: "Annual footfall", before: "500,000", after: "800,000" },
-  ],
-  image: "/images/investment/royal-exchange-courtyard.jpg",
-  imageAlt: "The courtyard of The Royal Exchange",
-  caseStudySlug: "ardent-royal-exchange",
-};
-
-export const INVESTMENT_TRACK_RECORD: Array<{ name: string; client: string; note: string; image?: string }> = [
-  { name: "The Royal Exchange, London", client: "Ardent", note: "Acquisition advice, leasing and asset management through to a successful exit.", image: "/images/investment/royal-exchange-corner.jpg" },
-  { name: "One Tower Bridge", client: "Redevco", note: "£70m acquisition of the riverside retail and leisure estate.", image: "/images/investment/one-tower-bridge.jpg" },
-  { name: "Brixton Market", client: "Hondo Enterprises / Angelo Gordon", note: "£47m purchase and subsequent sale of the market estate." },
-  { name: "16 Conduit Street, Mayfair", client: "Japanese private investor", note: "Prime West End retail acquisition." },
-  { name: "Wimbledon Bridge House", client: "Sheet Anchor Evolve", note: "Mixed-use investment advice." },
-  { name: "Oxam House, Oxford", client: "Charles Street", note: "City-centre retail investment." },
-  { name: "Filmworks, Ealing", client: "St George", note: "Retail and leisure at the cinema-led town-centre scheme." },
-  { name: "Grants Leisure, Croydon", client: "Hermes", note: "Leisure investment advice." },
-];
-
-export const CITY_COVERAGE = ["The Royal Exchange", "One New Change", "Bloomberg Arcade", "Cheapside", "Old Spitalfields Market", "One Millennium Bridge", "One Wood Street"];
-
 export const SERVICE_COPY = {
   investment: {
     body: [
-      "We take a 360-degree view of every investment opportunity, combining market intelligence with BGP's specialist leasing and lease advisory expertise.",
-      "Rigorous due diligence and a tailored route to market. Above all, our advice is honest, accurate and commercially focused — we build relationships for the long term, not just for the duration of a transaction.",
+      "Our investment advice starts with the leasing and lease advisory teams beside us: we understand what occupiers can afford, and we translate that into pricing, strategy and the honest, accurate advice our clients rely on. We value long-term relationships over single transactions.",
+      "Every mandate gets thorough due diligence across title, planning, leases and covenants, a rigorous financial and market review, a detailed marketing strategy and timeline, and a spread of pricing outcomes so the best result is achieved.",
     ],
   },
   brandRepresentation: {

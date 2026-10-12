@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-12T17:14:20.110Z",
+  "generatedAt": "2026-10-12T17:29:58.179Z",
   "site": "https://www.bgp.uk.com",
   "note": "Content of bgp.uk.com. Pages are rendered client-side; use this file rather than fetching HTML. Live availability comes from listingsFeed.",
   "heroStatement": "Great places are built through connected thinking.",
@@ -341,6 +341,20 @@
         "Location": "Mayfair"
       },
       "image": "https://www.bgp.uk.com/images/hanover-square.jpg"
+    },
+    {
+      "title": "The Royal Exchange",
+      "service": "Investment",
+      "url": "https://www.bgp.uk.com/case-studies/the-royal-exchange",
+      "blurb": "BGP has been Ardent's partner at The Royal Exchange since the very beginning: from the off-market acquisition in 2022, through leasing and asset management, to a successful exit in 2026.",
+      "facts": {
+        "Service": "Investment",
+        "Client": "Ardent",
+        "Occupancy": "75% to 100%",
+        "WAULT": "4 to 7 years",
+        "Annual footfall": "500,000 to 800,000"
+      },
+      "image": "https://www.bgp.uk.com/images/investment/royal-exchange-courtyard.jpg"
     },
     {
       "title": "19 Golden Square, Soho",
