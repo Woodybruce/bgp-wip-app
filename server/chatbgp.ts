@@ -5106,6 +5106,23 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
   // run_kyc_check retired 2026-10-05 — KYC4U is BGP's MLRO; the app runs no
   // KYC/sanctions screening of its own. check_covenant stays.
 
+  // The all-staff "Gossip & market intel" channel in Messages (Woody,
+  // 2026-10-12).
+  tools.push({
+    type: "function",
+    function: {
+      name: "summarise_gossip",
+      description: "Summarise BGP's 'Gossip & market intel' channel in Messages — the all-staff group where people post industry people moves and market intel. Returns a digest grouped into People moves, Deals & market, Brands & occupiers, Landlords & investors, and To verify, with who posted each item. Use when someone asks what's been said in gossip / market intel, who's moving, or for a weekly/monthly intel round-up. Staff only.",
+      parameters: {
+        type: "object",
+        properties: {
+          days: { type: "number", description: "How many days back to cover (default 7)" },
+          focus: { type: "string", description: "Optional focus, e.g. 'people moves only' or 'anything about Landsec'" },
+        },
+      },
+    },
+  });
+
   // Same as the deal's "Request KYC4U check" → Ready for KYC4U (Woody,
   // 2026-10-06: "chat needs ability to do this"). Submitting stays with the
   // user on KYC4U's form, via the Send to ChatBGP bookmark.
@@ -6774,6 +6791,12 @@ export async function executeCrmToolRaw(
     if (out.status === 404) return { data: { success: false, error: `No investment tracker item found with ID "${id}"` } };
     if (out.status !== 200) return { data: { success: false, error: out.body?.message || "Update refused" } };
     return { data: { success: true, action: "updated", entity: "investment tracker item", name: out.body.assetName, fields: Object.keys(cleanUpdates), amlStarted: !!out.body.amlStarted, amlWarning: out.body.amlWarning || null }, action: { type: "crm_updated", entityType: "investment", id } };
+  }
+
+  if (fnName === "summarise_gossip") {
+    if (await resolveCompanyScope(req).catch(() => null)) return { data: { success: false, error: "The gossip channel is BGP staff only" } };
+    const { summariseGossip } = await import("./gossip-channel");
+    return { data: await summariseGossip(Number(fnArgs.days) || 7, fnArgs.focus || null) };
   }
 
   if (fnName === "prepare_kyc4u_request") {

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { isGossipThread } from "@/components/gossip-summary";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getQueryFn, apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -2142,7 +2143,8 @@ export default function ChatBGP() {
       }
       return true;
     });
-    return mine.sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    // The all-staff gossip channel stays pinned at the top (Woody, 2026-10-12).
+    return mine.sort((a: any, b: any) => Number(isGossipThread(b)) - Number(isGossipThread(a)) || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }, [threads, currentUser?.id, searchQuery]);
   const [showAllTeamThreads, setShowAllTeamThreads] = useState(false);
 

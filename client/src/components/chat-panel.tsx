@@ -41,8 +41,7 @@ import {
   Mic,
   Square,
   MessageSquare,
-  Loader2,
-} from "lucide-react";
+  Loader2, Megaphone } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -58,6 +57,7 @@ import {
 import type { User as UserType } from "@shared/schema";
 import { TagChip, TAG_TOKEN_SOURCE, TAG_META, buildTagToken, type TagType } from "@/components/chat-tags";
 import { useChatBGPState } from "@/contexts/chatbgp-context";
+import { GossipStrip, isGossipThread } from "@/components/gossip-summary";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -1081,6 +1081,14 @@ function ThreadCard({ thread, onClick, onDelete, currentUserId, userPics }: { th
     }
     if (thread.groupPicUrl) {
       return <img src={thread.groupPicUrl} alt="" className="w-10 h-10 rounded-full object-cover shrink-0" />;
+    }
+    // The firm-wide channel isn't anyone's chat — no borrowed member photo.
+    if (isGossipThread(thread)) {
+      return (
+        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+          <Megaphone className="w-4.5 h-4.5 text-primary" />
+        </div>
+      );
     }
     if (otherMembers.length > 0) {
       const firstPic = otherMembers.find(m => userPics?.[m.id])?.id;
@@ -3014,6 +3022,8 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
           </Button>
         </div>
       </div>
+
+      {view !== "threads" && activeThreadId && isGossipThread(activeThread) && <GossipStrip />}
 
       {showSidebar && view === "chat" && !activeThreadId && (() => {
         const aiThreads = (threads || []).filter(t => t.isAiChat);
