@@ -4311,7 +4311,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // the Website admin page read the tree here; files are served web-sized.
   const SITE_IMAGES_ROOT = process.env.SITE_IMAGES_FOLDER || "Bruce Gillingham Pollard - Share Drive/Marketing/BGP Rebrand";
   const SITE_IMAGE_FOLDERS = ["Images for website", "Headshots 2026"];
-  type SiteImage = { id: string; folder: string; file: string; size: number; modified: string };
+  // The BGP SharePoint library is canonical; Woody's OneDrive mirror of the
+  // share drive (the team-photos drive) only holds what has synced, so it is
+  // walked second and fills gaps.
+  const SITE_IMAGE_DRIVES = [process.env.SITE_IMAGES_DRIVE_ID || "b!TkfPTD5QkkaKK2ThhYzkbeZV8L-Ly5xIm6a79Utuotf_bKhaqTNzTLlcjCkAWwlf", TEAM_PHOTOS_DRIVE_ID];
+  type SiteImage = { id: string; drive: string; folder: string; file: string; size: number; modified: string };
   let siteImageList: { at: number; rows: SiteImage[] } | null = null;
   const siteImageBytes = new Map<string, { at: number; buf: Buffer }>();
   const listSiteImages = async (): Promise<SiteImage[]> => {
@@ -4321,22 +4325,31 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     if (!token) return siteImageList?.rows || [];
     const headers = { Authorization: `Bearer ${token}` };
     const rows: SiteImage[] = [];
-    const walk = async (rel: string, depth: number) => {
+    const seen = new Set<string>();
+    const walk = async (drive: string, rel: string, depth: number) => {
       const path = encodeURIComponent(`${SITE_IMAGES_ROOT}/${rel}`).replace(/%2F/g, "/");
-      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${TEAM_PHOTOS_DRIVE_ID}/root:/${path}:/children?$top=500&$select=id,name,file,folder,size,lastModifiedDateTime`, { headers });
-      if (!r.ok) {
-        console.warn("[site-images] Graph list failed:", rel, r.status);
-        return;
-      }
-      const j: any = await r.json();
-      for (const it of j.value || []) {
-        if (it.folder && depth < 2) await walk(`${rel}/${it.name}`, depth + 1);
-        else if (it.file && /^image\//.test(it.file.mimeType || "") && (it.size || 0) >= 40 * 1024) {
-          rows.push({ id: it.id, folder: rel, file: it.name, size: it.size, modified: it.lastModifiedDateTime });
+      let url: string | null = `https://graph.microsoft.com/v1.0/drives/${drive}/root:/${path}:/children?$top=500&$select=id,name,file,folder,size,lastModifiedDateTime`;
+      while (url) {
+        const r = await fetch(url, { headers });
+        if (!r.ok) {
+          console.warn("[site-images] Graph list failed:", drive.slice(0, 12), rel, r.status, (await r.text()).slice(0, 120));
+          return;
         }
+        const j: any = await r.json();
+        for (const it of j.value || []) {
+          if (it.folder && depth < 2) await walk(drive, `${rel}/${it.name}`, depth + 1);
+          else if (it.file && /^image\//i.test(it.file.mimeType || "") && (it.size || 0) >= 40 * 1024) {
+            const key = `${rel}/${it.name}`.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            rows.push({ id: it.id, drive, folder: rel, file: it.name, size: it.size, modified: it.lastModifiedDateTime });
+          }
+        }
+        url = j["@odata.nextLink"] || null;
       }
     };
-    for (const f of SITE_IMAGE_FOLDERS) await walk(f, 0);
+    for (const drive of SITE_IMAGE_DRIVES) for (const f of SITE_IMAGE_FOLDERS) await walk(drive, f, 0);
+    console.log(`[site-images] listed ${rows.length} images`);
     siteImageList = { at: Date.now(), rows };
     return rows;
   };
@@ -4371,7 +4384,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const { getAppGraphToken } = await import("./microsoft");
       const token = await getAppGraphToken();
       if (!token) return res.status(503).end();
-      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${TEAM_PHOTOS_DRIVE_ID}/items/${hit.id}/content`, { headers: { Authorization: `Bearer ${token}` }, redirect: "follow" });
+      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${hit.drive}/items/${hit.id}/content`, { headers: { Authorization: `Bearer ${token}` }, redirect: "follow" });
       if (!r.ok) return res.status(404).end();
       const sharp = (await import("sharp")).default;
       const buf = await sharp(Buffer.from(await r.arrayBuffer())).rotate().resize(width, width, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82, mozjpeg: true }).toBuffer();
