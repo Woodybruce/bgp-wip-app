@@ -3059,7 +3059,6 @@ Return ONLY JSON.`,
     { slug: "season-ticket-loan", name: "Season Ticket Loan", category: "Travel", icon: "train", description: "Interest-free loan up to £5,000 for an annual rail/tube season ticket.", eligibility: "All permanent employees after probation", enrolment_url: "", contact: "Wendy McKenzie" },
     { slug: "eap", name: "Employee Assistance Programme", category: "Wellbeing", icon: "heart-handshake", description: "24/7 confidential counselling, legal & financial advice. Free for employees + family.", eligibility: "All employees", enrolment_url: "", contact: "Charlotte Roberts" },
     { slug: "professional-fees", name: "Professional Fees", category: "Career", icon: "graduation-cap", description: "RICS, ICAEW and other professional body subscriptions paid by BGP.", eligibility: "All members on a recognised pathway", enrolment_url: "", contact: "Line manager" },
-    { slug: "ski-trip", name: "Annual Ski Trip", category: "Social", icon: "mountain", description: "Bill £4m firm-wide and we all go skiing. Tracked live on the dashboard.", eligibility: "Whole firm — collective target", enrolment_url: "", contact: "Woody" },
   ];
 
   app.get("/api/hr/benefits", requireAuth, async (req: any, res) => {
@@ -3080,7 +3079,7 @@ Return ONLY JSON.`,
         SELECT b.*,
                EXISTS (SELECT 1 FROM staff_benefit_enrolments e WHERE e.user_id = $1 AND e.benefit_slug = b.slug) AS enrolled
         FROM benefits b
-        WHERE b.is_active = true
+        WHERE b.is_active = true AND b.slug <> 'ski-trip' -- ski trip taken off (Woody, 2026-10-12)
         ORDER BY b.sort_order, b.name
       `, [me || null]);
       res.json(rows);
@@ -5553,6 +5552,20 @@ Use the language and tone of BGP's review docs.`,
   // Salary / Current Salary, Effective Date / Date of Uplift, etc.). Whatever
   // we don't recognise comes back in the report's `unmappedColumns` so the
   // admin can see what was skipped and we iterate.
+  // HR schedule spreadsheet → fill empty HR fields (server/hr-schedule-import.ts).
+  // The file is read in memory only; dryRun=1 previews.
+  const hrScheduleUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+  app.post("/api/hr/import-schedule", requireAdmin, hrScheduleUpload.single("file"), async (req: any, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "Choose the HR schedule spreadsheet" });
+      const m = await import("./hr-schedule-import");
+      const rows = m.parseHrSchedule(req.file.buffer);
+      if (!rows.length) return res.status(400).json({ error: "No rows found — the sheet needs First Name and Email columns" });
+      if (String(req.body?.dryRun) === "1") return res.json({ rows: rows.length, ...(await m.planHrSchedule(rows)) });
+      res.json(await m.applyHrSchedule(rows));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   app.post("/api/hr/import-salaries", requireAdmin, async (req: any, res) => {
     const userId = req.session?.userId || req.tokenUserId;
     const { shareUrl, dryRun } = req.body || {};

@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
-  Trophy, Mountain, TrendingUp, Users, Calendar, Cake, Sparkles,
+  Trophy, TrendingUp, Users, Calendar, Cake, Sparkles,
   Coffee, Beer, Pizza, Star, Flame, Target, ChevronRight, ChevronDown,
   Loader2, Plus, Check, Briefcase, BarChart3, GitBranch, Eye,
   Megaphone, Heart, ArrowRight, Clock, CreditCard, FileText, Info,
@@ -133,50 +133,9 @@ interface Birthday {
   daysUntil: number;
 }
 
-// ── 🎿 Ski-target hero strip ─────────────────────────────────────────────────
-
-function SkiTargetHero() {
-  const { data, isLoading } = useQuery<FirmSummary>({ queryKey: ["/api/dashboard/firm-summary"] });
-  if (isLoading || !data) {
-    return <Skeleton className="h-24 w-full rounded-xl" />;
-  }
-  return (
-    <div className="relative overflow-hidden rounded-xl border border-border bg-card p-5 shadow-sm">
-      <div className="flex items-start gap-4">
-        <div className="rounded-full bg-muted p-2.5 shrink-0">
-          <Mountain className="w-6 h-6 text-primary" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <h2 className="text-base font-semibold tracking-tight">Ski target {data.year}</h2>
-            <span className="text-xs text-muted-foreground">{data.target.reward}</span>
-          </div>
-          <div className="mt-2 flex items-baseline gap-3 flex-wrap">
-            <span className="text-2xl font-bold font-mono tabular-nums">{fmtMoney(data.billedPence)}</span>
-            <span className="text-sm text-muted-foreground">billed of <span className="font-mono tabular-nums">{fmtMoney(data.target.pence)}</span> target</span>
-            <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">+ <span className="font-mono tabular-nums">{fmtMoney(data.wipPence)}</span> WIP</span>
-          </div>
-          <div className="relative h-2.5 mt-3 rounded-full bg-muted overflow-hidden">
-            <div className="absolute inset-y-0 left-0 bg-primary/30 rounded-full transition-all" style={{ width: `${data.pctForecast}%` }} />
-            <div className="absolute inset-y-0 left-0 bg-primary rounded-full transition-all" style={{ width: `${data.pctBilled}%` }} />
-          </div>
-          <div className="mt-1.5 flex items-center justify-between text-[11px] text-muted-foreground">
-            <span>
-              {data.toGoPence > 0
-                ? <><span className="font-mono tabular-nums">{fmtMoney(data.toGoPence)}</span> to go (incl. WIP)</>
-                : `Beating target — see you on the slopes`}
-            </span>
-            <span><span className="font-mono tabular-nums">{data.daysRemaining}</span> days left in {data.year}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── 👤 You panel ─────────────────────────────────────────────────────────────
 
-function YouPanel({ user, onSelectPerson }: { user: AuthUser; onSelectPerson?: (id: string, tab?: string) => void }) {
+function YouPanel({ user, onSelectPerson, showTasks = true }: { user: AuthUser; onSelectPerson?: (id: string, tab?: string) => void; showTasks?: boolean }) {
   // When the parent provided a select handler we use that — same-page state
   // updates are reliable. Falling back to URL navigation only matters when
   // YouPanel is rendered standalone (e.g. on the dashboard) where there's
@@ -187,7 +146,7 @@ function YouPanel({ user, onSelectPerson }: { user: AuthUser; onSelectPerson?: (
   const [newTask, setNewTask] = useState("");
 
   const { data: commission } = useQuery<CommissionData>({ queryKey: [`/api/hr/staff/${user.id}/commission`] });
-  const { data: tasks = [] } = useQuery<UserTask[]>({ queryKey: ["/api/tasks", "todo"], queryFn: () => apiRequest("GET", "/api/tasks?status=todo").then(r => r.json()) });
+  const { data: tasks = [] } = useQuery<UserTask[]>({ queryKey: ["/api/tasks", "todo"], queryFn: () => apiRequest("GET", "/api/tasks?status=todo").then(r => r.json()), enabled: showTasks });
 
   const addTask = useMutation({
     mutationFn: async (title: string) => {
@@ -275,8 +234,9 @@ function YouPanel({ user, onSelectPerson }: { user: AuthUser; onSelectPerson?: (
             </button>
           )}
 
-          {/* Tasks */}
-          <div>
+          {/* Tasks — not on the HR page (Woody, 2026-10-12): everyone's tasks
+              live on their own My Tasks. */}
+          {showTasks && <div>
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                 Open tasks {totalOpen > 0 && <span className="text-foreground font-semibold ml-1">{totalOpen}</span>}
@@ -336,7 +296,7 @@ function YouPanel({ user, onSelectPerson }: { user: AuthUser; onSelectPerson?: (
                 );
               })}
             </div>
-          </div>
+          </div>}
 
           {/* Quick stats strip */}
           <div className="grid grid-cols-3 gap-2 text-center pt-1">
@@ -1282,11 +1242,13 @@ interface LeaderboardData {
   topKudos: IndividualLeader[];
 }
 
-function HungerGamesStrip({ allStaff: _allStaff, onSelectPerson }: { allStaff: StaffMember[]; onSelectPerson?: (id: string) => void }) {
+// One board with the Watch House awards (Woody, 2026-10-12: "combine the
+// Hunger Games and Watch House coffee boards") — Awards is its last tab.
+function HungerGamesStrip({ allStaff, isAdmin, onSelectPerson }: { allStaff: StaffMember[]; isAdmin: boolean; onSelectPerson?: (id: string) => void }) {
   const [, navigate] = useLocation();
   const { data: teamData } = useQuery<{ teams: TeamSummary[] }>({ queryKey: ["/api/hr/team-summary"] });
   const { data: indiv } = useQuery<LeaderboardData>({ queryKey: ["/api/dashboard/individual-leaderboard"] });
-  const [tab, setTab] = useState<"teams" | "billers" | "pipeline" | "active" | "kudos">("billers");
+  const [tab, setTab] = useState<"teams" | "billers" | "pipeline" | "active" | "kudos" | "awards">("billers");
 
   const teamPodium = useMemo(() => {
     if (!teamData?.teams) return [];
@@ -1300,6 +1262,7 @@ function HungerGamesStrip({ allStaff: _allStaff, onSelectPerson }: { allStaff: S
     { id: "active",   label: "Most active",    icon: Flame },
     { id: "kudos",    label: "Most kudos",     icon: Star },
     { id: "teams",    label: "Top team",       icon: Trophy },
+    { id: "awards",   label: "Awards",         icon: Coffee },
   ];
 
   const list: IndividualLeader[] = (() => {
@@ -1356,7 +1319,9 @@ function HungerGamesStrip({ allStaff: _allStaff, onSelectPerson }: { allStaff: S
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0">
-        {tab === "teams" ? (
+        {tab === "awards" ? (
+          <WatchHouseBoard embedded isAdmin={isAdmin} allStaff={allStaff} onSelectPerson={onSelectPerson} />
+        ) : tab === "teams" ? (
           teamPodium.length === 0 ? (
             <div className="text-xs text-muted-foreground italic text-center py-4">No team data yet.</div>
           ) : (
@@ -1520,7 +1485,7 @@ function IssueAwardDialog({ open, onClose, isAdmin, allStaff }: { open: boolean;
   );
 }
 
-function WatchHouseBoard({ isAdmin, allStaff, onSelectPerson }: { isAdmin: boolean; allStaff: StaffMember[]; onSelectPerson?: (id: string) => void }) {
+function WatchHouseBoard({ isAdmin, allStaff, onSelectPerson, embedded = false }: { isAdmin: boolean; allStaff: StaffMember[]; onSelectPerson?: (id: string) => void; embedded?: boolean }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const [issueOpen, setIssueOpen] = useState(false);
@@ -1535,11 +1500,7 @@ function WatchHouseBoard({ isAdmin, allStaff, onSelectPerson }: { isAdmin: boole
     },
   });
 
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm flex items-center justify-between">
-          <span className="flex items-center gap-2"><Coffee className="w-4 h-4 text-amber-700" /> Watch House board</span>
+  const actions = (
           <div className="flex gap-1">
             {isAdmin && (
               <Button size="sm" variant="ghost" className="h-7 text-[11px] text-muted-foreground" onClick={() => autoDetect.mutate()} disabled={autoDetect.isPending}>
@@ -1550,9 +1511,9 @@ function WatchHouseBoard({ isAdmin, allStaff, onSelectPerson }: { isAdmin: boole
               <Plus className="w-3 h-3 mr-1" /> {isAdmin ? "Issue award" : "Send kudos"}
             </Button>
           </div>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="pt-0">
+  );
+  const body = (
+    <>
         {isLoading ? (
           <div className="space-y-1.5">{[0,1,2].map(i => <Skeleton key={i} className="h-12 w-full rounded-md" />)}</div>
         ) : awards.length === 0 ? (
@@ -1583,6 +1544,27 @@ function WatchHouseBoard({ isAdmin, allStaff, onSelectPerson }: { isAdmin: boole
         <div className="mt-3 text-[10px] text-muted-foreground italic text-center">
           {isAdmin ? "Coffee · beer · lunch · cake · above & beyond" : "Peer shout-outs welcome 👏"}
         </div>
+    </>
+  );
+  if (embedded) {
+    return (
+      <div>
+        <div className="flex justify-end mb-2">{actions}</div>
+        {body}
+        <IssueAwardDialog open={issueOpen} onClose={() => setIssueOpen(false)} isAdmin={isAdmin} allStaff={allStaff} />
+      </div>
+    );
+  }
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm flex items-center justify-between">
+          <span className="flex items-center gap-2"><Coffee className="w-4 h-4 text-amber-700" /> Watch House board</span>
+          {actions}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {body}
       </CardContent>
       <IssueAwardDialog open={issueOpen} onClose={() => setIssueOpen(false)} isAdmin={isAdmin} allStaff={allStaff} />
     </Card>
@@ -1753,14 +1735,11 @@ export default function HrOverview({ onSelectPerson }: { onSelectPerson?: (id: s
 
   return (
     <div className="space-y-4 pb-6">
-      <SkiTargetHero />
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-1 space-y-4">
-          {currentUser && <YouPanel user={currentUser} onSelectPerson={onSelectPerson} />}
+          {currentUser && <YouPanel user={currentUser} onSelectPerson={onSelectPerson} showTasks={false} />}
           <BruceyBonusesCard isAdmin={isAdmin} onSelectPerson={onSelectPerson} />
-          <HungerGamesStrip allStaff={allStaff} onSelectPerson={onSelectPerson} />
-          <WatchHouseBoard isAdmin={isAdmin} allStaff={allStaff} onSelectPerson={onSelectPerson} />
+          <HungerGamesStrip allStaff={allStaff} isAdmin={isAdmin} onSelectPerson={onSelectPerson} />
         </div>
         <div className="lg:col-span-2 space-y-4">
           <OrganigramSection allStaff={allStaff} isAdmin={isAdmin} onSelectPerson={onSelectPerson} />
