@@ -6445,22 +6445,6 @@ export default function HRPage() {
     return () => window.removeEventListener("popstate", sync);
   }, []);
 
-  const syncPhotosMutation = useMutation({
-    mutationFn: async () => {
-      const r = await apiRequest("POST", "/api/hr/sync-photos");
-      return r.json();
-    },
-    onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
-      const bits = [
-        data.updated ? `${data.updated} updated` : null,
-        data.skipped ? `${data.skipped} already had one` : null,
-        data.missing ? `${data.missing} no photo in M365` : null,
-      ].filter(Boolean).join(" · ");
-      toast({ title: "Photo sync complete", description: bits || "Nothing to do" });
-    },
-    onError: (e: any) => toast({ title: "Photo sync failed", description: e?.message, variant: "destructive" }),
-  });
 
   const { data: currentUser } = useQuery<AuthUser | null>({
     queryKey: ["/api/auth/me"],
@@ -6547,10 +6531,6 @@ export default function HRPage() {
           <Badge variant="secondary" className="sm:ml-2">{allStaff.length} staff</Badge>
           {isAdmin && (
             <div className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-center gap-2">
-              <Button size="sm" variant="outline" className="h-8" onClick={() => syncPhotosMutation.mutate()} disabled={syncPhotosMutation.isPending} data-testid="button-sync-photos">
-                {syncPhotosMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Camera className="w-3.5 h-3.5 mr-1.5" />}
-                Sync photos
-              </Button>
               <Button size="sm" className="h-8" onClick={() => setAddStaffOpen(true)} data-testid="button-add-staff">
                 <UserPlus className="w-3.5 h-3.5 mr-1.5" /> Add staff
               </Button>
