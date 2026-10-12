@@ -1,4 +1,4 @@
-import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, rosterTeamsFor, staffGroupFor } from "@shared/teams";
+import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, TEAM_LEADS_2026, rosterTeamsFor, samePerson, staffGroupFor } from "@shared/teams";
 import type { Express } from "express";
 import { pool } from "./db";
 import { requireAuth, requireAdmin } from "./auth";
@@ -1512,16 +1512,23 @@ export function setupHrRoutes(app: Express) {
       if (unassignedCount > 0) allTeams.push("Unassigned");
 
       const summaries = allTeams.map(team => {
-        const members = team === "Unassigned"
+        const grouped = team === "Unassigned"
           ? staff.filter((s: any) => !groupOf(s))
           : staff.filter((s: any) => groupOf(s) === team);
+        // The team's leads first (both of them), even when one sits on the
+        // Board (Jack) or also leads another team (Lizzie, Pete).
+        const leads = (TEAM_LEADS_2026[team] || []).map(n => staff.find((s: any) => samePerson(s.name, n)
+          || (n.split(" ")[0].toLowerCase() === String(s.name || "").split(" ")[0].toLowerCase()
+              && staff.filter((x: any) => String(x.name || "").split(" ")[0].toLowerCase() === n.split(" ")[0].toLowerCase()).length === 1))).filter(Boolean);
+        const members = [...leads, ...grouped.filter((m: any) => !leads.some((l: any) => l.id === m.id))];
         if (members.length === 0) return null;
         // Head selection (in priority order): explicit "Head ..." title,
         // management_team flag, board_member flag, "Director" in title,
         // then first member alphabetically. The title check makes the
         // pick stable even when flags drift (e.g. Pete heads Lease
         // Advisory by virtue of his "Head – Lease Consultancy" title).
-        const head = members.find((m: any) => /^head\b|\bhead\s/i.test(m.title || ""))
+        const head = leads[0]
+                  || members.find((m: any) => /^head\b|\bhead\s/i.test(m.title || ""))
                   || members.find((m: any) => m.management_team)
                   || members.find((m: any) => m.board_member)
                   || members.find((m: any) => /director/i.test(m.title || ""))
@@ -1533,6 +1540,7 @@ export function setupHrRoutes(app: Express) {
           team,
           headcount: members.length,
           head: head ? { id: head.id, name: head.name, title: head.title, profilePicUrl: head.profile_pic_url } : null,
+          headIds: leads.length ? leads.map((l: any) => l.id) : head ? [head.id] : [],
           memberIds: members.map((m: any) => m.id),
           // Full member rows so the TeamCard can render reports directly,
           // without needing /api/hr/staff (which sometimes returns empty for

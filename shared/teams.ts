@@ -102,3 +102,35 @@ export function staffGroupFor(name: string | null | undefined, team: string | nu
   if (SUPPORT_2026.some(n => samePerson(n, name))) return "Support";
   return team || null;
 }
+
+// App photo chosen over the website headshot for a person (Woody,
+// 2026-10-12: "change my photo, I hate it"). Paths are app-served files.
+export const APP_PHOTO_OVERRIDES: Record<string, string> = {
+  "Woody Bruce": "/headshots/woody-bruce.jpg",
+};
+export function appPhotoOverride(name: string | null | undefined): string | null {
+  const hit = Object.entries(APP_PHOTO_OVERRIDES).find(([n]) => samePerson(n, name));
+  return hit ? hit[1] : null;
+}
+
+// Team leads from BGP_Team_Structure.xlsx — shown first, in bold, on each
+// team card (Woody, 2026-10-12). A lead on the Board (Jack) still heads
+// their team's card.
+export const TEAM_LEADS_2026: Record<string, string[]> = {
+  "Shopping Centre": ["Millie Edwards", "Victoria Broadhead"],
+  "London Estate": ["Lizzie Knights", "Lucy Cope"],
+  "High Street": ["Lucy Gardiner", "Tracey Pollard"],
+  "City": ["Pete Wood", "Lizzie Knights"],
+  "Investment": ["Jack Barratt"],
+  "Tenant Rep": ["Harry Elliott", "Beth Emmens"],
+  "Lease Advisory": ["Pete Wood"],
+};
+
+// People who need a login + HR profile created by the team move if they
+// don't have one (Woody, 2026-10-12: "Millie Edwards needs a profile").
+export const NEW_STAFF_2026: Array<{ name: string; email: string; title: string }> = [
+  { name: "Millie Edwards", email: "millie@brucegillinghampollard.com", title: "Director" },
+];
+/** On the 2026-10 structure at all (team, board, support or consultant). */
+export const onStructure2026 = (name: string | null | undefined) =>
+  !!rosterTeamsFor(name) || [...BOARD_2026, ...SUPPORT_2026, ...CONSULTANTS_2026.map(c => c.name)].some(n => samePerson(n, name));

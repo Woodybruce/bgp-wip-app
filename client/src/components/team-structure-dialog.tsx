@@ -13,6 +13,9 @@ type Plan = {
   propChanges: Array<{ id: string; name: string; from: string[] | null; to: string[]; basis: string }>;
   dealChanges: Array<{ id: string; from: string[] | null; to: string[] }>;
   wipChanges: Array<{ id: string; from: string | null; to: string | null }>;
+  newStaff?: Array<{ name: string; email: string; title: string; team: string | null }>;
+  renames?: Array<{ id: string; from: string; to: string }>;
+  profilesNeeded?: Array<{ id: string; name: string }>;
 };
 const teamsText = (team: string | null, more?: string[] | null) => [team, ...(more || [])].filter(Boolean).join(" + ") || "No team (sees all)";
 
@@ -33,7 +36,7 @@ export function TeamStructureDialog({ open, onClose }: { open: boolean; onClose:
     onError: (e: any) => toast({ title: "Couldn't apply it", description: e?.message, variant: "destructive" }),
   });
   const plan = preview.data?.pending;
-  const total = plan ? plan.userChanges.length + plan.propChanges.length + plan.dealChanges.length + plan.wipChanges.length : 0;
+  const total = plan ? plan.userChanges.length + plan.propChanges.length + plan.dealChanges.length + plan.wipChanges.length + (plan.newStaff?.length || 0) + (plan.renames?.length || 0) + (plan.profilesNeeded?.length || 0) : 0;
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-3xl max-h-[88dvh] overflow-y-auto">
@@ -51,6 +54,11 @@ export function TeamStructureDialog({ open, onClose }: { open: boolean; onClose:
             <div className="space-y-4 text-sm">
               {preview.data?.applied && <p className="text-xs text-muted-foreground">Applied {new Date(preview.data.applied.at).toLocaleString("en-GB")}. Anything below is still on an old team.</p>}
               <p className="tabular-nums">{plan.userChanges.length} people · {plan.propChanges.length} properties · {plan.dealChanges.length} deals · {plan.wipChanges.length} WIP rows to move</p>
+              {(plan.newStaff?.length || plan.renames?.length || plan.profilesNeeded?.length) ? <section className="text-xs space-y-0.5">
+                {plan.newStaff?.map(n => <p key={n.email}>New login and HR profile: <strong>{n.name}</strong> ({n.email}{n.team ? `, ${n.team}` : ""})</p>)}
+                {plan.renames?.map(r => <p key={r.id}>Renamed: {r.from} → <strong>{r.to}</strong></p>)}
+                {plan.profilesNeeded?.length ? <p>HR profiles added for: {plan.profilesNeeded.map(p => p.name).join(", ")}</p> : null}
+              </section> : null}
               {plan.userChanges.length > 0 && <section>
                 <h3 className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">People</h3>
                 <div className="overflow-x-auto"><table className="w-full text-xs"><tbody>
