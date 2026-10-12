@@ -28,6 +28,9 @@ export async function ensureGossipChannel(): Promise<string | null> {
        VALUES ($1, $2, $3, $4, $1, false, false) RETURNING id`,
       [GOSSIP_TITLE, owner.id, GOSSIP_LINKED_TYPE, GOSSIP_LINKED_ID])).rows[0].id;
   }
+  // Its own picture (two speech bubbles in the brand colours) unless someone
+  // has set one — without it the list borrowed a member's photo.
+  await pool.query(`UPDATE chat_threads SET group_pic_url = '/gossip-channel.svg' WHERE id = $1 AND group_pic_url IS NULL`, [id]);
   // Every active staff login is a member; new starters join on the next sync.
   await pool.query(
     `INSERT INTO chat_thread_members (thread_id, user_id, added_by, seen)
