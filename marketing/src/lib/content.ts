@@ -466,7 +466,6 @@ export const LEASE_ADVISORY_CLIENTS: Client[] = [
   { name: "AXA", domain: "axa-im.com" },
   { name: "Ardent", domain: "ardentcompanies.com" },
   { name: "City of London", domain: "cityoflondon.gov.uk" },
-  { name: "Capital Real Estate Partners", domain: "capitalrealestatepartners.com" },
   { name: "Din Tai Fung", domain: "dintaifung.co.uk" },
   { name: "Barry's", domain: "barrys.com" },
 ];
