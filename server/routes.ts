@@ -4308,6 +4308,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   const SITE_ORIGIN = process.env.MARKETING_SITE_URL || "https://www.bgp.uk.com";
   const firstName = (s: string) => String(s || "").toLowerCase().trim().split(/\s+/)[0] || "";
   const resolveStaffPhoto = async (user: { name: string; email: string | null }): Promise<string | null> => {
+    const { appPhotoOverride } = await import("@shared/teams");
+    const override = appPhotoOverride(user.name);
+    if (override) return override;
     const site = (await pool.query(`SELECT name, email, photo_url FROM website_team WHERE visible IS NOT FALSE`).catch(() => ({ rows: [] as any[] }))).rows;
     const email = String(user.email || "").toLowerCase();
     let row = site.find((r: any) => email && String(r.email || "").toLowerCase() === email)

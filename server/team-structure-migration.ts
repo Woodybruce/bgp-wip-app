@@ -22,7 +22,7 @@
 // Fee allocations per agent are not touched.
 
 import { pool } from "./db";
-import { BGP_TEAM_NAMES, BOARD_2026, CONSULTANTS_2026, LEASING_TEAMS, LEFT_BGP_2026, RETIRED_TEAM_NAMES, isLeasingTeam, rosterTeamsFor, samePerson, type BgpTeamName } from "@shared/teams";
+import { BGP_TEAM_NAMES, NEW_STAFF_2026, onStructure2026, BOARD_2026, CONSULTANTS_2026, LEASING_TEAMS, LEFT_BGP_2026, RETIRED_TEAM_NAMES, isLeasingTeam, rosterTeamsFor, samePerson, type BgpTeamName } from "@shared/teams";
 
 const FLAG = "team_structure_2026_10";
 const KEPT = new Set(["Investment", "Tenant Rep", "Lease Advisory", "Landsec", ...LEASING_TEAMS]);
@@ -30,7 +30,7 @@ const RETIRED = new Set<string>(RETIRED_TEAM_NAMES.map(t => t.toLowerCase()));
 const isRetired = (t: string) => RETIRED.has(String(t || "").trim().toLowerCase());
 const LONDON_RETIRED = /london|f&b/i;
 
-export type MigUser = { id: string; name: string; email: string | null; team: string | null; additional_teams: string[] | null; active_team: string | null; is_active: boolean | null; role?: string | null; manager_id?: string | null; board_member?: boolean | null };
+export type MigUser = { id: string; name: string; email: string | null; team: string | null; additional_teams: string[] | null; active_team: string | null; is_active: boolean | null; role?: string | null; manager_id?: string | null; board_member?: boolean | null; has_profile?: boolean | null };
 type UserState = { team: string | null; additional_teams: string[] | null; active_team: string | null; is_active: boolean; role: string | null; manager_id: string | null; board_member: boolean };
 export type MigDeal = { id: string; team: string[] | null; property_id: string | null; internal_agent: string[] | null; internal_agent_ids: string[] | null; deal_type: string | null };
 export type MigProperty = { id: string; name: string; postcode: string | null; address: any; asset_class: string | null; bgp_engagement: string[] | null };
@@ -175,11 +175,26 @@ export function planTeamStructure(input: { users: MigUser[]; deals: MigDeal[]; p
     if (to !== w.team) wipChanges.push({ id: w.id, from: w.team, to });
   }
 
-  return { userChanges, propChanges, dealChanges, wipChanges };
+  // 6. People who need a login / HR profile (Millie Edwards) — created if
+  // missing; an existing login under that email takes the right name.
+  const newStaff: Array<{ name: string; email: string; title: string; team: string | null }> = [];
+  const renames: Array<{ id: string; from: string; to: string }> = [];
+  for (const n of NEW_STAFF_2026) {
+    const u = input.users.find(x => String(x.email || "").toLowerCase() === n.email.toLowerCase()) || input.users.find(x => samePerson(x.name, n.name));
+    if (!u) newStaff.push({ ...n, team: rosterTeamsFor(n.name)?.[0] ?? null });
+    else if (!samePerson(u.name, n.name)) renames.push({ id: u.id, from: u.name, to: n.name });
+  }
+  // Everyone on the structure gets an HR profile so they appear on People & HR.
+  const profilesNeeded = input.users
+    .filter(u => u.is_active !== false && String(u.email || "").toLowerCase().endsWith("@brucegillinghampollard.com") && !u.has_profile)
+    .filter(u => onStructure2026(u.name) || renames.some(r => r.id === u.id))
+    .map(u => ({ id: u.id, name: u.name }));
+
+  return { userChanges, propChanges, dealChanges, wipChanges, newStaff, renames, profilesNeeded };
 }
 
 async function loadInput() {
-  const users = (await pool.query(`SELECT u.id, u.name, u.email, u.team, u.additional_teams, u.active_team, u.is_active, u.role, u.manager_id, sp.board_member
+  const users = (await pool.query(`SELECT u.id, u.name, u.email, u.team, u.additional_teams, u.active_team, u.is_active, u.role, u.manager_id, sp.board_member, (sp.id IS NOT NULL) AS has_profile
     FROM users u LEFT JOIN staff_profiles sp ON sp.user_id = u.id`)).rows;
   const deals = (await pool.query(`SELECT id, team, property_id, internal_agent, internal_agent_ids, deal_type FROM crm_deals`)).rows;
   const properties = (await pool.query(`SELECT id, name, postcode, address, asset_class, bgp_engagement FROM crm_properties`)).rows;
@@ -226,6 +241,26 @@ export async function applyTeamStructure(opts: { force?: boolean } = {}): Promis
     for (const c of plan.dealChanges) {
       await client.query(`INSERT INTO team_structure_backup_2026_10 (kind, row_id, old_value, new_value) VALUES ('deal', $1, $2, $3)`, [c.id, JSON.stringify(c.from), JSON.stringify(c.to)]);
       await client.query(`UPDATE crm_deals SET team = $2 WHERE id = $1`, [c.id, c.to]);
+    }
+    // Logins + HR profiles. New logins get the same unusable placeholder
+    // password as other seeded staff — they sign in with Microsoft.
+    for (const n of plan.newStaff) {
+      const username = n.name.toLowerCase().replace(/[^a-z]+/g, ".").replace(/^\.|\.$/g, "");
+      const created = (await client.query(
+        `INSERT INTO users (username, password, name, email, team, role, is_active)
+         VALUES ($1, '$2b$10$CDskRcFnhZbhAhSEUnpjeusJATcpEIxJ4WKBqI11EWF02Y3ixn8fq', $2, $3, $4, $5, true)
+         ON CONFLICT (username) DO NOTHING RETURNING id`, [username, n.name, n.email, n.team, n.title])).rows[0];
+      if (created) {
+        await client.query(`INSERT INTO team_structure_backup_2026_10 (kind, row_id, old_value, new_value) VALUES ('user_created', $1, NULL, $2)`, [created.id, JSON.stringify(n)]);
+        await client.query(`INSERT INTO staff_profiles (user_id, title, status) VALUES ($1, $2, 'active') ON CONFLICT (user_id) DO NOTHING`, [created.id, n.title]);
+      }
+    }
+    for (const r of plan.renames) {
+      await client.query(`INSERT INTO team_structure_backup_2026_10 (kind, row_id, old_value, new_value) VALUES ('user_name', $1, $2, $3)`, [r.id, JSON.stringify(r.from), JSON.stringify(r.to)]);
+      await client.query(`UPDATE users SET name = $2 WHERE id = $1`, [r.id, r.to]);
+    }
+    for (const p of plan.profilesNeeded) {
+      await client.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [p.id]);
     }
     for (const c of plan.wipChanges) {
       await client.query(`INSERT INTO team_structure_backup_2026_10 (kind, row_id, old_value, new_value) VALUES ('wip', $1, $2, $3)`, [c.id, JSON.stringify(c.from), JSON.stringify(c.to)]);

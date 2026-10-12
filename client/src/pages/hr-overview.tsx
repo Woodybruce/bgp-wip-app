@@ -354,7 +354,11 @@ function TeamCard({ team, allStaff, aiSummary, oooByUser, onSelectPerson }: { te
     return allStaff.filter(s => team.memberIds.includes(s.id));
   }, [allStaff, team.memberIds, team.members]);
   const head = team.head;
-  const others = members.filter(m => m.id !== head?.id);
+  // Both team leads, bold at the top (2026-10 structure); older payloads
+  // only had the one head.
+  const headIds: string[] = (team as any).headIds?.length ? (team as any).headIds : head ? [head.id] : [];
+  const heads = headIds.map(id => members.find((m: any) => m.id === id) || (head?.id === id ? head : null)).filter(Boolean) as any[];
+  const others = members.filter(m => !headIds.includes(m.id));
 
   const MemberRow = ({ m, isHead }: { m: StaffMember | TeamSummary["head"]; isHead?: boolean }) => {
     if (!m) return null;
@@ -408,7 +412,7 @@ function TeamCard({ team, allStaff, aiSummary, oooByUser, onSelectPerson }: { te
         </div>
       )}
       <div className="p-2 space-y-1">
-        {head && <MemberRow m={head} isHead />}
+        {heads.map(h => <MemberRow key={h.id} m={h} isHead />)}
         {others.length > 0 && (
           <div className="space-y-0.5 mt-1">
             {others.map(m => <MemberRow key={m.id} m={m} />)}
