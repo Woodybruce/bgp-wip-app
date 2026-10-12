@@ -4405,7 +4405,16 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // subfolders (Images for website / <client>, Headshots 2026). The site and
   // the Website admin page read the tree here; files are served web-sized.
   const SITE_IMAGES_ROOT = process.env.SITE_IMAGES_FOLDER || "Bruce Gillingham Pollard - Share Drive/Marketing/BGP Rebrand";
-  const SITE_IMAGE_FOLDERS = ["Images for website", "Headshots 2026", "BGP Logo Suite"];
+  // Entries starting with "/" are absolute within the drive (the Royal
+  // Exchange pitch photography, Woody 2026-10-12); the rest sit under the root.
+  const REX_PITCH = "Investment/Towns/London - City/2025/The Royal Exchange/#2026 Sale/1. Pitch";
+  const SITE_IMAGE_FOLDERS = [
+    "Images for website", "Headshots 2026", "BGP Logo Suite",
+    `/Bruce Gillingham Pollard - Share Drive/${REX_PITCH}/Drafts/REX Pitch Pics`,
+    `/Bruce Gillingham Pollard - Share Drive/${REX_PITCH}/Resources/Images`,
+    `/BGP - Share Drive/${REX_PITCH}/Drafts/REX Pitch Pics`,
+    `/BGP - Share Drive/${REX_PITCH}/Resources/Images`,
+  ];
   // The BGP SharePoint library is canonical; Woody's OneDrive mirror of the
   // share drive (the team-photos drive) only holds what has synced, so it is
   // walked second and fills gaps.
@@ -4422,7 +4431,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     const rows: SiteImage[] = [];
     const seen = new Set<string>();
     const walk = async (drive: string, rel: string, depth: number) => {
-      const path = encodeURIComponent(`${SITE_IMAGES_ROOT}/${rel}`).replace(/%2F/g, "/");
+      const path = encodeURIComponent(rel.startsWith("/") ? rel.slice(1) : `${SITE_IMAGES_ROOT}/${rel}`).replace(/%2F/g, "/");
       let url: string | null = `https://graph.microsoft.com/v1.0/drives/${drive}/root:/${path}:/children?$top=500&$select=id,name,file,folder,size,lastModifiedDateTime`;
       while (url) {
         const r = await fetch(url, { headers });
