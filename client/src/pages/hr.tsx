@@ -1,5 +1,5 @@
 import { HrScheduleImportDialog } from "@/components/hr-schedule-import-dialog";
-import { BGP_TEAM_NAMES } from "@shared/teams";
+import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, staffGroupFor } from "@shared/teams";
 import { useState, useMemo, useRef, useEffect, lazy, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -591,7 +591,7 @@ function StaffCard({ person, onClick }: { person: StaffMember; onClick: () => vo
           <StatusBadge status={person.hr_status} />
         </div>
         <div className="text-xs text-muted-foreground truncate">{person.title || person.team || "—"}</div>
-        <div className="text-xs text-muted-foreground mt-1">{person.hr_department || person.team || ""}</div>
+        <div className="text-xs text-muted-foreground mt-1">{staffGroupFor(person.name, person.team) || person.hr_department || ""}</div>
         <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
           {person.start_date && <span title="Tenure">{tenure(person.start_date)}</span>}
           {/* Salary intentionally not shown in the card-summary line — it
@@ -5757,6 +5757,9 @@ const TEAM_STYLES: Record<string, { bg: string; border: string; text: string; pi
   "London Estate":       { bg: "bg-yellow-50 dark:bg-yellow-950/30", border: "border-yellow-300 dark:border-yellow-700", text: "text-yellow-900 dark:text-yellow-100", pip: "bg-yellow-500" },
   "High Street":          { bg: "bg-rose-50 dark:bg-rose-950/30", border: "border-rose-300 dark:border-rose-700", text: "text-rose-900 dark:text-rose-100", pip: "bg-rose-500" },
 };
+TEAM_STYLES["Board"] = { bg: "bg-primary/10", border: "border-primary/40", text: "text-primary", pip: "bg-primary" };
+TEAM_STYLES["Support"] = { bg: "bg-slate-50 dark:bg-slate-900/40", border: "border-slate-300 dark:border-slate-700", text: "text-slate-900 dark:text-slate-100", pip: "bg-slate-500" };
+TEAM_STYLES["Consultants"] = { bg: "bg-stone-50 dark:bg-stone-900/40", border: "border-stone-300 dark:border-stone-700", text: "text-stone-900 dark:text-stone-100", pip: "bg-stone-500" };
 const DEFAULT_TEAM_STYLE = { bg: "bg-muted", border: "border-border", text: "text-foreground", pip: "bg-gray-500" };
 // The 2026-10 team structure (shared/teams.ts). People with no team (MD,
 // heads of department, support staff) sit outside the team columns.
@@ -5894,11 +5897,13 @@ function OrgChartTab({ allStaff, onSelectPerson, isAdmin, matchedIds, hasFilter 
 
   // Group root's direct reports into team columns so e.g. Office / Corporate's
   // 5 PAs stack inside one column rather than spawning 5 sibling columns.
+  // Board, then the teams, then Support and Consultants (Woody, 2026-10-12).
   const directs = childrenByManager.get(root.id) || [];
-  const columnGroups = TEAM_ORDER
-    .map(team => ({ team, members: directs.filter(p => p.team === team) }))
+  const groupOf = (p: any) => staffGroupFor(p.name, p.team) || "";
+  const columnGroups = STAFF_GROUP_ORDER
+    .map(team => ({ team, members: directs.filter(p => groupOf(p) === team) }))
     .filter(g => g.members.length > 0);
-  const otherDirects = directs.filter(p => !TEAM_ORDER.includes(p.team || ""));
+  const otherDirects = directs.filter(p => !STAFF_GROUP_ORDER.includes(groupOf(p)));
   if (otherDirects.length > 0) columnGroups.push({ team: "Other", members: otherDirects });
 
   return (
@@ -6435,6 +6440,16 @@ export default function HRPage() {
     return () => window.removeEventListener("popstate", sync);
   }, []);
 
+  // Photos linked to bgp.uk.com's headshots — they update when the site's do.
+  const websitePhotosMutation = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/hr/link-website-photos")).json(),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries();
+      toast({ title: `${data.linked} photos linked to the website`, description: data.missing?.length ? `No website photo yet: ${data.missing.join(", ")}` : "Everyone now shows their website headshot." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't link the photos", description: e?.message, variant: "destructive" }),
+  });
+
   const syncPhotosMutation = useMutation({
     mutationFn: async () => {
       const r = await apiRequest("POST", "/api/hr/sync-photos");
@@ -6489,14 +6504,14 @@ export default function HRPage() {
 
   const departments = useMemo(() => {
     const staff = Array.isArray(allStaff) ? allStaff : [];
-    const depts = new Set(staff.map(s => s.hr_department || s.team || "").filter(Boolean));
-    return Array.from(depts).sort();
+    const depts = new Set(staff.map(s => staffGroupFor(s.name, s.team) || s.hr_department || "").filter(Boolean));
+    return Array.from(depts).sort((a, b) => (STAFF_GROUP_ORDER.indexOf(a) + 1 || 99) - (STAFF_GROUP_ORDER.indexOf(b) + 1 || 99) || a.localeCompare(b));
   }, [allStaff]);
 
   const filtered = useMemo(() => (Array.isArray(allStaff) ? allStaff : []).filter(s => {
     const q = search.toLowerCase();
     const matchSearch = !q || s.name.toLowerCase().includes(q) || s.title?.toLowerCase().includes(q) || s.email?.toLowerCase().includes(q);
-    const matchDept = deptFilter === "all" || (s.hr_department || s.team || "") === deptFilter;
+    const matchDept = deptFilter === "all" || (staffGroupFor(s.name, s.team) || s.hr_department || "") === deptFilter;
     return matchSearch && matchDept;
   }), [allStaff, search, deptFilter]);
 
@@ -6542,6 +6557,10 @@ export default function HRPage() {
               </Button>
               <Button size="sm" variant="outline" className="h-8" onClick={() => setImportSalariesOpen(true)} data-testid="button-import-salaries">
                 <Upload className="w-3.5 h-3.5 mr-1.5" /> Import salaries
+              </Button>
+              <Button size="sm" variant="outline" className="h-8" onClick={() => websitePhotosMutation.mutate()} disabled={websitePhotosMutation.isPending} data-testid="button-website-photos">
+                {websitePhotosMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Camera className="w-3.5 h-3.5 mr-1.5" />}
+                Use website photos
               </Button>
               <Button size="sm" variant="outline" className="h-8" onClick={() => syncPhotosMutation.mutate()} disabled={syncPhotosMutation.isPending} data-testid="button-sync-photos">
                 {syncPhotosMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Camera className="w-3.5 h-3.5 mr-1.5" />}

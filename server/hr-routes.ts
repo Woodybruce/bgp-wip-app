@@ -2526,6 +2526,8 @@ export function setupHrRoutes(app: Express) {
       const failed: string[] = [];
 
       for (const u of rows) {
+        // Website-linked photos (/api/staff-photo/…) always win.
+        if (String(u.profile_pic_url || "").startsWith("/api/staff-photo/")) { skipped++; continue; }
         if (!force && u.profile_pic_url) { skipped++; continue; }
         try {
           const r = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(u.email)}/photo/$value`, {

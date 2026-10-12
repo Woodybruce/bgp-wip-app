@@ -4300,6 +4300,57 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // ── Staff photos follow the website (Woody, 2026-10-12: "add everyone's
+  // headshots same as the website … linked to the website so auto
+  // updates"). A linked user's profile_pic_url is /api/staff-photo/<id>,
+  // which resolves on every load the way bgp.uk.com does: the photo set on
+  // their website team entry, else their share-drive "For website" file.
+  const SITE_ORIGIN = process.env.MARKETING_SITE_URL || "https://www.bgp.uk.com";
+  const firstName = (s: string) => String(s || "").toLowerCase().trim().split(/\s+/)[0] || "";
+  const resolveStaffPhoto = async (user: { name: string; email: string | null }): Promise<string | null> => {
+    const site = (await pool.query(`SELECT name, email, photo_url FROM website_team WHERE visible IS NOT FALSE`).catch(() => ({ rows: [] as any[] }))).rows;
+    const email = String(user.email || "").toLowerCase();
+    let row = site.find((r: any) => email && String(r.email || "").toLowerCase() === email)
+      || site.find((r: any) => normName(r.name) === normName(user.name));
+    if (!row) {
+      const same = site.filter((r: any) => firstName(r.name) === firstName(user.name));
+      if (same.length === 1) row = same[0];
+    }
+    const photo = String(row?.photo_url || "").trim();
+    if (photo) return /^https?:\/\//i.test(photo) ? photo : `${SITE_ORIGIN}${photo.startsWith("/") ? "" : "/"}${photo}`;
+    const files = await listTeamPhotos();
+    const names = [row?.name, user.name].filter(Boolean).map((n: any) => normName(n));
+    const hit = files.find(f => names.includes(normName(f.name)));
+    return hit ? `/api/public/team-photos/${encodeURIComponent(hit.name)}` : null;
+  };
+  app.get("/api/staff-photo/:userId", async (req, res) => {
+    try {
+      const u = (await pool.query(`SELECT name, email FROM users WHERE id = $1`, [String(req.params.userId)])).rows[0];
+      const url = u ? await resolveStaffPhoto(u) : null;
+      if (!url) return res.status(404).end();
+      res.header("Cache-Control", "public, max-age=600");
+      res.redirect(302, url);
+    } catch { res.status(404).end(); }
+  });
+  // Point active staff at their website photo. Admin-pressed (People & HR →
+  // Use website photos); only people the website has a photo for change.
+  app.post("/api/hr/link-website-photos", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, name, email, profile_pic_url FROM users
+          WHERE is_active IS NOT FALSE AND lower(email) LIKE '%@brucegillinghampollard.com'`);
+      const linked: string[] = [], missing: string[] = [];
+      for (const u of rows) {
+        const url = await resolveStaffPhoto(u);
+        if (!url) { missing.push(u.name); continue; }
+        const pointer = `/api/staff-photo/${u.id}`;
+        if (u.profile_pic_url !== pointer) await pool.query(`UPDATE users SET profile_pic_url = $2 WHERE id = $1`, [u.id, pointer]);
+        linked.push(u.name);
+      }
+      res.json({ linked: linked.length, missing });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
   app.get("/api/public/team-photos/:name", async (req, res) => {
     try {
       const want = normName(String(req.params.name || ""));
