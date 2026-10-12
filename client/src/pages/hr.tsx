@@ -1,4 +1,3 @@
-import { HrScheduleImportDialog } from "@/components/hr-schedule-import-dialog";
 import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, staffGroupFor } from "@shared/teams";
 import { useState, useMemo, useRef, useEffect, lazy, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -30,6 +29,7 @@ import { ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis, Tooltip, C
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
+import { startXeroConnect } from "@/lib/queryClient";
 import { CRM_OPTIONS } from "@/lib/crm-options";
 import { useToast } from "@/hooks/use-toast";
 import { getQueryFn } from "@/lib/queryClient";
@@ -6304,6 +6304,12 @@ function XeroPayrollPanel() {
               </p>
             </div>
             <div className="ml-auto flex items-center gap-2">
+              {/* Payroll access is a separate grant on the Xero sign-in —
+                  the plain Finance connect never asks for it (Woody hit the
+                  401 on 2026-10-12). */}
+              <Button size="sm" className="h-8" onClick={() => void startXeroConnect({ payroll: true })} data-testid="button-connect-xero-payroll">
+                <PoundSterling className="w-3.5 h-3.5 mr-1.5" /> Connect Xero Payroll
+              </Button>
               <Button size="sm" variant="outline" className="h-8" onClick={() => autoLink.mutate()} disabled={autoLink.isPending || !data?.connected}>
                 {autoLink.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
                 Auto-link
@@ -6420,7 +6426,6 @@ export default function HRPage() {
   const [deptFilter, setDeptFilter] = useState("all");
   const [addStaffOpen, setAddStaffOpen] = useState(false);
   const [importSalariesOpen, setImportSalariesOpen] = useState(false);
-  const [importScheduleOpen, setImportScheduleOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"org" | "grid">("org");
 
   // Honour ?person=:id (and optional &tab=:name) from the URL on first
@@ -6439,16 +6444,6 @@ export default function HRPage() {
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
   }, []);
-
-  // Photos linked to bgp.uk.com's headshots — they update when the site's do.
-  const websitePhotosMutation = useMutation({
-    mutationFn: async () => (await apiRequest("POST", "/api/hr/link-website-photos")).json(),
-    onSuccess: (data: any) => {
-      queryClient.invalidateQueries();
-      toast({ title: `${data.linked} photos linked to the website`, description: data.missing?.length ? `No website photo yet: ${data.missing.join(", ")}` : "Everyone now shows their website headshot." });
-    },
-    onError: (e: any) => toast({ title: "Couldn't link the photos", description: e?.message, variant: "destructive" }),
-  });
 
   const syncPhotosMutation = useMutation({
     mutationFn: async () => {
@@ -6552,16 +6547,6 @@ export default function HRPage() {
           <Badge variant="secondary" className="sm:ml-2">{allStaff.length} staff</Badge>
           {isAdmin && (
             <div className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-center gap-2">
-              <Button size="sm" variant="outline" className="h-8" onClick={() => setImportScheduleOpen(true)} data-testid="button-import-hr-schedule">
-                <Upload className="w-3.5 h-3.5 mr-1.5" /> Import HR schedule
-              </Button>
-              <Button size="sm" variant="outline" className="h-8" onClick={() => setImportSalariesOpen(true)} data-testid="button-import-salaries">
-                <Upload className="w-3.5 h-3.5 mr-1.5" /> Import salaries
-              </Button>
-              <Button size="sm" variant="outline" className="h-8" onClick={() => websitePhotosMutation.mutate()} disabled={websitePhotosMutation.isPending} data-testid="button-website-photos">
-                {websitePhotosMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Camera className="w-3.5 h-3.5 mr-1.5" />}
-                Use website photos
-              </Button>
               <Button size="sm" variant="outline" className="h-8" onClick={() => syncPhotosMutation.mutate()} disabled={syncPhotosMutation.isPending} data-testid="button-sync-photos">
                 {syncPhotosMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Camera className="w-3.5 h-3.5 mr-1.5" />}
                 Sync photos
@@ -6652,8 +6637,6 @@ export default function HRPage() {
       </div>
 
       {isAdmin && <AddStaffDialog allStaff={allStaff} open={addStaffOpen} onClose={() => setAddStaffOpen(false)} />}
-      {isAdmin && <ImportSalariesDialog open={importSalariesOpen} onClose={() => setImportSalariesOpen(false)} />}
-      {isAdmin && <HrScheduleImportDialog open={importScheduleOpen} onClose={() => setImportScheduleOpen(false)} />}
     </div>
   );
 }

@@ -4332,24 +4332,30 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.redirect(302, url);
     } catch { res.status(404).end(); }
   });
-  // Point active staff at their website photo. Admin-pressed (People & HR →
-  // Use website photos); only people the website has a photo for change.
+  // Point active staff at their website photo. Runs by itself shortly after
+  // each deploy and hourly (Woody, 2026-10-12: "we have all the photos fine
+  // on the website, we just need them on the app"), and from People & HR →
+  // Use website photos. Only people the website has a photo for change;
+  // the link resolves live, so later headshot changes need nothing.
+  const linkWebsitePhotos = async () => {
+    const { rows } = await pool.query(
+      `SELECT id, name, email, profile_pic_url FROM users
+        WHERE is_active IS NOT FALSE AND lower(email) LIKE '%@brucegillinghampollard.com'`);
+    const linked: string[] = [], missing: string[] = [];
+    for (const u of rows) {
+      const url = await resolveStaffPhoto(u);
+      if (!url) { missing.push(u.name); continue; }
+      const pointer = `/api/staff-photo/${u.id}`;
+      if (u.profile_pic_url !== pointer) await pool.query(`UPDATE users SET profile_pic_url = $2 WHERE id = $1`, [u.id, pointer]);
+      linked.push(u.name);
+    }
+    return { linked: linked.length, missing };
+  };
   app.post("/api/hr/link-website-photos", requireAuth, requireAdmin, async (_req, res) => {
-    try {
-      const { rows } = await pool.query(
-        `SELECT id, name, email, profile_pic_url FROM users
-          WHERE is_active IS NOT FALSE AND lower(email) LIKE '%@brucegillinghampollard.com'`);
-      const linked: string[] = [], missing: string[] = [];
-      for (const u of rows) {
-        const url = await resolveStaffPhoto(u);
-        if (!url) { missing.push(u.name); continue; }
-        const pointer = `/api/staff-photo/${u.id}`;
-        if (u.profile_pic_url !== pointer) await pool.query(`UPDATE users SET profile_pic_url = $2 WHERE id = $1`, [u.id, pointer]);
-        linked.push(u.name);
-      }
-      res.json({ linked: linked.length, missing });
-    } catch (e: any) { res.status(500).json({ message: e.message }); }
+    try { res.json(await linkWebsitePhotos()); } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
+  setTimeout(() => { linkWebsitePhotos().then(r => console.log(`[staff-photos] ${r.linked} linked to website headshots`)).catch(e => console.warn("[staff-photos] link failed:", e?.message)); }, 90_000);
+  setInterval(() => { linkWebsitePhotos().catch(() => {}); }, 60 * 60_000).unref?.();
 
   app.get("/api/public/team-photos/:name", async (req, res) => {
     try {
