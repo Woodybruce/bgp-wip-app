@@ -5,7 +5,7 @@ import { LOGOKIT_TOKEN, logoKitEnabled } from "../lib/logokit";
 // "A snapshot of clients" — LogoKit (fallback=404 so misses fail honestly),
 // then self-hosted PNGs in public/brand-logos/, then the client name.
 // A load timeout skips any source that hangs (ad-blockers, firewalls).
-// Grayscale unifies mixed logo colours; hover restores each brand's own.
+// Logos show in their own colours (Woody, 2026-10-12).
 function ClientCircle({ client }: { client: Client }) {
   const [step, setStep] = useState(0);
   const loadedRef = useRef(false);
@@ -38,7 +38,7 @@ function ClientCircle({ client }: { client: Client }) {
           src={src}
           alt={`${client.name} logo`}
           loading="lazy"
-          className="h-3/5 w-3/5 object-contain grayscale opacity-70 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-200"
+          className="h-3/5 w-3/5 object-contain"
           onLoad={() => { loadedRef.current = true; }}
           onError={() => setStep((s) => s + 1)}
         />
