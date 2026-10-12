@@ -473,9 +473,49 @@ export const LEASE_ADVISORY_SERVICES = [
 ];
 
 export const CONSULTANCY_SERVICES = [
-  "Pre-purchase advice for investment acquisitions, independent of our own investment team",
-  "Asset management strategy and implementation",
-  "Bespoke reporting and long-term placemaking consultancy",
+  {
+    name: "Ground floor & amenity strategy",
+    detail: "Defining the role, mix, scale and typology of day and evening uses — food and beverage, retail, leisure, culture, community anchors and services — so a ground floor works once built and supports the uses above it.",
+  },
+  {
+    name: "Placemaking consultancy",
+    detail: "Long-term advice to estates, developers and business improvement districts on what makes a destination consistently lively, grounded in occupier evidence and our leasing teams' live market knowledge.",
+  },
+  {
+    name: "Pre-purchase advice",
+    detail: "Independent advice on the retail and leisure potential of an investment acquisition, separate from our own investment team, so a buyer prices the ground floor correctly.",
+  },
+  {
+    name: "Asset management strategy",
+    detail: "Strategy and implementation for existing assets: repositioning, tenant mix, lease events and meanwhile use, aligned with the owner's business plan.",
+  },
+  {
+    name: "Bespoke reporting",
+    detail: "Research and reporting tailored to a client's question — market studies, occupier demand, benchmarking and future-trend insight for long-term development.",
+  },
+];
+
+export const BRAND_REP_SERVICES = [
+  {
+    name: "Global gatekeepers",
+    detail: "First-to-market UK retail locations for the world's most talked-about international brands, from a single flagship to a considered roll-out.",
+  },
+  {
+    name: "Digital to physical",
+    detail: "We take game-changing DTC brands from URL to IRL, planning and delivering high-impact bricks-and-mortar debuts that convert an online following into a destination.",
+  },
+  {
+    name: "Site acquisition",
+    detail: "Search, shortlist, negotiate and complete. Our relationships with London's estates and the UK's landmark destinations open doors that aren't on the market.",
+  },
+  {
+    name: "Portfolio strategy",
+    detail: "Where to be next and when: a roll-out plan built on footfall, catchment, competition and the brand's own trading data.",
+  },
+  {
+    name: "Lease negotiation",
+    detail: "Terms that protect a brand as it grows — rent, incentives, breaks and flexibility negotiated alongside our Lease Advisory team.",
+  },
 ];
 
 export const CONSULTANCY_BODY = [
@@ -802,8 +842,6 @@ export const SERVICE_COPY = {
     intro: "We help brands discover, secure and maximise opportunities across the UK's most exciting retail, leisure and hospitality destinations.",
     body: [
       "Our team combine market intelligence, occupier insight and creative thinking to deliver strategies that put brands in the right place, at the right time.",
-      "Global Gatekeepers: We deliver first-to-market UK retail locations for the world's most talked-about international brands.",
-      "Digital to Physical: We take 'game-changing' DTC brands from URL to IRL with high-impact bricks-and-mortar debuts.",
     ],
   },
 };

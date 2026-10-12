@@ -1,5 +1,6 @@
 import { Link } from "wouter";
 import KeyContacts from "../components/KeyContacts";
+import ServiceList from "../components/ServiceList";
 import ClientRow from "../components/ClientRow";
 import Placeholder from "../components/Placeholder";
 import { CONSULTANCY_BODY, CONSULTANCY_CLIENTS, CONSULTANCY_SERVICES, SERVICES, TESTIMONIAL } from "../lib/content";
@@ -28,27 +29,15 @@ export default function Consultancy() {
       </section>
 
       <section className="mx-auto max-w-6xl px-4 py-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-          <div className="bg-bgp-mist p-8">
-            <p className="label-caps border-b border-bgp-ink pb-2 mb-6">Additional services</p>
-            <ul className="space-y-4">
-              {CONSULTANCY_SERVICES.map((s) => (
-                <li key={s} className="text-sm text-bgp-ink/70 leading-relaxed border-b border-bgp-line pb-4">
-                  {s}
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div className="space-y-4">
-            <p className="text-sm font-semibold leading-relaxed">{CONSULTANCY_BODY[0]}</p>
-            {CONSULTANCY_BODY.slice(1).map((p) => (
-              <p key={p.slice(0, 20)} className="text-sm text-bgp-ink/70 leading-relaxed">
-                {p}
-              </p>
-            ))}
-          </div>
+        <div className="max-w-3xl space-y-4">
+          <p className="text-base md:text-lg font-semibold text-bgp-ink leading-relaxed">{CONSULTANCY_BODY[0]}</p>
+          {CONSULTANCY_BODY.slice(1).map((p) => (
+            <p key={p.slice(0, 20)} className="text-base md:text-lg text-bgp-ink/90 leading-relaxed">{p}</p>
+          ))}
         </div>
       </section>
+
+      <ServiceList services={CONSULTANCY_SERVICES} />
 
       {/* Client quote */}
       <section className="mx-auto max-w-6xl px-4 py-14">

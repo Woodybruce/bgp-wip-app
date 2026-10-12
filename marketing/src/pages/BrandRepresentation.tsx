@@ -2,7 +2,8 @@ import { Link } from "wouter";
 import KeyContacts from "../components/KeyContacts";
 import { ClientCircle } from "../components/ClientRow";
 import Placeholder from "../components/Placeholder";
-import { BRAND_REP_PILLARS, SERVICE_COPY, SERVICES } from "../lib/content";
+import { BRAND_REP_PILLARS, BRAND_REP_SERVICES, SERVICE_COPY, SERVICES } from "../lib/content";
+import ServiceList from "../components/ServiceList";
 import { useSiteContent } from "../lib/site-content";
 
 export default function BrandRepresentation() {
@@ -22,6 +23,9 @@ export default function BrandRepresentation() {
           ))}
         </div>
       </section>
+
+      <div className="mt-8" />
+      <ServiceList services={BRAND_REP_SERVICES} />
 
       <section className="mx-auto max-w-6xl px-4 py-14">
         <h2 className="display text-2xl md:text-3xl mb-3">A snapshot of clients</h2>

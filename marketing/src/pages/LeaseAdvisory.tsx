@@ -1,5 +1,5 @@
-import { useState } from "react";
 import KeyContacts from "../components/KeyContacts";
+import ServiceList from "../components/ServiceList";
 import { Link } from "wouter";
 import ClientRow from "../components/ClientRow";
 import Placeholder from "../components/Placeholder";
@@ -11,7 +11,6 @@ export default function LeaseAdvisory() {
   const { caseStudies, contacts } = useSiteContent();
   const LEASE_ADVISORY_CASE_STUDIES = caseStudies.filter((c) => c.service === "Lease Advisory");
   const LEASE_ADVISORY_CONTACTS = contacts.lease_advisory;
-  const [selected, setSelected] = useState(0);
 
   return (
     <div>
@@ -30,35 +29,7 @@ export default function LeaseAdvisory() {
         <ClientRow clients={LEASE_ADVISORY_CLIENTS} />
       </section>
 
-      <section className="mx-auto max-w-6xl px-4 py-6">
-        <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-10">
-          <div>
-            <h2 className="display text-2xl md:text-3xl">What we offer</h2>
-            <ul className="mt-6 space-y-3">
-              {LEASE_ADVISORY_SERVICES.map((s, i) => (
-                <li key={s.name}>
-                  <button
-                    onClick={() => setSelected(i)}
-                    className={`text-left text-sm border-l-2 pl-3 transition-colors ${
-                      selected === i
-                        ? "border-bgp-burgundy font-semibold text-bgp-burgundy"
-                        : "border-transparent text-bgp-ink/70 hover:text-bgp-burgundy"
-                    }`}
-                  >
-                    {s.name}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div className="bg-bgp-mist p-8">
-            <p className="label-caps mb-3">{LEASE_ADVISORY_SERVICES[selected].name}</p>
-            <p className="text-sm text-bgp-ink/70 leading-relaxed max-w-lg">
-              {LEASE_ADVISORY_SERVICES[selected].detail}
-            </p>
-          </div>
-        </div>
-      </section>
+      <ServiceList services={LEASE_ADVISORY_SERVICES} />
 
       <section className="mx-auto max-w-6xl px-4 py-10">
         <span className="section-label">Case studies</span>
