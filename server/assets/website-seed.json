@@ -412,6 +412,42 @@
       "published": true
     },
     {
+      "slug": "the-royal-exchange",
+      "title": "The Royal Exchange",
+      "service": "Investment",
+      "blurb": "BGP has been Ardent's partner at The Royal Exchange since the very beginning: from the off-market acquisition in 2022, through leasing and asset management, to a successful exit in 2026.",
+      "body": [
+        "One of the most prestigious and recognisable assets in the City of London, The Royal Exchange is a Grade I listed luxury retail destination of exceptional quality. BGP advised Ardent on the off-market acquisition, formulated the business plan, acted as incumbent leasing agents and carried the ongoing asset management responsibilities.",
+        "New lettings included Hagen, Trotters, Rosslyn Coffee, Baudoin & Lange, Georg Jensen, Inception, Searle Jewellery, Kiani Tea, Dei Duchi and Elevate; Bremont, Omega, Tiffany and Jo Malone were regeared or renewed and Ladurée upsized. New entrances, senior and mezzanine debt and year-on-year footfall growth of 20 to 25% followed.",
+        "By exit the scheme was fully let, the business plan had been exceeded and target returns achieved: occupancy up from 75% to 100%, WAULT from four to seven years, and annual footfall from 500,000 to 800,000."
+      ],
+      "facts": [
+        [
+          "Service",
+          "Investment"
+        ],
+        [
+          "Client",
+          "Ardent"
+        ],
+        [
+          "Occupancy",
+          "75% to 100%"
+        ],
+        [
+          "WAULT",
+          "4 to 7 years"
+        ],
+        [
+          "Annual footfall",
+          "500,000 to 800,000"
+        ]
+      ],
+      "imageUrl": "https://www.bgp.uk.com/images/investment/royal-exchange-courtyard.jpg",
+      "sortOrder": 2,
+      "published": true
+    },
+    {
       "slug": "19-golden-square",
       "title": "19 Golden Square, Soho",
       "service": "Investment",
@@ -443,7 +479,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/city-towers.jpg",
-      "sortOrder": 2,
+      "sortOrder": 3,
       "published": true
     },
     {
@@ -482,7 +518,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/shop-boutique.jpg",
-      "sortOrder": 3,
+      "sortOrder": 4,
       "published": true
     },
     {
@@ -513,7 +549,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/clients/city-street.jpg",
-      "sortOrder": 4,
+      "sortOrder": 5,
       "published": true
     },
     {
@@ -539,7 +575,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/principal-place.jpg",
-      "sortOrder": 5,
+      "sortOrder": 6,
       "published": true
     },
     {
@@ -570,7 +606,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/apartments.jpg",
-      "sortOrder": 6,
+      "sortOrder": 7,
       "published": true
     },
     {
@@ -593,7 +629,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/clients/bullring-interior.jpg",
-      "sortOrder": 7,
+      "sortOrder": 8,
       "published": true
     },
     {
@@ -616,7 +652,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/clients/victoria-street.jpg",
-      "sortOrder": 8,
+      "sortOrder": 9,
       "published": true
     },
     {
@@ -639,7 +675,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/city-towers.jpg",
-      "sortOrder": 9,
+      "sortOrder": 10,
       "published": true
     },
     {
@@ -662,7 +698,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/royal-exchange.jpg",
-      "sortOrder": 10,
+      "sortOrder": 11,
       "published": true
     },
     {
@@ -689,7 +725,7 @@
         ]
       ],
       "imageUrl": null,
-      "sortOrder": 11,
+      "sortOrder": 12,
       "published": true
     },
     {
@@ -716,7 +752,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/case-studies/percival-neal-street.jpg",
-      "sortOrder": 12,
+      "sortOrder": 13,
       "published": true
     },
     {
@@ -743,7 +779,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/case-studies/atis-loxton-walk.jpg",
-      "sortOrder": 13,
+      "sortOrder": 14,
       "published": true
     },
     {
@@ -770,7 +806,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/case-studies/masaj-islington-square.jpg",
-      "sortOrder": 14,
+      "sortOrder": 15,
       "published": true
     }
   ],

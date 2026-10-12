@@ -1,6 +1,6 @@
 import ServicePage from "../components/ServicePage";
-import { ClientCircle } from "../components/ClientRow";
-import { BRAND_REP_PILLARS, BRAND_REP_SERVICES, SERVICE_COPY, SERVICES } from "../lib/content";
+import ClientRow from "../components/ClientRow";
+import { BRAND_REP_CLIENTS, BRAND_REP_SERVICES, SERVICE_COPY, SERVICES } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
 
 export default function BrandRepresentation() {
@@ -12,18 +12,7 @@ export default function BrandRepresentation() {
       intro={service.intro}
       body={SERVICE_COPY.brandRepresentation.body}
       clientsBlurb="Four pillars, one approach: international labels making their UK debut, independents finding the right street, hospitality operators rolling out, and wellness brands building neighbourhoods."
-      clients={
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-12">
-          {BRAND_REP_PILLARS.map((pillar) => (
-            <div key={pillar.name}>
-              <p className="label-caps border-b border-bgp-ink pb-2 mb-6">{pillar.name}</p>
-              <div className="grid grid-cols-4 gap-4">
-                {pillar.clients.map((c) => <ClientCircle key={c.name} client={c} />)}
-              </div>
-            </div>
-          ))}
-        </div>
-      }
+      clients={<ClientRow clients={BRAND_REP_CLIENTS} />}
       services={BRAND_REP_SERVICES}
       caseStudies={caseStudies.filter((c) => c.service === "Brand Representation")}
       contacts={contacts.brand_representation}
