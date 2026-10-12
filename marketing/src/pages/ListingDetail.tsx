@@ -6,7 +6,7 @@ import KeyContacts from "../components/KeyContacts";
 import ListingMap from "../components/ListingMap";
 import { CONTACT, LEASING_CONTACTS, OFFICE_PHONE, type Person } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
-import { Listing, fetchListing, fetchListings, fileUrl, focalPosition, formatSqft, isImage, listingNames, rentLabel } from "../lib/api";
+import { Listing, areaLabel, fetchListing, fetchListings, fileUrl, focalPosition, formatSqft, isImage, listingNames, rentLabel, useClassLabel } from "../lib/api";
 import { downloadParticulars } from "../lib/particulars-pdf";
 
 // WhatsApp goes to the head of the leasing contact list — same number the
@@ -70,18 +70,18 @@ export default function ListingDetail() {
 
   const headline = [
     formatSqft(listing.sqft),
-    listing.useClass ? `${listing.useClass} opportunity` : null,
+    useClassLabel(listing.useClass) ? `${useClassLabel(listing.useClass)} opportunity` : null,
     listing.availableDate ? `available ${listing.availableDate.toLowerCase() === "immediately" ? "immediately" : listing.availableDate}` : null,
   ].filter(Boolean).join(" — ");
 
   const keyInfo: Array<[string, string | null]> = [
-    ["Address", listing.addressLine || listing.location || listing.postcode],
+    ["Address", listing.addressLine || areaLabel(listing)],
     ["Size", formatSqft(listing.sqft)],
     ["Rent", rentLabel(listing)],
     ["Rates", listing.ratesPa ? `£${Math.round(listing.ratesPa).toLocaleString("en-GB")} pa` : "To be re-assessed"],
     ["Service charge", listing.serviceChargePa ? `£${Math.round(listing.serviceChargePa).toLocaleString("en-GB")} pa` : "On application"],
     ["Lease terms", listing.leaseTerms || null],
-    ["Use class", listing.useClass],
+    ["Use class", useClassLabel(listing.useClass)],
     ["Condition", listing.condition],
     ["Available", listing.availableDate || "Immediately"],
     ["EPC", listing.epcRating || "Available on request"],
@@ -106,7 +106,7 @@ export default function ListingDetail() {
         <p className="label-caps text-bgp-ink/50">
           <Link href="/leasing" className="hover:text-bgp-red transition-colors">Leasing</Link>
           <span className="mx-2 text-bgp-wine/40">/</span>
-          <span className="text-bgp-wine">{listing.location || "Availability"}</span>
+          <span className="text-bgp-wine">{areaLabel(listing) || "Availability"}</span>
         </p>
         <div className="mt-4 flex flex-wrap items-baseline justify-between gap-x-8 gap-y-2 border-b border-bgp-wine/25 pb-6">
           <div>
@@ -147,7 +147,7 @@ export default function ListingDetail() {
               {[
                 formatSqft(listing.sqft),
                 listing.propertyName && listing.propertyName !== listing.unitName ? `within ${listing.propertyName.replace(/^\[Sample\]\s*/, "")}` : null,
-                listing.location ? `in ${listing.location}` : null,
+                areaLabel(listing) ? `in ${areaLabel(listing)}` : null,
               ].filter(Boolean).join(" ") || "Full particulars available on request."}
               {" "}Full particulars, floor plans and viewing arrangements from the leasing team below.
             </p>

@@ -165,15 +165,15 @@ export default function Leasing() {
           <>
             {/* Horizontal swipe strip — keeps the case study and contacts in
                 view below instead of pushing them down a long grid */}
-            <div className="mt-10 flex gap-6 overflow-x-auto pb-4 -mx-4 px-4 [scrollbar-width:thin]" style={{ WebkitOverflowScrolling: "touch" }}>
+            <div className="mt-10 card-strip sm:grid-cols-2 lg:grid-cols-3 sm:gap-x-6 sm:gap-y-12">
               {filtered.map((l) => (
-                <div key={l.id} className="shrink-0 w-[78vw] sm:w-[320px] lg:w-[350px]">
+                <div key={l.id}>
                   <ListingCard listing={l} />
                 </div>
               ))}
             </div>
             {filtered.length > 1 && (
-              <p className="mt-2 label-caps text-bgp-ink/40 text-right">
+              <p className="mt-2 label-caps text-bgp-ink/40 text-right sm:hidden">
                 {filtered.length} available — swipe for more <span aria-hidden>{"→"}</span>
               </p>
             )}

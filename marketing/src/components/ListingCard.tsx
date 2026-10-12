@@ -1,6 +1,6 @@
 import { Link } from "wouter";
 import Placeholder from "./Placeholder";
-import { Listing, fileUrl, focalPosition, formatRent, formatSqft, isImage, listingNames } from "../lib/api";
+import { Listing, areaLabel, fileUrl, focalPosition, formatRent, formatSqft, isImage, listingNames, useClassLabel } from "../lib/api";
 
 // v2c card: photo, serif address + TYPE label, details line, CONTACT rule-link
 export default function ListingCard({ listing, wide = false }: { listing: Listing; wide?: boolean }) {
@@ -35,16 +35,16 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
         <Link href={`/leasing/${listing.id}`} className="font-display text-bgp-ink text-xl leading-tight hover:text-bgp-wine transition-colors">
           {listingNames(listing).title}
         </Link>
-        {listing.useClass && (
-          <span className="label-caps text-bgp-ink/70 whitespace-nowrap shrink-0">{listing.useClass}</span>
+        {useClassLabel(listing.useClass) && (
+          <span className="label-caps text-bgp-ink/70 whitespace-nowrap shrink-0">{useClassLabel(listing.useClass)}</span>
         )}
       </div>
       <p className="mt-1 text-sm font-light text-bgp-ink/70">
         {listingNames(listing).secondary && (
           <span className="text-bgp-ink/85">{listingNames(listing).secondary}<br /></span>
         )}
-        {(listing.addressLine || listing.location || listing.postcode) && (
-          <span>{listing.addressLine || listing.location || listing.postcode}<br /></span>
+        {(listing.addressLine || areaLabel(listing)) && (
+          <span>{listing.addressLine || areaLabel(listing)}<br /></span>
         )}
         <span className="tabular">{details || "Details on application"}</span>
       </p>
