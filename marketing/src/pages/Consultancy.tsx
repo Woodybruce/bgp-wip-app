@@ -3,7 +3,7 @@ import KeyContacts from "../components/KeyContacts";
 import ServiceList from "../components/ServiceList";
 import ClientRow from "../components/ClientRow";
 import Placeholder from "../components/Placeholder";
-import { CONSULTANCY_BODY, CONSULTANCY_CLIENTS, CONSULTANCY_SERVICES, SERVICES, TESTIMONIAL } from "../lib/content";
+import { CONSULTANCY_BODY, CONSULTANCY_CLIENTS, CONSULTANCY_SERVICES, CONSULTANCY_TESTIMONIAL, SERVICES } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
 
 export default function Consultancy() {
@@ -43,9 +43,9 @@ export default function Consultancy() {
       <section className="mx-auto max-w-6xl px-4 py-14">
         <div className="max-w-2xl border-l-2 border-bgp-red pl-6">
           <div>
-            <p className="text-lg italic leading-relaxed text-bgp-ink/80">"{TESTIMONIAL.quote}"</p>
-            <p className="label-caps mt-4">{TESTIMONIAL.name}</p>
-            <p className="text-xs text-bgp-ink/50 uppercase">{TESTIMONIAL.title}</p>
+            <p className="text-lg italic leading-relaxed text-bgp-ink/80">"{CONSULTANCY_TESTIMONIAL.quote}"</p>
+            <p className="label-caps mt-4">{CONSULTANCY_TESTIMONIAL.name}</p>
+            <p className="text-xs text-bgp-ink/50 uppercase">{CONSULTANCY_TESTIMONIAL.title}</p>
           </div>
         </div>
       </section>

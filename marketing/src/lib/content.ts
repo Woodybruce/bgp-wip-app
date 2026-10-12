@@ -68,6 +68,15 @@ export const TESTIMONIAL = {
   title: "Client",
 };
 
+// Consultancy page quote — Cat Jenkins (Northbank BID) has agreed to give
+// one via Tracey; Latin placeholder until it lands (Woody, 2026-10-12).
+export const CONSULTANCY_TESTIMONIAL = {
+  quote:
+    "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.",
+  name: "Cat Jenkins",
+  title: "Northbank BID",
+};
+
 // Figures from brucegillinghampollard.com; "15 years" per Adieu 2025 (founded 2011).
 export const STATS = [
   { value: "7m", caption: "sq ft of assets our leasing team advises on" },
