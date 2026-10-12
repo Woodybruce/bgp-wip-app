@@ -14,7 +14,7 @@ export default function Consultancy() {
   return (
     <div>
       <section className="relative">
-        <Placeholder className="h-72 md:h-96 w-full" src="/images/clients/city-st-pauls-garden.jpg" alt="St Paul's Cathedral from One New Change" />
+        <Placeholder className="h-72 md:h-96 w-full" src="/images/centres/one-new-change.jpg" alt="The One New Change roof terrace and St Paul's" />
         <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/70 via-bgp-ink/10 to-transparent" />
         <div className="absolute inset-0 flex items-end">
           <div className="mx-auto max-w-6xl px-4 pb-10 w-full">

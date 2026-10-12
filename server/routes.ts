@@ -4345,7 +4345,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // subfolders (Images for website / <client>, Headshots 2026). The site and
   // the Website admin page read the tree here; files are served web-sized.
   const SITE_IMAGES_ROOT = process.env.SITE_IMAGES_FOLDER || "Bruce Gillingham Pollard - Share Drive/Marketing/BGP Rebrand";
-  const SITE_IMAGE_FOLDERS = ["Images for website", "Headshots 2026"];
+  const SITE_IMAGE_FOLDERS = ["Images for website", "Headshots 2026", "BGP Logo Suite"];
   // The BGP SharePoint library is canonical; Woody's OneDrive mirror of the
   // share drive (the team-photos drive) only holds what has synced, so it is
   // walked second and fills gaps.
@@ -4373,7 +4373,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         const j: any = await r.json();
         for (const it of j.value || []) {
           if (it.folder && depth < 2) await walk(drive, `${rel}/${it.name}`, depth + 1);
-          else if (it.file && /^image\//i.test(it.file.mimeType || "") && (it.size || 0) >= 40 * 1024) {
+          else if (it.file && /^image\//i.test(it.file.mimeType || "") && ((it.size || 0) >= 40 * 1024 || /\.svg$/i.test(it.name))) {
             const key = `${rel}/${it.name}`.toLowerCase();
             if (seen.has(key)) continue;
             seen.add(key);
@@ -4421,8 +4421,15 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (!token) return res.status(503).end();
       const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${hit.drive}/items/${hit.id}/content`, { headers: { Authorization: `Bearer ${token}` }, redirect: "follow" });
       if (!r.ok) return res.status(404).end();
+      const original = Buffer.from(await r.arrayBuffer());
+      // Vector artwork (the logo suite) and ?raw=1 are served untouched.
+      if (/\.svg$/i.test(hit.file) || req.query.raw === "1") {
+        res.header("Content-Type", /\.svg$/i.test(hit.file) ? "image/svg+xml" : /\.png$/i.test(hit.file) ? "image/png" : "application/octet-stream");
+        res.header("Cache-Control", "public, max-age=3600");
+        return res.send(original);
+      }
       const sharp = (await import("sharp")).default;
-      const buf = await sharp(Buffer.from(await r.arrayBuffer())).rotate().resize(width, width, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82, mozjpeg: true }).toBuffer();
+      const buf = await sharp(original).rotate().resize(width, width, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82, mozjpeg: true }).toBuffer();
       siteImageBytes.set(key, { at: Date.now(), buf });
       res.header("Content-Type", "image/jpeg");
       res.header("Cache-Control", "public, max-age=3600");
