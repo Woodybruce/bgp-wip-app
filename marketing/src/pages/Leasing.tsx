@@ -2,7 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import ListingCard from "../components/ListingCard";
 import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
+import { Link } from "wouter";
+import Placeholder from "../components/Placeholder";
 import { findCaseStudy, useSiteContent } from "../lib/site-content";
+import { LEASING_INTRO, LEASING_SECTORS } from "../lib/content";
+import { useDraftMode } from "../lib/draft";
 import { Listing, fetchListings } from "../lib/api";
 
 const SIZE_BANDS = [
@@ -46,6 +50,8 @@ function FilterSelect({
 
 export default function Leasing() {
   const content = useSiteContent();
+  const draft = useDraftMode();
+  const sectors = LEASING_SECTORS.filter((x) => x.approved || draft);
   const [listings, setListings] = useState<Listing[]>([]);
   const [live, setLive] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -87,11 +93,47 @@ export default function Leasing() {
     <div>
       {/* Centred serif intro per v2c */}
       <section className="mx-auto max-w-3xl px-4 pt-12 pb-8 text-center">
-        <span className="section-label">Availability & leasing</span>
-        <h1 className="display text-3xl md:text-4xl leading-snug">
-          Our Leasing team creates neighbourhoods that people love — across London's
-          leading estates and the UK's landmark destinations.
-        </h1>
+        <span className="section-label">Leasing</span>
+        <h1 className="display text-3xl md:text-4xl leading-snug">{LEASING_INTRO.headline}</h1>
+        {LEASING_INTRO.body.map((p) => (
+          <p key={p.slice(0, 24)} className="mt-5 text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">{p}</p>
+        ))}
+      </section>
+
+      {/* Where we work — one tile per sector (unapproved sectors in draft mode only) */}
+      <section className="mx-auto max-w-6xl px-4 pb-14">
+        {sectors.length === 1 ? (
+          <Link href={`/leasing/sectors/${sectors[0].slug}`} className="group grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+            <div className="img-frame">
+              <Placeholder className="aspect-[4/3] w-full" src={sectors[0].image} alt={sectors[0].name} />
+            </div>
+            <div>
+              <span className="section-label">Where we act</span>
+              <h2 className="display text-3xl md:text-4xl group-hover:text-bgp-burgundy transition-colors">{sectors[0].name}</h2>
+              <p className="mt-4 text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">{sectors[0].headline}</p>
+              <p className="mt-5"><span className="explore-link">Explore</span></p>
+            </div>
+          </Link>
+        ) : (
+        <div className={`card-strip sm:grid-cols-2 ${sectors.length > 2 ? "lg:grid-cols-4" : ""}`}>
+          {sectors.map((x) => (
+            <Link key={x.slug} href={`/leasing/sectors/${x.slug}`} className="group block">
+              <div className="img-frame">
+                <Placeholder className="aspect-[4/3] w-full" src={x.image} alt={x.name} />
+              </div>
+              <p className="label-caps mt-4 group-hover:text-bgp-burgundy transition-colors">
+                {x.name}{!x.approved && <span className="text-bgp-red"> · draft</span>}
+              </p>
+              <p className="mt-3"><span className="explore-link">Explore</span></p>
+            </Link>
+          ))}
+        </div>
+        )}
+      </section>
+
+      <section className="mx-auto max-w-3xl px-4 pb-8 text-center">
+        <span className="section-label">Availability</span>
+        <h2 className="display text-3xl md:text-4xl leading-snug">Current opportunities</h2>
         {!live && !loading && (
           <p className="mt-4 text-xs text-bgp-red">
             Showing sample listings — live availability feed not connected in this environment.

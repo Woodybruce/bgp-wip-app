@@ -158,6 +158,8 @@ any image named "Firstname Surname.jpg" in Woody's OneDrive folder
 "Bruce Gillingham Pollard - Share Drive / Marketing / Team CVs & Photos /
 Team Photos / For website" is served at
 https://chatbgp.app/api/public/team-photos/<Name> and appears on the site
+
+Website imagery (Emmy, Oct 2026) lives in the share drive at "Marketing / BGP Rebrand / Images for website / <client>" (and "Headshots 2026"). The dashboard lists that tree at https://chatbgp.app/api/public/site-images and serves any file web-sized at the url each row gives (add ?w=900 for smaller). The site's Leasing page now has sector pages — /leasing/sectors/shopping-centres (approved, 21 centres from Emmy's table with primary contacts), plus London Estates, The City and High Streets, which are DRAFT: they only show when the viewer opens the site with ?draft=1 (a red banner appears; ?draft=0 exits). Draft mode also reveals the unapproved Investment and Brand Representation copy and a page per shopping centre with a one-line description awaiting the team's check. Tell anyone reviewing Emmy's copy to use https://www.bgp.uk.com/leasing?draft=1.
 for anyone whose bundled photo is missing (10-minute cache) — so to put a
 headshot on the website, copy the file into that folder with the person's
 exact name; no deploy needed. Team members, case studies and news articles on the site are CONTENT IN
