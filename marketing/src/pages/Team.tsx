@@ -55,11 +55,7 @@ export default function Team() {
       </section>
 
       <section className="mx-auto max-w-6xl px-4 py-14 md:py-16">
-        <span className="section-label">The team</span>
-        <h1 className="display text-4xl md:text-5xl mb-4">Contact details, team by team</h1>
-        <p className="max-w-2xl text-base md:text-lg text-bgp-ink/90 leading-relaxed mb-12">
-          Every BGP team and the people in it. Names link through to the team's page.
-        </p>
+        <h1 className="sr-only">The BGP team</h1>
         {groups.map((g) => (
           <div key={g.label} className="mb-14">
             <div className="flex items-baseline justify-between border-b border-bgp-ink pb-2 mb-2">
