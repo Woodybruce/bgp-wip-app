@@ -218,11 +218,14 @@ const WEBSITE_LOGO_DOMAINS = new Set([
   "ronning.co", "schroders.com", "stanhopeplc.com", "thecrownestate.co.uk", "thefrankieshop.com", "thenorthbank.london",
   "yolklondon.com",
 ]);
-const WEBSITE_PLACE_QUERIES: Record<string, string> = {
-  "the-frankie-shop-davies-street": "The Frankie Shop, Davies Street, Mayfair, London",
-  "percival-neal-street": "Percival, Neal Street, Seven Dials, London",
-  "atis-loxton-walk": "Atis, Loxton Walk, London",
-  "masaj-islington-square": "Masaj, Islington Square, London",
+// Several queries per shop, first result whose name carries the brand wins
+// (a street-only match can land on the neighbour: "Davies Street" found
+// Hedonism Wines first time round).
+const WEBSITE_PLACE_QUERIES: Record<string, { brand: RegExp; queries: string[] }> = {
+  "the-frankie-shop-davies-street": { brand: /frankie/i, queries: ["The Frankie Shop Davies Street Mayfair London", "The Frankie Shop London", "The Frankie Shop Mayfair"] },
+  "percival-neal-street": { brand: /percival/i, queries: ["Percival Neal Street Seven Dials London", "Percival Covent Garden store"] },
+  "atis-loxton-walk": { brand: /atis/i, queries: ["atis Loxton Walk Marylebone London", "atis Marylebone London", "atis Blandford Street London"] },
+  "masaj-islington-square": { brand: /masaj/i, queries: ["MASAJ Islington Square Upper Street London", "MASAJ Islington"] },
 };
 const websiteAssetCache = new Map<string, { at: number; buf: Buffer; mime: string; source: string }>();
 const WEBSITE_ASSET_TTL = 6 * 3600 * 1000;
@@ -230,12 +233,13 @@ const WEBSITE_ASSET_TTL = 6 * 3600 * 1000;
 router.get("/api/public/website/logo/:domain", async (req, res) => {
   const domain = str(req.params.domain).toLowerCase();
   if (!WEBSITE_LOGO_DOMAINS.has(domain)) return res.status(404).json({ message: "Not a website client" });
-  const key = `logo:${domain}`;
+  const key = `logo:${domain}:${req.query.source === "site" ? "site" : "any"}`;
   let hit = websiteAssetCache.get(key);
   if (!hit || Date.now() - hit.at > WEBSITE_ASSET_TTL) {
     hit = undefined;
     const token = process.env.LOGO_DEV_TOKEN;
-    if (token) {
+    // ?source=site skips logo.dev (square icons) for the site's own wordmark.
+    if (token && req.query.source !== "site") {
       try {
         const r = await fetch(`https://img.logo.dev/${encodeURIComponent(domain)}?token=${token}&size=512&format=png`, { signal: AbortSignal.timeout(10_000) });
         const mime = r.headers.get("content-type") || "";
@@ -259,14 +263,18 @@ router.get("/api/public/website/logo/:domain", async (req, res) => {
 });
 
 async function websitePlacePhotos(slug: string): Promise<{ place: any; photos: any[] } | null> {
-  const query = WEBSITE_PLACE_QUERIES[slug];
+  const spec = WEBSITE_PLACE_QUERIES[slug];
   const googleKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
-  if (!query || !googleKey) return null;
-  const search: any = await (await fetch(
-    `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&region=uk&key=${googleKey}`,
-    { signal: AbortSignal.timeout(10_000) },
-  )).json();
-  const first = search?.results?.[0];
+  if (!spec || !googleKey) return null;
+  let first: any = null;
+  for (const query of spec.queries) {
+    const search: any = await (await fetch(
+      `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&region=uk&key=${googleKey}`,
+      { signal: AbortSignal.timeout(10_000) },
+    )).json();
+    first = (search?.results || []).find((r: any) => spec.brand.test(r.name || ""));
+    if (first?.place_id) break;
+  }
   if (!first?.place_id) return null;
   const details: any = await (await fetch(
     `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(first.place_id)}&fields=name,formatted_address,photos&key=${googleKey}`,
