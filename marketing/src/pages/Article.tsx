@@ -48,13 +48,13 @@ export default function ArticlePage() {
                 {para.slice(3)}
               </h2>
             ) : (
-              <p key={i} className="text-sm leading-relaxed text-bgp-ink/80">
+              <p key={i} className="text-base leading-relaxed text-bgp-ink/85">
                 {para}
               </p>
             ),
           )
         ) : (
-          <p className="text-sm leading-relaxed text-bgp-ink/80">{article.standfirst}</p>
+          <p className="text-base leading-relaxed text-bgp-ink/85">{article.standfirst}</p>
         )}
       </div>
 

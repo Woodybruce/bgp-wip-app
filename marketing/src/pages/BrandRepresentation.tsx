@@ -13,10 +13,12 @@ export default function BrandRepresentation() {
   return (
     <div>
       <section className="mx-auto max-w-6xl px-4 pt-14">
-        <p className="max-w-xl text-2xl md:text-3xl leading-snug">{service.intro}</p>
+        <p className="max-w-xl text-3xl md:text-4xl leading-snug">{service.intro}</p>
         <div className="mt-6 max-w-2xl space-y-3">
-          {SERVICE_COPY.brandRepresentation.body.map((p) => (
-            <p key={p.slice(0, 24)} className="text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">{p}</p>
+          {SERVICE_COPY.brandRepresentation.body.map((p, i) => (
+            <p key={p.slice(0, 24)} className={`text-base md:text-lg leading-relaxed ${i === 0 ? "font-semibold text-bgp-ink" : "text-bgp-ink/90"}`}>
+              {p.includes(": ") ? <><strong className="text-bgp-ink">{p.split(": ")[0]}:</strong> {p.split(": ").slice(1).join(": ")}</> : p}
+            </p>
           ))}
         </div>
       </section>
@@ -35,7 +37,7 @@ export default function BrandRepresentation() {
                 <Placeholder className="aspect-[4/3] w-full" src={cs.image} alt={cs.title} />
               </div>
               <p className="label-caps mt-4 group-hover:text-bgp-burgundy transition-colors">{cs.title}</p>
-              <p className="mt-2 text-[15px] font-light text-bgp-ink/85 leading-relaxed">{cs.blurb}</p>
+              <p className="mt-2 text-base md:text-lg text-bgp-ink/90 leading-relaxed">{cs.blurb}</p>
               <p className="mt-3"><span className="explore-link">Read more</span></p>
             </Link>
           ))}

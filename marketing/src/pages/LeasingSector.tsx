@@ -37,7 +37,7 @@ export default function LeasingSector() {
             <p className="label-caps text-white/80 mb-3">
               <Link href="/leasing" className="hover:text-white">Leasing</Link> · {sector.name}
             </p>
-            <h1 className="max-w-2xl text-2xl md:text-3xl leading-snug font-display italic text-white" style={{ textShadow: "0 2px 16px rgba(0,0,0,0.45)" }}>
+            <h1 className="max-w-2xl text-3xl md:text-4xl leading-snug font-display italic text-white" style={{ textShadow: "0 2px 16px rgba(0,0,0,0.45)" }}>
               {sector.headline}
             </h1>
           </div>
@@ -48,8 +48,8 @@ export default function LeasingSector() {
         <div className={`grid grid-cols-1 gap-10 ${sector.howWeHelp ? "md:grid-cols-[1fr_280px]" : "md:grid-cols-2"}`}>
           <div className="space-y-4">
             <span className="section-label">Our experience</span>
-            {sector.body.map((p) => (
-              <p key={p.slice(0, 24)} className="text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">{p}</p>
+            {sector.body.map((p, i) => (
+              <p key={p.slice(0, 24)} className={`text-base md:text-lg leading-relaxed ${i === 0 ? "font-semibold text-bgp-ink" : "text-bgp-ink/90"}`}>{p}</p>
             ))}
           </div>
           {sector.howWeHelp && (
@@ -84,7 +84,7 @@ export default function LeasingSector() {
               <span className="section-label">Where we act</span>
               <h2 className="display text-3xl md:text-4xl">Our shopping centres</h2>
             </div>
-            <p className="text-sm font-light text-bgp-ink/60 max-w-[28ch]">
+            <p className="text-base text-bgp-ink/70 max-w-[28ch]">
               {centres.length} centres across the UK, from London to Glasgow.
             </p>
           </div>
@@ -100,7 +100,7 @@ export default function LeasingSector() {
                   <div className={`border-t border-bgp-wine/30 pt-3 ${c.image ? "mt-3" : ""}`}>
                     <p className="font-display text-lg leading-snug text-bgp-wine">{c.name}</p>
                     <p className="mt-0.5 label-caps text-bgp-ink/45">{c.location}</p>
-                    <p className="mt-2 text-sm font-light text-bgp-ink/75 leading-relaxed">{c.blurb}</p>
+                    <p className="mt-2 text-base text-bgp-ink/80 leading-relaxed">{c.blurb}</p>
                     <p className="mt-1.5 label-caps text-bgp-ink/45">{c.contacts.join(" · ")}</p>
                   </div>
                 </>
@@ -140,8 +140,8 @@ export function ShoppingCentrePage() {
                 <Placeholder className="aspect-[16/9] w-full" src={centre.image} alt={centre.name} />
               </div>
             )}
-            <p className="mt-6 max-w-2xl text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">{centre.blurb}</p>
-            <p className="mt-4 max-w-2xl text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">
+            <p className="mt-6 max-w-2xl text-base md:text-lg text-bgp-ink/90 leading-relaxed">{centre.blurb}</p>
+            <p className="mt-4 max-w-2xl text-base md:text-lg text-bgp-ink/90 leading-relaxed">
               BGP advises the owners of {centre.name} on leasing strategy, tenant mix and positioning, drawing on our relationships with leading occupiers and our London Estates and High Street teams.
             </p>
             {centre.gallery && (

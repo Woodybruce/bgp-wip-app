@@ -17,7 +17,7 @@ export default function Consultancy() {
         <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/70 via-bgp-ink/10 to-transparent" />
         <div className="absolute inset-0 flex items-end">
           <div className="mx-auto max-w-6xl px-4 pb-10 w-full">
-            <p className="max-w-xl text-2xl md:text-3xl leading-snug font-display italic text-white" style={{ textShadow: "0 2px 16px rgba(0,0,0,0.45)" }}>{service.intro}</p>
+            <p className="max-w-xl text-3xl md:text-4xl leading-snug font-display italic text-white" style={{ textShadow: "0 2px 16px rgba(0,0,0,0.45)" }}>{service.intro}</p>
           </div>
         </div>
       </section>
@@ -70,7 +70,7 @@ export default function Consultancy() {
                 <Placeholder className="aspect-[4/3] w-full" src={cs.image} alt={cs.title} />
               </div>
               <p className="label-caps mt-4 group-hover:text-bgp-burgundy transition-colors">{cs.title}</p>
-              <p className="mt-2 text-[15px] font-light text-bgp-ink/85 leading-relaxed">{cs.blurb}</p>
+              <p className="mt-2 text-base md:text-lg text-bgp-ink/90 leading-relaxed">{cs.blurb}</p>
               <p className="mt-3"><span className="explore-link">Read more</span></p>
             </Link>
           ))}

@@ -94,7 +94,7 @@ export default function Leasing() {
         <span className="section-label">Leasing</span>
         <h1 className="display text-3xl md:text-4xl leading-snug">{LEASING_INTRO.headline}</h1>
         {LEASING_INTRO.body.map((p) => (
-          <p key={p.slice(0, 24)} className="mt-5 text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">{p}</p>
+          <p key={p.slice(0, 24)} className="mt-5 text-base md:text-lg text-bgp-ink/90 leading-relaxed">{p}</p>
         ))}
       </section>
 
@@ -108,7 +108,7 @@ export default function Leasing() {
             <div>
               <span className="section-label">Where we act</span>
               <h2 className="display text-3xl md:text-4xl group-hover:text-bgp-burgundy transition-colors">{sectors[0].name}</h2>
-              <p className="mt-4 text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">{sectors[0].headline}</p>
+              <p className="mt-4 text-base md:text-lg text-bgp-ink/90 leading-relaxed">{sectors[0].headline}</p>
               <p className="mt-5"><span className="explore-link">Explore</span></p>
             </div>
           </Link>
@@ -153,12 +153,12 @@ export default function Leasing() {
         ) : listings.length === 0 ? (
           <div className="py-16 text-center">
             <p className="display text-xl md:text-2xl">Current availability is being updated.</p>
-            <p className="mt-3 text-[15px] font-light text-bgp-ink/80">
+            <p className="mt-3 text-[15px] text-bgp-ink/80">
               For our latest opportunities, contact the leasing team — details below.
             </p>
           </div>
         ) : filtered.length === 0 ? (
-          <p className="py-16 text-center text-[15px] font-light text-bgp-ink/80">
+          <p className="py-16 text-center text-[15px] text-bgp-ink/80">
             Nothing matches those filters — please contact us for full availability.
           </p>
         ) : (

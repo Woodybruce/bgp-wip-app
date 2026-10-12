@@ -39,7 +39,7 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
           <span className="label-caps text-bgp-ink/70 whitespace-nowrap shrink-0">{useClassLabel(listing.useClass)}</span>
         )}
       </div>
-      <p className="mt-1 text-sm font-light text-bgp-ink/70">
+      <p className="mt-1 text-base text-bgp-ink/75">
         {listingNames(listing).secondary && (
           <span className="text-bgp-ink/85">{listingNames(listing).secondary}<br /></span>
         )}

@@ -30,7 +30,7 @@ export default function Footer() {
           </p>
         </div>
 
-        <div className="text-sm font-light leading-relaxed">
+        <div className="text-sm leading-relaxed">
           <p className="label-caps mb-4 text-bgp-nectar">Explore</p>
           <ul className="space-y-2.5">
             {NAV_ITEMS.map((item) => (
@@ -43,7 +43,7 @@ export default function Footer() {
           </ul>
         </div>
 
-        <div className="text-sm font-light leading-relaxed">
+        <div className="text-sm leading-relaxed">
           <p className="label-caps mb-4 text-bgp-nectar">Contact</p>
           {CONTACT.addressLines.map((l) => (
             <p key={l} className="text-bgp-cream/85">{l}</p>
@@ -58,7 +58,7 @@ export default function Footer() {
 
         <div>
           <p className="label-caps mb-4 text-bgp-nectar">Newsletter</p>
-          <p className="text-sm font-light text-bgp-cream/85 mb-4">
+          <p className="text-sm text-bgp-cream/85 mb-4">
             Lettings, transactions and opinion from the BGP team.
           </p>
           <form onSubmit={onSubmit} className="max-w-xs">

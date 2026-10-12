@@ -16,7 +16,7 @@ export default function Investment() {
         <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/70 via-bgp-ink/10 to-transparent" />
         <div className="absolute inset-0 flex items-end">
           <div className="mx-auto max-w-6xl px-4 pb-10 w-full">
-            <p className="max-w-xl text-2xl md:text-3xl leading-snug font-display italic text-white" style={{ textShadow: "0 2px 16px rgba(0,0,0,0.45)" }}>{service.intro}</p>
+            <p className="max-w-xl text-3xl md:text-4xl leading-snug font-display italic text-white" style={{ textShadow: "0 2px 16px rgba(0,0,0,0.45)" }}>{service.intro}</p>
           </div>
         </div>
       </section>
@@ -25,7 +25,7 @@ export default function Investment() {
         <span className="section-label">Our approach</span>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-4 max-w-5xl">
           {SERVICE_COPY.investment.body.map((p) => (
-            <p key={p.slice(0, 24)} className="text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">{p}</p>
+            <p key={p.slice(0, 24)} className="text-base md:text-lg text-bgp-ink/90 leading-relaxed">{p}</p>
           ))}
         </div>
       </section>
@@ -36,7 +36,7 @@ export default function Investment() {
             <span className="section-label">Track record</span>
             <h1 className="display text-3xl md:text-4xl">A snapshot of recent transactions</h1>
           </div>
-          <p className="text-sm font-light text-bgp-ink/60 max-w-[28ch]">
+          <p className="text-base text-bgp-ink/70 max-w-[28ch]">
             Contact the team for current opportunities and our full track record.
           </p>
         </div>

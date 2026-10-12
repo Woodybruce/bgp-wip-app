@@ -52,7 +52,7 @@ export default function CaseStudyPage() {
             )}
             <div className="mt-8 space-y-4 max-w-xl">
               {caseStudy.body.map((para) => (
-                <p key={para.slice(0, 32)} className="text-sm leading-relaxed text-bgp-ink/80">
+                <p key={para.slice(0, 32)} className="text-base leading-relaxed text-bgp-ink/85">
                   {para}
                 </p>
               ))}

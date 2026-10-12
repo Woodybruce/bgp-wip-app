@@ -24,7 +24,7 @@ export default function ContactCard({ person }: { person: Person }) {
         )}
       </div>
       <p className="label-caps mt-3 text-bgp-red">{person.name}</p>
-      <div className="mt-1 text-xs font-light leading-relaxed text-bgp-ink/70">
+      <div className="mt-1 text-sm leading-relaxed text-bgp-ink/70">
         <p>{person.title}</p>
         <p className="tabular">{person.phone}</p>
         {person.email !== "TBC" && (

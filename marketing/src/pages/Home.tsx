@@ -25,8 +25,8 @@ export default function Home() {
       {/* Hero — full-bleed photo, giant wordmark */}
       <section className="relative">
         <img
-          src="/images/bar.jpg"
-          alt="Bar interior"
+          src="/images/home-hero.jpg"
+          alt="A Mayfair street corner"
           className="h-[70vh] min-h-[480px] w-full object-cover"
         />
         <div className="absolute inset-0 bg-bgp-wine/30" />
@@ -54,7 +54,7 @@ export default function Home() {
       <section className="mx-auto max-w-3xl px-4 pt-16 pb-4 text-center">
         <h2 className="display text-3xl md:text-4xl italic font-normal">{HOME_INTRO.lead}</h2>
         {HOME_INTRO.body.map((para) => (
-          <p key={para.slice(0, 24)} className="mt-5 text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">
+          <p key={para.slice(0, 24)} className="mt-5 text-base md:text-lg text-bgp-ink/90 leading-relaxed">
             {para}
           </p>
         ))}
@@ -83,7 +83,7 @@ export default function Home() {
                 <div className="[direction:ltr] md:border-l md:border-bgp-wine/25 md:pl-8">
                   <span className="label-caps text-bgp-red/70 tabular">{String(i + 1).padStart(2, "0")}</span>
                   <h2 className="display text-3xl md:text-4xl mt-1.5">{service.name}</h2>
-                  <p className="mt-4 text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed max-w-sm">
+                  <p className="mt-4 text-base md:text-lg text-bgp-ink/90 leading-relaxed max-w-sm">
                     {service.intro}
                   </p>
                   <p className="mt-5">
@@ -94,7 +94,7 @@ export default function Home() {
                   {stat && (
                     <div className="mt-10 flex items-center gap-4">
                       <span className="display text-6xl md:text-7xl tabular">{stat.value}</span>
-                      <span className="text-bgp-red font-display text-5xl font-light" aria-hidden>/</span>
+                      <span className="text-bgp-red font-display text-5xl" aria-hidden>/</span>
                       <span className="label-caps text-bgp-wine max-w-[14ch]">{stat.caption}</span>
                     </div>
                   )}
@@ -122,7 +122,7 @@ export default function Home() {
         <h2 className="display text-3xl md:text-4xl">News and insights</h2>
         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
           <p><Link href="/news" className="explore-link">Explore</Link></p>
-          <p className="text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">
+          <p className="text-base md:text-lg text-bgp-ink/90 leading-relaxed">
             The latest news, lettings, transactions and opinion from the BGP team across
             leasing, investment, brand representation and placemaking.
           </p>

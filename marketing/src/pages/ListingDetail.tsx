@@ -114,7 +114,7 @@ export default function ListingDetail() {
                 lead with the address, named centres lead with the unit. */}
             <h1 className="display text-3xl md:text-5xl leading-tight">{names.title}</h1>
             {(names.secondary || listing.addressLine) && (
-              <p className="mt-2 text-[15px] md:text-base font-light text-bgp-ink/80">
+              <p className="mt-2 text-[15px] md:text-base text-bgp-ink/80">
                 {[names.secondary, listing.addressLine].filter(Boolean).join(" · ")}
               </p>
             )}
@@ -143,7 +143,7 @@ export default function ListingDetail() {
             {listing.marketingStatus === "Under Offer" && (
               <p className="mt-6 inline-block bg-bgp-burgundy text-bgp-paper label-caps px-3 py-1.5">Under offer</p>
             )}
-            <p className="mt-6 max-w-lg text-lg font-light leading-relaxed text-bgp-ink/80">
+            <p className="mt-6 max-w-lg text-lg leading-relaxed text-bgp-ink/80">
               {[
                 formatSqft(listing.sqft),
                 listing.propertyName && listing.propertyName !== listing.unitName ? `within ${listing.propertyName.replace(/^\[Sample\]\s*/, "")}` : null,

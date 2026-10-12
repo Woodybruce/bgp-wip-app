@@ -708,7 +708,9 @@ export const LEASING_SECTORS: LeasingSector[] = [
     headline:
       "We advise on 21 shopping centres across the UK; from some of London's leading mixed-use destinations and major regional shopping centres to new developments under construction.",
     body: [
-      "Our dedicated Shopping Centre team combines decades of deep sector expertise with a detailed understanding of each of the cities and the overall occupier market. We work closely with landlords and asset managers to develop leasing strategies that build stand out destinations while developing communities and embedding a culture around these centres. We respond to changing consumer behaviour, strengthen and create progressive and profitable tenant mix and positioning and drive long-term performance; always prioritising our focus of long term value creation for our clients.",
+      "Our dedicated Shopping Centre team combines decades of deep sector expertise with a detailed understanding of each of the cities and the overall occupier market.",
+      "We work closely with landlords and asset managers to develop leasing strategies that build stand out destinations while developing communities and embedding a culture around these centres.",
+      "We respond to changing consumer behaviour, strengthen and create progressive and profitable tenant mix and positioning and drive long-term performance; always prioritising our focus of long term value creation for our clients.",
       "We work closely with the London Estates and High Street teams, ensuring we capture conversations early and draw occupiers out of London to our clients' shopping centres.",
       "Shopping centres are continually evolving. Changing customer habits, the growth of experiential retail, the competition for spend in store versus through social media and the expansion of leisure are reshaping what successful destinations look like.",
       "Our advice is grounded in extensive market intelligence, data and insight from our relationships with leading occupiers, enabling us to identify opportunities and anticipate what comes next.",
@@ -797,11 +799,8 @@ export const SHOPPING_CENTRES: ShoppingCentre[] = [
 export const SERVICE_COPY = {
   investment: {
     body: [
-      "Acquisition and disposal advice across retail, leisure and mixed-use investments. We advise on all aspects of property investment from single assets to portfolios, acting for private clients, property companies and institutions.",
       "We take a 360-degree view of every investment opportunity, combining market intelligence with BGP's specialist leasing and lease advisory expertise.",
-      "We undertake detailed due diligence across title, planning, leases and covenants, alongside rigorous financial and market analysis. This gives us a clear understanding of an asset's strengths, risks and potential — and allows us to advise on the right pricing, positioning and route to market.",
-      "Every sale is supported by a tailored marketing strategy and clear transaction plan, designed to maximise competition and deliver the best possible outcome.",
-      "Above all, our advice is honest, accurate and commercially focused. We build relationships for the long term, not just for the duration of a transaction.",
+      "Rigorous due diligence and a tailored route to market. Above all, our advice is honest, accurate and commercially focused — we build relationships for the long term, not just for the duration of a transaction.",
     ],
   },
   brandRepresentation: {
@@ -812,4 +811,17 @@ export const SERVICE_COPY = {
       "Digital to Physical: We take 'game-changing' DTC brands from URL to IRL with high-impact bricks-and-mortar debuts.",
     ],
   },
+};
+
+// Which page(s) on the site a person belongs to — the Team A–Z links each
+// name through to their team so visitors can navigate from the biog.
+export const teamPagesFor = (name: string): Array<{ label: string; href: string }> => {
+  const out: Array<{ label: string; href: string }> = [];
+  for (const x of LEASING_SECTORS) if (x.contacts.includes(name)) out.push({ label: x.name, href: `/leasing/sectors/${x.slug}` });
+  if (INVESTMENT_CONTACTS.some((p) => p.name === name)) out.push({ label: "Investment", href: "/investment" });
+  if (BRAND_REP_CONTACTS.some((p) => p.name === name)) out.push({ label: "Brand Representation", href: "/brand-representation" });
+  if (LEASE_ADVISORY_CONTACTS.some((p) => p.name === name)) out.push({ label: "Lease Advisory", href: "/lease-advisory" });
+  if (CONSULTANCY_CONTACTS.some((p) => p.name === name)) out.push({ label: "Consultancy", href: "/consultancy" });
+  if (!out.length && LEASING_CONTACTS.some((p) => p.name === name)) out.push({ label: "Leasing", href: "/leasing" });
+  return out;
 };

@@ -7,7 +7,7 @@
     scroll-behavior: smooth;
   }
   body {
-    @apply font-sans font-light text-bgp-ink bg-bgp-cream antialiased;
+    @apply font-sans text-bgp-ink bg-bgp-cream antialiased;
   }
   ::selection {
     @apply bg-bgp-wine text-bgp-cream;
@@ -17,7 +17,7 @@
 @layer components {
   /* Small uppercase labels — Inter bold, tracked out (v2c card/nav labels) */
   .label-caps {
-    @apply text-[11px] font-bold uppercase tracking-widest2 font-sans;
+    @apply text-xs font-bold uppercase tracking-widest2 font-sans;
   }
   /* Red EXPLORE ↗ / READ MORE links */
   .explore-link {

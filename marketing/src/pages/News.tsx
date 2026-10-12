@@ -79,7 +79,7 @@ export default function News() {
               <h2 className="display text-2xl md:text-3xl leading-tight group-hover:text-bgp-red transition-colors">
                 {featured.title}
               </h2>
-              <p className="mt-4 text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed max-w-sm">{featured.standfirst}</p>
+              <p className="mt-4 text-base md:text-lg text-bgp-ink/90 leading-relaxed max-w-sm">{featured.standfirst}</p>
               <p className="mt-4"><span className="explore-link inline-block">Read more</span></p>
             </div>
           </div>
@@ -87,7 +87,7 @@ export default function News() {
       )}
 
       {filtered.length === 0 && (
-        <p className="py-16 text-center text-sm font-light text-bgp-ink/60">Nothing in that category yet.</p>
+        <p className="py-16 text-center text-base text-bgp-ink/70">Nothing in that category yet.</p>
       )}
 
       <div className="mt-10 card-strip sm:grid-cols-3 sm:gap-8">
