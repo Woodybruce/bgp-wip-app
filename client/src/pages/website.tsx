@@ -194,7 +194,7 @@ function EditDialog({ kind, row, onClose, onSave, saving }: { kind: Kind; row: a
           {kind === "team" ? (
             <>
               <Field label="Name"><Input value={f.name || ""} onChange={(e) => upd("name", e.target.value)} data-testid="input-website-name" /></Field>
-              <Field label="Title"><Input value={f.title || ""} onChange={(e) => upd("title", e.target.value)} placeholder="e.g. Director, National Leasing" /></Field>
+              <Field label="Title"><Input value={f.title || ""} onChange={(e) => upd("title", e.target.value)} placeholder="e.g. Director, Shopping Centre" /></Field>
               <Field label="Phone"><Input value={f.phone || ""} onChange={(e) => upd("phone", e.target.value)} /></Field>
               <Field label="Email"><Input value={f.email || ""} onChange={(e) => upd("email", e.target.value)} /></Field>
               <div className="sm:col-span-2">

@@ -61,7 +61,13 @@ export const TEAM_ROSTER_2026: Array<{ name: string; teams: BgpTeamName[] }> = [
   { name: "Carly Cunliffe", teams: ["Tenant Rep"] },
   { name: "Beth Emmens", teams: ["Tenant Rep"] },
 ];
-export const NO_TEAM_ROSTER_2026 = ["Woody Bruce", "Rupert Bentley Smith", "Charlotte Roberts", "Layla O'Driscoll", "Cara Milligan", "Harriette Walker Clark"];
+export const NO_TEAM_ROSTER_2026 = ["Woody Bruce", "Rupert Bentley Smith", "Charlotte Roberts", "Layla O'Driscoll", "Cara Milligan", "Harriette Walker Clark", "Nick Goodman"];
+// Woody, 2026-10-12: "Daisy and Emily are not part of BGP; Nick Goodman
+// should be, and report to me as a consultant."
+export const LEFT_BGP_2026 = ["Daisy Driscoll", "Emily Mitchell"];
+export const CONSULTANTS_2026: Array<{ name: string; role: string; reportsTo: string }> = [
+  { name: "Nick Goodman", role: "Consultant", reportsTo: "Woody Bruce" },
+];
 
 const normPerson = (s: string) => String(s || "").toLowerCase().replace(/[^a-z ]+/g, " ").replace(/\s+/g, " ").trim();
 /** A person's 2026-10 teams by name: full name first, then a first name
@@ -77,3 +83,6 @@ export function rosterTeamsFor(name: string | null | undefined): BgpTeamName[] |
   const byFirst = TEAM_ROSTER_2026.filter(r => normPerson(r.name).split(" ")[0] === first);
   return byFirst.length === 1 ? byFirst[0].teams : null;
 }
+
+/** Same person by name, ignoring case, punctuation and hyphens. */
+export const samePerson = (a: string | null | undefined, b: string | null | undefined) => !!normPerson(a || "") && normPerson(a || "") === normPerson(b || "");

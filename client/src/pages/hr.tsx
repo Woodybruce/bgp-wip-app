@@ -2245,7 +2245,10 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
   // commission scheme and aren't RICS surveyors, so we hide those tabs/cards
   // for them. Once a surveyor qualifies (APC completed), we still show their
   // RICS member number but drop the in-progress APC fields.
-  const isOfficeStaff = (person.team || "").toLowerCase().includes("office") || (person.team || "").toLowerCase().includes("corporate");
+  // Support staff have no team since the 2026-10 structure, so their title
+  // decides it (consultant / COO included); the old team still counts.
+  const isOfficeStaff = (person.team || "").toLowerCase().includes("office") || (person.team || "").toLowerCase().includes("corporate")
+    || (!person.team && (!isFeeEarner(person.title) || /\b(consultant|coo|chief operating|marketing)\b/i.test(person.title || "")));
   const isQualifiedSurveyor = person.apc_status === "completed";
   const showRicsCard = !isOfficeStaff && (person.rics_number || person.rics_pathway || (person.apc_status && person.apc_status !== "not_started"));
 

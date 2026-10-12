@@ -9,7 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 // people, properties, deals and WIP rows onto the new teams will change,
 // then applies it — never automatically. Every old value is backed up.
 type Plan = {
-  userChanges: Array<{ id: string; name: string; from: { team: string | null; additional_teams: string[] | null }; to: { team: string | null; additional_teams: string[] } }>;
+  userChanges: Array<{ id: string; name: string; note?: string; from: { team: string | null; additional_teams: string[] | null }; to: { team: string | null; additional_teams: string[] | null } }>;
   propChanges: Array<{ id: string; name: string; from: string[] | null; to: string[]; basis: string }>;
   dealChanges: Array<{ id: string; from: string[] | null; to: string[] }>;
   wipChanges: Array<{ id: string; from: string | null; to: string | null }>;
@@ -54,7 +54,7 @@ export function TeamStructureDialog({ open, onClose }: { open: boolean; onClose:
               {plan.userChanges.length > 0 && <section>
                 <h3 className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">People</h3>
                 <div className="overflow-x-auto"><table className="w-full text-xs"><tbody>
-                  {plan.userChanges.map(u => <tr key={u.id} className="border-t"><td className="py-1 pr-3">{u.name}</td><td className="py-1 pr-3 text-muted-foreground">{teamsText(u.from.team, u.from.additional_teams)}</td><td className="py-1">→ {teamsText(u.to.team, u.to.additional_teams)}</td></tr>)}
+                  {plan.userChanges.map(u => <tr key={u.id} className="border-t"><td className="py-1 pr-3">{u.name}</td><td className="py-1 pr-3 text-muted-foreground">{teamsText(u.from.team, u.from.additional_teams)}</td><td className="py-1 pr-3">→ {teamsText(u.to.team, u.to.additional_teams)}</td><td className="py-1 text-muted-foreground">{u.note || ""}</td></tr>)}
                 </tbody></table></div>
               </section>}
               {plan.propChanges.length > 0 && <section>

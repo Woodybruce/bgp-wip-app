@@ -585,7 +585,7 @@ export default function MobileHome() {
       )}
 
       {/* Team Expenses — read-only, only for designated team overseers
-          (e.g. Victoria → National Leasing). Same responsive page the
+          (e.g. Victoria → Shopping Centre). Same responsive page the
           desktop sidebar links to. */}
       {!isClientHome && Array.isArray(user?.expenseOverseerTeams) && user.expenseOverseerTeams.length > 0 && (
         <Link

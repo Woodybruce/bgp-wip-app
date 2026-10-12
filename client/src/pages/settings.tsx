@@ -1371,7 +1371,7 @@ function SortTeamsDialog({ open, onClose }: { open: boolean; onClose: () => void
         <DialogHeader>
           <DialogTitle>Sort teams</DialogTitle>
           <DialogDescription>
-            Reassign people to the canonical team list. Useful after a rename / merge — e.g. splitting "London Leasing" into London Retail and London F&B.
+            Reassign people to the canonical team list. Useful after a rename / merge — For the October 2026 teams use New team structure.
           </DialogDescription>
         </DialogHeader>
 
