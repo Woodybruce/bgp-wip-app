@@ -1,3 +1,4 @@
+import { BGP_TEAM_NAMES } from "@shared/teams";
 import { parseReqSize, USE_HINTS } from "@shared/requirement-fit";
 import type { Express, Request } from "express";
 import multer from "multer";
@@ -1491,17 +1492,27 @@ export function setupCrmRoutes(app: Express) {
   // question set lives client-side (crm-meetings-tab.tsx), responses are a
   // jsonb map keyed by question id so per-question autosaves merge instead
   // of clobbering each other. BGP-internal: client logins get nothing.
-  const INTERVIEW_TEAMS = [
-    "London Leasing Retail", "London Leasing F&B and Leisure", "National",
-    "Investment", "Tenant Rep", "Lease Advisory", "Development",
-  ];
-  // Teams added after the first four were seeded — existing boards get a
-  // card for each one they're missing, with the named Head of Team.
+  // One interview per team in the 2026-10 structure (shared/teams.ts), with
+  // the team leads from BGP_Team_Structure.xlsx as interviewees.
+  const INTERVIEW_TEAMS: string[] = [...BGP_TEAM_NAMES];
   const LATER_INTERVIEWS: { team: string; interviewee: string | null }[] = [
-    { team: "Development", interviewee: null },
-    { team: "National", interviewee: "Victoria Broadhead" },
-    { team: "London Leasing F&B and Leisure", interviewee: "Rupert Bentley Smith" },
+    { team: "Shopping Centre", interviewee: "Millie Edwards & Victoria Broadhead" },
+    { team: "London Estate", interviewee: "Lizzie Knights & Lucy Cope" },
+    { team: "High Street", interviewee: "Lucy Gardiner & Tracey Pollard" },
+    { team: "City", interviewee: "Pete Wood & Lizzie Knights" },
+    { team: "Investment", interviewee: "Jack Barratt" },
+    { team: "Tenant Rep", interviewee: "Harry Elliott & Beth Emmens" },
+    { team: "Lease Advisory", interviewee: "Pete Wood" },
   ];
+  // Cards held under the retired teams keep their answers and interviewee,
+  // relabelled to the team that took the work over.
+  const RETIRED_INTERVIEW_TEAMS: Record<string, string> = {
+    "Leasing": "London Estate",
+    "London Leasing Retail": "London Estate",
+    "London Leasing F&B and Leisure": "London Estate",
+    "National": "Shopping Centre",
+    "Development": "High Street",
+  };
 
   app.get("/api/crm/interviews", async (req, res) => {
     try {
@@ -1511,11 +1522,14 @@ export function setupCrmRoutes(app: Express) {
       if (count.rows[0].n === 0) {
         for (const team of INTERVIEW_TEAMS) {
           await pool.query(
-            `INSERT INTO crm_interviews (team, created_by) VALUES ($1, $2)`,
-            [team, (req as any).session?.userId || null],
+            `INSERT INTO crm_interviews (team, interviewee, created_by) VALUES ($1, $2, $3)`,
+            [team, LATER_INTERVIEWS.find(l => l.team === team)?.interviewee ?? null, (req as any).session?.userId || null],
           );
         }
       } else {
+        for (const [from, to] of Object.entries(RETIRED_INTERVIEW_TEAMS)) {
+          await pool.query(`UPDATE crm_interviews SET team = $2, updated_at = now() WHERE team = $1`, [from, to]);
+        }
         for (const { team, interviewee } of LATER_INTERVIEWS) {
           await pool.query(
             `INSERT INTO crm_interviews (team, interviewee, created_by)
@@ -1523,12 +1537,6 @@ export function setupCrmRoutes(app: Express) {
             [team, interviewee, (req as any).session?.userId || null],
           );
         }
-        // Leasing split into London Retail / London F&B and Leisure / National;
-        // Charlotte's interview is the London Leasing Retail one.
-        await pool.query(
-          `UPDATE crm_interviews SET team = 'London Leasing Retail', updated_at = now()
-           WHERE team = 'Leasing' AND interviewee ILIKE 'charlotte%'`,
-        );
       }
       const rows = await pool.query(`SELECT * FROM crm_interviews ORDER BY created_at ASC`);
       res.json(rows.rows);
