@@ -37,6 +37,10 @@ const TEAM_STYLES: Record<string, { bg: string; border: string; accent: string; 
   "London Estate":      { bg: "from-yellow-50 to-yellow-100/50 dark:from-yellow-950/40 dark:to-yellow-900/20", border: "border-yellow-200 dark:border-yellow-800", accent: "text-yellow-700 dark:text-yellow-300", ring: "ring-yellow-500/30", edge: "border-l-yellow-500" },
   "High Street":         { bg: "from-rose-50 to-rose-100/50 dark:from-rose-950/40 dark:to-rose-900/20", border: "border-rose-200 dark:border-rose-800", accent: "text-rose-700 dark:text-rose-300", ring: "ring-rose-500/30", edge: "border-l-rose-500" },
 };
+// Board / Support / Consultants cards (Woody, 2026-10-12).
+TEAM_STYLES["Board"] = { bg: "from-primary/5 to-primary/10", border: "border-primary/30", accent: "text-primary", ring: "ring-primary/30", edge: "border-l-primary" };
+TEAM_STYLES["Support"] = { bg: "from-slate-50 to-slate-100/50 dark:from-slate-950/40 dark:to-slate-900/20", border: "border-slate-200 dark:border-slate-800", accent: "text-slate-700 dark:text-slate-300", ring: "ring-slate-500/30", edge: "border-l-slate-500" };
+TEAM_STYLES["Consultants"] = { bg: "from-stone-50 to-stone-100/50 dark:from-stone-950/40 dark:to-stone-900/20", border: "border-stone-200 dark:border-stone-800", accent: "text-stone-700 dark:text-stone-300", ring: "ring-stone-500/30", edge: "border-l-stone-500" };
 const DEFAULT_TEAM_STYLE = { bg: "from-muted to-muted/50", border: "border-border", accent: "text-foreground", ring: "ring-muted", edge: "border-l-border" };
 const teamStyle = (t: string) => TEAM_STYLES[t] || DEFAULT_TEAM_STYLE;
 

@@ -1,4 +1,4 @@
-import { BGP_TEAM_NAMES, rosterTeamsFor } from "@shared/teams";
+import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, rosterTeamsFor, staffGroupFor } from "@shared/teams";
 import type { Express } from "express";
 import { pool } from "./db";
 import { requireAuth, requireAdmin } from "./auth";
@@ -1497,20 +1497,24 @@ export function setupHrRoutes(app: Express) {
       // show up — TEAM_ORDER drives display order for known teams; any
       // extra team values seen in staff records get appended alphabetically
       // so London Retail / London F&B / new teams don't silently fall off.
+      // Cards: Board, the teams, Support, Consultants (Woody, 2026-10-12) —
+      // by name, so they're right before the team move is applied.
+      const groupOf = (s: any) => String(staffGroupFor(s.name, s.team) || "").trim();
       const presentTeams = new Set<string>();
       let unassignedCount = 0;
       for (const s of staff) {
-        if (s.team && String(s.team).trim()) presentTeams.add(String(s.team).trim());
+        const g = groupOf(s);
+        if (g) presentTeams.add(g);
         else unassignedCount++;
       }
-      const extraTeams = [...presentTeams].filter(t => !TEAM_ORDER.includes(t)).sort();
-      const allTeams = [...TEAM_ORDER.filter(t => presentTeams.has(t)), ...extraTeams];
+      const extraTeams = [...presentTeams].filter(t => !STAFF_GROUP_ORDER.includes(t)).sort();
+      const allTeams = [...STAFF_GROUP_ORDER.filter(t => presentTeams.has(t)), ...extraTeams];
       if (unassignedCount > 0) allTeams.push("Unassigned");
 
       const summaries = allTeams.map(team => {
         const members = team === "Unassigned"
-          ? staff.filter((s: any) => !s.team || !String(s.team).trim())
-          : staff.filter((s: any) => s.team === team);
+          ? staff.filter((s: any) => !groupOf(s))
+          : staff.filter((s: any) => groupOf(s) === team);
         if (members.length === 0) return null;
         // Head selection (in priority order): explicit "Head ..." title,
         // management_team flag, board_member flag, "Director" in title,
