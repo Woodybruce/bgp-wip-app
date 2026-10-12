@@ -13,9 +13,9 @@ export const SERVICES = [
   {
     slug: "investment",
     name: "Investment",
-    image: "/images/clients/city-st-pauls.jpg",
+    image: "/images/investment/royal-exchange-street.jpg",
     intro:
-      "Acquisition and disposal advice across retail, leisure and mixed-use investments — from single assets to portfolios, acting for private clients, property companies and institutions including Aviva Investors, Legal & General and LondonMetric.",
+      "Acquisition and disposal advice across retail, leisure and mixed-use investments, from single assets to portfolios, for private clients, property companies and institutions.",
   },
   {
     slug: "brand-representation",
@@ -852,6 +852,54 @@ export const SHOPPING_CENTRES: ShoppingCentre[] = [
 ];
 
 // Investment and Brand Representation page copy from Emmy's document.
+// Investment page — built from the February 2026 Royal Exchange disposal
+// pitch (Woody, 2026-10-12). Only the public-safe parts: approach, the
+// Royal Exchange journey and headline metrics, track record, City
+// coverage. Pricing, buyers, comparables and fees stay in the deck.
+export const INVESTMENT_APPROACH = [
+  "Crucial interaction with our leasing and lease advisory teams.",
+  "We understand affordability and translate that into our advice.",
+  "Thorough due diligence: title, planning, leases and covenants.",
+  "A rigorous financial and market review.",
+  "A detailed marketing strategy and timeline.",
+  "A spread of pricing outcomes and incentive fees to achieve the best result.",
+  "Above all, honest and accurate advice. We value long-term relationships.",
+];
+
+export const ROYAL_EXCHANGE_FEATURE = {
+  title: "The Royal Exchange",
+  client: "Ardent",
+  intro:
+    "BGP has been Ardent's partner at The Royal Exchange since the very beginning: a Grade I listed luxury retail destination in the heart of the City, taken from an off-market acquisition in 2022 to a successful exit in 2026.",
+  journey: [
+    { year: "2022", step: "Advised on the off-market acquisition and formulated the business plan" },
+    { year: "2023–25", step: "Incumbent leasing agents: Hagen, Trotters, Rosslyn Coffee, Baudoin & Lange, Georg Jensen, Inception, Searle Jewellery and more" },
+    { year: "2023–25", step: "Ongoing asset management: Bremont, Omega, Tiffany and Jo Malone regears and renewals, Ladurée upsize, new entrances, debt secured" },
+    { year: "2026", step: "Business plan exceeded, 100% occupancy reached, target returns achieved and a successful exit advised" },
+  ],
+  kpis: [
+    { label: "Occupancy", before: "75%", after: "100%" },
+    { label: "WAULT", before: "4 years", after: "7 years" },
+    { label: "Annual footfall", before: "500,000", after: "800,000" },
+  ],
+  image: "/images/investment/royal-exchange-courtyard.jpg",
+  imageAlt: "The courtyard of The Royal Exchange",
+  caseStudySlug: "ardent-royal-exchange",
+};
+
+export const INVESTMENT_TRACK_RECORD: Array<{ name: string; client: string; note: string; image?: string }> = [
+  { name: "The Royal Exchange, London", client: "Ardent", note: "Acquisition advice, leasing and asset management through to a successful exit.", image: "/images/investment/royal-exchange-corner.jpg" },
+  { name: "One Tower Bridge", client: "Redevco", note: "£70m acquisition of the riverside retail and leisure estate.", image: "/images/investment/one-tower-bridge.jpg" },
+  { name: "Brixton Market", client: "Hondo Enterprises / Angelo Gordon", note: "£47m purchase and subsequent sale of the market estate." },
+  { name: "16 Conduit Street, Mayfair", client: "Japanese private investor", note: "Prime West End retail acquisition." },
+  { name: "Wimbledon Bridge House", client: "Sheet Anchor Evolve", note: "Mixed-use investment advice." },
+  { name: "Oxam House, Oxford", client: "Charles Street", note: "City-centre retail investment." },
+  { name: "Filmworks, Ealing", client: "St George", note: "Retail and leisure at the cinema-led town-centre scheme." },
+  { name: "Grants Leisure, Croydon", client: "Hermes", note: "Leisure investment advice." },
+];
+
+export const CITY_COVERAGE = ["The Royal Exchange", "One New Change", "Bloomberg Arcade", "Cheapside", "Old Spitalfields Market", "One Millennium Bridge", "One Wood Street"];
+
 export const SERVICE_COPY = {
   investment: {
     body: [

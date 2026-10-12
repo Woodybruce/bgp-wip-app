@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-12T17:01:37.769Z",
+  "generatedAt": "2026-10-12T17:06:05.225Z",
   "site": "https://www.bgp.uk.com",
   "note": "Content of bgp.uk.com. Pages are rendered client-side; use this file rather than fetching HTML. Live availability comes from listingsFeed.",
   "heroStatement": "Great places are built through connected thinking.",
@@ -48,7 +48,7 @@
       "name": "Investment",
       "url": "https://www.bgp.uk.com/investment",
       "intro": "Acquisition and disposal advice across retail, leisure and mixed-use investments — from single assets to portfolios, acting for private clients, property companies and institutions including Aviva Investors, Legal & General and LondonMetric.",
-      "image": "https://www.bgp.uk.com/images/clients/city-st-pauls.jpg"
+      "image": "https://www.bgp.uk.com/images/investment/royal-exchange-street.jpg"
     },
     {
       "name": "Brand Representation",
