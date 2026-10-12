@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Mouse clicks on links (the logo, nav) must not leave Chrome's blue focus
+   box behind; keyboard users still get a visible ring. */
+a:focus:not(:focus-visible) { outline: none; }
+a:focus-visible { outline: 2px solid #ff1923; outline-offset: 3px; }
+
+
 @layer base {
   html {
     scroll-behavior: smooth;
