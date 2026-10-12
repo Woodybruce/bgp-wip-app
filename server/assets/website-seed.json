@@ -12,11 +12,12 @@
     },
     {
       "name": "Tracey Pollard",
-      "title": "Founding Director",
+      "title": "Founding Director, Co-Head High Streets",
       "phone": "+44 (0)7779 323 306",
       "email": "tracey@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/tracey-pollard.jpg",
       "groups": [
+        "leasing",
         "consultancy"
       ],
       "sortOrder": 1,
@@ -24,7 +25,7 @@
     },
     {
       "name": "Charlotte Roberts",
-      "title": "Equity Director, Co-Head London Estates",
+      "title": "Equity Director, Co-Head of Leasing",
       "phone": "+44 (0)7738 448 338",
       "email": "charlotte@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/charlotte-roberts.jpg",
@@ -36,7 +37,7 @@
     },
     {
       "name": "Rupert Bentley-Smith",
-      "title": "Equity Director, Co-Head London Estates",
+      "title": "Equity Director, Co-Head of Leasing",
       "phone": "+44 (0)7876 354 160",
       "email": "rupert@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/rupert-bentley-smith.jpg",
@@ -60,7 +61,7 @@
     },
     {
       "name": "Victoria Broadhead",
-      "title": "Head of National",
+      "title": "Director, Co-Head Shopping Centres",
       "phone": "+44 (0)7793 158 133",
       "email": "victoria@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/victoria-broadhead.jpg",
@@ -72,7 +73,7 @@
     },
     {
       "name": "Peter Wood",
-      "title": "Head of Lease Consultancy and Asset Management",
+      "title": "Head of Lease Advisory and Asset Management",
       "phone": "+44 (0)7872 602 336",
       "email": "peter@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/peter-wood.jpg",
@@ -97,17 +98,19 @@
     },
     {
       "name": "Lucy Gardiner",
-      "title": "Director, National Leasing",
+      "title": "Director, Co-Head High Streets",
       "phone": "+44 (0)7741 877 452",
       "email": "lucyg@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/lucy-gardiner.jpg",
-      "groups": [],
+      "groups": [
+        "leasing"
+      ],
       "sortOrder": 8,
       "visible": true
     },
     {
       "name": "Lizzie Knights",
-      "title": "Director, London Leasing",
+      "title": "Director, Co-Head London Estates & City",
       "phone": "+44 (0)7511 902 073",
       "email": "lizzie@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/lizzie-knights.jpg",
@@ -119,7 +122,7 @@
     },
     {
       "name": "Harry Elliott",
-      "title": "Director, Brand Representation",
+      "title": "Director, Co-Head Brand Representation",
       "phone": "+44 (0)7568 367 777",
       "email": "harrye@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/harry-elliott.jpg",
@@ -131,13 +134,11 @@
     },
     {
       "name": "Emily Dumbell",
-      "title": "Director, National Leasing",
+      "title": "Director, Shopping Centres",
       "phone": "+44 (0)7805 259 793",
       "email": "emily@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/emily-dumbell.jpg",
-      "groups": [
-        "leasing"
-      ],
+      "groups": [],
       "sortOrder": 11,
       "visible": true
     },
@@ -165,7 +166,7 @@
     },
     {
       "name": "Lucy Cope",
-      "title": "Associate Director, London Leasing",
+      "title": "Associate Director, Co-Head London Estates",
       "phone": "+44 (0)7595 267 866",
       "email": "lucy@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/lucy-cope.jpg",
@@ -177,19 +178,17 @@
     },
     {
       "name": "Evie North",
-      "title": "Associate Director, Brand Representation",
+      "title": "Associate Director, London Estates",
       "phone": "+44 (0)7595 349 057",
       "email": "evie@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/evie-north.jpg",
-      "groups": [
-        "brand_representation"
-      ],
+      "groups": [],
       "sortOrder": 15,
       "visible": true
     },
     {
       "name": "Alex Todd",
-      "title": "Senior Surveyor, Development",
+      "title": "Senior Surveyor, Shopping Centres",
       "phone": "+44 (0)7526 504 806",
       "email": "alext@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/alex-todd.jpg",
@@ -199,54 +198,100 @@
     },
     {
       "name": "Millie Edwards",
-      "title": "Leasing",
+      "title": "Co-Head Shopping Centres",
       "phone": "+44 (0)20 3551 5260",
       "email": null,
       "photoUrl": "https://www.bgp.uk.com/images/team/millie-edwards.jpg",
-      "groups": [],
+      "groups": [
+        "leasing"
+      ],
       "sortOrder": 17,
       "visible": true
     },
     {
-      "name": "Emily Cann",
-      "title": "Graduate Surveyor, London Leasing",
-      "phone": "+44 (0)7516 660 791",
-      "email": "emilyc@brucegillinghampollard.com",
-      "photoUrl": "https://www.bgp.uk.com/images/team/emily-cann.jpg",
+      "name": "Ben Sykes",
+      "title": "Surveyor, Shopping Centres",
+      "phone": "+44 (0)20 3551 5260",
+      "email": null,
+      "photoUrl": "https://www.bgp.uk.com/images/team/ben-sykes.jpg",
       "groups": [],
       "sortOrder": 18,
       "visible": true
     },
     {
-      "name": "Will Penfold",
-      "title": "Graduate Surveyor, London Leasing",
-      "phone": "+44 (0)7760 881 270",
-      "email": "willp@brucegillinghampollard.com",
-      "photoUrl": "https://www.bgp.uk.com/images/team/will-penfold.jpg",
+      "name": "Kate Martin",
+      "title": "Surveyor, Shopping Centres",
+      "phone": "+44 (0)20 3551 5260",
+      "email": null,
+      "photoUrl": "https://www.bgp.uk.com/images/team/kate-martin.jpg",
       "groups": [],
       "sortOrder": 19,
       "visible": true
     },
     {
-      "name": "Luke Donohoe",
-      "title": "Graduate Surveyor, National Leasing",
-      "phone": "+44 (0)7983 855 926",
-      "email": "luke@brucegillinghampollard.com",
-      "photoUrl": "https://www.bgp.uk.com/images/team/luke-donohoe.jpg",
-      "groups": [],
+      "name": "Beth Emmens",
+      "title": "Co-Head Brand Representation",
+      "phone": "+44 (0)20 3551 5260",
+      "email": null,
+      "photoUrl": null,
+      "groups": [
+        "brand_representation"
+      ],
       "sortOrder": 20,
       "visible": true
     },
     {
+      "name": "Carly Cunliffe",
+      "title": "Brand Representation",
+      "phone": "+44 (0)20 3551 5260",
+      "email": null,
+      "photoUrl": "https://www.bgp.uk.com/images/team/carly-cunliffe.jpg",
+      "groups": [
+        "brand_representation"
+      ],
+      "sortOrder": 21,
+      "visible": true
+    },
+    {
+      "name": "Emily Cann",
+      "title": "Graduate Surveyor, London Estates",
+      "phone": "+44 (0)7516 660 791",
+      "email": "emilyc@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/emily-cann.jpg",
+      "groups": [],
+      "sortOrder": 22,
+      "visible": true
+    },
+    {
+      "name": "Will Penfold",
+      "title": "Graduate Surveyor, London Estates",
+      "phone": "+44 (0)7760 881 270",
+      "email": "willp@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/will-penfold.jpg",
+      "groups": [],
+      "sortOrder": 23,
+      "visible": true
+    },
+    {
+      "name": "Luke Donohoe",
+      "title": "Graduate Surveyor, Shopping Centres",
+      "phone": "+44 (0)7983 855 926",
+      "email": "luke@brucegillinghampollard.com",
+      "photoUrl": "https://www.bgp.uk.com/images/team/luke-donohoe.jpg",
+      "groups": [],
+      "sortOrder": 24,
+      "visible": true
+    },
+    {
       "name": "Libby Evans",
-      "title": "Graduate Surveyor, Development",
+      "title": "Graduate Surveyor, High Streets",
       "phone": "+44 (0)7931 462 768",
       "email": "libbye@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/libby-evans.jpg",
       "groups": [
         "consultancy"
       ],
-      "sortOrder": 21,
+      "sortOrder": 25,
       "visible": true
     },
     {
@@ -258,7 +303,7 @@
       "groups": [
         "investment"
       ],
-      "sortOrder": 22,
+      "sortOrder": 26,
       "visible": true
     },
     {
@@ -268,17 +313,17 @@
       "email": "harriette@brucegillinghampollard.com",
       "photoUrl": null,
       "groups": [],
-      "sortOrder": 23,
+      "sortOrder": 27,
       "visible": true
     },
     {
       "name": "Layla O'Driscoll",
-      "title": "PA & Office Manager",
+      "title": "Chief Operating Officer",
       "phone": "+44 (0)20 3551 5260",
       "email": "layla@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/layla-odriscoll.jpg",
       "groups": [],
-      "sortOrder": 24,
+      "sortOrder": 28,
       "visible": true
     },
     {
@@ -288,7 +333,7 @@
       "email": "cara@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/cara-milligan.jpg",
       "groups": [],
-      "sortOrder": 25,
+      "sortOrder": 29,
       "visible": true
     }
   ],

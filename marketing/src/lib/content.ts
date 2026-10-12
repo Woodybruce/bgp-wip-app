@@ -86,33 +86,38 @@ export interface Person {
 
 export const OFFICE_PHONE = "+44 (0)20 3551 5260";
 
-// Titles and contact details from the BGP team directory / public site.
+// Titles and contact details from the BGP team directory / public site;
+// teams and leads from Woody's BGP Team Structure workbook (2026-10-12).
 export const TEAM: Person[] = [
   { photo: "/images/team/woody-bruce.jpg", name: "Woody Bruce", title: "Managing Director", phone: "+44 (0)7980 313 675", email: "woody@brucegillinghampollard.com" },
-  { photo: "/images/team/tracey-pollard.jpg", name: "Tracey Pollard", title: "Founding Director", phone: "+44 (0)7779 323 306", email: "tracey@brucegillinghampollard.com" },
-  { photo: "/images/team/charlotte-roberts.jpg", name: "Charlotte Roberts", title: "Equity Director, Co-Head London Estates", phone: "+44 (0)7738 448 338", email: "charlotte@brucegillinghampollard.com" },
-  { photo: "/images/team/rupert-bentley-smith.jpg", name: "Rupert Bentley-Smith", title: "Equity Director, Co-Head London Estates", phone: "+44 (0)7876 354 160", email: "rupert@brucegillinghampollard.com" },
+  { photo: "/images/team/tracey-pollard.jpg", name: "Tracey Pollard", title: "Founding Director, Co-Head High Streets", phone: "+44 (0)7779 323 306", email: "tracey@brucegillinghampollard.com" },
+  { photo: "/images/team/charlotte-roberts.jpg", name: "Charlotte Roberts", title: "Equity Director, Co-Head of Leasing", phone: "+44 (0)7738 448 338", email: "charlotte@brucegillinghampollard.com" },
+  { photo: "/images/team/rupert-bentley-smith.jpg", name: "Rupert Bentley-Smith", title: "Equity Director, Co-Head of Leasing", phone: "+44 (0)7876 354 160", email: "rupert@brucegillinghampollard.com" },
   { photo: "/images/team/jack-barratt.jpg", name: "Jack Barratt", title: "Equity Director, Head of Investment", phone: "+44 (0)7788 215 044", email: "jack@brucegillinghampollard.com" },
-  { photo: "/images/team/victoria-broadhead.jpg", name: "Victoria Broadhead", title: "Head of National", phone: "+44 (0)7793 158 133", email: "victoria@brucegillinghampollard.com" },
-  { photo: "/images/team/peter-wood.jpg", name: "Peter Wood", title: "Head of Lease Consultancy and Asset Management", phone: "+44 (0)7872 602 336", email: "peter@brucegillinghampollard.com" },
+  { photo: "/images/team/victoria-broadhead.jpg", name: "Victoria Broadhead", title: "Director, Co-Head Shopping Centres", phone: "+44 (0)7793 158 133", email: "victoria@brucegillinghampollard.com" },
+  { photo: "/images/team/peter-wood.jpg", name: "Peter Wood", title: "Head of Lease Advisory and Asset Management", phone: "+44 (0)7872 602 336", email: "peter@brucegillinghampollard.com" },
   { photo: "/images/team/nick-halley.jpg", name: "Nick Halley", title: "Director, Investment", phone: "+44 (0)7766 042 736", email: "nick@brucegillinghampollard.com" },
-  { photo: "/images/team/lucy-gardiner.jpg", name: "Lucy Gardiner", title: "Director, National Leasing", phone: "+44 (0)7741 877 452", email: "lucyg@brucegillinghampollard.com" },
-  { photo: "/images/team/lizzie-knights.jpg", name: "Lizzie Knights", title: "Director, London Leasing", phone: "+44 (0)7511 902 073", email: "lizzie@brucegillinghampollard.com" },
-  { photo: "/images/team/harry-elliott.jpg", name: "Harry Elliott", title: "Director, Brand Representation", phone: "+44 (0)7568 367 777", email: "harrye@brucegillinghampollard.com" },
-  { photo: "/images/team/emily-dumbell.jpg", name: "Emily Dumbell", title: "Director, National Leasing", phone: "+44 (0)7805 259 793", email: "emily@brucegillinghampollard.com" },
+  { photo: "/images/team/lucy-gardiner.jpg", name: "Lucy Gardiner", title: "Director, Co-Head High Streets", phone: "+44 (0)7741 877 452", email: "lucyg@brucegillinghampollard.com" },
+  { photo: "/images/team/lizzie-knights.jpg", name: "Lizzie Knights", title: "Director, Co-Head London Estates & City", phone: "+44 (0)7511 902 073", email: "lizzie@brucegillinghampollard.com" },
+  { photo: "/images/team/harry-elliott.jpg", name: "Harry Elliott", title: "Director, Co-Head Brand Representation", phone: "+44 (0)7568 367 777", email: "harrye@brucegillinghampollard.com" },
+  { photo: "/images/team/emily-dumbell.jpg", name: "Emily Dumbell", title: "Director, Shopping Centres", phone: "+44 (0)7805 259 793", email: "emily@brucegillinghampollard.com" },
   { photo: "/images/team/nick-goodman.jpg", name: "Nick Goodman", title: "Consultant, Investment", phone: "+44 (0)7818 012 432", email: "nickgoodman@brucegillinghampollard.com" },
   { photo: "/images/team/tom-cater.jpg", name: "Tom Cater", title: "Associate Director, Lease Advisory", phone: "+44 (0)7947 484 902", email: "tom@brucegillinghampollard.com" },
-  { photo: "/images/team/lucy-cope.jpg", name: "Lucy Cope", title: "Associate Director, London Leasing", phone: "+44 (0)7595 267 866", email: "lucy@brucegillinghampollard.com" },
-  { photo: "/images/team/evie-north.jpg", name: "Evie North", title: "Associate Director, Brand Representation", phone: "+44 (0)7595 349 057", email: "evie@brucegillinghampollard.com" },
-  { photo: "/images/team/alex-todd.jpg", name: "Alex Todd", title: "Senior Surveyor, Development", phone: "+44 (0)7526 504 806", email: "alext@brucegillinghampollard.com" },
-  { photo: "/images/team/millie-edwards.jpg", name: "Millie Edwards", title: "Leasing", phone: OFFICE_PHONE, email: "TBC" },
-  { photo: "/images/team/emily-cann.jpg", name: "Emily Cann", title: "Graduate Surveyor, London Leasing", phone: "+44 (0)7516 660 791", email: "emilyc@brucegillinghampollard.com" },
-  { photo: "/images/team/will-penfold.jpg", name: "Will Penfold", title: "Graduate Surveyor, London Leasing", phone: "+44 (0)7760 881 270", email: "willp@brucegillinghampollard.com" },
-  { photo: "/images/team/luke-donohoe.jpg", name: "Luke Donohoe", title: "Graduate Surveyor, National Leasing", phone: "+44 (0)7983 855 926", email: "luke@brucegillinghampollard.com" },
-  { photo: "/images/team/libby-evans.jpg", name: "Libby Evans", title: "Graduate Surveyor, Development", phone: "+44 (0)7931 462 768", email: "libbye@brucegillinghampollard.com" },
+  { photo: "/images/team/lucy-cope.jpg", name: "Lucy Cope", title: "Associate Director, Co-Head London Estates", phone: "+44 (0)7595 267 866", email: "lucy@brucegillinghampollard.com" },
+  { photo: "/images/team/evie-north.jpg", name: "Evie North", title: "Associate Director, London Estates", phone: "+44 (0)7595 349 057", email: "evie@brucegillinghampollard.com" },
+  { photo: "/images/team/alex-todd.jpg", name: "Alex Todd", title: "Senior Surveyor, Shopping Centres", phone: "+44 (0)7526 504 806", email: "alext@brucegillinghampollard.com" },
+  { photo: "/images/team/millie-edwards.jpg", name: "Millie Edwards", title: "Co-Head Shopping Centres", phone: OFFICE_PHONE, email: "TBC" },
+  { photo: "/images/team/ben-sykes.jpg", name: "Ben Sykes", title: "Surveyor, Shopping Centres", phone: OFFICE_PHONE, email: "TBC" },
+  { photo: "/images/team/kate-martin.jpg", name: "Kate Martin", title: "Surveyor, Shopping Centres", phone: OFFICE_PHONE, email: "TBC" },
+  { name: "Beth Emmens", title: "Co-Head Brand Representation", phone: OFFICE_PHONE, email: "TBC" },
+  { photo: "/images/team/carly-cunliffe.jpg", name: "Carly Cunliffe", title: "Brand Representation", phone: OFFICE_PHONE, email: "TBC" },
+  { photo: "/images/team/emily-cann.jpg", name: "Emily Cann", title: "Graduate Surveyor, London Estates", phone: "+44 (0)7516 660 791", email: "emilyc@brucegillinghampollard.com" },
+  { photo: "/images/team/will-penfold.jpg", name: "Will Penfold", title: "Graduate Surveyor, London Estates", phone: "+44 (0)7760 881 270", email: "willp@brucegillinghampollard.com" },
+  { photo: "/images/team/luke-donohoe.jpg", name: "Luke Donohoe", title: "Graduate Surveyor, Shopping Centres", phone: "+44 (0)7983 855 926", email: "luke@brucegillinghampollard.com" },
+  { photo: "/images/team/libby-evans.jpg", name: "Libby Evans", title: "Graduate Surveyor, High Streets", phone: "+44 (0)7931 462 768", email: "libbye@brucegillinghampollard.com" },
   { photo: "/images/team/jonny-palmer.jpg", name: "Jonny Palmer", title: "Graduate, Investment", phone: "+44 (0)7506 439 429", email: "jonny@brucegillinghampollard.com" },
   { name: "Harriette Walker-Clark", title: "PA & Office Manager", phone: OFFICE_PHONE, email: "harriette@brucegillinghampollard.com" },
-  { photo: "/images/team/layla-odriscoll.jpg", name: "Layla O'Driscoll", title: "PA & Office Manager", phone: OFFICE_PHONE, email: "layla@brucegillinghampollard.com" },
+  { photo: "/images/team/layla-odriscoll.jpg", name: "Layla O'Driscoll", title: "Chief Operating Officer", phone: OFFICE_PHONE, email: "layla@brucegillinghampollard.com" },
   { photo: "/images/team/cara-milligan.jpg", name: "Cara Milligan", title: "PA — National", phone: OFFICE_PHONE, email: "cara@brucegillinghampollard.com" },
 ];
 
@@ -122,9 +127,11 @@ export const LEASING_CONTACTS = byName(
   "Charlotte Roberts",
   "Rupert Bentley-Smith",
   "Victoria Broadhead",
+  "Millie Edwards",
   "Lizzie Knights",
-  "Emily Dumbell",
   "Lucy Cope",
+  "Lucy Gardiner",
+  "Tracey Pollard",
 );
 
 export const INVESTMENT_CONTACTS = byName(
@@ -135,7 +142,7 @@ export const INVESTMENT_CONTACTS = byName(
 
 export const LEASE_ADVISORY_CONTACTS = byName("Peter Wood", "Tom Cater");
 
-export const BRAND_REP_CONTACTS = byName("Harry Elliott", "Evie North");
+export const BRAND_REP_CONTACTS = byName("Harry Elliott", "Beth Emmens", "Carly Cunliffe");
 
 // Tracey, 2026-09-11: Pete Wood replaces Alex on the consultancy page.
 export const CONSULTANCY_CONTACTS = byName("Tracey Pollard", "Peter Wood", "Libby Evans");
@@ -708,7 +715,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
       "Our relationships with clients are equally long-standing. We are proud to have advised some of our shopping centre clients for more than 18 years, providing continuity of insight and advice as their assets - and the market - have continued to evolve.",
     ],
     howWeHelp: ["Leasing and strategic advice", "Asset management", "Lease consultancy", "Investment advice"],
-    contacts: ["Victoria Broadhead", "Charlotte Roberts", "Emily Dumbell", "Alex Todd", "Emily Cann"],
+    contacts: ["Millie Edwards", "Victoria Broadhead", "Emily Dumbell", "Alex Todd", "Ben Sykes", "Kate Martin", "Luke Donohoe"],
   },
   {
     slug: "london-estates",
@@ -721,7 +728,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
       "We believe that building destinations across London's estates requires a highly considered approach. Our Leasing team works with estate owners and landlords to identify opportunities, attract the right occupiers and deliver strategies that enhance the character and commercial performance of their portfolios.",
       "Working closely with our colleagues in Brand Representation, we combine extensive relationships across retail, hospitality and leisure with detailed knowledge of London's property market to create distinctive destinations. From sought after independents to established international brands looking for a London flagship, we identify the right tenant mix to reflect the character of each estate, respond to evolving customer expectations and create memorable places.",
     ],
-    contacts: ["Charlotte Roberts", "Rupert Bentley-Smith", "Lizzie Knights"],
+    contacts: ["Lizzie Knights", "Lucy Cope", "Emily Cann", "Evie North", "Will Penfold"],
   },
   {
     slug: "city",
@@ -734,7 +741,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
     body: [
       "From exciting hospitality offerings to drive footfall throughout the day to new competitive socialising concepts, we create diverse tenant mixes that reflect the evolving nature of the City of London.",
     ],
-    contacts: ["Charlotte Roberts", "Emily Cann"],
+    contacts: ["Lizzie Knights", "Peter Wood"],
   },
   {
     slug: "high-streets",
@@ -747,7 +754,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
     body: [
       "We curate dynamic occupier mixes that reflect the needs and unique characteristics of the communities they serve; taking a long term view to build distinctive high streets that remain vibrant over time.",
     ],
-    contacts: ["Victoria Broadhead", "Lucy Gardiner", "Emily Dumbell"],
+    contacts: ["Lucy Gardiner", "Tracey Pollard", "Libby Evans"],
   },
 ];
 
