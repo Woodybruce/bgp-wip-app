@@ -33,8 +33,7 @@ import {
   Menu, MessageSquare, FileText, Handshake,
   Newspaper, Mail, Phone, Download, Eye, Star, Upload,
   Mic, Square, Building, Link2,
-  Palette, ChevronRight, Sun, CalendarDays, Bell,
-} from "lucide-react";
+  Palette, ChevronRight, Sun, CalendarDays, Bell, Megaphone } from "lucide-react";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
 import { useKeyboardOpen } from "@/hooks/use-mobile";
 import { ThreadMediaDialog } from "@/components/chat-panel";
@@ -888,6 +887,14 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, onArchive,
     }
     if (thread.groupPicUrl) {
       return <img src={thread.groupPicUrl} alt="" className="w-[52px] h-[52px] rounded-full object-cover shrink-0 ring-2 ring-gray-100" />;
+    }
+    // The firm-wide channel isn't anyone's chat — no borrowed member photo.
+    if (isGossipThread(thread)) {
+      return (
+        <div className="w-[52px] h-[52px] rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+          <Megaphone className="w-6 h-6 text-primary" />
+        </div>
+      );
     }
     if (!isDm && otherMembers.length > 0) {
       const firstPic = otherMembers.find(m => userPics?.[m.id])?.id;
