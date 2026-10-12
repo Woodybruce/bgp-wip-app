@@ -2,7 +2,6 @@ import { Link, useRoute } from "wouter";
 import KeyContacts from "../components/KeyContacts";
 import Placeholder from "../components/Placeholder";
 import { LEASING_SECTORS, SHOPPING_CENTRES, type Person } from "../lib/content";
-import { DraftNote, useDraftMode } from "../lib/draft";
 import { useSiteContent } from "../lib/site-content";
 
 export const peopleNamed = (team: Person[], names: string[]): Person[] =>
@@ -21,10 +20,9 @@ function NotFound() {
 
 export default function LeasingSector() {
   const [, params] = useRoute("/leasing/sectors/:slug");
-  const draft = useDraftMode();
   const { team } = useSiteContent();
   const sector = LEASING_SECTORS.find((s) => s.slug === params?.slug);
-  if (!sector || (!sector.approved && !draft)) return <NotFound />;
+  if (!sector) return <NotFound />;
   const contacts = peopleNamed(team, sector.contacts);
   // Photographed centres lead the grid so the image tiles sit together.
   const centres = sector.slug === "shopping-centres" ? [...SHOPPING_CENTRES].sort((a, b) => Number(!!b.image) - Number(!!a.image)) : [];
@@ -47,11 +45,6 @@ export default function LeasingSector() {
       </section>
 
       <section className="mx-auto max-w-6xl px-4 py-14">
-        {!sector.approved && (
-          <div className="mb-8">
-            <DraftNote>not yet approved{sector.needed ? ` · needed: ${sector.needed}` : ""}</DraftNote>
-          </div>
-        )}
         <div className={`grid grid-cols-1 gap-10 ${sector.howWeHelp ? "md:grid-cols-[1fr_280px]" : "md:grid-cols-2"}`}>
           <div className="space-y-4">
             <span className="section-label">Our experience</span>
@@ -71,6 +64,18 @@ export default function LeasingSector() {
           )}
         </div>
       </section>
+
+      {sector.gallery && (
+        <section className="mx-auto max-w-6xl px-4 pb-14">
+          <div className="card-strip sm:grid-cols-3">
+            {sector.gallery.map((src) => (
+              <div key={src} className="img-frame">
+                <Placeholder className="aspect-[4/3] w-full" src={src} alt="" />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {centres.length > 0 && (
         <section className="mx-auto max-w-6xl px-4 pb-14">
@@ -95,15 +100,13 @@ export default function LeasingSector() {
                   <div className={`border-t border-bgp-wine/30 pt-3 ${c.image ? "mt-3" : ""}`}>
                     <p className="font-display text-lg leading-snug text-bgp-wine">{c.name}</p>
                     <p className="mt-0.5 label-caps text-bgp-ink/45">{c.location}</p>
-                    <p className="mt-1.5 text-sm font-light text-bgp-ink/70">{c.contacts.join(", ")}</p>
-                    {draft && <p className="mt-2 text-sm font-light text-bgp-red/80 leading-relaxed">{c.draftBlurb}</p>}
+                    <p className="mt-2 text-sm font-light text-bgp-ink/75 leading-relaxed">{c.blurb}</p>
+                    <p className="mt-1.5 label-caps text-bgp-ink/45">{c.contacts.join(" · ")}</p>
                   </div>
                 </>
               );
-              return draft ? (
+              return (
                 <Link key={c.slug} href={`/leasing/sectors/shopping-centres/${c.slug}`} className="group block">{inner}</Link>
-              ) : (
-                <div key={c.slug} className="group">{inner}</div>
               );
             })}
           </div>
@@ -115,16 +118,13 @@ export default function LeasingSector() {
   );
 }
 
-// One page per centre — brief bio, photo and contacts. Draft mode only until
-// the one-line descriptions have been checked.
+// One page per centre — brief bio, photos and contacts.
 export function ShoppingCentrePage() {
   const [, params] = useRoute("/leasing/sectors/shopping-centres/:slug");
-  const draft = useDraftMode();
   const { team } = useSiteContent();
   const centre = SHOPPING_CENTRES.find((c) => c.slug === params?.slug);
-  if (!centre || !draft) return <NotFound />;
+  if (!centre) return <NotFound />;
   const contacts = peopleNamed(team, centre.contacts);
-  const missing = centre.contacts.filter((n) => !contacts.some((p) => p.name === n));
   return (
     <div>
       <section className="mx-auto max-w-6xl px-4 py-10">
@@ -135,11 +135,24 @@ export function ShoppingCentrePage() {
         <div className="grid grid-cols-1 md:grid-cols-[1fr_280px] gap-10 mt-8">
           <div>
             <h1 className="display text-3xl md:text-4xl">{centre.name}</h1>
-            <div className="img-frame mt-6">
-              <Placeholder className="aspect-[16/9] w-full" src={centre.image} alt={centre.name} />
-            </div>
-            <div className="mt-4"><DraftNote>description to be checked by the team</DraftNote></div>
-            <p className="mt-6 max-w-2xl text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">{centre.draftBlurb}</p>
+            {centre.image && (
+              <div className="img-frame mt-6">
+                <Placeholder className="aspect-[16/9] w-full" src={centre.image} alt={centre.name} />
+              </div>
+            )}
+            <p className="mt-6 max-w-2xl text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">{centre.blurb}</p>
+            <p className="mt-4 max-w-2xl text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">
+              BGP advises the owners of {centre.name} on leasing strategy, tenant mix and positioning, drawing on our relationships with leading occupiers and our London Estates and High Street teams.
+            </p>
+            {centre.gallery && (
+              <div className="card-strip sm:grid-cols-3 mt-8">
+                {centre.gallery.map((src) => (
+                  <div key={src} className="img-frame">
+                    <Placeholder className="aspect-[4/3] w-full" src={src} alt="" />
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <aside className="border-t border-bgp-ink pt-3 self-start">
             {[["Location", centre.location], ["Primary contacts", centre.contacts.join(", ")]].map(([k, v]) => (
@@ -152,7 +165,7 @@ export function ShoppingCentrePage() {
           </aside>
         </div>
       </section>
-      {contacts.length > 0 && <KeyContacts people={contacts} blurb={missing.length ? `${missing.join(", ")} not yet on the team page.` : undefined} />}
+      {contacts.length > 0 && <KeyContacts people={contacts} />}
     </div>
   );
 }

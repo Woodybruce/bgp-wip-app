@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-12T10:54:15.134Z",
+  "generatedAt": "2026-10-12T10:59:07.793Z",
   "site": "https://www.bgp.uk.com",
   "note": "Content of bgp.uk.com. Pages are rendered client-side; use this file rather than fetching HTML. Live availability comes from listingsFeed.",
   "heroStatement": "Great places are built through connected thinking.",
@@ -53,7 +53,7 @@
     {
       "name": "Brand Representation",
       "url": "https://www.bgp.uk.com/brand-representation",
-      "intro": "Brand led retail estate advisory. Providing strategic support and market analysis for brand expansion across multi sector clients — acquiring space for brands to thrive in.",
+      "intro": "We help brands discover, secure and maximise opportunities across the UK's most exciting retail, leisure and hospitality destinations.",
       "image": "https://www.bgp.uk.com/images/fred-perry-camden.jpg"
     },
     {
@@ -294,7 +294,7 @@
         "Sector": "Restaurant & leisure",
         "Location": "Piccadilly Circus, W1"
       },
-      "image": "https://www.bgp.uk.com/images/stills-preview-piccadilly.jpg"
+      "image": "https://www.bgp.uk.com/images/lucent-piccadilly.jpg"
     },
     {
       "title": "20 Hanover Square",
@@ -362,7 +362,7 @@
         "Client": "The Crown Estate",
         "Location": "Cambridge Business Park"
       },
-      "image": null
+      "image": "https://www.bgp.uk.com/images/principal-place.jpg"
     },
     {
       "title": "Mayfield, Manchester — Amenity & Ground Floor Activation Strategy",
@@ -375,7 +375,7 @@
         "Offices": "1,666,267 sq ft",
         "Homes": "1,400"
       },
-      "image": null
+      "image": "https://www.bgp.uk.com/images/apartments.jpg"
     },
     {
       "title": "Hammerson",
@@ -408,7 +408,7 @@
         "Service": "Lease Advisory",
         "Client": "Bloomberg"
       },
-      "image": null
+      "image": "https://www.bgp.uk.com/images/city-towers.jpg"
     },
     {
       "title": "The Royal Exchange",
@@ -419,7 +419,7 @@
         "Service": "Lease Advisory",
         "Client": "The Royal Exchange"
       },
-      "image": "https://www.bgp.uk.com/images/stills-preview-royal-exchange.jpg"
+      "image": "https://www.bgp.uk.com/images/royal-exchange.jpg"
     },
     {
       "title": "ATIS",
@@ -432,7 +432,7 @@
         "Sector": "F&B — healthy grab & go",
         "First site": "City Road, Atlas Building"
       },
-      "image": "https://www.bgp.uk.com/images/stills-preview-central-cafe.jpg"
+      "image": "https://www.bgp.uk.com/images/cafe.jpg"
     },
     {
       "title": "Fred Perry",
@@ -458,7 +458,7 @@
         "Sector": "Fitness & wellness",
         "Coverage": "London & UK"
       },
-      "image": "https://www.bgp.uk.com/images/stills-preview-gym.jpg"
+      "image": "https://www.bgp.uk.com/images/gym.jpg"
     },
     {
       "title": "YOLK",

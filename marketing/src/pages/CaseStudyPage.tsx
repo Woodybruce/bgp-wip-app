@@ -45,9 +45,11 @@ export default function CaseStudyPage() {
         <div className="mt-8 grid grid-cols-1 md:grid-cols-[1fr_220px] gap-10">
           <div>
             <h1 className="display text-3xl md:text-4xl leading-tight">{caseStudy.title}</h1>
-            <div className="mt-6">
-              <Placeholder className="aspect-[16/10] w-full" src={caseStudy.image} alt={caseStudy.title} />
-            </div>
+            {caseStudy.image && (
+              <div className="mt-6 img-frame">
+                <Placeholder className="aspect-[16/10] w-full" src={caseStudy.image} alt={caseStudy.title} />
+              </div>
+            )}
             <div className="mt-8 space-y-4 max-w-xl">
               {caseStudy.body.map((para) => (
                 <p key={para.slice(0, 32)} className="text-sm leading-relaxed text-bgp-ink/80">

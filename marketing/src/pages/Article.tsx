@@ -54,7 +54,7 @@ export default function ArticlePage() {
             ),
           )
         ) : (
-          <p className="text-sm text-bgp-ink/50 italic">[Sample] Full article copy to follow.</p>
+          <p className="text-sm leading-relaxed text-bgp-ink/80">{article.standfirst}</p>
         )}
       </div>
 

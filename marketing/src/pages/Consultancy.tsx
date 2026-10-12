@@ -52,8 +52,7 @@ export default function Consultancy() {
 
       {/* Client quote */}
       <section className="mx-auto max-w-6xl px-4 py-14">
-        <div className="grid grid-cols-1 md:grid-cols-[200px_1fr] gap-8 items-center max-w-2xl">
-          <Placeholder className="aspect-square w-full" />
+        <div className="max-w-2xl border-l-2 border-bgp-red pl-6">
           <div>
             <p className="text-lg italic leading-relaxed text-bgp-ink/80">"{TESTIMONIAL.quote}"</p>
             <p className="label-caps mt-4">{TESTIMONIAL.name}</p>

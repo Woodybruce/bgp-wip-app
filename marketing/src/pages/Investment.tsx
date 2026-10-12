@@ -1,8 +1,7 @@
 import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
 import Placeholder from "../components/Placeholder";
-import { DRAFT_COPY, INVESTMENT_DEALS, SERVICES } from "../lib/content";
-import { DraftNote, useDraftMode } from "../lib/draft";
+import { INVESTMENT_DEALS, SERVICE_COPY, SERVICES } from "../lib/content";
 import { findCaseStudy, useSiteContent } from "../lib/site-content";
 
 export default function Investment() {
@@ -10,7 +9,6 @@ export default function Investment() {
   const INVESTMENT_CONTACTS = content.contacts.investment;
   const caseStudyBySlug = (slug: string) => findCaseStudy(content, slug);
   const service = SERVICES.find((s) => s.slug === "investment")!;
-  const draft = useDraftMode();
   return (
     <div>
       <section className="relative">
@@ -23,16 +21,14 @@ export default function Investment() {
         </div>
       </section>
 
-      {draft && (
-        <section className="mx-auto max-w-6xl px-4 pt-14">
-          <DraftNote>{DRAFT_COPY.investment.note}</DraftNote>
-          <div className="mt-6 max-w-2xl space-y-4">
-            {DRAFT_COPY.investment.body.map((p) => (
-              <p key={p.slice(0, 24)} className="text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">{p}</p>
-            ))}
-          </div>
-        </section>
-      )}
+      <section className="mx-auto max-w-6xl px-4 pt-14">
+        <span className="section-label">Our approach</span>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-4 max-w-5xl">
+          {SERVICE_COPY.investment.body.map((p) => (
+            <p key={p.slice(0, 24)} className="text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">{p}</p>
+          ))}
+        </div>
+      </section>
 
       <section className="mx-auto max-w-6xl px-4 py-16 md:py-20">
         <div className="flex flex-wrap items-end justify-between gap-4 border-b border-bgp-wine/25 pb-6 mb-10">

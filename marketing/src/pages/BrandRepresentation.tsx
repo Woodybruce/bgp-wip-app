@@ -2,8 +2,7 @@ import { Link } from "wouter";
 import KeyContacts from "../components/KeyContacts";
 import ClientRow from "../components/ClientRow";
 import Placeholder from "../components/Placeholder";
-import { BRAND_REP_CLIENTS, DRAFT_COPY, SERVICES } from "../lib/content";
-import { DraftNote, useDraftMode } from "../lib/draft";
+import { BRAND_REP_CLIENTS, SERVICE_COPY, SERVICES } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
 
 export default function BrandRepresentation() {
@@ -11,19 +10,15 @@ export default function BrandRepresentation() {
   const { caseStudies, contacts } = useSiteContent();
   const BRAND_REP_CASE_STUDIES = caseStudies.filter((c) => c.service === "Brand Representation");
   const BRAND_REP_CONTACTS = contacts.brand_representation;
-  const draft = useDraftMode();
   return (
     <div>
       <section className="mx-auto max-w-6xl px-4 pt-14">
-        <p className="max-w-xl text-2xl md:text-3xl leading-snug">{draft ? DRAFT_COPY.brandRepresentation.intro : service.intro}</p>
-        {draft && (
-          <div className="mt-6 max-w-2xl space-y-3">
-            <DraftNote>{DRAFT_COPY.brandRepresentation.note}</DraftNote>
-            {DRAFT_COPY.brandRepresentation.body.map((p) => (
-              <p key={p.slice(0, 24)} className="text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">{p}</p>
-            ))}
-          </div>
-        )}
+        <p className="max-w-xl text-2xl md:text-3xl leading-snug">{service.intro}</p>
+        <div className="mt-6 max-w-2xl space-y-3">
+          {SERVICE_COPY.brandRepresentation.body.map((p) => (
+            <p key={p.slice(0, 24)} className="text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">{p}</p>
+          ))}
+        </div>
       </section>
 
       <section className="mx-auto max-w-6xl px-4 py-14">

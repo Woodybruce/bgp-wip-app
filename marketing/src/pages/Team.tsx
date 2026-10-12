@@ -19,7 +19,7 @@ export default function Team() {
   return (
     <div>
       <section className="relative">
-        <Placeholder className="h-80 md:h-[28rem] w-full" src="/images/office.jpg" alt="Office interior — team photo to follow" />
+        <Placeholder className="h-80 md:h-[28rem] w-full" src="/images/office.jpg" alt="The BGP office" />
         <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/70 via-bgp-ink/10 to-transparent" />
         <div className="absolute inset-0 flex items-end">
           <div className="mx-auto max-w-6xl px-4 pb-10 w-full">
@@ -46,13 +46,11 @@ export default function Team() {
               </p>
               <p className="text-sm font-light text-bgp-ink/70">{p.title}</p>
               <p className="text-sm tabular text-bgp-ink/80">{p.phone}</p>
-              <p className="text-sm break-all">
-                {p.email === "TBC" ? (
-                  <span className="text-bgp-ink/40">Email to follow</span>
-                ) : (
+              {p.email !== "TBC" && (
+                <p className="text-sm break-all">
                   <a href={`mailto:${p.email}`} className="hover:text-bgp-red transition-colors">{p.email}</a>
-                )}
-              </p>
+                </p>
+              )}
             </div>
           ))}
         </div>

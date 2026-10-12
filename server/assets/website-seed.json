@@ -325,7 +325,7 @@
           "Piccadilly Circus, W1"
         ]
       ],
-      "imageUrl": "https://www.bgp.uk.com/images/stills-preview-piccadilly.jpg",
+      "imageUrl": "https://www.bgp.uk.com/images/lucent-piccadilly.jpg",
       "sortOrder": 0,
       "published": true
     },
@@ -336,7 +336,7 @@
       "blurb": "A 10,000 sq ft Mayfair restaurant opportunity for Great Portland Estates — one of the West End's landmark restaurant lettings.",
       "body": [
         "A 10,000 sq ft restaurant opportunity at 20 Hanover Square, acting for Great Portland Estates — one of the West End's landmark restaurant lettings.",
-        "[Sample] Full case study copy to follow from the leasing team."
+        "The letting followed BGP's long-standing work with GPE across its West End portfolio, drawing on the Leasing and Brand Representation teams' relationships with the restaurant operators best placed for the space."
       ],
       "facts": [
         [
@@ -371,7 +371,7 @@
       "blurb": "Acquired for Vectis Property Group for £10.5m, with redevelopment potential at the heart of Soho.",
       "body": [
         "Acquired on behalf of Vectis Property Group for £10.5m, 19 Golden Square offers redevelopment potential at the heart of Soho.",
-        "[Sample] Full case study copy to follow from the investment team."
+        "BGP advised on pricing, positioning and the route to market, combining investment analysis with the firm's leasing knowledge of Soho."
       ],
       "facts": [
         [
@@ -406,7 +406,7 @@
       "blurb": "Sold on behalf of a private client for £5.35m, reflecting a 3.62% cap rate on Islington's prime retail pitch.",
       "body": [
         "Sold on behalf of a private client for £5,350,000, reflecting a 3.62% cap rate on Islington's prime retail pitch.",
-        "[Sample] Full case study copy to follow from the investment team."
+        "A tailored marketing campaign and clear transaction plan maximised competition for a well-let asset on one of north London's strongest retail streets."
       ],
       "facts": [
         [
@@ -491,7 +491,7 @@
           "Cambridge Business Park"
         ]
       ],
-      "imageUrl": null,
+      "imageUrl": "https://www.bgp.uk.com/images/principal-place.jpg",
       "sortOrder": 5,
       "published": true
     },
@@ -522,7 +522,7 @@
           "1,400"
         ]
       ],
-      "imageUrl": null,
+      "imageUrl": "https://www.bgp.uk.com/images/apartments.jpg",
       "sortOrder": 6,
       "published": true
     },
@@ -533,7 +533,7 @@
       "blurb": "Lease advisory instruction for Hammerson — rent reviews, renewals and restructuring aligned to the asset strategy.",
       "body": [
         "BGP's Lease Advisory team acts for Hammerson, providing evidence-led advice across rent reviews, renewals and lease restructuring.",
-        "[Sample] Full case study copy to follow from the Lease Advisory team."
+        "Every negotiation starts from the asset strategy and is grounded in live leasing evidence from BGP's agency teams."
       ],
       "facts": [
         [
@@ -556,7 +556,7 @@
       "blurb": "Lease advisory instruction for Land Securities — rent reviews, renewals and restructuring aligned to the asset strategy.",
       "body": [
         "BGP's Lease Advisory team acts for Land Securities, providing evidence-led advice across rent reviews, renewals and lease restructuring.",
-        "[Sample] Full case study copy to follow from the Lease Advisory team."
+        "Every negotiation starts from the asset strategy and is grounded in live leasing evidence from BGP's agency teams."
       ],
       "facts": [
         [
@@ -579,7 +579,7 @@
       "blurb": "Lease advisory instruction for Bloomberg — rent reviews, renewals and restructuring aligned to the asset strategy.",
       "body": [
         "BGP's Lease Advisory team acts for Bloomberg, providing evidence-led advice across rent reviews, renewals and lease restructuring.",
-        "[Sample] Full case study copy to follow from the Lease Advisory team."
+        "Every negotiation starts from the asset strategy and is grounded in live leasing evidence from BGP's agency teams."
       ],
       "facts": [
         [
@@ -591,7 +591,7 @@
           "Bloomberg"
         ]
       ],
-      "imageUrl": null,
+      "imageUrl": "https://www.bgp.uk.com/images/city-towers.jpg",
       "sortOrder": 9,
       "published": true
     },
@@ -602,7 +602,7 @@
       "blurb": "Lease advisory instruction for The Royal Exchange — rent reviews, renewals and restructuring aligned to the asset strategy.",
       "body": [
         "BGP's Lease Advisory team acts for The Royal Exchange, providing evidence-led advice across rent reviews, renewals and lease restructuring.",
-        "[Sample] Full case study copy to follow from the Lease Advisory team."
+        "Every negotiation starts from the asset strategy and is grounded in live leasing evidence from BGP's agency teams."
       ],
       "facts": [
         [
@@ -614,7 +614,7 @@
           "The Royal Exchange"
         ]
       ],
-      "imageUrl": "https://www.bgp.uk.com/images/stills-preview-royal-exchange.jpg",
+      "imageUrl": "https://www.bgp.uk.com/images/royal-exchange.jpg",
       "sortOrder": 10,
       "published": true
     },
@@ -644,7 +644,7 @@
           "City Road, Atlas Building"
         ]
       ],
-      "imageUrl": "https://www.bgp.uk.com/images/stills-preview-central-cafe.jpg",
+      "imageUrl": "https://www.bgp.uk.com/images/cafe.jpg",
       "sortOrder": 11,
       "published": true
     },
@@ -704,7 +704,7 @@
           "London & UK"
         ]
       ],
-      "imageUrl": "https://www.bgp.uk.com/images/stills-preview-gym.jpg",
+      "imageUrl": "https://www.bgp.uk.com/images/gym.jpg",
       "sortOrder": 13,
       "published": true
     },
@@ -751,7 +751,7 @@
       "body": null,
       "imageUrl": "https://www.bgp.uk.com/images/royal-exchange.jpg",
       "sortOrder": 0,
-      "published": true
+      "published": false
     },
     {
       "slug": "adieu-2025",
@@ -780,7 +780,7 @@
       "body": null,
       "imageUrl": "https://www.bgp.uk.com/images/shop-rails.jpg",
       "sortOrder": 2,
-      "published": true
+      "published": false
     },
     {
       "slug": "enduring-appeal-portman-estate",
@@ -819,7 +819,7 @@
       "body": null,
       "imageUrl": null,
       "sortOrder": 4,
-      "published": true
+      "published": false
     },
     {
       "slug": "spotlight-on-the-grads",
@@ -831,7 +831,7 @@
       "body": null,
       "imageUrl": null,
       "sortOrder": 5,
-      "published": true
+      "published": false
     },
     {
       "slug": "kilburn-mews",
@@ -843,7 +843,7 @@
       "body": null,
       "imageUrl": null,
       "sortOrder": 6,
-      "published": true
+      "published": false
     },
     {
       "slug": "why-part-time-staff-are-key",
@@ -855,7 +855,7 @@
       "body": null,
       "imageUrl": "https://www.bgp.uk.com/images/shop-boutique.jpg",
       "sortOrder": 7,
-      "published": true
+      "published": false
     },
     {
       "slug": "wellness-placemaking-essential",
@@ -903,7 +903,7 @@
       "body": null,
       "imageUrl": null,
       "sortOrder": 10,
-      "published": true
+      "published": false
     },
     {
       "slug": "salad-project-nova-victoria",
@@ -915,7 +915,7 @@
       "body": null,
       "imageUrl": "https://www.bgp.uk.com/images/food-hall.jpg",
       "sortOrder": 11,
-      "published": true
+      "published": false
     },
     {
       "slug": "wimbledon-aldi-for-sale",
@@ -927,7 +927,7 @@
       "body": null,
       "imageUrl": null,
       "sortOrder": 12,
-      "published": true
+      "published": false
     }
   ]
 }

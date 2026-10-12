@@ -27,13 +27,11 @@ export default function ContactCard({ person }: { person: Person }) {
       <div className="mt-1 text-xs font-light leading-relaxed text-bgp-ink/70">
         <p>{person.title}</p>
         <p className="tabular">{person.phone}</p>
-        <p className="break-all">
-          {person.email === "TBC" ? (
-            "Email TBC"
-          ) : (
+        {person.email !== "TBC" && (
+          <p className="break-all">
             <a href={`mailto:${person.email}`} className="hover:text-bgp-red">{person.email}</a>
-          )}
-        </p>
+          </p>
+        )}
       </div>
     </div>
   );

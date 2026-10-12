@@ -6,7 +6,6 @@ import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
 import { findCaseStudy, useSiteContent } from "../lib/site-content";
 import { LEASING_INTRO, LEASING_SECTORS } from "../lib/content";
-import { useDraftMode } from "../lib/draft";
 import { Listing, fetchListings } from "../lib/api";
 
 const SIZE_BANDS = [
@@ -50,8 +49,7 @@ function FilterSelect({
 
 export default function Leasing() {
   const content = useSiteContent();
-  const draft = useDraftMode();
-  const sectors = LEASING_SECTORS.filter((x) => x.approved || draft);
+  const sectors = LEASING_SECTORS;
   const [listings, setListings] = useState<Listing[]>([]);
   const [live, setLive] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -100,7 +98,7 @@ export default function Leasing() {
         ))}
       </section>
 
-      {/* Where we work — one tile per sector (unapproved sectors in draft mode only) */}
+      {/* Where we work — one tile per sector */}
       <section className="mx-auto max-w-6xl px-4 pb-14">
         {sectors.length === 1 ? (
           <Link href={`/leasing/sectors/${sectors[0].slug}`} className="group grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
@@ -122,7 +120,7 @@ export default function Leasing() {
                 <Placeholder className="aspect-[4/3] w-full" src={x.image} alt={x.name} />
               </div>
               <p className="label-caps mt-4 group-hover:text-bgp-burgundy transition-colors">
-                {x.name}{!x.approved && <span className="text-bgp-red"> · draft</span>}
+                {x.name}
               </p>
               <p className="mt-3"><span className="explore-link">Explore</span></p>
             </Link>

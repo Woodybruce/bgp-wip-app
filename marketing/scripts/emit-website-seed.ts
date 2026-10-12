@@ -57,7 +57,7 @@ const seed = {
     body: a.body,
     imageUrl: abs(a.image),
     sortOrder: i,
-    published: !a.isSample,
+    published: !!a.body && !a.isSample,
   })),
 };
 

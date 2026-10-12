@@ -32,7 +32,7 @@ export interface SiteContent {
 const BUNDLED: SiteContent = {
   team: TEAM,
   caseStudies: CASE_STUDIES,
-  articles: ARTICLES,
+  articles: ARTICLES.filter((a) => !!a.body),
   contacts: {
     leasing: LEASING_CONTACTS,
     investment: INVESTMENT_CONTACTS,

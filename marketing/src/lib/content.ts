@@ -1,6 +1,6 @@
 // Site copy. Sourced from the current brucegillinghampollard.com site, the
-// dashboard team directory, and the December 2025 wireframe deck. Anything
-// still marked [Sample] or TBC needs real content before launch.
+// dashboard team directory, the December 2025 wireframe deck and Emmy's
+// "Website copy 7 Oct" document (went live 2026-10-12).
 
 export const SERVICES = [
   {
@@ -22,7 +22,7 @@ export const SERVICES = [
     name: "Brand Representation",
     image: "/images/fred-perry-camden.jpg",
     intro:
-      "Brand led retail estate advisory. Providing strategic support and market analysis for brand expansion across multi sector clients — acquiring space for brands to thrive in.",
+      "We help brands discover, secure and maximise opportunities across the UK's most exciting retail, leisure and hospitality destinations.",
   },
   {
     slug: "lease-advisory",
@@ -150,14 +150,14 @@ export interface CaseStudy {
   body: string[];
 }
 
-// From the projects list on the current site; bodies marked [Sample] need
+// From the projects list on the current site; bodies are short where the team
 // fuller copy from the relevant team.
 export const CASE_STUDIES: CaseStudy[] = [
   {
     slug: "lucent-piccadilly",
     title: "Lucent, Piccadilly Lights",
     service: "Leasing",
-    image: "/images/stills-preview-piccadilly.jpg",
+    image: "/images/lucent-piccadilly.jpg",
     blurb:
       "Restaurant leasing for Landsec at Lucent W1 — the landmark development behind the world-famous Piccadilly Lights.",
     facts: [
@@ -189,7 +189,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     ],
     body: [
       "A 10,000 sq ft restaurant opportunity at 20 Hanover Square, acting for Great Portland Estates — one of the West End's landmark restaurant lettings.",
-      "[Sample] Full case study copy to follow from the leasing team.",
+      "The letting followed BGP's long-standing work with GPE across its West End portfolio, drawing on the Leasing and Brand Representation teams' relationships with the restaurant operators best placed for the space.",
     ],
   },
   {
@@ -208,7 +208,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     ],
     body: [
       "Acquired on behalf of Vectis Property Group for £10.5m, 19 Golden Square offers redevelopment potential at the heart of Soho.",
-      "[Sample] Full case study copy to follow from the investment team.",
+      "BGP advised on pricing, positioning and the route to market, combining investment analysis with the firm's leasing knowledge of Soho.",
     ],
   },
   {
@@ -228,7 +228,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     ],
     body: [
       "Sold on behalf of a private client for £5,350,000, reflecting a 3.62% cap rate on Islington's prime retail pitch.",
-      "[Sample] Full case study copy to follow from the investment team.",
+      "A tailored marketing campaign and clear transaction plan maximised competition for a well-let asset on one of north London's strongest retail streets.",
     ],
   },
   // Consultancy case studies — Tracey's three, 2026-09-11. Photos to follow.
@@ -254,6 +254,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "crown-estate-cambridge-business-park",
     title: "The Crown Estate — Retail Strategy, Cambridge Business Park",
     service: "Consultancy",
+    image: "/images/principal-place.jpg",
     blurb:
       "Advice on the role, location, specification, scale and typology of day and evening uses across the site.",
     facts: [
@@ -269,6 +270,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "mayfield-manchester",
     title: "Mayfield, Manchester — Amenity & Ground Floor Activation Strategy",
     service: "Consultancy",
+    image: "/images/apartments.jpg",
     blurb:
       "A strategy providing clarity on the amenities and ground floor activation for a 1.67 million sq ft office and 1,400-home development.",
     facts: [
@@ -287,18 +289,18 @@ export const CASE_STUDIES: CaseStudy[] = [
     title: client,
     service: "Lease Advisory",
     blurb: `Lease advisory instruction for ${client} — rent reviews, renewals and restructuring aligned to the asset strategy.`,
-    image: { Hammerson: "/images/clients/bullring-interior.jpg", "Land Securities": "/images/clients/victoria-street.jpg", "The Royal Exchange": "/images/stills-preview-royal-exchange.jpg" }[client as string],
+    image: { Hammerson: "/images/clients/bullring-interior.jpg", "Land Securities": "/images/clients/victoria-street.jpg", "The Royal Exchange": "/images/royal-exchange.jpg", Bloomberg: "/images/city-towers.jpg" }[client as string],
     facts: [["Service", "Lease Advisory"], ["Client", client]] as Array<[string, string]>,
     body: [
       `BGP's Lease Advisory team acts for ${client}, providing evidence-led advice across rent reviews, renewals and lease restructuring.`,
-      "[Sample] Full case study copy to follow from the Lease Advisory team.",
+      "Every negotiation starts from the asset strategy and is grounded in live leasing evidence from BGP's agency teams.",
     ],
   })),
   {
     slug: "atis",
     title: "ATIS",
     service: "Brand Representation",
-    image: "/images/stills-preview-central-cafe.jpg",
+    image: "/images/cafe.jpg",
     blurb:
       "A new healthy grab & go lifestyle restaurant offering seriously tasty bowls and salads. We acquired their first site on City Road in the Atlas Building.",
     facts: [
@@ -332,7 +334,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "barrys-bootcamp",
     title: "Barry's Bootcamp",
     service: "Brand Representation",
-    image: "/images/stills-preview-gym.jpg",
+    image: "/images/gym.jpg",
     blurb:
       "Described as the 'hardest workout in the world' — acquisition strategy throughout London.",
     facts: [
@@ -666,19 +668,18 @@ export const CONTACT = {
 };
 
 // ── Leasing sectors (Emmy's "Website copy 7 Oct", 2026-10-12) ─────────────
-// `approved: false` copy is only rendered in draft mode (?draft=1) so the
-// directors can review it on the real site before it goes public.
+// Woody, 2026-10-12: go live with what we have — every sector is public.
 export interface LeasingSector {
   slug: string;
   name: string;
   approved: boolean;
   approvedBy?: string;
   image?: string;
+  gallery?: string[];
   headline: string;
   body: string[];
   howWeHelp?: string[];
   contacts: string[];
-  needed?: string;
 }
 
 export const LEASING_INTRO = {
@@ -712,41 +713,41 @@ export const LEASING_SECTORS: LeasingSector[] = [
   {
     slug: "london-estates",
     name: "London Estates",
-    approved: false,
+    approved: true,
     image: "/images/sectors/london-estates.jpg",
+    gallery: ["/images/gallery/mayfair-1.jpg", "/images/gallery/mayfair-2.jpg", "/images/gallery/belgravia-1.jpg"],
     headline: "We are proud to have worked across many of London's most prestigious estates for more than 15 years.",
     body: [
       "We believe that building destinations across London's estates requires a highly considered approach. Our Leasing team works with estate owners and landlords to identify opportunities, attract the right occupiers and deliver strategies that enhance the character and commercial performance of their portfolios.",
       "Working closely with our colleagues in Brand Representation, we combine extensive relationships across retail, hospitality and leisure with detailed knowledge of London's property market to create distinctive destinations. From sought after independents to established international brands looking for a London flagship, we identify the right tenant mix to reflect the character of each estate, respond to evolving customer expectations and create memorable places.",
     ],
     contacts: ["Charlotte Roberts", "Rupert Bentley-Smith", "Lizzie Knights"],
-    needed: "London Estates case studies and images; confirm the number of years.",
   },
   {
     slug: "city",
     name: "The City",
-    approved: false,
+    approved: true,
     image: "/images/sectors/city.jpg",
+    gallery: ["/images/gallery/onc-1.jpg", "/images/gallery/gpe-1.jpg", "/images/gallery/gpe-2.jpg"],
     headline:
       "We act on a range of destinations within the Square Mile, and understand the unique opportunities and considerations that come with leasing this part of London.",
     body: [
       "From exciting hospitality offerings to drive footfall throughout the day to new competitive socialising concepts, we create diverse tenant mixes that reflect the evolving nature of the City of London.",
     ],
     contacts: ["Charlotte Roberts", "Emily Cann"],
-    needed: "City case studies and images.",
   },
   {
     slug: "high-streets",
     name: "High Streets",
-    approved: false,
+    approved: true,
     image: "/images/sectors/high-streets.jpg",
+    gallery: ["/images/gallery/belgravia-2.jpg", "/images/gallery/coin-street-1.jpg", "/images/gallery/coin-street-2.jpg"],
     headline:
       "Our High Street Leasing team works on a diverse range of High Streets throughout London and across the UK.",
     body: [
       "We curate dynamic occupier mixes that reflect the needs and unique characteristics of the communities they serve; taking a long term view to build distinctive high streets that remain vibrant over time.",
     ],
     contacts: ["Victoria Broadhead", "Lucy Gardiner", "Emily Dumbell"],
-    needed: "High Street case studies and images.",
   },
 ];
 
@@ -756,39 +757,38 @@ export interface ShoppingCentre {
   location: string;
   contacts: string[];
   image?: string;
-  // One-line description drafted for the directors to check — draft mode only.
-  draftBlurb: string;
+  gallery?: string[];
+  blurb: string;
 }
 
 // From the "BGP shopping centres" table in Emmy's copy document.
 export const SHOPPING_CENTRES: ShoppingCentre[] = [
-  { slug: "one-new-change", name: "One New Change", location: "London", image: "/images/centres/one-new-change.jpg", contacts: ["Charlotte Roberts", "Emily Cann"], draftBlurb: "Landsec's mixed-use destination beside St Paul's Cathedral, with a rooftop terrace and strong City lunch and after-work trade." },
-  { slug: "cardinal-place", name: "Cardinal Place", location: "London", image: "/images/centres/cardinal-place.jpg", contacts: ["Charlotte Roberts", "Emily Cann"], draftBlurb: "Retail and dining at the heart of Victoria, serving the office and commuter catchment around Victoria Station." },
-  { slug: "o2-finchley-road", name: "O2 Finchley Road", location: "London", contacts: ["Victoria Broadhead", "Ben Sykes"], draftBlurb: "A leisure-led north London centre anchored by cinema and gym, serving a dense residential catchment." },
-  { slug: "lewisham-shopping-centre", name: "Lewisham Shopping Centre", location: "London", contacts: ["Victoria Broadhead", "Ben Sykes"], draftBlurb: "The retail heart of Lewisham town centre, at the centre of a major south-east London regeneration area." },
-  { slug: "brent-cross", name: "Brent Cross", location: "London", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], draftBlurb: "One of the UK's first major shopping centres, in north London, with a new town centre rising alongside it." },
-  { slug: "bluewater", name: "Bluewater", location: "Kent", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], draftBlurb: "The south-east's landmark regional shopping and leisure destination, set in a former chalk quarry in Kent." },
-  { slug: "oracle", name: "The Oracle", location: "Reading", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], draftBlurb: "Reading's riverside shopping and dining destination along the Kennet." },
-  { slug: "westgate", name: "Westgate", location: "Oxford", contacts: ["Victoria Broadhead", "Ben Sykes"], draftBlurb: "Oxford's city-centre shopping and dining destination, with a rooftop restaurant terrace." },
-  { slug: "gunwharf-quays", name: "Gunwharf Quays", location: "Portsmouth", contacts: ["Victoria Broadhead", "Emily Dumbell"], draftBlurb: "Portsmouth's waterfront outlet shopping and leisure destination beneath the Spinnaker Tower." },
-  { slug: "bullring", name: "Bullring", location: "Birmingham", image: "/images/centres/bullring.jpg", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], draftBlurb: "Birmingham's flagship city-centre shopping destination, home to Selfridges." },
-  { slug: "grand-central", name: "Grand Central", location: "Birmingham", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], draftBlurb: "The dining and retail destination above Birmingham New Street station." },
-  { slug: "trinity-leeds", name: "Trinity Leeds", location: "Leeds", contacts: ["Emily Dumbell", "Alex Todd"], draftBlurb: "The Leeds city-centre destination mixing retail with dining and leisure under its glass roof." },
-  { slug: "white-rose", name: "White Rose", location: "Leeds", contacts: ["Emily Dumbell", "Alex Todd"], draftBlurb: "Leeds' out-of-town shopping and leisure centre, with cinema and dining." },
-  { slug: "liverpool-one", name: "Liverpool One", location: "Liverpool", contacts: ["Victoria Broadhead", "Ben Sykes"], draftBlurb: "The 42-acre open-air shopping district at the heart of Liverpool city centre." },
-  { slug: "the-bridges", name: "The Bridges", location: "Sunderland", contacts: ["Victoria Broadhead", "Ben Sykes"], draftBlurb: "Sunderland city centre's principal shopping centre." },
-  { slug: "tunsgate", name: "Tunsgate Quarter", location: "Guildford", contacts: ["Victoria Broadhead", "Ben Sykes"], draftBlurb: "Guildford's boutique shopping and dining quarter, just off the High Street." },
-  { slug: "paradise", name: "Paradise", location: "Birmingham", contacts: ["Victoria Broadhead"], draftBlurb: "Birmingham's new mixed-use quarter beside the Town Hall and Chamberlain Square." },
-  { slug: "braintree-outlet", name: "Braintree Village", location: "Braintree", contacts: ["Victoria Broadhead", "Ben Sykes"], draftBlurb: "Essex's outlet shopping destination, just off the A120." },
-  { slug: "clarks-village", name: "Clarks Village", location: "Street, Somerset", contacts: ["Victoria Broadhead", "Ben Sykes"], draftBlurb: "The UK's first purpose-built outlet village, on the site of the original Clarks factory." },
-  { slug: "buchanan-galleries", name: "Buchanan Galleries", location: "Glasgow", contacts: ["Victoria Broadhead", "Ben Sykes"], draftBlurb: "Glasgow's city-centre shopping centre at the top of Buchanan Street." },
-  { slug: "st-davids", name: "St David's", location: "Cardiff", contacts: ["Victoria Broadhead", "Ben Sykes"], draftBlurb: "Cardiff's city-centre shopping destination, anchored by John Lewis." },
+  { slug: "one-new-change", name: "One New Change", location: "London", image: "/images/centres/one-new-change.jpg", gallery: ["/images/gallery/onc-2.jpg", "/images/gallery/onc-3.jpg", "/images/gallery/onc-4.jpg"], contacts: ["Charlotte Roberts", "Emily Cann"], blurb: "Landsec's mixed-use destination beside St Paul's Cathedral, with a rooftop terrace and strong City lunch and after-work trade." },
+  { slug: "cardinal-place", name: "Cardinal Place", location: "London", image: "/images/centres/cardinal-place.jpg", gallery: ["/images/gallery/cardinal-1.jpg", "/images/clients/victoria-street.jpg"], contacts: ["Charlotte Roberts", "Emily Cann"], blurb: "Retail and dining at the heart of Victoria, serving the office and commuter catchment around Victoria Station." },
+  { slug: "o2-finchley-road", name: "O2 Finchley Road", location: "London", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "A leisure-led north London centre anchored by cinema and gym, serving a dense residential catchment." },
+  { slug: "lewisham-shopping-centre", name: "Lewisham Shopping Centre", location: "London", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "The retail heart of Lewisham town centre, at the centre of a major south-east London regeneration area." },
+  { slug: "brent-cross", name: "Brent Cross", location: "London", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "One of the UK's first major shopping centres, in north London, with a new town centre rising alongside it." },
+  { slug: "bluewater", name: "Bluewater", location: "Kent", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "The south-east's landmark regional shopping and leisure destination, set in a former chalk quarry in Kent." },
+  { slug: "oracle", name: "The Oracle", location: "Reading", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "Reading's riverside shopping and dining destination along the Kennet." },
+  { slug: "westgate", name: "Westgate", location: "Oxford", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "Oxford's city-centre shopping and dining destination, with a rooftop restaurant terrace." },
+  { slug: "gunwharf-quays", name: "Gunwharf Quays", location: "Portsmouth", contacts: ["Victoria Broadhead", "Emily Dumbell"], blurb: "Portsmouth's waterfront outlet shopping and leisure destination beneath the Spinnaker Tower." },
+  { slug: "bullring", name: "Bullring", location: "Birmingham", image: "/images/centres/bullring.jpg", gallery: ["/images/gallery/bullring-1.jpg", "/images/gallery/bullring-2.jpg", "/images/gallery/bullring-3.jpg"], contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "Birmingham's flagship city-centre shopping destination, home to Selfridges." },
+  { slug: "grand-central", name: "Grand Central", location: "Birmingham", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "The dining and retail destination above Birmingham New Street station." },
+  { slug: "trinity-leeds", name: "Trinity Leeds", location: "Leeds", contacts: ["Emily Dumbell", "Alex Todd"], blurb: "The Leeds city-centre destination mixing retail with dining and leisure under its glass roof." },
+  { slug: "white-rose", name: "White Rose", location: "Leeds", contacts: ["Emily Dumbell", "Alex Todd"], blurb: "Leeds' out-of-town shopping and leisure centre, with cinema and dining." },
+  { slug: "liverpool-one", name: "Liverpool One", location: "Liverpool", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "The 42-acre open-air shopping district at the heart of Liverpool city centre." },
+  { slug: "the-bridges", name: "The Bridges", location: "Sunderland", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "Sunderland city centre's principal shopping centre." },
+  { slug: "tunsgate", name: "Tunsgate Quarter", location: "Guildford", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "Guildford's boutique shopping and dining quarter, just off the High Street." },
+  { slug: "paradise", name: "Paradise", location: "Birmingham", contacts: ["Victoria Broadhead"], blurb: "Birmingham's new mixed-use quarter beside the Town Hall and Chamberlain Square." },
+  { slug: "braintree-outlet", name: "Braintree Village", location: "Braintree", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "Essex's outlet shopping destination, just off the A120." },
+  { slug: "clarks-village", name: "Clarks Village", location: "Street, Somerset", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "The UK's first purpose-built outlet village, on the site of the original Clarks factory." },
+  { slug: "buchanan-galleries", name: "Buchanan Galleries", location: "Glasgow", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "Glasgow's city-centre shopping centre at the top of Buchanan Street." },
+  { slug: "st-davids", name: "St David's", location: "Cardiff", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "Cardiff's city-centre shopping destination, anchored by John Lewis." },
 ];
 
-// Copy still with the teams for sign-off — rendered in draft mode only.
-export const DRAFT_COPY = {
+// Investment and Brand Representation page copy from Emmy's document.
+export const SERVICE_COPY = {
   investment: {
-    note: "Investment — Jack to check (drafted from the TRE pitch).",
     body: [
       "Acquisition and disposal advice across retail, leisure and mixed-use investments. We advise on all aspects of property investment from single assets to portfolios, acting for private clients, property companies and institutions.",
       "We take a 360-degree view of every investment opportunity, combining market intelligence with BGP's specialist leasing and lease advisory expertise.",
@@ -798,7 +798,6 @@ export const DRAFT_COPY = {
     ],
   },
   brandRepresentation: {
-    note: "Brand Representation — not yet marked approved.",
     intro: "We help brands discover, secure and maximise opportunities across the UK's most exciting retail, leisure and hospitality destinations.",
     body: [
       "Our team combine market intelligence, occupier insight and creative thinking to deliver strategies that put brands in the right place, at the right time.",

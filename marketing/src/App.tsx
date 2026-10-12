@@ -14,15 +14,32 @@ import News from "./pages/News";
 import ArticlePage from "./pages/Article";
 import CaseStudyPage from "./pages/CaseStudyPage";
 import LeasingSector, { ShoppingCentrePage } from "./pages/LeasingSector";
-import DraftBanner from "./components/DraftBanner";
 
 // SPA navigation keeps the previous scroll position — every page change
 // should land at the top. Plain #hash anchors don't change the route, so
 // in-page jumps (services, contact) are unaffected.
+const TITLES: Array<[RegExp, string]> = [
+  [/^\/leasing\/sectors\/shopping-centres\/.+/, "Shopping centres · Leasing"],
+  [/^\/leasing\/sectors\/shopping-centres/, "Shopping Centres · Leasing"],
+  [/^\/leasing\/sectors\/london-estates/, "London Estates · Leasing"],
+  [/^\/leasing\/sectors\/city/, "The City · Leasing"],
+  [/^\/leasing\/sectors\/high-streets/, "High Streets · Leasing"],
+  [/^\/leasing/, "Leasing"],
+  [/^\/investment/, "Investment"],
+  [/^\/brand-representation/, "Brand Representation"],
+  [/^\/lease-advisory/, "Lease Advisory"],
+  [/^\/consultancy/, "Consultancy"],
+  [/^\/team/, "Team"],
+  [/^\/news/, "News"],
+  [/^\/case-studies/, "Case study"],
+];
+
 function ScrollToTop() {
   const [location] = useLocation();
   useEffect(() => {
     window.scrollTo(0, 0);
+    const hit = TITLES.find(([re]) => re.test(location));
+    document.title = hit ? `${hit[1]} — Bruce Gillingham Pollard` : "Bruce Gillingham Pollard";
   }, [location]);
   return null;
 }
@@ -31,7 +48,6 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col">
       <ScrollToTop />
-      <DraftBanner />
       <Nav />
       <main className="flex-1">
         <Switch>
