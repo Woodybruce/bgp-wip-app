@@ -3796,6 +3796,7 @@ export const websiteCaseStudies = pgTable("website_case_studies", {
   body: text("body").array(),
   facts: jsonb("facts"), // [["Client", "Landsec"], ...]
   imageUrl: text("image_url"),
+  galleryUrls: text("gallery_urls").array(), // up to three more photos (Woody, 2026-10-12)
   sortOrder: integer("sort_order").default(0),
   published: boolean("published").default(false),
   updatedBy: text("updated_by"),

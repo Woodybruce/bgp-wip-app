@@ -50,6 +50,13 @@ export default function CaseStudyPage() {
                 <Placeholder className="aspect-[16/10] w-full" src={caseStudy.image} alt={caseStudy.title} />
               </div>
             )}
+            {caseStudy.gallery && caseStudy.gallery.length > 0 && (
+              <div className={`mt-4 grid gap-4 ${caseStudy.gallery.length >= 3 ? "grid-cols-3" : "grid-cols-2"}`}>
+                {caseStudy.gallery.slice(0, 3).map((src) => (
+                  <div key={src} className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={src} alt={caseStudy.title} /></div>
+                ))}
+              </div>
+            )}
             <div className="mt-8 space-y-4 max-w-xl">
               {caseStudy.body.map((para) => (
                 <p key={para.slice(0, 32)} className="text-base leading-relaxed text-bgp-ink/85">

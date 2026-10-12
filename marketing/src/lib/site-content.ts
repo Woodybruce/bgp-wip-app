@@ -62,6 +62,7 @@ function fromApi(j: any): SiteContent {
       service: r.service,
       blurb: r.blurb,
       image: r.imageUrl || undefined,
+      gallery: Array.isArray(r.galleryUrls) ? r.galleryUrls.filter(Boolean) : [],
       facts: Array.isArray(r.facts) ? r.facts : [],
       body: r.body || [],
     })),

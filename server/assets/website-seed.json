@@ -362,6 +362,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/lucent-piccadilly.jpg",
+      "galleryUrls": [],
       "sortOrder": 0,
       "published": true
     },
@@ -397,6 +398,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/hanover-square.jpg",
+      "galleryUrls": [],
       "sortOrder": 1,
       "published": true
     },
@@ -428,6 +430,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/st-christophers-place.jpg",
+      "galleryUrls": [],
       "sortOrder": 2,
       "published": true
     },
@@ -459,6 +462,7 @@
         ]
       ],
       "imageUrl": null,
+      "galleryUrls": [],
       "sortOrder": 3,
       "published": true
     },
@@ -490,6 +494,7 @@
         ]
       ],
       "imageUrl": null,
+      "galleryUrls": [],
       "sortOrder": 4,
       "published": true
     },
@@ -526,6 +531,11 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/investment/royal-exchange-courtyard.jpg",
+      "galleryUrls": [
+        "https://www.bgp.uk.com/images/case-studies/the-royal-exchange-2.jpg",
+        "https://www.bgp.uk.com/images/case-studies/the-royal-exchange-3.jpg",
+        "https://www.bgp.uk.com/images/case-studies/the-royal-exchange-4.jpg"
+      ],
       "sortOrder": 5,
       "published": true
     },
@@ -561,6 +571,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/city-towers.jpg",
+      "galleryUrls": [],
       "sortOrder": 6,
       "published": true
     },
@@ -600,6 +611,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/shop-boutique.jpg",
+      "galleryUrls": [],
       "sortOrder": 7,
       "published": true
     },
@@ -631,6 +643,11 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/clients/city-street.jpg",
+      "galleryUrls": [
+        "https://www.bgp.uk.com/images/clients/city-st-pauls.jpg",
+        "https://www.bgp.uk.com/images/gallery/gpe-2.jpg",
+        "https://www.bgp.uk.com/images/gallery/onc-3.jpg"
+      ],
       "sortOrder": 8,
       "published": true
     },
@@ -657,6 +674,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/principal-place.jpg",
+      "galleryUrls": [],
       "sortOrder": 9,
       "published": true
     },
@@ -688,6 +706,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/apartments.jpg",
+      "galleryUrls": [],
       "sortOrder": 10,
       "published": true
     },
@@ -711,6 +730,11 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/clients/bullring-interior.jpg",
+      "galleryUrls": [
+        "https://www.bgp.uk.com/images/gallery/bullring-1.jpg",
+        "https://www.bgp.uk.com/images/gallery/bullring-2.jpg",
+        "https://www.bgp.uk.com/images/gallery/bullring-3.jpg"
+      ],
       "sortOrder": 11,
       "published": true
     },
@@ -734,6 +758,11 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/clients/victoria-street.jpg",
+      "galleryUrls": [
+        "https://www.bgp.uk.com/images/gallery/cardinal-1.jpg",
+        "https://www.bgp.uk.com/images/gallery/onc-3.jpg",
+        "https://www.bgp.uk.com/images/gallery/onc-2.jpg"
+      ],
       "sortOrder": 12,
       "published": true
     },
@@ -757,6 +786,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/city-towers.jpg",
+      "galleryUrls": [],
       "sortOrder": 13,
       "published": true
     },
@@ -780,6 +810,11 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/royal-exchange.jpg",
+      "galleryUrls": [
+        "https://www.bgp.uk.com/images/case-studies/the-royal-exchange-2.jpg",
+        "https://www.bgp.uk.com/images/case-studies/the-royal-exchange-3.jpg",
+        "https://www.bgp.uk.com/images/case-studies/the-royal-exchange-4.jpg"
+      ],
       "sortOrder": 14,
       "published": true
     },
@@ -807,6 +842,7 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/case-studies/the-frankie-shop-davies-street.jpg",
+      "galleryUrls": [],
       "sortOrder": 15,
       "published": true
     },
@@ -834,6 +870,10 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/case-studies/percival-neal-street.jpg",
+      "galleryUrls": [
+        "https://www.bgp.uk.com/images/case-studies/percival-neal-street-2.jpg",
+        "https://www.bgp.uk.com/images/case-studies/percival-neal-street-3.jpg"
+      ],
       "sortOrder": 16,
       "published": true
     },
@@ -861,6 +901,10 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/case-studies/atis-loxton-walk.jpg",
+      "galleryUrls": [
+        "https://www.bgp.uk.com/images/case-studies/atis-loxton-walk-2.jpg",
+        "https://www.bgp.uk.com/images/case-studies/atis-loxton-walk-3.jpg"
+      ],
       "sortOrder": 17,
       "published": true
     },
@@ -888,6 +932,10 @@
         ]
       ],
       "imageUrl": "https://www.bgp.uk.com/images/case-studies/masaj-islington-square.jpg",
+      "galleryUrls": [
+        "https://www.bgp.uk.com/images/case-studies/masaj-islington-square-2.jpg",
+        "https://www.bgp.uk.com/images/case-studies/masaj-islington-square-3.jpg"
+      ],
       "sortOrder": 18,
       "published": true
     }

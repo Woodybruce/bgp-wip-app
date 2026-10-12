@@ -162,6 +162,7 @@ export interface CaseStudy {
   service: string;
   blurb: string;
   image?: string;
+  gallery?: string[]; // up to three more photos, shown on the case study page and strip
   facts: Array<[string, string]>;
   body: string[];
 }
@@ -256,6 +257,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     ],
     facts: [["Service", "Investment"], ["Client", "Ardent"], ["Occupancy", "75% to 100%"], ["WAULT", "4 to 7 years"], ["Annual footfall", "500,000 to 800,000"]],
     image: "/images/investment/royal-exchange-courtyard.jpg",
+    gallery: ["/images/case-studies/the-royal-exchange-2.jpg", "/images/case-studies/the-royal-exchange-3.jpg", "/images/case-studies/the-royal-exchange-4.jpg"],
   },
   {
     slug: "19-golden-square",
@@ -314,6 +316,7 @@ export const CASE_STUDIES: CaseStudy[] = [
       "\"Developing a consistently lively and animated ground floor experience\" — produced on behalf of the City of London Corporation and the City's five Business Improvement Districts: Aldgate Connect, Cheapside Business Alliance, Culture Mile BID, Eastern City BID and Fleet Street Quarter.",
       "A strategic study defining what makes a vibrant, consistently lively ground-floor experience across the Square Mile.",
     ],
+    gallery: ["/images/clients/city-st-pauls.jpg", "/images/gallery/gpe-2.jpg", "/images/gallery/onc-3.jpg"],
   },
   {
     slug: "crown-estate-cambridge-business-park",
@@ -355,6 +358,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     service: "Lease Advisory",
     blurb: `Lease advisory instruction for ${client} — rent reviews, renewals and restructuring aligned to the asset strategy.`,
     image: { Hammerson: "/images/clients/bullring-interior.jpg", "Land Securities": "/images/clients/victoria-street.jpg", "The Royal Exchange": "/images/royal-exchange.jpg", Bloomberg: "/images/city-towers.jpg" }[client as string],
+    gallery: ({ Hammerson: ["/images/gallery/bullring-1.jpg", "/images/gallery/bullring-2.jpg", "/images/gallery/bullring-3.jpg"], "Land Securities": ["/images/gallery/cardinal-1.jpg", "/images/gallery/onc-3.jpg", "/images/gallery/onc-2.jpg"], "The Royal Exchange": ["/images/case-studies/the-royal-exchange-2.jpg", "/images/case-studies/the-royal-exchange-3.jpg", "/images/case-studies/the-royal-exchange-4.jpg"] } as Record<string, string[]>)[client as string],
     facts: [["Service", "Lease Advisory"], ["Client", client]] as Array<[string, string]>,
     body: [
       `BGP's Lease Advisory team acts for ${client}, providing evidence-led advice across rent reviews, renewals and lease restructuring.`,
@@ -386,6 +390,7 @@ export const CASE_STUDIES: CaseStudy[] = [
       "Independent brands need the right street more than the biggest one; our estate relationships put Percival where its audience walks every day.",
     ],
     image: "/images/case-studies/percival-neal-street.jpg",
+    gallery: ["/images/case-studies/percival-neal-street-2.jpg", "/images/case-studies/percival-neal-street-3.jpg"],
   },
   {
     slug: "atis-loxton-walk",
@@ -398,6 +403,7 @@ export const CASE_STUDIES: CaseStudy[] = [
       "Atis has grown from a single City Road site to a network across London with BGP acquiring each one.",
     ],
     image: "/images/case-studies/atis-loxton-walk.jpg",
+    gallery: ["/images/case-studies/atis-loxton-walk-2.jpg", "/images/case-studies/atis-loxton-walk-3.jpg"],
   },
   {
     slug: "masaj-islington-square",
@@ -410,6 +416,7 @@ export const CASE_STUDIES: CaseStudy[] = [
       "Wellness operators want neighbourhoods with daily footfall and a residential catchment; Islington Square gives Masaj both.",
     ],
     image: "/images/case-studies/masaj-islington-square.jpg",
+    gallery: ["/images/case-studies/masaj-islington-square-2.jpg", "/images/case-studies/masaj-islington-square-3.jpg"],
   },
 ];
 
