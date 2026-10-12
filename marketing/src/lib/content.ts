@@ -34,7 +34,7 @@ export const SERVICES = [
   {
     slug: "consultancy",
     name: "Consultancy",
-    image: "/images/55-bishopsgate.jpg",
+    image: "/images/clients/city-street.jpg",
     intro:
       "Placemaking is central to our business philosophy. As such, we've evolved from traditional leasing to offering clients bespoke reporting, long-term consultancy, and strategic asset management services.",
   },
