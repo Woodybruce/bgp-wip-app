@@ -26,7 +26,7 @@ export default function Home() {
       <section className="relative">
         <img
           src="/images/home-hero.jpg"
-          alt="Shoppers and cafés on a Mayfair street"
+          alt="Independent shopfronts on Chiltern Street, Marylebone"
           className="h-[70vh] min-h-[480px] w-full object-cover"
         />
         <div className="absolute inset-0 bg-bgp-wine/30" />
@@ -39,8 +39,8 @@ export default function Home() {
             />
           </h1>
           <p
-            className="mt-6 max-w-2xl font-display italic text-white text-2xl md:text-3xl leading-snug"
-            style={{ textShadow: "0 2px 18px rgba(0,0,0,0.6)" }}
+            className="mt-6 max-w-2xl font-display italic font-semibold text-white text-3xl md:text-4xl leading-snug"
+            style={{ textShadow: "0 2px 6px rgba(0,0,0,0.7), 0 4px 28px rgba(0,0,0,0.6)" }}
           >
             {HERO_STATEMENT}
           </p>

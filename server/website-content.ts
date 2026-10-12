@@ -272,7 +272,7 @@ async function websitePlacePhotos(slug: string): Promise<{ place: any; photos: a
       `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&region=uk&key=${googleKey}`,
       { signal: AbortSignal.timeout(10_000) },
     )).json();
-    first = (search?.results || []).find((r: any) => spec.brand.test(r.name || ""));
+    first = (search?.results || []).find((r: any) => spec.brand.test(r.name || "") && /London|United Kingdom|\bUK\b/i.test(r.formatted_address || ""));
     if (first?.place_id) break;
   }
   if (!first?.place_id) return null;

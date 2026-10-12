@@ -335,6 +335,7 @@ export const CASE_STUDIES: CaseStudy[] = [
       "We acquired Percival's Seven Dials store on Neal Street, placing an independent London menswear label at the heart of Covent Garden's best pitch for its customer.",
       "Independent brands need the right street more than the biggest one; our estate relationships put Percival where its audience walks every day.",
     ],
+    image: "/images/case-studies/percival-neal-street.jpg",
   },
   {
     slug: "atis-loxton-walk",
@@ -357,6 +358,7 @@ export const CASE_STUDIES: CaseStudy[] = [
       "We acquired Masaj's studio at Islington Square, extending the wellness brand into a new north London neighbourhood.",
       "Wellness operators want neighbourhoods with daily footfall and a residential catchment; Islington Square gives Masaj both.",
     ],
+    image: "/images/case-studies/masaj-islington-square.jpg",
   },
 ];
 

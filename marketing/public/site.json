@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-12T15:01:20.360Z",
+  "generatedAt": "2026-10-12T15:24:09.302Z",
   "site": "https://www.bgp.uk.com",
   "note": "Content of bgp.uk.com. Pages are rendered client-side; use this file rather than fetching HTML. Live availability comes from listingsFeed.",
   "heroStatement": "Great places are built through connected thinking.",
@@ -475,7 +475,7 @@
         "Pillar": "Independent / Lifestyle",
         "Location": "Neal Street, Seven Dials"
       },
-      "image": null
+      "image": "https://www.bgp.uk.com/images/case-studies/percival-neal-street.jpg"
     },
     {
       "title": "Atis, Loxton Walk",
@@ -499,7 +499,7 @@
         "Pillar": "Wellness",
         "Location": "Islington Square"
       },
-      "image": null
+      "image": "https://www.bgp.uk.com/images/case-studies/masaj-islington-square.jpg"
     }
   ],
   "contact": {
