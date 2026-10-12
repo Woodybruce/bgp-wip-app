@@ -430,7 +430,9 @@ export const caseStudyBySlug = (slug: string): CaseStudy =>
 export interface InvestmentDeal {
   name: string;
   client: string;
-  price: string;
+  price: string;                 // "£13,450,000" or "" when not disclosed
+  type: "Sale" | "Acquisition" | "Forward funding" | "Transaction"; // "Transaction" until the team confirms
+  status: "Completed" | "Under offer";
   capRate: string | null;
   sold: boolean;
   wide: boolean;
@@ -441,15 +443,21 @@ export interface InvestmentDeal {
 // replaces the old transactions list (Woody, 2026-10-12). Photos are the
 // deck's until the high-res set arrives.
 export const INVESTMENT_DEALS: InvestmentDeal[] = [
-  { image: "/images/investment/royal-exchange-corner.jpg", name: "The Royal Exchange, London", client: "Ardent", price: "Acquisition, leasing and asset management through to exit", capRate: null, sold: true, wide: true },
-  { image: "/images/investment/one-tower-bridge.jpg", name: "One Tower Bridge", client: "Redevco", price: "£70,000,000 acquisition", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/brixton-market.jpg", name: "Brixton Market", client: "Hondo Enterprises / Angelo Gordon", price: "£47,000,000 purchase and subsequent sale", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/16-conduit-street.jpg", name: "16 Conduit Street, Mayfair", client: "Japanese private investor", price: "Prime West End retail acquisition", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/wimbledon-bridge-house.jpg", name: "Wimbledon Bridge House", client: "Sheet Anchor Evolve", price: "Mixed-use investment", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/oxam-house-oxford.jpg", name: "Oxam House, Oxford", client: "Charles Street", price: "City-centre retail investment", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/filmworks-ealing.jpg", name: "Filmworks, Ealing", client: "St George", price: "Cinema-led town-centre retail and leisure", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/grants-leisure-croydon.jpg", name: "Grants Leisure, Croydon", client: "Hermes", price: "Leisure investment", capRate: null, sold: true, wide: false },
+  // Nick Halley's edits, 2026-10-12: prices where disclosed and big enough,
+  // sale vs acquisition shown, One Tower Bridge dropped (pre-2020), Brixton
+  // shown as the current sale. "Transaction" = type still to be confirmed.
+  { image: "/images/investment/royal-exchange-corner.jpg", name: "The Royal Exchange, London", client: "Ardent", type: "Sale", price: "", status: "Completed", capRate: null, sold: true, wide: true },
+  { image: "/images/investment/brixton-market.jpg", name: "Brixton Market", client: "Hondo Enterprises / Angelo Gordon", type: "Sale", price: "", status: "Under offer", capRate: null, sold: false, wide: false },
+  { image: "/images/investment/16-conduit-street.jpg", name: "16 Conduit Street, Mayfair", client: "Japanese private investor", type: "Acquisition", price: "£13,450,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { name: "Bombardier Hangar, Biggin Hill Airport", client: "LCN Capital Partners", type: "Forward funding", price: "£35,000,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { name: "142 Fulham Road", client: "Owner occupier", type: "Transaction", price: "£26,000,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { name: "Clapham North Arts Centre", client: "Owner occupier", type: "Transaction", price: "£16,000,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/oxam-house-oxford.jpg", name: "Oxam House, Oxford", client: "Charles Street", type: "Transaction", price: "£21,250,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/filmworks-ealing.jpg", name: "Filmworks, Ealing", client: "St George", type: "Transaction", price: "£13,500,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/wimbledon-bridge-house.jpg", name: "Wimbledon Bridge House", client: "Sheet Anchor Evolve", type: "Transaction", price: "", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/grants-leisure-croydon.jpg", name: "Grants Leisure, Croydon", client: "Hermes", type: "Transaction", price: "", status: "Completed", capRate: null, sold: true, wide: false },
 ];
+
 
 
 // Real client rosters from the projects page. Logos resolve via the Clearbit

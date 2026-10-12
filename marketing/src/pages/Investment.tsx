@@ -14,10 +14,10 @@ export default function Investment() {
     <div>
       <section className="relative min-h-[18rem] md:min-h-[24rem] flex items-end">
         <Placeholder className="absolute inset-0 h-full w-full" src={service.image} alt="The Royal Exchange, City of London" />
-        <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/70 via-bgp-ink/10 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/85 via-bgp-ink/45 to-bgp-ink/15 md:from-bgp-ink/70 md:via-bgp-ink/10 md:to-transparent" />
         <div className="relative w-full">
           <div className="mx-auto max-w-6xl px-4 pt-28 pb-8 md:pb-10 w-full">
-            <p className="max-w-xl text-2xl md:text-4xl leading-snug font-display italic text-white" style={{ textShadow: "0 2px 16px rgba(0,0,0,0.45)" }}>{service.intro}</p>
+            <p className="max-w-xl text-2xl md:text-4xl leading-snug font-display italic text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>{service.intro}</p>
           </div>
         </div>
       </section>
@@ -47,16 +47,16 @@ export default function Investment() {
             <div key={deal.name} className="group">
               <div className="relative img-frame">
                 <Placeholder className="aspect-[4/3] w-full" src={deal.image} alt={deal.name} label="Photo to follow" />
-                {deal.sold && (
-                  <span className="absolute top-0 right-0 bg-bgp-wine text-bgp-cream label-caps px-3 py-1.5">
-                    Completed
-                  </span>
-                )}
+                <span className={`absolute top-0 right-0 label-caps px-3 py-1.5 ${deal.status === "Under offer" ? "bg-bgp-red text-white" : "bg-bgp-wine text-bgp-cream"}`}>
+                  {deal.status}
+                </span>
               </div>
               <div className="mt-3 border-t border-bgp-wine/30 pt-3">
                 <p className="font-display text-lg leading-snug text-bgp-wine">{deal.name}</p>
                 <p className="mt-0.5 label-caps text-bgp-ink/45">{deal.client}</p>
-                <p className="mt-1.5 text-sm text-bgp-ink/80 leading-relaxed">
+                <p className="mt-1.5 text-sm text-bgp-ink/80 leading-relaxed tabular">
+                  {deal.type === "Transaction" ? "" : deal.type}
+                  {deal.type !== "Transaction" && deal.price ? " · " : ""}
                   {deal.price}
                   {deal.capRate ? ` / cap rate ${deal.capRate}` : ""}
                 </p>

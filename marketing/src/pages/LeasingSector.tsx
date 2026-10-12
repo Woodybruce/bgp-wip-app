@@ -31,13 +31,13 @@ export default function LeasingSector() {
     <div>
       <section className="relative min-h-[18rem] md:min-h-[24rem] flex items-end">
         <Placeholder className="absolute inset-0 h-full w-full" src={sector.image} alt={sector.name} />
-        <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/70 via-bgp-ink/10 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/85 via-bgp-ink/45 to-bgp-ink/15 md:from-bgp-ink/70 md:via-bgp-ink/10 md:to-transparent" />
         <div className="relative w-full">
           <div className="mx-auto max-w-6xl px-4 pt-28 pb-8 md:pb-10 w-full">
             <p className="label-caps text-white/80 mb-3">
               <Link href="/leasing" className="hover:text-white">Leasing</Link> · {sector.name}
             </p>
-            <h1 className="max-w-2xl text-2xl md:text-4xl leading-snug font-display italic text-white" style={{ textShadow: "0 2px 16px rgba(0,0,0,0.45)" }}>
+            <h1 className="max-w-2xl text-2xl md:text-4xl leading-snug font-display italic text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>
               {sector.headline}
             </h1>
           </div>

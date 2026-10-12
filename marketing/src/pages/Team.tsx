@@ -21,10 +21,10 @@ export default function Team() {
     <div>
       <section className="relative">
         <Placeholder className="h-80 md:h-[28rem] w-full" src="/images/office.jpg" alt="The BGP office" />
-        <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/70 via-bgp-ink/10 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/85 via-bgp-ink/45 to-bgp-ink/15 md:from-bgp-ink/70 md:via-bgp-ink/10 md:to-transparent" />
         <div className="absolute inset-0 flex items-end">
           <div className="mx-auto max-w-6xl px-4 pb-10 w-full">
-            <p className="max-w-xl text-3xl md:text-4xl leading-snug font-display italic text-white" style={{ textShadow: "0 2px 16px rgba(0,0,0,0.45)" }}>
+            <p className="max-w-xl text-3xl md:text-4xl leading-snug font-display italic text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>
               Connecting leading brands with the best international locations. Creating
               neighbourhoods that people love.
             </p>
