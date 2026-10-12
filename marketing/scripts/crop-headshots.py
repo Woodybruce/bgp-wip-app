@@ -10,7 +10,7 @@ share={"woody-bruce":"Woody Bruce","tracey-pollard":"Tracey Pollard","charlotte-
  "lucy-cope":"Lucy Cope","evie-north":"Evie North","alex-todd":"Alex Todd","millie-edwards":"Millie Edwards",
  "will-penfold":"Will Penfold","libby-evans":"Libby Evans","layla-odriscoll":"Layla O'Driscoll","cara-milligan":"Cara Milligan"}
 bundled_only=["emily-cann","jonny-palmer","luke-donohoe"]
-casc=[cv2.CascadeClassifier(cv2.data.haarcascades+n) for n in ("haarcascade_frontalface_default.xml","haarcascade_frontalface_alt2.xml","haarcascade_profileface.xml")]
+casc=[cv2.CascadeClassifier(cv2.data.haarcascades+n) for n in ("haarcascade_frontalface_alt2.xml","haarcascade_frontalface_default.xml","haarcascade_profileface.xml")]
 W,H=900,1200
 FACE_FRAC=0.47   # face box width as fraction of output width
 FACE_CY=0.44     # face centre as fraction of output height
