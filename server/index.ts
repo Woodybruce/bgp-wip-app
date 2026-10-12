@@ -2942,6 +2942,13 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     console.warn("[schema-drift] guard failed:", e?.message);
   }
 
+  // Beth Emmens's headshot (Woody, 2026-10-12) for bgp.uk.com, served from
+  // the dashboard so it doesn't wait on a website redeploy. Only fills a
+  // blank photo, so a later change on the website stands.
+  await pool.query(
+    `UPDATE website_team SET photo_url = 'https://chatbgp.app/headshots/beth-emmens-web.jpg', updated_at = NOW()
+      WHERE lower(name) = 'beth emmens' AND COALESCE(photo_url, '') = ''`).catch((e: any) => console.warn("[website-team] Beth photo:", e?.message));
+
   // 2026-10 team structure: Woody asked for it to be applied rather than
   // waiting on the Settings button ("can you just add all of these",
   // 2026-10-12). Runs once (flagged in system_settings), backs every old

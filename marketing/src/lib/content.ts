@@ -126,7 +126,7 @@ export const TEAM: Person[] = [
   { photo: "/images/team/millie-edwards.jpg", name: "Millie Edwards", title: "Director, Co-Head Shopping Centres", phone: OFFICE_PHONE, email: "TBC" },
   { photo: "/images/team/ben-sykes.jpg", name: "Ben Sykes", title: "Surveyor, Shopping Centres", phone: OFFICE_PHONE, email: "TBC" },
   { photo: "/images/team/kate-martin.jpg", name: "Kate Martin", title: "Surveyor, Shopping Centres", phone: OFFICE_PHONE, email: "TBC" },
-  { name: "Beth Emmens", title: "Director, Co-Head Brand Representation", phone: OFFICE_PHONE, email: "TBC" },
+  { photo: "/images/team/beth-emmens.jpg", name: "Beth Emmens", title: "Director, Co-Head Brand Representation", phone: OFFICE_PHONE, email: "TBC" },
   { photo: "/images/team/carly-cunliffe.jpg", name: "Carly Cunliffe", title: "Graduate Surveyor, Brand Representation", phone: OFFICE_PHONE, email: "TBC" },
   { photo: "/images/team/emily-cann.jpg", name: "Emily Cann", title: "Graduate Surveyor, London Estates", phone: "+44 (0)7516 660 791", email: "emilyc@brucegillinghampollard.com" },
   { photo: "/images/team/will-penfold.jpg", name: "Will Penfold", title: "Graduate Surveyor, London Estates", phone: "+44 (0)7760 881 270", email: "willp@brucegillinghampollard.com" },
