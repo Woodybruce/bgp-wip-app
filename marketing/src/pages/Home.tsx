@@ -26,7 +26,7 @@ export default function Home() {
       <section className="relative">
         <img
           src="/images/home-hero.jpg"
-          alt="St Paul's Cathedral from One New Change"
+          alt="Shoppers and cafés on a Mayfair street"
           className="h-[70vh] min-h-[480px] w-full object-cover"
         />
         <div className="absolute inset-0 bg-bgp-wine/30" />
