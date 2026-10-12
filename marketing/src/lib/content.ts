@@ -140,16 +140,8 @@ export const TEAM: Person[] = [
 
 const byName = (...names: string[]) => TEAM.filter((p) => names.includes(p.name));
 
-export const LEASING_CONTACTS = byName(
-  "Charlotte Roberts",
-  "Rupert Bentley-Smith",
-  "Victoria Broadhead",
-  "Millie Edwards",
-  "Lizzie Knights",
-  "Lucy Cope",
-  "Lucy Gardiner",
-  "Tracey Pollard",
-);
+// Leasing key contacts: Rupert and Charlotte only (Woody, 2026-10-12).
+export const LEASING_CONTACTS = byName("Charlotte Roberts", "Rupert Bentley-Smith");
 
 export const INVESTMENT_CONTACTS = byName(
   "Jack Barratt",
@@ -407,7 +399,7 @@ export interface InvestmentDeal {
 export const INVESTMENT_DEALS: InvestmentDeal[] = [
   { image: "/images/investment/royal-exchange-corner.jpg", name: "The Royal Exchange, London", client: "Ardent", price: "Acquisition, leasing and asset management through to exit", capRate: null, sold: true, wide: true },
   { image: "/images/investment/one-tower-bridge.jpg", name: "One Tower Bridge", client: "Redevco", price: "£70,000,000 acquisition", capRate: null, sold: true, wide: false },
-  { name: "Brixton Market", client: "Hondo Enterprises / Angelo Gordon", price: "£47,000,000 purchase and subsequent sale", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/brixton-market.jpg", name: "Brixton Market", client: "Hondo Enterprises / Angelo Gordon", price: "£47,000,000 purchase and subsequent sale", capRate: null, sold: true, wide: false },
   { image: "/images/investment/16-conduit-street.jpg", name: "16 Conduit Street, Mayfair", client: "Japanese private investor", price: "Prime West End retail acquisition", capRate: null, sold: true, wide: false },
   { image: "/images/investment/wimbledon-bridge-house.jpg", name: "Wimbledon Bridge House", client: "Sheet Anchor Evolve", price: "Mixed-use investment", capRate: null, sold: true, wide: false },
   { image: "/images/investment/oxam-house-oxford.jpg", name: "Oxam House, Oxford", client: "Charles Street", price: "City-centre retail investment", capRate: null, sold: true, wide: false },

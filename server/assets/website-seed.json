@@ -17,7 +17,6 @@
       "email": "tracey@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/tracey-pollard.jpg",
       "groups": [
-        "leasing",
         "consultancy"
       ],
       "sortOrder": 1,
@@ -65,9 +64,7 @@
       "phone": "+44 (0)7793 158 133",
       "email": "victoria@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/victoria-broadhead.jpg",
-      "groups": [
-        "leasing"
-      ],
+      "groups": [],
       "sortOrder": 5,
       "visible": true
     },
@@ -102,9 +99,7 @@
       "phone": "+44 (0)7741 877 452",
       "email": "lucyg@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/lucy-gardiner.jpg",
-      "groups": [
-        "leasing"
-      ],
+      "groups": [],
       "sortOrder": 8,
       "visible": true
     },
@@ -114,9 +109,7 @@
       "phone": "+44 (0)7511 902 073",
       "email": "lizzie@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/lizzie-knights.jpg",
-      "groups": [
-        "leasing"
-      ],
+      "groups": [],
       "sortOrder": 9,
       "visible": true
     },
@@ -170,9 +163,7 @@
       "phone": "+44 (0)7595 267 866",
       "email": "lucy@brucegillinghampollard.com",
       "photoUrl": "https://www.bgp.uk.com/images/team/lucy-cope.jpg",
-      "groups": [
-        "leasing"
-      ],
+      "groups": [],
       "sortOrder": 14,
       "visible": true
     },
@@ -204,9 +195,7 @@
       "phone": "+44 (0)20 3551 5260",
       "email": null,
       "photoUrl": "https://www.bgp.uk.com/images/team/millie-edwards.jpg",
-      "groups": [
-        "leasing"
-      ],
+      "groups": [],
       "sortOrder": 17,
       "visible": true
     },

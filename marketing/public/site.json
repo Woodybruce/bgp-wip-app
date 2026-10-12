@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-12T18:05:44.742Z",
+  "generatedAt": "2026-10-12T18:13:20.805Z",
   "site": "https://www.bgp.uk.com",
   "note": "Content of bgp.uk.com. Pages are rendered client-side; use this file rather than fetching HTML. Live availability comes from listingsFeed.",
   "heroStatement": "Great places are built through connected thinking.",
@@ -283,14 +283,8 @@
   ],
   "keyContacts": {
     "leasing": [
-      "Tracey Pollard",
       "Charlotte Roberts",
-      "Rupert Bentley-Smith",
-      "Victoria Broadhead",
-      "Lucy Gardiner",
-      "Lizzie Knights",
-      "Lucy Cope",
-      "Millie Edwards"
+      "Rupert Bentley-Smith"
     ],
     "investment": [
       "Jack Barratt",
