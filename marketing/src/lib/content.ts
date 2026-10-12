@@ -90,7 +90,7 @@ export const OFFICE_PHONE = "+44 (0)20 3551 5260";
 // teams and leads from Woody's BGP Team Structure workbook (2026-10-12).
 export const TEAM: Person[] = [
   { photo: "/images/team/woody-bruce.jpg", name: "Woody Bruce", title: "Managing Director", phone: "+44 (0)7980 313 675", email: "woody@brucegillinghampollard.com" },
-  { photo: "/images/team/tracey-pollard.jpg", name: "Tracey Pollard", title: "Founding Director, Co-Head High Streets", phone: "+44 (0)7779 323 306", email: "tracey@brucegillinghampollard.com" },
+  { photo: "/images/team/tracey-pollard.jpg", name: "Tracey Pollard", title: "Director, Co-Head High Streets", phone: "+44 (0)7779 323 306", email: "tracey@brucegillinghampollard.com" },
   { photo: "/images/team/charlotte-roberts.jpg", name: "Charlotte Roberts", title: "Equity Director, Co-Head of Leasing", phone: "+44 (0)7738 448 338", email: "charlotte@brucegillinghampollard.com" },
   { photo: "/images/team/rupert-bentley-smith.jpg", name: "Rupert Bentley-Smith", title: "Equity Director, Co-Head of Leasing", phone: "+44 (0)7876 354 160", email: "rupert@brucegillinghampollard.com" },
   { photo: "/images/team/jack-barratt.jpg", name: "Jack Barratt", title: "Equity Director, Head of Investment", phone: "+44 (0)7788 215 044", email: "jack@brucegillinghampollard.com" },
@@ -103,10 +103,10 @@ export const TEAM: Person[] = [
   { photo: "/images/team/emily-dumbell.jpg", name: "Emily Dumbell", title: "Director, Shopping Centres", phone: "+44 (0)7805 259 793", email: "emily@brucegillinghampollard.com" },
   { photo: "/images/team/nick-goodman.jpg", name: "Nick Goodman", title: "Consultant, Investment", phone: "+44 (0)7818 012 432", email: "nickgoodman@brucegillinghampollard.com" },
   { photo: "/images/team/tom-cater.jpg", name: "Tom Cater", title: "Associate Director, Lease Advisory", phone: "+44 (0)7947 484 902", email: "tom@brucegillinghampollard.com" },
-  { photo: "/images/team/lucy-cope.jpg", name: "Lucy Cope", title: "Associate Director, Co-Head London Estates", phone: "+44 (0)7595 267 866", email: "lucy@brucegillinghampollard.com" },
+  { photo: "/images/team/lucy-cope.jpg", name: "Lucy Cope", title: "Director, Co-Head London Estates", phone: "+44 (0)7595 267 866", email: "lucy@brucegillinghampollard.com" },
   { photo: "/images/team/evie-north.jpg", name: "Evie North", title: "Associate Director, London Estates", phone: "+44 (0)7595 349 057", email: "evie@brucegillinghampollard.com" },
   { photo: "/images/team/alex-todd.jpg", name: "Alex Todd", title: "Senior Surveyor, Shopping Centres", phone: "+44 (0)7526 504 806", email: "alext@brucegillinghampollard.com" },
-  { photo: "/images/team/millie-edwards.jpg", name: "Millie Edwards", title: "Co-Head Shopping Centres", phone: OFFICE_PHONE, email: "TBC" },
+  { photo: "/images/team/millie-edwards.jpg", name: "Millie Edwards", title: "Director, Co-Head Shopping Centres", phone: OFFICE_PHONE, email: "TBC" },
   { photo: "/images/team/ben-sykes.jpg", name: "Ben Sykes", title: "Surveyor, Shopping Centres", phone: OFFICE_PHONE, email: "TBC" },
   { photo: "/images/team/kate-martin.jpg", name: "Kate Martin", title: "Surveyor, Shopping Centres", phone: OFFICE_PHONE, email: "TBC" },
   { name: "Beth Emmens", title: "Co-Head Brand Representation", phone: OFFICE_PHONE, email: "TBC" },
