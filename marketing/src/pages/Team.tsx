@@ -58,7 +58,7 @@ export default function Team() {
         <span className="section-label">The team</span>
         <h1 className="display text-4xl md:text-5xl mb-4">Contact details, team by team</h1>
         <p className="max-w-2xl text-base md:text-lg text-bgp-ink/90 leading-relaxed mb-12">
-          Every BGP team and the people in it. Names link through to the team's page; many of us work across more than one.
+          Every BGP team and the people in it. Names link through to the team's page.
         </p>
         {groups.map((g) => (
           <div key={g.label} className="mb-14">
@@ -79,16 +79,7 @@ export default function Team() {
                     <Link href={teamPagesFor(p.name)[0].href} className="hover:text-bgp-red transition-colors">{p.name}</Link>
                   ) : p.name}
                 </p>
-                <p className="text-base text-bgp-ink/75">
-                  {p.title}
-                  {teamPagesFor(p.name).length > 1 && (
-                    <span className="block mt-1 flex flex-wrap gap-x-3">
-                      {teamPagesFor(p.name).map((t) => (
-                        <Link key={t.href} href={t.href} className="label-caps text-bgp-red hover:text-bgp-wine">{t.label} ↗</Link>
-                      ))}
-                    </span>
-                  )}
-                </p>
+                <p className="text-base text-bgp-ink/75">{p.title}</p>
                 <p className="text-base tabular text-bgp-ink/85">{p.phone}</p>
                 {p.email !== "TBC" && (
                   <p className="text-base break-all">
