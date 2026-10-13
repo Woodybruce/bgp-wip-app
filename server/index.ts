@@ -3062,6 +3062,19 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       console.log(`[hr-phones] mobiles set: ${known.length} from signatures, ${filled} from the website`);
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_phones_2026_10_13', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
+    const done5 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_phones_2026_10_13b'`);
+    if (!done5.rows.length) {
+      const known2: Array<[string, string]> = [
+        ["ben@brucegillinghampollard.com", "+44 (0)7506 050 108"],
+        ["beth@brucegillinghampollard.com", "+44 (0)7301 284 853"],
+        ["kate@brucegillinghampollard.com", "+44 (0)7506 050 107"],
+      ];
+      for (const [email, phone] of known2) {
+        const r = await pool.query(`UPDATE users SET phone = $2 WHERE lower(email) = $1 AND (phone IS NULL OR btrim(phone) = '' OR phone ~ '3551\s*5260')`, [email, phone]);
+        if (!r.rowCount) console.warn(`[hr-phones] no login to update for ${email}`);
+      }
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_phones_2026_10_13b', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
     // Millie Edwards needs a login + HR page (Woody, 2026-10-13). The 2026-10
     // team move had already run when she was added to NEW_STAFF_2026, so she
     // was never created. Idempotent: by email, then by name.
