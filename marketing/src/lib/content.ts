@@ -486,19 +486,19 @@ export const BRAND_REP_PILLARS: Array<{ name: string; clients: Client[] }> = [
     { name: "Percival", domain: "percivalclo.com" },
     { name: "Earl of East", domain: "earlofeast.com" },
     { name: "Daniella Draper", domain: "danielladraper.com" },
-    { name: "Rønning", domain: "ronning.co" },
+    { name: "Rønning", domain: "ronning.store" },
   ] },
   { name: "Hospitality", clients: [
     { name: "Atis", domain: "atisfood.com" },
     { name: "Bangers", domain: "bangerslondon.com" },
-    { name: "Old Spike", domain: "oldspike.co.uk" },
+    { name: "Old Spike", domain: "oldspikeroastery.com" },
     { name: "Yolk", domain: "yolklondon.com" },
   ] },
   { name: "Wellness", clients: [
-    { name: "Masaj", domain: "masaj.london" },
+    { name: "Masaj", domain: "masaj.me" },
     { name: "Barry's Bootcamp", domain: "barrys.com" },
     { name: "Jab", domain: "jabgym.com" },
-    { name: "Karve", domain: "karvestudio.com" },
+    { name: "Karve", domain: "karve.club" },
   ] },
 ];
 export const BRAND_REP_CLIENTS: Client[] = BRAND_REP_PILLARS.flatMap((p) => p.clients);
