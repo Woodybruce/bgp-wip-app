@@ -449,7 +449,7 @@ export const INVESTMENT_DEALS: InvestmentDeal[] = [
   { image: "/images/investment/royal-exchange-corner.jpg", name: "The Royal Exchange, London", client: "Ardent", type: "Sale", price: "", status: "Completed", capRate: null, sold: true, wide: true },
   { image: "/images/investment/brixton-market.jpg", name: "Brixton Market", client: "Hondo Enterprises / Angelo Gordon", type: "Sale", price: "", status: "Under offer", capRate: null, sold: false, wide: false },
   { image: "/images/investment/16-conduit-street.jpg", name: "16 Conduit Street, Mayfair", client: "Japanese private investor", type: "Acquisition", price: "£13,450,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { name: "Bombardier Hangar, Biggin Hill Airport", client: "LCN Capital Partners", type: "Forward funding", price: "£35,000,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/biggin-hill-bombardier.jpg", name: "Bombardier Hangar, Biggin Hill Airport", client: "LCN Capital Partners", type: "Forward funding", price: "£35,000,000", status: "Completed", capRate: null, sold: true, wide: false },
   // Our House Group: a run of buildings bought for the members' clubs
   // (Woody, 2026-10-13) — Jesse's House in Fulham, Leo's House in Clapham,
   // Orly's House in East Sheen.
