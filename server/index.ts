@@ -3011,6 +3011,17 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       }
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_13', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
+    // Woody, 2026-10-13 (later): "Peter Wood is head of lease advisory and a director".
+    const done2 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_titles_2026_10_13b'`);
+    if (!done2.rows.length) {
+      const u = await pool.query(`SELECT id FROM users WHERE lower(name) = 'peter wood' AND is_active = true`);
+      for (const r of u.rows) {
+        await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [r.id]);
+        await pool.query(`UPDATE staff_profiles SET title = $2, updated_at = now() WHERE user_id = $1`, [r.id, "Director, Head of Lease Advisory"]);
+      }
+      if (!u.rows.length) console.warn(`[hr-titles] no active login named peter wood`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_13b', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
   } catch (e: any) {
     console.warn("[hr-titles]", e?.message);
   }
