@@ -453,7 +453,8 @@ export const INVESTMENT_DEALS: InvestmentDeal[] = [
   // Our House Group: a run of buildings bought for the members' clubs
   // (Woody, 2026-10-13) — Jesse's House in Fulham, Leo's House in Clapham,
   // Orly's House in East Sheen.
-  { image: "/images/investment/jesses-house-fulham.jpg", name: "Jesse's House, 142 Fulham Road", client: "Our House Group", type: "Acquisition", price: "£26,000,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { name: "The Old Picture House, 142 Fulham Road", client: "Our House Group", type: "Acquisition", price: "£26,000,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/jesses-house-fulham.jpg", name: "Jesse's House, Fulham", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/leos-house-clapham.jpg", name: "Leo's House, Clapham North", client: "Our House Group", type: "Acquisition", price: "£16,000,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/orlys-house-east-sheen.jpg", name: "Orly's House, East Sheen", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/oxam-house-oxford.jpg", name: "Oxam House, Oxford", client: "Charles Street", type: "Acquisition", price: "£21,250,000", status: "Completed", capRate: null, sold: true, wide: false },
