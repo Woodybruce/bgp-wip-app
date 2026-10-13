@@ -3022,6 +3022,13 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       if (!u.rows.length) console.warn(`[hr-titles] no active login named peter wood`);
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_13b', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
+    // Woody, 2026-10-13 (evening): "Toddy's should say Associate Director".
+    const doneAT = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_titles_2026_10_13d'`);
+    if (!doneAT.rows.length) {
+      await pool.query(`UPDATE staff_profiles SET title = 'Associate Director', updated_at = now()
+                         WHERE user_id IN (SELECT id FROM users WHERE lower(name) = 'alex todd' AND is_active = true)`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_13d', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
     // Woody, 2026-10-13: "keep surveyors" — graduates are Surveyors on the
     // site and cards, so the HR title (the source of truth) says so.
     const done3 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_titles_2026_10_13c'`);
