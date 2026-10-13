@@ -504,8 +504,12 @@
           "Canary Wharf, E14"
         ]
       ],
-      "imageUrl": null,
-      "galleryUrls": [],
+      "imageUrl": "https://www.bgp.uk.com/images/case-studies/canary-wharf.jpg",
+      "galleryUrls": [
+        "https://www.bgp.uk.com/images/case-studies/canary-wharf-2.jpg",
+        "https://www.bgp.uk.com/images/case-studies/canary-wharf-3.jpg",
+        "https://www.bgp.uk.com/images/case-studies/canary-wharf-4.jpg"
+      ],
       "sortOrder": 4,
       "published": true
     },

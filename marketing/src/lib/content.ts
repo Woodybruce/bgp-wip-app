@@ -57,6 +57,7 @@ export const HERO_SLIDES: Array<{ src: string; alt: string; place: string; capab
   { src: "/images/hero/portman-chiltern-street.jpg", alt: "Independent shopfronts on Chiltern Street, Marylebone", place: "The Portman Estate", capability: "Leasing" },
   { src: "/images/hero/royal-exchange.jpg", alt: "The Royal Exchange, City of London", place: "The Royal Exchange", capability: "Investment and asset management" },
   { src: "/images/hero/bullring.jpg", alt: "The bull at Bullring, Birmingham", place: "Bullring, Birmingham", capability: "Shopping centre leasing" },
+  { src: "/images/hero/canary-wharf.jpg", alt: "Shops and restaurants at Wood Wharf, Canary Wharf", place: "Canary Wharf", capability: "Leasing and placemaking" },
 ];
 
 // From Emmy's "Website copy 7 Oct" — Website: Homepage
@@ -247,6 +248,8 @@ export const CASE_STUDIES: CaseStudy[] = [
       "Canary Wharf is one of the largest retail and leisure estates in London, with shopping malls, waterside restaurants and a growing residential population. BGP has advised Canary Wharf Group for more than twenty years.",
       "The instruction spans leasing strategy, tenant mix and the introduction of new restaurant, leisure and lifestyle operators as the estate has broadened from a working district into a seven-day destination.",
     ],
+    image: "/images/case-studies/canary-wharf.jpg",
+    gallery: ["/images/case-studies/canary-wharf-2.jpg", "/images/case-studies/canary-wharf-3.jpg", "/images/case-studies/canary-wharf-4.jpg"],
   },
   {
     slug: "the-royal-exchange",
