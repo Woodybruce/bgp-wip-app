@@ -759,6 +759,7 @@ function getToolProgressLabel(toolName: string): string {
     add_property_imagery: "Attaching imagery...",
     create_requirement: "Logging requirement...",
     create_available_unit: "Creating unit...",
+    refresh_unit_photos_from_brochure: "Pulling photos from the brochure...",
     update_available_unit: "Updating unit...",
     create_targeting_brief: "Creating targeting brief...",
     find_duplicate_properties: "Scanning for duplicates...",
@@ -1446,7 +1447,7 @@ Don't ask permission for any of this. Don't dump the raw extracted text back to 
 
 Brochures uploaded directly to a property page already run through a bespoke pipeline (see brochure-ingest.ts). For everything else, this is the path.
 
-**"Add this to the letting tracker" (a marketing brochure):** read_document → search_crm for the building (create_property if missing — the unit's own address, never a whole estate the brochure happens to be filed under) → ONE create_available_unit call with sqft, askingRent per annum (or rentPoa), leaseTerms, useClass, epcRating, the BGP people named on the brochure as agentNames, and brochureChatMediaFilename so the brochure is filed and a page becomes the listing photo. Then report exactly what the result says: on the tracker (unit + deal), agents set / not matched, photo yes/no, and websiteLive or the websiteMissing list. Never describe these steps instead of doing them, and never say a file wasn't found without first calling list_my_uploads.
+**"Add this to the letting tracker" (a marketing brochure):** read_document → search_crm for the building (create_property if missing — the unit's own address, never a whole estate the brochure happens to be filed under) → ONE create_available_unit call with sqft, askingRent per annum (or rentPoa), leaseTerms, useClass, epcRating, the BGP people named on the brochure as agentNames, and brochureChatMediaFilename so the brochure is filed and its own photographs become the listing photos (refresh_unit_photos_from_brochure re-pulls them for a unit that already has the brochure). Then report exactly what the result says: on the tracker (unit + deal), agents set / not matched, photo yes/no, and websiteLive or the websiteMissing list. Never describe these steps instead of doing them, and never say a file wasn't found without first calling list_my_uploads.
 
 ## Evidence-plan unit facts
 Use **manage_evidence_plan_unit** to read a plan unit and its evidence, then apply user-authorized current facts with the returned revision. Staff and clients can edit units on properties they can access; admin is not required. Never use sql_write for evidence-plan tables. Transaction/headline rent is not necessarily passing rent; do not derive expiry, break or review dates from a transaction date and term.
@@ -3561,6 +3562,19 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           showOnWebsite: { type: "boolean", description: "Default true: switch the website on as soon as the listing is complete. false keeps it off the website." },
         },
         required: ["propertyId", "unitName"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "refresh_unit_photos_from_brochure",
+      description: "Re-pull a Letting Tracker unit's listing photos from the brochure PDF(s) filed under it: the brochure's own photographs (exteriors first, then interiors; plans, maps and logos left out), replacing any page-screenshot photo. Use when the user says a unit's website photo is a screenshot / poor / should come from the brochure. Search available units first for the unit ID.",
+      parameters: {
+        type: "object",
+        properties: { unitId: { type: "string", description: "The available unit ID (UUID)" } },
+        required: ["unitId"],
       },
     },
   });
@@ -7004,6 +7018,17 @@ export async function executeCrmToolRaw(
       const { addUnitToLettingTracker } = await import("./letting-tracker-chat");
       const r = await addUnitToLettingTracker(req, fnArgs as any);
       return { data: { ...r, action: r.alreadyListed ? "updated" : "created", entity: "available unit", id: r.unitId, name: r.unitName }, action: { type: r.alreadyListed ? "crm_updated" : "crm_created", entityType: "unit", id: r.unitId } };
+    } catch (e: any) {
+      return { data: { success: false, error: e?.message || String(e) } };
+    }
+  }
+
+  if (fnName === "refresh_unit_photos_from_brochure") {
+    try {
+      const { refreshUnitPhotosFromBrochures } = await import("./letting-tracker-chat");
+      const r = await refreshUnitPhotosFromBrochures(String(fnArgs.unitId || ""));
+      if (!r.brochures) return { data: { success: false, error: "No brochure PDF is filed under this unit — add one first (create_available_unit with brochureChatMediaFilename, or Files on the unit's row)." } };
+      return { data: { success: true, ...r, note: r.added ? `${r.added} photo(s) now on the listing, hero first; ${r.removedPageRenders} page screenshot(s) removed.` : "The brochure has no usable photographs (vector-only layout) — the page render stays." }, action: { type: "crm_updated", entityType: "unit", id: fnArgs.unitId } };
     } catch (e: any) {
       return { data: { success: false, error: e?.message || String(e) } };
     }

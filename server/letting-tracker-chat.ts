@@ -89,6 +89,111 @@ async function addUnitFile(unitId: string, data: Buffer, fileName: string, mimeT
   return row.id;
 }
 
+/** The brochure's own photographs → the unit's listing photos (Woody,
+ *  2026-10-13: "take the photo from the brochure rather than a screenshot").
+ *  pdfimages pulls the embedded images; sharp drops anything small, thin or
+ *  logo-shaped; the brochure vision classifier (Haiku) keeps exteriors /
+ *  interiors and drops plans, maps and logos; the hero goes in first so the
+ *  website leads with it. Replaces earlier page-render photos. */
+export async function photosFromBrochure(unitId: string, pdf: Buffer, opts: { max?: number; replacePageRenders?: boolean; label?: string } = {}): Promise<{ added: number; removedPageRenders: number; kinds: string[] }> {
+  const max = opts.max ?? 6;
+  const { extractImagesFromPdf } = await import("./pdf-image-extract");
+  const raw = await extractImagesFromPdf({ pdfBuffer: pdf, maxImages: 40, minBytes: 20_000 });
+  type Cand = { buffer: Buffer; w: number; h: number; kind: string; rank: number };
+  const cands: Cand[] = [];
+  let sharp: any = null;
+  try { sharp = (await import("sharp")).default; } catch {}
+  for (const img of raw) {
+    try {
+      let buffer = img.buffer, w = 0, h = 0;
+      if (sharp) {
+        const meta = await sharp(img.buffer).metadata();
+        w = meta.width || 0; h = meta.height || 0;
+        if (w < 640 || h < 420) continue;                 // icons, logos, thumbnails
+        const ar = w / h;
+        if (ar < 0.55 || ar > 2.6) continue;              // strips, banners
+        if (cands.some(c => c.w === w && c.h === h && Math.abs(c.buffer.length - img.buffer.length) < 2048)) continue; // same image twice
+        // Flat colour / texture backgrounds (the biggest images in many
+        // brochures) have almost no tonal spread — not photographs.
+        const st = await sharp(img.buffer).stats();
+        const spread = st.channels.slice(0, 3).reduce((a: number, c: any) => a + (c.stdev || 0), 0) / Math.min(3, st.channels.length);
+        if (spread < 14) continue;
+        buffer = await sharp(img.buffer).rotate().jpeg({ quality: 86 }).toBuffer();
+      }
+      cands.push({ buffer, w, h, kind: "unknown", rank: 5 });
+    } catch {}
+  }
+  // Classify (vision) — kept kinds and their order on the listing.
+  const order: Record<string, number> = { hero: 0, cover: 1, secondary_external: 2, internal: 3 };
+  try {
+    const { classifyBrochureImage } = await import("./brochure-vision");
+    let i = 0;
+    const worker = async () => {
+      while (i < cands.length) {
+        const c = cands[i++];
+        const r = await classifyBrochureImage({ buffer: c.buffer, mimeType: "image/jpeg" }).catch(() => null);
+        if (!r) continue;                                  // classifier unavailable → keep by size
+        c.kind = r.kind;
+        c.rank = r.isUseful && r.kind in order ? order[r.kind] : 9;
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, cands.length) }, worker));
+  } catch {}
+  const keep = cands.filter(c => c.rank < 9).sort((a, b) => a.rank - b.rank || (b.w * b.h) - (a.w * a.h)).slice(0, max);
+  if (!keep.length) return { added: 0, removedPageRenders: 0, kinds: [] };
+
+  const { unitMarketingFiles } = await import("@shared/schema");
+  const { eq, and, like } = await import("drizzle-orm");
+  let removedPageRenders = 0;
+  if (opts.replacePageRenders !== false) {
+    const old = await db.select().from(unitMarketingFiles).where(and(eq(unitMarketingFiles.unitId, unitId), eq(unitMarketingFiles.category, "photo"), like(unitMarketingFiles.fileName, "% - page %.jpg")));
+    for (const f of old) {
+      const key = (f.filePath || "").replace(/^\/uploads\//, "");
+      try { const { deleteFile } = await import("./file-storage"); if (key) await deleteFile(key); } catch {}
+      await db.delete(unitMarketingFiles).where(eq(unitMarketingFiles.id, f.id));
+      removedPageRenders++;
+    }
+  }
+  const unit: any = await storage.getAvailableUnit(unitId);
+  const prop: any = unit?.propertyId ? await storage.getCrmProperty(unit.propertyId).catch(() => null) : null;
+  const base = (opts.label || unit?.unitName || "unit").replace(/[\\/:*?"<>|]+/g, " ").trim();
+  let n = 0;
+  for (const c of keep) {
+    n++;
+    const name = `${base} — ${c.kind === "unknown" ? "photo" : c.kind.replace(/_/g, " ")} ${n}.jpg`;
+    await addUnitFile(unitId, c.buffer, name, "image/jpeg", "photo");
+    try {
+      const { storeImageFromBuffer } = await import("./image-studio");
+      await storeImageFromBuffer({
+        buffer: c.buffer, fileName: name, category: "Properties",
+        tags: ["letting-tracker", "brochure", ...(unit?.unitName ? [unit.unitName] : []), ...(prop?.name ? [prop.name] : [])],
+        description: `From the brochure — ${unit?.unitName || ""}${prop?.name ? ` at ${prop.name}` : ""}`,
+        source: "letting-tracker", propertyId: unit?.propertyId || null,
+        companyId: prop?.landlordId || null, address: prop?.address || undefined, mimeType: "image/jpeg",
+      });
+    } catch {}
+  }
+  return { added: keep.length, removedPageRenders, kinds: keep.map(c => c.kind) };
+}
+
+/** Re-pull the listing photos from the brochure PDFs already filed under a unit. */
+export async function refreshUnitPhotosFromBrochures(unitId: string): Promise<{ added: number; removedPageRenders: number; kinds: string[]; brochures: number }> {
+  const { unitMarketingFiles } = await import("@shared/schema");
+  const { eq, and } = await import("drizzle-orm");
+  const files = await db.select().from(unitMarketingFiles).where(and(eq(unitMarketingFiles.unitId, unitId), eq(unitMarketingFiles.category, "brochure")));
+  const pdfs = files.filter(f => (f.mimeType || "").includes("pdf") && (f.fileType || "") !== "infosheet");
+  let total = { added: 0, removedPageRenders: 0, kinds: [] as string[] };
+  for (const f of pdfs) {
+    const key = (f.filePath || "").replace(/^\/uploads\//, "");
+    const stored = key ? await getFile(key) : null;
+    if (!stored) continue;
+    const r = await photosFromBrochure(unitId, stored.data, { replacePageRenders: total.added === 0, max: 6 - total.added });
+    total = { added: total.added + r.added, removedPageRenders: total.removedPageRenders + r.removedPageRenders, kinds: [...total.kinds, ...r.kinds] };
+    if (total.added >= 6) break;
+  }
+  return { ...total, brochures: pdfs.length };
+}
+
 /** The website's five requirements (server/routes.ts publicMissing). */
 export async function websiteMissingFor(unitId: string): Promise<string[]> {
   const { rows } = await pool.query(
@@ -159,25 +264,24 @@ export async function addUnitToLettingTracker(req: Request, args: AddUnitArgs) {
       if (isPdf) {
         await addUnitFile(unitId, file.data, file.originalName, "application/pdf", "brochure");
         brochureFiled = true;
-        const { rasterisePdfPage } = await import("./pdf-image-extract");
-        const page = Math.max(1, Math.floor(args.photoPage || 1));
-        const jpeg = await rasterisePdfPage({ pdfBuffer: file.data, page, dpi: 110 }) || (page > 1 ? await rasterisePdfPage({ pdfBuffer: file.data, page: 1, dpi: 110 }) : null);
-        if (jpeg) {
-          const photoName = `${file.originalName.replace(/\.pdf$/i, "")} - page ${page}.jpg`;
-          await addUnitFile(unitId, jpeg, photoName, "image/jpeg", "photo");
-          photoAdded = true;
-          try {
-            const prop = args.propertyId ? await storage.getCrmProperty(args.propertyId) : null;
-            const { storeImageFromBuffer } = await import("./image-studio");
-            await storeImageFromBuffer({
-              buffer: jpeg, fileName: photoName, category: "Properties",
-              tags: ["letting-tracker", args.unitName, ...(prop?.name ? [prop.name] : [])],
-              description: `Brochure page ${page} — ${args.unitName}${prop?.name ? ` at ${prop.name}` : ""}`,
-              source: "letting-tracker", propertyId: args.propertyId || null,
-              companyId: (prop as any)?.landlordId || null, address: (prop as any)?.address || undefined, mimeType: "image/jpeg",
-            });
-          } catch {}
-        } else notes.push("Couldn't render a page of the brochure for the photo — add one via Files on the unit's row.");
+        // The brochure's own photographs first; a rendered page only if it
+        // has none we can use (vector-only layouts).
+        let got = 0;
+        try {
+          const r = await photosFromBrochure(unitId, file.data, { label: args.unitName, replacePageRenders: true });
+          got = r.added;
+          if (got) { photoAdded = true; notes.push(`${got} photo${got === 1 ? "" : "s"} taken from the brochure (${r.kinds.join(", ")}).`); }
+        } catch (e: any) { notes.push(`Couldn't pull photos out of the brochure: ${e?.message || e}`); }
+        if (!got) {
+          const { rasterisePdfPage } = await import("./pdf-image-extract");
+          const page = Math.max(1, Math.floor(args.photoPage || 1));
+          const jpeg = await rasterisePdfPage({ pdfBuffer: file.data, page, dpi: 110 }) || (page > 1 ? await rasterisePdfPage({ pdfBuffer: file.data, page: 1, dpi: 110 }) : null);
+          if (jpeg) {
+            await addUnitFile(unitId, jpeg, `${file.originalName.replace(/\.pdf$/i, "")} - page ${page}.jpg`, "image/jpeg", "photo");
+            photoAdded = true;
+            notes.push("The brochure had no usable photographs, so page " + page + " is the listing photo for now — swap it via Files on the unit's row.");
+          } else notes.push("Couldn't get a photo from the brochure — add one via Files on the unit's row.");
+        }
       } else if (file.contentType.startsWith("image/")) {
         await addUnitFile(unitId, file.data, file.originalName, file.contentType, "photo");
         photoAdded = true;

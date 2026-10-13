@@ -7724,6 +7724,21 @@ These terms are indicative only and do not constitute a binding agreement.`;
         mimeType: req.file.mimetype,
         category,
       }).returning();
+      // A brochure PDF brings its own photographs: when the unit has no
+      // real photos yet, pull them out in the background (Woody,
+      // 2026-10-13 — the website was showing a page screenshot).
+      if (category === "brochure" && (req.file.mimetype || "").includes("pdf")) {
+        const pdfBuf = req.file.buffer;
+        const unitId = req.params.id as string;
+        (async () => {
+          const have = await db.select({ n: unitMarketingFiles.fileName }).from(unitMarketingFiles)
+            .where(and(eq(unitMarketingFiles.unitId, unitId), eq(unitMarketingFiles.category, "photo")));
+          if (have.some(f => !/ - page \d+\.jpg$/.test(f.n || ""))) return;
+          const { photosFromBrochure } = await import("./letting-tracker-chat");
+          const r = await photosFromBrochure(unitId, pdfBuf, { label: unit.unitName || undefined, replacePageRenders: true });
+          console.log(`[unit-files] brochure photos for ${unitId}: ${r.added} added (${r.kinds.join(", ")}), ${r.removedPageRenders} page renders removed`);
+        })().catch((e: any) => console.warn("[unit-files] brochure photos failed:", e?.message));
+      }
       // Photos uploaded against a tracker unit also land in the Image
       // Gallery, filed under the property (and tagged with the unit) so
       // they show organised on the property page / Image Studio.
@@ -7750,6 +7765,24 @@ These terms are indicative only and do not constitute a binding agreement.`;
       res.json(file);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to upload file" });
+    }
+  });
+
+  // Re-pull the listing photos from the brochure PDF(s) filed under a unit
+  // (ChatBGP's refresh_unit_photos_from_brochure).
+  app.post("/api/available-units/:id/photos-from-brochure", requireAuth, async (req: any, res) => {
+    try {
+      const unit = await storage.getAvailableUnit(req.params.id);
+      if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      const { refreshUnitPhotosFromBrochures } = await import("./letting-tracker-chat");
+      const r = await refreshUnitPhotosFromBrochures(req.params.id as string);
+      if (!r.brochures) return res.status(400).json({ message: "No brochure PDF is filed under this unit yet — upload one in Files first." });
+      res.json(r);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Couldn't pull photos from the brochure" });
     }
   });
 
