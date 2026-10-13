@@ -3036,6 +3036,32 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       }
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_13c', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
+    // Mobile numbers (Woody, 2026-10-13: "get everyone's mobiles sorted and
+    // added"). HR (users.phone) is the source for cards and the website, so
+    // fill it from email signatures and the numbers already published on the
+    // website; the office switchboard is not a mobile.
+    const done4 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_phones_2026_10_13'`);
+    if (!done4.rows.length) {
+      const office = /^\+?44\s*\(?0?\)?\s*20\s*3551\s*5260$|^0?20\s*3551\s*5260$/;
+      const isMobile = (v: string | null | undefined) => /^(\+44\s*\(?0?\)?\s*7|07)\d/.test(String(v || "").replace(/[^\d+()]/g, "").replace(/\(\)/g, ""));
+      const known: Array<[string, string]> = [
+        ["millie@brucegillinghampollard.com", "+44 (0)7799 882 850"],
+        ["harriette@brucegillinghampollard.com", "+44 (0)7938 539 879"],
+        ["layla@brucegillinghampollard.com", "+44 (0)7943 957 637"],
+      ];
+      for (const [email, phone] of known) {
+        await pool.query(`UPDATE users SET phone = $2 WHERE lower(email) = $1 AND (phone IS NULL OR btrim(phone) = '' OR phone ~ '3551\s*5260')`, [email, phone]);
+      }
+      const site = await pool.query(`SELECT lower(email) AS email, phone FROM website_team WHERE email IS NOT NULL AND phone IS NOT NULL`).catch(() => ({ rows: [] as any[] }));
+      let filled = 0;
+      for (const r of site.rows) {
+        if (!isMobile(r.phone) || office.test(String(r.phone))) continue;
+        const u = await pool.query(`UPDATE users SET phone = $2 WHERE lower(email) = $1 AND (phone IS NULL OR btrim(phone) = '' OR phone ~ '3551\s*5260')`, [r.email, String(r.phone).trim()]);
+        filled += u.rowCount || 0;
+      }
+      console.log(`[hr-phones] mobiles set: ${known.length} from signatures, ${filled} from the website`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_phones_2026_10_13', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
     // Millie Edwards needs a login + HR page (Woody, 2026-10-13). The 2026-10
     // team move had already run when she was added to NEW_STAFF_2026, so she
     // was never created. Idempotent: by email, then by name.
