@@ -144,3 +144,8 @@ export const NEW_STAFF_2026: Array<{ name: string; email: string; title: string 
 /** On the 2026-10 structure at all (team, board, support or consultant). */
 export const onStructure2026 = (name: string | null | undefined) =>
   !!rosterTeamsFor(name) || [...BOARD_2026, ...SUPPORT_2026, ...CONSULTANTS_2026.map(c => c.name)].some(n => samePerson(n, name));
+/** Who belongs on the People & HR pages: a BGP login that's on the 2026
+ *  structure or in a BGP team. Keeps out client logins, test and service
+ *  accounts (Woody, 2026-10-13: "they are just rando accounts"). */
+export const isHrPerson = (p: { name?: string | null; email?: string | null; team?: string | null }) =>
+  /@brucegillinghampollard\.com$/i.test(String(p.email || "")) && (onStructure2026(p.name) || isBgpTeam(p.team));

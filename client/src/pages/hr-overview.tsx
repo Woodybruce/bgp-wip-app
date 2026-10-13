@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect } from "react";
+import { isHrPerson } from "@shared/teams";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
@@ -1715,7 +1716,7 @@ export default function HrOverview({ onSelectPerson }: { onSelectPerson?: (id: s
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
-  const { data: allStaff = [] } = useQuery<StaffMember[]>({ queryKey: ["/api/hr/staff"] });
+  const { data: allStaff = [] } = useQuery<StaffMember[]>({ queryKey: ["/api/hr/staff"], select: (rows) => rows.filter((r) => isHrPerson(r)) });
 
   if (userLoading) {
     return (

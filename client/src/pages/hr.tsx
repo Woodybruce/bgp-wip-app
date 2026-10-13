@@ -1,4 +1,4 @@
-import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, staffGroupFor } from "@shared/teams";
+import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, isHrPerson, staffGroupFor } from "@shared/teams";
 import { useState, useMemo, useRef, useEffect, lazy, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -6455,6 +6455,9 @@ export default function HRPage() {
 
   const { data: allStaff = [], isLoading } = useQuery<StaffMember[]>({
     queryKey: ["/api/hr/staff"],
+    // People & HR shows BGP people on the structure only — client, test
+    // and service logins stay out (Woody, 2026-10-13).
+    select: (rows) => rows.filter((r) => isHrPerson(r)),
   });
 
   // Resolve the selected person: prefer the cached allStaff row (fast,

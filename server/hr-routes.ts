@@ -1,4 +1,4 @@
-import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, TEAM_LEADS_2026, rosterNameFor, rosterTeamsFor, samePerson, staffGroupFor } from "@shared/teams";
+import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, TEAM_LEADS_2026, isHrPerson, rosterNameFor, rosterTeamsFor, samePerson, staffGroupFor } from "@shared/teams";
 import type { Express } from "express";
 import { pool } from "./db";
 import { requireAuth, requireAdmin } from "./auth";
@@ -1514,17 +1514,15 @@ export function setupHrRoutes(app: Express) {
       // so London Retail / London F&B / new teams don't silently fall off.
       // Cards: Board, the teams, Support, Consultants (Woody, 2026-10-12) —
       // by name, so they're right before the team move is applied.
+      // Only people on the structure — no client, test or service logins,
+      // and no Unassigned / Landsec cards (Woody, 2026-10-13).
+      const hrStaff = staff.filter((s: any) => isHrPerson(s));
       const groupOf = (s: any) => String(staffGroupFor(s.name, s.team) || "").trim();
       const presentTeams = new Set<string>();
-      let unassignedCount = 0;
-      for (const s of staff) {
+      for (const s of hrStaff) {
         const g = groupOf(s);
-        if (g) presentTeams.add(g);
-        else unassignedCount++;
+        if (g && STAFF_GROUP_ORDER.includes(g)) presentTeams.add(g);
       }
-      const extraTeams = [...presentTeams].filter(t => !STAFF_GROUP_ORDER.includes(t)).sort();
-      const allTeams = [...STAFF_GROUP_ORDER.filter(t => presentTeams.has(t)), ...extraTeams];
-      if (unassignedCount > 0) allTeams.push("Unassigned");
 
       // Someone in two teams sits on both cards (Layla, 2026-10-13: Millie
       // and Tracey in London Estate too, Lucy Gardiner in Shopping Centre,
@@ -1533,16 +1531,13 @@ export function setupHrRoutes(app: Express) {
       const inTeam = (s: any, team: string) => groupOf(s) === team
         || (rosterTeamsFor(s.name) || []).includes(team as any)
         || (!rosterTeamsFor(s.name) && Array.isArray(s.additional_teams) && s.additional_teams.includes(team));
-      for (const s of staff) for (const t of rosterTeamsFor(s.name) || []) presentTeams.add(t);
-      const orderedTeams = [...STAFF_GROUP_ORDER.filter(t => presentTeams.has(t)), ...extraTeams];
-      if (unassignedCount > 0) orderedTeams.push("Unassigned");
+      for (const s of hrStaff) for (const t of rosterTeamsFor(s.name) || []) presentTeams.add(t);
+      const orderedTeams = STAFF_GROUP_ORDER.filter(t => presentTeams.has(t));
       const summaries = orderedTeams.map(team => {
-        const grouped = team === "Unassigned"
-          ? staff.filter((s: any) => !groupOf(s))
-          : staff.filter((s: any) => inTeam(s, team));
+        const grouped = hrStaff.filter((s: any) => inTeam(s, team));
         // The team's leads first (both of them), even when one sits on the
         // Board (Jack) or also leads another team (Lizzie, Pete).
-        const leads = (TEAM_LEADS_2026[team] || []).map(n => staff.find((s: any) => samePerson(s.name, n) || rosterNameFor(s.name) === n)).filter(Boolean);
+        const leads = (TEAM_LEADS_2026[team] || []).map(n => hrStaff.find((s: any) => samePerson(s.name, n) || rosterNameFor(s.name) === n)).filter(Boolean);
         const members = [...leads, ...grouped.filter((m: any) => !leads.some((l: any) => l.id === m.id))];
         if (members.length === 0) return null;
         // Head selection (in priority order): explicit "Head ..." title,
