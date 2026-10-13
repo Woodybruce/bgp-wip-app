@@ -50,7 +50,7 @@ export const TEAM_ROSTER_2026: Array<{ name: string; teams: BgpTeamName[] }> = [
   { name: "Lizzie Knights", teams: ["London Estate", "City"] },
   { name: "Lucy Cope", teams: ["London Estate"] },
   { name: "Emily Cann", teams: ["London Estate"] },
-  { name: "Evie North", teams: ["London Estate"] },
+  { name: "Evie North", teams: ["Tenant Rep"] }, // moved from London Estate (Woody, 2026-10-13)
   { name: "Will Penfold", teams: ["London Estate"] },
   { name: "Lucy Gardiner", teams: ["High Street"] },
   { name: "Tracey Pollard", teams: ["High Street"] },
