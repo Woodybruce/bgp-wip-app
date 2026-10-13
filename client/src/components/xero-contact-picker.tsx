@@ -165,6 +165,15 @@ export function XeroContactPicker({
               </button>
             );
           })}
+          {!isFetching && !notConnected && (
+            <button
+              className="w-full text-left px-3 py-2 text-xs text-muted-foreground hover:bg-accent border-t"
+              onMouseDown={(e) => { e.preventDefault(); void startXeroConnect({ returnTo: window.location.pathname + window.location.search }); }}
+              data-testid={`${testIdPrefix}-reconnect`}
+            >
+              Connect to Xero again (switch organisation or fix missing contacts)
+            </button>
+          )}
         </div>
       )}
     </div>
