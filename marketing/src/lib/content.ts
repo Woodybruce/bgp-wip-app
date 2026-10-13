@@ -352,7 +352,7 @@ export const CASE_STUDIES: CaseStudy[] = [
       "Our work has been used to help shape ground floor unit configuration, to ensure the units are fit for purpose once built and that there is a long-term vision in place to support office lettings.",
     ],
   },
-  ...(["Hammerson", "Land Securities", "Bloomberg", "The Royal Exchange"] as const).map((client) => ({
+  ...(["Hammerson", "Land Securities", "The Royal Exchange"] as const).map((client) => ({
     slug: client.toLowerCase().replace(/^the /, "").replace(/[^a-z0-9]+/g, "-") + "-lease-advisory",
     title: client,
     service: "Lease Advisory",
@@ -507,7 +507,6 @@ export const BRAND_REP_CLIENTS: Client[] = BRAND_REP_PILLARS.flatMap((p) => p.cl
 export const LEASE_ADVISORY_CLIENTS: Client[] = [
   { name: "Landsec", domain: "landsec.com" },
   { name: "Hammerson", domain: "hammerson.com" },
-  { name: "Bloomberg", domain: "bloomberg.com" },
   { name: "Schroders", domain: "schroders.com" },
   { name: "Brookfield", domain: "brookfield.com" },
   { name: "Columbia Threadneedle", domain: "columbiathreadneedle.com" },

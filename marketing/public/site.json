@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-13T06:41:53.315Z",
+  "generatedAt": "2026-10-13T07:41:48.735Z",
   "site": "https://www.bgp.uk.com",
   "note": "Content of bgp.uk.com. Pages are rendered client-side; use this file rather than fetching HTML. Live availability comes from listingsFeed.",
   "heroStatement": "Great places are built through connected thinking.",
@@ -477,17 +477,6 @@
         "Client": "Land Securities"
       },
       "image": "https://www.bgp.uk.com/images/clients/victoria-street.jpg"
-    },
-    {
-      "title": "Bloomberg",
-      "service": "Lease Advisory",
-      "url": "https://www.bgp.uk.com/case-studies/bloomberg-lease-advisory",
-      "blurb": "Lease advisory instruction for Bloomberg — rent reviews, renewals and restructuring aligned to the asset strategy.",
-      "facts": {
-        "Service": "Lease Advisory",
-        "Client": "Bloomberg"
-      },
-      "image": "https://www.bgp.uk.com/images/city-towers.jpg"
     },
     {
       "title": "The Royal Exchange",

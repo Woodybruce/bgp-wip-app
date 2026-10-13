@@ -767,30 +767,6 @@
       "published": true
     },
     {
-      "slug": "bloomberg-lease-advisory",
-      "title": "Bloomberg",
-      "service": "Lease Advisory",
-      "blurb": "Lease advisory instruction for Bloomberg — rent reviews, renewals and restructuring aligned to the asset strategy.",
-      "body": [
-        "BGP's Lease Advisory team acts for Bloomberg, providing evidence-led advice across rent reviews, renewals and lease restructuring.",
-        "Every negotiation starts from the asset strategy and is grounded in live leasing evidence from BGP's agency teams."
-      ],
-      "facts": [
-        [
-          "Service",
-          "Lease Advisory"
-        ],
-        [
-          "Client",
-          "Bloomberg"
-        ]
-      ],
-      "imageUrl": "https://www.bgp.uk.com/images/city-towers.jpg",
-      "galleryUrls": [],
-      "sortOrder": 13,
-      "published": true
-    },
-    {
       "slug": "royal-exchange-lease-advisory",
       "title": "The Royal Exchange",
       "service": "Lease Advisory",
@@ -815,7 +791,7 @@
         "https://www.bgp.uk.com/images/case-studies/the-royal-exchange-3.jpg",
         "https://www.bgp.uk.com/images/case-studies/the-royal-exchange-4.jpg"
       ],
-      "sortOrder": 14,
+      "sortOrder": 13,
       "published": true
     },
     {
@@ -843,7 +819,7 @@
       ],
       "imageUrl": "https://www.bgp.uk.com/images/case-studies/the-frankie-shop-davies-street.jpg",
       "galleryUrls": [],
-      "sortOrder": 15,
+      "sortOrder": 14,
       "published": true
     },
     {
@@ -874,7 +850,7 @@
         "https://www.bgp.uk.com/images/case-studies/percival-neal-street-2.jpg",
         "https://www.bgp.uk.com/images/case-studies/percival-neal-street-3.jpg"
       ],
-      "sortOrder": 16,
+      "sortOrder": 15,
       "published": true
     },
     {
@@ -905,7 +881,7 @@
         "https://www.bgp.uk.com/images/case-studies/atis-loxton-walk-2.jpg",
         "https://www.bgp.uk.com/images/case-studies/atis-loxton-walk-3.jpg"
       ],
-      "sortOrder": 17,
+      "sortOrder": 16,
       "published": true
     },
     {
@@ -936,7 +912,7 @@
         "https://www.bgp.uk.com/images/case-studies/masaj-islington-square-2.jpg",
         "https://www.bgp.uk.com/images/case-studies/masaj-islington-square-3.jpg"
       ],
-      "sortOrder": 18,
+      "sortOrder": 17,
       "published": true
     }
   ],
