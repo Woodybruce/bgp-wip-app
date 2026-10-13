@@ -382,7 +382,7 @@ export const CASE_STUDIES: CaseStudy[] = [
       "We acquired The Frankie Shop's London flagship on Davies Street, bringing the New York and Paris label to Mayfair.",
       "A first-to-market UK location secured through our relationships with the estate and a clear view of where the brand's customer already shops.",
     ],
-    image: "/images/case-studies/the-frankie-shop-davies-street.jpg",
+    // Davies Street photo to come from Harry (the one pasted on 2026-10-12 was a dashboard screenshot).
   },
   {
     slug: "percival-neal-street",
