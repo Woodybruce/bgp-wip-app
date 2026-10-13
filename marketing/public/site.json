@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-13T12:28:00.244Z",
+  "generatedAt": "2026-10-13T12:33:22.138Z",
   "site": "https://www.bgp.uk.com",
   "note": "Content of bgp.uk.com. Pages are rendered client-side; use this file rather than fetching HTML. Live availability comes from listingsFeed.",
   "heroStatement": "Great places are built through connected thinking.",
@@ -379,13 +379,11 @@
       "title": "The Royal Exchange",
       "service": "Investment",
       "url": "https://www.bgp.uk.com/case-studies/the-royal-exchange",
-      "blurb": "BGP has been Ardent's partner at The Royal Exchange since the very beginning: from the off-market acquisition in 2022, through leasing and asset management, to a successful exit in 2026.",
+      "blurb": "BGP acted for Ardent on the acquisition of The Royal Exchange, then drew on the firm's full-service expertise to deliver the business plan and stabilise a unique retail asset.",
       "facts": {
         "Service": "Investment",
         "Client": "Ardent",
-        "Occupancy": "75% to 100%",
-        "WAULT": "4 to 7 years",
-        "Annual footfall": "500,000 to 800,000"
+        "Asset": "Grade I listed luxury retail, City of London"
       },
       "image": "https://www.bgp.uk.com/images/investment/royal-exchange-courtyard.jpg"
     },
