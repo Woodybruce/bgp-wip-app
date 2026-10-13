@@ -39,7 +39,7 @@ function ScrollToTop() {
   useEffect(() => {
     window.scrollTo(0, 0);
     const hit = TITLES.find(([re]) => re.test(location));
-    document.title = hit ? `${hit[1]} — Bruce Gillingham Pollard` : "Bruce Gillingham Pollard";
+    document.title = hit ? `${hit[1]} · BGP` : "BGP";
   }, [location]);
   return null;
 }
