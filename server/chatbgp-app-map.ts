@@ -160,7 +160,11 @@ brochure dropped into chat (create_available_unit): it files the brochure under
 the unit, uses one of its pages as the listing photo, sets the BGP agents named
 on the brochure, and switches the website on when address, rent or POA, size,
 photo and lease terms are all in — otherwise it says which are missing. Swap the
-photo later via Files on the unit's row. Team headshots reach the site from the share drive:
+photo later via Files on the unit's row. The unit's **Create document** (Files dialog)
+makes the Unit particulars PDF in BGP house style — bordeaux header with the
+real BGP wordmark, the first photo full-width, area / rent / use as big
+numbers, particulars table, agents on a cream strip; the landlord's logo sits
+in the header as a small co-brand when the company has one. Team headshots reach the site from the share drive:
 any image named "Firstname Surname.jpg" in Woody's OneDrive folder
 "Bruce Gillingham Pollard - Share Drive / Marketing / Team CVs & Photos /
 Team Photos / For website" is served at
