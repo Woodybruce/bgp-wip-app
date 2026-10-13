@@ -105,6 +105,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
+import { startXeroConnect } from "@/lib/queryClient";
 import { usePropertySchemeList } from "@/components/property-schemes-panel";
 import { useRoute, Link, useLocation } from "wouter";
 import type { CrmDeal, CrmProperty, CrmCompany, CrmContact, DealFeeAllocation, AvailableUnit, PropertyUnit } from "@shared/schema";
@@ -4219,11 +4220,8 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
   const [allowMissingPo, setAllowMissingPo] = useState(false);
 
   const connectMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("GET", "/api/xero/auth");
-      const data = await res.json();
-      window.location.href = data.url;
-    },
+    // Comes back to this deal after Xero, not the Finance page.
+    mutationFn: async () => startXeroConnect({ returnTo: window.location.pathname + window.location.search }),
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
@@ -4320,7 +4318,10 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
   // Contact search and invoice sync run on the firm-wide Xero session, so
   // "Connect Xero" (a per-login token, only needed to send a NEW invoice)
   // no longer headlines a card that already has invoices.
-  const showConnect = !xeroStatus?.connected && invoices.length === 0;
+  // Not signed in to Xero → the header always offers Connect Xero, even on a
+  // deal that already has invoices (Woody, 2026-10-13: the button had
+  // "disappeared" there, leaving no way to invoice).
+  const showConnect = !xeroStatus?.connected;
 
   if (!xeroStatus?.configured) {
     return (
@@ -4350,8 +4351,8 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
           <div className="flex items-center gap-1">
             {showConnect ? (
               <Button variant="outline" size="sm" onClick={() => connectMutation.mutate()} disabled={connectMutation.isPending} data-testid="button-connect-xero">
-                {connectMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />}
-                Connect Xero
+                {connectMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Send className="w-3.5 h-3.5 mr-1" />}
+                Connect Xero to invoice
               </Button>
             ) : xeroStatus?.connected ? (
               <Button
@@ -4527,11 +4528,6 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
 
         {!xeroStatus?.connected && invoices.length === 0 && (
           <p className="text-xs text-muted-foreground">Connect Xero to create and track invoices for this deal.</p>
-        )}
-        {!xeroStatus?.connected && invoices.length > 0 && (
-          <button type="button" className="mt-2 text-[11px] text-primary hover:underline" onClick={() => connectMutation.mutate()} disabled={connectMutation.isPending} data-testid="button-connect-xero-another">
-            Sign in to Xero to send another invoice
-          </button>
         )}
       </CardContent>
     </Card>
