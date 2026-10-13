@@ -454,7 +454,7 @@ export const INVESTMENT_DEALS: InvestmentDeal[] = [
   { name: "Clapham North Arts Centre", client: "Leo's", type: "Acquisition", price: "£16,000,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/oxam-house-oxford.jpg", name: "Oxam House, Oxford", client: "Charles Street", type: "Acquisition", price: "£21,250,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/filmworks-ealing.jpg", name: "Filmworks, Ealing", client: "St George", type: "Sale", price: "£13,500,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/wimbledon-bridge-house.jpg", name: "Wimbledon Bridge House", client: "Sheet Anchor Evolve", type: "Transaction", price: "", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/wimbledon-bridge-house.jpg", name: "Wimbledon Bridge House", client: "Sheet Anchor Evolve", type: "Acquisition", price: "then the sale of the Aldi unit", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/grants-leisure-croydon.jpg", name: "Grants Leisure, Croydon", client: "Hermes", type: "Transaction", price: "", status: "Completed", capRate: null, sold: true, wide: false },
 ];
 
