@@ -72,9 +72,9 @@ export const HOME_INTRO = {
 
 export const TESTIMONIAL = {
   quote:
-    "With so many years' experience, they are no longer thought of as agents, more as part of our team.",
-  name: "Camille Waxer",
-  title: "Client",
+    "BGP have become an invaluable extension of my Landsec Hospitality leasing team, offering trusted counsel and delivering excellent leasing outcomes across our Retail, Workplace and Mixed-Use portfolio.",
+  name: "Mark Warne",
+  title: "Director of Hospitality and Leisure, Landsec",
 };
 
 // Consultancy page quote — Cat Jenkins (Northbank BID) has agreed to give
