@@ -342,6 +342,20 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
   }
 }
 
+// A Xero login can see several organisations (Xero's Demo Company, a
+// personal org). Always link the firm's: the one the firm-wide session
+// already uses, else one named Bruce Gillingham / BGP, else anything that
+// isn't a demo company. connections[0] linked Layla to the wrong org, so
+// her contact search came back empty (2026-10-13).
+export function pickFirmTenant(connections: any[], firmTenantId: string | null): any {
+  const orgs = connections.filter((c: any) => !c.tenantType || c.tenantType === "ORGANISATION");
+  const pool = orgs.length ? orgs : connections;
+  return (firmTenantId && pool.find((c: any) => c.tenantId === firmTenantId))
+    || pool.find((c: any) => /bruce\s*gillingham|\bbgp\b/i.test(c.tenantName || ""))
+    || pool.find((c: any) => !/demo/i.test(c.tenantName || ""))
+    || pool[0];
+}
+
 // Read-side helper: tries the caller's session first, then falls back
 // to the firm-wide system Xero session for unauthenticated/orphan
 // requests. Used by the contacts / accounts / organisation endpoints
@@ -385,9 +399,10 @@ export async function xeroApi(session: any, path: string, options: RequestInit =
         const connections = await connRes.json();
         console.log("[Xero] Connections found:", connections.length);
         if (connections.length > 0) {
-          tenantId = connections[0].tenantId;
+          const chosen = pickFirmTenant(connections, null);
+          tenantId = chosen.tenantId;
           session.xeroTokens.tenantId = tenantId;
-          console.log("[Xero] Auto-resolved tenant:", connections[0].tenantName);
+          console.log("[Xero] Auto-resolved tenant:", chosen.tenantName);
         }
       } else {
         console.error("[Xero] Connections request failed:", connRes.status, await connRes.text());
@@ -677,8 +692,10 @@ export function setupXeroRoutes(app: Express) {
         const connections = await connRes.json();
         console.log("[Xero] Callback connections found:", connections.length);
         if (connections.length > 0) {
-          req.session.xeroTokens.tenantId = connections[0].tenantId;
-          console.log("[Xero] Connected to tenant:", connections[0].tenantName, "id:", connections[0].tenantId);
+          const firmTenantId = (await import("./xero-system-session").then(m => m.readPersistedXeroTokens()).catch(() => null))?.tenantId || null;
+          const chosen = pickFirmTenant(connections, firmTenantId);
+          req.session.xeroTokens.tenantId = chosen.tenantId;
+          console.log("[Xero] Connected to tenant:", chosen.tenantName, "id:", chosen.tenantId, "| of", connections.map((c: any) => c.tenantName).join(", "));
         } else {
           console.error("[Xero] No tenants returned from connections endpoint");
         }
@@ -691,8 +708,11 @@ export function setupXeroRoutes(app: Express) {
       // Capture system-wide Xero session so background jobs (Stripe webhooks,
       // expense auto-post) can call Xero without an HTTP request context.
       try {
-        const { captureSystemXeroSession } = await import("./xero-system-session");
-        await captureSystemXeroSession(req.session);
+        const { captureSystemXeroSession, readPersistedXeroTokens } = await import("./xero-system-session");
+        const firm = await readPersistedXeroTokens().catch(() => null);
+        // Never swap the firm-wide session onto a different organisation.
+        if (!firm?.tenantId || firm.tenantId === req.session.xeroTokens?.tenantId) await captureSystemXeroSession(req.session);
+        else console.warn("[Xero] Sign-in linked a different organisation from the firm's — firm-wide session left alone");
       } catch (sysErr: any) {
         console.warn("[Xero] System session capture failed:", sysErr?.message);
       }
@@ -763,7 +783,19 @@ export function setupXeroRoutes(app: Express) {
       // can pick a billing entity without each having to OAuth-connect
       // their own Xero. Write endpoints stay session-scoped for proper
       // attribution.
-      const data = await xeroApiWithFallback(req.session, path);
+      let data: any = null;
+      try { data = await xeroApiWithFallback(req.session, path); } catch (e: any) {
+        if (String(e?.message || "").includes("Not connected")) throw e;
+        console.warn("[Xero] Contacts search on the user's session failed, trying the firm's:", e?.message);
+      }
+      // The user's own sign-in can point at the wrong organisation or lack
+      // contact access — search the firm-wide session too before saying
+      // nothing matched.
+      if (!data?.Contacts?.length && req.session?.xeroTokens) {
+        const { withSystemXero } = await import("./xero-system-session");
+        const firm = await withSystemXero((sys) => xeroApi(sys, path)).catch(() => null);
+        if (firm?.Contacts?.length || !data) data = firm || { Contacts: [] };
+      }
       const contacts = (data.Contacts || []).map((c: any) => ({
         ContactID: c.ContactID,
         Name: c.Name,
