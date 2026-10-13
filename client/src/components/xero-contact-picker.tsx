@@ -50,7 +50,7 @@ export function XeroContactPicker({
   // from "not connected" in the empty UI. Surfaces the actionable error
   // ("Connect Xero in Settings") rather than the misleading "no contacts found".
   const [notConnected, setNotConnected] = useState(false);
-  const { data: contacts = [], isFetching } = useQuery<XeroContact[]>({
+  const { data: contacts = [], isFetching, error } = useQuery<XeroContact[]>({
     queryKey: ["/api/xero/contacts", trimmed],
     queryFn: async () => {
       const url = trimmed
@@ -62,12 +62,14 @@ export function XeroContactPicker({
           setNotConnected(true);
           return [];
         }
-        throw new Error(await res.text());
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message || `Xero search failed (${res.status})`);
       }
       setNotConnected(false);
       return res.json();
     },
     enabled: open,
+    retry: false,
     staleTime: 60_000,
   });
 
@@ -134,7 +136,12 @@ export function XeroContactPicker({
               </Button>
             </div>
           )}
-          {!isFetching && !notConnected && contacts.length === 0 && (
+          {!isFetching && !notConnected && error && (
+            <div className="px-3 py-2 text-xs text-destructive" data-testid={`${testIdPrefix}-error`}>
+              Xero search didn't work: {(error as Error).message.slice(0, 200)}
+            </div>
+          )}
+          {!isFetching && !notConnected && !error && contacts.length === 0 && (
             <div className="px-3 py-2 text-xs text-muted-foreground">
               {trimmed
                   ? "No Xero contacts found"
