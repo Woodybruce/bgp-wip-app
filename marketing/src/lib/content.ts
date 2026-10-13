@@ -450,8 +450,12 @@ export const INVESTMENT_DEALS: InvestmentDeal[] = [
   { image: "/images/investment/brixton-market.jpg", name: "Brixton Market", client: "Hondo Enterprises / Angelo Gordon", type: "Sale", price: "", status: "Under offer", capRate: null, sold: false, wide: false },
   { image: "/images/investment/16-conduit-street.jpg", name: "16 Conduit Street, Mayfair", client: "Japanese private investor", type: "Acquisition", price: "£13,450,000", status: "Completed", capRate: null, sold: true, wide: false },
   { name: "Bombardier Hangar, Biggin Hill Airport", client: "LCN Capital Partners", type: "Forward funding", price: "£35,000,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { name: "142 Fulham Road", client: "Leo's", type: "Acquisition", price: "£26,000,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { name: "Clapham North Arts Centre", client: "Leo's", type: "Acquisition", price: "£16,000,000", status: "Completed", capRate: null, sold: true, wide: false },
+  // Our House Group: a run of buildings bought for the members' clubs
+  // (Woody, 2026-10-13) — Jesse's House in Fulham, Leo's House in Clapham,
+  // Orly's House in East Sheen.
+  { image: "/images/investment/jesses-house-fulham.jpg", name: "Jesse's House, 142 Fulham Road", client: "Our House Group", type: "Acquisition", price: "£26,000,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/leos-house-clapham.jpg", name: "Leo's House, Clapham North", client: "Our House Group", type: "Acquisition", price: "£16,000,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/orlys-house-east-sheen.jpg", name: "Orly's House, East Sheen", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/oxam-house-oxford.jpg", name: "Oxam House, Oxford", client: "Charles Street", type: "Acquisition", price: "£21,250,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/filmworks-ealing.jpg", name: "Filmworks, Ealing", client: "St George", type: "Sale", price: "£13,500,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/wimbledon-bridge-house.jpg", name: "Wimbledon Bridge House", client: "Sheet Anchor Evolve", type: "Acquisition", price: "then the sale of the Aldi unit", status: "Completed", capRate: null, sold: true, wide: false },
