@@ -452,8 +452,8 @@ export const INVESTMENT_DEALS: InvestmentDeal[] = [
   { name: "Bombardier Hangar, Biggin Hill Airport", client: "LCN Capital Partners", type: "Forward funding", price: "£35,000,000", status: "Completed", capRate: null, sold: true, wide: false },
   { name: "142 Fulham Road", client: "Leo's", type: "Acquisition", price: "£26,000,000", status: "Completed", capRate: null, sold: true, wide: false },
   { name: "Clapham North Arts Centre", client: "Leo's", type: "Acquisition", price: "£16,000,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/oxam-house-oxford.jpg", name: "Oxam House, Oxford", client: "Charles Street", type: "Transaction", price: "£21,250,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/filmworks-ealing.jpg", name: "Filmworks, Ealing", client: "St George", type: "Transaction", price: "£13,500,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/oxam-house-oxford.jpg", name: "Oxam House, Oxford", client: "Charles Street", type: "Acquisition", price: "£21,250,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/filmworks-ealing.jpg", name: "Filmworks, Ealing", client: "St George", type: "Sale", price: "£13,500,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/wimbledon-bridge-house.jpg", name: "Wimbledon Bridge House", client: "Sheet Anchor Evolve", type: "Transaction", price: "", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/grants-leisure-croydon.jpg", name: "Grants Leisure, Croydon", client: "Hermes", type: "Transaction", price: "", status: "Completed", capRate: null, sold: true, wide: false },
 ];
