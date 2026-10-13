@@ -386,6 +386,23 @@ export async function xeroApiWithFallback(session: any, path: string, options: R
   return result;
 }
 
+let xeroBlockedUntil = 0;
+const rateLimitMessage = (wait: number) =>
+  `Xero is rate-limiting the app (429)${wait ? ` — try again in ${wait >= 120 ? `${Math.ceil(wait / 60)} minutes` : `${wait} seconds`}` : ""}`;
+const xeroCallCounts = new Map<string, number>();
+function countXeroCall(path: string, method?: string) {
+  const day = new Date().toISOString().slice(0, 10);
+  const kind = `${(method || "GET").toUpperCase()} ${path.split("?")[0].replace(/\/[0-9a-f-]{36}/gi, "/:id")}`;
+  const k = `${day}|${kind}`;
+  xeroCallCounts.set(k, (xeroCallCounts.get(k) || 0) + 1);
+}
+export function xeroUsage() {
+  const byDay: Record<string, Record<string, number>> = {};
+  for (const [k, n] of xeroCallCounts) { const [d, kind] = k.split("|"); (byDay[d] ||= {})[kind] = n; }
+  return { since: XERO_COUNT_SINCE, blockedUntil: xeroBlockedUntil > Date.now() ? new Date(xeroBlockedUntil).toISOString() : null, byDay };
+}
+const XERO_COUNT_SINCE = new Date().toISOString();
+
 export async function xeroApi(session: any, path: string, options: RequestInit = {}): Promise<any> {
   const token = await refreshXeroToken(session);
   if (!token) throw new Error("Not connected to Xero");
@@ -414,6 +431,12 @@ export async function xeroApi(session: any, path: string, options: RequestInit =
     if (!tenantId) throw new Error("No Xero tenant found. Please disconnect and reconnect to Xero to re-authorize with the required permissions.");
   }
 
+  // Xero's daily allowance ran out (429, "try again in 43 minutes",
+  // 2026-10-13). Once Xero says wait more than a minute, stop calling until
+  // then — refused calls only dig the hole deeper — and count calls by type
+  // so /api/admin/xero-usage shows what's using the allowance.
+  if (Date.now() < xeroBlockedUntil) throw new Error(rateLimitMessage(Math.ceil((xeroBlockedUntil - Date.now()) / 1000)));
+  countXeroCall(path, options.method);
   const url = `${XERO_API_BASE}${path}`;
   const res = await fetch(url, {
     ...options,
@@ -431,7 +454,10 @@ export async function xeroApi(session: any, path: string, options: RequestInit =
     console.error(`[Xero] API error ${res.status}:`, errText);
     if (res.status === 429) {
       const wait = Number(res.headers.get("retry-after") || 0);
-      throw new Error(`Xero is rate-limiting the app (429)${wait ? ` — try again in ${wait >= 120 ? `${Math.ceil(wait / 60)} minutes` : `${wait} seconds`}` : ""}`);
+      const which = res.headers.get("x-rate-limit-problem") || "";
+      console.warn(`[Xero] 429 (${which || "limit"}) on ${path} — retry after ${wait}s`);
+      if (wait > 60) xeroBlockedUntil = Date.now() + wait * 1000;
+      throw new Error(rateLimitMessage(wait));
     }
     throw new Error(`Xero API error: ${res.status} - ${errText}`);
   }
@@ -451,6 +477,8 @@ export async function xeroPayrollApi(session: any, path: string, opts: { binary?
   let tenantId = session.xeroTokens?.tenantId;
   if (!tenantId) throw new Error("No Xero tenant — reconnect to Xero with payroll scopes");
 
+  if (Date.now() < xeroBlockedUntil) throw new Error(rateLimitMessage(Math.ceil((xeroBlockedUntil - Date.now()) / 1000)));
+  countXeroCall(`/payroll${path}`);
   const res = await fetch(`${XERO_PAYROLL_API_BASE}${path}`, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -460,6 +488,11 @@ export async function xeroPayrollApi(session: any, path: string, opts: { binary?
   });
   if (!res.ok) {
     const txt = await res.text();
+    if (res.status === 429) {
+      const wait = Number(res.headers.get("retry-after") || 0);
+      if (wait > 60) xeroBlockedUntil = Date.now() + wait * 1000;
+      throw new Error(rateLimitMessage(wait));
+    }
     if (res.status === 403) {
       throw new Error(`Xero Payroll scope not granted (403). Press Connect Xero Payroll (People & HR → Xero Payroll) and allow payroll access.`);
     }
@@ -786,6 +819,16 @@ export function setupXeroRoutes(app: Express) {
       throw e;
     }
   };
+  const knownXeroContacts = async (): Promise<any[]> => {
+    const r = await pool.query(`
+      SELECT DISTINCT ON (xero_contact_id) xero_contact_id AS id, xero_contact_name AS name, xero_account_number AS acct, xero_billing_address AS addr
+        FROM crm_deals WHERE xero_contact_id IS NOT NULL AND xero_contact_name IS NOT NULL
+       ORDER BY xero_contact_id`);
+    return r.rows.map((x: any) => ({
+      ContactID: x.id, Name: x.name, AccountNumber: x.acct || null,
+      Addresses: x.addr ? [{ AddressType: "POBOX", ...(typeof x.addr === "string" ? JSON.parse(x.addr) : x.addr) }] : [],
+    }));
+  };
   app.get("/api/xero/contacts", requireAuth, async (req: Request, res: Response) => {
     try {
       const search = ((req.query.search as string) || "").trim().replace(/"/g, "").toLowerCase();
@@ -810,7 +853,14 @@ export function setupXeroRoutes(app: Express) {
         }).catch((e) => { firmErr = e; return null; });
         if (firm) list = firm;
         else if (!userTenant && String(firmErr?.message || "").includes("Not connected")) throw firmErr;
-        else if (userErr || firmErr) throw userErr || firmErr;
+        else if (userErr || firmErr) {
+          // Xero is refusing (e.g. its daily allowance is used up): offer the
+          // Xero contacts already linked on deals, so invoicing isn't stuck.
+          const known = await knownXeroContacts().catch(() => []);
+          if (!known.length) throw userErr || firmErr;
+          list = known;
+          res.setHeader("X-Xero-Contacts-Source", "app");
+        }
       }
       const squash = (v: string) => v.toLowerCase().replace(/\s+/g, "");
       const matches = list.filter((c: any) => c.ContactStatus !== "ARCHIVED" && tokens.every(t => squash(c.Name || "").includes(t)

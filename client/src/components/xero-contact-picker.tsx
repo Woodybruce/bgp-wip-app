@@ -55,6 +55,8 @@ export function XeroContactPicker({
   // from "not connected" in the empty UI. Surfaces the actionable error
   // ("Connect Xero in Settings") rather than the misleading "no contacts found".
   const [notConnected, setNotConnected] = useState(false);
+  // Xero refusing → the server lists contacts already linked on deals.
+  const [fromApp, setFromApp] = useState(false);
   const { data: contacts = [], isFetching, error } = useQuery<XeroContact[]>({
     queryKey: ["/api/xero/contacts", trimmed],
     queryFn: async () => {
@@ -71,6 +73,7 @@ export function XeroContactPicker({
         throw new Error(body?.message || `Xero search failed (${res.status})`);
       }
       setNotConnected(false);
+      setFromApp(res.headers.get("X-Xero-Contacts-Source") === "app");
       return res.json();
     },
     enabled: open,
@@ -185,6 +188,9 @@ export function XeroContactPicker({
                 </div>
               )}
             </div>
+          )}
+          {!isFetching && fromApp && contacts.length > 0 && (
+            <div className="px-3 py-1.5 text-[11px] text-muted-foreground border-b">Xero is busy — these are Xero contacts already used on other deals.</div>
           )}
           {contacts.map((c) => {
             const addr = formatAddress(c.BillingAddress);

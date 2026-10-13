@@ -660,6 +660,24 @@ export function setupHrRoutes(app: Express) {
   // Commission scheme year: 1 May → 30 April
   // Tiers: 2x salary → 30%, 3x → 40%, 4x → 50% (of fees above each threshold)
 
+  // Every phone home and HR page asks for this every 30 seconds; it used
+  // to send four Xero calls each time and helped use up Xero's daily
+  // allowance (429, 2026-10-13). The paid-invoice lists are the same for
+  // everyone, so keep them for 30 minutes.
+  const paidInvoiceCache = new Map<string, { at: number; data: any }>();
+  const paidInvoicesCached = async (session: any, from: string, to: string) => {
+    const key = `${from}|${to}`;
+    const hit = paidInvoiceCache.get(key);
+    if (hit && Date.now() - hit.at < 30 * 60_000) return hit.data;
+    try {
+      const data = await xeroApi(session, `/Invoices?Status=PAID&DateFrom=${from}&DateTo=${to}&summaryOnly=false`);
+      paidInvoiceCache.set(key, { at: Date.now(), data });
+      return data;
+    } catch (e) {
+      if (hit) return hit.data;
+      throw e;
+    }
+  };
   app.get("/api/hr/staff/:userId/commission", requireAuth, async (req: any, res) => {
     const actor = await getActor(req);
     if (!actor.isAdmin && actor.userId !== req.params.userId) {
@@ -704,9 +722,7 @@ export function setupHrRoutes(app: Express) {
           // Query paid invoices for this scheme year where tracking matches the agent
           const fromDate = schemeYearStart.toISOString().split("T")[0];
           const toDate = schemeYearEnd.toISOString().split("T")[0];
-          const invoiceData = await xeroApi(session,
-            `/Invoices?Status=PAID&DateFrom=${fromDate}&DateTo=${toDate}&summaryOnly=false`,
-          );
+          const invoiceData = await paidInvoicesCached(session, fromDate, toDate);
 
           if (invoiceData?.Invoices) {
             for (const inv of invoiceData.Invoices) {
@@ -728,9 +744,7 @@ export function setupHrRoutes(app: Express) {
               const yEnd = new Date(yStart.getFullYear() + 1, 3, 30);
               let yPence = 0;
               if (i > 0) {
-                const yData = await xeroApi(session,
-                  `/Invoices?Status=PAID&DateFrom=${yStart.toISOString().split("T")[0]}&DateTo=${yEnd.toISOString().split("T")[0]}&summaryOnly=false`
-                );
+                const yData = await paidInvoicesCached(session, yStart.toISOString().split("T")[0], yEnd.toISOString().split("T")[0]);
                 for (const inv of (yData?.Invoices || [])) {
                   const match = inv.LineItems?.some((li: any) =>
                     li.Tracking?.some((t: any) =>
