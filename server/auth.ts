@@ -524,6 +524,11 @@ export function setupAuth(app: Express) {
       // the one-time code to the task pane) rather than the main app.
       if (isAddin) {
         (req.session as any).ssoAddin = true;
+        // The task pane also polls with this nonce, because Outlook can
+        // refuse the completion page's messageParent ("Couldn't return to
+        // the add-in", Will, 2026-10-13).
+        const nonce = String(req.query.nonce || "");
+        if (/^[a-f0-9]{64}$/.test(nonce)) (req.session as any).ssoAddinNonce = nonce;
       }
       const redirectUri = getSsoRedirectUri(req);
       console.log("SSO: initiating login, redirect URI =", redirectUri, "basic:", useBasic, "addin:", isAddin);
@@ -543,6 +548,22 @@ export function setupAuth(app: Express) {
     } catch (err: any) {
       console.error("SSO auth error:", err.message);
       res.status(500).json({ message: "Failed to start Microsoft login" });
+    }
+  });
+
+  // Add-in task pane polls here while its sign-in window is open; hands
+  // over the one-time code once, within five minutes of sign-in.
+  app.get("/api/auth/addin-sso-poll", async (req: Request, res: Response) => {
+    const nonce = String(req.query.nonce || "");
+    if (!/^[a-f0-9]{64}$/.test(nonce)) return res.status(400).json({ message: "Bad nonce" });
+    try {
+      const r = await pool.query(`DELETE FROM system_settings WHERE key = $1 RETURNING value`, [`addin_sso:${nonce}`]);
+      const v = r.rows[0]?.value;
+      const val = typeof v === "string" ? JSON.parse(v) : v;
+      if (!val?.code || Date.now() - Number(val.at || 0) > 5 * 60_000) return res.json({ pending: true });
+      res.json({ code: val.code });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message });
     }
   });
 
@@ -604,7 +625,9 @@ export function setupAuth(app: Express) {
       delete (req.session as any).ssoBasicMode;
       // Capture the add-in flag now — req.session.regenerate() below wipes it.
       const isAddinFlow = !!(req.session as any).ssoAddin;
+      const addinNonce: string | null = (req.session as any).ssoAddinNonce || null;
       delete (req.session as any).ssoAddin;
+      delete (req.session as any).ssoAddinNonce;
       const scopes = useBasicScopes ? SSO_SCOPES_BASIC : SSO_SCOPES_FULL;
       const result = await client.acquireTokenByCode({
         code: code as string,
@@ -697,11 +720,18 @@ export function setupAuth(app: Express) {
           }
 
           const exchangeCode = crypto.randomBytes(32).toString("hex");
-          const expiresAt = new Date(Date.now() + 60 * 1000);
+          const expiresAt = new Date(Date.now() + (isAddinFlow ? 5 * 60 : 60) * 1000);
           await pool.query(
             "INSERT INTO sso_exchange_codes (code, user_id, expires_at) VALUES ($1, $2, $3)",
             [exchangeCode, user.id, expiresAt]
           );
+          if (isAddinFlow && addinNonce) {
+            await pool.query(
+              `INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2::jsonb, NOW())
+               ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+              [`addin_sso:${addinNonce}`, JSON.stringify({ code: exchangeCode, at: Date.now() })],
+            ).catch((e: any) => console.warn("SSO: add-in nonce save failed:", e?.message));
+          }
 
           console.log("SSO: login successful for", user.name, "(", msEmail, ")");
           trackLogin(user.id, 'sso', true);
