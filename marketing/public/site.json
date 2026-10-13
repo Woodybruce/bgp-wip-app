@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-13T10:04:17.242Z",
+  "generatedAt": "2026-10-13T10:08:17.411Z",
   "site": "https://www.bgp.uk.com",
   "note": "Content of bgp.uk.com. Pages are rendered client-side; use this file rather than fetching HTML. Live availability comes from listingsFeed.",
   "heroStatement": "Great places are built through connected thinking.",
@@ -320,7 +320,7 @@
         "Sector": "Restaurant & leisure",
         "Location": "Piccadilly Circus, W1"
       },
-      "image": "https://www.bgp.uk.com/images/lucent-piccadilly.jpg"
+      "image": "https://www.bgp.uk.com/images/case-studies/lucent-piccadilly.jpg"
     },
     {
       "title": "20 Hanover Square",
