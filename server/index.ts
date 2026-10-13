@@ -3022,6 +3022,16 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       if (!u.rows.length) console.warn(`[hr-titles] no active login named peter wood`);
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_13b', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
+    // HR teams the website groups by (Woody, 2026-10-13): Evie moved to
+    // Tenant Rep (the roster sync only adds teams, so her home team was still
+    // London Estate); Nick Goodman consults to Investment.
+    const doneTeams = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_teams_2026_10_13'`);
+    if (!doneTeams.rows.length) {
+      await pool.query(`UPDATE users SET team = 'Tenant Rep', additional_teams = array_remove(COALESCE(additional_teams, '{}'), 'London Estate')
+                         WHERE lower(name) = 'evie north' AND is_active = true`);
+      await pool.query(`UPDATE users SET team = 'Investment' WHERE lower(name) = 'nick goodman' AND is_active = true AND team IS NULL`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_teams_2026_10_13', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
     // Woody, 2026-10-13 (evening): "Toddy's should say Associate Director".
     const doneAT = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_titles_2026_10_13d'`);
     if (!doneAT.rows.length) {
