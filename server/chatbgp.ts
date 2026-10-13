@@ -1446,6 +1446,8 @@ Don't ask permission for any of this. Don't dump the raw extracted text back to 
 
 Brochures uploaded directly to a property page already run through a bespoke pipeline (see brochure-ingest.ts). For everything else, this is the path.
 
+**"Add this to the letting tracker" (a marketing brochure):** read_document → search_crm for the building (create_property if missing — the unit's own address, never a whole estate the brochure happens to be filed under) → ONE create_available_unit call with sqft, askingRent per annum (or rentPoa), leaseTerms, useClass, epcRating, the BGP people named on the brochure as agentNames, and brochureChatMediaFilename so the brochure is filed and a page becomes the listing photo. Then report exactly what the result says: on the tracker (unit + deal), agents set / not matched, photo yes/no, and websiteLive or the websiteMissing list. Never describe these steps instead of doing them, and never say a file wasn't found without first calling list_my_uploads.
+
 ## Evidence-plan unit facts
 Use **manage_evidence_plan_unit** to read a plan unit and its evidence, then apply user-authorized current facts with the returned revision. Staff and clients can edit units on properties they can access; admin is not required. Never use sql_write for evidence-plan tables. Transaction/headline rent is not necessarily passing rent; do not derive expiry, break or review dates from a transaction date and term.
 
@@ -3532,15 +3534,17 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "create_available_unit",
-      description: "Create a new available unit (leasing). Use when the user wants to add a unit to market for letting.",
+      description: "Add a unit to the Letting Tracker — the complete add, the same as the Add Unit form: duplicate guard, property unit, leasing schedule row, backing deal, BGP agents, lease terms, the brochure filed under the unit with one of its pages as the listing photo, and the website switched on when the five website fields (address, rent or POA, size, photo, lease terms) are all in. Use whenever the user wants a unit on the tracker / marketed / on the website. Read the brochure first (read_document), search_crm for the property (create_property if it doesn't exist — the unit's own building, never a whole estate), then call this ONCE with everything the brochure gives. Report the result's websiteLive / websiteMissing and agentsNotMatched honestly.",
       parameters: {
         type: "object",
         properties: {
           propertyId: { type: "string", description: "Property ID this unit belongs to. Search properties first to get the ID." },
           unitName: { type: "string", description: "Unit name/description e.g. 'Ground Floor', 'Unit 3', '1st-2nd Floor'" },
           floor: { type: "string" },
-          sqft: { type: "number", description: "Area in sq ft" },
-          askingRent: { type: "number", description: "Asking rent £ per sq ft per annum" },
+          sqft: { type: "number", description: "Total area in sq ft" },
+          askingRent: { type: "number", description: "Quoting rent in £ PER ANNUM (e.g. 120000), not per sq ft. Leave out and set rentPoa when the brochure says 'rent on application'." },
+          rentPoa: { type: "boolean", description: "true when rent is on application / POA" },
+          leaseTerms: { type: "string", description: "Lease terms as the brochure states them, e.g. 'New effective FRI lease, term to be agreed'. Needed for the website." },
           ratesPa: { type: "number", description: "Business rates per annum" },
           serviceChargePa: { type: "number", description: "Service charge per annum" },
           useClass: { type: "string", description: "Use class e.g. E, A1, B1, Sui Generis" },
@@ -3549,8 +3553,12 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           availableDate: { type: "string", description: "Month the unit becomes available — month granularity, always the 1st: YYYY-MM-01" },
           marketingStatus: { type: "string", description: "e.g. Available, Under Offer, Let, Withdrawn" },
           epcRating: { type: "string" },
-          notes: { type: "string" },
+          notes: { type: "string", description: "Anything else from the brochure worth keeping (joint agent, floor split, planning)." },
           fee: { type: "number", description: "Fee percentage" },
+          agentNames: { type: "array", items: { type: "string" }, description: "The BGP people named on the brochure, e.g. ['Tracey Pollard', 'Lizzie Knights']. They become the unit's agents (and the deal's). Names that aren't BGP logins are reported back, not guessed." },
+          brochureChatMediaFilename: { type: "string", description: "The brochure's chat-media filename (from the chat context) or its original file name. Filed under the unit, and one page becomes the listing photo." },
+          photoPage: { type: "number", description: "Which brochure page to use as the photo (default 1 — usually the hero shot). Pick the page with the best photograph." },
+          showOnWebsite: { type: "boolean", description: "Default true: switch the website on as soon as the listing is complete. false keeps it off the website." },
         },
         required: ["propertyId", "unitName"],
       },
@@ -6992,15 +7000,13 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "create_available_unit") {
-    const { availableUnits } = await import("@shared/schema");
-    const [created] = await db.insert(availableUnits).values({
-      propertyId: fnArgs.propertyId, unitName: fnArgs.unitName, floor: fnArgs.floor,
-      sqft: fnArgs.sqft, askingRent: fnArgs.askingRent, ratesPa: fnArgs.ratesPa,
-      serviceChargePa: fnArgs.serviceChargePa, useClass: fnArgs.useClass, condition: fnArgs.condition,
-      location: fnArgs.location, availableDate: fnArgs.availableDate, marketingStatus: fnArgs.marketingStatus || "Available",
-      epcRating: fnArgs.epcRating, notes: fnArgs.notes, fee: fnArgs.fee,
-    }).returning();
-    return { data: { success: true, action: "created", entity: "available unit", id: created.id, name: created.unitName }, action: { type: "crm_created", entityType: "unit", id: created.id } };
+    try {
+      const { addUnitToLettingTracker } = await import("./letting-tracker-chat");
+      const r = await addUnitToLettingTracker(req, fnArgs as any);
+      return { data: { ...r, action: r.alreadyListed ? "updated" : "created", entity: "available unit", id: r.unitId, name: r.unitName }, action: { type: r.alreadyListed ? "crm_updated" : "crm_created", entityType: "unit", id: r.unitId } };
+    } catch (e: any) {
+      return { data: { success: false, error: e?.message || String(e) } };
+    }
   }
 
   if (fnName === "find_duplicate_properties") {
@@ -12915,25 +12921,14 @@ export async function handleCrmToolCall(
 
 
   if (fnName === "create_available_unit") {
-    const { availableUnits } = await import("@shared/schema");
-    const [created] = await db.insert(availableUnits).values({
-      propertyId: fnArgs.propertyId,
-      unitName: fnArgs.unitName,
-      floor: fnArgs.floor,
-      sqft: fnArgs.sqft,
-      askingRent: fnArgs.askingRent,
-      ratesPa: fnArgs.ratesPa,
-      serviceChargePa: fnArgs.serviceChargePa,
-      useClass: fnArgs.useClass,
-      condition: fnArgs.condition,
-      availableDate: fnArgs.availableDate,
-      marketingStatus: fnArgs.marketingStatus || "Available",
-      epcRating: fnArgs.epcRating,
-      notes: fnArgs.notes,
-      fee: fnArgs.fee,
-    }).returning();
-    const reply = await summaryHelper({ success: true, action: "created", entity: "available unit", record: { id: created.id, name: created.unitName } });
-    return { handled: true, response: { reply: reply || `Available unit "${created.unitName}" created.`, action: { type: "crm_created", entityType: "unit", id: created.id, name: created.unitName } } };
+    try {
+      const { addUnitToLettingTracker } = await import("./letting-tracker-chat");
+      const r = await addUnitToLettingTracker(req, fnArgs as any);
+      const reply = await summaryHelper({ success: true, action: r.alreadyListed ? "updated" : "created", entity: "available unit", record: r });
+      return { handled: true, response: { reply: reply || `Unit "${r.unitName}" ${r.alreadyListed ? "updated on" : "added to"} the Letting Tracker.`, action: { type: r.alreadyListed ? "crm_updated" : "crm_created", entityType: "unit", id: r.unitId, name: r.unitName } } };
+    } catch (e: any) {
+      return { handled: true, response: { reply: `Couldn't add the unit: ${e?.message || e}` } };
+    }
   }
 
   if (fnName === "update_available_unit") {
@@ -14275,6 +14270,7 @@ export function setupChatBGPRoutes(app: Express) {
                   const detail = pipelineMessages.length > 0 ? `\n${pipelineMessages.join("\n")}` : "";
                   documentTexts.push(
                     `=== BROCHURE: ${file.originalname} ===\n` +
+                    `chat-media filename: ${chatMediaName}\n` +
                     `This PDF was processed through the rich brochure pipeline (not raw text extraction). ` +
                     `It was matched/created in the property CRM and its tenancy schedule, ownership, agent contacts, and images were captured where present.${detail}`
                   );
@@ -15872,7 +15868,10 @@ export function setupChatBGPRoutes(app: Express) {
           try {
             const doc = await readDocumentForAI({ chatMediaFilename: filename, includePageImages: false, maxTextChars: 40000 });
             if (doc.ok && doc.text && doc.text.trim()) {
-              docTexts.push(`=== FILE: ${label} ===\n${doc.text}${doc.textTruncated ? "\n\n[...truncated]" : ""}`);
+              // The chat-media filename is what every file tool takes —
+              // without it the model only knew the original name and
+              // read_document came back "File not found" (2026-10-13).
+              docTexts.push(`=== FILE: ${label} ===\nchat-media filename: ${filename}\n${doc.text}${doc.textTruncated ? "\n\n[...truncated]" : ""}`);
             } else {
               docTexts.push(`=== FILE: ${label} ===\n(Could not read this file: ${doc.ok ? "no extractable text found" : doc.error})`);
             }
