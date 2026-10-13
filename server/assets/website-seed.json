@@ -461,8 +461,12 @@
           "Mayfair, W1"
         ]
       ],
-      "imageUrl": null,
-      "galleryUrls": [],
+      "imageUrl": "https://www.bgp.uk.com/images/case-studies/south-molton-triangle.jpg",
+      "galleryUrls": [
+        "https://www.bgp.uk.com/images/case-studies/south-molton-triangle-2.jpg",
+        "https://www.bgp.uk.com/images/case-studies/south-molton-triangle-3.jpg",
+        "https://www.bgp.uk.com/images/case-studies/south-molton-triangle-4.jpg"
+      ],
       "sortOrder": 3,
       "published": true
     },

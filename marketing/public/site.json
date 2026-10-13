@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-13T09:22:31.639Z",
+  "generatedAt": "2026-10-13T09:32:03.681Z",
   "site": "https://www.bgp.uk.com",
   "note": "Content of bgp.uk.com. Pages are rendered client-side; use this file rather than fetching HTML. Live availability comes from listingsFeed.",
   "heroStatement": "Great places are built through connected thinking.",
@@ -360,7 +360,7 @@
         "Sector": "Retail & restaurant",
         "Location": "Mayfair, W1"
       },
-      "image": null
+      "image": "https://www.bgp.uk.com/images/case-studies/south-molton-triangle.jpg"
     },
     {
       "title": "Canary Wharf",

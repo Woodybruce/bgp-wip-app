@@ -233,6 +233,8 @@ export const CASE_STUDIES: CaseStudy[] = [
       "South Molton Triangle is Grosvenor's largest mixed-use development in the West End, bringing new shops, restaurants and public space to the streets beside the Elizabeth line at Bond Street.",
       "BGP advises Grosvenor on the retail and restaurant leasing, building on the firm's long relationship across the Mayfair and Belgravia estates.",
     ],
+    image: "/images/case-studies/south-molton-triangle.jpg",
+    gallery: ["/images/case-studies/south-molton-triangle-2.jpg", "/images/case-studies/south-molton-triangle-3.jpg", "/images/case-studies/south-molton-triangle-4.jpg"],
   },
   {
     slug: "canary-wharf",
