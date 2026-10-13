@@ -215,7 +215,8 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "st-christophers-place",
     title: "St Christopher's Place",
     service: "Leasing",
-    image: "/images/st-christophers-place.jpg",
+    image: "/images/case-studies/st-christophers-place.jpg",
+    gallery: ["/images/case-studies/st-christophers-place-2.jpg", "/images/case-studies/st-christophers-place-3.jpg", "/images/case-studies/st-christophers-place-4.jpg"],
     blurb: "Retail and restaurant leasing across the pedestrian lanes between Oxford Street and Wigmore Street, for Columbia Threadneedle.",
     facts: [["Service", "Leasing"], ["Client", "Columbia Threadneedle"], ["Sector", "Retail & restaurant"], ["Location", "Marylebone, W1"]],
     body: [

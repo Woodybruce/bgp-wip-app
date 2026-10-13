@@ -432,8 +432,12 @@
           "Marylebone, W1"
         ]
       ],
-      "imageUrl": "https://www.bgp.uk.com/images/st-christophers-place.jpg",
-      "galleryUrls": [],
+      "imageUrl": "https://www.bgp.uk.com/images/case-studies/st-christophers-place.jpg",
+      "galleryUrls": [
+        "https://www.bgp.uk.com/images/case-studies/st-christophers-place-2.jpg",
+        "https://www.bgp.uk.com/images/case-studies/st-christophers-place-3.jpg",
+        "https://www.bgp.uk.com/images/case-studies/st-christophers-place-4.jpg"
+      ],
       "sortOrder": 2,
       "published": true
     },
