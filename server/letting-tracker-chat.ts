@@ -93,7 +93,7 @@ async function addUnitFile(unitId: string, data: Buffer, fileName: string, mimeT
 export async function websiteMissingFor(unitId: string): Promise<string[]> {
   const { rows } = await pool.query(
     `SELECT au.asking_rent, au.rent_poa, au.sqft, au.lease_terms,
-            COALESCE(NULLIF(pu.address, ''), NULLIF(p.address::text, '')) AS address_line,
+            COALESCE(NULLIF(pu.unit_address, ''), NULLIF(p.address::text, '')) AS address_line,
             (SELECT COUNT(*) FROM unit_marketing_files f WHERE f.unit_id = au.id AND (f.category = 'photo' OR f.mime_type LIKE 'image/%'))::int AS photos
        FROM available_units au
        LEFT JOIN crm_properties p ON p.id = au.property_id
