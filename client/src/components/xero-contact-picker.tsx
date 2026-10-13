@@ -78,6 +78,23 @@ export function XeroContactPicker({
     staleTime: 60_000,
   });
 
+  // Nothing at all came back — ask the server which Xero organisation it
+  // searched, so the empty list says why (Layla, 2026-10-13).
+  const emptyAnswer = open && !isFetching && !notConnected && !error && contacts.length === 0;
+  const { data: check } = useQuery<any>({
+    queryKey: ["/api/xero/contacts-check"],
+    queryFn: async () => {
+      const r = await fetch("/api/xero/contacts-check", { credentials: "include", headers: getAuthHeaders() });
+      return r.ok ? r.json() : null;
+    },
+    enabled: emptyAnswer,
+    staleTime: 30_000,
+    retry: false,
+  });
+  const describe = (label: string, x: any) => !x?.connected ? `${label}: not signed in`
+    : x.error ? `${label}: Xero said "${x.error}"`
+    : `${label}: ${x.org || "unknown organisation"}, ${x.contacts === 100 ? "100+" : x.contacts} contacts${x.moved ? " (moved to the firm's organisation — search again)" : ""}${x.orgs?.length > 1 ? ` · your Xero login sees ${x.orgs.join(", ")}` : ""}`;
+
   const showSelected = !!value;
   const selectedAddress = cachedAddress ? formatAddress(cachedAddress) : "";
 
@@ -161,6 +178,12 @@ export function XeroContactPicker({
               {trimmed
                   ? "No Xero contacts found"
                   : "Type to search Xero contacts"}
+              {check && (
+                <div className="mt-1 space-y-0.5 text-[11px]" data-testid={`${testIdPrefix}-check`}>
+                  <p>{describe("Your Xero sign-in", check.mine)}</p>
+                  <p>{describe("Firm Xero link", check.firm)}</p>
+                </div>
+              )}
             </div>
           )}
           {contacts.map((c) => {

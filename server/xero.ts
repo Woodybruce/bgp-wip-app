@@ -344,14 +344,15 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
 
 // A Xero login can see several organisations (Xero's Demo Company, a
 // personal org). Always link the firm's: the one the firm-wide session
-// already uses, else one named Bruce Gillingham / BGP, else anything that
+// named Bruce Gillingham / BGP, else the one the firm-wide session uses, else
+// anything that
 // isn't a demo company. connections[0] linked Layla to the wrong org, so
 // her contact search came back empty (2026-10-13).
 export function pickFirmTenant(connections: any[], firmTenantId: string | null): any {
   const orgs = connections.filter((c: any) => !c.tenantType || c.tenantType === "ORGANISATION");
   const pool = orgs.length ? orgs : connections;
-  return (firmTenantId && pool.find((c: any) => c.tenantId === firmTenantId))
-    || pool.find((c: any) => /bruce\s*gillingham|\bbgp\b/i.test(c.tenantName || ""))
+  return pool.find((c: any) => /bruce\s*gillingham|\bbgp\b/i.test(c.tenantName || ""))
+    || (firmTenantId && pool.find((c: any) => c.tenantId === firmTenantId))
     || pool.find((c: any) => !/demo/i.test(c.tenantName || ""))
     || pool[0];
 }
@@ -808,6 +809,44 @@ export function setupXeroRoutes(app: Express) {
       console.error("[Xero] Contacts error:", err);
       res.status(500).json({ message: err.message });
     }
+  });
+
+  // Which Xero organisation the contact search reads, for the caller's own
+  // sign-in and the firm-wide one, with a contact count — shown under an
+  // empty search so "no contacts" says why. Also moves the caller's sign-in
+  // onto the Bruce Gillingham Pollard organisation if it's on another.
+  app.get("/api/xero/contacts-check", requireAuth, async (req: Request, res: Response) => {
+    const probe = async (session: any) => {
+      const token = await refreshXeroToken(session);
+      if (!token) return { connected: false };
+      let orgs: string[] = [];
+      let moved = false;
+      try {
+        const connRes = await fetch(XERO_CONNECTIONS_URL, { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } });
+        if (connRes.ok) {
+          const connections = await connRes.json();
+          orgs = connections.map((c: any) => c.tenantName);
+          const chosen = connections.length ? pickFirmTenant(connections, null) : null;
+          if (chosen && chosen.tenantId !== session.xeroTokens.tenantId) { session.xeroTokens.tenantId = chosen.tenantId; moved = true; }
+        }
+      } catch {}
+      try {
+        const org = await xeroApi(session, "/Organisation");
+        const contacts = await xeroApi(session, "/Contacts?page=1&pageSize=100&includeArchived=false");
+        return { connected: true, org: org?.Organisations?.[0]?.Name || null, contacts: (contacts.Contacts || []).length, orgs, moved };
+      } catch (e: any) {
+        return { connected: true, orgs, moved, error: String(e?.message || e).slice(0, 300) };
+      }
+    };
+    const mine = req.session?.xeroTokens ? await probe(req.session) : { connected: false };
+    if ((mine as any).moved) await new Promise<void>((r) => req.session.save(() => r()));
+    const { withSystemXero } = await import("./xero-system-session");
+    const firm = await withSystemXero(async (sys) => {
+      const org = await xeroApi(sys, "/Organisation");
+      const contacts = await xeroApi(sys, "/Contacts?page=1&pageSize=100&includeArchived=false");
+      return { connected: true, org: org?.Organisations?.[0]?.Name || null, contacts: (contacts.Contacts || []).length };
+    }).catch((e: any) => ({ connected: true, error: String(e?.message || e).slice(0, 300) }));
+    res.json({ mine, firm: firm || { connected: false } });
   });
 
   // Fetch a single Xero contact by ID — used to refresh the cached
