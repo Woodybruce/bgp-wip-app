@@ -892,7 +892,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
     name: "High Streets",
     approved: true,
     image: "/images/sectors/high-streets.jpg",
-    gallery: [{ src: "/images/gallery/chiltern-street.jpg", caption: "Chiltern Street, Marylebone, for The Portman Estate" }, { src: "/images/gallery/mayfair-3.jpg", caption: "Pavement dining in North Mayfair, for Grosvenor" }, { src: "/images/gallery/coin-street-1.jpg", caption: "Gabriel's Wharf, South Bank, for Coin Street" }],
+    gallery: [{ src: "/images/gallery/chiltern-street.jpg", caption: "Chiltern Street, Marylebone, for The Portman Estate" }, { src: "/images/gallery/seymour-place.jpg", caption: "Seymour Place, Marylebone, for The Portman Estate" }, { src: "/images/gallery/new-quebec-street.jpg", caption: "New Quebec Street, Marylebone, for The Portman Estate" }],
     headline:
       "Our High Street Leasing team works on a diverse range of High Streets throughout London and across the UK.",
     body: [
