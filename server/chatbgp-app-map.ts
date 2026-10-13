@@ -155,7 +155,12 @@ https://www.bgp.uk.com/site.json instead — the full team list (titles,
 phones, emails, photo URLs), services copy, case studies, key contacts and
 nav — and https://chatbgp.app/api/public/leasing-listings for live
 availability (the Letting Tracker units ticked "Display on website" that pass
-the completeness gate). Team headshots reach the site from the share drive:
+the completeness gate). ChatBGP can add a unit to the Letting Tracker from a
+brochure dropped into chat (create_available_unit): it files the brochure under
+the unit, uses one of its pages as the listing photo, sets the BGP agents named
+on the brochure, and switches the website on when address, rent or POA, size,
+photo and lease terms are all in — otherwise it says which are missing. Swap the
+photo later via Files on the unit's row. Team headshots reach the site from the share drive:
 any image named "Firstname Surname.jpg" in Woody's OneDrive folder
 "Bruce Gillingham Pollard - Share Drive / Marketing / Team CVs & Photos /
 Team Photos / For website" is served at
