@@ -66,8 +66,8 @@ export default function Investment() {
         </div>
       </section>
 
-      <KeyContacts people={INVESTMENT_CONTACTS} />
       <CaseStudyStrip caseStudy={findCaseStudy(content, "the-royal-exchange")} />
+      <KeyContacts people={INVESTMENT_CONTACTS} />
     </div>
   );
 }
