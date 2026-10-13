@@ -51,6 +51,7 @@ function fromApi(j: any): SiteContent {
     phone: r.phone || OFFICE_PHONE,
     email: r.email || "",
     photo: r.photoUrl || undefined,
+    team: r.team || undefined,
     groups: r.groups || [],
   }));
   const byGroup = (g: ContactGroup): Person[] => team.filter((p) => p.groups.includes(g) && isDirectorLevel(p)).map(({ groups, ...p }) => p);

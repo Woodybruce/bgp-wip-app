@@ -19,7 +19,7 @@ export default function Team() {
   // Seniority order within a team (Charlotte, 2026-10-13), then surname.
   const rank = (p: Person) => {
     const t = p.title;
-    if (/managing director|chief operating|equity director|founding director/i.test(t)) return 0;
+    if (/managing director|chief operat|equity director|founding director/i.test(t)) return 0;
     if ((/\bdirector\b|\bhead\b/i.test(t)) && !/associate/i.test(t)) return 1;
     if (/associate director/i.test(t)) return 2;
     if (/\bassociate\b|consultant/i.test(t)) return 3;
@@ -28,8 +28,10 @@ export default function Team() {
     if (/surveyor/i.test(t)) return 5;
     return 7;
   };
+  const HR_TEAM: Record<string, string> = { "Shopping Centre": "Shopping Centres", "London Estate": "London Estates", "City": "The City", "High Street": "High Streets", "Investment": "Investment", "Tenant Rep": "Brand Representation", "Lease Advisory": "Lease Advisory" };
   const groupOf = (p: Person): string => {
-    if (/managing director|chief operating officer|\bcoo\b/i.test(p.title)) return "Leadership";
+    if (/managing director|chief operat|\bcoo\b/i.test(p.title)) return "Leadership";
+    if (p.team && HR_TEAM[p.team]) return HR_TEAM[p.team];
     for (const [re, label] of [[/shopping centre/i, "Shopping Centres"], [/london estate/i, "London Estates"], [/\bcity\b/i, "The City"], [/high street/i, "High Streets"], [/investment/i, "Investment"], [/brand rep/i, "Brand Representation"], [/lease advisory|asset management/i, "Lease Advisory"], [/consultan/i, "Consultancy"]] as Array<[RegExp, string]>) {
       if (re.test(p.title)) return label;
     }

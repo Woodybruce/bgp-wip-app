@@ -101,7 +101,7 @@ export async function overlayHrProfiles<T extends { name: string; title: string;
   if (!rows.length) return rows;
   try {
     const r: any = await db.execute(sql`
-      SELECT lower(u.email) AS email, u.name, u.phone, sp.title
+      SELECT lower(u.email) AS email, u.name, u.phone, u.team, sp.title
         FROM users u LEFT JOIN staff_profiles sp ON sp.user_id = u.id
        WHERE COALESCE(u.is_active, true) AND u.email IS NOT NULL`);
     const byEmail = new Map<string, any>((r.rows || r).map((h: any) => [String(h.email), h]));
@@ -111,7 +111,7 @@ export async function overlayHrProfiles<T extends { name: string; title: string;
       const name = String(h.name || "").trim();
       const title = cleanTitle(h.title);
       const phone = String(h.phone || "").trim();
-      return { ...row, name: name || row.name, title: title || row.title, phone: phone || row.phone };
+      return { ...row, name: name || row.name, title: title || row.title, phone: phone || row.phone, team: h.team || null };
     });
   } catch (err: any) {
     console.warn("[website-content] HR overlay skipped:", err?.message);

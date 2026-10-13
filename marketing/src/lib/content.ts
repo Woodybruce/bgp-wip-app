@@ -100,6 +100,7 @@ export interface Person {
   phone: string;
   email: string;
   photo?: string;
+  team?: string; // HR team from the app (Shopping Centre, London Estate, City, High Street, Investment, Tenant Rep, Lease Advisory)
 }
 
 export const OFFICE_PHONE = "+44 (0)20 3551 5260";
