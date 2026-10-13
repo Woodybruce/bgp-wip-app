@@ -1,5 +1,5 @@
 import { getAuthHeaders, startXeroConnect } from "@/lib/queryClient";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +44,11 @@ export function XeroContactPicker({
 }: Props) {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Opening from a linked contact ("Change") swaps the card for the search
+  // box — focus it so typing works straight away (Layla, 2026-10-13: a
+  // linked contact left no way to type a different one).
+  useEffect(() => { if (open && value) inputRef.current?.focus(); }, [open, value]);
 
   const trimmed = search.trim();
   // Track Xero auth state separately so we can distinguish "no contacts"
@@ -92,6 +97,15 @@ export function XeroContactPicker({
           )}
         </div>
         <Button
+          variant="outline"
+          size="sm"
+          className="h-6 px-2 rounded-full text-[11px] flex-shrink-0"
+          onClick={() => setOpen(true)}
+          data-testid={`${testIdPrefix}-change`}
+        >
+          Change
+        </Button>
+        <Button
           variant="ghost"
           size="icon"
           className="h-6 w-6 flex-shrink-0"
@@ -108,6 +122,7 @@ export function XeroContactPicker({
   return (
     <div className="relative">
       <Input
+        ref={inputRef}
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         onFocus={() => setOpen(true)}
