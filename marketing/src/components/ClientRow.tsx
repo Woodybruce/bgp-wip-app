@@ -26,7 +26,7 @@ export function ClientCircle({ client }: { client: Client }) {
 
   return (
     <div
-      className="group aspect-[4/3] flex items-center justify-center overflow-hidden"
+      className="group aspect-square rounded-full border border-bgp-line bg-white flex items-center justify-center overflow-hidden hover:border-bgp-burgundy/40 transition-colors"
       title={client.name}
     >
       {src ? (
@@ -34,7 +34,7 @@ export function ClientCircle({ client }: { client: Client }) {
           src={src}
           alt={`${client.name} logo`}
           loading="lazy"
-          className="max-h-[60%] w-[82%] object-contain"
+          className="h-3/5 w-[72%] object-contain"
           onLoad={() => { loadedRef.current = true; }}
           onError={() => setStep((s) => s + 1)}
         />

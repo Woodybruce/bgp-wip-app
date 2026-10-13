@@ -526,7 +526,7 @@ export const CONSULTANCY_CLIENTS: Client[] = [
   { name: "City of London Corporation", domain: "cityoflondon.gov.uk" },
   { name: "The Crown Estate", domain: "thecrownestate.co.uk" },
   { name: "Landsec", domain: "landsec.com" },
-  { name: "Northbank BID", domain: "thenorthbank.london" },
+  { name: "Northbank BID", domain: "london-hq.co.uk" },
   { name: "Stanhope", domain: "stanhopeplc.com" },
 ];
 
