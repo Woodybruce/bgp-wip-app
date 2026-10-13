@@ -157,10 +157,18 @@ nav — and https://chatbgp.app/api/public/leasing-listings for live
 availability (the Letting Tracker units ticked "Display on website" that pass
 the completeness gate). ChatBGP can add a unit to the Letting Tracker from a
 brochure dropped into chat (create_available_unit): it files the brochure under
-the unit, uses one of its pages as the listing photo, sets the BGP agents named
+the unit, pulls the brochure's own photographs out as the listing photos
+(exteriors first, then interiors; plans, maps and logos left out — a page
+render only when the brochure has no usable photos), uploading a brochure PDF
+in a unit's Files does the same when the unit has no photos yet, and ChatBGP
+can re-pull them for any unit (refresh_unit_photos_from_brochure), sets the BGP agents named
 on the brochure, and switches the website on when address, rent or POA, size,
 photo and lease terms are all in — otherwise it says which are missing. Swap the
-photo later via Files on the unit's row. Team headshots reach the site from the share drive:
+photo later via Files on the unit's row. The unit's **Create document** (Files dialog)
+makes the Unit particulars PDF in BGP house style — bordeaux header with the
+real BGP wordmark, the first photo full-width, area / rent / use as big
+numbers, particulars table, agents on a cream strip; the landlord's logo sits
+in the header as a small co-brand when the company has one. Team headshots reach the site from the share drive:
 any image named "Firstname Surname.jpg" in Woody's OneDrive folder
 "Bruce Gillingham Pollard - Share Drive / Marketing / Team CVs & Photos /
 Team Photos / For website" is served at
