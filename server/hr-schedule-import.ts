@@ -2,8 +2,8 @@
 // The HR schedule spreadsheet (First Name, Last Name, Job title, Date of
 // Birth, Address, Email, Start Date, Annual Salary) fills each person's HR
 // record. Admin-only, uploaded in the app (never stored in the repo or on
-// disk), previewed first, and it only fills EMPTY fields — nothing already
-// in the app is overwritten. People are matched by work email, then by full
+// disk), previewed first, and it only fills EMPTY fields — except salary,
+// which is updated to the sheet's figure (see below). People are matched by work email, then by full
 // name, then by a first name only one person has. Names in the sheet are
 // never copied over the app's (logins and fee allocations use them).
 
@@ -50,10 +50,21 @@ export function parseHrSchedule(buffer: Buffer): HrRow[] {
   return out;
 }
 
-const FIELD_LABELS: Record<string, string> = { title: "Job title", dob: "Date of birth", address: "Home address", start_date: "Start date", salary_current: "Annual salary" };
+const FIELD_LABELS: Record<string, string> = { title: "Job title", dob: "Date of birth", address: "Home address", start_date: "Start date" };
 export type HrFill = { userId: string; appName: string; sheetName: string; matchedBy: string; fields: Record<string, string | number> };
 
-export async function planHrSchedule(rows: HrRow[]): Promise<{ fills: HrFill[]; unmatched: string[]; labels: Record<string, string> }> {
+// Salaries are the exception (Layla, 2026-10-13: "salaries aren't correct"):
+// the sheet is the up-to-date record, so a salary that differs from it is
+// updated — with a salary_history row, so the old figure stays on record.
+// Stored salaries are a mix of pounds and pence; compare in pence.
+const toPence = (raw: unknown): number | null => {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n < 1_000_000 ? Math.round(n * 100) : Math.round(n);
+};
+export type SalaryChange = { userId: string; appName: string; fromPence: number | null; toPence: number };
+
+export async function planHrSchedule(rows: HrRow[]): Promise<{ fills: HrFill[]; salaryChanges: SalaryChange[]; unmatched: string[]; labels: Record<string, string> }> {
   const { rows: staff } = await pool.query(
     `SELECT u.id, u.name, lower(u.email) AS email, u.dob AS u_dob, u.address AS u_address, u.start_date AS u_start,
             sp.title, sp.dob AS sp_dob, sp.start_date AS sp_start, sp.salary_current
@@ -61,6 +72,7 @@ export async function planHrSchedule(rows: HrRow[]): Promise<{ fills: HrFill[]; 
       WHERE lower(u.email) LIKE '%@brucegillinghampollard.com'`);
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
   const fills: HrFill[] = [];
+  const salaryChanges: SalaryChange[] = [];
   const unmatched: string[] = [];
   for (const r of rows) {
     const full = norm(`${r.firstName} ${r.lastName}`);
@@ -78,14 +90,23 @@ export async function planHrSchedule(rows: HrRow[]): Promise<{ fills: HrFill[]; 
     if (r.dob && !clean(s.u_dob) && !clean(s.sp_dob)) fields.dob = r.dob;
     if (r.address && !clean(s.u_address)) fields.address = r.address;
     if (r.startDate && !clean(s.u_start) && !clean(s.sp_start)) fields.start_date = r.startDate;
-    if (r.salaryPence && s.salary_current == null) fields.salary_current = r.salaryPence;
+    if (r.salaryPence && toPence(s.salary_current) !== r.salaryPence) salaryChanges.push({ userId: s.id, appName: s.name, fromPence: toPence(s.salary_current), toPence: r.salaryPence });
     if (Object.keys(fields).length) fills.push({ userId: s.id, appName: s.name, sheetName: `${r.firstName} ${r.lastName}`.trim(), matchedBy, fields });
   }
-  return { fills, unmatched, labels: FIELD_LABELS };
+  return { fills, salaryChanges, unmatched, labels: FIELD_LABELS };
 }
 
-export async function applyHrSchedule(rows: HrRow[]): Promise<{ people: number; fields: number }> {
-  const { fills } = await planHrSchedule(rows);
+export async function applyHrSchedule(rows: HrRow[], recordedBy: string | null): Promise<{ people: number; fields: number; salaries: number }> {
+  const { fills, salaryChanges } = await planHrSchedule(rows);
+  const today = new Date().toISOString().slice(0, 10);
+  for (const c of salaryChanges) {
+    await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [c.userId]);
+    await pool.query(
+      `INSERT INTO salary_history (user_id, salary_pence, effective_date, reason, notes, recorded_by) VALUES ($1, $2, $3, 'HR schedule', $4, $5)`,
+      [c.userId, c.toPence, today, c.fromPence != null ? `was £${(c.fromPence / 100).toLocaleString("en-GB")}` : null, recordedBy],
+    );
+    await pool.query(`UPDATE staff_profiles SET salary_current = $2, updated_at = now() WHERE user_id = $1`, [c.userId, c.toPence]);
+  }
   let n = 0;
   for (const f of fills) {
     await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [f.userId]);
@@ -101,7 +122,6 @@ export async function applyHrSchedule(rows: HrRow[]): Promise<{ people: number; 
       n += (await pool.query(`UPDATE staff_profiles SET start_date = $2 WHERE user_id = $1 AND COALESCE(start_date, '') = ''`, [f.userId, v.start_date])).rowCount || 0;
       await pool.query(`UPDATE users SET start_date = $2 WHERE id = $1 AND COALESCE(start_date, '') = ''`, [f.userId, v.start_date]).catch(() => {});
     }
-    if (v.salary_current) n += (await pool.query(`UPDATE staff_profiles SET salary_current = $2 WHERE user_id = $1 AND salary_current IS NULL`, [f.userId, v.salary_current])).rowCount || 0;
   }
-  return { people: fills.length, fields: n };
+  return { people: fills.length, fields: n, salaries: salaryChanges.length };
 }

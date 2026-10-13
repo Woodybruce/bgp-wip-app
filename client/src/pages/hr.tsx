@@ -4528,6 +4528,7 @@ function MarketingHub({ isAdmin }: { isAdmin: boolean }) {
 
 interface ExpensesSummary {
   hasCard: boolean;
+  cardholderId?: string;
   mtdPence: number;
   ytdPence: number;
   totalPence: number;
@@ -4585,7 +4586,7 @@ function ExpensesAnalysisCard({ userId, isAdmin, isOwn }: { userId: string; isAd
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center justify-between">
           <span className="flex items-center gap-2"><CreditCard className="w-4 h-4 text-primary" /> Expenses analysis</span>
-          <button onClick={() => navigate(isAdmin ? "/expenses" : "/my-expenses")} className="text-[11px] text-primary hover:underline">Open full ledger →</button>
+          <button onClick={() => navigate(isOwn ? "/my-expenses" : `/expenses${data?.cardholderId ? `?cardholder=${data.cardholderId}` : ""}`)} className="text-[11px] text-primary hover:underline">Open full ledger →</button>
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0 space-y-4">
@@ -4681,7 +4682,7 @@ function ExpensesAnalysisCard({ userId, isAdmin, isOwn }: { userId: string; isAd
               {data.recent.slice(0, 6).map(r => (
                 <button
                   key={r.id}
-                  onClick={() => navigate(isAdmin ? `/expenses/${r.id}` : `/my-expenses/${r.id}`)}
+                  onClick={() => navigate(isOwn ? `/my-expenses?expense=${r.id}` : `/expenses${data?.cardholderId ? `?cardholder=${data.cardholderId}` : ""}`)}
                   className="w-full flex items-center gap-2 p-1.5 rounded-md hover:bg-muted/40 text-left text-xs"
                 >
                   <Clock className={`w-3 h-3 shrink-0 ${statusColor(r.status)}`} />

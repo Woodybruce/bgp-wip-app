@@ -123,7 +123,10 @@ export default function ExpensesAdmin() {
   // Spend by Cardholder rows are expandable — click to drill into the
   // cardholder's individual expenses for the period. Set to the
   // cardholder id of the open row (or null when collapsed).
-  const [expandedCardholderId, setExpandedCardholderId] = useState<string | null>(null);
+  // ?cardholder=<id> (from a person's Expenses tab in HR) opens their spend.
+  const [expandedCardholderId, setExpandedCardholderId] = useState<string | null>(
+    () => (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("cardholder") : null),
+  );
 
   const { data: cardholders = [], isLoading: chLoading, refetch: refetchCh } = useQuery<Cardholder[]>({
     queryKey: ["/api/expenses/cardholders"],

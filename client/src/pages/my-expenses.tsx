@@ -109,6 +109,14 @@ export default function MyExpenses() {
     refetchInterval: 60_000,
     refetchOnWindowFocus: true,
   });
+  // ?expense=<id> (from the Expenses tab on your HR profile) opens it.
+  const openedFromLink = useRef(false);
+  useEffect(() => {
+    if (openedFromLink.current || !data?.expenses?.length) return;
+    const id = new URLSearchParams(window.location.search).get("expense");
+    const hit = id ? data.expenses.find((e: any) => e.id === id) : null;
+    if (hit) { openedFromLink.current = true; setEditing(hit); }
+  }, [data]);
 
   const uploadMutation = useMutation({
     mutationFn: async (args: { id: string; files: FileList | File[] }) => {

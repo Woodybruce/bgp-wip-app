@@ -35,20 +35,20 @@ export function HrScheduleImportDialog({ open, onClose }: { open: boolean; onClo
     setBusy(true);
     try {
       const r = await send(file, false);
-      toast({ title: "HR profiles updated", description: `${r.fields} fields filled for ${r.people} people` });
+      toast({ title: "HR profiles updated", description: `${r.salaries} salaries updated · ${r.fields} empty fields filled for ${r.people} people` });
       queryClient.invalidateQueries();
       setPlan(null); setFile(null); onClose();
     } catch (e: any) { toast({ title: "Couldn't apply it", description: e?.message, variant: "destructive" }); }
     finally { setBusy(false); }
   };
   const close = () => { setPlan(null); setFile(null); onClose(); };
-  const show = (k: string, v: any) => k === "salary_current" ? money(v) : String(v);
+  const show = (_k: string, v: any) => String(v);
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) close(); }}>
       <DialogContent className="max-w-3xl max-h-[88dvh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Import HR schedule</DialogTitle>
-          <DialogDescription>Fills job title, date of birth, home address, start date and salary where they're empty — nothing already in the app is changed. People are matched by work email. The file isn't stored.</DialogDescription>
+          <DialogTitle>Update from HR schedule</DialogTitle>
+          <DialogDescription>Updates each person's salary to the sheet's figure (the old one stays in their salary history) and fills job title, date of birth, home address and start date where they're empty. People are matched by work email. The file isn't stored.</DialogDescription>
         </DialogHeader>
         <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void preview(f); }} />
         <Button variant="outline" className="rounded-full w-fit" disabled={busy} onClick={() => fileRef.current?.click()} data-testid="button-choose-hr-schedule">
@@ -56,8 +56,15 @@ export function HrScheduleImportDialog({ open, onClose }: { open: boolean; onClo
         </Button>
         {plan && (
           <div className="text-sm space-y-2">
-            <p className="text-xs text-muted-foreground tabular-nums">{plan.rows} rows · {plan.fills.length} people with gaps to fill{plan.unmatched.length ? ` · not matched: ${plan.unmatched.join(", ")}` : ""}</p>
-            {plan.fills.length === 0 ? <p>Everyone's HR record already has these details.</p> : (
+            <p className="text-xs text-muted-foreground tabular-nums">{plan.rows} rows · {plan.salaryChanges?.length || 0} salaries to update · {plan.fills.length} people with gaps to fill{plan.unmatched.length ? ` · not matched: ${plan.unmatched.join(", ")}` : ""}</p>
+            {plan.salaryChanges?.length > 0 && (
+              <div className="overflow-x-auto"><table className="w-full text-xs tabular-nums"><tbody>
+                {plan.salaryChanges.map((c: any) => (
+                  <tr key={c.userId} className="border-t"><td className="py-1 pr-3 font-medium">{c.appName}</td><td className="py-1 pr-3 text-muted-foreground">{c.fromPence != null ? money(c.fromPence) : "none"}</td><td className="py-1">→ {money(c.toPence)}</td></tr>
+                ))}
+              </tbody></table></div>
+            )}
+            {plan.fills.length === 0 ? <p className="text-xs text-muted-foreground">No empty fields to fill.</p> : (
               <div className="overflow-x-auto"><table className="w-full text-xs"><tbody>
                 {plan.fills.map((f: any) => (
                   <tr key={f.userId} className="border-t align-top">
@@ -71,7 +78,7 @@ export function HrScheduleImportDialog({ open, onClose }: { open: boolean; onClo
         )}
         <DialogFooter>
           <Button variant="outline" className="rounded-full" onClick={close}>Close</Button>
-          <Button className="rounded-full" disabled={!plan?.fills?.length || busy} onClick={apply} data-testid="button-apply-hr-schedule">
+          <Button className="rounded-full" disabled={!(plan?.fills?.length || plan?.salaryChanges?.length) || busy} onClick={apply} data-testid="button-apply-hr-schedule">
             {busy && plan && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}Apply
           </Button>
         </DialogFooter>

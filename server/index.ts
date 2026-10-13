@@ -2974,6 +2974,47 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     console.warn("[team-structure] boot apply failed:", e?.message);
   }
 
+  // Roster second teams added after the team move (Layla, 2026-10-13:
+  // Millie and Tracey also London Estate, Lucy Gardiner also Shopping
+  // Centre). Additive only — adds a roster team a login lacks, never
+  // removes one, so it's safe on every boot.
+  try {
+    const { rosterTeamsFor } = await import("@shared/teams");
+    const { rows } = await pool.query(`SELECT id, name, team, additional_teams FROM users WHERE is_active = true AND lower(email) LIKE '%@brucegillinghampollard.com'`);
+    for (const u of rows) {
+      const roster = rosterTeamsFor(u.name);
+      if (!roster) continue;
+      const have = new Set([u.team, ...(u.additional_teams || [])].filter(Boolean));
+      const missing = roster.filter(t => !have.has(t));
+      if (!missing.length) continue;
+      if (!u.team) await pool.query(`UPDATE users SET team = $2, additional_teams = $3 WHERE id = $1`, [u.id, missing[0], [...(u.additional_teams || []), ...missing.slice(1)]]);
+      else await pool.query(`UPDATE users SET additional_teams = $2 WHERE id = $1`, [u.id, [...(u.additional_teams || []), ...missing]]);
+      console.log(`[team-structure] ${u.name}: added ${missing.join(", ")}`);
+    }
+  } catch (e: any) {
+    console.warn("[team-structure] roster second teams:", e?.message);
+  }
+
+  // Job titles (Woody, 2026-10-13: "Ben is a senior surveyor, Toddy is an
+  // associate"). Once, flagged, so a later edit in HR stands.
+  try {
+    const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_titles_2026_10_13'`);
+    if (!done.rows.length) {
+      const titles: Array<[string, string]> = [["ben sykes", "Senior Surveyor"], ["alex todd", "Associate"]];
+      for (const [name, title] of titles) {
+        const u = await pool.query(`SELECT id FROM users WHERE lower(name) = $1 AND is_active = true`, [name]);
+        for (const r of u.rows) {
+          await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [r.id]);
+          await pool.query(`UPDATE staff_profiles SET title = $2, updated_at = now() WHERE user_id = $1`, [r.id, title]);
+        }
+        if (!u.rows.length) console.warn(`[hr-titles] no active login named ${name}`);
+      }
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_13', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+  } catch (e: any) {
+    console.warn("[hr-titles]", e?.message);
+  }
+
   // ── One-off (per Woody, 2026-09-28): Canary Wharf Group runs "No PO No
   // Pay", so its invoices need a PO number. Guarded on requires_po never
   // having been set (NULL), so it applies once and a later change on the
