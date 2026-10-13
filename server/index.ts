@@ -3078,6 +3078,8 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
         await pool.query(`UPDATE users SET email = $2 WHERE id = $1`, [u.rows[0].id, email]);
       }
       if (u.rows.length) {
+        // Her mobile (email signature) — the phones step above may have run before her login existed.
+        await pool.query(`UPDATE users SET phone = '+44 (0)7799 882 850' WHERE id = $1 AND (phone IS NULL OR btrim(phone) = '' OR phone ~ '3551\s*5260')`, [u.rows[0].id]);
         await pool.query(
           `INSERT INTO staff_profiles (user_id, title, start_date, status) VALUES ($1, 'Director', '2025-10-28', 'active')
            ON CONFLICT (user_id) DO UPDATE SET title = COALESCE(staff_profiles.title, EXCLUDED.title), start_date = COALESCE(staff_profiles.start_date, EXCLUDED.start_date)`, [u.rows[0].id]);
