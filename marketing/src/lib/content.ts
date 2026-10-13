@@ -462,7 +462,19 @@ export const INVESTMENT_DEALS: InvestmentDeal[] = [
   { name: "Parkhall Business Centre, Dulwich", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/oxam-house-oxford.jpg", name: "Oxam House, Oxford", client: "Charles Street", type: "Acquisition", price: "£21,250,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/filmworks-ealing.jpg", name: "Filmworks, Ealing", client: "St George", type: "Sale", price: "£13,500,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/wimbledon-bridge-house.jpg", name: "Wimbledon Bridge House", client: "Sheet Anchor Evolve", type: "Acquisition", price: "then the sale of the Aldi unit", status: "Completed", capRate: null, sold: true, wide: false },
+  // Jack's list, 2026-10-13 (photos from his WeTransfer).
+  { image: "/images/investment/wimbledon-bridge-house.jpg", name: "Wimbledon Bridge House", client: "M Core", type: "Acquisition", price: "£18,000,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/aldi-wimbledon.jpg", name: "Aldi, Wimbledon", client: "Sheet Anchor Evolve", type: "Sale", price: "£5,775,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/wimbledon-village.jpg", name: "Wimbledon Village", client: "UK private investor", type: "Sale", price: "£7,300,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { name: "Cardiff", client: "Hermes", type: "Sale", price: "£5,150,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/cambridge.jpg", name: "Cambridge", client: "Family office", type: "Acquisition", price: "£9,200,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/birmingham.jpg", name: "Birmingham", client: "Overseas family office", type: "Acquisition", price: "£14,700,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/exeter.jpg", name: "Exeter", client: "Overseas family office", type: "Acquisition", price: "£6,550,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/lincoln.jpg", name: "Lincoln", client: "Overseas family office", type: "Acquisition", price: "£5,900,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/lush-liverpool.jpg", name: "Lush, Liverpool", client: "Overseas family office", type: "Acquisition", price: "£8,800,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/decathlon-liverpool.jpg", name: "Decathlon, Liverpool", client: "Overseas family office", type: "Acquisition", price: "£7,795,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/river-island-liverpool.jpg", name: "River Island, Liverpool", client: "Overseas family office", type: "Acquisition", price: "£6,300,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/hsbc-brighton.jpg", name: "HSBC, Brighton", client: "Family office", type: "Acquisition", price: "£5,640,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/grants-leisure-croydon.jpg", name: "Grants Leisure, Croydon", client: "Hermes", type: "Sale", price: "", status: "Completed", capRate: null, sold: true, wide: false },
 ];
 
