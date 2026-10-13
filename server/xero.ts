@@ -761,41 +761,37 @@ export function setupXeroRoutes(app: Express) {
   app.get("/api/xero/contacts", requireAuth, async (req: Request, res: Response) => {
     try {
       const rawSearch = ((req.query.search as string) || "").trim();
-      // Strip Xero-filter-incompatible chars, drop multi-token whitespace,
-      // and lowercase both the term + the field. Xero's where-clause is a
-      // .NET expression so Name.ToLower().Contains("landsec") matches
-      // "Landsec", "LANDSEC", "LandSec" — fixes the case-sensitive miss
-      // ("Land Sec" not matching "Landsec" was the original complaint).
       const search = rawSearch.replace(/"/g, "").toLowerCase();
-      let path = "/Contacts?page=1&pageSize=100&includeArchived=false";
-      if (search) {
-        // Multi-token: split on whitespace, require each token to be a
-        // substring of the lower-cased name. "land sec" matches "Landsec",
-        // "London Land Securities Plc", etc. Tokens AND'd together via
-        // chained Contains() — keeps the matching tight without exploding
-        // into typo-tolerance territory.
-        const tokens = search.split(/\s+/).filter(t => t.length > 0);
-        const conds = tokens.map(t => `Name.ToLower().Contains("${t}")`);
-        path += `&where=${encodeURIComponent(conds.join(" AND "))}`;
-      }
+      // Xero's searchTerm (case-insensitive, Name / contact person / email)
+      // replaced the old Name.ToLower().Contains() where-filter, which Xero
+      // turns down — every search came back "No Xero contacts found" (Layla,
+      // 2026-10-13). Search the longest word, then keep names containing
+      // every word, so "land sec" still finds "Landsec".
+      const tokens = search.split(/\s+/).filter(t => t.length > 0);
+      const term = [...tokens].sort((x, y) => y.length - x.length)[0] || "";
+      const path = `/Contacts?page=1&pageSize=100&includeArchived=false${term ? `&searchTerm=${encodeURIComponent(term)}` : ""}`;
       // Read-only endpoint — falls back to the firm-wide system Xero
-      // session when the caller's session isn't connected. Means agents
-      // can pick a billing entity without each having to OAuth-connect
-      // their own Xero. Write endpoints stay session-scoped for proper
-      // attribution.
+      // session when the caller's session isn't connected. Write endpoints
+      // stay session-scoped for proper attribution.
       let data: any = null;
+      let userErr: any = null;
       try { data = await xeroApiWithFallback(req.session, path); } catch (e: any) {
         if (String(e?.message || "").includes("Not connected")) throw e;
+        userErr = e;
         console.warn("[Xero] Contacts search on the user's session failed, trying the firm's:", e?.message);
       }
-      // The user's own sign-in can point at the wrong organisation or lack
-      // contact access — search the firm-wide session too before saying
-      // nothing matched.
+      // The user's own sign-in can point at the wrong organisation — search
+      // the firm-wide session too before saying nothing matched.
       if (!data?.Contacts?.length && req.session?.xeroTokens) {
         const { withSystemXero } = await import("./xero-system-session");
         const firm = await withSystemXero((sys) => xeroApi(sys, path)).catch(() => null);
-        if (firm?.Contacts?.length || !data) data = firm || { Contacts: [] };
+        if (firm?.Contacts?.length || !data) data = firm;
       }
+      if (!data) throw userErr || new Error("Xero didn't answer the contact search");
+      const squash = (v: string) => v.toLowerCase().replace(/\s+/g, "");
+      const matches = (data.Contacts || []).filter((c: any) => tokens.every(t => squash(c.Name || "").includes(t)
+        || [c.EmailAddress, c.FirstName, c.LastName, c.AccountNumber].some((f: any) => String(f || "").toLowerCase().includes(t))));
+      data = { Contacts: matches };
       const contacts = (data.Contacts || []).map((c: any) => ({
         ContactID: c.ContactID,
         Name: c.Name,
