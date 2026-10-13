@@ -460,7 +460,7 @@ export const INVESTMENT_DEALS: InvestmentDeal[] = [
   { image: "/images/investment/jesses-house-fulham.jpg", name: "Jesse's House, Fulham", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/leos-house-clapham.jpg", name: "Leo's House, Clapham North", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/orlys-house-east-sheen.jpg", name: "Orly's House, East Sheen", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
-  { name: "Parkhall Business Centre, Dulwich", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/parkhall-dulwich.jpg", name: "Parkhall Business Centre, Dulwich", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/oxam-house-oxford.jpg", name: "Oxam House, Oxford", client: "Charles Street", type: "Acquisition", price: "£21,250,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/filmworks-ealing.jpg", name: "Filmworks, Ealing", client: "St George", type: "Sale", price: "£13,500,000", status: "Completed", capRate: null, sold: true, wide: false },
   // Jack's list, 2026-10-13 (photos from his WeTransfer).
