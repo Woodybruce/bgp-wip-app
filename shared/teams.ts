@@ -40,7 +40,7 @@ export const TEAM_ROSTER_2026: Array<{ name: string; teams: BgpTeamName[] }> = [
   { name: "Jack Barratt", teams: ["Investment"] },
   { name: "Nick Halley", teams: ["Investment"] },
   { name: "Jonny Palmer", teams: ["Investment"] },
-  { name: "Millie Edwards", teams: ["Shopping Centre"] },
+  { name: "Millie Edwards", teams: ["Shopping Centre", "London Estate"] }, // + London Estate (Layla, 2026-10-13)
   { name: "Victoria Broadhead", teams: ["Shopping Centre"] },
   { name: "Emily Dumbell", teams: ["Shopping Centre"] },
   { name: "Alex Todd", teams: ["Shopping Centre"] },
@@ -52,8 +52,8 @@ export const TEAM_ROSTER_2026: Array<{ name: string; teams: BgpTeamName[] }> = [
   { name: "Emily Cann", teams: ["London Estate"] },
   { name: "Evie North", teams: ["Tenant Rep"] }, // moved from London Estate (Woody, 2026-10-13)
   { name: "Will Penfold", teams: ["London Estate"] },
-  { name: "Lucy Gardiner", teams: ["High Street"] },
-  { name: "Tracey Pollard", teams: ["High Street"] },
+  { name: "Lucy Gardiner", teams: ["High Street", "Shopping Centre"] }, // + Shopping Centre (Layla, 2026-10-13)
+  { name: "Tracey Pollard", teams: ["High Street", "London Estate"] }, // + London Estate (Layla, 2026-10-13)
   { name: "Libby Evans", teams: ["High Street"] },
   { name: "Pete Wood", teams: ["Lease Advisory", "City"] },
   { name: "Tom Cater", teams: ["Lease Advisory"] },
@@ -75,18 +75,27 @@ export const CONSULTANTS_2026: Array<{ name: string; role: string; reportsTo: st
 ];
 
 const normPerson = (s: string) => String(s || "").toLowerCase().replace(/[^a-z ]+/g, " ").replace(/\s+/g, " ").trim();
-/** A person's 2026-10 teams by name: full name first, then a first name
- *  that only one roster person has ("Libby", "Millie"). null = not on the
- *  roster (no team: MD, heads of department, support, or unknown). */
-export function rosterTeamsFor(name: string | null | undefined): BgpTeamName[] | null {
+/** The roster name a login belongs to: full name first, then a first name
+ *  only one roster person has ("Libby", "Millie"), then a surname only one
+ *  has ("Peter Wood" → Pete Wood, "Elizabeth Knights" → Lizzie Knights).
+ *  null = not on the roster (no team: MD, heads of department, support). */
+export function rosterNameFor(name: string | null | undefined): string | null {
   const n = normPerson(name || "");
   if (!n) return null;
   const full = TEAM_ROSTER_2026.find(r => normPerson(r.name) === n);
-  if (full) return full.teams;
+  if (full) return full.name;
   if (NO_TEAM_ROSTER_2026.some(r => normPerson(r) === n)) return null;
-  const first = n.split(" ")[0];
-  const byFirst = TEAM_ROSTER_2026.filter(r => normPerson(r.name).split(" ")[0] === first);
-  return byFirst.length === 1 ? byFirst[0].teams : null;
+  const parts = n.split(" ");
+  const byFirst = TEAM_ROSTER_2026.filter(r => normPerson(r.name).split(" ")[0] === parts[0]);
+  if (byFirst.length === 1) return byFirst[0].name;
+  const last = parts[parts.length - 1];
+  const byLast = parts.length > 1 ? TEAM_ROSTER_2026.filter(r => normPerson(r.name).split(" ").pop() === last) : [];
+  return byLast.length === 1 ? byLast[0].name : null;
+}
+/** A person's 2026-10 teams by name (see rosterNameFor). */
+export function rosterTeamsFor(name: string | null | undefined): BgpTeamName[] | null {
+  const r = rosterNameFor(name);
+  return r ? TEAM_ROSTER_2026.find(x => x.name === r)!.teams : null;
 }
 
 /** Same person by name, ignoring case, punctuation and hyphens. */

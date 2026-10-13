@@ -343,7 +343,7 @@ interface TeamAiSummary { team: string; summary: string; generated_at: string }
 // on the firm-wide ski target hero. Each card shows the team head pinned at
 // the top with their direct reports listed underneath, organigram-style,
 // plus a one-line AI summary of what they've been up to lately.
-function TeamCard({ team, allStaff, aiSummary, oooByUser, onSelectPerson }: { team: TeamSummary; allStaff: StaffMember[]; aiSummary?: string; oooByUser?: Map<string, { subject: string; isAllDay: boolean }>; onSelectPerson?: (id: string) => void }) {
+function TeamCard({ team, allStaff, aiSummary, onSelectPerson }: { team: TeamSummary; allStaff: StaffMember[]; aiSummary?: string; onSelectPerson?: (id: string) => void }) {
   const [, navigate] = useLocation();
   const style = teamStyle(team.team);
   // Prefer the team-summary's own `members` payload (always populated) and
@@ -363,15 +363,12 @@ function TeamCard({ team, allStaff, aiSummary, oooByUser, onSelectPerson }: { te
   const MemberRow = ({ m, isHead }: { m: StaffMember | TeamSummary["head"]; isHead?: boolean }) => {
     if (!m) return null;
     const profilePic = (m as any).profile_pic_url ?? (m as any).profilePicUrl ?? null;
-    const ooo = oooByUser?.get(m.id);
-    // Only show the WFH chip when the person isn't already flagged OOO —
-    // OOO trumps WFH visually (you're out of office, period).
-    const wfh = !ooo && isWfhToday(m as any);
+    const wfh = isWfhToday(m as any);
     return (
       <button
         onClick={() => onSelectPerson ? onSelectPerson(m.id) : navigate(`/hr?person=${m.id}`)}
-        className={`w-full flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/60 ${isHead ? "bg-muted/50" : ""} ${ooo ? "opacity-70" : ""}`}
-        title={ooo ? `OOO: ${ooo.subject}` : wfh ? "Working from home today" : undefined}
+        className={`w-full flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/60 ${isHead ? "bg-muted/50" : ""}`}
+        title={wfh ? "Working from home today" : undefined}
       >
         <div className="relative shrink-0">
           {profilePic ? (
@@ -381,9 +378,6 @@ function TeamCard({ team, allStaff, aiSummary, oooByUser, onSelectPerson }: { te
               {m.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
             </div>
           )}
-          {ooo && (
-            <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-orange-500 border-2 border-white dark:border-black/20" title={ooo.subject} />
-          )}
           {wfh && (
             <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-sky-500 border-2 border-white dark:border-black/20" title="WFH today" />
           )}
@@ -392,9 +386,8 @@ function TeamCard({ team, allStaff, aiSummary, oooByUser, onSelectPerson }: { te
           <div className={`truncate ${isHead ? "text-sm font-semibold" : "text-xs font-medium"}`}>{m.name}</div>
           {m.title && <div className="text-[10px] text-muted-foreground truncate">{m.title}</div>}
         </div>
-        {ooo && <Badge variant="outline" className="text-[9px] h-4 px-1 bg-orange-100 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 border-orange-300 shrink-0">OOO</Badge>}
         {wfh && <Badge variant="outline" className="text-[9px] h-4 px-1 bg-sky-100 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border-sky-300 shrink-0">WFH</Badge>}
-        {isHead && !ooo && !wfh && <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">Head</Badge>}
+        {isHead && <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">Head</Badge>}
       </button>
     );
   };
@@ -427,7 +420,6 @@ function OrganigramSection({ allStaff, isAdmin, onSelectPerson }: { allStaff: St
   const { toast } = useToast();
   const { data, isLoading } = useQuery<{ teams: TeamSummary[] }>({ queryKey: ["/api/hr/team-summary"] });
   const { data: aiSummaries = [] } = useQuery<TeamAiSummary[]>({ queryKey: ["/api/hr/team-ai-summaries"] });
-  const { data: oooData } = useQuery<{ events: Array<{ userId: string; subject: string; isAllDay: boolean }> }>({ queryKey: ["/api/hr/calendar/now"] });
 
   const refreshAi = useMutation({
     mutationFn: async () => apiRequest("POST", "/api/hr/team-ai-summaries/refresh").then(r => r.json()),
@@ -438,13 +430,8 @@ function OrganigramSection({ allStaff, isAdmin, onSelectPerson }: { allStaff: St
   });
 
   const aiByTeam = useMemo(() => new Map(aiSummaries.map(s => [s.team, s.summary])), [aiSummaries]);
-  const oooByUser = useMemo(() => {
-    const m = new Map<string, { subject: string; isAllDay: boolean }>();
-    for (const e of oooData?.events || []) {
-      if (!m.has(e.userId)) m.set(e.userId, { subject: e.subject, isAllDay: e.isAllDay });
-    }
-    return m;
-  }, [oooData]);
+  // No out-of-office greying (Layla, 2026-10-13): it read diary entries,
+  // so someone holding a colleague's leave in their diary showed as OOO.
 
   if (isLoading) return <Skeleton className="h-64 w-full rounded-xl" />;
   if (!data?.teams?.length) return null;
@@ -467,7 +454,7 @@ function OrganigramSection({ allStaff, isAdmin, onSelectPerson }: { allStaff: St
       </CardHeader>
       <CardContent className="pt-0">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {data.teams.map(t => <TeamCard key={t.team} team={t} allStaff={allStaff} aiSummary={aiByTeam.get(t.team)} oooByUser={oooByUser} onSelectPerson={onSelectPerson} />)}
+          {data.teams.map(t => <TeamCard key={t.team} team={t} allStaff={allStaff} aiSummary={aiByTeam.get(t.team)} onSelectPerson={onSelectPerson} />)}
         </div>
       </CardContent>
     </Card>

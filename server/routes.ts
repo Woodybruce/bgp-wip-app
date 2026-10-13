@@ -2861,6 +2861,13 @@ export async function registerRoutes(
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
+  // Xero calls since the last restart, by day and type — shows what's using
+  // Xero's daily allowance (5,000 calls) when it starts returning 429.
+  app.get("/api/admin/xero-usage", requireAuth, requireAdmin, async (_req, res) => {
+    const { xeroUsage } = await import("./xero");
+    res.json(xeroUsage());
+  });
+
   app.get("/api/admin/schema-drift", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const { listSchemaDrift } = await import("./schema-drift");

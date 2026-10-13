@@ -13,7 +13,7 @@ import {
 import { AddinHeader } from "@/components/addin-header";
 import { Pill } from "@/components/ui/pill";
 import { OutlookChat } from "@/components/outlook-chat";
-import { AddinSignIn } from "@/components/addin-signin";
+import { AddinSignIn, readAddinSignIn, saveAddinSignIn } from "@/components/addin-signin";
 
 declare global {
   interface Window {
@@ -114,6 +114,16 @@ function AddinOutlook() {
     if (!window.Office) return;
     window.Office.onReady((info: any) => {
       if (info.host !== "Outlook") return;
+      // Outlook wiped localStorage → restore the sign-in from the add-in's
+      // roaming settings (saved at sign-in).
+      const saved = readAddinSignIn();
+      if (saved) {
+        setToken((t) => t || saved.token);
+        setUserName((n) => n || saved.name);
+        try { if (!localStorage.getItem(TOKEN_KEY)) { localStorage.setItem(TOKEN_KEY, saved.token); localStorage.setItem(USER_KEY, saved.name); } } catch {}
+      } else {
+        try { const t = localStorage.getItem(TOKEN_KEY); if (t) saveAddinSignIn(t, localStorage.getItem(USER_KEY) || ""); } catch {}
+      }
       readOpenEmail();
       // Pinned task panes stay open while the user changes selection —
       // re-read the open email on every switch.
@@ -133,6 +143,7 @@ function AddinOutlook() {
       localStorage.setItem(TOKEN_KEY, newToken);
       localStorage.setItem(USER_KEY, name);
     } catch {}
+    saveAddinSignIn(newToken, name);
   };
 
   const handleLogout = () => {
@@ -142,6 +153,7 @@ function AddinOutlook() {
       localStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(USER_KEY);
     } catch {}
+    saveAddinSignIn(null, "");
   };
 
   // Sender search cascade: full email → bare domain (drops the TLD noise)

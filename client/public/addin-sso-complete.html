@@ -31,7 +31,12 @@
       }
       function send(payload) {
         try { Office.context.ui.messageParent(JSON.stringify(payload)); }
-        catch (e) { show("Couldn't return to the add-in. Close this window and try again.", true); }
+        catch (e) {
+          // Outlook sometimes blocks the post-back; the add-in picks the
+          // sign-in up by itself, so this isn't a failure.
+          if (payload && payload.sso_code) { var sp = document.getElementById("spin"); if (sp) sp.style.display = "none"; show("You're signed in. Close this window to return to Outlook."); setTimeout(function () { try { window.close(); } catch (x) {} }, 2500); }
+          else show("Couldn't return to the add-in. Close this window and try again.", true);
+        }
       }
       function run() {
         var code = qp("sso_code");

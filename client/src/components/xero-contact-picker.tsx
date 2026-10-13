@@ -1,5 +1,5 @@
 import { getAuthHeaders, startXeroConnect } from "@/lib/queryClient";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -44,12 +44,19 @@ export function XeroContactPicker({
 }: Props) {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Opening from a linked contact ("Change") swaps the card for the search
+  // box — focus it so typing works straight away (Layla, 2026-10-13: a
+  // linked contact left no way to type a different one).
+  useEffect(() => { if (open && value) inputRef.current?.focus(); }, [open, value]);
 
   const trimmed = search.trim();
   // Track Xero auth state separately so we can distinguish "no contacts"
   // from "not connected" in the empty UI. Surfaces the actionable error
   // ("Connect Xero in Settings") rather than the misleading "no contacts found".
   const [notConnected, setNotConnected] = useState(false);
+  // Xero refusing → the server lists contacts already linked on deals.
+  const [fromApp, setFromApp] = useState(false);
   const { data: contacts = [], isFetching, error } = useQuery<XeroContact[]>({
     queryKey: ["/api/xero/contacts", trimmed],
     queryFn: async () => {
@@ -66,12 +73,30 @@ export function XeroContactPicker({
         throw new Error(body?.message || `Xero search failed (${res.status})`);
       }
       setNotConnected(false);
+      setFromApp(res.headers.get("X-Xero-Contacts-Source") === "app");
       return res.json();
     },
     enabled: open,
     retry: false,
     staleTime: 60_000,
   });
+
+  // Nothing at all came back — ask the server which Xero organisation it
+  // searched, so the empty list says why (Layla, 2026-10-13).
+  const emptyAnswer = open && !isFetching && !notConnected && !error && contacts.length === 0;
+  const { data: check } = useQuery<any>({
+    queryKey: ["/api/xero/contacts-check"],
+    queryFn: async () => {
+      const r = await fetch("/api/xero/contacts-check", { credentials: "include", headers: getAuthHeaders() });
+      return r.ok ? r.json() : null;
+    },
+    enabled: emptyAnswer,
+    staleTime: 30_000,
+    retry: false,
+  });
+  const describe = (label: string, x: any) => !x?.connected ? `${label}: not signed in`
+    : x.error ? `${label}: Xero said "${x.error}"`
+    : `${label}: ${x.org || "unknown organisation"}, ${x.contacts} contacts${x.moved ? " (moved to the firm's organisation — search again)" : ""}${x.orgs?.length > 1 ? ` · your Xero login sees ${x.orgs.join(", ")}` : ""}`;
 
   const showSelected = !!value;
   const selectedAddress = cachedAddress ? formatAddress(cachedAddress) : "";
@@ -92,6 +117,15 @@ export function XeroContactPicker({
           )}
         </div>
         <Button
+          variant="outline"
+          size="sm"
+          className="h-6 px-2 rounded-full text-[11px] flex-shrink-0"
+          onClick={() => setOpen(true)}
+          data-testid={`${testIdPrefix}-change`}
+        >
+          Change
+        </Button>
+        <Button
           variant="ghost"
           size="icon"
           className="h-6 w-6 flex-shrink-0"
@@ -108,6 +142,7 @@ export function XeroContactPicker({
   return (
     <div className="relative">
       <Input
+        ref={inputRef}
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         onFocus={() => setOpen(true)}
@@ -146,7 +181,16 @@ export function XeroContactPicker({
               {trimmed
                   ? "No Xero contacts found"
                   : "Type to search Xero contacts"}
+              {check && (
+                <div className="mt-1 space-y-0.5 text-[11px]" data-testid={`${testIdPrefix}-check`}>
+                  <p>{describe("Your Xero sign-in", check.mine)}</p>
+                  <p>{describe("Firm Xero link", check.firm)}</p>
+                </div>
+              )}
             </div>
+          )}
+          {!isFetching && fromApp && contacts.length > 0 && (
+            <div className="px-3 py-1.5 text-[11px] text-muted-foreground border-b">Xero is busy — these are Xero contacts already used on other deals.</div>
           )}
           {contacts.map((c) => {
             const addr = formatAddress(c.BillingAddress);

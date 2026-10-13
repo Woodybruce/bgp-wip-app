@@ -21,6 +21,7 @@ import { Link } from "wouter";
 import { ProfilePhotoCard } from "@/components/profile-photo-card";
 import { TeamStructureDialog } from "@/components/team-structure-dialog";
 import { XeroFillDialog } from "@/components/xero-fill-dialog";
+import { HrScheduleImportDialog } from "@/components/hr-schedule-import-dialog";
 
 interface TeamMember {
   id: string;
@@ -1046,6 +1047,7 @@ function DataHealthSection() {
   const [splitTeamOpen, setSplitTeamOpen] = useState(false);
   const [teamStructureOpen, setTeamStructureOpen] = useState(false);
   const [xeroFillOpen, setXeroFillOpen] = useState(false);
+  const [hrScheduleOpen, setHrScheduleOpen] = useState(false);
 
   const runScan = async () => {
     setScanning(true);
@@ -1174,6 +1176,9 @@ function DataHealthSection() {
             </Button>
             <Button size="sm" variant="outline" onClick={() => setXeroFillOpen(true)} data-testid="button-xero-fill">
               <RefreshCw className="w-4 h-4 mr-2" />Fill from Xero
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setHrScheduleOpen(true)} data-testid="button-hr-schedule">
+              <Users className="w-4 h-4 mr-2" />Update from HR schedule
             </Button>
             <Button size="sm" onClick={() => setTeamStructureOpen(true)} data-testid="button-team-structure">
               <Users className="w-4 h-4 mr-2" />New team structure
@@ -1304,6 +1309,7 @@ function DataHealthSection() {
       <SortTeamsDialog open={splitTeamOpen} onClose={() => setSplitTeamOpen(false)} />
       <TeamStructureDialog open={teamStructureOpen} onClose={() => setTeamStructureOpen(false)} />
       <XeroFillDialog open={xeroFillOpen} onClose={() => setXeroFillOpen(false)} />
+      <HrScheduleImportDialog open={hrScheduleOpen} onClose={() => setHrScheduleOpen(false)} />
     </Card>
   );
 }

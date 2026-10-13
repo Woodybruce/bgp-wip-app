@@ -1,4 +1,4 @@
-import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, TEAM_LEADS_2026, rosterTeamsFor, samePerson, staffGroupFor } from "@shared/teams";
+import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, TEAM_LEADS_2026, rosterNameFor, rosterTeamsFor, samePerson, staffGroupFor } from "@shared/teams";
 import type { Express } from "express";
 import { pool } from "./db";
 import { requireAuth, requireAdmin } from "./auth";
@@ -660,6 +660,24 @@ export function setupHrRoutes(app: Express) {
   // Commission scheme year: 1 May → 30 April
   // Tiers: 2x salary → 30%, 3x → 40%, 4x → 50% (of fees above each threshold)
 
+  // Every phone home and HR page asks for this every 30 seconds; it used
+  // to send four Xero calls each time and helped use up Xero's daily
+  // allowance (429, 2026-10-13). The paid-invoice lists are the same for
+  // everyone, so keep them for 30 minutes.
+  const paidInvoiceCache = new Map<string, { at: number; data: any }>();
+  const paidInvoicesCached = async (session: any, from: string, to: string) => {
+    const key = `${from}|${to}`;
+    const hit = paidInvoiceCache.get(key);
+    if (hit && Date.now() - hit.at < 30 * 60_000) return hit.data;
+    try {
+      const data = await xeroApi(session, `/Invoices?Status=PAID&DateFrom=${from}&DateTo=${to}&summaryOnly=false`);
+      paidInvoiceCache.set(key, { at: Date.now(), data });
+      return data;
+    } catch (e) {
+      if (hit) return hit.data;
+      throw e;
+    }
+  };
   app.get("/api/hr/staff/:userId/commission", requireAuth, async (req: any, res) => {
     const actor = await getActor(req);
     if (!actor.isAdmin && actor.userId !== req.params.userId) {
@@ -704,9 +722,7 @@ export function setupHrRoutes(app: Express) {
           // Query paid invoices for this scheme year where tracking matches the agent
           const fromDate = schemeYearStart.toISOString().split("T")[0];
           const toDate = schemeYearEnd.toISOString().split("T")[0];
-          const invoiceData = await xeroApi(session,
-            `/Invoices?Status=PAID&DateFrom=${fromDate}&DateTo=${toDate}&summaryOnly=false`,
-          );
+          const invoiceData = await paidInvoicesCached(session, fromDate, toDate);
 
           if (invoiceData?.Invoices) {
             for (const inv of invoiceData.Invoices) {
@@ -728,9 +744,7 @@ export function setupHrRoutes(app: Express) {
               const yEnd = new Date(yStart.getFullYear() + 1, 3, 30);
               let yPence = 0;
               if (i > 0) {
-                const yData = await xeroApi(session,
-                  `/Invoices?Status=PAID&DateFrom=${yStart.toISOString().split("T")[0]}&DateTo=${yEnd.toISOString().split("T")[0]}&summaryOnly=false`
-                );
+                const yData = await paidInvoicesCached(session, yStart.toISOString().split("T")[0], yEnd.toISOString().split("T")[0]);
                 for (const inv of (yData?.Invoices || [])) {
                   const match = inv.LineItems?.some((li: any) =>
                     li.Tracking?.some((t: any) =>
@@ -1440,12 +1454,13 @@ export function setupHrRoutes(app: Express) {
       const TEAM_ORDER: string[] = [...BGP_TEAM_NAMES];
 
       const { rows: staff } = await pool.query(`
-        SELECT u.id, u.name, u.email, u.team, u.profile_pic_url,
+        SELECT u.id, u.name, u.email, u.team, u.additional_teams, u.profile_pic_url,
                sp.title, sp.board_member, sp.management_team, sp.manager_id,
                sp.wfh_days
         FROM users u
         LEFT JOIN staff_profiles sp ON sp.user_id = u.id
-        WHERE u.is_active = true AND sp.id IS NOT NULL
+        WHERE u.is_active = true
+          AND (sp.id IS NOT NULL OR lower(u.email) LIKE '%@brucegillinghampollard.com')
       `);
 
       // Aggregate WIP / pipeline from crm_deals per team. Open = not invoiced/
@@ -1511,15 +1526,23 @@ export function setupHrRoutes(app: Express) {
       const allTeams = [...STAFF_GROUP_ORDER.filter(t => presentTeams.has(t)), ...extraTeams];
       if (unassignedCount > 0) allTeams.push("Unassigned");
 
-      const summaries = allTeams.map(team => {
+      // Someone in two teams sits on both cards (Layla, 2026-10-13: Millie
+      // and Tracey in London Estate too, Lucy Gardiner in Shopping Centre,
+      // Pete and Lizzie make up City) — the One to Ones roster, else the
+      // login's extra teams.
+      const inTeam = (s: any, team: string) => groupOf(s) === team
+        || (rosterTeamsFor(s.name) || []).includes(team as any)
+        || (!rosterTeamsFor(s.name) && Array.isArray(s.additional_teams) && s.additional_teams.includes(team));
+      for (const s of staff) for (const t of rosterTeamsFor(s.name) || []) presentTeams.add(t);
+      const orderedTeams = [...STAFF_GROUP_ORDER.filter(t => presentTeams.has(t)), ...extraTeams];
+      if (unassignedCount > 0) orderedTeams.push("Unassigned");
+      const summaries = orderedTeams.map(team => {
         const grouped = team === "Unassigned"
           ? staff.filter((s: any) => !groupOf(s))
-          : staff.filter((s: any) => groupOf(s) === team);
+          : staff.filter((s: any) => inTeam(s, team));
         // The team's leads first (both of them), even when one sits on the
         // Board (Jack) or also leads another team (Lizzie, Pete).
-        const leads = (TEAM_LEADS_2026[team] || []).map(n => staff.find((s: any) => samePerson(s.name, n)
-          || (n.split(" ")[0].toLowerCase() === String(s.name || "").split(" ")[0].toLowerCase()
-              && staff.filter((x: any) => String(x.name || "").split(" ")[0].toLowerCase() === n.split(" ")[0].toLowerCase()).length === 1))).filter(Boolean);
+        const leads = (TEAM_LEADS_2026[team] || []).map(n => staff.find((s: any) => samePerson(s.name, n) || rosterNameFor(s.name) === n)).filter(Boolean);
         const members = [...leads, ...grouped.filter((m: any) => !leads.some((l: any) => l.id === m.id))];
         if (members.length === 0) return null;
         // Head selection (in priority order): explicit "Head ..." title,
@@ -2652,6 +2675,7 @@ export function setupHrRoutes(app: Express) {
 
       res.json({
         hasCard: true,
+        cardholderId,
         mtdPence: parseInt(totals.rows[0].mtd, 10),
         ytdPence: parseInt(totals.rows[0].ytd, 10),
         totalPence: parseInt(totals.rows[0].total, 10),
@@ -5576,7 +5600,7 @@ Use the language and tone of BGP's review docs.`,
       const rows = m.parseHrSchedule(req.file.buffer);
       if (!rows.length) return res.status(400).json({ error: "No rows found — the sheet needs First Name and Email columns" });
       if (String(req.body?.dryRun) === "1") return res.json({ rows: rows.length, ...(await m.planHrSchedule(rows)) });
-      res.json(await m.applyHrSchedule(rows));
+      res.json(await m.applyHrSchedule(rows, req.session?.userId || req.tokenUserId || null));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

@@ -344,14 +344,15 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
 
 // A Xero login can see several organisations (Xero's Demo Company, a
 // personal org). Always link the firm's: the one the firm-wide session
-// already uses, else one named Bruce Gillingham / BGP, else anything that
+// named Bruce Gillingham / BGP, else the one the firm-wide session uses, else
+// anything that
 // isn't a demo company. connections[0] linked Layla to the wrong org, so
 // her contact search came back empty (2026-10-13).
 export function pickFirmTenant(connections: any[], firmTenantId: string | null): any {
   const orgs = connections.filter((c: any) => !c.tenantType || c.tenantType === "ORGANISATION");
   const pool = orgs.length ? orgs : connections;
-  return (firmTenantId && pool.find((c: any) => c.tenantId === firmTenantId))
-    || pool.find((c: any) => /bruce\s*gillingham|\bbgp\b/i.test(c.tenantName || ""))
+  return pool.find((c: any) => /bruce\s*gillingham|\bbgp\b/i.test(c.tenantName || ""))
+    || (firmTenantId && pool.find((c: any) => c.tenantId === firmTenantId))
     || pool.find((c: any) => !/demo/i.test(c.tenantName || ""))
     || pool[0];
 }
@@ -385,6 +386,23 @@ export async function xeroApiWithFallback(session: any, path: string, options: R
   return result;
 }
 
+let xeroBlockedUntil = 0;
+const rateLimitMessage = (wait: number) =>
+  `Xero is rate-limiting the app (429)${wait ? ` — try again in ${wait >= 120 ? `${Math.ceil(wait / 60)} minutes` : `${wait} seconds`}` : ""}`;
+const xeroCallCounts = new Map<string, number>();
+function countXeroCall(path: string, method?: string) {
+  const day = new Date().toISOString().slice(0, 10);
+  const kind = `${(method || "GET").toUpperCase()} ${path.split("?")[0].replace(/\/[0-9a-f-]{36}/gi, "/:id")}`;
+  const k = `${day}|${kind}`;
+  xeroCallCounts.set(k, (xeroCallCounts.get(k) || 0) + 1);
+}
+export function xeroUsage() {
+  const byDay: Record<string, Record<string, number>> = {};
+  for (const [k, n] of xeroCallCounts) { const [d, kind] = k.split("|"); (byDay[d] ||= {})[kind] = n; }
+  return { since: XERO_COUNT_SINCE, blockedUntil: xeroBlockedUntil > Date.now() ? new Date(xeroBlockedUntil).toISOString() : null, byDay };
+}
+const XERO_COUNT_SINCE = new Date().toISOString();
+
 export async function xeroApi(session: any, path: string, options: RequestInit = {}): Promise<any> {
   const token = await refreshXeroToken(session);
   if (!token) throw new Error("Not connected to Xero");
@@ -413,6 +431,12 @@ export async function xeroApi(session: any, path: string, options: RequestInit =
     if (!tenantId) throw new Error("No Xero tenant found. Please disconnect and reconnect to Xero to re-authorize with the required permissions.");
   }
 
+  // Xero's daily allowance ran out (429, "try again in 43 minutes",
+  // 2026-10-13). Once Xero says wait more than a minute, stop calling until
+  // then — refused calls only dig the hole deeper — and count calls by type
+  // so /api/admin/xero-usage shows what's using the allowance.
+  if (Date.now() < xeroBlockedUntil) throw new Error(rateLimitMessage(Math.ceil((xeroBlockedUntil - Date.now()) / 1000)));
+  countXeroCall(path, options.method);
   const url = `${XERO_API_BASE}${path}`;
   const res = await fetch(url, {
     ...options,
@@ -428,6 +452,13 @@ export async function xeroApi(session: any, path: string, options: RequestInit =
   if (!res.ok) {
     const errText = await res.text();
     console.error(`[Xero] API error ${res.status}:`, errText);
+    if (res.status === 429) {
+      const wait = Number(res.headers.get("retry-after") || 0);
+      const which = res.headers.get("x-rate-limit-problem") || "";
+      console.warn(`[Xero] 429 (${which || "limit"}) on ${path} — retry after ${wait}s`);
+      if (wait > 60) xeroBlockedUntil = Date.now() + wait * 1000;
+      throw new Error(rateLimitMessage(wait));
+    }
     throw new Error(`Xero API error: ${res.status} - ${errText}`);
   }
 
@@ -446,6 +477,8 @@ export async function xeroPayrollApi(session: any, path: string, opts: { binary?
   let tenantId = session.xeroTokens?.tenantId;
   if (!tenantId) throw new Error("No Xero tenant — reconnect to Xero with payroll scopes");
 
+  if (Date.now() < xeroBlockedUntil) throw new Error(rateLimitMessage(Math.ceil((xeroBlockedUntil - Date.now()) / 1000)));
+  countXeroCall(`/payroll${path}`);
   const res = await fetch(`${XERO_PAYROLL_API_BASE}${path}`, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -455,6 +488,11 @@ export async function xeroPayrollApi(session: any, path: string, opts: { binary?
   });
   if (!res.ok) {
     const txt = await res.text();
+    if (res.status === 429) {
+      const wait = Number(res.headers.get("retry-after") || 0);
+      if (wait > 60) xeroBlockedUntil = Date.now() + wait * 1000;
+      throw new Error(rateLimitMessage(wait));
+    }
     if (res.status === 403) {
       throw new Error(`Xero Payroll scope not granted (403). Press Connect Xero Payroll (People & HR → Xero Payroll) and allow payroll access.`);
     }
@@ -758,44 +796,80 @@ export function setupXeroRoutes(app: Express) {
   // Returns Xero contacts with their account number and primary billing
   // address flattened to a stable shape, so the client billing-entity
   // picker can render account number + address without extra calls.
+  // The whole contact list is read from Xero once and kept for 10 minutes;
+  // typing searches that copy. Asking Xero on every keystroke ran into
+  // Xero's 60-calls-a-minute limit (429) and the search came back empty
+  // (Layla, 2026-10-13). A stale copy is used while Xero is refusing.
+  const contactListCache = new Map<string, { at: number; list: any[] }>();
+  const loadContactList = async (key: string, call: (path: string) => Promise<any>) => {
+    const hit = contactListCache.get(key);
+    if (hit && Date.now() - hit.at < 10 * 60_000) return hit.list;
+    try {
+      const list: any[] = [];
+      for (let page = 1; page <= 20; page++) {
+        const d = await call(`/Contacts?page=${page}&pageSize=1000&includeArchived=false`);
+        const got = d?.Contacts || [];
+        list.push(...got);
+        if (got.length < 1000) break;
+      }
+      contactListCache.set(key, { at: Date.now(), list });
+      return list;
+    } catch (e) {
+      if (hit) return hit.list;
+      throw e;
+    }
+  };
+  const knownXeroContacts = async (): Promise<any[]> => {
+    const r = await pool.query(`
+      SELECT DISTINCT ON (xero_contact_id) xero_contact_id AS id, xero_contact_name AS name, xero_account_number AS acct, xero_billing_address AS addr
+        FROM crm_deals WHERE xero_contact_id IS NOT NULL AND xero_contact_name IS NOT NULL
+       ORDER BY xero_contact_id`);
+    return r.rows.map((x: any) => ({
+      ContactID: x.id, Name: x.name, AccountNumber: x.acct || null,
+      Addresses: x.addr ? [{ AddressType: "POBOX", ...(typeof x.addr === "string" ? JSON.parse(x.addr) : x.addr) }] : [],
+    }));
+  };
   app.get("/api/xero/contacts", requireAuth, async (req: Request, res: Response) => {
     try {
-      const rawSearch = ((req.query.search as string) || "").trim();
-      // Strip Xero-filter-incompatible chars, drop multi-token whitespace,
-      // and lowercase both the term + the field. Xero's where-clause is a
-      // .NET expression so Name.ToLower().Contains("landsec") matches
-      // "Landsec", "LANDSEC", "LandSec" — fixes the case-sensitive miss
-      // ("Land Sec" not matching "Landsec" was the original complaint).
-      const search = rawSearch.replace(/"/g, "").toLowerCase();
-      let path = "/Contacts?page=1&pageSize=100&includeArchived=false";
-      if (search) {
-        // Multi-token: split on whitespace, require each token to be a
-        // substring of the lower-cased name. "land sec" matches "Landsec",
-        // "London Land Securities Plc", etc. Tokens AND'd together via
-        // chained Contains() — keeps the matching tight without exploding
-        // into typo-tolerance territory.
-        const tokens = search.split(/\s+/).filter(t => t.length > 0);
-        const conds = tokens.map(t => `Name.ToLower().Contains("${t}")`);
-        path += `&where=${encodeURIComponent(conds.join(" AND "))}`;
+      const search = ((req.query.search as string) || "").trim().replace(/"/g, "").toLowerCase();
+      const tokens = search.split(/\s+/).filter(t => t.length > 0);
+      // Read-only — the caller's own Xero sign-in, else the firm-wide one.
+      // If the caller's organisation has no contacts (signed in to the
+      // wrong one), the firm's list is used.
+      let list: any[] = [];
+      let userErr: any = null;
+      const userTenant = req.session?.xeroTokens?.tenantId;
+      if (userTenant) {
+        try { list = await loadContactList(userTenant, (p) => xeroApi(req.session, p)); }
+        catch (e: any) { userErr = e; console.warn("[Xero] Contacts on the user's sign-in failed, trying the firm's:", e?.message); }
       }
-      // Read-only endpoint — falls back to the firm-wide system Xero
-      // session when the caller's session isn't connected. Means agents
-      // can pick a billing entity without each having to OAuth-connect
-      // their own Xero. Write endpoints stay session-scoped for proper
-      // attribution.
-      let data: any = null;
-      try { data = await xeroApiWithFallback(req.session, path); } catch (e: any) {
-        if (String(e?.message || "").includes("Not connected")) throw e;
-        console.warn("[Xero] Contacts search on the user's session failed, trying the firm's:", e?.message);
-      }
-      // The user's own sign-in can point at the wrong organisation or lack
-      // contact access — search the firm-wide session too before saying
-      // nothing matched.
-      if (!data?.Contacts?.length && req.session?.xeroTokens) {
+      if (!list.length) {
         const { withSystemXero } = await import("./xero-system-session");
-        const firm = await withSystemXero((sys) => xeroApi(sys, path)).catch(() => null);
-        if (firm?.Contacts?.length || !data) data = firm || { Contacts: [] };
+        let firmErr: any = null;
+        const firm = await loadContactList("firm", async (p) => {
+          const r = await withSystemXero((sys) => xeroApi(sys, p));
+          if (r === null) throw new Error("Not connected to Xero");
+          return r;
+        }).catch((e) => { firmErr = e; return null; });
+        if (firm) list = firm;
+        else if (!userTenant && String(firmErr?.message || "").includes("Not connected")) throw firmErr;
+        else if (userErr || firmErr) {
+          // Xero is refusing (e.g. its daily allowance is used up): offer the
+          // Xero contacts already linked on deals, so invoicing isn't stuck.
+          const known = await knownXeroContacts().catch(() => []);
+          if (!known.length) throw userErr || firmErr;
+          list = known;
+          res.setHeader("X-Xero-Contacts-Source", "app");
+        }
       }
+      const squash = (v: string) => v.toLowerCase().replace(/\s+/g, "");
+      const matches = list.filter((c: any) => c.ContactStatus !== "ARCHIVED" && tokens.every(t => squash(c.Name || "").includes(t)
+        || [c.EmailAddress, c.FirstName, c.LastName, c.AccountNumber].some((f: any) => String(f || "").toLowerCase().includes(t))));
+      // Names starting with the search first, then alphabetical.
+      const first = tokens[0] || "";
+      const lead = (c: any) => (squash(c.Name || "").startsWith(first) ? 0 : 1);
+      matches.sort((x: any, y: any) => lead(x) - lead(y) || String(x.Name).localeCompare(String(y.Name)));
+      const data = { Contacts: matches.slice(0, 50) };
       const contacts = (data.Contacts || []).map((c: any) => ({
         ContactID: c.ContactID,
         Name: c.Name,
@@ -812,6 +886,44 @@ export function setupXeroRoutes(app: Express) {
       console.error("[Xero] Contacts error:", err);
       res.status(500).json({ message: err.message });
     }
+  });
+
+  // Which Xero organisation the contact search reads, for the caller's own
+  // sign-in and the firm-wide one, with a contact count — shown under an
+  // empty search so "no contacts" says why. Also moves the caller's sign-in
+  // onto the Bruce Gillingham Pollard organisation if it's on another.
+  app.get("/api/xero/contacts-check", requireAuth, async (req: Request, res: Response) => {
+    const probe = async (session: any) => {
+      const token = await refreshXeroToken(session);
+      if (!token) return { connected: false };
+      let orgs: string[] = [];
+      let moved = false;
+      try {
+        const connRes = await fetch(XERO_CONNECTIONS_URL, { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } });
+        if (connRes.ok) {
+          const connections = await connRes.json();
+          orgs = connections.map((c: any) => c.tenantName);
+          const chosen = connections.length ? pickFirmTenant(connections, null) : null;
+          if (chosen && chosen.tenantId !== session.xeroTokens.tenantId) { session.xeroTokens.tenantId = chosen.tenantId; moved = true; }
+        }
+      } catch {}
+      try {
+        const org = await xeroApi(session, "/Organisation");
+        const list = await loadContactList(session.xeroTokens.tenantId, (p) => xeroApi(session, p));
+        return { connected: true, org: org?.Organisations?.[0]?.Name || null, contacts: list.length, orgs, moved };
+      } catch (e: any) {
+        return { connected: true, orgs, moved, error: String(e?.message || e).slice(0, 300) };
+      }
+    };
+    const mine = req.session?.xeroTokens ? await probe(req.session) : { connected: false };
+    if ((mine as any).moved) await new Promise<void>((r) => req.session.save(() => r()));
+    const { withSystemXero } = await import("./xero-system-session");
+    const firm = await withSystemXero(async (sys) => {
+      const org = await xeroApi(sys, "/Organisation");
+      const list = await loadContactList("firm", (p) => xeroApi(sys, p));
+      return { connected: true, org: org?.Organisations?.[0]?.Name || null, contacts: list.length };
+    }).catch((e: any) => ({ connected: true, error: String(e?.message || e).slice(0, 300) }));
+    res.json({ mine, firm: firm || { connected: false } });
   });
 
   // Fetch a single Xero contact by ID — used to refresh the cached
