@@ -453,14 +453,14 @@ export const INVESTMENT_DEALS: InvestmentDeal[] = [
   // Our House Group: a run of buildings bought for the members' clubs
   // (Woody, 2026-10-13) — Jesse's House in Fulham, Leo's House in Clapham,
   // Orly's House in East Sheen.
-  { name: "The Old Picture House, 142 Fulham Road", client: "Our House Group", type: "Acquisition", price: "£26,000,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { name: "The Old Picture House, 142 Fulham Road", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/jesses-house-fulham.jpg", name: "Jesse's House, Fulham", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/leos-house-clapham.jpg", name: "Leo's House, Clapham North", client: "Our House Group", type: "Acquisition", price: "£16,000,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/leos-house-clapham.jpg", name: "Leo's House, Clapham North", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/orlys-house-east-sheen.jpg", name: "Orly's House, East Sheen", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/oxam-house-oxford.jpg", name: "Oxam House, Oxford", client: "Charles Street", type: "Acquisition", price: "£21,250,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/filmworks-ealing.jpg", name: "Filmworks, Ealing", client: "St George", type: "Sale", price: "£13,500,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/wimbledon-bridge-house.jpg", name: "Wimbledon Bridge House", client: "Sheet Anchor Evolve", type: "Acquisition", price: "then the sale of the Aldi unit", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/grants-leisure-croydon.jpg", name: "Grants Leisure, Croydon", client: "Hermes", type: "Transaction", price: "", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/grants-leisure-croydon.jpg", name: "Grants Leisure, Croydon", client: "Hermes", type: "Sale", price: "", status: "Completed", capRate: null, sold: true, wide: false },
 ];
 
 
