@@ -5,7 +5,7 @@ export default function KeyContacts({ people, blurb }: { people: Person[]; blurb
   return (
     <section className="mx-auto max-w-6xl px-4 py-14">
       <h2 className="display text-3xl md:text-4xl text-bgp-red mb-8">Key contacts</h2>
-      <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4">
         {blurb && (
           <p className="col-span-2 sm:col-span-1 text-base md:text-lg text-bgp-ink/90 leading-relaxed">{blurb}</p>
         )}

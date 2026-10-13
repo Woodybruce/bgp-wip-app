@@ -134,7 +134,7 @@ export default function Leasing() {
         <h2 className="display text-3xl md:text-4xl leading-snug">Current opportunities</h2>
         {!live && !loading && (
           <p className="mt-4 text-xs text-bgp-red">
-            Showing sample listings — live availability feed not connected in this environment.
+            Showing sample listings. The live availability feed is not connected in this environment.
           </p>
         )}
       </section>
@@ -154,12 +154,12 @@ export default function Leasing() {
           <div className="py-16 text-center">
             <p className="display text-xl md:text-2xl">Current availability is being updated.</p>
             <p className="mt-3 text-[15px] text-bgp-ink/80">
-              For our latest opportunities, contact the leasing team — details below.
+              For our latest opportunities, contact the leasing team below.
             </p>
           </div>
         ) : filtered.length === 0 ? (
           <p className="py-16 text-center text-[15px] text-bgp-ink/80">
-            Nothing matches those filters — please contact us for full availability.
+            Nothing matches those filters. Please contact us for full availability.
           </p>
         ) : (
           <>
@@ -174,7 +174,7 @@ export default function Leasing() {
             </div>
             {filtered.length > 1 && (
               <p className="mt-2 label-caps text-bgp-ink/40 text-right sm:hidden">
-                {filtered.length} available — swipe for more <span aria-hidden>{"→"}</span>
+                {filtered.length} available, swipe for more <span aria-hidden>{"→"}</span>
               </p>
             )}
           </>

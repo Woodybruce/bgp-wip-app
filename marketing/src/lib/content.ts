@@ -6,9 +6,9 @@ export const SERVICES = [
   {
     slug: "leasing",
     name: "Leasing",
-    image: "/images/clients/nova-hero.jpg",
+    image: "/images/gallery/mayfair-3.jpg",
     intro:
-      "Creating neighbourhoods that people love. We let shops, restaurants, bars and leisure together, so a street or scheme works as one place — across London's leading estates, the UK's landmark shopping centres and the high streets in between, for landlords including The Portman Estate, Grosvenor, The Crown Estate, Landsec and Hammerson.",
+      "Creating neighbourhoods that people love. We let shops, restaurants, bars and leisure together, so a street or scheme works as one place, across London's leading estates, the UK's landmark shopping centres and the high streets in between, for landlords including The Portman Estate, Grosvenor, The Crown Estate, Landsec and Hammerson.",
   },
   {
     slug: "investment",
@@ -90,7 +90,7 @@ export const STATS = [
   { value: "7m", caption: "sq ft of assets our leasing team advises on" },
   { value: "244", caption: "leasing transactions completed" },
   { value: "66", caption: "brands advised in the UK and abroad" },
-  { value: "15", caption: "years of BGP — est. 2011" },
+  { value: "15", caption: "years of BGP, est. 2011" },
 ] as const;
 
 export interface Person {
@@ -127,15 +127,15 @@ export const TEAM: Person[] = [
   { photo: "/images/team/ben-sykes.jpg", name: "Ben Sykes", title: "Surveyor, Shopping Centres", phone: OFFICE_PHONE, email: "TBC" },
   { photo: "/images/team/kate-martin.jpg", name: "Kate Martin", title: "Surveyor, Shopping Centres", phone: OFFICE_PHONE, email: "TBC" },
   { photo: "/images/team/beth-emmens.jpg", name: "Beth Emmens", title: "Director, Co-Head Brand Representation", phone: OFFICE_PHONE, email: "TBC" },
-  { photo: "/images/team/carly-cunliffe.jpg", name: "Carly Cunliffe", title: "Graduate Surveyor, Brand Representation", phone: OFFICE_PHONE, email: "TBC" },
-  { photo: "/images/team/emily-cann.jpg", name: "Emily Cann", title: "Graduate Surveyor, London Estates", phone: "+44 (0)7516 660 791", email: "emilyc@brucegillinghampollard.com" },
-  { photo: "/images/team/will-penfold.jpg", name: "Will Penfold", title: "Graduate Surveyor, London Estates", phone: "+44 (0)7760 881 270", email: "willp@brucegillinghampollard.com" },
-  { photo: "/images/team/luke-donohoe.jpg", name: "Luke Donohoe", title: "Graduate Surveyor, Shopping Centres", phone: "+44 (0)7983 855 926", email: "luke@brucegillinghampollard.com" },
-  { photo: "/images/team/libby-evans.jpg", name: "Libby Evans", title: "Graduate Surveyor, High Streets", phone: "+44 (0)7931 462 768", email: "libbye@brucegillinghampollard.com" },
-  { photo: "/images/team/jonny-palmer.jpg", name: "Jonny Palmer", title: "Graduate, Investment", phone: "+44 (0)7506 439 429", email: "jonny@brucegillinghampollard.com" },
+  { photo: "/images/team/carly-cunliffe.jpg", name: "Carly Cunliffe", title: "Surveyor, Brand Representation", phone: OFFICE_PHONE, email: "TBC" },
+  { photo: "/images/team/emily-cann.jpg", name: "Emily Cann", title: "Surveyor, London Estates", phone: "+44 (0)7516 660 791", email: "emilyc@brucegillinghampollard.com" },
+  { photo: "/images/team/will-penfold.jpg", name: "Will Penfold", title: "Associate, London Estates", phone: "+44 (0)7760 881 270", email: "willp@brucegillinghampollard.com" },
+  { photo: "/images/team/luke-donohoe.jpg", name: "Luke Donohoe", title: "Surveyor, Shopping Centres", phone: "+44 (0)7983 855 926", email: "luke@brucegillinghampollard.com" },
+  { photo: "/images/team/libby-evans.jpg", name: "Libby Evans", title: "Surveyor, High Streets", phone: "+44 (0)7931 462 768", email: "libbye@brucegillinghampollard.com" },
+  { photo: "/images/team/jonny-palmer.jpg", name: "Jonny Palmer", title: "Surveyor, Investment", phone: "+44 (0)7506 439 429", email: "jonny@brucegillinghampollard.com" },
   { name: "Harriette Walker-Clark", title: "PA & Office Manager", phone: OFFICE_PHONE, email: "harriette@brucegillinghampollard.com" },
   { photo: "/images/team/layla-odriscoll.jpg", name: "Layla O'Driscoll", title: "Chief Operating Officer", phone: OFFICE_PHONE, email: "layla@brucegillinghampollard.com" },
-  { photo: "/images/team/cara-milligan.jpg", name: "Cara Milligan", title: "PA — National", phone: OFFICE_PHONE, email: "cara@brucegillinghampollard.com" },
+  { photo: "/images/team/cara-milligan.jpg", name: "Cara Milligan", title: "PA: National", phone: OFFICE_PHONE, email: "cara@brucegillinghampollard.com" },
 ];
 
 const byName = (...names: string[]) => TEAM.filter((p) => names.includes(p.name));
@@ -176,16 +176,16 @@ export const CASE_STUDIES: CaseStudy[] = [
     service: "Leasing",
     image: "/images/lucent-piccadilly.jpg",
     blurb:
-      "Restaurant leasing for Landsec at Lucent W1 — the landmark development behind the world-famous Piccadilly Lights.",
+      "Restaurant leasing for Landsec at Lucent W1, the landmark development behind the world-famous Piccadilly Lights.",
     facts: [
       ["Service", "Leasing"],
       ["Client", "Landsec"],
-      ["Scheme", "Lucent W1 — 144,000 sq ft"],
+      ["Scheme", "Lucent W1, 144,000 sq ft"],
       ["Sector", "Restaurant & leisure"],
       ["Location", "Piccadilly Circus, W1"],
     ],
     body: [
-      "Lucent is Landsec's 144,000 sq ft development behind the Piccadilly Lights — office, retail and restaurant space on one of the most famous corners in the world, completed in 2023.",
+      "Lucent is Landsec's 144,000 sq ft development behind the Piccadilly Lights, office, retail and restaurant space on one of the most famous corners in the world, completed in 2023.",
       "BGP advised Landsec on the food & beverage leasing of the scheme, shaping the restaurant strategy and securing occupiers for space that sits directly behind the Lights, with some of the highest footfall in the West End.",
       "Photograph: Thomas Dahlstrøm Nielsen, CC BY-SA 4.0.",
     ],
@@ -196,7 +196,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     service: "Leasing",
     image: "/images/hanover-square.jpg",
     blurb:
-      "A 10,000 sq ft Mayfair restaurant opportunity for Great Portland Estates — one of the West End's landmark restaurant lettings.",
+      "A 10,000 sq ft Mayfair restaurant opportunity for Great Portland Estates, one of the West End's landmark restaurant lettings.",
     facts: [
       ["Service", "Leasing"],
       ["Client", "Great Portland Estates"],
@@ -205,7 +205,7 @@ export const CASE_STUDIES: CaseStudy[] = [
       ["Location", "Mayfair"],
     ],
     body: [
-      "A 10,000 sq ft restaurant opportunity at 20 Hanover Square, acting for Great Portland Estates — one of the West End's landmark restaurant lettings.",
+      "A 10,000 sq ft restaurant opportunity at 20 Hanover Square, acting for Great Portland Estates, one of the West End's landmark restaurant lettings.",
       "The letting followed BGP's long-standing work with GPE across its West End portfolio, drawing on the Leasing and Brand Representation teams' relationships with the restaurant operators best placed for the space.",
     ],
   },
@@ -301,7 +301,7 @@ export const CASE_STUDIES: CaseStudy[] = [
   // Consultancy case studies — Tracey's three, 2026-09-11. Photos to follow.
   {
     slug: "city-of-london-ground-floor-study",
-    title: "City of London Corporation — Ground Floor Study",
+    title: "City of London Corporation: Ground Floor Study",
     service: "Consultancy",
     image: "/images/clients/city-street.jpg",
     blurb:
@@ -313,14 +313,14 @@ export const CASE_STUDIES: CaseStudy[] = [
       ["Location", "The Square Mile"],
     ],
     body: [
-      "\"Developing a consistently lively and animated ground floor experience\" — produced on behalf of the City of London Corporation and the City's five Business Improvement Districts: Aldgate Connect, Cheapside Business Alliance, Culture Mile BID, Eastern City BID and Fleet Street Quarter.",
+      "\"Developing a consistently lively and animated ground floor experience\": produced on behalf of the City of London Corporation and the City's five Business Improvement Districts: Aldgate Connect, Cheapside Business Alliance, Culture Mile BID, Eastern City BID and Fleet Street Quarter.",
       "A strategic study defining what makes a vibrant, consistently lively ground-floor experience across the Square Mile.",
     ],
     gallery: ["/images/clients/city-st-pauls.jpg", "/images/gallery/gpe-2.jpg", "/images/gallery/onc-3.jpg"],
   },
   {
     slug: "crown-estate-cambridge-business-park",
-    title: "The Crown Estate — Retail Strategy, Cambridge Business Park",
+    title: "The Crown Estate: Retail Strategy, Cambridge Business Park",
     service: "Consultancy",
     image: "/images/principal-place.jpg",
     blurb:
@@ -331,12 +331,12 @@ export const CASE_STUDIES: CaseStudy[] = [
       ["Location", "Cambridge Business Park"],
     ],
     body: [
-      "Providing advice on the role, location, specification, scale and typology of day and evening uses — F&B, retail, leisure, culture, community anchors and services — across the site.",
+      "Providing advice on the role, location, specification, scale and typology of day and evening uses, F&B, retail, leisure, culture, community anchors and services, across the site.",
     ],
   },
   {
     slug: "mayfield-manchester",
-    title: "Mayfield, Manchester — Amenity & Ground Floor Activation Strategy",
+    title: "Mayfield, Manchester: Amenity & Ground Floor Activation Strategy",
     service: "Consultancy",
     image: "/images/apartments.jpg",
     blurb:
@@ -348,7 +348,7 @@ export const CASE_STUDIES: CaseStudy[] = [
       ["Homes", "1,400"],
     ],
     body: [
-      "A strategy document providing clarity on the amenities and ground floor activation for Mayfield, Manchester — a development comprising 1,666,267 sq ft of offices, 1,400 new homes and the range of facilities required to serve residents, the office catchment and visitors to Mayfield.",
+      "A strategy document providing clarity on the amenities and ground floor activation for Mayfield, Manchester, a development comprising 1,666,267 sq ft of offices, 1,400 new homes and the range of facilities required to serve residents, the office catchment and visitors to Mayfield.",
       "Our work has been used to help shape ground floor unit configuration, to ensure the units are fit for purpose once built and that there is a long-term vision in place to support office lettings.",
     ],
   },
@@ -356,7 +356,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: client.toLowerCase().replace(/^the /, "").replace(/[^a-z0-9]+/g, "-") + "-lease-advisory",
     title: client,
     service: "Lease Advisory",
-    blurb: `Lease advisory instruction for ${client} — rent reviews, renewals and restructuring aligned to the asset strategy.`,
+    blurb: `Lease advisory instruction for ${client}: rent reviews, renewals and restructuring aligned to the asset strategy.`,
     image: { Hammerson: "/images/clients/bullring-interior.jpg", "Land Securities": "/images/clients/victoria-street.jpg", "The Royal Exchange": "/images/royal-exchange.jpg", Bloomberg: "/images/city-towers.jpg" }[client as string],
     gallery: ({ Hammerson: ["/images/gallery/bullring-1.jpg", "/images/gallery/bullring-2.jpg", "/images/gallery/bullring-3.jpg"], "Land Securities": ["/images/gallery/cardinal-1.jpg", "/images/gallery/onc-3.jpg", "/images/gallery/onc-2.jpg"], "The Royal Exchange": ["/images/case-studies/the-royal-exchange-2.jpg", "/images/case-studies/the-royal-exchange-3.jpg", "/images/case-studies/the-royal-exchange-4.jpg"] } as Record<string, string[]>)[client as string],
     facts: [["Service", "Lease Advisory"], ["Client", client]] as Array<[string, string]>,
@@ -371,7 +371,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "the-frankie-shop-davies-street",
     title: "The Frankie Shop, Davies Street",
     service: "Brand Representation",
-    blurb: "International / DTC — the New York and Paris label's London home on Davies Street, Mayfair.",
+    blurb: "International / DTC: the New York and Paris label's London home on Davies Street, Mayfair.",
     facts: [["Service", "Brand Representation"], ["Pillar", "International / DTC"], ["Location", "Davies Street, Mayfair"]],
     body: [
       "We acquired The Frankie Shop's London flagship on Davies Street, bringing the New York and Paris label to Mayfair.",
@@ -383,7 +383,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "percival-neal-street",
     title: "Percival, Neal Street, Seven Dials",
     service: "Brand Representation",
-    blurb: "Independent / Lifestyle — the London menswear label's store on Neal Street in Seven Dials.",
+    blurb: "Independent / Lifestyle: the London menswear label's store on Neal Street in Seven Dials.",
     facts: [["Service", "Brand Representation"], ["Pillar", "Independent / Lifestyle"], ["Location", "Neal Street, Seven Dials"]],
     body: [
       "We acquired Percival's Seven Dials store on Neal Street, placing an independent London menswear label at the heart of Covent Garden's best pitch for its customer.",
@@ -396,10 +396,10 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "atis-loxton-walk",
     title: "Atis, Loxton Walk",
     service: "Brand Representation",
-    blurb: "Hospitality — the healthy grab-and-go restaurant's site at Loxton Walk.",
+    blurb: "Hospitality: the healthy grab-and-go restaurant's site at Loxton Walk.",
     facts: [["Service", "Brand Representation"], ["Pillar", "Hospitality"], ["Location", "Loxton Walk"]],
     body: [
-      "We acquired Atis's Loxton Walk site as part of its London roll-out — seriously tasty bowls and salads for a lunchtime office crowd.",
+      "We acquired Atis's Loxton Walk site as part of its London roll-out, seriously tasty bowls and salads for a lunchtime office crowd.",
       "Atis has grown from a single City Road site to a network across London with BGP acquiring each one.",
     ],
     image: "/images/case-studies/atis-loxton-walk.jpg",
@@ -409,7 +409,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "masaj-islington-square",
     title: "Masaj, Islington Square",
     service: "Brand Representation",
-    blurb: "Wellness — the massage studio's site at Islington Square.",
+    blurb: "Wellness: the massage studio's site at Islington Square.",
     facts: [["Service", "Brand Representation"], ["Pillar", "Wellness"], ["Location", "Islington Square"]],
     body: [
       "We acquired Masaj's studio at Islington Square, extending the wellness brand into a new north London neighbourhood.",
@@ -532,7 +532,7 @@ export const LEASE_ADVISORY_SERVICES = [
   {
     name: "Rent reviews",
     detail:
-      "Acting for landlords and occupiers on rent reviews across retail, restaurant and leisure — grounded in live leasing evidence from our agency teams.",
+      "Acting for landlords and occupiers on rent reviews across retail, restaurant and leisure, grounded in live leasing evidence from our agency teams.",
   },
   {
     name: "Lease renewals",
@@ -558,7 +558,7 @@ export const LEASE_ADVISORY_SERVICES = [
 export const CONSULTANCY_SERVICES = [
   {
     name: "Ground floor & amenity strategy",
-    detail: "Defining the role, mix, scale and typology of day and evening uses — food and beverage, retail, leisure, culture, community anchors and services — so a ground floor works once built and supports the uses above it.",
+    detail: "Defining the role, mix, scale and typology of day and evening uses, food and beverage, retail, leisure, culture, community anchors and services, so a ground floor works once built and supports the uses above it.",
   },
   {
     name: "Placemaking consultancy",
@@ -574,7 +574,7 @@ export const CONSULTANCY_SERVICES = [
   },
   {
     name: "Bespoke reporting",
-    detail: "Research and reporting tailored to a client's question — market studies, occupier demand, benchmarking and future-trend insight for long-term development.",
+    detail: "Research and reporting tailored to a client's question, market studies, occupier demand, benchmarking and future-trend insight for long-term development.",
   },
 ];
 
@@ -597,7 +597,7 @@ export const BRAND_REP_SERVICES = [
   },
   {
     name: "Lease negotiation",
-    detail: "Terms that protect a brand as it grows — rent, incentives, breaks and flexibility negotiated alongside our Lease Advisory team.",
+    detail: "Terms that protect a brand as it grows, rent, incentives, breaks and flexibility negotiated alongside our Lease Advisory team.",
   },
 ];
 
@@ -649,8 +649,8 @@ export const ARTICLES: Article[] = [
       "Well that's that for 2025. And I don't think anyone in this industry can claim that it didn't have its challenges.",
     body: [
       "Well that's that for 2025. And I don't think anyone in this industry can claim that it didn't have its challenges. But looking back, there's a lot to be positive about.",
-      "We've grown the team and strengthened the way our divisions work together — Investment, Leasing, Lease Consultancy and Brand Representation. We've had some brilliant deals across the board – well done team – all of which contributed to 2026 being our best year to date.",
-      "We've got a lot lined up for 2026 – our 15th birthday year. A new website, a complete rebrand and even… a new name?!",
+      "We've grown the team and strengthened the way our divisions work together, Investment, Leasing, Lease Consultancy and Brand Representation. We've had some brilliant deals across the board, well done team, all of which contributed to 2026 being our best year to date.",
+      "We've got a lot lined up for 2026, our 15th birthday year. A new website, a complete rebrand and even… a new name?!",
       "Hugest thanks to our clients, colleagues and associates. Wishing you all the best for 2026.",
     ],
   },
@@ -677,9 +677,9 @@ export const ARTICLES: Article[] = [
     body: [
       "Dating back to 2010, the role of the Portman Estate's partnership with the Chiltern Firehouse in transforming Chiltern Street into one of London's most recognisable destinations can't be overstated. But the really positive news is that since the hotel's temporary closure, a series of dynamic new openings have reinforced the vibrancy of the area. The retail and F&B scene continues to thrive, offering some of the most coveted new retail and restaurant experiences in London.",
       "## Chiltern Street and its surroundings are at historically low vacancy levels",
-      "As sole agents on the Portman Estate, our team is tasked with curating a vibrant mix of independent retailers and market leading F&B operators to cater to the tourists, office workers and locals of Marylebone. Having worked on the instruction for 3 years, I've seen the market evolve — and I can confidently say that operator demand for space across the Estate is stronger than ever. Over the past six months, every available unit on Chiltern Street has received multiple competitive offers — often eight or more — reflecting the exceptional popularity of the location. Chiltern Street today is fully let or under offer, while the surrounding Portman Marylebone area encompassing Dorset Street, Blandford Street, Seymour Place and New Quebec Street are at a historically low vacancy rate.",
+      "As sole agents on the Portman Estate, our team is tasked with curating a vibrant mix of independent retailers and market leading F&B operators to cater to the tourists, office workers and locals of Marylebone. Having worked on the instruction for 3 years, I've seen the market evolve, and I can confidently say that operator demand for space across the Estate is stronger than ever. Over the past six months, every available unit on Chiltern Street has received multiple competitive offers, often eight or more, reflecting the exceptional popularity of the location. Chiltern Street today is fully let or under offer, while the surrounding Portman Marylebone area encompassing Dorset Street, Blandford Street, Seymour Place and New Quebec Street are at a historically low vacancy rate.",
       "## Character and community drive leasing activity",
-      "The footfall statistics for Chiltern Street are good, but footfall is not the key driver of tenant demand at this location. The independent retailers and restaurateurs who choose to open here are not just looking for a site — they're looking for a setting that values their individuality and tells their story. The street offers a distinct character within London's retail environment, fostering a sense of destination rather than a transaction — a key consideration as the 'flight to quality' trend sees brands continue to seek out fewer, often smaller sites in premium locations.",
+      "The footfall statistics for Chiltern Street are good, but footfall is not the key driver of tenant demand at this location. The independent retailers and restaurateurs who choose to open here are not just looking for a site, they're looking for a setting that values their individuality and tells their story. The street offers a distinct character within London's retail environment, fostering a sense of destination rather than a transaction, a key consideration as the 'flight to quality' trend sees brands continue to seek out fewer, often smaller sites in premium locations.",
       "## Footfall driving F&B lettings",
       "Maset is a new Mediterranean restaurant and wine bar inspired by the Occitan region, currently soft-launching at 40–42 Chiltern Street. Created by the owners of the successful Michelin Guide restaurants Lurra and Donostia on Seymour Place, Maset opened last week in a unit which was subject to considerable interest from both retail and restaurant operators. As the only restaurant on the iconic red-bricked street, the site was destined for something special which Maset absolutely delivers.",
       "Similarly, the old Flower House pub at 56 Blandford Street has been let to Public House Group for their new pub 'The Hart' following an incredibly competitive bidding war among London's best restaurant and pub operators.",
@@ -737,13 +737,13 @@ export const ARTICLES: Article[] = [
     date: "28.07.25",
     author: "Evie North",
     standfirst:
-      "Karve opened in Victoria — the third location for the premium pilates studio that offers its clients everything from classes and coffee to a strong community.",
+      "Karve opened in Victoria: the third location for the premium pilates studio that offers its clients everything from classes and coffee to a strong community.",
     body: [
-      "Karve opened in Victoria – the third location for the premium pilates studio that offers its clients everything from classes and coffee to a strong community. Our recent client work demonstrates a significant shift: wellness is no longer an add on to placemaking schemes. In fact in many mixed use developments, wellness businesses are becoming the anchor.",
+      "Karve opened in Victoria: the third location for the premium pilates studio that offers its clients everything from classes and coffee to a strong community. Our recent client work demonstrates a significant shift: wellness is no longer an add on to placemaking schemes. In fact in many mixed use developments, wellness businesses are becoming the anchor.",
       "When it comes to London leasing, BGP was ahead of the wellness trend. We advised on some of the first and most progressive wellness tenant mixes.",
-      "Wellness operators are now a key element when creating a place that people want to travel to. They bring footfall daily, and consistently throughout the day — unlike dining, which peaks around mealtimes.",
+      "Wellness operators are now a key element when creating a place that people want to travel to. They bring footfall daily, and consistently throughout the day, unlike dining, which peaks around mealtimes.",
       "The pub is no longer the default place to meet and socialise, particularly for Gen Z. Instead, wellness studios and cafes are leaping into the (alcohol free) mixer.",
-      "Wellness is no longer an afterthought for landlords – it's part of a habitual human lifestyle change.",
+      "Wellness is no longer an afterthought for landlords, it's part of a habitual human lifestyle change.",
     ],
   },
   {
@@ -754,12 +754,12 @@ export const ARTICLES: Article[] = [
     date: "24.06.25",
     author: "BGP",
     standfirst:
-      "From a 2014 pop-up to ten permanent locations across London — how YOLK built 'fine fast food' into a breakthrough brand.",
+      "From a 2014 pop-up to ten permanent locations across London, how YOLK built 'fine fast food' into a breakthrough brand.",
     body: [
       "YOLK recently opened its tenth location, in Holborn. The brand began as a pop-up venture in 2014, when founder Nick Philpot realised there was a gap in the market between basic fast food and time-intensive dining experiences.",
-      "YOLK's appeal stems from offering freshly prepared, premium food options with quality ingredients — distinguishing it from typical grab-and-go venues. Menu items like the Flying Tiger Steak showcase this elevated approach.",
+      "YOLK's appeal stems from offering freshly prepared, premium food options with quality ingredients, distinguishing it from typical grab-and-go venues. Menu items like the Flying Tiger Steak showcase this elevated approach.",
       "Store design prioritises efficiency through click and collect and digital ordering screens, serving office workers and tourists seeking convenient meals of real quality.",
-      "The Holborn location features the brand's refreshed identity — 'Good Bites Only' — louder, bolder and built to match the energy, with digital menu boards and an open kitchen concept.",
+      "The Holborn location features the brand's refreshed identity, 'Good Bites Only', louder, bolder and built to match the energy, with digital menu boards and an open kitchen concept.",
       "The brand team focuses on visible, high footfall areas. For expansion opportunities, contact Jamie Orme or Evie North.",
     ],
   },
@@ -851,7 +851,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
     name: "London Estates",
     approved: true,
     image: "/images/sectors/london-estates.jpg",
-    gallery: [{ src: "/images/gallery/mayfair-1.jpg", caption: "Roka, North Audley Street, Mayfair — for Grosvenor" }, { src: "/images/gallery/mayfair-2.jpg", caption: "North Audley Street, Mayfair — for Grosvenor" }, { src: "/images/gallery/belgravia-1.jpg", caption: "Pimlico Road, Belgravia — for Grosvenor" }],
+    gallery: [{ src: "/images/gallery/mayfair-1.jpg", caption: "North Audley Street, Mayfair, for Grosvenor" }, { src: "/images/gallery/mayfair-2.jpg", caption: "North Audley Street, Mayfair, for Grosvenor" }, { src: "/images/gallery/belgravia-1.jpg", caption: "Pimlico Road, Belgravia, for Grosvenor" }],
     headline: "We are proud to have worked across many of London's most prestigious estates for more than 15 years.",
     body: [
       "We believe that building destinations across London's estates requires a highly considered approach. Our Leasing team works with estate owners and landlords to identify opportunities, attract the right occupiers and deliver strategies that enhance the character and commercial performance of their portfolios.",
@@ -864,7 +864,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
     name: "The City",
     approved: true,
     image: "/images/sectors/city.jpg",
-    gallery: [{ src: "/images/gallery/onc-1.jpg", caption: "Retail at One New Change — for Landsec" }, { src: "/images/gallery/gpe-1.jpg", caption: "2 Aldermanbury Square, City of London — for GPE" }, { src: "/images/gallery/gpe-2.jpg", caption: "The Corner Collective, Medici Courtyard — for GPE" }],
+    gallery: [{ src: "/images/gallery/onc-1.jpg", caption: "Retail at One New Change, for Landsec" }, { src: "/images/gallery/gpe-1.jpg", caption: "2 Aldermanbury Square, City of London, for GPE" }, { src: "/images/gallery/gpe-2.jpg", caption: "Medici Courtyard, for GPE" }],
     headline:
       "We act on a range of destinations within the Square Mile, and understand the unique opportunities and considerations that come with leasing this part of London.",
     body: [
@@ -877,7 +877,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
     name: "High Streets",
     approved: true,
     image: "/images/sectors/high-streets.jpg",
-    gallery: [{ src: "/images/gallery/chiltern-street.jpg", caption: "Chiltern Street, Marylebone — for The Portman Estate" }, { src: "/images/gallery/mayfair-3.jpg", caption: "Pavement dining in North Mayfair — for Grosvenor" }, { src: "/images/gallery/coin-street-1.jpg", caption: "Gabriel's Wharf, South Bank — for Coin Street" }],
+    gallery: [{ src: "/images/gallery/chiltern-street.jpg", caption: "Chiltern Street, Marylebone, for The Portman Estate" }, { src: "/images/gallery/mayfair-3.jpg", caption: "Pavement dining in North Mayfair, for Grosvenor" }, { src: "/images/gallery/coin-street-1.jpg", caption: "Gabriel's Wharf, South Bank, for Coin Street" }],
     headline:
       "Our High Street Leasing team works on a diverse range of High Streets throughout London and across the UK.",
     body: [
@@ -899,8 +899,8 @@ export interface ShoppingCentre {
 
 // From the "BGP shopping centres" table in Emmy's copy document.
 export const SHOPPING_CENTRES: ShoppingCentre[] = [
-  { slug: "one-new-change", name: "One New Change", location: "London", image: "/images/centres/one-new-change.jpg", gallery: [{ src: "/images/gallery/onc-2.jpg", caption: "Rooftop dining at One New Change — for Landsec" }, { src: "/images/gallery/onc-3.jpg", caption: "One New Change, Cheapside — for Landsec" }, { src: "/images/gallery/onc-4.jpg", caption: "One New Change, Cheapside — for Landsec" }], contacts: ["Charlotte Roberts", "Emily Cann"], blurb: "Landsec's mixed-use destination beside St Paul's Cathedral, with a rooftop terrace and strong City lunch and after-work trade." },
-  { slug: "cardinal-place", name: "Cardinal Place", location: "London", image: "/images/centres/cardinal-place.jpg", gallery: [{ src: "/images/gallery/cardinal-1.jpg", caption: "Cardinal Place, Victoria — for Landsec" }, { src: "/images/clients/victoria-street.jpg", caption: "Victoria Street — for Landsec" }], contacts: ["Charlotte Roberts", "Emily Cann"], blurb: "Retail and dining at the heart of Victoria, serving the office and commuter catchment around Victoria Station." },
+  { slug: "one-new-change", name: "One New Change", location: "London", image: "/images/centres/one-new-change.jpg", gallery: [{ src: "/images/gallery/onc-2.jpg", caption: "Rooftop dining at One New Change, for Landsec" }, { src: "/images/gallery/onc-3.jpg", caption: "One New Change, Cheapside, for Landsec" }, { src: "/images/gallery/onc-4.jpg", caption: "One New Change, Cheapside, for Landsec" }], contacts: ["Charlotte Roberts", "Emily Cann"], blurb: "Landsec's mixed-use destination beside St Paul's Cathedral, with a rooftop terrace and strong City lunch and after-work trade." },
+  { slug: "cardinal-place", name: "Cardinal Place", location: "London", image: "/images/centres/cardinal-place.jpg", gallery: [{ src: "/images/gallery/cardinal-1.jpg", caption: "Cardinal Place, Victoria, for Landsec" }, { src: "/images/clients/victoria-street.jpg", caption: "Victoria Street, for Landsec" }], contacts: ["Charlotte Roberts", "Emily Cann"], blurb: "Retail and dining at the heart of Victoria, serving the office and commuter catchment around Victoria Station." },
   { slug: "o2-finchley-road", name: "O2 Finchley Road", location: "London", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "A leisure-led north London centre anchored by cinema and gym, serving a dense residential catchment." },
   { slug: "lewisham-shopping-centre", name: "Lewisham Shopping Centre", location: "London", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "The retail heart of Lewisham town centre, at the centre of a major south-east London regeneration area." },
   { slug: "brent-cross", name: "Brent Cross", location: "London", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "One of the UK's first major shopping centres, in north London, with a new town centre rising alongside it." },
@@ -908,7 +908,7 @@ export const SHOPPING_CENTRES: ShoppingCentre[] = [
   { slug: "oracle", name: "The Oracle", location: "Reading", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "Reading's riverside shopping and dining destination along the Kennet." },
   { slug: "westgate", name: "Westgate", location: "Oxford", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "Oxford's city-centre shopping and dining destination, with a rooftop restaurant terrace." },
   { slug: "gunwharf-quays", name: "Gunwharf Quays", location: "Portsmouth", contacts: ["Victoria Broadhead", "Emily Dumbell"], blurb: "Portsmouth's waterfront outlet shopping and leisure destination beneath the Spinnaker Tower." },
-  { slug: "bullring", name: "Bullring", location: "Birmingham", image: "/images/centres/bullring.jpg", gallery: [{ src: "/images/gallery/bullring-1.jpg", caption: "The Bull, Bullring, Birmingham — for Hammerson" }, { src: "/images/gallery/bullring-2.jpg", caption: "Inside Bullring — for Hammerson" }, { src: "/images/gallery/bullring-3.jpg", caption: "St Martin's Square, Bullring — for Hammerson" }], contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "Birmingham's flagship city-centre shopping destination, home to Selfridges." },
+  { slug: "bullring", name: "Bullring", location: "Birmingham", image: "/images/centres/bullring.jpg", gallery: [{ src: "/images/gallery/bullring-1.jpg", caption: "The Bull, Bullring, Birmingham, for Hammerson" }, { src: "/images/gallery/bullring-2.jpg", caption: "Inside Bullring, for Hammerson" }, { src: "/images/gallery/bullring-3.jpg", caption: "St Martin's Square, Bullring, for Hammerson" }], contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "Birmingham's flagship city-centre shopping destination, home to Selfridges." },
   { slug: "grand-central", name: "Grand Central", location: "Birmingham", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "The dining and retail destination above Birmingham New Street station." },
   { slug: "trinity-leeds", name: "Trinity Leeds", location: "Leeds", contacts: ["Emily Dumbell", "Alex Todd"], blurb: "The Leeds city-centre destination mixing retail with dining and leisure under its glass roof." },
   { slug: "white-rose", name: "White Rose", location: "Leeds", contacts: ["Emily Dumbell", "Alex Todd"], blurb: "Leeds' out-of-town shopping and leisure centre, with cinema and dining." },

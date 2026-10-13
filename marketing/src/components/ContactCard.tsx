@@ -28,7 +28,7 @@ export default function ContactCard({ person }: { person: Person }) {
         <p>{person.title}</p>
         <p className="tabular">{person.phone}</p>
         {person.email !== "TBC" && (
-          <p className="break-all">
+          <p className="text-[13px] whitespace-nowrap overflow-hidden text-ellipsis">
             <a href={`mailto:${person.email}`} className="hover:text-bgp-red">{person.email}</a>
           </p>
         )}

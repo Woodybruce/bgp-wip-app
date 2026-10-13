@@ -130,7 +130,7 @@ export default function Home() {
           <blockquote className="font-display italic text-2xl md:text-3xl leading-snug -mt-4">
             {TESTIMONIAL.quote}
           </blockquote>
-          <p className="mt-6 label-caps text-bgp-cream/70">{TESTIMONIAL.name} — {TESTIMONIAL.title}</p>
+          <p className="mt-6 label-caps text-bgp-cream/70">{TESTIMONIAL.name}, {TESTIMONIAL.title}</p>
         </div>
       </section>
 
