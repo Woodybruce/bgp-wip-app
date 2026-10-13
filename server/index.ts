@@ -3011,6 +3011,80 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       }
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_13', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
+    // Woody, 2026-10-13 (later): "Peter Wood is head of lease advisory and a director".
+    const done2 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_titles_2026_10_13b'`);
+    if (!done2.rows.length) {
+      const u = await pool.query(`SELECT id FROM users WHERE lower(name) = 'peter wood' AND is_active = true`);
+      for (const r of u.rows) {
+        await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [r.id]);
+        await pool.query(`UPDATE staff_profiles SET title = $2, updated_at = now() WHERE user_id = $1`, [r.id, "Director, Head of Lease Advisory"]);
+      }
+      if (!u.rows.length) console.warn(`[hr-titles] no active login named peter wood`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_13b', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // Woody, 2026-10-13: "keep surveyors" — graduates are Surveyors on the
+    // site and cards, so the HR title (the source of truth) says so.
+    const done3 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_titles_2026_10_13c'`);
+    if (!done3.rows.length) {
+      for (const name of ["kate martin", "carly cunliffe", "emily cann", "luke donohoe", "libby evans", "jonny palmer"]) {
+        const u = await pool.query(`SELECT u.id FROM users u LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+                                     WHERE lower(u.name) = $1 AND u.is_active = true AND (sp.title IS NULL OR sp.title ILIKE 'graduate%')`, [name]);
+        for (const r of u.rows) {
+          await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [r.id]);
+          await pool.query(`UPDATE staff_profiles SET title = 'Surveyor', updated_at = now() WHERE user_id = $1`, [r.id]);
+        }
+      }
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_13c', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // Mobile numbers (Woody, 2026-10-13: "get everyone's mobiles sorted and
+    // added"). HR (users.phone) is the source for cards and the website, so
+    // fill it from email signatures and the numbers already published on the
+    // website; the office switchboard is not a mobile.
+    const done4 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_phones_2026_10_13'`);
+    if (!done4.rows.length) {
+      const office = /^\+?44\s*\(?0?\)?\s*20\s*3551\s*5260$|^0?20\s*3551\s*5260$/;
+      const isMobile = (v: string | null | undefined) => /^(\+44\s*\(?0?\)?\s*7|07)\d/.test(String(v || "").replace(/[^\d+()]/g, "").replace(/\(\)/g, ""));
+      const known: Array<[string, string]> = [
+        ["millie@brucegillinghampollard.com", "+44 (0)7799 882 850"],
+        ["harriette@brucegillinghampollard.com", "+44 (0)7938 539 879"],
+        ["layla@brucegillinghampollard.com", "+44 (0)7943 957 637"],
+      ];
+      for (const [email, phone] of known) {
+        await pool.query(`UPDATE users SET phone = $2 WHERE lower(email) = $1 AND (phone IS NULL OR btrim(phone) = '' OR phone ~ '3551\s*5260')`, [email, phone]);
+      }
+      const site = await pool.query(`SELECT lower(email) AS email, phone FROM website_team WHERE email IS NOT NULL AND phone IS NOT NULL`).catch(() => ({ rows: [] as any[] }));
+      let filled = 0;
+      for (const r of site.rows) {
+        if (!isMobile(r.phone) || office.test(String(r.phone))) continue;
+        const u = await pool.query(`UPDATE users SET phone = $2 WHERE lower(email) = $1 AND (phone IS NULL OR btrim(phone) = '' OR phone ~ '3551\s*5260')`, [r.email, String(r.phone).trim()]);
+        filled += u.rowCount || 0;
+      }
+      console.log(`[hr-phones] mobiles set: ${known.length} from signatures, ${filled} from the website`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_phones_2026_10_13', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // Millie Edwards needs a login + HR page (Woody, 2026-10-13). The 2026-10
+    // team move had already run when she was added to NEW_STAFF_2026, so she
+    // was never created. Idempotent: by email, then by name.
+    {
+      const email = "millie@brucegillinghampollard.com";
+      let u = await pool.query(`SELECT id, email FROM users WHERE lower(email) = $1 OR lower(name) = 'millie edwards' ORDER BY (lower(email) = $1) DESC LIMIT 1`, [email]);
+      if (!u.rows.length) {
+        u = await pool.query(
+          `INSERT INTO users (username, password, name, email, team, role, is_admin, is_active)
+           VALUES ('millie.edwards', '$2b$10$CDskRcFnhZbhAhSEUnpjeusJATcpEIxJ4WKBqI11EWF02Y3ixn8fq', 'Millie Edwards', $1, 'Shopping Centre', 'Director', false, true)
+           ON CONFLICT (username) DO UPDATE SET email = COALESCE(users.email, EXCLUDED.email), is_active = true RETURNING id, email`, [email]);
+        console.log("[hr] created login for Millie Edwards");
+      } else if (!u.rows[0].email) {
+        await pool.query(`UPDATE users SET email = $2 WHERE id = $1`, [u.rows[0].id, email]);
+      }
+      if (u.rows.length) {
+        // Her mobile (email signature) — the phones step above may have run before her login existed.
+        await pool.query(`UPDATE users SET phone = '+44 (0)7799 882 850' WHERE id = $1 AND (phone IS NULL OR btrim(phone) = '' OR phone ~ '3551\s*5260')`, [u.rows[0].id]);
+        await pool.query(
+          `INSERT INTO staff_profiles (user_id, title, start_date, status) VALUES ($1, 'Director', '2025-10-28', 'active')
+           ON CONFLICT (user_id) DO UPDATE SET title = COALESCE(staff_profiles.title, EXCLUDED.title), start_date = COALESCE(staff_profiles.start_date, EXCLUDED.start_date)`, [u.rows[0].id]);
+      }
+    }
   } catch (e: any) {
     console.warn("[hr-titles]", e?.message);
   }

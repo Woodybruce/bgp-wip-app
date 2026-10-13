@@ -140,6 +140,16 @@ lines there in the same commit**. Stale lines become confident wrong
 answers to the team (that's how this file came to exist — ChatBGP sent
 Woody to a Settings page the phone app can't reach, 2026-08-23).
 
+## Website team list = HR (Woody, 2026-10-13)
+
+The HR pages in the app are the one source of truth for people. The public
+team feed (`/api/public/website/all`, `overlayHrProfiles` in
+`server/website-content.ts`) takes name, job title and phone from
+`users` + `staff_profiles` (matched by email) and only keeps the website
+row for photo, key-contact groups, order and visibility. Business cards
+(`/card/<slug>`) read the same HR fields. Fix a title in HR, not in the
+website panel or `marketing/src/lib/content.ts`.
+
 ## Marketing site (bgp.uk.com) deploys
 
 The public website is a **separate Railway service** (root directory

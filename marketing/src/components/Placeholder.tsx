@@ -1,6 +1,8 @@
 // Image slot: renders the photo when src is given, otherwise a wireframe-style
 // placeholder. Current photos are Unsplash stock (free licence) — swap for real
 // BGP photography as it arrives.
+import { useEffect, useState } from "react";
+
 export default function Placeholder({
   label = "Image TBC",
   className = "",
@@ -12,8 +14,12 @@ export default function Placeholder({
   src?: string;
   alt?: string;
 }) {
-  if (src) {
-    return <img src={src} alt={alt} loading="lazy" className={`object-cover ${className}`} />;
+  // A photo that fails to load falls back to the placeholder instead of a
+  // broken-image icon (Frankie Shop, 2026-10-13).
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { setFailed(false); }, [src]);
+  if (src && !failed) {
+    return <img src={src} alt={alt} loading="lazy" onError={() => setFailed(true)} className={`object-cover ${className}`} />;
   }
   return (
     <div className={`relative overflow-hidden bg-bgp-mist ${className}`}>

@@ -6,7 +6,7 @@
 import { Router, type Request } from "express";
 import { existsSync, readFileSync } from "fs";
 import path from "path";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import { requireAuth } from "./auth";
 import { scrapeLogoFromWebsite } from "./website-logo-scraper";
@@ -91,10 +91,38 @@ export function ensureWebsiteContentSeed(): Promise<void> {
 
 const slugify = (s: string) => s.toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
+// The HR pages are the one source of truth for who someone is (Woody,
+// 2026-10-13): name, job title, email and phone on bgp.uk.com come from
+// users + staff_profiles, matched by email. The website row only decides
+// the site-specific bits — photo, key-contact groups, order, visibility.
+// "Managing Director - Board" style suffixes are dropped, as on the cards.
+const cleanTitle = (value: unknown) => String(value || "").split(/\s+[-–—|]\s+/)[0].trim();
+export async function overlayHrProfiles<T extends { name: string; title: string; email: string | null; phone: string | null }>(rows: T[]): Promise<T[]> {
+  if (!rows.length) return rows;
+  try {
+    const r: any = await db.execute(sql`
+      SELECT lower(u.email) AS email, u.name, u.phone, sp.title
+        FROM users u LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+       WHERE COALESCE(u.is_active, true) AND u.email IS NOT NULL`);
+    const byEmail = new Map<string, any>((r.rows || r).map((h: any) => [String(h.email), h]));
+    return rows.map((row) => {
+      const h = row.email ? byEmail.get(row.email.toLowerCase()) : null;
+      if (!h) return row;
+      const name = String(h.name || "").trim();
+      const title = cleanTitle(h.title);
+      const phone = String(h.phone || "").trim();
+      return { ...row, name: name || row.name, title: title || row.title, phone: phone || row.phone };
+    });
+  } catch (err: any) {
+    console.warn("[website-content] HR overlay skipped:", err?.message);
+    return rows;
+  }
+}
+
 export async function listPublic(kind: WebsiteKind) {
   await ensureWebsiteContentSeed();
   if (kind === "team") {
-    return db.select().from(websiteTeam).where(eq(websiteTeam.visible, true)).orderBy(asc(websiteTeam.sortOrder), asc(websiteTeam.name));
+    return overlayHrProfiles(await db.select().from(websiteTeam).where(eq(websiteTeam.visible, true)).orderBy(asc(websiteTeam.sortOrder), asc(websiteTeam.name)));
   }
   if (kind === "case_study") {
     return db.select().from(websiteCaseStudies).where(eq(websiteCaseStudies.published, true)).orderBy(asc(websiteCaseStudies.sortOrder));

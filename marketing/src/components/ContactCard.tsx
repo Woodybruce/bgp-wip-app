@@ -1,4 +1,4 @@
-import type { Person } from "../lib/content";
+import { cardUrlFor, type Person } from "../lib/content";
 import { useTeamPhoto } from "../lib/team-photos";
 
 // Initials monogram on blush when no headshot exists — an empty grey
@@ -23,7 +23,7 @@ export default function ContactCard({ person }: { person: Person }) {
           <Monogram name={person.name} />
         )}
       </div>
-      <p className="label-caps mt-3 text-bgp-red">{person.name}</p>
+      <p className="label-caps mt-3 text-bgp-red"><a href={cardUrlFor(person.name)} className="hover:text-bgp-wine" title="Business card">{person.name}</a></p>
       <div className="mt-1 text-sm leading-relaxed text-bgp-ink/70">
         <p>{person.title}</p>
         <p className="tabular">{person.phone}</p>

@@ -1,6 +1,6 @@
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
-import { LEASING_SECTORS, teamPagesFor, type Person } from "../lib/content";
+import { LEASING_SECTORS, cardUrlFor, teamPagesFor, type Person } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
 import { useTeamPhoto } from "../lib/team-photos";
 
@@ -71,9 +71,7 @@ export default function Team() {
               >
                 <p className="font-display text-xl text-bgp-wine flex items-center gap-3">
                   <Avatar person={p} />
-                  {teamPagesFor(p.name)[0] ? (
-                    <Link href={teamPagesFor(p.name)[0].href} className="hover:text-bgp-red transition-colors">{p.name}</Link>
-                  ) : p.name}
+                  <a href={cardUrlFor(p.name)} className="hover:text-bgp-red transition-colors" title="Business card">{p.name}</a>
                 </p>
                 <p className="text-base text-bgp-ink/75">{p.title}</p>
                 <p className="text-base tabular text-bgp-ink/85">{p.phone}</p>
