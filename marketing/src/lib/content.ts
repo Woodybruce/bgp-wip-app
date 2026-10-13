@@ -467,7 +467,7 @@ export const INVESTMENT_DEALS: InvestmentDeal[] = [
   { image: "/images/investment/wimbledon-bridge-house.jpg", name: "Wimbledon Bridge House", client: "M Core", type: "Acquisition", price: "£18,000,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/aldi-wimbledon.jpg", name: "Aldi, Wimbledon", client: "Sheet Anchor Evolve", type: "Sale", price: "£5,775,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/wimbledon-village.jpg", name: "Wimbledon Village", client: "UK private investor", type: "Sale", price: "£7,300,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { name: "Cardiff", client: "Hermes", type: "Sale", price: "£5,150,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/cardiff.jpg", name: "Cardiff", client: "Hermes", type: "Sale", price: "£5,150,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/cambridge.jpg", name: "Cambridge", client: "Family office", type: "Acquisition", price: "£9,200,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/birmingham.jpg", name: "Birmingham", client: "Overseas family office", type: "Acquisition", price: "£14,700,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/exeter.jpg", name: "Exeter", client: "Overseas family office", type: "Acquisition", price: "£6,550,000", status: "Completed", capRate: null, sold: true, wide: false },
