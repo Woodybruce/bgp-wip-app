@@ -27,6 +27,7 @@ export interface BusinessCard {
   mobile: string | null;
   email: string | null;
   linkedin: string | null;
+  instagram: string | null;
   photoUrl: string | null;
   specialisms: string[];
   url: string;
@@ -40,7 +41,7 @@ const telHref = (phone: string) => `tel:${phone.replace(/\(0\)/g, "").replace(/[
 
 const CARD_SQL = `
   SELECT u.id, u.name, u.email, u.phone, u.role, u.profile_pic_url, COALESCE(u.is_active, true) AS active,
-         sp.title, sp.linkedin_url, sp.cv_specialisms, sp.status,
+         sp.title, sp.linkedin_url, sp.instagram_handle, sp.cv_specialisms, sp.status,
          bc.slug, COALESCE(bc.enabled, true) AS enabled
     FROM users u
     LEFT JOIN staff_profiles sp ON sp.user_id = u.id
@@ -54,6 +55,8 @@ function photoUrlFor(pic: string | null | undefined, slug: string): string | nul
   if (/^https:\/\//i.test(value)) return value;
   if (/^\/headshots\/[\w.-]+$/.test(value)) return `${CARD_BASE_URL}${value}`;
   if (/^\/uploads\/profile-pics\/[^/?#]+$/.test(value)) return `${CARD_BASE_URL}/card/${slug}/photo`;
+  // Website-linked staff photos (/api/staff-photo/<id>) resolve on the dashboard.
+  if (/^\/api\/staff-photo\/[\w-]+$/.test(value)) return `${CARD_BASE_URL}${value}`;
   return null;
 }
 
@@ -68,6 +71,7 @@ function toCard(row: any): BusinessCard {
     mobile: row.phone ? String(row.phone).trim() : null,
     email: row.email ? String(row.email).trim().toLowerCase() : null,
     linkedin: row.linkedin_url ? (/^https?:/i.test(row.linkedin_url) ? row.linkedin_url : `https://${row.linkedin_url}`) : null,
+    instagram: row.instagram_handle ? String(row.instagram_handle).trim().replace(/^@/, "").replace(/^https?:\/\/(www\.)?instagram\.com\//i, "").replace(/\/+$/, "") : null,
     photoUrl: photoUrlFor(row.profile_pic_url, slug),
     specialisms: (Array.isArray(row.cv_specialisms) ? row.cv_specialisms : []).filter(Boolean).slice(0, 4),
     url: `${CARD_BASE_URL}/card/${slug}`,
@@ -116,6 +120,7 @@ export function vcardFor(card: BusinessCard, photo?: { data: Buffer; contentType
     `ADR;TYPE=WORK:;;${v(OFFICE.lines[0])};London;;W1T 3PT;United Kingdom`,
     `URL:https://${OFFICE.web}`,
     card.linkedin ? `URL;TYPE=LinkedIn:${card.linkedin}` : "",
+    card.instagram ? `URL;TYPE=Instagram:https://instagram.com/${card.instagram}` : "",
     photo && photo.data.length < 300_000 ? fold(`PHOTO;ENCODING=b;TYPE=${/png/i.test(photo.contentType) ? "PNG" : "JPEG"}:${photo.data.toString("base64")}`) : "",
     `NOTE:${v(`Card: ${card.url}`)}`,
     "END:VCARD",
@@ -143,6 +148,7 @@ ${card.title ? `<div style="font-size:12px;color:${BRAND.ink};padding:1px 0 8px;
 <table cellpadding="0" cellspacing="0" border="0" style="margin-top:10px;border-collapse:collapse;"><tr>
 <td style="background:${BRAND.bordeaux};border-radius:4px;padding:6px 12px;"><a href="${esc(card.url)}" style="${font}color:#ffffff;text-decoration:none;font-size:12px;font-weight:bold;">Save my contact</a></td>
 ${card.linkedin ? `<td style="padding:0 0 0 12px;font-size:12px;"><a href="${esc(card.linkedin)}" style="color:${BRAND.bordeaux};text-decoration:none;">LinkedIn</a></td>` : ""}
+${card.instagram ? `<td style="padding:0 0 0 12px;font-size:12px;"><a href="https://instagram.com/${esc(card.instagram)}" style="color:${BRAND.bordeaux};text-decoration:none;">Instagram</a></td>` : ""}
 </tr></table>
 </td></tr>
 <tr><td colspan="${card.photoUrl ? 2 : 1}" style="padding:14px 0 0;border-bottom:1px solid ${BRAND.blush};"></td></tr>
@@ -216,6 +222,7 @@ ${card.mobile ? `<a href="${telHref(card.mobile)}">Mobile · ${esc(card.mobile)}
 <a href="${telHref(OFFICE.phone)}">Office · ${esc(OFFICE.phone)}</a>
 ${card.email ? `<a href="mailto:${esc(card.email)}">${esc(card.email)}</a>` : ""}
 ${card.linkedin ? `<a href="${esc(card.linkedin)}" rel="noopener">LinkedIn</a>` : ""}
+${card.instagram ? `<a href="https://instagram.com/${esc(card.instagram)}" rel="noopener">Instagram · @${esc(card.instagram)}</a>` : ""}
 <a href="https://${OFFICE.web}" rel="noopener">${OFFICE.web}</a>
 <a href="https://maps.google.com/?q=${encodeURIComponent("55 Wells Street, London W1T 3PT")}" rel="noopener">${esc(OFFICE.lines.join(", "))}</a>
 </div></div>
@@ -346,6 +353,19 @@ export function leadVcard(ct: { name: string; email?: string | null; mobile?: st
 }
 
 export function registerBusinessCardRoutes(app: Express, requireAuth: any) {
+  // Every active member of staff gets a live card without visiting the app
+  // (Woody, 2026-10-13: the website links to chatbgp.app/card/<name>).
+  const provisionCards = async () => {
+    const { rows } = await pool.query(
+      `SELECT u.id FROM users u LEFT JOIN business_cards bc ON bc.user_id = u.id
+        WHERE bc.user_id IS NULL AND COALESCE(u.is_active, true) AND lower(u.email) LIKE '%@brucegillinghampollard.com'`);
+    let made = 0;
+    for (const r of rows) { if (await cardForUser(r.id).catch(() => null)) made++; }
+    if (made) console.log(`[cards] provisioned ${made} business cards`);
+  };
+  setTimeout(() => { provisionCards().catch(e => console.warn("[cards] provisioning failed:", e?.message)); }, 100_000);
+  setInterval(() => { provisionCards().catch(() => {}); }, 6 * 60 * 60_000).unref?.();
+
   app.get("/api/business-card/me", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = req.session.userId || (req as any).tokenUserId;
@@ -441,6 +461,11 @@ export function registerBusinessCardRoutes(app: Express, requireAuth: any) {
       if (filename) {
         const { getFile } = await import("./file-storage");
         photo = await getFile(`profile-pics/${filename}`).catch(() => null);
+      } else if (/^\/api\/staff-photo\/[\w-]+$/.test(card.profilePic || "")) {
+        try {
+          const r = await fetch(`${CARD_BASE_URL}${card.profilePic}`, { redirect: "follow", signal: AbortSignal.timeout(8000) });
+          if (r.ok) photo = { data: Buffer.from(await r.arrayBuffer()), contentType: r.headers.get("content-type") || "image/jpeg" };
+        } catch { /* no photo in the vCard */ }
       } else if (headshot) {
         const fs = await import("fs");
         for (const dir of ["dist/public/headshots", "client/public/headshots"]) {

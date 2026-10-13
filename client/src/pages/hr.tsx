@@ -81,6 +81,7 @@ interface StaffMember {
   contract_sharepoint_url: string | null;
   passport_sharepoint_url: string | null;
   linkedin_url: string | null;
+  instagram_handle: string | null;
   xero_tracking_name: string | null;
   // Org-chart additions (May 2026)
   dob: string | null;
@@ -1930,6 +1931,7 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
     contractSharepointUrl: person.contract_sharepoint_url || "",
     passportSharepointUrl: person.passport_sharepoint_url || "",
     linkedinUrl: person.linkedin_url || "",
+    instagramHandle: person.instagram_handle || "",
     xeroTrackingName: person.xero_tracking_name || "",
     // Org chart additions (May 2026)
     dob: person.dob || "",
@@ -1978,6 +1980,7 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
         contractSharepointUrl: form.contractSharepointUrl || undefined,
         passportSharepointUrl: form.passportSharepointUrl || undefined,
         linkedinUrl: form.linkedinUrl || undefined,
+        instagramHandle: form.instagramHandle,
         xeroTrackingName: form.xeroTrackingName || undefined,
         // Org chart additions
         dob: form.dob || undefined,
@@ -2040,6 +2043,7 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
           <div className="space-y-1.5"><Label>Education / University</Label><Input value={form.education} onChange={f("education")} placeholder="e.g. University of Reading, BSc Real Estate" /></div>
           <div className="space-y-1.5"><Label>Bio / notes</Label><Textarea rows={2} value={form.bio} onChange={f("bio")} /></div>
           <div className="space-y-1.5"><Label>LinkedIn URL</Label><Input value={form.linkedinUrl} onChange={f("linkedinUrl")} placeholder="https://linkedin.com/in/..." /></div>
+          <div className="space-y-1.5"><Label>Instagram handle</Label><Input value={form.instagramHandle} onChange={f("instagramHandle")} placeholder="@handle (shown on your business card)" /></div>
           <div className="space-y-1.5"><Label>Xero tracking name</Label><Input value={form.xeroTrackingName} onChange={f("xeroTrackingName")} placeholder="How they appear in Xero tracking (for commission calc)" /></div>
 
           <div className="border-t pt-3">

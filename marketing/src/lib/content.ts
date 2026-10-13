@@ -958,6 +958,12 @@ export const SERVICE_COPY = {
 
 // Which page(s) on the site a person belongs to — the Team A–Z links each
 // name through to their team so visitors can navigate from the biog.
+// Everyone's business card lives on the dashboard at chatbgp.app/card/<slug>
+// (Woody, 2026-10-13: names link to cards). Same slug rule as the server.
+export const CARD_BASE_URL = "https://chatbgp.app";
+export const cardUrlFor = (name: string): string =>
+  `${CARD_BASE_URL}/card/${name.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`;
+
 export const teamPagesFor = (name: string): Array<{ label: string; href: string }> => {
   const out: Array<{ label: string; href: string }> = [];
   for (const x of LEASING_SECTORS) if (x.contacts.includes(name)) out.push({ label: x.name, href: `/leasing/sectors/${x.slug}` });

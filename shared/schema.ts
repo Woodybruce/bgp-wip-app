@@ -3448,6 +3448,7 @@ export const staffProfiles = pgTable("staff_profiles", {
   contractSharepointUrl: text("contract_sharepoint_url"),
   passportSharepointUrl: text("passport_sharepoint_url"),
   linkedinUrl: text("linkedin_url"),
+  instagramHandle: text("instagram_handle"), // business card (Woody, 2026-10-13)
   xeroTrackingName: text("xero_tracking_name"), // how they appear in Xero tracking
   // Xero Payroll employee link. Stored once (auto-matched by email→name, or
   // set manually) so payslip sync + future payroll features resolve people by

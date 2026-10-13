@@ -275,7 +275,7 @@ export function setupHrRoutes(app: Express) {
           sp.emergency_contact_name, sp.emergency_contact_phone, sp.emergency_contact_relation,
           sp.holiday_entitlement, sp.pension_opt_in, sp.pension_rate,
           sp.contract_sharepoint_url, sp.passport_sharepoint_url,
-          sp.linkedin_url, sp.xero_tracking_name,
+          sp.linkedin_url, sp.instagram_handle, sp.xero_tracking_name,
           sp.wfh_days, sp.employment_type, sp.cv_sharepoint_url,
           sp.board_member, sp.management_team,
           CASE WHEN $2::boolean OR u.id = $1 THEN sp.dob ELSE NULL END AS dob,
@@ -360,7 +360,7 @@ export function setupHrRoutes(app: Express) {
           CASE WHEN $2::boolean THEN sp.pension_rate ELSE NULL END AS pension_rate,
           CASE WHEN $2::boolean THEN sp.contract_sharepoint_url ELSE NULL END AS contract_sharepoint_url,
           CASE WHEN $2::boolean THEN sp.passport_sharepoint_url ELSE NULL END AS passport_sharepoint_url,
-          sp.linkedin_url, sp.xero_tracking_name,
+          sp.linkedin_url, sp.instagram_handle, sp.xero_tracking_name,
           CASE WHEN $2::boolean THEN sp.dob ELSE NULL END AS dob,
           CASE WHEN $2::boolean THEN sp.address ELSE NULL END AS address,
           sp.wfh_days, sp.employment_type, sp.cv_sharepoint_url,
@@ -394,7 +394,7 @@ export function setupHrRoutes(app: Express) {
           SELECT u.id, u.name, u.email, u.phone, u.role, u.department, u.team,
                  u.is_admin, u.is_active, u.profile_pic_url,
                  sp.id AS profile_id, sp.title, sp.manager_id, sp.start_date,
-                 sp.status AS hr_status, sp.bio, sp.cv_summary, sp.linkedin_url,
+                 sp.status AS hr_status, sp.bio, sp.cv_summary, sp.linkedin_url, sp.instagram_handle,
                  m.name AS manager_name
             FROM users u
             LEFT JOIN staff_profiles sp ON sp.user_id = u.id
@@ -453,7 +453,7 @@ export function setupHrRoutes(app: Express) {
       cvSummary, cvSpecialisms, cvNotableClients, cvCareerHistory,
       education, bio, emergencyContactName, emergencyContactPhone,
       emergencyContactRelation, holidayEntitlement, pensionOptIn, pensionRate,
-      contractSharepointUrl, passportSharepointUrl, linkedinUrl, xeroTrackingName,
+      contractSharepointUrl, passportSharepointUrl, linkedinUrl, instagramHandle, xeroTrackingName,
       dob, address, wfhDays, employmentType, cvSharepointUrl, boardMember, managementTeam,
     } = req.body;
 
@@ -539,6 +539,13 @@ export function setupHrRoutes(app: Express) {
       // Team is on the users table itself (not staff_profiles). Admins can
       // reassign someone via the Team dropdown in Edit Profile — the canonical
       // list lives in CRM_OPTIONS.dealTeam on the client.
+      // Instagram handle for the business card (Woody, 2026-10-13).
+      if (instagramHandle !== undefined) {
+        await pool.query(
+          "UPDATE staff_profiles SET instagram_handle = $1 WHERE user_id = $2",
+          [String(instagramHandle || "").trim().replace(/^@/, "") || null, userId]
+        );
+      }
       if (isAdmin && req.body.team !== undefined) {
         await pool.query(
           "UPDATE users SET team = $1 WHERE id = $2",
