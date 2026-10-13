@@ -446,7 +446,7 @@ export const INVESTMENT_DEALS: InvestmentDeal[] = [
   // Nick Halley's edits, 2026-10-12: prices where disclosed and big enough,
   // sale vs acquisition shown, One Tower Bridge dropped (pre-2020), Brixton
   // shown as the current sale. "Transaction" = type still to be confirmed.
-  { image: "/images/investment/royal-exchange-corner.jpg", name: "The Royal Exchange, London", client: "Ardent", type: "Sale", price: "", status: "Completed", capRate: null, sold: true, wide: true },
+  { image: "/images/investment/royal-exchange-corner.jpg", name: "The Royal Exchange, London", client: "Ardent", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: true },
   { image: "/images/investment/brixton-market.jpg", name: "Brixton Market", client: "Hondo Enterprises / Angelo Gordon", type: "Sale", price: "", status: "Under offer", capRate: null, sold: false, wide: false },
   { image: "/images/investment/16-conduit-street.jpg", name: "16 Conduit Street, Mayfair", client: "Japanese private investor", type: "Acquisition", price: "£13,450,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/biggin-hill-bombardier.jpg", name: "Bombardier Hangar, Biggin Hill Airport", client: "LCN Capital Partners", type: "Forward funding", price: "£35,000,000", status: "Completed", capRate: null, sold: true, wide: false },
