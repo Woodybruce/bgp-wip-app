@@ -1,3 +1,4 @@
+import { getAuthHeaders, startXeroConnect } from "@/lib/queryClient";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
@@ -55,7 +56,7 @@ export function XeroContactPicker({
       const url = trimmed
         ? `/api/xero/contacts?search=${encodeURIComponent(trimmed)}`
         : `/api/xero/contacts`;
-      const res = await fetch(url, { credentials: "include" });
+      const res = await fetch(url, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) {
         if (res.status === 401) {
           setNotConnected(true);
@@ -120,11 +121,22 @@ export function XeroContactPicker({
               Searching Xero…
             </div>
           )}
-          {!isFetching && contacts.length === 0 && (
+          {!isFetching && notConnected && (
+            <div className="px-3 py-2 text-xs text-muted-foreground space-y-1.5">
+              <p>You're not signed in to Xero.</p>
+              <Button
+                size="sm"
+                className="h-7 rounded-full"
+                onMouseDown={(e) => { e.preventDefault(); void startXeroConnect({ returnTo: window.location.pathname + window.location.search }); }}
+                data-testid={`${testIdPrefix}-connect`}
+              >
+                Connect to Xero
+              </Button>
+            </div>
+          )}
+          {!isFetching && !notConnected && contacts.length === 0 && (
             <div className="px-3 py-2 text-xs text-muted-foreground">
-              {notConnected
-                ? "Xero isn't connected — an admin needs to connect Xero in Settings before billing contacts will appear."
-                : trimmed
+              {trimmed
                   ? "No Xero contacts found"
                   : "Type to search Xero contacts"}
             </div>

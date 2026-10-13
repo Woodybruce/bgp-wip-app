@@ -33,7 +33,7 @@ const XERO_BASE_SCOPES =
 // `expected: undefined`. Entries are single-use, expire after 10 minutes,
 // and are bound to the issuing browser's session id so a state minted in one
 // browser can't complete the consent in another (OAuth login-CSRF).
-const pendingOAuthStates = new Map<string, { createdAt: number; sid: string }>();
+const pendingOAuthStates = new Map<string, { createdAt: number; sid: string; returnTo?: string | null }>();
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
 // The consent state is also kept in the database (2026-10-05, Woody: "the
@@ -43,32 +43,39 @@ const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 // installed phone app, which drops the cookie on the hop out to Xero and
 // back. The state is 256-bit random, single-use, 10-minute, issued only to
 // a signed-in user, so it is sufficient proof on its own.
-function issueOAuthState(sid: string, userId?: string | null): string {
+// Where to send the user after consent: an in-app path only (no open
+// redirect). Deal pages pass their own path so invoicing carries on there.
+const safeReturnTo = (v: unknown): string | null => {
+  const p = typeof v === "string" ? v.trim() : "";
+  return /^\/(?!\/)[\w\-/?=&%.#]*$/.test(p) && p.length < 300 ? p : null;
+};
+
+function issueOAuthState(sid: string, userId?: string | null, returnTo?: string | null): string {
   const now = Date.now();
   for (const [k, v] of pendingOAuthStates) {
     if (now - v.createdAt > OAUTH_STATE_TTL_MS) pendingOAuthStates.delete(k);
   }
   const state = crypto.randomBytes(32).toString("hex");
-  pendingOAuthStates.set(state, { createdAt: now, sid });
+  pendingOAuthStates.set(state, { createdAt: now, sid, returnTo: returnTo || null });
   pool.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-    [`xero_oauth_state:${state}`, JSON.stringify({ createdAt: now, sid, userId: userId || null })])
+    [`xero_oauth_state:${state}`, JSON.stringify({ createdAt: now, sid, userId: userId || null, returnTo: returnTo || null })])
     .catch((e: any) => console.warn("[Xero] persisting consent state failed:", e?.message));
   pool.query(`DELETE FROM system_settings WHERE key LIKE 'xero_oauth_state:%' AND (value->>'createdAt')::bigint < $1`, [now - 24 * 3600_000]).catch(() => {});
   return state;
 }
 
-async function consumeOAuthState(state: unknown, sid: string): Promise<{ ok: boolean; reason?: string }> {
+async function consumeOAuthState(state: unknown, sid: string): Promise<{ ok: boolean; reason?: string; returnTo?: string | null }> {
   if (typeof state !== "string" || !state) return { ok: false, reason: "no state param on the callback" };
-  let entry: { createdAt: number; sid: string } | undefined = pendingOAuthStates.get(state);
+  let entry: { createdAt: number; sid: string; returnTo?: string | null } | undefined = pendingOAuthStates.get(state);
   pendingOAuthStates.delete(state);
   try {
     const r = await pool.query(`DELETE FROM system_settings WHERE key = $1 RETURNING value`, [`xero_oauth_state:${state}`]);
-    if (!entry && r.rows[0]?.value) entry = { createdAt: Number(r.rows[0].value.createdAt), sid: String(r.rows[0].value.sid || "") };
+    if (!entry && r.rows[0]?.value) entry = { createdAt: Number(r.rows[0].value.createdAt), sid: String(r.rows[0].value.sid || ""), returnTo: r.rows[0].value.returnTo || null };
   } catch {}
   if (!entry) return { ok: false, reason: "state unknown or already used" };
   if (Date.now() - entry.createdAt > OAUTH_STATE_TTL_MS) return { ok: false, reason: "state expired (>10 min between Connect and approval)" };
   if (entry.sid !== sid) console.log("[Xero] consent returned in a different browser session (phone app or cookie loss) — accepted on the single-use state");
-  return { ok: true };
+  return { ok: true, returnTo: safeReturnTo(entry.returnTo) };
 }
 
 const TRUSTED_HOSTS = ["bgp-wip-app-production-efac.up.railway.app", "chatbgp.app", "bgp-dashboard-flow.replit.app", "9578f23f-37ae-4acf-944d-42a112fa681a-00-w7prqguaevhh.worf.replit.dev"];
@@ -558,7 +565,7 @@ export function setupXeroRoutes(app: Express) {
       return res.status(500).json({ message: "Xero Client ID not configured. Add XERO_CLIENT_ID and XERO_CLIENT_SECRET to your environment." });
     }
 
-    const state = issueOAuthState(req.sessionID, req.session?.userId || (req as any).tokenUserId || null);
+    const state = issueOAuthState(req.sessionID, req.session?.userId || (req as any).tokenUserId || null, safeReturnTo(req.query.returnTo));
     req.session.xeroOAuthState = state; // fallback only — survives a deploy mid-consent
 
     const redirectUri = getRedirectUri(req);
@@ -695,7 +702,8 @@ export function setupXeroRoutes(app: Express) {
         if (!req.session.xeroTokens?.tenantId) {
           res.redirect("/finance?xero_error=no_tenant");
         } else {
-          res.redirect("/finance?xero=connected");
+          const back = stateVerdict.returnTo;
+          res.redirect(back ? `${back}${back.includes("?") ? "&" : "?"}xero=connected` : "/finance?xero=connected");
         }
       });
     } catch (err: any) {
