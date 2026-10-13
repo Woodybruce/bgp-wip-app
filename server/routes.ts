@@ -4419,6 +4419,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     "/BGP - Share Drive/London/St Christopher´s Place/St Christopher´s Place",
     "/Bruce Gillingham Pollard - Share Drive/London/St Christopher´s Place/St Christopher's Place - Morgan Capital",
     "/BGP - Share Drive/London/St Christopher´s Place/St Christopher's Place - Morgan Capital",
+    // South Molton CGIs (Lizzie's folder, Woody 2026-10-13).
+    "/Bruce Gillingham Pollard - Share Drive/London/Grosvenor Estate/South Molton/CGI's",
+    "/BGP - Share Drive/London/Grosvenor Estate/South Molton/CGI's",
   ];
   // The BGP SharePoint library is canonical; Woody's OneDrive mirror of the
   // share drive (the team-photos drive) only holds what has synced, so it is
