@@ -16,7 +16,18 @@ export default function Team() {
   // what their title says; failing that, the first page they belong to; leadership and
   // operations bookend the list. Within a team, directors first, then A–Z.
   const surname = (n: string) => n.split(" ").slice(-1)[0];
-  const rank = (p: Person) => (/managing director|chief operating|equity director/i.test(p.title) ? 0 : /\bdirector\b|\bhead\b/i.test(p.title) && !/associate/i.test(p.title) ? 1 : /associate director/i.test(p.title) ? 2 : 3);
+  // Seniority order within a team (Charlotte, 2026-10-13), then surname.
+  const rank = (p: Person) => {
+    const t = p.title;
+    if (/managing director|chief operating|equity director|founding director/i.test(t)) return 0;
+    if ((/\bdirector\b|\bhead\b/i.test(t)) && !/associate/i.test(t)) return 1;
+    if (/associate director/i.test(t)) return 2;
+    if (/\bassociate\b|consultant/i.test(t)) return 3;
+    if (/senior surveyor/i.test(t)) return 4;
+    if (/graduate/i.test(t)) return 6;
+    if (/surveyor/i.test(t)) return 5;
+    return 7;
+  };
   const groupOf = (p: Person): string => {
     if (/managing director|chief operating officer|\bcoo\b/i.test(p.title)) return "Leadership";
     for (const [re, label] of [[/shopping centre/i, "Shopping Centres"], [/london estate/i, "London Estates"], [/\bcity\b/i, "The City"], [/high street/i, "High Streets"], [/investment/i, "Investment"], [/brand rep/i, "Brand Representation"], [/lease advisory|asset management/i, "Lease Advisory"], [/consultan/i, "Consultancy"]] as Array<[RegExp, string]>) {
