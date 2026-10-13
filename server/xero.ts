@@ -429,6 +429,10 @@ export async function xeroApi(session: any, path: string, options: RequestInit =
   if (!res.ok) {
     const errText = await res.text();
     console.error(`[Xero] API error ${res.status}:`, errText);
+    if (res.status === 429) {
+      const wait = Number(res.headers.get("retry-after") || 0);
+      throw new Error(`Xero is rate-limiting the app (429)${wait ? ` — try again in ${wait >= 120 ? `${Math.ceil(wait / 60)} minutes` : `${wait} seconds`}` : ""}`);
+    }
     throw new Error(`Xero API error: ${res.status} - ${errText}`);
   }
 
@@ -759,40 +763,63 @@ export function setupXeroRoutes(app: Express) {
   // Returns Xero contacts with their account number and primary billing
   // address flattened to a stable shape, so the client billing-entity
   // picker can render account number + address without extra calls.
+  // The whole contact list is read from Xero once and kept for 10 minutes;
+  // typing searches that copy. Asking Xero on every keystroke ran into
+  // Xero's 60-calls-a-minute limit (429) and the search came back empty
+  // (Layla, 2026-10-13). A stale copy is used while Xero is refusing.
+  const contactListCache = new Map<string, { at: number; list: any[] }>();
+  const loadContactList = async (key: string, call: (path: string) => Promise<any>) => {
+    const hit = contactListCache.get(key);
+    if (hit && Date.now() - hit.at < 10 * 60_000) return hit.list;
+    try {
+      const list: any[] = [];
+      for (let page = 1; page <= 20; page++) {
+        const d = await call(`/Contacts?page=${page}&pageSize=1000&includeArchived=false`);
+        const got = d?.Contacts || [];
+        list.push(...got);
+        if (got.length < 1000) break;
+      }
+      contactListCache.set(key, { at: Date.now(), list });
+      return list;
+    } catch (e) {
+      if (hit) return hit.list;
+      throw e;
+    }
+  };
   app.get("/api/xero/contacts", requireAuth, async (req: Request, res: Response) => {
     try {
-      const rawSearch = ((req.query.search as string) || "").trim();
-      const search = rawSearch.replace(/"/g, "").toLowerCase();
-      // Xero's searchTerm (case-insensitive, Name / contact person / email)
-      // replaced the old Name.ToLower().Contains() where-filter, which Xero
-      // turns down — every search came back "No Xero contacts found" (Layla,
-      // 2026-10-13). Search the longest word, then keep names containing
-      // every word, so "land sec" still finds "Landsec".
+      const search = ((req.query.search as string) || "").trim().replace(/"/g, "").toLowerCase();
       const tokens = search.split(/\s+/).filter(t => t.length > 0);
-      const term = [...tokens].sort((x, y) => y.length - x.length)[0] || "";
-      const path = `/Contacts?page=1&pageSize=100&includeArchived=false${term ? `&searchTerm=${encodeURIComponent(term)}` : ""}`;
-      // Read-only endpoint — falls back to the firm-wide system Xero
-      // session when the caller's session isn't connected. Write endpoints
-      // stay session-scoped for proper attribution.
-      let data: any = null;
+      // Read-only — the caller's own Xero sign-in, else the firm-wide one.
+      // If the caller's organisation has no contacts (signed in to the
+      // wrong one), the firm's list is used.
+      let list: any[] = [];
       let userErr: any = null;
-      try { data = await xeroApiWithFallback(req.session, path); } catch (e: any) {
-        if (String(e?.message || "").includes("Not connected")) throw e;
-        userErr = e;
-        console.warn("[Xero] Contacts search on the user's session failed, trying the firm's:", e?.message);
+      const userTenant = req.session?.xeroTokens?.tenantId;
+      if (userTenant) {
+        try { list = await loadContactList(userTenant, (p) => xeroApi(req.session, p)); }
+        catch (e: any) { userErr = e; console.warn("[Xero] Contacts on the user's sign-in failed, trying the firm's:", e?.message); }
       }
-      // The user's own sign-in can point at the wrong organisation — search
-      // the firm-wide session too before saying nothing matched.
-      if (!data?.Contacts?.length && req.session?.xeroTokens) {
+      if (!list.length) {
         const { withSystemXero } = await import("./xero-system-session");
-        const firm = await withSystemXero((sys) => xeroApi(sys, path)).catch(() => null);
-        if (firm?.Contacts?.length || !data) data = firm;
+        let firmErr: any = null;
+        const firm = await loadContactList("firm", async (p) => {
+          const r = await withSystemXero((sys) => xeroApi(sys, p));
+          if (r === null) throw new Error("Not connected to Xero");
+          return r;
+        }).catch((e) => { firmErr = e; return null; });
+        if (firm) list = firm;
+        else if (!userTenant && String(firmErr?.message || "").includes("Not connected")) throw firmErr;
+        else if (userErr || firmErr) throw userErr || firmErr;
       }
-      if (!data) throw userErr || new Error("Xero didn't answer the contact search");
       const squash = (v: string) => v.toLowerCase().replace(/\s+/g, "");
-      const matches = (data.Contacts || []).filter((c: any) => tokens.every(t => squash(c.Name || "").includes(t)
+      const matches = list.filter((c: any) => c.ContactStatus !== "ARCHIVED" && tokens.every(t => squash(c.Name || "").includes(t)
         || [c.EmailAddress, c.FirstName, c.LastName, c.AccountNumber].some((f: any) => String(f || "").toLowerCase().includes(t))));
-      data = { Contacts: matches };
+      // Names starting with the search first, then alphabetical.
+      const first = tokens[0] || "";
+      const lead = (c: any) => (squash(c.Name || "").startsWith(first) ? 0 : 1);
+      matches.sort((x: any, y: any) => lead(x) - lead(y) || String(x.Name).localeCompare(String(y.Name)));
+      const data = { Contacts: matches.slice(0, 50) };
       const contacts = (data.Contacts || []).map((c: any) => ({
         ContactID: c.ContactID,
         Name: c.Name,
@@ -832,8 +859,8 @@ export function setupXeroRoutes(app: Express) {
       } catch {}
       try {
         const org = await xeroApi(session, "/Organisation");
-        const contacts = await xeroApi(session, "/Contacts?page=1&pageSize=100&includeArchived=false");
-        return { connected: true, org: org?.Organisations?.[0]?.Name || null, contacts: (contacts.Contacts || []).length, orgs, moved };
+        const list = await loadContactList(session.xeroTokens.tenantId, (p) => xeroApi(session, p));
+        return { connected: true, org: org?.Organisations?.[0]?.Name || null, contacts: list.length, orgs, moved };
       } catch (e: any) {
         return { connected: true, orgs, moved, error: String(e?.message || e).slice(0, 300) };
       }
@@ -843,8 +870,8 @@ export function setupXeroRoutes(app: Express) {
     const { withSystemXero } = await import("./xero-system-session");
     const firm = await withSystemXero(async (sys) => {
       const org = await xeroApi(sys, "/Organisation");
-      const contacts = await xeroApi(sys, "/Contacts?page=1&pageSize=100&includeArchived=false");
-      return { connected: true, org: org?.Organisations?.[0]?.Name || null, contacts: (contacts.Contacts || []).length };
+      const list = await loadContactList("firm", (p) => xeroApi(sys, p));
+      return { connected: true, org: org?.Organisations?.[0]?.Name || null, contacts: list.length };
     }).catch((e: any) => ({ connected: true, error: String(e?.message || e).slice(0, 300) }));
     res.json({ mine, firm: firm || { connected: false } });
   });

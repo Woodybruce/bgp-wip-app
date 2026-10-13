@@ -93,7 +93,7 @@ export function XeroContactPicker({
   });
   const describe = (label: string, x: any) => !x?.connected ? `${label}: not signed in`
     : x.error ? `${label}: Xero said "${x.error}"`
-    : `${label}: ${x.org || "unknown organisation"}, ${x.contacts === 100 ? "100+" : x.contacts} contacts${x.moved ? " (moved to the firm's organisation — search again)" : ""}${x.orgs?.length > 1 ? ` · your Xero login sees ${x.orgs.join(", ")}` : ""}`;
+    : `${label}: ${x.org || "unknown organisation"}, ${x.contacts} contacts${x.moved ? " (moved to the firm's organisation — search again)" : ""}${x.orgs?.length > 1 ? ` · your Xero login sees ${x.orgs.join(", ")}` : ""}`;
 
   const showSelected = !!value;
   const selectedAddress = cachedAddress ? formatAddress(cachedAddress) : "";
