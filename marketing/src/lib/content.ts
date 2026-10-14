@@ -443,6 +443,7 @@ export interface InvestmentDeal {
   sold: boolean;
   wide: boolean;
   image?: string;
+  address?: string;              // Woody, 2026-10-14
 }
 
 // The pitch's track record (Royal Exchange disposal pitch, February 2026)
@@ -453,32 +454,32 @@ export const INVESTMENT_DEALS: InvestmentDeal[] = [
   // sale vs acquisition shown, One Tower Bridge dropped (pre-2020), Brixton
   // shown as the current sale. "Transaction" = type still to be confirmed.
   { image: "/images/investment/royal-exchange-corner.jpg", name: "The Royal Exchange, London", client: "Ardent", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: true },
-  { image: "/images/investment/brixton-market.jpg", name: "Brixton Market", client: "Hondo Enterprises / Angelo Gordon", type: "Sale", price: "", status: "Under offer", capRate: null, sold: false, wide: false },
+  { image: "/images/investment/brixton-market.jpg", name: "Brixton Market", address: "Brixton Market, London", client: "Hondo Enterprises / Angelo Gordon", type: "Sale", price: "", status: "Under offer", capRate: null, sold: false, wide: false },
   { image: "/images/investment/16-conduit-street.jpg", name: "16 Conduit Street, Mayfair", client: "Japanese private investor", type: "Acquisition", price: "£13,450,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/biggin-hill-bombardier.jpg", name: "Bombardier Hangar, Biggin Hill Airport", client: "LCN Capital Partners", type: "Forward funding", price: "£35,000,000", status: "Completed", capRate: null, sold: true, wide: false },
   // Our House Group: a run of buildings bought for the members' clubs
   // (Woody, 2026-10-13) — Jesse's House in Fulham, Leo's House in Clapham,
   // Orly's House in East Sheen.
   { image: "/images/investment/old-picture-house-fulham-road.jpg", name: "The Old Picture House, 142 Fulham Road", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/jesses-house-fulham.jpg", name: "Jesse's House, Fulham", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/leos-house-clapham.jpg", name: "Leo's House, Clapham North", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/orlys-house-east-sheen.jpg", name: "Orly's House, East Sheen", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/jesses-house-fulham.jpg", name: "Jesse's House, Fulham", address: "8-10 Heathmans Road, Fulham", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/leos-house-clapham.jpg", name: "Leo's House, Clapham North", address: "26-32 Voltaire Road, Clapham", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/orlys-house-east-sheen.jpg", name: "Orly's House, East Sheen", address: "Sheen Lane, East Sheen", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/parkhall-dulwich.jpg", name: "Parkhall Business Centre, Dulwich", client: "Our House Group", type: "Acquisition", price: "", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/oxam-house-oxford.jpg", name: "Oxam House, Oxford", client: "Charles Street", type: "Acquisition", price: "£21,250,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/filmworks-ealing.jpg", name: "Filmworks, Ealing", client: "St George", type: "Sale", price: "£13,500,000", status: "Completed", capRate: null, sold: true, wide: false },
   // Jack's list, 2026-10-13 (photos from his WeTransfer).
-  { image: "/images/investment/wimbledon-bridge-house.jpg", name: "Wimbledon Bridge House", client: "M Core", type: "Acquisition", price: "£18,000,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/aldi-wimbledon.jpg", name: "Aldi, Wimbledon", client: "Sheet Anchor Evolve", type: "Sale", price: "£5,775,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/wimbledon-village.jpg", name: "Wimbledon Village", client: "UK private investor", type: "Sale", price: "£7,300,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/cardiff.jpg", name: "Cardiff", client: "Hermes", type: "Sale", price: "£5,150,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/cambridge.jpg", name: "Cambridge", client: "Family office", type: "Acquisition", price: "£9,200,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/birmingham.jpg", name: "Birmingham", client: "Overseas family office", type: "Acquisition", price: "£14,700,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/exeter.jpg", name: "Exeter", client: "Overseas family office", type: "Acquisition", price: "£6,550,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/lincoln.jpg", name: "Lincoln", client: "Overseas family office", type: "Acquisition", price: "£5,900,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/lush-liverpool.jpg", name: "Lush, Liverpool", client: "Overseas family office", type: "Acquisition", price: "£8,800,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/decathlon-liverpool.jpg", name: "Decathlon, Liverpool", client: "Overseas family office", type: "Acquisition", price: "£7,795,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/river-island-liverpool.jpg", name: "River Island, Liverpool", client: "Overseas family office", type: "Acquisition", price: "£6,300,000", status: "Completed", capRate: null, sold: true, wide: false },
-  { image: "/images/investment/hsbc-brighton.jpg", name: "HSBC, Brighton", client: "Family office", type: "Acquisition", price: "£5,640,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/wimbledon-bridge-house.jpg", name: "Wimbledon Bridge House", address: "Wimbledon", client: "M Core", type: "Acquisition", price: "£18,000,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/aldi-wimbledon.jpg", name: "Aldi, Wimbledon", address: "4 Wimbledon Bridge, Wimbledon", client: "Sheet Anchor Evolve", type: "Sale", price: "£5,775,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/wimbledon-village.jpg", name: "Wimbledon Village", address: "89-91 High Street, Wimbledon Village", client: "UK private investor", type: "Sale", price: "£7,300,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/cardiff.jpg", name: "Cardiff", address: "5-10 Church Street, Cardiff", client: "Hermes", type: "Sale", price: "£5,150,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/cambridge.jpg", name: "Cambridge", address: "57-60 Sidney Street / Market Place, Cambridge", client: "Family office", type: "Acquisition", price: "£9,200,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/birmingham.jpg", name: "Birmingham", address: "79-84 High Street, Birmingham", client: "Overseas family office", type: "Acquisition", price: "£14,700,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/exeter.jpg", name: "Exeter", address: "252-253 High Street, Exeter", client: "Overseas family office", type: "Acquisition", price: "£6,550,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/lincoln.jpg", name: "Lincoln", address: "196-199 High Street, Lincoln", client: "Overseas family office", type: "Acquisition", price: "£5,900,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/lush-liverpool.jpg", name: "Lush, Liverpool", address: "38-46 Church Street, Liverpool", client: "Overseas family office", type: "Acquisition", price: "£8,800,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/decathlon-liverpool.jpg", name: "Decathlon, Liverpool", address: "18-20 Church Street, Liverpool", client: "Overseas family office", type: "Acquisition", price: "£7,795,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/river-island-liverpool.jpg", name: "River Island, Liverpool", address: "11-16 Church Street, Liverpool", client: "Overseas family office", type: "Acquisition", price: "£6,300,000", status: "Completed", capRate: null, sold: true, wide: false },
+  { image: "/images/investment/hsbc-brighton.jpg", name: "HSBC, Brighton", address: "153 North Street, Brighton", client: "Family office", type: "Acquisition", price: "£5,640,000", status: "Completed", capRate: null, sold: true, wide: false },
   { image: "/images/investment/grants-leisure-croydon.jpg", name: "Grants Leisure, Croydon", client: "Hermes", type: "Sale", price: "", status: "Completed", capRate: null, sold: true, wide: false },
 ];
 
