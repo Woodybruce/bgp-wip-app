@@ -3142,6 +3142,28 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     }
   }, 60_000);
 
+  // One-off (2026-10-15): photos pulled out of print brochures were colour
+  // negatives (Adobe CMYK JPEGs copied raw). Re-extract every unit's
+  // brochure photos with poppler decoding them, replacing the extracted set.
+  setTimeout(async () => {
+    try {
+      const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'brochure_photos_cmyk_2026_10_15'`);
+      if (done.rows.length) return;
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('brochure_photos_cmyk_2026_10_15', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+      const { refreshUnitPhotosFromBrochures, EXTRACTED_PHOTO_PATTERN } = await import("./letting-tracker-chat");
+      const { rows } = await pool.query(`
+        SELECT DISTINCT f.unit_id FROM unit_marketing_files f
+         WHERE f.category = 'photo' AND f.file_name LIKE $1
+           AND EXISTS (SELECT 1 FROM unit_marketing_files b WHERE b.unit_id = f.unit_id AND b.category = 'brochure' AND b.mime_type LIKE '%pdf%')`, [EXTRACTED_PHOTO_PATTERN]);
+      for (const r of rows) {
+        const res = await refreshUnitPhotosFromBrochures(r.unit_id, { replaceExtracted: true }).catch((e: any) => ({ added: 0, removedPageRenders: 0, kinds: [], brochures: 0, error: e?.message }));
+        console.log(`[brochure-photos-cmyk] ${r.unit_id}: ${res.added} added, ${res.removedPageRenders} replaced${(res as any).error ? ` (${(res as any).error})` : ""}`);
+      }
+    } catch (e: any) {
+      console.warn("[brochure-photos-cmyk]", e?.message);
+    }
+  }, 120_000);
+
   // ── One-off (per Woody, 2026-09-28): Canary Wharf Group runs "No PO No
   // Pay", so its invoices need a PO number. Guarded on requires_po never
   // having been set (NULL), so it applies once and a later change on the

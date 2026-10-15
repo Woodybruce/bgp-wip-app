@@ -95,7 +95,8 @@ async function addUnitFile(unitId: string, data: Buffer, fileName: string, mimeT
  *  logo-shaped; the brochure vision classifier (Haiku) keeps exteriors /
  *  interiors and drops plans, maps and logos; the hero goes in first so the
  *  website leads with it. Replaces earlier page-render photos. */
-export async function photosFromBrochure(unitId: string, pdf: Buffer, opts: { max?: number; replacePageRenders?: boolean; label?: string } = {}): Promise<{ added: number; removedPageRenders: number; kinds: string[] }> {
+export const EXTRACTED_PHOTO_PATTERN = "% — %.jpg"; // "<unit> — hero 1.jpg", "… — internal 2.jpg"
+export async function photosFromBrochure(unitId: string, pdf: Buffer, opts: { max?: number; replacePageRenders?: boolean; replaceExtracted?: boolean; label?: string } = {}): Promise<{ added: number; removedPageRenders: number; kinds: string[] }> {
   const max = opts.max ?? 6;
   const { extractImagesFromPdf } = await import("./pdf-image-extract");
   const raw = await extractImagesFromPdf({ pdfBuffer: pdf, maxImages: 40, minBytes: 20_000 });
@@ -146,7 +147,11 @@ export async function photosFromBrochure(unitId: string, pdf: Buffer, opts: { ma
   const { eq, and, like } = await import("drizzle-orm");
   let removedPageRenders = 0;
   if (opts.replacePageRenders !== false) {
-    const old = await db.select().from(unitMarketingFiles).where(and(eq(unitMarketingFiles.unitId, unitId), eq(unitMarketingFiles.category, "photo"), like(unitMarketingFiles.fileName, "% - page %.jpg")));
+    const { or } = await import("drizzle-orm");
+    const stale = opts.replaceExtracted
+      ? or(like(unitMarketingFiles.fileName, "% - page %.jpg"), like(unitMarketingFiles.fileName, EXTRACTED_PHOTO_PATTERN))
+      : like(unitMarketingFiles.fileName, "% - page %.jpg");
+    const old = await db.select().from(unitMarketingFiles).where(and(eq(unitMarketingFiles.unitId, unitId), eq(unitMarketingFiles.category, "photo"), stale));
     for (const f of old) {
       const key = (f.filePath || "").replace(/^\/uploads\//, "");
       try { const { deleteFile } = await import("./file-storage"); if (key) await deleteFile(key); } catch {}
@@ -177,7 +182,7 @@ export async function photosFromBrochure(unitId: string, pdf: Buffer, opts: { ma
 }
 
 /** Re-pull the listing photos from the brochure PDFs already filed under a unit. */
-export async function refreshUnitPhotosFromBrochures(unitId: string): Promise<{ added: number; removedPageRenders: number; kinds: string[]; brochures: number }> {
+export async function refreshUnitPhotosFromBrochures(unitId: string, opts: { replaceExtracted?: boolean } = {}): Promise<{ added: number; removedPageRenders: number; kinds: string[]; brochures: number }> {
   const { unitMarketingFiles } = await import("@shared/schema");
   const { eq, and } = await import("drizzle-orm");
   const files = await db.select().from(unitMarketingFiles).where(and(eq(unitMarketingFiles.unitId, unitId), eq(unitMarketingFiles.category, "brochure")));
@@ -187,7 +192,7 @@ export async function refreshUnitPhotosFromBrochures(unitId: string): Promise<{ 
     const key = (f.filePath || "").replace(/^\/uploads\//, "");
     const stored = key ? await getFile(key) : null;
     if (!stored) continue;
-    const r = await photosFromBrochure(unitId, stored.data, { replacePageRenders: total.added === 0, max: 6 - total.added });
+    const r = await photosFromBrochure(unitId, stored.data, { replacePageRenders: total.added === 0, replaceExtracted: opts.replaceExtracted && total.added === 0, max: 6 - total.added });
     total = { added: total.added + r.added, removedPageRenders: total.removedPageRenders + r.removedPageRenders, kinds: [...total.kinds, ...r.kinds] };
     if (total.added >= 6) break;
   }
