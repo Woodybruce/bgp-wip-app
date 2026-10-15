@@ -179,7 +179,7 @@ export default function Leasing() {
                 view below instead of pushing them down a long grid */}
             <div ref={gridTop} className="scroll-mt-28 mt-10 card-strip sm:grid-cols-2 lg:grid-cols-3 sm:gap-x-6 sm:gap-y-12">
               {pageItems.map((l) => (
-                <div key={l.id}>
+                <div key={l.id} className="h-full">
                   <ListingCard listing={l} />
                 </div>
               ))}

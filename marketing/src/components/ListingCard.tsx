@@ -8,7 +8,9 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
   const details = [formatSqft(listing.sqft), listing.rentPoa ? "POA" : formatRent(listing.askingRent)].filter(Boolean).join(", ");
 
   return (
-    <div className={wide ? "sm:col-span-2" : ""}>
+    // Flex column filling the grid cell so the CONTACT rule sits on the same
+    // line across a row whatever the text above it (Woody, 2026-10-15).
+    <div className={`flex h-full flex-col ${wide ? "sm:col-span-2" : ""}`}>
       <Link href={`/leasing/${listing.id}`} className="block group relative">
         <div className="img-frame">
           {img ? (
@@ -48,7 +50,7 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
         )}
         <span className="tabular">{details || "Details on application"}</span>
       </p>
-      <p className="mt-3">
+      <p className="mt-auto pt-3">
         <Link href={`/leasing/${listing.id}`} className="rule-link inline-block w-full">
           Contact
         </Link>
