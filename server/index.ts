@@ -3194,6 +3194,21 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     }
   }, 180_000);
 
+  // One-off (Woody, 2026-10-15): "remove Johnny Penfold from the app" — a
+  // stray login that was landing on the London Estate and Investment
+  // cards. Deactivated, not deleted, so anything it touched keeps its
+  // history. Flagged so it runs once and a later reactivation stands.
+  try {
+    const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'deactivate_johnny_penfold_2026_10_15'`);
+    if (!done.rows.length) {
+      const r = await pool.query(`UPDATE users SET is_active = false WHERE lower(trim(name)) = 'johnny penfold' AND is_active = true RETURNING id, email`);
+      console.log(`[users] Johnny Penfold deactivated: ${r.rowCount} login(s) ${r.rows.map((x: any) => x.email).join(", ")}`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('deactivate_johnny_penfold_2026_10_15', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+  } catch (e: any) {
+    console.warn("[users] Johnny Penfold:", e?.message);
+  }
+
   // ── One-off (per Woody, 2026-09-28): Canary Wharf Group runs "No PO No
   // Pay", so its invoices need a PO number. Guarded on requires_po never
   // having been set (NULL), so it applies once and a later change on the
