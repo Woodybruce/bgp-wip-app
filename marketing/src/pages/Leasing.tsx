@@ -103,8 +103,8 @@ export default function Leasing() {
     <div>
       {/* Centred intro per v2c */}
       <section className="mx-auto max-w-3xl px-4 pt-12 pb-8 text-center">
-        <span className="section-label">Leasing</span>
-        <h1 className="font-light text-xl md:text-2xl text-bgp-wine">{LEASING_INTRO.headline}</h1>
+        <h1 className="display text-4xl md:text-5xl">Leasing</h1>
+        <p className="mt-5 font-light text-xl md:text-2xl text-bgp-wine">{LEASING_INTRO.headline}</p>
         {LEASING_INTRO.body.map((p) => (
           <p key={p.slice(0, 24)} className="mt-5 text-base md:text-lg text-bgp-ink/90">{p}</p>
         ))}

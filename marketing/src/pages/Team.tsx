@@ -59,6 +59,7 @@ export default function Team() {
         <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/85 via-bgp-ink/45 to-bgp-ink/15 md:from-bgp-ink/70 md:via-bgp-ink/10 md:to-transparent" />
         <div className="absolute inset-0 flex items-end">
           <div className="mx-auto max-w-6xl px-4 pb-10 w-full">
+            <h1 className="display text-4xl md:text-5xl text-white mb-4" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>The BGP team</h1>
             <p className="max-w-xl text-2xl md:text-3xl font-light leading-[1.2] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>
               Connecting leading brands with the best international locations. Creating
               neighbourhoods that people love.
@@ -68,7 +69,6 @@ export default function Team() {
       </section>
 
       <section className="mx-auto max-w-6xl px-4 py-14 md:py-16">
-        <h1 className="sr-only">The BGP team</h1>
         {groups.map((g) => (
           <div key={g.label} className="mb-14">
             <div className="flex items-baseline justify-between border-b border-bgp-ink pb-2 mb-2">

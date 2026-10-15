@@ -8,6 +8,7 @@ export default function BrandRepresentation() {
   const { caseStudies, contacts } = useSiteContent();
   return (
     <ServicePage
+      title="Brand Representation"
       hero={{ src: "/images/case-studies/percival-neal-street.jpg", alt: "Percival's store on Neal Street, Seven Dials" }}
       intro={service.intro}
       body={SERVICE_COPY.brandRepresentation.body}

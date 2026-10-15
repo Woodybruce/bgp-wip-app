@@ -12,6 +12,7 @@ import type { Person } from "../lib/content";
 // contacts. Leasing and Investment keep their own pages (sub-pages and
 // the deals board).
 export interface ServicePageProps {
+  title: string;
   hero: { src: string; alt: string; position?: string };
   intro: string;
   body?: string[];
@@ -24,7 +25,7 @@ export interface ServicePageProps {
   contactsBlurb?: string;
 }
 
-export default function ServicePage({ hero, intro, body, clients, clientsBlurb, services, quote, caseStudies, contacts, contactsBlurb }: ServicePageProps) {
+export default function ServicePage({ title, hero, intro, body, clients, clientsBlurb, services, quote, caseStudies, contacts, contactsBlurb }: ServicePageProps) {
   const cols = caseStudies.length >= 4 ? "sm:grid-cols-2 lg:grid-cols-4" : caseStudies.length === 3 ? "sm:grid-cols-3" : "sm:grid-cols-2";
   return (
     <div>
@@ -33,6 +34,7 @@ export default function ServicePage({ hero, intro, body, clients, clientsBlurb, 
         <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/85 via-bgp-ink/45 to-bgp-ink/15 md:from-bgp-ink/70 md:via-bgp-ink/10 md:to-transparent" />
         <div className="relative w-full">
           <div className="mx-auto max-w-6xl px-4 pt-28 pb-8 md:pb-10 w-full">
+            <h1 className="display text-4xl md:text-5xl text-white mb-4" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>{title}</h1>
             <p className="max-w-xl text-2xl md:text-3xl font-light leading-[1.2] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>{intro}</p>
           </div>
         </div>

@@ -39,9 +39,10 @@ export default function LeasingSector() {
             <p className="label-caps text-white/80 mb-3">
               <Link href="/leasing" className="hover:text-white">Leasing</Link> · {sector.name}
             </p>
-            <h1 className="max-w-2xl text-2xl md:text-3xl font-light leading-[1.2] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>
+            <h1 className="display text-4xl md:text-5xl text-white mb-4" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>{sector.name}</h1>
+            <p className="max-w-2xl text-2xl md:text-3xl font-light leading-[1.2] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>
               {sector.headline}
-            </h1>
+            </p>
           </div>
         </div>
       </section>

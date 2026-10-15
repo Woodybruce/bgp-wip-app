@@ -17,6 +17,7 @@ export default function Investment() {
         <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/85 via-bgp-ink/45 to-bgp-ink/15 md:from-bgp-ink/70 md:via-bgp-ink/10 md:to-transparent" />
         <div className="relative w-full">
           <div className="mx-auto max-w-6xl px-4 pt-28 pb-8 md:pb-10 w-full">
+            <h1 className="display text-4xl md:text-5xl text-white mb-4" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>Investment</h1>
             <p className="max-w-xl text-2xl md:text-3xl font-light leading-[1.2] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>{service.intro}</p>
           </div>
         </div>
@@ -35,7 +36,7 @@ export default function Investment() {
         <div className="flex flex-wrap items-end justify-between gap-4 border-b border-bgp-wine/25 pb-6 mb-10">
           <div>
             <span className="section-label">Track record</span>
-            <h1 className="display text-3xl md:text-4xl">A snapshot of recent transactions</h1>
+            <h2 className="display text-3xl md:text-4xl">A snapshot of recent transactions</h2>
           </div>
           <p className="text-base text-bgp-ink/70 max-w-[28ch]">
             Contact the team for current opportunities and our full track record.

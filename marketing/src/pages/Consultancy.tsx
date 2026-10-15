@@ -8,6 +8,7 @@ export default function Consultancy() {
   const { caseStudies, contacts } = useSiteContent();
   return (
     <ServicePage
+      title="Consultancy"
       hero={{ src: "/images/centres/one-new-change.jpg", alt: "The One New Change roof terrace and St Paul's" }}
       intro={service.intro}
       body={CONSULTANCY_BODY}
