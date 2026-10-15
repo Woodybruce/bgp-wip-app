@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-15T06:59:18.785Z",
+  "generatedAt": "2026-10-15T07:06:00.418Z",
   "site": "https://www.bgp.uk.com",
   "note": "Content of bgp.uk.com. Pages are rendered client-side; use this file rather than fetching HTML. Live availability comes from listingsFeed.",
   "heroStatement": "Great places are built through connected thinking.",
@@ -335,6 +335,32 @@
         "Location": "Mayfair"
       },
       "image": "https://www.bgp.uk.com/images/hanover-square.jpg"
+    },
+    {
+      "title": "Landsec",
+      "service": "Leasing",
+      "url": "https://www.bgp.uk.com/case-studies/landsec",
+      "blurb": "Strategic advice and leasing across Landsec's shopping centre and outlet portfolio for all food and beverage and leisure.",
+      "facts": {
+        "Service": "Leasing",
+        "Client": "Landsec",
+        "Sector": "Shopping centres and outlets",
+        "Focus": "F&B and leisure"
+      },
+      "image": "https://www.bgp.uk.com/images/case-studies/landsec/bluewater/bluewater-1.jpg"
+    },
+    {
+      "title": "Westgate, Oxford",
+      "service": "Leasing",
+      "url": "https://www.bgp.uk.com/case-studies/westgate-oxford",
+      "blurb": "A rooftop terrace relet with best in class operators, and 100% let for the first time since opening.",
+      "facts": {
+        "Service": "Leasing",
+        "Client": "Landsec",
+        "Location": "Oxford",
+        "Result": "Rooftop 100% let"
+      },
+      "image": "https://www.bgp.uk.com/images/case-studies/landsec/westgate/westgate-8.jpg"
     },
     {
       "title": "St Christopher's Place",

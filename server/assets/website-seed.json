@@ -406,6 +406,79 @@
       "published": true
     },
     {
+      "slug": "landsec",
+      "title": "Landsec",
+      "service": "Leasing",
+      "blurb": "Strategic advice and leasing across Landsec's shopping centre and outlet portfolio for all food and beverage and leisure.",
+      "body": [
+        "We provide strategic advice and leasing across Landsec's shopping centre and outlet portfolio for all F&B and leisure, always considering what is right for the specific asset: curating the best of the national operators, searching out an independent to transform a unique space, or adding a large leisure anchor to a major city centre.",
+        "Our team considers what is right for each location while working as part of the internal Landsec team, so that what we deliver is right for the customer."
+      ],
+      "facts": [
+        [
+          "Service",
+          "Leasing"
+        ],
+        [
+          "Client",
+          "Landsec"
+        ],
+        [
+          "Sector",
+          "Shopping centres and outlets"
+        ],
+        [
+          "Focus",
+          "F&B and leisure"
+        ]
+      ],
+      "imageUrl": "https://www.bgp.uk.com/images/case-studies/landsec/bluewater/bluewater-1.jpg",
+      "galleryUrls": [
+        "https://www.bgp.uk.com/images/case-studies/landsec/st-davids/st-davids-2.jpg",
+        "https://www.bgp.uk.com/images/case-studies/landsec/gunwharf-quays/gunwharf-quays-5.jpg",
+        "https://www.bgp.uk.com/images/case-studies/landsec/trinity/trinity-2.jpg"
+      ],
+      "sortOrder": 2,
+      "published": true
+    },
+    {
+      "slug": "westgate-oxford",
+      "title": "Westgate, Oxford",
+      "service": "Leasing",
+      "blurb": "A rooftop terrace relet with best in class operators, and 100% let for the first time since opening.",
+      "body": [
+        "The rooftop terrace at Westgate, Oxford was an established pitch, but it was lacking dwell time. The team considered what was missing and what would increase footfall and give people reasons to visit this iconic location in the heart of such a historic city.",
+        "Together with the in-house team we considered who the customer was, drawing on the research that had been collected and our own knowledge of the city and of mixed-use developments. The strategy we created relocated Mowgli and added Flight Club, Six by Nico and Beefy Boys.",
+        "A mix of best in class operators, and the rooftop is now 100% let for the first time since opening."
+      ],
+      "facts": [
+        [
+          "Service",
+          "Leasing"
+        ],
+        [
+          "Client",
+          "Landsec"
+        ],
+        [
+          "Location",
+          "Oxford"
+        ],
+        [
+          "Result",
+          "Rooftop 100% let"
+        ]
+      ],
+      "imageUrl": "https://www.bgp.uk.com/images/case-studies/landsec/westgate/westgate-8.jpg",
+      "galleryUrls": [
+        "https://www.bgp.uk.com/images/case-studies/landsec/westgate/westgate-7.jpg",
+        "https://www.bgp.uk.com/images/case-studies/landsec/westgate/westgate-1.jpg",
+        "https://www.bgp.uk.com/images/case-studies/landsec/westgate/westgate-9.jpg"
+      ],
+      "sortOrder": 3,
+      "published": true
+    },
+    {
       "slug": "st-christophers-place",
       "title": "St Christopher's Place",
       "service": "Leasing",
@@ -438,7 +511,7 @@
         "https://www.bgp.uk.com/images/case-studies/st-christophers-place-3.jpg",
         "https://www.bgp.uk.com/images/case-studies/st-christophers-place-4.jpg"
       ],
-      "sortOrder": 2,
+      "sortOrder": 4,
       "published": true
     },
     {
@@ -474,7 +547,7 @@
         "https://www.bgp.uk.com/images/case-studies/south-molton-triangle-3.jpg",
         "https://www.bgp.uk.com/images/case-studies/south-molton-triangle-4.jpg"
       ],
-      "sortOrder": 3,
+      "sortOrder": 5,
       "published": true
     },
     {
@@ -510,7 +583,7 @@
         "https://www.bgp.uk.com/images/case-studies/canary-wharf-3.jpg",
         "https://www.bgp.uk.com/images/case-studies/canary-wharf-4.jpg"
       ],
-      "sortOrder": 4,
+      "sortOrder": 6,
       "published": true
     },
     {
@@ -542,7 +615,7 @@
         "https://www.bgp.uk.com/images/case-studies/the-royal-exchange-3.jpg",
         "https://www.bgp.uk.com/images/case-studies/the-royal-exchange-4.jpg"
       ],
-      "sortOrder": 5,
+      "sortOrder": 7,
       "published": true
     },
     {
@@ -578,7 +651,7 @@
       ],
       "imageUrl": "https://www.bgp.uk.com/images/city-towers.jpg",
       "galleryUrls": [],
-      "sortOrder": 6,
+      "sortOrder": 8,
       "published": true
     },
     {
@@ -618,7 +691,7 @@
       ],
       "imageUrl": "https://www.bgp.uk.com/images/shop-boutique.jpg",
       "galleryUrls": [],
-      "sortOrder": 7,
+      "sortOrder": 9,
       "published": true
     },
     {
@@ -654,7 +727,7 @@
         "https://www.bgp.uk.com/images/gallery/gpe-2.jpg",
         "https://www.bgp.uk.com/images/gallery/onc-3.jpg"
       ],
-      "sortOrder": 8,
+      "sortOrder": 10,
       "published": true
     },
     {
@@ -681,7 +754,7 @@
       ],
       "imageUrl": "https://www.bgp.uk.com/images/principal-place.jpg",
       "galleryUrls": [],
-      "sortOrder": 9,
+      "sortOrder": 11,
       "published": true
     },
     {
@@ -713,7 +786,7 @@
       ],
       "imageUrl": "https://www.bgp.uk.com/images/apartments.jpg",
       "galleryUrls": [],
-      "sortOrder": 10,
+      "sortOrder": 12,
       "published": true
     },
     {
@@ -741,7 +814,7 @@
         "https://www.bgp.uk.com/images/gallery/bullring-2.jpg",
         "https://www.bgp.uk.com/images/gallery/bullring-3.jpg"
       ],
-      "sortOrder": 11,
+      "sortOrder": 13,
       "published": true
     },
     {
@@ -769,7 +842,7 @@
         "https://www.bgp.uk.com/images/gallery/onc-3.jpg",
         "https://www.bgp.uk.com/images/gallery/onc-2.jpg"
       ],
-      "sortOrder": 12,
+      "sortOrder": 14,
       "published": true
     },
     {
@@ -797,7 +870,7 @@
         "https://www.bgp.uk.com/images/case-studies/the-royal-exchange-3.jpg",
         "https://www.bgp.uk.com/images/case-studies/the-royal-exchange-4.jpg"
       ],
-      "sortOrder": 13,
+      "sortOrder": 15,
       "published": true
     },
     {
@@ -825,7 +898,7 @@
       ],
       "imageUrl": null,
       "galleryUrls": [],
-      "sortOrder": 14,
+      "sortOrder": 16,
       "published": true
     },
     {
@@ -856,7 +929,7 @@
         "https://www.bgp.uk.com/images/case-studies/percival-neal-street-2.jpg",
         "https://www.bgp.uk.com/images/case-studies/percival-neal-street-3.jpg"
       ],
-      "sortOrder": 15,
+      "sortOrder": 17,
       "published": true
     },
     {
@@ -887,7 +960,7 @@
         "https://www.bgp.uk.com/images/case-studies/atis-loxton-walk-2.jpg",
         "https://www.bgp.uk.com/images/case-studies/atis-loxton-walk-3.jpg"
       ],
-      "sortOrder": 16,
+      "sortOrder": 18,
       "published": true
     },
     {
@@ -918,7 +991,7 @@
         "https://www.bgp.uk.com/images/case-studies/masaj-islington-square-2.jpg",
         "https://www.bgp.uk.com/images/case-studies/masaj-islington-square-3.jpg"
       ],
-      "sortOrder": 17,
+      "sortOrder": 19,
       "published": true
     }
   ],
