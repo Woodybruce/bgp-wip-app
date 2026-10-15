@@ -95,6 +95,13 @@ async function addUnitFile(unitId: string, data: Buffer, fileName: string, mimeT
  *  logo-shaped; the brochure vision classifier (Haiku) keeps exteriors /
  *  interiors and drops plans, maps and logos; the hero goes in first so the
  *  website leads with it. Replaces earlier page-render photos. */
+/** A copy small enough for the vision classifier (10 MB request limit;
+ *  poppler's lossless PNGs of brochure photos can be 25 MB+). */
+async function classifierCopy(sharp: any, buffer: Buffer): Promise<{ buffer: Buffer; mimeType: string }> {
+  if (!sharp || buffer.length < 3_000_000) return { buffer, mimeType: buffer[0] === 0x89 ? "image/png" : "image/jpeg" };
+  try { return { buffer: await sharp(buffer).resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer(), mimeType: "image/jpeg" }; }
+  catch { return { buffer, mimeType: "image/jpeg" }; }
+}
 export const EXTRACTED_PHOTO_PATTERN = "% — %.jpg"; // "<unit> — hero 1.jpg", "… — internal 2.jpg"
 export async function photosFromBrochure(unitId: string, pdf: Buffer, opts: { max?: number; replacePageRenders?: boolean; replaceExtracted?: boolean; label?: string } = {}): Promise<{ added: number; removedPageRenders: number; kinds: string[] }> {
   const max = opts.max ?? 6;
@@ -132,7 +139,8 @@ export async function photosFromBrochure(unitId: string, pdf: Buffer, opts: { ma
     const worker = async () => {
       while (i < cands.length) {
         const c = cands[i++];
-        const r = await classifyBrochureImage({ buffer: c.buffer, mimeType: "image/jpeg" }).catch(() => null);
+        const small = await classifierCopy(sharp, c.buffer);
+        const r = await classifyBrochureImage(small).catch(() => null);
         if (!r) continue;                                  // classifier unavailable → keep by size
         c.kind = r.kind;
         c.rank = r.isUseful && r.kind in order ? order[r.kind] : 9;
@@ -210,7 +218,7 @@ export async function plansFromBrochure(unitId: string, pdf: Buffer, opts: { max
         const meta = sharp ? await sharp(img.buffer).metadata() : { width: 0, height: 0 };
         const w = meta.width || 0, h = meta.height || 0;
         if (w < 500 || h < 400) continue;
-        const r = await classifyBrochureImage({ buffer: img.buffer, mimeType: img.mimeType }).catch(() => null);
+        const r = await classifyBrochureImage(await classifierCopy(sharp, img.buffer)).catch(() => null);
         if (!r || r.kind !== "floor_plan") continue;
         const buffer = sharp ? await sharp(img.buffer).jpeg({ quality: 88 }).toBuffer() : img.buffer;
         cands.push({ buffer, kind: "floor plan", area: w * h });
