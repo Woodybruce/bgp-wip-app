@@ -419,7 +419,7 @@ const PAGE_PROMPT = `This is one page of a UK commercial property brochure. Deci
 { "kind": "floor_plan" | "site_plan" | "location_plan" | "other", "confidence": "high"|"medium"|"low" }
 
 - floor_plan: a floor plan or unit layout drawing (walls, rooms, areas, "Ground floor", "Basement"), even with a sidebar of areas or text
-- site_plan: a scheme / block / master plan showing units or buildings across a site or estate, a leasing plan, a unit plan of a shopping centre
+- site_plan: any scheme plan: a block, master or leasing plan of a site, estate or shopping centre; a Goad plan or similar retail street plan with shop units marked; a street or town-centre plan showing occupiers; a multi-let plan of a scheme with the tenants named on the units (even when a key, areas or notes sit beside it)
 - location_plan: a map of the area, transport links, catchment
 - other: photographs, text pages, covers, contact pages, mixed pages where the plan is only a small part`;
 

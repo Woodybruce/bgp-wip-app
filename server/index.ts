@@ -3168,9 +3168,9 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
   // brochure already filed, for units that have no plans yet.
   setTimeout(async () => {
     try {
-      const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'brochure_plans_2026_10_15'`);
+      const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'brochure_plans_2026_10_15b'`);
       if (done.rows.length) return;
-      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('brochure_plans_2026_10_15', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('brochure_plans_2026_10_15b', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
       const { plansFromBrochure } = await import("./letting-tracker-chat");
       const { getFile } = await import("./file-storage");
       const { rows } = await pool.query(`
