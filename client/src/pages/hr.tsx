@@ -3202,6 +3202,12 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
   };
   // Immediate save — money fields on commit, and the status buttons (which
   // carry any still-pending text edits along in the same PATCH).
+  // Explicit Save beside Submit (Woody, 2026-10-15): field edits already
+  // autosave on blur, but people want to press something and see "Saved".
+  const saveClick = async () => {
+    if (!pendingRef.current) { setSaveState("saved"); return; }
+    await flush();
+  };
   const saveNow = (fields: Record<string, any>) => {
     if (!editingId) return;
     const { status, ...rest } = fields;
@@ -3513,6 +3519,11 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                   <span className="inline-flex items-center text-[11px] text-muted-foreground px-1" data-testid="wip-autopull-status">
                     <Loader2 className="w-3 h-3 mr-1 animate-spin" /> Pulling from WIP…
                   </span>
+                )}
+                {editing.status !== "completed" && (isOwn || isAdmin) && (
+                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void saveClick()} disabled={saveState === "saving"} data-testid="button-review-save">
+                    {saveState === "saving" ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : saveState === "saved" ? <Check className="w-3.5 h-3.5 mr-1" /> : null}Save
+                  </Button>
                 )}
                 {editing.status === "draft" && isOwn && (
                   <Button size="sm" className="h-7 text-xs" onClick={() => saveNow({ status: "submitted" })}>
@@ -3885,7 +3896,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                   )}
                 </span>
                 {editing.status === "draft" && (
-                  <>Draft — your field edits autosave as you type. {isOwn ? "Click Submit when you're ready for your manager to review." : isAdmin ? "After the in-person meeting, click Mark review complete to finalise without waiting for the employee to submit." : "Waiting for the reviewee to submit."}</>
+                  <>Draft — field edits autosave as you type; Save stores them now. {isOwn ? "Click Submit when you're ready for your manager to review." : isAdmin ? "After the in-person meeting, click Mark review complete to finalise without waiting for the employee to submit." : "Waiting for the reviewee to submit."}</>
                 )}
                 {editing.status === "submitted" && (
                   <>Submitted to manager{(editing as any).submitted_at ? ` on ${new Date((editing as any).submitted_at).toLocaleDateString("en-GB")}` : ""}. {isAdmin ? "Add manager comments above, then mark complete." : "Awaiting manager review."}</>
@@ -3895,6 +3906,11 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 )}
               </div>
               <div className="flex gap-2">
+                {editing.status !== "completed" && (isOwn || isAdmin) && (
+                  <Button size="sm" variant="outline" className="h-8" onClick={() => void saveClick()} disabled={saveState === "saving"} data-testid="button-review-save-footer">
+                    {saveState === "saving" ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : saveState === "saved" ? <Check className="w-3 h-3 mr-1" /> : null}Save
+                  </Button>
+                )}
                 {editing.status === "draft" && isOwn && (
                   <Button
                     size="sm"
