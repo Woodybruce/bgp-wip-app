@@ -78,7 +78,7 @@ async function chatMediaBuffer(name: string): Promise<{ data: Buffer; originalNa
   return byName ? { data: byName.data, originalName: byName.originalName || n, contentType: byName.contentType || "application/pdf" } : null;
 }
 
-async function addUnitFile(unitId: string, data: Buffer, fileName: string, mimeType: string, category: "brochure" | "photo"): Promise<string> {
+async function addUnitFile(unitId: string, data: Buffer, fileName: string, mimeType: string, category: "brochure" | "photo" | "floorplan"): Promise<string> {
   const { unitMarketingFiles } = await import("@shared/schema");
   const ext = (fileName.toLowerCase().match(/\.[a-z0-9]+$/) || [mimeType.startsWith("image/") ? ".jpg" : ".pdf"])[0];
   const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
@@ -181,22 +181,95 @@ export async function photosFromBrochure(unitId: string, pdf: Buffer, opts: { ma
   return { added: keep.length, removedPageRenders, kinds: keep.map(c => c.kind) };
 }
 
+/** The brochure's floor plans and scheme/site plans → the unit's Floor plans
+ *  (Woody, 2026-10-15). Plans are vector drawings, so every page is
+ *  rendered and judged by the page classifier; embedded raster plans are
+ *  taken too. Files are named "<unit> — floor plan 1.jpg" / "— site plan
+ *  2.jpg" under category "floorplan", so the website and the tracker keep
+ *  them apart from photographs. */
+export const EXTRACTED_PLAN_PATTERN = "% — % plan %.jpg";
+export async function plansFromBrochure(unitId: string, pdf: Buffer, opts: { max?: number; replaceExtracted?: boolean; label?: string } = {}): Promise<{ added: number; replaced: number; kinds: string[] }> {
+  const max = opts.max ?? 4;
+  const { unitMarketingFiles } = await import("@shared/schema");
+  const { eq, and, like } = await import("drizzle-orm");
+  const existing = await db.select().from(unitMarketingFiles).where(and(eq(unitMarketingFiles.unitId, unitId), eq(unitMarketingFiles.category, "floorplan")));
+  const extractedOld = existing.filter(f => / — .* plan \d+\.jpg$/.test(f.fileName || ""));
+  if (existing.length > extractedOld.length) return { added: 0, replaced: 0, kinds: [] };   // someone uploaded real plans
+  if (extractedOld.length && !opts.replaceExtracted) return { added: 0, replaced: 0, kinds: [] };
+  let sharp: any = null;
+  try { sharp = (await import("sharp")).default; } catch {}
+  type Cand = { buffer: Buffer; kind: string; area: number };
+  const cands: Cand[] = [];
+  const { classifyBrochureImage, classifyBrochurePage } = await import("./brochure-vision");
+  // 1. Embedded raster plans.
+  try {
+    const { extractImagesFromPdf } = await import("./pdf-image-extract");
+    const raw = await extractImagesFromPdf({ pdfBuffer: pdf, maxImages: 40, minBytes: 20_000 });
+    for (const img of raw) {
+      try {
+        const meta = sharp ? await sharp(img.buffer).metadata() : { width: 0, height: 0 };
+        const w = meta.width || 0, h = meta.height || 0;
+        if (w < 500 || h < 400) continue;
+        const r = await classifyBrochureImage({ buffer: img.buffer, mimeType: img.mimeType }).catch(() => null);
+        if (!r || r.kind !== "floor_plan") continue;
+        const buffer = sharp ? await sharp(img.buffer).jpeg({ quality: 88 }).toBuffer() : img.buffer;
+        cands.push({ buffer, kind: "floor plan", area: w * h });
+      } catch {}
+    }
+  } catch {}
+  // 2. Pages that are plans (vector drawings).
+  try {
+    const { rasterisePdfPage } = await import("./pdf-image-extract");
+    for (let page = 1; page <= 14; page++) {
+      const buf = await rasterisePdfPage({ pdfBuffer: pdf, page, dpi: 120 }).catch(() => null);
+      if (!buf) break;
+      const r = await classifyBrochurePage(buf).catch(() => null);
+      if (!r || (r.kind !== "floor_plan" && r.kind !== "site_plan") || r.confidence === "low") continue;
+      cands.push({ buffer: buf, kind: r.kind === "site_plan" ? "site plan" : "floor plan", area: 10 ** 9 + page });
+    }
+  } catch {}
+  const keep = cands.sort((a, b) => a.kind.localeCompare(b.kind) || a.area - b.area).slice(0, max);
+  if (!keep.length) return { added: 0, replaced: 0, kinds: [] };
+  let replaced = 0;
+  for (const f of extractedOld) {
+    const key = (f.filePath || "").replace(/^\/uploads\//, "");
+    try { const { deleteFile } = await import("./file-storage"); if (key) await deleteFile(key); } catch {}
+    await db.delete(unitMarketingFiles).where(eq(unitMarketingFiles.id, f.id));
+    replaced++;
+  }
+  const unit: any = await storage.getAvailableUnit(unitId);
+  const base = (opts.label || unit?.unitName || "unit").replace(/[\\/:*?"<>|]+/g, " ").trim();
+  let n = 0;
+  for (const c of keep) {
+    n++;
+    await addUnitFile(unitId, c.buffer, `${base} — ${c.kind} ${n}.jpg`, "image/jpeg", "floorplan");
+  }
+  void like;
+  return { added: keep.length, replaced, kinds: keep.map(c => c.kind) };
+}
+
 /** Re-pull the listing photos from the brochure PDFs already filed under a unit. */
-export async function refreshUnitPhotosFromBrochures(unitId: string, opts: { replaceExtracted?: boolean } = {}): Promise<{ added: number; removedPageRenders: number; kinds: string[]; brochures: number }> {
+export async function refreshUnitPhotosFromBrochures(unitId: string, opts: { replaceExtracted?: boolean; plans?: boolean } = {}): Promise<{ added: number; removedPageRenders: number; kinds: string[]; brochures: number; plans: number }> {
   const { unitMarketingFiles } = await import("@shared/schema");
   const { eq, and } = await import("drizzle-orm");
   const files = await db.select().from(unitMarketingFiles).where(and(eq(unitMarketingFiles.unitId, unitId), eq(unitMarketingFiles.category, "brochure")));
   const pdfs = files.filter(f => (f.mimeType || "").includes("pdf") && (f.fileType || "") !== "infosheet");
   let total = { added: 0, removedPageRenders: 0, kinds: [] as string[] };
+  let plans = 0;
   for (const f of pdfs) {
     const key = (f.filePath || "").replace(/^\/uploads\//, "");
     const stored = key ? await getFile(key) : null;
     if (!stored) continue;
-    const r = await photosFromBrochure(unitId, stored.data, { replacePageRenders: total.added === 0, replaceExtracted: opts.replaceExtracted && total.added === 0, max: 6 - total.added });
-    total = { added: total.added + r.added, removedPageRenders: total.removedPageRenders + r.removedPageRenders, kinds: [...total.kinds, ...r.kinds] };
-    if (total.added >= 6) break;
+    if (total.added < 6) {
+      const r = await photosFromBrochure(unitId, stored.data, { replacePageRenders: total.added === 0, replaceExtracted: opts.replaceExtracted && total.added === 0, max: 6 - total.added });
+      total = { added: total.added + r.added, removedPageRenders: total.removedPageRenders + r.removedPageRenders, kinds: [...total.kinds, ...r.kinds] };
+    }
+    if (opts.plans !== false && plans < 4) {
+      const pr = await plansFromBrochure(unitId, stored.data, { replaceExtracted: opts.replaceExtracted && plans === 0, max: 4 - plans }).catch(() => ({ added: 0 }));
+      plans += pr.added;
+    }
   }
-  return { ...total, brochures: pdfs.length };
+  return { ...total, brochures: pdfs.length, plans };
 }
 
 /** The website's five requirements (server/routes.ts publicMissing). */

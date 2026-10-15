@@ -58,7 +58,8 @@ export default function ListingDetail() {
     );
   }
 
-  const images = listing.files.filter(isImage);
+  const images = listing.files.filter((f) => isImage(f) && f.category !== "floorplan");
+  const plans = listing.files.filter((f) => isImage(f) && f.category === "floorplan");
   const brochurePdf = listing.files.find((f) => f.mimeType === "application/pdf");
   const brochureHref = listing.brochureUrl ?? (brochurePdf ? fileUrl(brochurePdf.id) : null);
   const mailSubject = encodeURIComponent(`Viewing request — ${listing.unitName}`);
@@ -138,6 +139,18 @@ export default function ListingDetail() {
                 {images.slice(1, 5).map((f) => (
                   <img key={f.id} src={fileUrl(f.id)} alt="" className="aspect-[4/3] w-full object-cover" style={{ objectPosition: focalPosition(f) }} />
                 ))}
+              </div>
+            )}
+            {plans.length > 0 && (
+              <div className="mt-8">
+                <span className="section-label">Plans</span>
+                <div className={`mt-3 grid gap-3 ${plans.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
+                  {plans.slice(0, 4).map((f) => (
+                    <a key={f.id} href={fileUrl(f.id)} target="_blank" rel="noopener" className="img-frame block border border-bgp-line">
+                      <img src={fileUrl(f.id)} alt={f.fileName || "Plan"} className="w-full object-contain bg-white" />
+                    </a>
+                  ))}
+                </div>
               </div>
             )}
             {listing.marketingStatus === "Under Offer" && (

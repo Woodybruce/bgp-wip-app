@@ -407,3 +407,41 @@ export async function classifyBrochureImage(args: {
     return null;
   }
 }
+
+
+// ─── Page classifier: is this brochure page a plan? ──────────────────────
+// Floor plans and scheme/site plans are almost always vector drawings, so
+// pdfimages never sees them; the page itself has to be rendered and judged
+// (Woody, 2026-10-15: "not grabbing floor plans or scheme plans").
+export type BrochurePageKind = "floor_plan" | "site_plan" | "location_plan" | "other";
+const PAGE_PROMPT = `This is one page of a UK commercial property brochure. Decide what the page mainly shows. Respond with ONLY this JSON (no markdown):
+
+{ "kind": "floor_plan" | "site_plan" | "location_plan" | "other", "confidence": "high"|"medium"|"low" }
+
+- floor_plan: a floor plan or unit layout drawing (walls, rooms, areas, "Ground floor", "Basement"), even with a sidebar of areas or text
+- site_plan: a scheme / block / master plan showing units or buildings across a site or estate, a leasing plan, a unit plan of a shopping centre
+- location_plan: a map of the area, transport links, catchment
+- other: photographs, text pages, covers, contact pages, mixed pages where the plan is only a small part`;
+
+export async function classifyBrochurePage(buffer: Buffer): Promise<{ kind: BrochurePageKind; confidence: "high" | "medium" | "low" } | null> {
+  if (!process.env.ANTHROPIC_API_KEY) return null;
+  try {
+    const msg = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 120,
+      messages: [{ role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: "image/jpeg", data: buffer.toString("base64") } },
+        { type: "text", text: PAGE_PROMPT },
+      ] }],
+    });
+    const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    const raw = JSON.parse(m[0]);
+    const kind: BrochurePageKind = ["floor_plan", "site_plan", "location_plan"].includes(raw?.kind) ? raw.kind : "other";
+    return { kind, confidence: ["high", "medium", "low"].includes(raw?.confidence) ? raw.confidence : "medium" };
+  } catch (err: any) {
+    console.warn("[brochure-vision] page classify failed:", err?.message);
+    return null;
+  }
+}

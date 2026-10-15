@@ -3164,6 +3164,36 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     }
   }, 120_000);
 
+  // One-off (Woody, 2026-10-15): floor plans and scheme plans from every
+  // brochure already filed, for units that have no plans yet.
+  setTimeout(async () => {
+    try {
+      const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'brochure_plans_2026_10_15'`);
+      if (done.rows.length) return;
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('brochure_plans_2026_10_15', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+      const { plansFromBrochure } = await import("./letting-tracker-chat");
+      const { getFile } = await import("./file-storage");
+      const { rows } = await pool.query(`
+        SELECT b.unit_id, b.file_path, u.unit_name FROM unit_marketing_files b
+          JOIN available_units u ON u.id = b.unit_id
+         WHERE b.category = 'brochure' AND b.mime_type LIKE '%pdf%' AND COALESCE(b.file_type, '') <> 'infosheet'
+           AND NOT EXISTS (SELECT 1 FROM unit_marketing_files p WHERE p.unit_id = b.unit_id AND p.category = 'floorplan')
+         ORDER BY b.unit_id, b.created_at`);
+      let perUnit: Record<string, number> = {};
+      for (const r of rows) {
+        if ((perUnit[r.unit_id] || 0) >= 4) continue;
+        const key = String(r.file_path || "").replace(/^\/uploads\//, "");
+        const stored = key ? await getFile(key).catch(() => null) : null;
+        if (!stored) continue;
+        const res = await plansFromBrochure(r.unit_id, stored.data, { label: r.unit_name || undefined, max: 4 - (perUnit[r.unit_id] || 0) }).catch((e: any) => ({ added: 0, replaced: 0, kinds: [], error: e?.message }));
+        perUnit[r.unit_id] = (perUnit[r.unit_id] || 0) + res.added;
+        console.log(`[brochure-plans] ${r.unit_name || r.unit_id}: ${res.added} added (${res.kinds.join(", ")})${(res as any).error ? ` (${(res as any).error})` : ""}`);
+      }
+    } catch (e: any) {
+      console.warn("[brochure-plans]", e?.message);
+    }
+  }, 180_000);
+
   // ── One-off (per Woody, 2026-09-28): Canary Wharf Group runs "No PO No
   // Pay", so its invoices need a PO number. Guarded on requires_po never
   // having been set (NULL), so it applies once and a later change on the
