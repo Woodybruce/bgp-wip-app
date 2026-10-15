@@ -213,6 +213,34 @@ export const CASE_STUDIES: CaseStudy[] = [
   },
   // Leasing strip now carries four (Woody, 2026-10-12). Copy below is a
   // first draft for the leasing team to confirm; photos to follow.
+  // Shopping centre case studies (Woody, 2026-10-15), Landsec photography.
+  {
+    slug: "landsec",
+    title: "Landsec",
+    service: "Leasing",
+    image: "/images/case-studies/landsec/bluewater/bluewater-1.jpg",
+    gallery: ["/images/case-studies/landsec/st-davids/st-davids-2.jpg", "/images/case-studies/landsec/gunwharf-quays/gunwharf-quays-5.jpg", "/images/case-studies/landsec/trinity/trinity-2.jpg"],
+    blurb: "Strategic advice and leasing across Landsec's shopping centre and outlet portfolio for all food and beverage and leisure.",
+    facts: [["Service", "Leasing"], ["Client", "Landsec"], ["Sector", "Shopping centres and outlets"], ["Focus", "F&B and leisure"]],
+    body: [
+      "We provide strategic advice and leasing across Landsec's shopping centre and outlet portfolio for all F&B and leisure, always considering what is right for the specific asset: curating the best of the national operators, searching out an independent to transform a unique space, or adding a large leisure anchor to a major city centre.",
+      "Our team considers what is right for each location while working as part of the internal Landsec team, so that what we deliver is right for the customer.",
+    ],
+  },
+  {
+    slug: "westgate-oxford",
+    title: "Westgate, Oxford",
+    service: "Leasing",
+    image: "/images/case-studies/landsec/westgate/westgate-8.jpg",
+    gallery: ["/images/case-studies/landsec/westgate/westgate-7.jpg", "/images/case-studies/landsec/westgate/westgate-1.jpg", "/images/case-studies/landsec/westgate/westgate-9.jpg"],
+    blurb: "A rooftop terrace relet with best in class operators, and 100% let for the first time since opening.",
+    facts: [["Service", "Leasing"], ["Client", "Landsec"], ["Location", "Oxford"], ["Result", "Rooftop 100% let"]],
+    body: [
+      "The rooftop terrace at Westgate, Oxford was an established pitch, but it was lacking dwell time. The team considered what was missing and what would increase footfall and give people reasons to visit this iconic location in the heart of such a historic city.",
+      "Together with the in-house team we considered who the customer was, drawing on the research that had been collected and our own knowledge of the city and of mixed-use developments. The strategy we created relocated Mowgli and added Flight Club, Six by Nico and Beefy Boys.",
+      "A mix of best in class operators, and the rooftop is now 100% let for the first time since opening.",
+    ],
+  },
   {
     slug: "st-christophers-place",
     title: "St Christopher's Place",
@@ -832,6 +860,7 @@ export interface LeasingSector {
   body: string[];
   howWeHelp?: string[];
   contacts: string[];
+  caseStudies?: string[]; // case-study slugs shown in a strip on the sector page
 }
 
 export const LEASING_INTRO = {
@@ -865,6 +894,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
     ],
     howWeHelp: ["Leasing and strategic advice", "Asset management", "Lease consultancy", "Investment advice"],
     contacts: ["Millie Edwards", "Victoria Broadhead", "Emily Dumbell", "Alex Todd", "Ben Sykes", "Kate Martin", "Luke Donohoe"],
+    caseStudies: ["landsec", "westgate-oxford"],
   },
   {
     slug: "london-estates",
@@ -919,27 +949,27 @@ export interface ShoppingCentre {
 
 // From the "BGP shopping centres" table in Emmy's copy document.
 export const SHOPPING_CENTRES: ShoppingCentre[] = [
-  { slug: "one-new-change", name: "One New Change", location: "London", image: "/images/centres/one-new-change.jpg", gallery: [{ src: "/images/gallery/onc-2.jpg", caption: "Rooftop dining at One New Change, for Landsec" }, { src: "/images/gallery/onc-3.jpg", caption: "One New Change, Cheapside, for Landsec" }, { src: "/images/gallery/onc-4.jpg", caption: "One New Change, Cheapside, for Landsec" }], contacts: ["Charlotte Roberts", "Emily Cann"], blurb: "Landsec's mixed-use destination beside St Paul's Cathedral, with a rooftop terrace and strong City lunch and after-work trade." },
-  { slug: "cardinal-place", name: "Cardinal Place", location: "London", image: "/images/centres/cardinal-place.jpg", gallery: [{ src: "/images/gallery/cardinal-1.jpg", caption: "Cardinal Place, Victoria, for Landsec" }, { src: "/images/clients/victoria-street.jpg", caption: "Victoria Street, for Landsec" }], contacts: ["Charlotte Roberts", "Emily Cann"], blurb: "Retail and dining at the heart of Victoria, serving the office and commuter catchment around Victoria Station." },
+  { slug: "one-new-change", name: "One New Change", location: "London", image: "/images/case-studies/landsec/one-new-change/one-new-change-3.jpg", gallery: [{ src: "/images/case-studies/landsec/one-new-change/one-new-change-1.jpg", caption: "One New Change, Cheapside, for Landsec" }, { src: "/images/case-studies/landsec/one-new-change/one-new-change-2.jpg", caption: "One New Change, Cheapside, for Landsec" }, { src: "/images/case-studies/landsec/one-new-change/one-new-change-5.jpg", caption: "One New Change, Cheapside, for Landsec" }], contacts: ["Charlotte Roberts", "Emily Cann"], blurb: "Landsec's mixed-use destination beside St Paul's Cathedral, with a rooftop terrace and strong City lunch and after-work trade." },
+  { slug: "cardinal-place", name: "Cardinal Place", location: "London", image: "/images/case-studies/landsec/cardinal-place/cardinal-place-1.jpg", gallery: [{ src: "/images/case-studies/landsec/cardinal-place/cardinal-place-2.jpg", caption: "Cardinal Place, Victoria, for Landsec" }, { src: "/images/gallery/cardinal-1.jpg", caption: "Cardinal Place, Victoria, for Landsec" }, { src: "/images/clients/victoria-street.jpg", caption: "Cardinal Place, Victoria, for Landsec" }], contacts: ["Charlotte Roberts", "Emily Cann"], blurb: "Retail and dining at the heart of Victoria, serving the office and commuter catchment around Victoria Station." },
   { slug: "o2-finchley-road", name: "O2 Finchley Road", location: "London", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "A leisure-led north London centre anchored by cinema and gym, serving a dense residential catchment." },
   { slug: "lewisham-shopping-centre", name: "Lewisham Shopping Centre", location: "London", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "The retail heart of Lewisham town centre, at the centre of a major south-east London regeneration area." },
   { slug: "brent-cross", name: "Brent Cross", location: "London", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "One of the UK's first major shopping centres, in north London, with a new town centre rising alongside it." },
-  { slug: "bluewater", name: "Bluewater", location: "Kent", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "The south-east's landmark regional shopping and leisure destination, set in a former chalk quarry in Kent." },
+  { slug: "bluewater", name: "Bluewater", location: "Kent", image: "/images/case-studies/landsec/bluewater/bluewater-1.jpg", gallery: [{ src: "/images/case-studies/landsec/bluewater/bluewater-2.jpg", caption: "Bluewater, Kent, for Landsec" }, { src: "/images/case-studies/landsec/bluewater/bluewater-3.jpg", caption: "Bluewater, Kent, for Landsec" }, { src: "/images/case-studies/landsec/bluewater/bluewater-4.jpg", caption: "Bluewater, Kent, for Landsec" }], contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "The south-east's landmark regional shopping and leisure destination, set in a former chalk quarry in Kent." },
   { slug: "oracle", name: "The Oracle", location: "Reading", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "Reading's riverside shopping and dining destination along the Kennet." },
-  { slug: "westgate", name: "Westgate", location: "Oxford", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "Oxford's city-centre shopping and dining destination, with a rooftop restaurant terrace." },
-  { slug: "gunwharf-quays", name: "Gunwharf Quays", location: "Portsmouth", contacts: ["Victoria Broadhead", "Emily Dumbell"], blurb: "Portsmouth's waterfront outlet shopping and leisure destination beneath the Spinnaker Tower." },
+  { slug: "westgate", name: "Westgate", location: "Oxford", image: "/images/case-studies/landsec/westgate/westgate-14.jpg", gallery: [{ src: "/images/case-studies/landsec/westgate/westgate-5.jpg", caption: "Westgate, Oxford, for Landsec" }, { src: "/images/case-studies/landsec/westgate/westgate-12.jpg", caption: "Westgate, Oxford, for Landsec" }, { src: "/images/case-studies/landsec/westgate/westgate-8.jpg", caption: "Westgate, Oxford, for Landsec" }], contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "Oxford's city-centre shopping and dining destination, with a rooftop restaurant terrace." },
+  { slug: "gunwharf-quays", name: "Gunwharf Quays", location: "Portsmouth", image: "/images/case-studies/landsec/gunwharf-quays/gunwharf-quays-5.jpg", gallery: [{ src: "/images/case-studies/landsec/gunwharf-quays/gunwharf-quays-1.jpg", caption: "Gunwharf Quays, Portsmouth, for Landsec" }, { src: "/images/case-studies/landsec/gunwharf-quays/gunwharf-quays-3.jpg", caption: "Gunwharf Quays, Portsmouth, for Landsec" }, { src: "/images/case-studies/landsec/gunwharf-quays/gunwharf-quays-4.jpg", caption: "Gunwharf Quays, Portsmouth, for Landsec" }], contacts: ["Victoria Broadhead", "Emily Dumbell"], blurb: "Portsmouth's waterfront outlet shopping and leisure destination beneath the Spinnaker Tower." },
   { slug: "bullring", name: "Bullring", location: "Birmingham", image: "/images/centres/bullring.jpg", gallery: [{ src: "/images/gallery/bullring-1.jpg", caption: "The Bull, Bullring, Birmingham, for Hammerson" }, { src: "/images/gallery/bullring-2.jpg", caption: "Inside Bullring, for Hammerson" }, { src: "/images/gallery/bullring-3.jpg", caption: "St Martin's Square, Bullring, for Hammerson" }], contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "Birmingham's flagship city-centre shopping destination, home to Selfridges." },
   { slug: "grand-central", name: "Grand Central", location: "Birmingham", contacts: ["Charlotte Roberts", "Emily Dumbell", "Alex Todd"], blurb: "The dining and retail destination above Birmingham New Street station." },
-  { slug: "trinity-leeds", name: "Trinity Leeds", location: "Leeds", contacts: ["Emily Dumbell", "Alex Todd"], blurb: "The Leeds city-centre destination mixing retail with dining and leisure under its glass roof." },
-  { slug: "white-rose", name: "White Rose", location: "Leeds", contacts: ["Emily Dumbell", "Alex Todd"], blurb: "Leeds' out-of-town shopping and leisure centre, with cinema and dining." },
-  { slug: "liverpool-one", name: "Liverpool One", location: "Liverpool", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "The 42-acre open-air shopping district at the heart of Liverpool city centre." },
+  { slug: "trinity-leeds", name: "Trinity Leeds", location: "Leeds", image: "/images/case-studies/landsec/trinity/trinity-2.jpg", gallery: [{ src: "/images/case-studies/landsec/trinity/trinity-1.jpg", caption: "Trinity Leeds, for Landsec" }, { src: "/images/case-studies/landsec/trinity/trinity-3.jpg", caption: "Trinity Leeds, for Landsec" }], contacts: ["Emily Dumbell", "Alex Todd"], blurb: "The Leeds city-centre destination mixing retail with dining and leisure under its glass roof." },
+  { slug: "white-rose", name: "White Rose", location: "Leeds", image: "/images/case-studies/landsec/white-rose/white-rose-3.jpg", gallery: [{ src: "/images/case-studies/landsec/white-rose/white-rose-2.jpg", caption: "White Rose, Leeds, for Landsec" }, { src: "/images/case-studies/landsec/white-rose/white-rose-4.jpg", caption: "White Rose, Leeds, for Landsec" }, { src: "/images/case-studies/landsec/white-rose/white-rose-5.jpg", caption: "White Rose, Leeds, for Landsec" }], contacts: ["Emily Dumbell", "Alex Todd"], blurb: "Leeds' out-of-town shopping and leisure centre, with cinema and dining." },
+  { slug: "liverpool-one", name: "Liverpool One", location: "Liverpool", image: "/images/case-studies/landsec/liverpool-one/liverpool-one-1.jpg", gallery: [{ src: "/images/case-studies/landsec/liverpool-one/liverpool-one-2.jpg", caption: "Liverpool ONE, for Landsec" }, { src: "/images/case-studies/landsec/liverpool-one/liverpool-one-3.jpg", caption: "Liverpool ONE, for Landsec" }], contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "The 42-acre open-air shopping district at the heart of Liverpool city centre." },
   { slug: "the-bridges", name: "The Bridges", location: "Sunderland", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "Sunderland city centre's principal shopping centre." },
   { slug: "tunsgate", name: "Tunsgate Quarter", location: "Guildford", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "Guildford's boutique shopping and dining quarter, just off the High Street." },
   { slug: "paradise", name: "Paradise", location: "Birmingham", contacts: ["Victoria Broadhead"], blurb: "Birmingham's new mixed-use quarter beside the Town Hall and Chamberlain Square." },
-  { slug: "braintree-outlet", name: "Braintree Village", location: "Braintree", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "Essex's outlet shopping destination, just off the A120." },
-  { slug: "clarks-village", name: "Clarks Village", location: "Street, Somerset", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "The UK's first purpose-built outlet village, on the site of the original Clarks factory." },
+  { slug: "braintree-outlet", name: "Braintree Village", location: "Braintree", image: "/images/case-studies/landsec/braintree-village/braintree-village-2.jpg", gallery: [{ src: "/images/case-studies/landsec/braintree-village/braintree-village-1.jpg", caption: "Braintree Village, for Landsec" }, { src: "/images/case-studies/landsec/braintree-village/braintree-village-3.jpg", caption: "Braintree Village, for Landsec" }], contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "Essex's outlet shopping destination, just off the A120." },
+  { slug: "clarks-village", name: "Clarks Village", location: "Street, Somerset", image: "/images/case-studies/landsec/clarks-village/clarks-village-1.jpg", gallery: [{ src: "/images/case-studies/landsec/clarks-village/clarks-village-2.jpg", caption: "Clarks Village, Street, for Landsec" }], contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "The UK's first purpose-built outlet village, on the site of the original Clarks factory." },
   { slug: "buchanan-galleries", name: "Buchanan Galleries", location: "Glasgow", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "Glasgow's city-centre shopping centre at the top of Buchanan Street." },
-  { slug: "st-davids", name: "St David's", location: "Cardiff", contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "Cardiff's city-centre shopping destination, anchored by John Lewis." },
+  { slug: "st-davids", name: "St David's", location: "Cardiff", image: "/images/case-studies/landsec/st-davids/st-davids-2.jpg", gallery: [{ src: "/images/case-studies/landsec/st-davids/st-davids-1.jpg", caption: "St David's, Cardiff, for Landsec" }, { src: "/images/case-studies/landsec/st-davids/st-davids-3.jpg", caption: "St David's, Cardiff, for Landsec" }, { src: "/images/case-studies/landsec/st-davids/st-davids-4.jpg", caption: "St David's, Cardiff, for Landsec" }], contacts: ["Victoria Broadhead", "Ben Sykes"], blurb: "Cardiff's city-centre shopping destination, anchored by John Lewis." },
 ];
 
 // Investment and Brand Representation page copy from Emmy's document.

@@ -1,8 +1,9 @@
 import { Link, useRoute } from "wouter";
 import KeyContacts from "../components/KeyContacts";
 import Placeholder from "../components/Placeholder";
+import CaseStudyStrip from "../components/CaseStudyStrip";
 import { LEASING_SECTORS, SHOPPING_CENTRES, isDirectorLevel, type Person } from "../lib/content";
-import { useSiteContent } from "../lib/site-content";
+import { findCaseStudy, useSiteContent } from "../lib/site-content";
 
 export const peopleNamed = (team: Person[], names: string[]): Person[] =>
   names.map((n) => team.find((p) => p.name === n)).filter((p): p is Person => !!p && isDirectorLevel(p));
@@ -20,7 +21,8 @@ function NotFound() {
 
 export default function LeasingSector() {
   const [, params] = useRoute("/leasing/sectors/:slug");
-  const { team } = useSiteContent();
+  const content = useSiteContent();
+  const { team } = content;
   const sector = LEASING_SECTORS.find((s) => s.slug === params?.slug);
   if (!sector) return <NotFound />;
   const contacts = peopleNamed(team, sector.contacts);
@@ -76,6 +78,10 @@ export default function LeasingSector() {
             ))}
           </div>
         </section>
+      )}
+
+      {sector.caseStudies && sector.caseStudies.length > 0 && (
+        <CaseStudyStrip caseStudies={sector.caseStudies.map((slug) => findCaseStudy(content, slug)).filter(Boolean) as any} />
       )}
 
       {centres.length > 0 && (

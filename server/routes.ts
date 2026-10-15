@@ -4640,7 +4640,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         const stored = await getFile(`marketing-files/${fileName}`);
         if (stored) {
           res.setHeader("Content-Type", stored.contentType || file.mimeType || "application/octet-stream");
-          res.setHeader("Content-Disposition", `inline; filename="${file.fileName.replace(/"/g, "")}"`);
+          // Brochure-extracted photos carry em dashes in their names; a raw
+          // header value with non-Latin-1 characters throws (2026-10-15).
+          res.setHeader("Content-Disposition", contentDispositionFor(file.fileName, "inline"));
           res.setHeader("Cache-Control", "public, max-age=3600");
           return res.send(stored.data);
         }
@@ -7737,10 +7739,17 @@ These terms are indicative only and do not constitute a binding agreement.`;
         (async () => {
           const have = await db.select({ n: unitMarketingFiles.fileName }).from(unitMarketingFiles)
             .where(and(eq(unitMarketingFiles.unitId, unitId), eq(unitMarketingFiles.category, "photo")));
-          if (have.some(f => !/ - page \d+\.jpg$/.test(f.n || ""))) return;
-          const { photosFromBrochure } = await import("./letting-tracker-chat");
+          if (have.some(f => !/ - page \d+\.jpg$/.test(f.n || ""))) {
+            const { plansFromBrochure } = await import("./letting-tracker-chat");
+            const pl = await plansFromBrochure(unitId, pdfBuf, { label: unit.unitName || undefined });
+            if (pl.added) console.log(`[unit-files] brochure plans for ${unitId}: ${pl.added} added (${pl.kinds.join(", ")})`);
+            return;
+          }
+          const { photosFromBrochure, plansFromBrochure } = await import("./letting-tracker-chat");
           const r = await photosFromBrochure(unitId, pdfBuf, { label: unit.unitName || undefined, replacePageRenders: true });
           console.log(`[unit-files] brochure photos for ${unitId}: ${r.added} added (${r.kinds.join(", ")}), ${r.removedPageRenders} page renders removed`);
+          const pl = await plansFromBrochure(unitId, pdfBuf, { label: unit.unitName || undefined });
+          if (pl.added) console.log(`[unit-files] brochure plans for ${unitId}: ${pl.added} added (${pl.kinds.join(", ")})`);
         })().catch((e: any) => console.warn("[unit-files] brochure photos failed:", e?.message));
       }
       // Photos uploaded against a tracker unit also land in the Image
