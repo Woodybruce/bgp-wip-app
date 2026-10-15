@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ListingCard from "../components/ListingCard";
 import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
@@ -56,6 +56,12 @@ export default function Leasing() {
   const [location, setLocation] = useState("");
   const [type, setType] = useState("");
   const [size, setSize] = useState("");
+  // Nine listings a page with page numbers underneath, so the case studies
+  // and contacts are never pushed below a long run (Woody, 2026-10-15).
+  const PAGE_SIZE = 9;
+  const [page, setPage] = useState(1);
+  const gridTop = useRef<HTMLDivElement>(null);
+  useEffect(() => { setPage(1); }, [location, type, size]);
 
   useEffect(() => {
     fetchListings().then(({ listings, live }) => {
@@ -85,6 +91,12 @@ export default function Leasing() {
       return true;
     });
   }, [listings, location, type, size]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const goTo = (n: number) => {
+    setPage(Math.min(Math.max(1, n), pageCount));
+    gridTop.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
 
   return (
@@ -165,17 +177,30 @@ export default function Leasing() {
           <>
             {/* Horizontal swipe strip — keeps the case study and contacts in
                 view below instead of pushing them down a long grid */}
-            <div className="mt-10 card-strip sm:grid-cols-2 lg:grid-cols-3 sm:gap-x-6 sm:gap-y-12">
-              {filtered.map((l) => (
+            <div ref={gridTop} className="scroll-mt-28 mt-10 card-strip sm:grid-cols-2 lg:grid-cols-3 sm:gap-x-6 sm:gap-y-12">
+              {pageItems.map((l) => (
                 <div key={l.id}>
                   <ListingCard listing={l} />
                 </div>
               ))}
             </div>
-            {filtered.length > 1 && (
+            {pageItems.length > 1 && (
               <p className="mt-2 label-caps text-bgp-ink/40 text-right sm:hidden">
-                {filtered.length} available, swipe for more <span aria-hidden>{"→"}</span>
+                {pageItems.length} on this page, swipe for more <span aria-hidden>{"→"}</span>
               </p>
+            )}
+            {pageCount > 1 && (
+              <nav aria-label="Listing pages" className="mt-10 flex items-center justify-center gap-2 border-t border-bgp-wine/30 pt-6">
+                <button type="button" onClick={() => goTo(page - 1)} disabled={page === 1} className="label-caps px-3 py-2 text-bgp-red disabled:text-bgp-ink/30 hover:text-bgp-wine">‹ Prev</button>
+                {Array.from({ length: pageCount }, (_, i) => i + 1).map((n) => (
+                  <button key={n} type="button" onClick={() => goTo(n)} aria-current={n === page ? "page" : undefined}
+                    className={`tabular min-w-[2.25rem] px-2 py-2 text-sm border-b-2 transition-colors ${n === page ? "border-bgp-red text-bgp-wine" : "border-transparent text-bgp-ink/60 hover:text-bgp-red"}`}>
+                    {n}
+                  </button>
+                ))}
+                <button type="button" onClick={() => goTo(page + 1)} disabled={page === pageCount} className="label-caps px-3 py-2 text-bgp-red disabled:text-bgp-ink/30 hover:text-bgp-wine">Next ›</button>
+                <span className="ml-4 hidden sm:inline label-caps text-bgp-ink/40">{filtered.length} available</span>
+              </nav>
             )}
           </>
         )}
