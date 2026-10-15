@@ -54,3 +54,7 @@ asks for the list; add to it when he says "put it on the list".
   the site and cards (2026-10-13).
 - Brochure-extracted listing photos: CMYK negatives fixed, em-dash file
   names fixed (2026-10-15).
+- Site prerendered to static HTML per route so crawlers and Semrush read
+  the content; Dan's re-audit should come back clean. Still to do at
+  go-live: submit the sitemap in Google Search Console and Bing
+  (2026-10-15). Pre-call note for Dan: `docs/note-to-dan-benchmark.md`.
