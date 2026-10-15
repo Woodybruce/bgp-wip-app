@@ -9,13 +9,18 @@ import { useSiteContent } from "../lib/site-content";
 import { Listing, areaLabel, fetchListing, fetchListings, fileUrl, focalPosition, formatSqft, isImage, listingNames, rentLabel, useClassLabel } from "../lib/api";
 import { downloadParticulars } from "../lib/particulars-pdf";
 
-// WhatsApp goes to the head of the leasing contact list — same number the
-// team page already publishes.
-const WHATSAPP = LEASING_CONTACTS[0];
-const waLink = (unitName: string) =>
-  `https://wa.me/${WHATSAPP.phone.replace(/[^0-9]/g, "").replace(/^0/, "44")}?text=${encodeURIComponent(
-    `Hi ${WHATSAPP.name.split(" ")[0]}, I'd like to find out more about ${unitName.replace(/^\[Sample\]\s*/, "")}.`,
+// WhatsApp goes to the unit's own agent from the letting tracker (the first
+// one with a mobile, phones from HR), else the head of the leasing contact
+// list (Woody, 2026-10-15: Bakers Annexe should reach Tracey, not Charlotte).
+const isMobile = (phone: string | null | undefined) => /^(\+44\s*\(?0?\)?\s*7|07)/.test(String(phone || "").trim());
+const waLink = (listing: Listing) => {
+  const agent = (listing.agents || []).find((a) => isMobile(a.phone));
+  const who = agent ? { name: agent.name, phone: agent.phone as string } : LEASING_CONTACTS[0];
+  const digits = who.phone.replace(/[^0-9]/g, "").replace(/^440/, "44").replace(/^0/, "44");
+  return `https://wa.me/${digits}?text=${encodeURIComponent(
+    `Hi ${who.name.split(" ")[0]}, I'd like to find out more about ${listing.unitName.replace(/^\[Sample\]\s*/, "")}.`,
   )}`;
+};
 
 export default function ListingDetail() {
   const [, params] = useRoute("/leasing/:id");
@@ -186,7 +191,7 @@ export default function ListingDetail() {
                 Book viewing
               </a>
               <a
-                href={waLink(listing.unitName)}
+                href={waLink(listing)}
                 target="_blank"
                 rel="noreferrer"
                 className="block border border-bgp-burgundy text-bgp-burgundy text-center label-caps py-3 hover:bg-bgp-burgundy hover:text-bgp-paper transition-colors"
@@ -250,7 +255,7 @@ export default function ListingDetail() {
           Book viewing
         </a>
         <a
-          href={waLink(listing.unitName)}
+          href={waLink(listing)}
           target="_blank"
           rel="noreferrer"
           className="flex-1 border border-bgp-burgundy text-bgp-burgundy text-center label-caps py-3"
