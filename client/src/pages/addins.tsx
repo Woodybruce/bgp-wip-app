@@ -6,7 +6,7 @@ const addins = [
   {
     name: "Outlook",
     icon: Mail,
-    description: "ChatBGP inside Outlook — summarises the thread, drafts replies straight into Outlook's reply window (or into the message you're writing), opens new emails and meeting invites, with BGP's CRM, deals and your memory behind it. Plus the Sender & CRM tab: relationship read, matched contacts/companies/deals and one-click Log to CRM. Pinnable; remembers each thread.",
+    description: "ChatBGP inside Outlook — summarises the thread, drafts replies straight into Outlook's reply window (or into the message you're writing), opens new emails and meeting invites, with BGP's CRM, deals and your memory behind it. Plus the Sender & CRM tab: relationship read, matched contacts/companies/deals and one-click Log to CRM. Works on calendar meetings too — brief me, who's coming, prep notes, follow-ups, and agenda writing while you organise an invite. Pinnable; remembers each thread.",
     manifest: "/manifests/outlook-addin.xml",
     preview: "/addin/outlook",
     adminSteps: "Microsoft 365 Admin Centre → Settings → Integrated Apps → Upload custom apps",

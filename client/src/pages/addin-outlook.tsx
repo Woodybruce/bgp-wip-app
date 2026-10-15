@@ -80,6 +80,8 @@ function AddinOutlook() {
   const [emailPreview, setEmailPreview] = useState("");
   const [emailItemId, setEmailItemId] = useState("");
   const [emailDate, setEmailDate] = useState("");
+  const [isMeeting, setIsMeeting] = useState(false);
+  const [attendees, setAttendees] = useState<Array<{ name: string; email: string }>>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [logState, setLogState] = useState<"idle" | "logging" | "done" | "already" | "error">("idle");
   // ChatBGP first (Woody, 2026-09-28: as good as the Claude add-ins); the
@@ -97,6 +99,29 @@ function AddinOutlook() {
     try {
       const item = window.Office?.context?.mailbox?.item;
       if (!item) return;
+      // A calendar item (Woody, 2026-10-15): the person to look up is the
+      // organiser, or the first attendee who isn't a colleague.
+      const isAppt = String(item.itemType || "").toLowerCase() === "appointment" || (!("from" in item) && "organizer" in item);
+      if (isAppt) {
+        const everyone: any[] = [item.organizer, ...(Array.isArray(item.requiredAttendees) ? item.requiredAttendees : []), ...(Array.isArray(item.optionalAttendees) ? item.optionalAttendees : [])].filter(Boolean);
+        const external = everyone.filter((p: any) => !/@brucegillinghampollard\.com$/i.test(String(p?.emailAddress || "")));
+        setAttendees(everyone.map((p: any) => ({ name: p?.displayName || "", email: p?.emailAddress || "" })).filter(p => p.email));
+        const who = external[0] || everyone[0];
+        setIsMeeting(true);
+        setSenderEmail(who?.emailAddress || "");
+        setSenderName(who?.displayName || "");
+        setSearchQuery(who?.emailAddress || who?.displayName || "");
+        setEmailSubject(typeof item.subject === "string" ? item.subject : "");
+        setEmailItemId(item.itemId || "");
+        setEmailDate(item.start ? new Date(item.start).toISOString() : "");
+        setLogState("idle");
+        item.body?.getAsync?.("text", (r: any) => {
+          if (r?.status === "succeeded") setEmailPreview(String(r.value || "").trim().slice(0, 500));
+        });
+        return;
+      }
+      setIsMeeting(false);
+      setAttendees([]);
       const from = item.from;
       if (from) {
         setSenderEmail(from.emailAddress || "");
@@ -268,9 +293,19 @@ function AddinOutlook() {
         {senderEmail && (
           <div className="p-2 bg-muted/40 border border-border rounded-lg space-y-1.5" data-testid="outlook-sender-card">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Current email from</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{isMeeting ? "Meeting with" : "Current email from"}</p>
               <p className="text-sm font-medium">{senderName || senderEmail}</p>
               {senderName && <p className="text-xs text-muted-foreground">{senderEmail}</p>}
+              {isMeeting && attendees.length > 1 && (
+                <div className="flex flex-wrap gap-1 pt-1" data-testid="outlook-attendees">
+                  {attendees.map(a => (
+                    <button key={a.email} type="button" onClick={() => { setSenderEmail(a.email); setSenderName(a.name); setSearchQuery(a.email || a.name); }}
+                      className={`text-[11px] rounded-full border px-2 py-0.5 ${a.email === senderEmail ? "bg-primary/10 border-primary/30" : "bg-background hover:bg-muted"}`} title={a.email}>
+                      {a.name || a.email}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <Button
               size="sm"
