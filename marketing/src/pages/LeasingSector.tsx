@@ -39,7 +39,7 @@ export default function LeasingSector() {
             <p className="label-caps text-white/80 mb-3">
               <Link href="/leasing" className="hover:text-white">Leasing</Link> · {sector.name}
             </p>
-            <h1 className="max-w-2xl text-2xl md:text-4xl leading-snug font-display italic text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>
+            <h1 className="max-w-2xl text-2xl md:text-3xl font-light leading-[1.2] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>
               {sector.headline}
             </h1>
           </div>
@@ -51,7 +51,7 @@ export default function LeasingSector() {
           <div className="space-y-4">
             <span className="section-label">Our experience</span>
             {sector.body.map((p, i) => (
-              <p key={p.slice(0, 24)} className={`text-base md:text-lg leading-relaxed ${i === 0 ? "font-semibold text-bgp-ink" : "text-bgp-ink/90"}`}>{p}</p>
+              <p key={p.slice(0, 24)} className={`text-base md:text-lg ${i === 0 ? "font-semibold text-bgp-ink" : "text-bgp-ink/90"}`}>{p}</p>
             ))}
           </div>
           {sector.howWeHelp && (
@@ -59,7 +59,7 @@ export default function LeasingSector() {
               <p className="label-caps border-b border-bgp-ink pb-2 mb-6">How we can help</p>
               <ul className="space-y-4">
                 {sector.howWeHelp.map((s) => (
-                  <li key={s} className="text-sm text-bgp-ink/70 leading-relaxed border-b border-bgp-line pb-4">{s}</li>
+                  <li key={s} className="text-sm text-bgp-ink/70 border-b border-bgp-line pb-4">{s}</li>
                 ))}
               </ul>
             </div>
@@ -105,9 +105,9 @@ export default function LeasingSector() {
                     </div>
                   )}
                   <div className={`border-t border-bgp-wine/30 pt-3 ${c.image ? "mt-3" : ""}`}>
-                    <p className="font-display text-lg leading-snug text-bgp-wine">{c.name}</p>
+                    <p className="font-normal text-lg text-bgp-wine">{c.name}</p>
                     <p className="mt-0.5 label-caps text-bgp-ink/45">{c.location}</p>
-                    <p className="mt-2 text-base text-bgp-ink/80 leading-relaxed">{c.blurb}</p>
+                    <p className="mt-2 text-base text-bgp-ink/80">{c.blurb}</p>
                     <p className="mt-1.5 label-caps text-bgp-ink/45">{c.contacts.join(" · ")}</p>
                   </div>
                 </>
@@ -136,8 +136,8 @@ export function ShoppingCentrePage() {
     <div>
       <section className="mx-auto max-w-6xl px-4 py-10">
         <p className="label-caps border-b border-bgp-ink pb-2 text-bgp-ink/50">
-          <Link href="/leasing" className="hover:text-bgp-red">Leasing</Link> ·{" "}
-          <Link href="/leasing/sectors/shopping-centres" className="hover:text-bgp-red">Shopping Centres</Link> · {centre.location}
+          <Link href="/leasing" className="hover:text-bgp-wine">Leasing</Link> ·{" "}
+          <Link href="/leasing/sectors/shopping-centres" className="hover:text-bgp-wine">Shopping Centres</Link> · {centre.location}
         </p>
         <div className="grid grid-cols-1 md:grid-cols-[1fr_280px] gap-10 mt-8">
           <div>
@@ -147,8 +147,8 @@ export function ShoppingCentrePage() {
                 <Placeholder className="aspect-[16/9] w-full" src={centre.image} alt={centre.name} />
               </div>
             )}
-            <p className="mt-6 max-w-2xl text-base md:text-lg text-bgp-ink/90 leading-relaxed">{centre.blurb}</p>
-            <p className="mt-4 max-w-2xl text-base md:text-lg text-bgp-ink/90 leading-relaxed">
+            <p className="mt-6 max-w-2xl text-base md:text-lg text-bgp-ink/90">{centre.blurb}</p>
+            <p className="mt-4 max-w-2xl text-base md:text-lg text-bgp-ink/90">
               BGP advises the owners of {centre.name} on leasing strategy, tenant mix and positioning, drawing on our relationships with leading occupiers and our London Estates and High Street teams.
             </p>
             {centre.gallery && (
@@ -169,7 +169,7 @@ export function ShoppingCentrePage() {
                 <p className="mt-1 text-sm">{v}</p>
               </div>
             ))}
-            <a href="#contact" className="mt-6 block bg-bgp-wine text-bgp-cream label-caps text-center py-3">Talk to us</a>
+            <a href="#contact" className="btn mt-6 block">Talk to us</a>
           </aside>
         </div>
       </section>

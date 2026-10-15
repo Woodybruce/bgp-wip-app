@@ -31,7 +31,7 @@ export default function ServiceList({ services, heading = "What we offer" }: { s
         </div>
         <div className="bg-bgp-mist p-8">
           <p className="label-caps mb-3">{current.name}</p>
-          <p className="text-base md:text-lg text-bgp-ink/85 leading-relaxed max-w-xl">{current.detail}</p>
+          <p className="text-base md:text-lg text-bgp-ink/85 max-w-xl">{current.detail}</p>
         </div>
       </div>
     </section>

@@ -29,12 +29,12 @@ function FilterSelect({
   return (
     <label className="label-caps flex items-center justify-between sm:justify-start gap-1.5 text-bgp-wine w-full sm:w-auto py-2.5 sm:py-0 border-b border-bgp-wine/10 sm:border-0">
       <span className="whitespace-nowrap">
-        {label} <span className="text-bgp-red" aria-hidden>{"↘︎"}</span>
+        {label} <span className="text-bgp-wine" aria-hidden>{"↘︎"}</span>
       </span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="bg-transparent label-caps text-bgp-wine outline-none cursor-pointer hover:text-bgp-red text-right sm:text-left shrink-0 max-w-[60%] sm:max-w-none [text-align-last:right] sm:[text-align-last:auto]"
+        className="bg-transparent label-caps text-bgp-wine outline-none cursor-pointer hover:text-bgp-wine text-right sm:text-left shrink-0 max-w-[60%] sm:max-w-none [text-align-last:right] sm:[text-align-last:auto]"
       >
         <option value="">All</option>
         {options.map((o) => (
@@ -101,12 +101,12 @@ export default function Leasing() {
 
   return (
     <div>
-      {/* Centred serif intro per v2c */}
+      {/* Centred intro per v2c */}
       <section className="mx-auto max-w-3xl px-4 pt-12 pb-8 text-center">
         <span className="section-label">Leasing</span>
-        <h1 className="display text-3xl md:text-4xl leading-snug">{LEASING_INTRO.headline}</h1>
+        <h1 className="font-light text-xl md:text-2xl text-bgp-wine">{LEASING_INTRO.headline}</h1>
         {LEASING_INTRO.body.map((p) => (
-          <p key={p.slice(0, 24)} className="mt-5 text-base md:text-lg text-bgp-ink/90 leading-relaxed">{p}</p>
+          <p key={p.slice(0, 24)} className="mt-5 text-base md:text-lg text-bgp-ink/90">{p}</p>
         ))}
       </section>
 
@@ -120,7 +120,7 @@ export default function Leasing() {
             <div>
               <span className="section-label">Where we act</span>
               <h2 className="display text-3xl md:text-4xl group-hover:text-bgp-burgundy transition-colors">{sectors[0].name}</h2>
-              <p className="mt-4 text-base md:text-lg text-bgp-ink/90 leading-relaxed">{sectors[0].headline}</p>
+              <p className="mt-4 text-base md:text-lg text-bgp-ink/90">{sectors[0].headline}</p>
               <p className="mt-5"><span className="explore-link">Explore</span></p>
             </div>
           </Link>
@@ -143,9 +143,9 @@ export default function Leasing() {
 
       <section className="mx-auto max-w-3xl px-4 pb-8 text-center">
         <span className="section-label">Availability</span>
-        <h2 className="display text-3xl md:text-4xl leading-snug">Current opportunities</h2>
+        <h2 className="display text-3xl md:text-4xl">Current opportunities</h2>
         {!live && !loading && (
-          <p className="mt-4 text-xs text-bgp-red">
+          <p className="mt-4 text-xs text-bgp-wine">
             Showing sample listings. The live availability feed is not connected in this environment.
           </p>
         )}
@@ -191,14 +191,14 @@ export default function Leasing() {
             )}
             {pageCount > 1 && (
               <nav aria-label="Listing pages" className="mt-10 flex items-center justify-center gap-2 border-t border-bgp-wine/30 pt-6">
-                <button type="button" onClick={() => goTo(page - 1)} disabled={page === 1} className="label-caps px-3 py-2 text-bgp-red disabled:text-bgp-ink/30 hover:text-bgp-wine">‹ Prev</button>
+                <button type="button" onClick={() => goTo(page - 1)} disabled={page === 1} className="label-caps px-3 py-2 text-bgp-wine disabled:text-bgp-ink/30 hover:text-bgp-wine">‹ Prev</button>
                 {Array.from({ length: pageCount }, (_, i) => i + 1).map((n) => (
                   <button key={n} type="button" onClick={() => goTo(n)} aria-current={n === page ? "page" : undefined}
-                    className={`tabular min-w-[2.25rem] px-2 py-2 text-sm border-b-2 transition-colors ${n === page ? "border-bgp-red text-bgp-wine" : "border-transparent text-bgp-ink/60 hover:text-bgp-red"}`}>
+                    className={`tabular min-w-[2.25rem] px-2 py-2 text-sm border-b-2 transition-colors ${n === page ? "border-bgp-wine text-bgp-wine" : "border-transparent text-bgp-ink/60 hover:text-bgp-wine"}`}>
                     {n}
                   </button>
                 ))}
-                <button type="button" onClick={() => goTo(page + 1)} disabled={page === pageCount} className="label-caps px-3 py-2 text-bgp-red disabled:text-bgp-ink/30 hover:text-bgp-wine">Next ›</button>
+                <button type="button" onClick={() => goTo(page + 1)} disabled={page === pageCount} className="label-caps px-3 py-2 text-bgp-wine disabled:text-bgp-ink/30 hover:text-bgp-wine">Next ›</button>
                 <span className="ml-4 hidden sm:inline label-caps text-bgp-ink/40">{filtered.length} available</span>
               </nav>
             )}

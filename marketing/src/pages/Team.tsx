@@ -59,7 +59,7 @@ export default function Team() {
         <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/85 via-bgp-ink/45 to-bgp-ink/15 md:from-bgp-ink/70 md:via-bgp-ink/10 md:to-transparent" />
         <div className="absolute inset-0 flex items-end">
           <div className="mx-auto max-w-6xl px-4 pb-10 w-full">
-            <p className="max-w-xl text-3xl md:text-4xl leading-snug font-display italic text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>
+            <p className="max-w-xl text-2xl md:text-3xl font-light leading-[1.2] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>
               Connecting leading brands with the best international locations. Creating
               neighbourhoods that people love.
             </p>
@@ -73,7 +73,7 @@ export default function Team() {
           <div key={g.label} className="mb-14">
             <div className="flex items-baseline justify-between border-b border-bgp-ink pb-2 mb-2">
               <h2 className="display text-2xl md:text-3xl">
-                {g.href ? <Link href={g.href} className="hover:text-bgp-red transition-colors">{g.label}</Link> : g.label}
+                {g.href ? <Link href={g.href} className="hover:text-bgp-wine transition-colors">{g.label}</Link> : g.label}
               </h2>
               <span className="label-caps text-bgp-ink/45 tabular">{g.people.length}</span>
             </div>
@@ -82,15 +82,15 @@ export default function Team() {
                 key={p.name}
                 className="group grid grid-cols-1 md:grid-cols-[2.2fr_2fr_1.4fr_2.2fr] gap-x-6 gap-y-0.5 py-4 border-b border-bgp-line items-baseline"
               >
-                <p className="font-display text-xl text-bgp-wine flex items-center gap-3">
+                <p className="font-normal text-lg text-bgp-wine flex items-center gap-3">
                   <Avatar person={p} />
-                  <a href={cardUrlFor(p.name)} className="hover:text-bgp-red transition-colors" title="Business card">{p.name}</a>
+                  <a href={cardUrlFor(p.name)} className="hover:text-bgp-wine transition-colors" title="Business card">{p.name}</a>
                 </p>
                 <p className="text-base text-bgp-ink/75">{p.title}</p>
                 <p className="text-base tabular text-bgp-ink/85">{p.phone}</p>
                 {p.email !== "TBC" && (
                   <p className="text-base break-all">
-                    <a href={`mailto:${p.email}`} className="hover:text-bgp-red transition-colors">{p.email}</a>
+                    <a href={`mailto:${p.email}`} className="hover:text-bgp-wine transition-colors">{p.email}</a>
                   </p>
                 )}
               </div>

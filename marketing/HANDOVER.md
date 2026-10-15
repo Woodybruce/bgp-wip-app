@@ -38,10 +38,16 @@ is baked into the HTML at build time. Names, titles, phones and photos come
 from the HR records there. Do not hardcode people or listings in the site;
 restyle the components that render them.
 
-## Fonts
+## Brand
 
-Headings use FreightText Pro from Adobe Fonts (kit in `index.html`), with
-Lora as the fallback. Body text is Lato from Google Fonts.
+The site follows the BGP Brand Guidelines v1.0 (August 2026): Bordeaux,
+Nectar, Stone and Feather only; headlines in Century Gothic Pro Bold, upper
+case, -30 tracking, 100% leading; body and labels in Lato at 120% leading;
+block or frame logo lockups never below 50px tall (`public/brand/bgp-block-*`
+and `bgp-frame-*`). Century Gothic Pro comes from the Adobe Fonts kit in
+`index.html`; Jost from Google Fonts stands in until the family is added to
+that kit. The tokens live in `tailwind.config.ts`, the type classes
+(`.display`, `.label-caps`, `.subhead`, `.btn`) in `src/index.css`.
 
 ## Deploy
 

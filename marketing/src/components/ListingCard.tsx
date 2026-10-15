@@ -26,7 +26,7 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
           )}
         </div>
         {listing.marketingStatus === "Under Offer" && (
-          <span className="absolute top-0 right-0 bg-bgp-red text-white label-caps px-3 py-1.5">
+          <span className="absolute top-0 right-0 bg-bgp-nectar text-bgp-wine label-caps px-3 py-1.5">
             Under offer
           </span>
         )}
@@ -34,7 +34,7 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
       {/* Title hierarchy per listingNames: address-named buildings lead
           with the address, named centres lead with the unit. */}
       <div className="mt-3 flex items-baseline justify-between gap-3">
-        <Link href={`/leasing/${listing.id}`} className="font-display text-bgp-ink text-xl leading-tight hover:text-bgp-wine transition-colors">
+        <Link href={`/leasing/${listing.id}`} className="font-normal text-bgp-wine text-lg leading-tight hover:opacity-70 transition-colors">
           {listingNames(listing).title}
         </Link>
         {useClassLabel(listing.useClass) && (

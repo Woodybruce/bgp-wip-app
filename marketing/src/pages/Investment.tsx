@@ -17,7 +17,7 @@ export default function Investment() {
         <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/85 via-bgp-ink/45 to-bgp-ink/15 md:from-bgp-ink/70 md:via-bgp-ink/10 md:to-transparent" />
         <div className="relative w-full">
           <div className="mx-auto max-w-6xl px-4 pt-28 pb-8 md:pb-10 w-full">
-            <p className="max-w-xl text-2xl md:text-4xl leading-snug font-display italic text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>{service.intro}</p>
+            <p className="max-w-xl text-2xl md:text-3xl font-light leading-[1.2] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>{service.intro}</p>
           </div>
         </div>
       </section>
@@ -26,7 +26,7 @@ export default function Investment() {
         <span className="section-label">Our approach</span>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-4 max-w-5xl">
           {SERVICE_COPY.investment.body.map((p, i) => (
-            <p key={p.slice(0, 24)} className={`text-base md:text-lg leading-relaxed ${i === 0 ? "font-semibold text-bgp-ink" : "text-bgp-ink/90"}`}>{p}</p>
+            <p key={p.slice(0, 24)} className={`text-base md:text-lg ${i === 0 ? "font-semibold text-bgp-ink" : "text-bgp-ink/90"}`}>{p}</p>
           ))}
         </div>
       </section>
@@ -47,15 +47,15 @@ export default function Investment() {
             <div key={deal.name} className="group">
               <div className="relative img-frame">
                 <Placeholder className="aspect-[4/3] w-full" src={deal.image} alt={deal.name} label="Photo to follow" />
-                <span className={`absolute top-0 right-0 label-caps px-3 py-1.5 ${deal.status === "Under offer" ? "bg-bgp-red text-white" : "bg-bgp-wine text-bgp-cream"}`}>
+                <span className={`absolute top-0 right-0 label-caps px-3 py-1.5 ${deal.status === "Under offer" ? "bg-bgp-nectar text-bgp-wine" : "bg-bgp-wine text-bgp-cream"}`}>
                   {deal.status}
                 </span>
               </div>
               <div className="mt-3 border-t border-bgp-wine/30 pt-3">
-                <p className="font-display text-lg leading-snug text-bgp-wine">{deal.name}</p>
+                <p className="font-normal text-lg text-bgp-wine">{deal.name}</p>
                 {deal.address && deal.address !== deal.name && <p className="mt-0.5 text-sm text-bgp-ink/60">{deal.address}</p>}
                 <p className="mt-0.5 label-caps text-bgp-ink/45">{deal.client}</p>
-                <p className="mt-1.5 text-sm text-bgp-ink/80 leading-relaxed tabular">
+                <p className="mt-1.5 text-sm text-bgp-ink/80 tabular">
                   {deal.type === "Transaction" ? "" : deal.type}
                   {deal.type !== "Transaction" && deal.price ? " · " : ""}
                   {deal.price}

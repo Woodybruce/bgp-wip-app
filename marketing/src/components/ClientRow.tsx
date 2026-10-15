@@ -39,7 +39,7 @@ export function ClientCircle({ client }: { client: Client }) {
           onError={() => setStep((s) => s + 1)}
         />
       ) : (
-        <span className="px-3 text-center font-display text-lg leading-tight text-bgp-wine">
+        <span className="px-3 text-center font-normal text-sm leading-tight text-bgp-wine">
           {client.name}
         </span>
       )}
