@@ -85,6 +85,11 @@ function AddinOutlook() {
   // ChatBGP first (Woody, 2026-09-28: as good as the Claude add-ins); the
   // sender CRM panel stays one tap away.
   const [tab, setTab] = useState<"chat" | "crm">(() => { try { return (localStorage.getItem("bgp-outlook-tab") as any) || "chat"; } catch { return "chat"; } });
+  // Outlook closes an unpinned pane whenever the selected email changes
+  // (Woody, 2026-10-15: "turned off as soon as I change email"). Say so
+  // once, with where the pin is, until dismissed.
+  const [pinHint, setPinHint] = useState(() => { try { return localStorage.getItem("bgp-outlook-pin-hint") !== "off"; } catch { return true; } });
+  const dismissPinHint = () => { setPinHint(false); try { localStorage.setItem("bgp-outlook-pin-hint", "off"); } catch {} };
   useEffect(() => { try { localStorage.setItem("bgp-outlook-tab", tab); } catch {} }, [tab]);
   const queryClient = useQueryClient();
 
@@ -247,6 +252,12 @@ function AddinOutlook() {
           <LogOut className="h-3.5 w-3.5" />
         </Button>
       </AddinHeader>
+      {pinHint && (
+        <div className="flex items-start gap-2 px-3 py-2 border-b bg-muted/40 text-[11px] text-muted-foreground" data-testid="outlook-pin-hint">
+          <span className="flex-1">To keep ChatBGP open while you move between emails, press the <strong>pin</strong> icon at the top of this pane (next to the ×). Outlook remembers it.</span>
+          <button type="button" onClick={dismissPinHint} className="shrink-0 underline" data-testid="button-dismiss-pin-hint">Got it</button>
+        </div>
+      )}
       <div className="flex items-center gap-1.5 px-3 py-2 border-b">
         <Pill active={tab === "chat"} onClick={() => setTab("chat")} data-testid="tab-outlook-chat">ChatBGP</Pill>
         <Pill active={tab === "crm"} onClick={() => setTab("crm")} data-testid="tab-outlook-crm">Sender &amp; CRM</Pill>
