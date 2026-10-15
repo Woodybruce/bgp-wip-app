@@ -3,7 +3,11 @@ import { Link, useRoute } from "wouter";
 import Placeholder from "../components/Placeholder";
 import ListingCard from "../components/ListingCard";
 import KeyContacts from "../components/KeyContacts";
-import ListingMap from "../components/ListingMap";
+import { Suspense, lazy } from "react";
+// Leaflet touches `window` when it loads, so the map stays out of the
+// build-time render and arrives lazily in the browser.
+const ListingMap = lazy(() => import("../components/ListingMap"));
+const isBrowser = typeof window !== "undefined";
 import { CONTACT, LEASING_CONTACTS, OFFICE_PHONE, type Person } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
 import { Listing, areaLabel, fetchListing, fetchListings, fileUrl, focalPosition, formatSqft, isImage, listingNames, rentLabel, useClassLabel } from "../lib/api";
@@ -223,8 +227,8 @@ export default function ListingDetail() {
       {/* Location */}
       <section className="mx-auto max-w-6xl px-4 py-8 md:py-10">
         <h2 className="display text-2xl md:text-3xl mb-6">Location</h2>
-        {hasCoords ? (
-          <ListingMap lat={lat} lon={lon} className="h-72 md:h-80 w-full" />
+        {hasCoords && isBrowser ? (
+          <Suspense fallback={<div className="h-72 md:h-80 w-full bg-bgp-mist" />}><ListingMap lat={lat} lon={lon} className="h-72 md:h-80 w-full" /></Suspense>
         ) : (
           <Placeholder label={listing.postcode ? `Map — ${listing.postcode}` : "Map TBC"} className="h-72 md:h-80 w-full" />
         )}

@@ -18,7 +18,7 @@ import LeasingSector, { ShoppingCentrePage } from "./pages/LeasingSector";
 // SPA navigation keeps the previous scroll position — every page change
 // should land at the top. Plain #hash anchors don't change the route, so
 // in-page jumps (services, contact) are unaffected.
-const TITLES: Array<[RegExp, string]> = [
+export const TITLES: Array<[RegExp, string]> = [
   [/^\/leasing\/sectors\/shopping-centres\/.+/, "Shopping centres · Leasing"],
   [/^\/leasing\/sectors\/shopping-centres/, "Shopping Centres · Leasing"],
   [/^\/leasing\/sectors\/london-estates/, "London Estates · Leasing"],
@@ -34,12 +34,16 @@ const TITLES: Array<[RegExp, string]> = [
   [/^\/case-studies/, "Case study"],
 ];
 
+export const titleFor = (path: string) => {
+  const hit = TITLES.find(([re]) => re.test(path));
+  return hit ? `${hit[1]} · BGP` : "BGP";
+};
+
 function ScrollToTop() {
   const [location] = useLocation();
   useEffect(() => {
     window.scrollTo(0, 0);
-    const hit = TITLES.find(([re]) => re.test(location));
-    document.title = hit ? `${hit[1]} · BGP` : "BGP";
+    document.title = titleFor(location);
   }, [location]);
   return null;
 }
