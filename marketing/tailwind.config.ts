@@ -30,7 +30,8 @@ export default {
       },
       fontFamily: {
         sans: ["Lato", "Helvetica Neue", "Arial", "sans-serif"],
-        display: ["century-gothic-pro", "Century Gothic", "Jost", "Futura", "sans-serif"],
+        // Adobe Fonts serves the family as "century-gothic" (web project nan4etq)
+        display: ["century-gothic", "century-gothic-pro", "Century Gothic", "Jost", "Futura", "sans-serif"],
       },
       // Body line height 120% per the guidelines; headlines are leading-none.
       fontSize: {
