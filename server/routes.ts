@@ -4640,7 +4640,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         const stored = await getFile(`marketing-files/${fileName}`);
         if (stored) {
           res.setHeader("Content-Type", stored.contentType || file.mimeType || "application/octet-stream");
-          res.setHeader("Content-Disposition", `inline; filename="${file.fileName.replace(/"/g, "")}"`);
+          // Brochure-extracted photos carry em dashes in their names; a raw
+          // header value with non-Latin-1 characters throws (2026-10-15).
+          res.setHeader("Content-Disposition", contentDispositionFor(file.fileName, "inline"));
           res.setHeader("Cache-Control", "public, max-age=3600");
           return res.send(stored.data);
         }
