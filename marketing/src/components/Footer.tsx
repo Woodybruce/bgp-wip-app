@@ -24,13 +24,13 @@ export default function Footer() {
     <footer id="contact" className="mt-24 bg-bgp-wine text-bgp-cream">
       <div className="mx-auto max-w-6xl px-4 pt-16 pb-10 grid grid-cols-1 md:grid-cols-4 gap-10">
         <div>
-          <img src="/brand/bgp-logo-white.svg?v=block" alt="bgp" className="h-14 w-auto" />
-          <p className="mt-5 font-display italic text-bgp-cream/80 text-lg leading-snug max-w-[16ch]">
+          <img src="/brand/bgp-frame-nectar.svg" alt="bgp" className="h-16 w-auto" />
+          <p className="mt-5 font-light text-bgp-nectar text-lg max-w-[16ch]">
             {HERO_STATEMENT}
           </p>
         </div>
 
-        <div className="text-sm leading-relaxed">
+        <div className="text-sm">
           <p className="label-caps mb-4 text-bgp-nectar">Explore</p>
           <ul className="space-y-2.5">
             {NAV_ITEMS.map((item) => (
@@ -43,7 +43,7 @@ export default function Footer() {
           </ul>
         </div>
 
-        <div className="text-sm leading-relaxed">
+        <div className="text-sm">
           <p className="label-caps mb-4 text-bgp-nectar">Contact</p>
           {CONTACT.addressLines.map((l) => (
             <p key={l} className="text-bgp-cream/85">{l}</p>

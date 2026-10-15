@@ -14,9 +14,9 @@ export default function Nav() {
     <header className="sticky top-0 z-50 bg-bgp-cream/95 backdrop-blur border-b border-bgp-wine/10">
       <div className="relative mx-auto max-w-6xl px-4">
         {/* Phone bar */}
-        <div className="flex md:hidden items-center justify-between h-14">
+        <div className="flex md:hidden items-center justify-between h-16">
           <Link href="/" aria-label="Bruce Gillingham Pollard home" onClick={() => setOpen(false)}>
-            <img src="/brand/bgp-logo-burgundy-nav.svg?v=1" alt="bgp" className="h-8 w-auto" />
+            <img src="/brand/bgp-frame-bordeaux.svg" alt="bgp" className="h-[50px] w-auto" />
           </Link>
           <button
             className="label-caps text-bgp-wine px-2 py-2 -mr-2"
@@ -39,7 +39,7 @@ export default function Nav() {
                   href={item.href}
                   onClick={() => setOpen(false)}
                   className={`block px-4 py-3.5 label-caps border-t border-bgp-wine/10 ${
-                    active ? "text-bgp-red" : "text-bgp-wine"
+                    active ? "text-bgp-wine" : "text-bgp-wine"
                   }`}
                 >
                   {item.label}
@@ -50,9 +50,10 @@ export default function Nav() {
         )}
 
         {/* Desktop bar */}
-        <div className="hidden md:flex items-center justify-between h-16">
+        <div className="hidden md:flex items-center justify-between h-20">
           <Link href="/" aria-label="Bruce Gillingham Pollard home" className="shrink-0">
-            <img src="/brand/bgp-logo-burgundy-nav.svg?v=1" alt="bgp" className="h-9 w-auto" />
+            {/* Frame logo, never below the 50px minimum (guidelines p.3) */}
+            <img src="/brand/bgp-frame-bordeaux.svg" alt="bgp" className="h-[50px] w-auto" />
           </Link>
           <nav className="flex items-center">
             {NAV_ITEMS.map((item, i) => {
@@ -64,7 +65,7 @@ export default function Nav() {
                     href={item.href}
                     data-active={active}
                     className={`label-caps nav-link whitespace-nowrap transition-colors ${
-                      active ? "text-bgp-red" : "text-bgp-wine hover:text-bgp-red"
+                      active ? "text-bgp-wine" : "text-bgp-wine hover:opacity-70"
                     }`}
                   >
                     {item.label}
@@ -85,7 +86,7 @@ export default function Nav() {
         which pinned this tab inside the header and mangled it. */}
     <a
       href="#contact"
-      className="hidden md:block fixed right-0 top-1/2 z-40 -translate-y-1/2 bg-bgp-red text-white label-caps px-2.5 py-4 [writing-mode:vertical-rl] hover:bg-bgp-wine transition-colors"
+      className="hidden md:block fixed right-0 top-1/2 z-40 -translate-y-1/2 bg-bgp-wine text-bgp-nectar label-caps px-2.5 py-4 [writing-mode:vertical-rl] hover:bg-bgp-ink transition-colors"
     >
       Talk to us
     </a>

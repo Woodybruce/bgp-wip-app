@@ -37,7 +37,7 @@ export default function ArticlePage() {
 
       <div className="mt-8 grid grid-cols-1 md:grid-cols-[1fr_220px] gap-8 items-start">
         <Placeholder className="aspect-[4/3] w-full" src={article.image} alt={article.title} />
-        <p className="text-sm text-bgp-ink/70 leading-relaxed">{article.standfirst}</p>
+        <p className="text-sm text-bgp-ink/70">{article.standfirst}</p>
       </div>
 
       <div className="mt-10 space-y-5">
@@ -48,13 +48,13 @@ export default function ArticlePage() {
                 {para.slice(3)}
               </h2>
             ) : (
-              <p key={i} className="text-base leading-relaxed text-bgp-ink/85">
+              <p key={i} className="text-base text-bgp-ink/85">
                 {para}
               </p>
             ),
           )
         ) : (
-          <p className="text-base leading-relaxed text-bgp-ink/85">{article.standfirst}</p>
+          <p className="text-base text-bgp-ink/85">{article.standfirst}</p>
         )}
       </div>
 

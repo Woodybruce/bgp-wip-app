@@ -8,6 +8,7 @@ export default function LeaseAdvisory() {
   const { caseStudies, contacts } = useSiteContent();
   return (
     <ServicePage
+      title="Lease Advisory"
       hero={{ src: "/images/clients/birmingham-st-martins.jpg", alt: "St Martin's Square, Birmingham" }}
       intro={service.intro}
       body={LEASE_ADVISORY_BODY}

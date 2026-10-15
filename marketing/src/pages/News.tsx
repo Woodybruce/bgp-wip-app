@@ -39,23 +39,23 @@ export default function News() {
         <span className="label-caps text-bgp-ink/60">Filter by</span>
         <button
           onClick={() => toggleKind("News")}
-          className={`label-caps transition-colors ${kind === "News" ? "text-bgp-red" : "text-bgp-wine hover:text-bgp-red"}`}
+          className={`label-caps transition-colors ${kind === "News" ? "text-bgp-wine" : "text-bgp-wine hover:opacity-70"}`}
         >
           News +
         </button>
         <button
           onClick={() => toggleKind("Opinion")}
-          className={`label-caps transition-colors ${kind === "Opinion" ? "text-bgp-red" : "text-bgp-wine hover:text-bgp-red"}`}
+          className={`label-caps transition-colors ${kind === "Opinion" ? "text-bgp-wine" : "text-bgp-wine hover:opacity-70"}`}
         >
           Opinion +
         </button>
         <label className="label-caps flex items-center gap-1.5 text-bgp-wine">
           <span>Type</span>
-          <span className="text-bgp-red" aria-hidden>+</span>
+          <span className="text-bgp-wine" aria-hidden>+</span>
           <select
             value={category}
             onChange={(e) => { setCategory(e.target.value); setKind(""); }}
-            className="bg-transparent label-caps text-bgp-wine outline-none cursor-pointer hover:text-bgp-red"
+            className="bg-transparent label-caps text-bgp-wine outline-none cursor-pointer hover:text-bgp-wine"
           >
             <option value="">All</option>
             {types.map((c) => (
@@ -76,10 +76,10 @@ export default function News() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
             <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={featured.image} alt={featured.title} /></div>
             <div>
-              <h2 className="display text-2xl md:text-3xl leading-tight group-hover:text-bgp-red transition-colors">
+              <h2 className="display text-2xl md:text-3xl leading-tight group-hover:text-bgp-wine transition-colors">
                 {featured.title}
               </h2>
-              <p className="mt-4 text-base md:text-lg text-bgp-ink/90 leading-relaxed max-w-sm">{featured.standfirst}</p>
+              <p className="mt-4 text-base md:text-lg text-bgp-ink/90 max-w-sm">{featured.standfirst}</p>
               <p className="mt-4"><span className="explore-link inline-block">Read more</span></p>
             </div>
           </div>
@@ -98,7 +98,7 @@ export default function News() {
               <span className="text-bgp-ink/50">{a.date}</span>
             </div>
             <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} /></div>
-            <h3 className="mt-3 text-base font-semibold leading-snug group-hover:text-bgp-red transition-colors">{a.title}</h3>
+            <h3 className="mt-3 text-base font-semibold group-hover:text-bgp-wine transition-colors">{a.title}</h3>
             <p className="mt-2 label-caps text-bgp-ink/50">Read more</p>
           </Link>
         ))}
@@ -106,7 +106,7 @@ export default function News() {
 
       {!expanded && rest.length > INITIAL_VISIBLE && (
         <p className="mt-10 text-right">
-          <button onClick={() => setExpanded(true)} className="label-caps text-bgp-wine hover:text-bgp-red">
+          <button onClick={() => setExpanded(true)} className="label-caps text-bgp-wine hover:opacity-70">
             + More listings
           </button>
         </p>

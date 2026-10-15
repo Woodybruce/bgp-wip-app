@@ -21,34 +21,47 @@ a:focus-visible { outline: 2px solid #ff1923; outline-offset: 3px; }
 }
 
 @layer components {
-  /* Small uppercase labels — Inter bold, tracked out (v2c card/nav labels) */
+  /* Small uppercase labels and CTAs — Lato Medium upper case, letter
+     spacing 0 (guidelines p.10; Google Fonts has no Medium, Regular stands in) */
   .label-caps {
-    @apply text-xs font-bold uppercase tracking-widest2 font-sans;
+    @apply text-xs font-normal uppercase tracking-normal font-sans;
   }
-  /* Red EXPLORE ↗ / READ MORE links */
+  /* Sub headings — Lato Light upper case (guidelines p.9) */
+  .subhead {
+    @apply font-light uppercase tracking-normal font-sans text-bgp-wine;
+  }
+  /* Buttons — Lato Medium sentence case, Bordeaux, rounded (guidelines p.10) */
+  .btn {
+    @apply inline-block rounded-lg bg-bgp-wine text-bgp-cream text-center text-sm font-normal px-5 py-3 hover:bg-bgp-ink transition-colors;
+  }
+  .btn-outline {
+    @apply inline-block rounded-lg border border-bgp-wine text-bgp-wine text-center text-sm font-normal px-5 py-3 hover:bg-bgp-wine hover:text-bgp-cream transition-colors;
+  }
+  /* Bordeaux EXPLORE ↗ / READ MORE links */
   .explore-link {
-    @apply label-caps text-bgp-red hover:text-bgp-wine transition-colors;
+    @apply label-caps text-bgp-wine hover:opacity-70 transition-opacity;
   }
   /* \FE0E forces text presentation — iOS otherwise renders the arrow as a
      blue emoji glyph */
   .explore-link::after {
     content: " \2197\FE0E";
   }
-  /* CONTACT link with full-width red underline (leasing cards) */
+  /* CONTACT link with full-width Bordeaux underline (leasing cards) */
   .rule-link {
-    @apply label-caps text-bgp-red border-t-0 border-b border-bgp-red pb-1 hover:text-bgp-wine hover:border-bgp-wine transition-colors;
+    @apply label-caps text-bgp-wine border-t-0 border-b border-bgp-wine pb-1 hover:opacity-70 transition-opacity;
   }
-  /* Display serif headings */
+  /* Headlines — Century Gothic Pro Bold, upper case, -30 tracking, 100% leading */
   .display {
-    @apply font-display text-bgp-wine tracking-[-0.01em];
+    @apply font-display font-bold uppercase text-bgp-wine tracking-[-0.03em] leading-none;
   }
-  /* Small red eyebrow label above serif section headings (v2c pattern) */
+  /* Eyebrow label above section headlines — same Lato upper case as the
+     other labels; Light read as too thin at 12px (Woody, 2026-10-15) */
   .section-label {
-    @apply label-caps text-bgp-red block mb-3;
+    @apply label-caps text-bgp-wine block mb-3;
   }
   /* Typeset BGP wordmark */
   .wordmark {
-    @apply font-display font-semibold tracking-tight leading-none;
+    @apply font-display font-bold tracking-tight leading-none;
   }
   .tabular {
     font-variant-numeric: tabular-nums;
@@ -80,7 +93,7 @@ a:focus-visible { outline: 2px solid #ff1923; outline-offset: 3px; }
   }
   .nav-link::after {
     content: "";
-    @apply absolute left-0 -bottom-0.5 h-px w-0 bg-bgp-red transition-all duration-300;
+    @apply absolute left-0 -bottom-0.5 h-px w-0 bg-bgp-wine transition-all duration-300;
   }
   .nav-link:hover::after,
   .nav-link[data-active="true"]::after {

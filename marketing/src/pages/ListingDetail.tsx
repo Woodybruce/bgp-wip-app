@@ -3,7 +3,11 @@ import { Link, useRoute } from "wouter";
 import Placeholder from "../components/Placeholder";
 import ListingCard from "../components/ListingCard";
 import KeyContacts from "../components/KeyContacts";
-import ListingMap from "../components/ListingMap";
+import { Suspense, lazy } from "react";
+// Leaflet touches `window` when it loads, so the map stays out of the
+// build-time render and arrives lazily in the browser.
+const ListingMap = lazy(() => import("../components/ListingMap"));
+const isBrowser = typeof window !== "undefined";
 import { CONTACT, LEASING_CONTACTS, OFFICE_PHONE, type Person } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
 import { Listing, areaLabel, fetchListing, fetchListings, fileUrl, focalPosition, formatSqft, isImage, listingNames, rentLabel, useClassLabel } from "../lib/api";
@@ -110,7 +114,7 @@ export default function ListingDetail() {
     <div className="pb-24 md:pb-0">
       <section className="mx-auto max-w-6xl px-4 pt-8 md:pt-10">
         <p className="label-caps text-bgp-ink/50">
-          <Link href="/leasing" className="hover:text-bgp-red transition-colors">Leasing</Link>
+          <Link href="/leasing" className="hover:text-bgp-wine transition-colors">Leasing</Link>
           <span className="mx-2 text-bgp-wine/40">/</span>
           <span className="text-bgp-wine">{areaLabel(listing) || "Availability"}</span>
         </p>
@@ -125,7 +129,7 @@ export default function ListingDetail() {
               </p>
             )}
           </div>
-          {headline && <p className="font-display italic text-bgp-ink/70 text-lg md:text-xl">{headline}</p>}
+          {headline && <p className="font-light text-bgp-ink/70 text-lg md:text-xl">{headline}</p>}
         </div>
       </section>
 
@@ -161,7 +165,7 @@ export default function ListingDetail() {
             {listing.marketingStatus === "Under Offer" && (
               <p className="mt-6 inline-block bg-bgp-burgundy text-bgp-paper label-caps px-3 py-1.5">Under offer</p>
             )}
-            <p className="mt-6 max-w-lg text-lg leading-relaxed text-bgp-ink/80">
+            <p className="mt-6 max-w-lg text-lg text-bgp-ink/80">
               {[
                 formatSqft(listing.sqft),
                 listing.propertyName && listing.propertyName !== listing.unitName ? `within ${listing.propertyName.replace(/^\[Sample\]\s*/, "")}` : null,
@@ -186,7 +190,7 @@ export default function ListingDetail() {
             <div className="mt-6 space-y-3 hidden md:block">
               <a
                 href={`mailto:${CONTACT.email}?subject=${mailSubject}`}
-                className="block bg-bgp-burgundy text-bgp-paper text-center label-caps py-3 hover:bg-bgp-ink transition-colors"
+                className="btn block"
               >
                 Book viewing
               </a>
@@ -194,14 +198,14 @@ export default function ListingDetail() {
                 href={waLink(listing)}
                 target="_blank"
                 rel="noreferrer"
-                className="block border border-bgp-burgundy text-bgp-burgundy text-center label-caps py-3 hover:bg-bgp-burgundy hover:text-bgp-paper transition-colors"
+                className="btn-outline block"
               >
                 WhatsApp us
               </a>
               <button
                 onClick={onDownload}
                 disabled={generating}
-                className="block w-full border border-bgp-ink text-center label-caps py-3 hover:border-bgp-burgundy hover:text-bgp-burgundy transition-colors disabled:opacity-50"
+                className="btn-outline block w-full disabled:opacity-50"
               >
                 {generating ? "Preparing…" : "Download details"}
               </button>
@@ -210,7 +214,7 @@ export default function ListingDetail() {
                   href={brochureHref}
                   target="_blank"
                   rel="noreferrer"
-                  className="block border border-bgp-ink text-center label-caps py-3 hover:border-bgp-burgundy hover:text-bgp-burgundy transition-colors"
+                  className="btn-outline block"
                 >
                   Download brochure
                 </a>
@@ -223,8 +227,8 @@ export default function ListingDetail() {
       {/* Location */}
       <section className="mx-auto max-w-6xl px-4 py-8 md:py-10">
         <h2 className="display text-2xl md:text-3xl mb-6">Location</h2>
-        {hasCoords ? (
-          <ListingMap lat={lat} lon={lon} className="h-72 md:h-80 w-full" />
+        {hasCoords && isBrowser ? (
+          <Suspense fallback={<div className="h-72 md:h-80 w-full bg-bgp-mist" />}><ListingMap lat={lat} lon={lon} className="h-72 md:h-80 w-full" /></Suspense>
         ) : (
           <Placeholder label={listing.postcode ? `Map — ${listing.postcode}` : "Map TBC"} className="h-72 md:h-80 w-full" />
         )}
@@ -250,7 +254,7 @@ export default function ListingDetail() {
       <div className="fixed inset-x-0 bottom-0 z-40 md:hidden bg-bgp-cream/95 backdrop-blur border-t border-bgp-wine/20 px-3 py-2.5 flex gap-2">
         <a
           href={`mailto:${CONTACT.email}?subject=${mailSubject}`}
-          className="flex-1 bg-bgp-burgundy text-bgp-paper text-center label-caps py-3"
+          className="btn flex-1"
         >
           Book viewing
         </a>
@@ -258,14 +262,14 @@ export default function ListingDetail() {
           href={waLink(listing)}
           target="_blank"
           rel="noreferrer"
-          className="flex-1 border border-bgp-burgundy text-bgp-burgundy text-center label-caps py-3"
+          className="btn-outline flex-1"
         >
           WhatsApp
         </a>
         <button
           onClick={onDownload}
           disabled={generating}
-          className="flex-1 border border-bgp-ink text-center label-caps py-3 disabled:opacity-50"
+          className="btn-outline flex-1 disabled:opacity-50"
         >
           {generating ? "…" : "Details PDF"}
         </button>

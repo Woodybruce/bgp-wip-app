@@ -59,7 +59,7 @@ export default function CaseStudyPage() {
             )}
             <div className="mt-8 space-y-4 max-w-xl">
               {caseStudy.body.map((para) => (
-                <p key={para.slice(0, 32)} className="text-base leading-relaxed text-bgp-ink/85">
+                <p key={para.slice(0, 32)} className="text-base text-bgp-ink/85">
                   {para}
                 </p>
               ))}
@@ -77,7 +77,7 @@ export default function CaseStudyPage() {
             </dl>
             <a
               href="#contact"
-              className="mt-6 block bg-bgp-burgundy text-bgp-paper text-center label-caps py-3 hover:bg-bgp-ink transition-colors"
+              className="mt-6 btn block"
             >
               Talk to us
             </a>

@@ -29,7 +29,7 @@ export default function Home() {
   }, []);
   return (
     <div>
-      {/* Hero — rotating flagship instructions, giant wordmark */}
+      {/* Hero — rotating flagship instructions, frame logo */}
       <section className="relative h-[70vh] min-h-[480px] overflow-hidden">
         {HERO_SLIDES.map((slide, i) => (
           <img
@@ -51,13 +51,13 @@ export default function Home() {
         <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-4">
           <h1>
             <img
-              src="/brand/bgp-logo-white.svg?v=block"
+              src="/brand/bgp-frame-white.svg"
               alt="bgp"
-              className="h-28 md:h-44 w-auto mx-auto drop-shadow-[0_4px_24px_rgba(0,0,0,0.55)]"
+              className="h-24 md:h-36 w-auto mx-auto drop-shadow-[0_4px_24px_rgba(0,0,0,0.55)]"
             />
           </h1>
           <p
-            className="mt-6 max-w-2xl font-display italic font-semibold text-white text-3xl md:text-4xl leading-snug"
+            className="mt-6 max-w-2xl font-display font-bold uppercase tracking-[-0.03em] leading-none text-white text-3xl md:text-4xl"
             style={{ textShadow: "0 2px 6px rgba(0,0,0,0.7), 0 4px 28px rgba(0,0,0,0.6)" }}
           >
             {HERO_STATEMENT}
@@ -70,9 +70,9 @@ export default function Home() {
 
       {/* We are bgp — intro copy from Rebrand_Copy */}
       <section className="mx-auto max-w-3xl px-4 pt-16 pb-4 text-center">
-        <h2 className="display text-3xl md:text-4xl italic font-normal">{HOME_INTRO.lead}</h2>
+        <h2 className="display text-3xl md:text-4xl">{HOME_INTRO.lead}</h2>
         {HOME_INTRO.body.map((para) => (
-          <p key={para.slice(0, 24)} className="mt-5 text-base md:text-lg text-bgp-ink/90 leading-relaxed">
+          <p key={para.slice(0, 24)} className="mt-5 text-base md:text-lg text-bgp-ink/90">
             {para}
           </p>
         ))}
@@ -99,9 +99,9 @@ export default function Home() {
                   />
                 </div>
                 <div className="[direction:ltr] md:border-l md:border-bgp-wine/25 md:pl-8">
-                  <span className="label-caps text-bgp-red/70 tabular">{String(i + 1).padStart(2, "0")}</span>
+                  <span className="label-caps text-bgp-stone tabular">{String(i + 1).padStart(2, "0")}</span>
                   <h2 className="display text-3xl md:text-4xl mt-1.5">{service.name}</h2>
-                  <p className="mt-4 text-base md:text-lg text-bgp-ink/90 leading-relaxed max-w-sm">
+                  <p className="mt-4 text-base md:text-lg text-bgp-ink/90 max-w-sm">
                     {service.intro}
                   </p>
                   <p className="mt-5">
@@ -112,7 +112,7 @@ export default function Home() {
                   {stat && (
                     <div className="mt-10 flex items-center gap-4">
                       <span className="display text-6xl md:text-7xl tabular">{stat.value}</span>
-                      <span className="text-bgp-red font-display text-5xl" aria-hidden>/</span>
+                      <span className="text-bgp-stone font-display text-5xl" aria-hidden>/</span>
                       <span className="label-caps text-bgp-wine max-w-[14ch]">{stat.caption}</span>
                     </div>
                   )}
@@ -123,11 +123,11 @@ export default function Home() {
         })}
       </div>
 
-      {/* Testimonial — full-bleed wine band, big italic serif */}
+      {/* Testimonial — full-bleed Bordeaux band */}
       <section className="bg-bgp-wine text-bgp-cream">
         <div className="mx-auto max-w-4xl px-4 py-16 md:py-20 text-center">
           <span className="font-display text-6xl leading-none text-bgp-nectar" aria-hidden>“</span>
-          <blockquote className="font-display italic text-2xl md:text-3xl leading-snug -mt-4">
+          <blockquote className="font-light text-2xl md:text-3xl -mt-4">
             {TESTIMONIAL.quote}
           </blockquote>
           <p className="mt-6 label-caps text-bgp-cream/70">{TESTIMONIAL.name}, {TESTIMONIAL.title}</p>
@@ -140,7 +140,7 @@ export default function Home() {
         <h2 className="display text-3xl md:text-4xl">News and insights</h2>
         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
           <p><Link href="/news" className="explore-link">Explore</Link></p>
-          <p className="text-base md:text-lg text-bgp-ink/90 leading-relaxed">
+          <p className="text-base md:text-lg text-bgp-ink/90">
             The latest news, lettings, transactions and opinion from the BGP team across
             leasing, investment, brand representation and placemaking.
           </p>
@@ -150,7 +150,7 @@ export default function Home() {
             <Link key={a.slug} href={`/news/${a.slug}`} className="group block border-t border-bgp-wine/40 pt-3">
               <p className="label-caps text-bgp-wine mb-3">{a.category}</p>
               <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} /></div>
-              <p className="mt-3 text-sm font-semibold leading-snug group-hover:text-bgp-red transition-colors">
+              <p className="mt-3 text-sm font-semibold group-hover:text-bgp-wine transition-colors">
                 {a.title}
               </p>
             </Link>

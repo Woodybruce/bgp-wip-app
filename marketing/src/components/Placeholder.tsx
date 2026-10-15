@@ -17,9 +17,12 @@ export default function Placeholder({
   // A photo that fails to load falls back to the placeholder instead of a
   // broken-image icon (Frankie Shop, 2026-10-13).
   const [failed, setFailed] = useState(false);
-  useEffect(() => { setFailed(false); }, [src]);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => { setFailed(false); setRetry(0); }, [src]);
   if (src && !failed) {
-    return <img src={src} alt={alt} loading="lazy" onError={() => setFailed(true)} className={`object-cover ${className}`} />;
+    // One retry on a momentary drop before falling back (Woody, 2026-10-15).
+    const url = retry ? `${src}${src.includes("?") ? "&" : "?"}r=${retry}` : src;
+    return <img src={url} alt={alt} loading="lazy" onError={() => (retry ? setFailed(true) : setTimeout(() => setRetry(1), 1500))} className={`object-cover ${className}`} />;
   }
   return (
     <div className={`relative overflow-hidden bg-bgp-mist ${className}`}>
