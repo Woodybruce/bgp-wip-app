@@ -31,20 +31,11 @@ export default function LeasingSector() {
 
   return (
     <div>
-      <section className="relative min-h-[18rem] md:min-h-[24rem] flex items-end">
-        <Placeholder className="absolute inset-0 h-full w-full" src={sector.image} alt={sector.name} />
-        <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/85 via-bgp-ink/45 to-bgp-ink/15 md:from-bgp-ink/70 md:via-bgp-ink/10 md:to-transparent" />
-        <div className="relative w-full">
-          <div className="mx-auto max-w-6xl px-4 pt-28 pb-8 md:pb-10 w-full">
-            <p className="label-caps text-white/80 mb-3">
-              <Link href="/leasing" className="hover:text-white">Leasing</Link> · {sector.name}
-            </p>
-            <h1 className="display text-4xl md:text-5xl text-white mb-4" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>{sector.name}</h1>
-            <p className="max-w-2xl text-2xl md:text-3xl font-light leading-[1.2] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>
-              {sector.headline}
-            </p>
-          </div>
-        </div>
+      <Placeholder className="h-64 md:h-[22rem] w-full" src={sector.image} alt={sector.name} />
+      <section className="mx-auto max-w-3xl px-4 pt-12 pb-4 text-center">
+        <p className="section-label"><Link href="/leasing" className="hover:opacity-70">Leasing</Link></p>
+        <h1 className="display text-4xl md:text-5xl">{sector.name}</h1>
+        <p className="mt-5 font-light text-xl md:text-2xl text-bgp-wine">{sector.headline}</p>
       </section>
 
       <section className="mx-auto max-w-6xl px-4 py-14">

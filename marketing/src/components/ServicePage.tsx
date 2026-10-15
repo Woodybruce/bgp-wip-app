@@ -29,22 +29,19 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
   const cols = caseStudies.length >= 4 ? "sm:grid-cols-2 lg:grid-cols-4" : caseStudies.length === 3 ? "sm:grid-cols-3" : "sm:grid-cols-2";
   return (
     <div>
-      <section className="relative min-h-[18rem] md:min-h-[24rem] flex items-end">
-        <Placeholder className="absolute inset-0 h-full w-full" src={hero.src} alt={hero.alt} />
-        <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/85 via-bgp-ink/45 to-bgp-ink/15 md:from-bgp-ink/70 md:via-bgp-ink/10 md:to-transparent" />
-        <div className="relative w-full">
-          <div className="mx-auto max-w-6xl px-4 pt-28 pb-8 md:pb-10 w-full">
-            <h1 className="display text-4xl md:text-5xl text-white mb-4" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>{title}</h1>
-            <p className="max-w-xl text-2xl md:text-3xl font-light leading-[1.2] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>{intro}</p>
-          </div>
-        </div>
+      {/* Same opening as Leasing: photo, then the page name as the headline
+          with the team's statement and copy centred beneath (Woody, 2026-10-15) */}
+      <Placeholder className="h-64 md:h-[22rem] w-full" src={hero.src} alt={hero.alt} />
+      <section className="mx-auto max-w-3xl px-4 pt-12 pb-4 text-center">
+        <h1 className="display text-4xl md:text-5xl">{title}</h1>
+        <p className="mt-5 font-light text-xl md:text-2xl text-bgp-wine">{intro}</p>
       </section>
 
       {body && body.length > 0 && (
-        <section className="mx-auto max-w-6xl px-4 pt-14">
-          <div className="max-w-3xl space-y-4">
+        <section className="mx-auto max-w-3xl px-4 pt-4 text-center">
+          <div className="space-y-4">
             {body.map((p, i) => (
-              <p key={p.slice(0, 24)} className={`text-base md:text-lg ${i === 0 ? "font-semibold text-bgp-ink" : "text-bgp-ink/90"}`}>
+              <p key={p.slice(0, 24)} className={`text-base md:text-lg ${i === 0 ? "text-bgp-ink" : "text-bgp-ink/90"}`}>
                 {p.includes(": ") ? <><strong className="text-bgp-ink">{p.split(": ")[0]}:</strong> {p.split(": ").slice(1).join(": ")}</> : p}
               </p>
             ))}

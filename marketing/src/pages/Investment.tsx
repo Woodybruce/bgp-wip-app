@@ -12,22 +12,16 @@ export default function Investment() {
   const service = SERVICES.find((s) => s.slug === "investment")!;
   return (
     <div>
-      <section className="relative min-h-[18rem] md:min-h-[24rem] flex items-end">
-        <Placeholder className="absolute inset-0 h-full w-full" src={service.image} alt="The Royal Exchange, City of London" />
-        <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/85 via-bgp-ink/45 to-bgp-ink/15 md:from-bgp-ink/70 md:via-bgp-ink/10 md:to-transparent" />
-        <div className="relative w-full">
-          <div className="mx-auto max-w-6xl px-4 pt-28 pb-8 md:pb-10 w-full">
-            <h1 className="display text-4xl md:text-5xl text-white mb-4" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>Investment</h1>
-            <p className="max-w-xl text-2xl md:text-3xl font-light leading-[1.2] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)" }}>{service.intro}</p>
-          </div>
-        </div>
+      <Placeholder className="h-64 md:h-[22rem] w-full" src={service.image} alt="The Royal Exchange, City of London" />
+      <section className="mx-auto max-w-3xl px-4 pt-12 pb-4 text-center">
+        <h1 className="display text-4xl md:text-5xl">Investment</h1>
+        <p className="mt-5 font-light text-xl md:text-2xl text-bgp-wine">{service.intro}</p>
       </section>
 
-      <section className="mx-auto max-w-6xl px-4 pt-14">
-        <span className="section-label">Our approach</span>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-4 max-w-5xl">
+      <section className="mx-auto max-w-3xl px-4 pt-4 text-center">
+        <div className="space-y-4">
           {SERVICE_COPY.investment.body.map((p, i) => (
-            <p key={p.slice(0, 24)} className={`text-base md:text-lg ${i === 0 ? "font-semibold text-bgp-ink" : "text-bgp-ink/90"}`}>{p}</p>
+            <p key={p.slice(0, 24)} className={`text-base md:text-lg ${i === 0 ? "text-bgp-ink" : "text-bgp-ink/90"}`}>{p}</p>
           ))}
         </div>
       </section>
