@@ -27,7 +27,7 @@ So we are not looking for a CMS, a hosting platform or a rebuild of the stack.
 
 **Where we could use you**
 
-- Design: a Figma pass on the visual layer. We would implement it in-house in the existing codebase, so we would want Figma files and a component-level spec rather than a theme or template.
+- Design: a Figma pass on the visual layer. We would implement it in-house in the existing codebase, so we would want Figma files and a component-level spec rather than a theme or template. To save you rebuilding anything, I have put the current site into a Figma file you can work in directly: six desktop pages (home, leasing, a listing, a sector page, a case study, the team), the nav, footer and cards as components, and a brand page with the palette as variables and the type styles. It is a starting point for exploration, not a design system, so please do not quote for building one out. I will share it to your Figma email.
 - SEO: a second opinion on page structure, titles and descriptions, schema markup for the office and people, and the go-live checklist (Search Console, Bing, Google Business Profile).
 - Anything you spot in the re-crawl once it comes back clean.
 

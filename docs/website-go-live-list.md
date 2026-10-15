@@ -58,3 +58,8 @@ asks for the list; add to it when he says "put it on the list".
   the content; Dan's re-audit should come back clean. Still to do at
   go-live: submit the sitemap in Google Search Console and Bing
   (2026-10-15). Pre-call note for Dan: `docs/note-to-dan-benchmark.md`.
+- Figma file of the live site for Dan to redesign in: "bgp.uk.com — site
+  pages (for redesign)" in the Bruce Gillingham Pollard Figma team,
+  https://www.figma.com/design/sBdWkCvqSisuuymOskDX8o. Six desktop pages,
+  components, brand page. Lora stands in for FreightText Pro (not in
+  Figma). Woody to invite Dan as an editor (2026-10-15).
