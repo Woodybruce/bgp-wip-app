@@ -1331,11 +1331,18 @@ export function setupStripeIssuingRoutes(app: Express) {
       // Accept one OR many files under the "receipt" field — an expense can
       // hold multiple photos (multi-page receipt, several items). Back-compat:
       // .array() puts a single upload into req.files as a one-element array.
-      const files = ((req.files as Express.Multer.File[]) || []).filter(Boolean);
-      if (files.length === 0) return res.status(400).json({ error: "No file uploaded" });
+      const rawFiles = ((req.files as Express.Multer.File[]) || []).filter(Boolean);
+      if (rawFiles.length === 0) return res.status(400).json({ error: "No file uploaded" });
 
       const [exp] = await db.select().from(expenses).where(eq(expenses.id, expenseId)).limit(1);
       if (!exp) return res.status(404).json({ error: "Expense not found" });
+
+      // iPhone HEIC photos are stored as JPEG (Woody, 2026-10-15).
+      const { normaliseReceiptUpload } = await import("./expense-receipt-parser");
+      const files = await Promise.all(rawFiles.map(async (f) => {
+        const n = await normaliseReceiptUpload({ buffer: f.buffer, mimeType: f.mimetype, filename: f.originalname });
+        return { ...f, buffer: n.buffer, mimetype: n.mimeType, originalname: n.filename, size: n.buffer.length };
+      }));
 
       let firstKey: string | null = null;
       for (let i = 0; i < files.length; i++) {
@@ -1728,6 +1735,9 @@ export function setupStripeIssuingRoutes(app: Express) {
           if (target) {
             // Attach to existing pending row — same shape as POST /:id/receipt.
             used.add(target.id);
+            const { normaliseReceiptUpload } = await import("./expense-receipt-parser");
+            const norm = await normaliseReceiptUpload({ buffer: file.buffer, mimeType: file.mimetype, filename: file.originalname });
+            file.buffer = norm.buffer; file.mimetype = norm.mimeType; file.originalname = norm.filename;
             const storageKey = `expense-receipts/${target.id}-${Date.now()}-${file.originalname}`;
             await saveFile(storageKey, file.buffer, file.mimetype, file.originalname);
             await db.insert(expenseReceipts).values({

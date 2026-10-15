@@ -225,3 +225,31 @@ async function normaliseForClaude(
 function isPdfByMagic(b: Buffer): boolean {
   return b.length >= 5 && b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46 && b[4] === 0x2d;
 }
+
+/**
+ * Receipt photos are STORED as JPEG (Woody, 2026-10-15: "save receipts as
+ * jpeg rather than HEIC"). iPhones send HEIC/HEIF, which browsers, Xero and
+ * the approvers' viewers can't show; convert once at upload — heic-convert
+ * (pure-JS libheif, since sharp's prebuilt binary has no HEIF decoder) then
+ * sharp for orientation. Anything else (JPEG, PNG, PDF) is kept as-is.
+ */
+export async function normaliseReceiptUpload(input: { buffer: Buffer; mimeType: string | null | undefined; filename: string | null | undefined }): Promise<{ buffer: Buffer; mimeType: string; filename: string }> {
+  const name = input.filename || "receipt";
+  const mt = (input.mimeType || "").toLowerCase();
+  const isHeic = /heic|heif/.test(mt) || /\.(heic|heif)$/i.test(name);
+  if (!isHeic) return { buffer: input.buffer, mimeType: input.mimeType || "application/octet-stream", filename: name };
+  let jpeg: Buffer;
+  try {
+    const heicConvert = (await import("heic-convert")).default;
+    jpeg = Buffer.from(await heicConvert({ buffer: input.buffer, format: "JPEG", quality: 0.9 }));
+  } catch (e: any) {
+    console.warn("[receipt] heic-convert failed, trying sharp:", e?.message);
+    const sharpMod = (await import("sharp")).default;
+    jpeg = await sharpMod(input.buffer, { failOn: "none" }).jpeg({ quality: 90 }).toBuffer();
+  }
+  try {
+    const sharpMod = (await import("sharp")).default;
+    jpeg = await sharpMod(jpeg, { failOn: "none" }).rotate().jpeg({ quality: 90, mozjpeg: true }).toBuffer();
+  } catch {}
+  return { buffer: jpeg, mimeType: "image/jpeg", filename: name.replace(/\.(heic|heif)$/i, "") + ".jpg" };
+}
