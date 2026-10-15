@@ -54,9 +54,10 @@ a:focus-visible { outline: 2px solid #ff1923; outline-offset: 3px; }
   .display {
     @apply font-display font-bold uppercase text-bgp-wine tracking-[-0.03em] leading-none;
   }
-  /* Eyebrow label above section headlines — Lato Light upper case */
+  /* Eyebrow label above section headlines — same Lato upper case as the
+     other labels; Light read as too thin at 12px (Woody, 2026-10-15) */
   .section-label {
-    @apply subhead text-xs block mb-3;
+    @apply label-caps text-bgp-wine block mb-3;
   }
   /* Typeset BGP wordmark */
   .wordmark {
