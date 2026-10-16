@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
 import Placeholder from "../components/Placeholder";
-import { Hero, QuoteBlock, SectionHead } from "../components/Wire";
+import { Hero, SectionHead } from "../components/Wire";
 import { INVESTMENT_DEALS, SERVICE_COPY, SERVICES } from "../lib/content";
 import { findCaseStudy, useSiteContent } from "../lib/site-content";
 
@@ -36,7 +36,7 @@ export default function Investment() {
   const service = SERVICES.find((s) => s.slug === "investment")!;
   return (
     <div>
-      <Hero src={service.image} alt="The Royal Exchange, City of London" label="Investment" statement={service.intro} />
+      <Hero src="/images/investment/royal-exchange-interior.jpg" alt="The Royal Exchange, City of London" label="Investment" statement={service.intro} />
 
       <section className="mx-auto max-w-6xl px-4 py-12 md:py-14">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-12">
@@ -54,9 +54,10 @@ export default function Investment() {
           <Filter label="Type" value={type} options={types} onChange={setType} />
         </div>
 
-        <div className="card-strip sm:grid-cols-2 lg:grid-cols-4 sm:gap-x-6 sm:gap-y-12">
-          {shown.map((deal) => (
-            <div key={deal.name} className={`group ${deal.wide ? "sm:col-span-2" : ""}`}>
+        {/* Slide 31: three across, the first tile across two columns. */}
+        <div className="card-strip sm:grid-cols-2 lg:grid-cols-3 sm:gap-x-6 sm:gap-y-12">
+          {shown.map((deal, i) => (
+            <div key={deal.name} className={`group ${i === 0 || deal.wide ? "sm:col-span-2" : ""}`}>
               <div className="relative img-frame">
                 <Placeholder className="aspect-[4/3] w-full" src={deal.image} alt={deal.name} label="Photo to follow" />
                 <span className={`absolute top-0 right-0 label-caps px-3 py-1.5 ${deal.status === "Under offer" ? "bg-bgp-nectar text-bgp-wine" : "bg-bgp-wine text-bgp-cream"}`}>
@@ -86,7 +87,6 @@ export default function Investment() {
         )}
       </section>
 
-      <QuoteBlock quote={{ quote: "", name: "Client name", title: "Title, company" }} />
       <KeyContacts people={INVESTMENT_CONTACTS} blurb="Our investment team would be delighted to discuss current opportunities and our full track record." />
       <CaseStudyStrip caseStudies={["the-royal-exchange", "19-golden-square", "213-214-upper-street"].map((s) => findCaseStudy(content, s)).filter(Boolean) as any} />
     </div>

@@ -24,18 +24,18 @@ export const DRAFT_QUOTE = "BGP understood what we needed from the space from th
 
 // Client quote with photo (slides 32 and 41). A missing quote shows draft
 // words in italics; a missing photo shows a stock image.
-export function QuoteBlock({ quote, image, imageAlt = "" }: { quote?: { quote: string; name: string; title: string } | null; image?: string; imageAlt?: string }) {
+export function QuoteBlock({ quote, image, imageAlt = "", imageSide = "right" }: { quote?: { quote: string; name: string; title: string } | null; image?: string; imageAlt?: string; imageSide?: "left" | "right" }) {
   const hasQuote = !!quote?.quote && !/^lorem ipsum/i.test(quote.quote);
   const draft = !hasQuote;
   return (
     <section className="mx-auto max-w-6xl px-4 py-12 md:py-14">
-      <div className="grid grid-cols-1 md:grid-cols-[1.4fr_1fr] gap-8 md:gap-12 items-start">
-        <div className={draft ? "italic" : ""}>
+      <div className={`grid grid-cols-1 gap-8 md:gap-12 items-start ${imageSide === "left" ? "md:grid-cols-[1fr_1.4fr] md:[direction:rtl]" : "md:grid-cols-[1.4fr_1fr]"}`}>
+        <div className={`[direction:ltr] ${draft ? "italic" : ""}`}>
           <p className="font-light text-xl md:text-2xl text-bgp-ink/85">“{hasQuote ? quote!.quote : DRAFT_QUOTE}”</p>
           <p className="mt-4 label-caps">{quote?.name || "Client name"}</p>
           <p className="text-xs text-bgp-ink/55 uppercase">{quote?.title || "Title, company"}</p>
         </div>
-        <Placeholder className="aspect-[4/3] w-full max-w-sm" src={image} alt={imageAlt || "Client quote photo"} label="Photo to follow" />
+        <Placeholder className="aspect-[4/3] w-full max-w-sm [direction:ltr]" src={image} alt={imageAlt || "Client quote photo"} label="Photo to follow" />
       </div>
     </section>
   );
@@ -80,12 +80,15 @@ export function Band({ children, className = "", id }: { children: ReactNode; cl
   );
 }
 
+// Section headings on every slide are small bold text over a rule (slides
+// 26, 28, 31, 32, 35, 38, 41, 45); page and case-study titles are large
+// light type. Brand Rep set the pattern on 2026-10-16; the rest follow.
 export function SectionHead({ title, sub, right, as: Tag = "h2", rule = true }: { title: ReactNode; sub?: ReactNode; right?: ReactNode; as?: "h1" | "h2"; rule?: boolean }) {
   return (
-    <div className={`flex flex-wrap items-end justify-between gap-x-8 gap-y-2 ${rule ? "border-b border-bgp-ink pb-3 mb-8" : "mb-6"}`}>
+    <div className={`flex flex-wrap items-end justify-between gap-x-8 gap-y-2 ${rule ? "border-b border-bgp-ink pb-2 mb-6" : "mb-4"}`}>
       <div>
-        <Tag className="display text-2xl md:text-3xl">{title}</Tag>
-        {sub && <p className="mt-1.5 text-sm text-bgp-ink/70">{sub}</p>}
+        <Tag className="text-sm font-bold text-bgp-ink">{title}</Tag>
+        {sub && <p className="mt-1 text-sm text-bgp-ink/70">{sub}</p>}
       </div>
       {right}
     </div>

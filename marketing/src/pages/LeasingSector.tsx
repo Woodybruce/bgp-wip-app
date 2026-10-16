@@ -43,7 +43,7 @@ export default function LeasingSector() {
       <section className="mx-auto max-w-6xl px-4 py-10 md:py-12">
         <p className="label-caps text-bgp-ink/50 mb-4"><Link href="/leasing" className="hover:text-bgp-wine">Leasing</Link> · {sector.name}</p>
         <div className="grid grid-cols-1 md:grid-cols-[1fr_1.3fr] gap-x-10 gap-y-4 items-start">
-          <h1 className="display text-3xl md:text-4xl">{sector.name}</h1>
+          <h1 className="font-light text-3xl md:text-4xl">{sector.name}</h1>
           <div className="flex items-start justify-between gap-8">
             <p className="font-light text-xl md:text-2xl text-bgp-ink/85">{sector.headline}</p>
             <span className="flex flex-col items-end gap-1 shrink-0 label-caps text-bgp-wine">
@@ -55,7 +55,7 @@ export default function LeasingSector() {
         <div className={`mt-10 grid grid-cols-1 gap-10 ${sector.howWeHelp ? "md:grid-cols-[1fr_280px]" : "md:grid-cols-[1fr_1.3fr]"}`}>
           <div className="space-y-4">
             {sector.body.map((p, i) => (
-              <p key={p.slice(0, 24)} className={`text-base ${i === 0 ? "font-bold text-bgp-ink" : "text-bgp-ink/90"}`}>{p}</p>
+              <p key={p.slice(0, 24)} className="text-base text-bgp-ink/90">{p}</p>
             ))}
           </div>
           {!sector.howWeHelp && sector.gallery && sector.gallery[0] && (
@@ -154,7 +154,7 @@ export function ShoppingCentrePage() {
         </p>
         <div className="grid grid-cols-1 md:grid-cols-[1fr_280px] gap-10 mt-8">
           <div>
-            <h1 className="display text-3xl md:text-4xl">{centre.name}</h1>
+            <h1 className="font-light text-3xl md:text-4xl">{centre.name}</h1>
             <div className="img-frame mt-6">
               <Placeholder className="aspect-[16/9] w-full" src={centre.image} alt={centre.name} stock={CENTRE_STOCK[0]} />
             </div>

@@ -71,7 +71,7 @@ export default function CaseStudyPage() {
             beside them, then an image carousel with arrows and dots. */}
         <div className="mt-8 grid grid-cols-1 md:grid-cols-[1fr_220px] gap-10">
           <div>
-            <h1 className={`display text-3xl md:text-4xl ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
+            <h1 className={`font-light text-3xl md:text-4xl ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
             <div className={`mt-5 space-y-4 ${caseStudy.draft ? "italic" : ""}`}>
               {caseStudy.body.map((para) => (
                 <p key={para.slice(0, 32)} className="text-base text-bgp-ink/85">
@@ -101,7 +101,7 @@ export default function CaseStudyPage() {
         </div>
       </section>
 
-      <QuoteBlock quote={caseStudy.quote} />
+      <QuoteBlock quote={caseStudy.quote} imageSide="left" />
 
       <section className="mx-auto max-w-6xl px-4 pb-10">
         <SectionHead title="Location" />
@@ -131,6 +131,7 @@ export default function CaseStudyPage() {
         </section>
       )}
 
+      {related.length === 0 && (
       <section className="mx-auto max-w-6xl px-4 py-10">
         <SectionHead title="More case studies" />
         <div className="card-strip sm:grid-cols-3">
@@ -143,6 +144,7 @@ export default function CaseStudyPage() {
           ))}
         </div>
       </section>
+      )}
     </div>
   );
 }

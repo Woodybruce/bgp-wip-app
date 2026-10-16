@@ -25,7 +25,7 @@ export default function ArticlePage() {
 
   return (
     <article className="mx-auto max-w-4xl px-4 py-14">
-      <h2 className="display text-2xl md:text-3xl border-b border-bgp-ink pb-3">News and insights</h2>
+      <h2 className="text-sm font-bold text-bgp-ink border-b border-bgp-ink pb-2">News and insights</h2>
 
       <div className="mt-4 flex flex-wrap justify-between gap-x-6 label-caps text-bgp-ink/50 bg-bgp-mist px-4 py-2">
         <span>{article.date} <span className="mx-2 text-bgp-ink/30">·</span> By {article.author}</span>

@@ -67,7 +67,7 @@ export default function Team() {
         {groups.map((g) => (
           <div key={g.label} className="mb-14">
             <div className="flex items-baseline justify-between border-b border-bgp-ink pb-2 mb-2">
-              <h2 className="display text-2xl md:text-3xl">
+              <h2 className="text-sm font-bold text-bgp-ink">
                 {g.href ? <Link href={g.href} className="hover:text-bgp-wine transition-colors">{g.label}</Link> : g.label}
               </h2>
               <span className="label-caps text-bgp-ink/45 tabular">{g.people.length}</span>

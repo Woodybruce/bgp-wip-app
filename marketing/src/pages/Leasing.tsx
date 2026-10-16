@@ -4,9 +4,9 @@ import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
-import { Hero, QuoteBlock, SectionHead } from "../components/Wire";
+import { Hero, SectionHead } from "../components/Wire";
 import { findCaseStudy, useSiteContent } from "../lib/site-content";
-import { LEASING_INTRO, LEASING_SECTORS, TESTIMONIAL } from "../lib/content";
+import { LEASING_INTRO, LEASING_SECTORS } from "../lib/content";
 import { Listing, fetchListings } from "../lib/api";
 
 const SIZE_BANDS = [
@@ -59,6 +59,7 @@ export default function Leasing() {
   const [size, setSize] = useState("");
   // Nine listings a page with page numbers underneath, so the case studies
   // and contacts are never pushed below a long run (Woody, 2026-10-15).
+  // Slide 26: a page of listings, then "+ More listings" to extend it.
   const PAGE_SIZE = 9;
   const [page, setPage] = useState(1);
   const gridTop = useRef<HTMLDivElement>(null);
@@ -107,7 +108,7 @@ export default function Leasing() {
     });
   }, [listings, location, type, size]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const pageItems = filtered.slice(0, page * PAGE_SIZE);
   const goTo = (n: number) => {
     setPage(Math.min(Math.max(1, n), pageCount));
     gridTop.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -183,24 +184,15 @@ export default function Leasing() {
                 {pageItems.length} on this page, swipe for more <span aria-hidden>{"→"}</span>
               </p>
             )}
-            {pageCount > 1 && (
-              <nav aria-label="Listing pages" className="mt-10 flex items-center gap-2 border-t border-bgp-wine/30 pt-6">
-                <button type="button" onClick={() => goTo(page - 1)} disabled={page === 1} className="label-caps px-3 py-2 text-bgp-wine disabled:text-bgp-ink/30 hover:opacity-70">‹ Prev</button>
-                {Array.from({ length: pageCount }, (_, i) => i + 1).map((n) => (
-                  <button key={n} type="button" onClick={() => goTo(n)} aria-current={n === page ? "page" : undefined}
-                    className={`tabular min-w-[2.25rem] px-2 py-2 text-sm border-b-2 transition-colors ${n === page ? "border-bgp-wine text-bgp-wine" : "border-transparent text-bgp-ink/60 hover:text-bgp-wine"}`}>
-                    {n}
-                  </button>
-                ))}
-                <button type="button" onClick={() => goTo(page + 1)} disabled={page === pageCount} className="label-caps px-3 py-2 text-bgp-wine disabled:text-bgp-ink/30 hover:opacity-70">Next ›</button>
-                <span className="ml-4 hidden sm:inline label-caps text-bgp-ink/40">{filtered.length} available</span>
-              </nav>
+            {page < pageCount && (
+              <p className="mt-8 text-right">
+                <button type="button" onClick={() => setPage(page + 1)} className="label-caps text-bgp-wine hover:opacity-70">+ More listings ({filtered.length - pageItems.length})</button>
+              </p>
             )}
           </>
         )}
       </section>
 
-      <QuoteBlock quote={TESTIMONIAL} image="/images/case-studies/lucent-piccadilly.jpg" imageAlt="Lucent, Piccadilly Lights" />
       <KeyContacts people={content.contacts.leasing} blurb="Our leasing team would be delighted to arrange a viewing or share full particulars." />
       <CaseStudyStrip caseStudies={["lucent-piccadilly", "st-christophers-place", "south-molton-triangle", "canary-wharf"].map((slug) => findCaseStudy(content, slug))} />
     </div>

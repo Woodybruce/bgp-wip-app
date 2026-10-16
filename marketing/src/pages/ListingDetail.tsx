@@ -135,7 +135,7 @@ export default function ListingDetail() {
             </div>
             <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-10 border-b border-bgp-ink pb-6">
               <div>
-                <h1 className="display text-3xl md:text-4xl">{names.title}</h1>
+                <h1 className="font-light text-3xl md:text-4xl">{names.title}</h1>
                 {(names.secondary || listing.addressLine) && (
                   <p className="mt-2 text-[15px] md:text-base text-bgp-ink/80">
                     {[names.secondary, listing.addressLine].filter(Boolean).join(" · ")}
