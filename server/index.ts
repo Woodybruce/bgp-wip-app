@@ -4578,6 +4578,27 @@ app.use("/api/branding/assets", express.static(
  *   3) Test fetch: pull a known-good Westminster IDOX docs page through
  *      the proxy and check we get HTML back (not a block / 503)
  */
+// Shared appraisal pages for the team — self-contained HTML files kept in
+// server/assets/share (copied to dist by script/build.ts), served only to a
+// logged-in staff user. Client logins are refused by the /api default-deny
+// backstop. ChatBGP links to these from the app map (e.g. the Roehampton
+// Sports Ground Estate appraisal for Related, October 2026).
+app.get("/api/share/:slug", requireAuth, async (req, res) => {
+  const slug = String(req.params.slug || "");
+  if (!/^[a-z0-9-]{1,80}$/.test(slug)) return res.status(404).json({ message: "Not found" });
+  const fs = await import("fs");
+  const path = await import("path");
+  const candidates = [
+    path.resolve(process.cwd(), "server", "assets", "share", `${slug}.html`),
+    path.resolve(process.cwd(), "dist", "server", "assets", "share", `${slug}.html`),
+  ];
+  const file = candidates.find((f) => fs.existsSync(f));
+  if (!file) return res.status(404).json({ message: "Not found" });
+  res.set("Cache-Control", "no-store");
+  res.set("X-Robots-Tag", "noindex, nofollow");
+  res.type("html").sendFile(file);
+});
+
 app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   const key = process.env.SCRAPERAPI_KEY;
   const out: any = { keySet: !!key, keyLength: key?.length || 0 };
