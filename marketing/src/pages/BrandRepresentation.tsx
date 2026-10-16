@@ -51,7 +51,7 @@ export default function BrandRepresentation() {
                 <div className="hidden md:block" />
                 <div className="[direction:ltr] flex flex-col">
                   {/* Slide 35 gives each case study a full paragraph, so the blurb and body run together. */}
-                  <div className={`space-y-3 text-lg md:text-xl leading-snug text-bgp-ink ${cs.draft ? "italic" : ""}`}>
+                  <div className={`space-y-3 text-lg md:text-[1.35rem] leading-snug text-bgp-ink ${cs.draft ? "italic" : ""}`}>
                     {[cs.blurb, ...(cs.body || [])].map((para, k) => <p key={k}>{para}</p>)}
                   </div>
                   <p className="mt-auto pt-6 label-caps font-bold text-bgp-ink self-end">Read more</p>
