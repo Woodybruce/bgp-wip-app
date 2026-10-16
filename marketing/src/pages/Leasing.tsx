@@ -2,11 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ListingCard from "../components/ListingCard";
 import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
-import { Link } from "wouter";
-import Placeholder from "../components/Placeholder";
 import { Hero, SectionHead } from "../components/Wire";
 import { findCaseStudy, useSiteContent } from "../lib/site-content";
-import { LEASING_INTRO, LEASING_SECTORS } from "../lib/content";
+import { LEASING_INTRO } from "../lib/content";
 import { Listing, fetchListings } from "../lib/api";
 
 const SIZE_BANDS = [
@@ -50,7 +48,6 @@ function FilterSelect({
 
 export default function Leasing() {
   const content = useSiteContent();
-  const sectors = LEASING_SECTORS;
   const [listings, setListings] = useState<Listing[]>([]);
   const [live, setLive] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -119,29 +116,7 @@ export default function Leasing() {
     <div>
       <Hero src="/images/gallery/mayfair-3.jpg" alt="North Audley Street, Mayfair" label="Leasing" statement={LEASING_INTRO.headline} />
 
-      <section className="mx-auto max-w-6xl px-4 py-12 md:py-14">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-12">
-          {LEASING_INTRO.body.map((p) => (
-            <p key={p.slice(0, 24)} className="text-base md:text-lg text-bgp-ink/90">{p}</p>
-          ))}
-        </div>
-      </section>
-
-      {/* Leasing teams: one tile per sector (Woody, 2026-10-16: "where we act change to leasing teams") */}
-      <section className="mx-auto max-w-6xl px-4 pb-14">
-        <SectionHead title="Leasing teams" />
-        <div className={`card-strip sm:grid-cols-2 ${sectors.length > 2 ? "lg:grid-cols-4" : ""}`}>
-          {sectors.map((x) => (
-            <Link key={x.slug} href={`/leasing/sectors/${x.slug}`} className="group block">
-              <div className="img-frame">
-                <Placeholder className="aspect-[4/3] w-full" src={x.image} alt={x.name} />
-              </div>
-              <p className="label-caps mt-3 text-bgp-wine">{x.name}</p>
-              <p className="mt-2"><span className="explore-link">Find out more</span></p>
-            </Link>
-          ))}
-        </div>
-      </section>
+      {/* Slide 26: the hero runs straight into the listings; the four teams live in the Leasing rollover. */}
 
       {/* Snapshot of available properties */}
       <section id="availability" className="mx-auto max-w-6xl px-4 pb-14 scroll-mt-24">
@@ -172,9 +147,10 @@ export default function Leasing() {
           </p>
         ) : (
           <>
-            <div ref={gridTop} className="scroll-mt-28 mt-8 card-strip sm:grid-cols-2 lg:grid-cols-3 sm:gap-x-6 sm:gap-y-10">
+            {/* Slide 26: three across, then a row of two wider cards ("key properties sometimes taking a wider column"). */}
+            <div ref={gridTop} className="scroll-mt-28 mt-8 card-strip sm:grid-cols-2 lg:grid-cols-6 sm:gap-x-6 sm:gap-y-10">
               {pageItems.map((l, i) => (
-                <div key={l.id} className={`h-full ${i === 3 && pageItems.length >= 6 ? "lg:col-span-2" : ""}`}>
+                <div key={l.id} className={`h-full ${(i === 3 || i === 4) && pageItems.length >= 6 ? "lg:col-span-3" : "lg:col-span-2"}`}>
                   <ListingCard listing={l} />
                 </div>
               ))}

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
 import { Band, SectionHead } from "../components/Wire";
-import { CONSULTANCY_BODY, HERO_SLIDES, HERO_STATEMENT, HOME_INTRO, LEASE_ADVISORY_BODY, LEASING_INTRO, SERVICES, SERVICE_COPY, TESTIMONIAL } from "../lib/content";
+import { CONSULTANCY_BODY, HERO_SLIDES, HERO_STATEMENT, LEASE_ADVISORY_BODY, LEASING_INTRO, SERVICES, SERVICE_COPY } from "../lib/content";
 
 // Slide 23 gives each service overview about five lines, so each block
 // carries its intro plus one paragraph from its own page.
@@ -64,6 +64,9 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Slide 23: a slim dark Talk to us bar under the hero, then the stats. */}
+      <a href="#contact" className="block bg-bgp-ink text-bgp-cream text-center label-caps py-2 hover:bg-bgp-wine transition-colors">Talk to us</a>
+
       {/* Stats row */}
       <section className="mx-auto max-w-6xl px-4 py-10 md:py-12 border-b border-bgp-line">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-8 text-center">
@@ -73,19 +76,6 @@ export default function Home() {
               <p className="mt-2 text-xs text-bgp-ink/70 max-w-[18ch] mx-auto">{s.caption}</p>
             </div>
           ))}
-        </div>
-      </section>
-
-      {/* We are bgp */}
-      <section className="mx-auto max-w-6xl px-4 py-14 md:py-16">
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr] gap-8 md:gap-12">
-          <h2 className="display text-3xl md:text-4xl">{HOME_INTRO.lead}</h2>
-          <div className="space-y-4">
-            {HOME_INTRO.body.map((para) => (
-              <p key={para.slice(0, 24)} className="text-base md:text-lg text-bgp-ink/90">{para}</p>
-            ))}
-            <p className="font-light text-lg md:text-xl text-bgp-wine pt-2">{HOME_INTRO.servicesHeading}</p>
-          </div>
         </div>
       </section>
 
@@ -114,15 +104,6 @@ export default function Home() {
           );
         })}
       </div>
-
-      {/* Testimonial */}
-      <section className="mx-auto max-w-6xl px-4 py-12 md:py-14">
-        <div className="max-w-3xl border-l-2 border-bgp-wine pl-6">
-          <blockquote className="font-light text-xl md:text-2xl text-bgp-ink/85">“{TESTIMONIAL.quote}”</blockquote>
-          <p className="mt-4 label-caps">{TESTIMONIAL.name}</p>
-          <p className="text-xs text-bgp-ink/55 uppercase">{TESTIMONIAL.title}</p>
-        </div>
-      </section>
 
       {/* News & insights */}
       <Band>
