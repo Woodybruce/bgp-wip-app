@@ -22,7 +22,7 @@ export default function Footer() {
 
   return (
     <footer id="contact" className="mt-24 bg-bgp-wine text-bgp-cream">
-      <div className="mx-auto max-w-6xl px-4 pt-16 pb-10 grid grid-cols-1 md:grid-cols-4 gap-10">
+      <div className="mx-auto max-w-[1360px] px-4 pt-16 pb-10 grid grid-cols-1 md:grid-cols-4 gap-10">
         <div>
           <img src="/brand/bgp-frame-nectar.svg" alt="bgp" className="h-16 w-auto" />
           <p className="mt-5 font-light text-bgp-nectar text-lg max-w-[16ch]">
@@ -84,7 +84,7 @@ export default function Footer() {
       </div>
 
       <div className="border-t border-bgp-cream/15">
-        <div className="mx-auto max-w-6xl px-4 py-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 text-xs text-bgp-cream/60">
+        <div className="mx-auto max-w-[1360px] px-4 py-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 text-xs text-bgp-cream/60">
           <div>
             <p>© Bruce Gillingham Pollard 2013–{String(new Date().getFullYear()).slice(2)}. All registered trademarks.</p>
           </div>

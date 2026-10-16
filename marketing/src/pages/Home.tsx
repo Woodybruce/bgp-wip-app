@@ -2,17 +2,8 @@ import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
 import { Band, SectionHead } from "../components/Wire";
-import { CONSULTANCY_BODY, HERO_SLIDES, HERO_STATEMENT, LEASE_ADVISORY_BODY, LEASING_INTRO, SERVICES, SERVICE_COPY } from "../lib/content";
+import { HERO_SLIDES, HERO_STATEMENT, SERVICES } from "../lib/content";
 
-// Slide 23 gives each service overview about five lines, so each block
-// carries its intro plus one paragraph from its own page.
-const SECOND_PARAGRAPH: Record<string, string> = {
-  leasing: LEASING_INTRO.body[0],
-  investment: SERVICE_COPY.investment.body[0],
-  "brand-representation": SERVICE_COPY.brandRepresentation.body[0],
-  "lease-advisory": LEASE_ADVISORY_BODY[1],
-  consultancy: CONSULTANCY_BODY[1],
-};
 import { useSiteContent } from "../lib/site-content";
 
 // Home per wireframe slides 22–23: hero with the statement bottom-left,
@@ -43,7 +34,7 @@ export default function Home() {
   return (
     <div>
       {/* Hero: rotating flagship instructions, statement bottom-left */}
-      <section className="relative flex items-end h-[70vh] min-h-[480px] overflow-hidden">
+      <section data-hero className="relative flex items-end -mt-16 md:-mt-24 lg:-mt-28 h-[min(63vw,100vh)] min-h-[420px] overflow-hidden">
         {HERO_SLIDES.map((slide, i) => (
           <img
             key={slide.src}
@@ -53,9 +44,9 @@ export default function Home() {
             className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-[1500ms] ease-in-out ${i === slideIndex ? "opacity-100" : "opacity-0"}`}
           />
         ))}
-        <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/80 via-bgp-ink/25 to-bgp-ink/5" />
-        <div className="relative mx-auto w-full max-w-6xl px-4 pb-10 md:pb-14 flex flex-wrap items-end justify-between gap-6">
-          <h1 className="max-w-2xl font-light text-3xl md:text-5xl leading-[1.1] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>
+        <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/80 via-bgp-ink/25 to-bgp-ink/35" />
+        <div className="relative mx-auto w-full max-w-[1360px] px-4 pb-10 md:pb-9 flex flex-wrap items-end justify-between gap-6">
+          <h1 className="max-w-[62%] font-light text-3xl md:text-4xl leading-[1.1] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>
             {HERO_STATEMENT}
           </h1>
           <p className="label-caps text-white/85" aria-live="polite">
@@ -67,31 +58,30 @@ export default function Home() {
       {/* Slide 23: a slim dark Talk to us bar under the hero, then the stats. */}
       <a href="#contact" className="block bg-bgp-ink text-bgp-cream text-center label-caps py-2 hover:bg-bgp-wine transition-colors">Talk to us</a>
 
-      {/* Stats row */}
-      <section className="mx-auto max-w-6xl px-4 py-10 md:py-12 border-b border-bgp-line">
+      {/* Stats row, on the grey band as slide 23 draws it */}
+      <section className="bg-bgp-mist"><div className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-8 text-center">
           {STATS.map((s) => (
             <div key={s.caption}>
-              <p className="display text-4xl md:text-5xl tabular">{s.value}</p>
+              <p className="display text-4xl md:text-7xl tabular">{s.value}</p>
               <p className="mt-2 text-xs text-bgp-ink/70 max-w-[18ch] mx-auto">{s.caption}</p>
             </div>
           ))}
         </div>
-      </section>
+      </div></section>
 
       {/* Service overviews on alternating bands */}
       <div id="services">
         {SERVICES.map((service, i) => {
           const inner = (
             <>
-              <SectionHead title={service.name} rule={false} />
-              <div className={`grid grid-cols-1 md:grid-cols-[1.1fr_1fr] gap-8 md:gap-12 items-start ${i % 2 ? "md:[direction:rtl]" : ""}`}>
+              <h2 className="text-3xl font-bold text-bgp-ink mb-5">{service.name}</h2>
+              <div className={`grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-10 items-start ${i % 2 ? "md:[direction:rtl]" : ""}`}>
                 <div className="img-frame [direction:ltr]">
-                  <Placeholder className="aspect-[4/3] w-full" src={service.image} alt={service.name} />
+                  <Placeholder className="aspect-[16/10] w-full" src={service.image} alt={service.name} />
                 </div>
                 <div className="[direction:ltr]">
-                  <p className="text-base md:text-lg text-bgp-ink/90">{service.intro}</p>
-                  {SECOND_PARAGRAPH[service.slug] && <p className="mt-3 text-base md:text-lg text-bgp-ink/90">{SECOND_PARAGRAPH[service.slug]}</p>}
+                  <p className="text-xl leading-snug text-bgp-ink/90">{service.intro}</p>
                   <p className="mt-5"><Link href={`/${service.slug}`} className="explore-link">Find out more</Link></p>
                 </div>
               </div>
@@ -100,7 +90,7 @@ export default function Home() {
           return i % 2 ? (
             <Band key={service.slug}>{inner}</Band>
           ) : (
-            <section key={service.slug} className="mx-auto max-w-6xl px-4 py-12 md:py-14">{inner}</section>
+            <section key={service.slug} className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">{inner}</section>
           );
         })}
       </div>

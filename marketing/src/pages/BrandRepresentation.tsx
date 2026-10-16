@@ -1,8 +1,8 @@
 import { Link } from "wouter";
-import { ClientCircle } from "../components/ClientRow";
+import ClientRow from "../components/ClientRow";
 import ContactCard from "../components/ContactCard";
 import Placeholder from "../components/Placeholder";
-import { BRAND_REP_CLIENTS, SERVICE_COPY, SERVICES } from "../lib/content";
+import { BRAND_REP_CLIENTS, SERVICES } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
 
 // Built to wireframe slide 35 exactly (Woody, 2026-10-16): no hero photo,
@@ -12,34 +12,30 @@ import { useSiteContent } from "../lib/site-content";
 export default function BrandRepresentation() {
   const service = SERVICES.find((s) => s.slug === "brand-representation")!;
   const { caseStudies, contacts, team } = useSiteContent();
-  const studies = caseStudies.filter((c) => c.service === "Brand Representation").slice(0, 4);
+  const studies = caseStudies.filter((c) => c.service === "Brand Representation").slice(0, 3);
   // Slide 35 shows three contacts: the two directors from the feed, then the
   // next person on the Brand Representation team.
   const people = [...contacts.brand_representation, ...team.filter((p) => p.team === "Tenant Rep" && !contacts.brand_representation.some((c) => c.name === p.name))].slice(0, 3);
   const clients = BRAND_REP_CLIENTS.slice(0, 14);
 
   return (
-    <div className="mx-auto max-w-6xl px-4 pt-10 md:pt-14">
+    <div className="mx-auto max-w-[1360px] px-4 pt-10 md:pt-14">
       <h1 className="sr-only">Brand Representation</h1>
 
       {/* Overview / intro */}
-      <p className="max-w-4xl font-light text-2xl md:text-[2.5rem] leading-[1.15] text-bgp-ink">
-        {service.intro} {SERVICE_COPY.brandRepresentation.body[0]}
+      <p className="max-w-[62%] font-light text-2xl md:text-4xl leading-[1.1] text-bgp-ink">
+        {service.intro}
       </p>
 
       {/* A snapshot of clients */}
       <section className="mt-10">
-        <h2 className="text-sm font-bold text-bgp-ink border-b border-bgp-ink pb-2 mb-5">A snapshot of clients</h2>
-        <div className="grid grid-cols-4 sm:grid-cols-7 gap-4 md:gap-6">
-          {clients.map((c) => (
-            <ClientCircle key={c.name} client={c} />
-          ))}
-        </div>
+        <h2 className="text-2xl font-bold text-bgp-ink border-b-[3px] border-bgp-ink pb-2 mb-6">A snapshot of clients</h2>
+        <ClientRow clients={clients} />
       </section>
 
       {/* Case studies */}
-      <section className="mt-12 border-t border-bgp-ink pt-6">
-        <h2 className="text-sm font-bold text-bgp-ink mb-4">Case studies</h2>
+      <section className="mt-10 border-t-[3px] border-bgp-ink pt-6">
+        <h2 className="text-2xl font-bold text-bgp-ink mb-4">Case studies</h2>
         <div className="grid grid-cols-1 gap-4">
           {studies.map((cs, i) => (
             <Link
@@ -68,7 +64,7 @@ export default function BrandRepresentation() {
       {/* Key contacts */}
       <section className="mt-12 mb-16 grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-8 md:gap-12 items-start">
         <div>
-          <h2 className="text-sm font-bold text-bgp-ink">Key contacts</h2>
+          <h2 className="text-2xl font-bold text-bgp-ink">Key contacts</h2>
           <p className="mt-3 text-base md:text-lg leading-snug text-bgp-ink/85">
             Our brand representation team supports occupiers from first site to full network. Talk to us about a first UK store, the next ten, or a portfolio review.
           </p>
@@ -76,6 +72,13 @@ export default function BrandRepresentation() {
         <div className="grid grid-cols-3 gap-4">
           {people.map((p) => (
             <ContactCard key={p.name} person={p} compact />
+          ))}
+          {Array.from({ length: Math.max(0, 3 - people.length) }, (_, i) => (
+            <div key={i} className="w-full max-w-[14rem] italic text-bgp-stone">
+              <div className="aspect-[9/10] w-full bg-bgp-stone/30" />
+              <p className="mt-3 label-caps text-bgp-stone">Name {people.length + i + 1}</p>
+              <div className="mt-1 text-sm space-y-0.5"><p>Job title</p><p>+44 (0)20 0000 0000</p><p>name@bgp.uk.com</p></div>
+            </div>
           ))}
         </div>
       </section>

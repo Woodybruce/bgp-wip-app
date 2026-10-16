@@ -46,7 +46,7 @@ export default function CaseStudyPage() {
 
   if (!caseStudy) {
     return (
-      <div className="mx-auto max-w-6xl px-4 py-32 text-center">
+      <div className="mx-auto max-w-[1360px] px-4 py-32 text-center">
         <p className="label-caps text-bgp-burgundy">Case study not found</p>
         <p className="mt-4">
           <Link href="/" className="explore-link inline-block">Back to home</Link>
@@ -63,13 +63,13 @@ export default function CaseStudyPage() {
 
   return (
     <div>
-      <section className="mx-auto max-w-6xl px-4 py-10">
+      <section className="mx-auto max-w-[1360px] px-4 py-7">
         <p className="label-caps border-b border-bgp-ink pb-2 text-bgp-ink/50">
           Case study · {caseStudy.service}
         </p>
         {/* Wireframe slide 32: title and intro at left with the facts panel
             beside them, then an image carousel with arrows and dots. */}
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-[1fr_220px] gap-10">
+        <div className="mt-8 grid grid-cols-1 md:grid-cols-[63fr_12fr_25fr] gap-6 md:gap-0">
           <div>
             <h1 className={`font-light text-3xl md:text-4xl ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
             <div className={`mt-5 space-y-4 ${caseStudy.draft ? "italic" : ""}`}>
@@ -81,7 +81,7 @@ export default function CaseStudyPage() {
             </div>
             {photos.length > 0 && <Carousel photos={photos} alt={caseStudy.title} />}
           </div>
-
+          <div className="hidden md:block" />
           <aside>
             <dl className="border-t border-bgp-ink">
               {caseStudy.facts.map(([k, v]) => (
@@ -103,7 +103,7 @@ export default function CaseStudyPage() {
 
       <QuoteBlock quote={caseStudy.quote} imageSide="left" />
 
-      <section className="mx-auto max-w-6xl px-4 pb-10">
+      <section className="mx-auto max-w-[1360px] px-4 pb-10">
         <SectionHead title="Location" />
         <MapSlot lat={caseStudy.location?.lat} lon={caseStudy.location?.lon} />
       </section>
@@ -111,7 +111,7 @@ export default function CaseStudyPage() {
       <KeyContacts band={false} people={contacts} />
 
       {related.length > 0 && (
-        <section className="mx-auto max-w-6xl px-4 py-10">
+        <section className="mx-auto max-w-[1360px] px-4 py-7">
           <SectionHead title="Similar transactions" sub="By location" />
           <div className="card-strip sm:grid-cols-3 sm:gap-6">
             {related.map((deal) => (
@@ -132,7 +132,7 @@ export default function CaseStudyPage() {
       )}
 
       {related.length === 0 && (
-      <section className="mx-auto max-w-6xl px-4 py-10">
+      <section className="mx-auto max-w-[1360px] px-4 py-7">
         <SectionHead title="More case studies" />
         <div className="card-strip sm:grid-cols-3">
           {others.map((c) => (

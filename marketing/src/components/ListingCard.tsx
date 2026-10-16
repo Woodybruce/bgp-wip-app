@@ -18,9 +18,9 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
       <Link href={`/leasing/${listing.id}`} className="block group relative">
         <div className="img-frame">
           {img ? (
-            <img src={fileUrl(img.id)} alt={listing.unitName} className="aspect-[4/3] w-full object-cover" style={{ objectPosition: focalPosition(img) }} loading="lazy" />
+            <img src={fileUrl(img.id)} alt={listing.unitName} className="aspect-[3/2] w-full object-cover" style={{ objectPosition: focalPosition(img) }} loading="lazy" />
           ) : (
-            <Placeholder className="aspect-[4/3] w-full" src={listing.image} alt={listing.unitName} />
+            <Placeholder className="aspect-[3/2] w-full" src={listing.image} alt={listing.unitName} />
           )}
         </div>
         {listing.marketingStatus === "Under Offer" && (

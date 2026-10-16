@@ -63,11 +63,11 @@ export default function Team() {
       />
       <h1 className="sr-only">The BGP team</h1>
 
-      <section className="mx-auto max-w-6xl px-4 py-14 md:py-16">
+      <section className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
         {groups.map((g) => (
           <div key={g.label} className="mb-14">
             <div className="flex items-baseline justify-between border-b border-bgp-ink pb-2 mb-2">
-              <h2 className="text-sm font-bold text-bgp-ink">
+              <h2 className="text-2xl font-bold text-bgp-ink">
                 {g.href ? <Link href={g.href} className="hover:text-bgp-wine transition-colors">{g.label}</Link> : g.label}
               </h2>
               <span className="label-caps text-bgp-ink/45 tabular">{g.people.length}</span>

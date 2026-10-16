@@ -8,7 +8,7 @@ import { findCaseStudy, useSiteContent } from "../lib/site-content";
 
 // Same page shape as before; the copy, the transactions and the photos come
 // from the February 2026 Royal Exchange pitch (Woody, 2026-10-12).
-const INITIAL_VISIBLE = 8;
+const INITIAL_VISIBLE = 7;
 
 function Filter({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (v: string) => void }) {
   return (
@@ -38,15 +38,7 @@ export default function Investment() {
     <div>
       <Hero src="/images/investment/royal-exchange-interior.jpg" alt="The Royal Exchange, City of London" label="Investment" statement={service.intro} />
 
-      <section className="mx-auto max-w-6xl px-4 py-12 md:py-14">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-12">
-          {SERVICE_COPY.investment.body.map((p, i) => (
-            <p key={p.slice(0, 24)} className={`text-base md:text-lg ${i === 0 ? "text-bgp-ink" : "text-bgp-ink/90"}`}>{p}</p>
-          ))}
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-6xl px-4 pb-14">
+      <section className="mx-auto max-w-[1360px] px-4 pb-9">
         <SectionHead title="Snapshot of properties" sub="Please contact us for full availability" />
         <div className="flex flex-wrap items-center gap-x-10 gap-y-3 border-b border-bgp-wine/30 pb-3 mb-8 -mt-4">
           <span className="label-caps text-bgp-ink/60">Filter by</span>
@@ -54,21 +46,21 @@ export default function Investment() {
           <Filter label="Type" value={type} options={types} onChange={setType} />
         </div>
 
-        {/* Slide 31: three across, the first tile across two columns. */}
-        <div className="card-strip sm:grid-cols-2 lg:grid-cols-3 sm:gap-x-6 sm:gap-y-12">
-          {shown.map((deal, i) => (
-            <div key={deal.name} className={`group ${i === 0 || deal.wide ? "sm:col-span-2" : ""}`}>
+        {/* Slide 31: a wide tile and a small one, then a small and a wide, then three across. */}
+        {(() => {
+          const Tile = ({ deal, aspect }: { deal: (typeof shown)[number]; aspect: string }) => (
+            <div className="group">
               <div className="relative img-frame">
-                <Placeholder className="aspect-[4/3] w-full" src={deal.image} alt={deal.name} label="Photo to follow" />
+                <Placeholder className={`${aspect} w-full`} src={deal.image} alt={deal.name} label="Photo to follow" />
                 <span className={`absolute top-0 right-0 label-caps px-3 py-1.5 ${deal.status === "Under offer" ? "bg-bgp-nectar text-bgp-wine" : "bg-bgp-wine text-bgp-cream"}`}>
                   {deal.status}
                 </span>
               </div>
-              <div className="mt-3 border-t border-bgp-wine/30 pt-3">
-                <p className="label-caps text-bgp-wine">{deal.name}</p>
+              <div className="mt-3">
+                <p className="label-caps font-bold text-bgp-ink">{deal.name}</p>
                 {deal.address && deal.address !== deal.name && <p className="mt-0.5 text-sm text-bgp-ink/60">{deal.address}</p>}
                 <p className="mt-0.5 text-xs text-bgp-ink/55 uppercase">{deal.client}</p>
-                <p className="mt-1.5 text-sm text-bgp-ink/80 tabular">
+                <p className="mt-1 text-sm text-bgp-ink/80 tabular">
                   {deal.type === "Transaction" ? "" : deal.type}
                   {deal.type !== "Transaction" && deal.price ? " · " : ""}
                   {deal.price}
@@ -76,8 +68,32 @@ export default function Investment() {
                 </p>
               </div>
             </div>
-          ))}
-        </div>
+          );
+          const [a, b, c, d, ...rest] = shown;
+          return (
+            <div className="space-y-10">
+              {a && (
+                <div className="grid grid-cols-1 md:grid-cols-[51fr_8fr_29fr_12fr] gap-6 md:gap-0 items-end">
+                  <Tile deal={a} aspect="aspect-[8/5]" />
+                  <div className="hidden md:block" />
+                  {b && <Tile deal={b} aspect="aspect-[5/4]" />}
+                </div>
+              )}
+              {c && (
+                <div className="grid grid-cols-1 md:grid-cols-[29fr_12fr_51fr_8fr] gap-6 md:gap-0 items-end">
+                  <Tile deal={c} aspect="aspect-[5/4]" />
+                  <div className="hidden md:block" />
+                  {d && <Tile deal={d} aspect="aspect-[8/5]" />}
+                </div>
+              )}
+              {rest.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                  {rest.map((deal) => <Tile key={deal.name} deal={deal} aspect="aspect-[3/2]" />)}
+                </div>
+              )}
+            </div>
+          );
+        })()}
         {!expanded && !status && !type && deals.length > INITIAL_VISIBLE && (
           <p className="mt-10 text-right">
             <button onClick={() => setExpanded(true)} className="label-caps text-bgp-wine hover:opacity-70">

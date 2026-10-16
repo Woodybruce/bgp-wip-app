@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { LEASING_SECTORS, NAV_ITEMS } from "../lib/content";
 
@@ -15,11 +15,23 @@ const LEASING_MENU: Array<{ heading: string; items: Array<{ label: string; href:
 export default function Nav() {
   const [location] = useLocation();
   const [open, setOpen] = useState(false);
+  // The slides draw the bar inside the hero photo: transparent with white text
+  // at the top of a hero page, cream once scrolled or on pages without a hero.
+  const [scrolled, setScrolled] = useState(false);
+  const [hasHero, setHasHero] = useState(false);
+  useEffect(() => {
+    const on = () => setScrolled(window.scrollY > 40);
+    on();
+    window.addEventListener("scroll", on, { passive: true });
+    return () => window.removeEventListener("scroll", on);
+  }, []);
+  useEffect(() => { setHasHero(!!document.querySelector("[data-hero]")); }, [location]);
+  const over = hasHero && !scrolled && !open;
 
   return (
     <>
-    <header className="sticky top-0 z-50 bg-bgp-cream/95 backdrop-blur border-b border-bgp-wine/10">
-      <div className="relative mx-auto max-w-6xl px-4">
+    <header className={`sticky top-0 z-50 border-b transition-colors ${over ? "bg-transparent border-transparent" : "bg-bgp-cream/95 backdrop-blur border-bgp-wine/10"}`}>
+      <div className="relative mx-auto max-w-[1360px] px-4">
         {/* Phone bar */}
         <div className="flex md:hidden items-center justify-between h-16">
           <Link href="/" aria-label="Bruce Gillingham Pollard home" onClick={() => setOpen(false)}>
@@ -57,10 +69,10 @@ export default function Nav() {
         )}
 
         {/* Desktop bar */}
-        <div className="hidden md:flex items-center justify-between h-20">
+        <div className="hidden md:flex items-center justify-between h-24 lg:h-28">
           <Link href="/" aria-label="Bruce Gillingham Pollard home" className="shrink-0">
-            {/* Frame logo, never below the 50px minimum (guidelines p.3) */}
-            <img src="/brand/bgp-frame-bordeaux.svg" alt="bgp" className="h-[50px] w-auto" />
+            {/* Frame logo, never below the 50px minimum (guidelines p.3); the slide draws it larger */}
+            <img src={over ? "/brand/bgp-frame-white.svg" : "/brand/bgp-frame-bordeaux.svg"} alt="bgp" className="h-[50px] lg:h-[68px] w-auto" />
           </Link>
           <nav className="flex items-center">
             {NAV_ITEMS.map((item, i) => {
@@ -68,12 +80,12 @@ export default function Nav() {
               const menu = item.href === "/leasing";
               return (
                 <span key={item.href} className={`flex items-center ${menu ? "group/menu relative" : ""}`}>
-                  {i > 0 && <span className="mx-3 text-bgp-wine/40">/</span>}
+                  {i > 0 && <span className={`mx-3 ${over ? "text-white/50" : "text-bgp-wine/40"}`}>/</span>}
                   <Link
                     href={item.href}
                     data-active={active}
                     className={`label-caps nav-link whitespace-nowrap transition-colors py-7 ${
-                      active ? "text-bgp-wine" : "text-bgp-wine hover:opacity-70"
+                      over ? "text-white hover:opacity-80" : active ? "text-bgp-wine" : "text-bgp-wine hover:opacity-70"
                     }`}
                   >
                     {item.label}

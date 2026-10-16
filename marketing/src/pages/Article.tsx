@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { Fragment } from "react";
 import { Link, useRoute } from "wouter";
 import Placeholder from "../components/Placeholder";
 import { useSiteContent } from "../lib/site-content";
@@ -14,7 +15,7 @@ export default function ArticlePage() {
 
   if (!article) {
     return (
-      <div className="mx-auto max-w-6xl px-4 py-32 text-center">
+      <div className="mx-auto max-w-[1360px] px-4 py-32 text-center">
         <p className="label-caps text-bgp-burgundy">Article not found</p>
         <p className="mt-4">
           <Link href="/news" className="explore-link inline-block">Back to news &amp; insights</Link>
@@ -24,39 +25,37 @@ export default function ArticlePage() {
   }
 
   return (
-    <article className="mx-auto max-w-4xl px-4 py-14">
-      <h2 className="text-sm font-bold text-bgp-ink border-b border-bgp-ink pb-2">News and insights</h2>
+    <article className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
+      <h2 className="text-2xl font-bold text-bgp-ink border-b border-bgp-ink pb-2">News and insights</h2>
 
       <div className="mt-4 flex flex-wrap justify-between gap-x-6 label-caps text-bgp-ink/50 bg-bgp-mist px-4 py-2">
         <span>{article.date} <span className="mx-2 text-bgp-ink/30">·</span> By {article.author}</span>
         <span>{article.category}</span>
       </div>
 
-      {/* Wireframe slide 46: image at left, headline and standfirst beside it */}
-      <div className="mt-6 grid grid-cols-1 md:grid-cols-[1.3fr_1fr] gap-8 items-start">
+      {/* Wireframe slide 46: a 54% photo beside the headline and standfirst, then the whole article at full width with a second photo set into it. */}
+      <div className="mt-6 grid grid-cols-1 md:grid-cols-[54fr_46fr] gap-8 md:gap-12 items-start">
         <Placeholder className="aspect-[4/3] w-full" src={article.image} alt={article.title} />
         <div>
-          <h1 className="font-light text-2xl md:text-3xl text-bgp-wine">{article.title}</h1>
-          <p className="mt-4 text-sm text-bgp-ink/75">{article.standfirst}</p>
+          <h1 className="font-light text-3xl md:text-4xl text-bgp-wine">{article.title}</h1>
+          <p className="mt-4 text-xl leading-snug text-bgp-ink/75">{article.standfirst}</p>
         </div>
       </div>
 
-      <div className="mt-10 space-y-5 max-w-3xl">
+      <div className="mt-8 space-y-5 [&>p]:text-base [&>p]:text-bgp-ink/85">
         {article.body ? (
-          article.body.map((para, i) =>
-            para.startsWith("## ") ? (
-              <h2 key={i} className="text-base font-semibold pt-4">
-                {para.slice(3)}
-              </h2>
-            ) : (
-              <p key={i} className="text-base text-bgp-ink/85">
-                {para}
-              </p>
-            ),
-          )
+          article.body.map((para, i) => (
+            <Fragment key={i}>
+              {i === Math.floor(article.body!.length * 0.55) && (
+                <Placeholder className="aspect-[4/3] w-full md:float-left md:w-[45%] md:mr-10 md:mb-4" alt={`${article.title} second photo`} label="Photo to follow" />
+              )}
+              {para.startsWith("## ") ? <h2 className="text-lg font-bold pt-4">{para.slice(3)}</h2> : <p>{para}</p>}
+            </Fragment>
+          ))
         ) : (
-          <p className="text-base text-bgp-ink/85">{article.standfirst}</p>
+          <p>{article.standfirst}</p>
         )}
+        <div className="clear-both" />
       </div>
 
       <div className="mt-12 flex items-center justify-between border-t border-bgp-ink pt-4">

@@ -57,7 +57,7 @@ export default function Leasing() {
   // Nine listings a page with page numbers underneath, so the case studies
   // and contacts are never pushed below a long run (Woody, 2026-10-15).
   // Slide 26: a page of listings, then "+ More listings" to extend it.
-  const PAGE_SIZE = 9;
+  const PAGE_SIZE = 8;
   const [page, setPage] = useState(1);
   const gridTop = useRef<HTMLDivElement>(null);
   useEffect(() => { setPage(1); }, [location, type, size]);
@@ -119,7 +119,7 @@ export default function Leasing() {
       {/* Slide 26: the hero runs straight into the listings; the four teams live in the Leasing rollover. */}
 
       {/* Snapshot of available properties */}
-      <section id="availability" className="mx-auto max-w-6xl px-4 pb-14 scroll-mt-24">
+      <section id="availability" className="mx-auto max-w-[1360px] px-4 pb-9 scroll-mt-24">
         <SectionHead
           rule={false}
           title="Snapshot of available properties"

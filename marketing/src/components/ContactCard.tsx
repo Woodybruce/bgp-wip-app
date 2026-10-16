@@ -6,7 +6,7 @@ import { useTeamPhoto } from "../lib/team-photos";
 function Monogram({ name }: { name: string }) {
   const initials = name.split(" ").map((n) => n[0]).slice(0, 2).join("");
   return (
-    <div className="aspect-[4/5] w-full bg-bgp-stone/40 flex items-center justify-center">
+    <div className="aspect-[9/10] w-full bg-bgp-stone/40 flex items-center justify-center">
       <span className="font-display font-bold text-3xl text-bgp-wine/60">{initials}</span>
     </div>
   );
@@ -15,16 +15,16 @@ function Monogram({ name }: { name: string }) {
 export default function ContactCard({ person, compact = false }: { person: Person; compact?: boolean }) {
   const photo = useTeamPhoto(person);
   return (
-    <div className={`w-full group ${compact ? "max-w-[9.5rem]" : ""}`}>
+    <div className={`w-full group ${compact ? "max-w-[14rem]" : ""}`}>
       <div className="img-frame">
         {photo ? (
-          <img src={photo} alt={person.name} className="aspect-[4/5] w-full object-cover grayscale" />
+          <img src={photo} alt={person.name} className="aspect-[9/10] w-full object-cover grayscale" />
         ) : (
           <Monogram name={person.name} />
         )}
       </div>
       <p className="label-caps mt-3 text-bgp-wine"><a href={cardUrlFor(person.name)} className="hover:opacity-70" title="Business card">{person.name}</a></p>
-      <div className="mt-1 text-xs text-bgp-ink/70 space-y-0.5">
+      <div className="mt-1 text-sm text-bgp-ink/70 space-y-0.5">
         <p>{person.title}</p>
         <p className="tabular">{person.phone}</p>
         {person.email !== "TBC" && (

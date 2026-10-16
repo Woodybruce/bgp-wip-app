@@ -28,7 +28,7 @@ export function QuoteBlock({ quote, image, imageAlt = "", imageSide = "right" }:
   const hasQuote = !!quote?.quote && !/^lorem ipsum/i.test(quote.quote);
   const draft = !hasQuote;
   return (
-    <section className="mx-auto max-w-6xl px-4 py-12 md:py-14">
+    <section className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
       <div className={`grid grid-cols-1 gap-8 md:gap-12 items-start ${imageSide === "left" ? "md:grid-cols-[1fr_1.4fr] md:[direction:rtl]" : "md:grid-cols-[1.4fr_1fr]"}`}>
         <div className={`[direction:ltr] ${draft ? "italic" : ""}`}>
           <p className="font-light text-xl md:text-2xl text-bgp-ink/85">“{hasQuote ? quote!.quote : DRAFT_QUOTE}”</p>
@@ -60,12 +60,12 @@ export function MapSlot({ lat, lon, zoom = 15, marker = true, pins, className = 
 
 export function Hero({ src, alt, label, statement, caption, tall = false }: { src?: string; alt: string; label?: ReactNode; statement: ReactNode; caption?: ReactNode; tall?: boolean }) {
   return (
-    <section className={`relative flex items-end overflow-hidden ${tall ? "h-[70vh] min-h-[480px]" : "h-[52vh] min-h-[380px] md:min-h-[440px]"}`}>
+    <section data-hero className={`relative flex items-end overflow-hidden -mt-16 md:-mt-24 lg:-mt-28 ${tall ? "h-[70vh] min-h-[480px]" : "h-[min(63vw,100vh)] min-h-[420px]"}`}>
       <Placeholder className="absolute inset-0 h-full w-full" src={src} alt={alt} />
-      <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/80 via-bgp-ink/30 to-bgp-ink/5" />
-      <div className="relative mx-auto w-full max-w-6xl px-4 pb-10 md:pb-14">
+      <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/80 via-bgp-ink/25 to-bgp-ink/35" />
+      <div className="relative mx-auto w-full max-w-[1360px] px-4 pb-8 md:pb-10">
         {label && <p className="label-caps text-white/80 mb-3">{label}</p>}
-        <p className="max-w-3xl font-light text-2xl md:text-4xl leading-[1.15] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>{statement}</p>
+        <p className="max-w-[62%] font-light text-2xl md:text-4xl leading-[1.1] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>{statement}</p>
         {caption}
       </div>
     </section>
@@ -75,7 +75,7 @@ export function Hero({ src, alt, label, statement, caption, tall = false }: { sr
 export function Band({ children, className = "", id }: { children: ReactNode; className?: string; id?: string }) {
   return (
     <section id={id} className={`bg-bgp-mist ${className}`}>
-      <div className="mx-auto max-w-6xl px-4 py-12 md:py-14">{children}</div>
+      <div className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">{children}</div>
     </section>
   );
 }
@@ -85,9 +85,9 @@ export function Band({ children, className = "", id }: { children: ReactNode; cl
 // light type. Brand Rep set the pattern on 2026-10-16; the rest follow.
 export function SectionHead({ title, sub, right, as: Tag = "h2", rule = true }: { title: ReactNode; sub?: ReactNode; right?: ReactNode; as?: "h1" | "h2"; rule?: boolean }) {
   return (
-    <div className={`flex flex-wrap items-end justify-between gap-x-8 gap-y-2 ${rule ? "border-b border-bgp-ink pb-2 mb-6" : "mb-4"}`}>
+    <div className={`flex flex-wrap items-end justify-between gap-x-8 gap-y-2 ${rule ? "border-b-[3px] border-bgp-ink pb-2 mb-6" : "mb-4"}`}>
       <div>
-        <Tag className="text-sm font-bold text-bgp-ink">{title}</Tag>
+        <Tag className="text-2xl font-bold text-bgp-ink">{title}</Tag>
         {sub && <p className="mt-1 text-sm text-bgp-ink/70">{sub}</p>}
       </div>
       {right}

@@ -40,15 +40,15 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
       {hero ? (
         <Hero src={hero.src} alt={hero.alt} label={title} statement={intro} />
       ) : (
-        <section className="mx-auto max-w-6xl px-4 pt-12 md:pt-16">
+        <section className="mx-auto max-w-[1360px] px-4 pt-12 md:pt-16">
           <p className="label-caps text-bgp-ink/50 mb-3">{title}</p>
           <p className="max-w-4xl font-light text-2xl md:text-4xl leading-[1.15] text-bgp-wine">{intro}</p>
         </section>
       )}
 
       <h1 className="sr-only">{title}</h1>
-      <section className="mx-auto max-w-6xl px-4 pt-12 md:pt-14 pb-10">
-        <h2 className="text-sm font-bold text-bgp-ink border-b border-bgp-ink pb-2 mb-5">A snapshot of clients</h2>
+      <section className="mx-auto max-w-[1360px] px-4 pt-12 md:pt-14 pb-10">
+        <h2 className="text-2xl font-bold text-bgp-ink border-b-[3px] border-bgp-ink pb-2 mb-6">A snapshot of clients</h2>
         {clientsBlurb && <p className="text-sm text-bgp-ink/70 mb-4">{clientsBlurb}</p>}
         {clients}
       </section>
@@ -58,7 +58,7 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
       {quote && <QuoteBlock quote={quote} />}
 
       {caseStudies.length > 0 && caseStudyLayout === "stacked" && (
-        <section className="mx-auto max-w-6xl px-4 py-10">
+        <section className="mx-auto max-w-[1360px] px-4 py-7">
           <SectionHead title="Case studies" />
           {/* Wireframe slide 35: stacked blocks, text beside image, alternating sides */}
           <div className="grid grid-cols-1 gap-4">

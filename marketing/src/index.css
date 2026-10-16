@@ -12,6 +12,18 @@ a:focus-visible { outline: 2px solid #ff1923; outline-offset: 3px; }
   html {
     scroll-behavior: smooth;
   }
+  /* The wireframes are drawn at a 340px frame with 4.5px body text: 1.3% of
+     the width, 19px at 1440. Every rem size follows (Woody, 2026-10-16). */
+  @media (min-width: 768px) {
+    html {
+      font-size: 18px;
+    }
+  }
+  @media (min-width: 1024px) {
+    html {
+      font-size: 24px;
+    }
+  }
   body {
     @apply font-sans text-bgp-ink bg-bgp-cream antialiased;
   }

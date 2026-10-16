@@ -1,17 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import type { Client } from "../lib/content";
 
-// "A snapshot of clients" — LogoKit (fallback=404 so misses fail honestly),
-// then self-hosted PNGs in public/brand-logos/, then the client name.
-// A load timeout skips any source that hangs (ad-blockers, firewalls).
-// Logos show in their own colours (Woody, 2026-10-12).
+// "A snapshot of clients" — self-hosted PNGs in public/brand-logos/, then
+// the client name. A load timeout skips any source that hangs (ad-blockers,
+// firewalls). Logos show in their own colours (Woody, 2026-10-12).
 export function ClientCircle({ client }: { client: Client }) {
   const [step, setStep] = useState(0);
   const loadedRef = useRef(false);
 
-  // Only logos we hold as clean files (public/brand-logos, 640px, from the
-  // client's own site). Anything else is typeset — a crisp name beats a
-  // favicon or a scraped photo (Woody / Harry, 2026-10-12).
+  // Only logos we hold as clean files (public/brand-logos, from the client's
+  // own site). Anything else is typeset — a crisp name beats a favicon or a
+  // scraped photo (Woody / Harry, 2026-10-12).
   const sources: string[] = client.domain ? [`/brand-logos/${client.domain}.png`] : [];
   const src = sources[step];
 
@@ -50,13 +49,26 @@ export function ClientCircle({ client }: { client: Client }) {
   );
 }
 
-// Same seven-across grid as Brand Representation (slide 35) on every page.
-export default function ClientRow({ clients }: { clients: Client[] }) {
+// The slides draw fourteen circles, two rows of seven. Where a team has
+// fewer logos the row is made up with dashed "Logo" circles in italics so the
+// gap is visible (Woody, 2026-10-16: "change the content to reflect the wireframes").
+export function LogoSlot({ n }: { n: number }) {
   return (
-    <div className="grid grid-cols-4 sm:grid-cols-7 gap-4 md:gap-6">
-      {clients.map((c) => (
+    <div className="aspect-square rounded-full border border-dashed border-bgp-stone flex items-center justify-center" aria-hidden>
+      <span className="italic text-sm text-bgp-stone">Logo {n}</span>
+    </div>
+  );
+}
+
+// Same seven-across grid as Brand Representation (slide 35) on every page.
+export default function ClientRow({ clients, padTo = 14 }: { clients: Client[]; padTo?: number }) {
+  const shown = clients.slice(0, padTo);
+  return (
+    <div className="grid grid-cols-4 sm:grid-cols-7 gap-x-3 gap-y-6 max-w-[80%]">
+      {shown.map((c) => (
         <ClientCircle key={c.name} client={c} />
       ))}
+      {Array.from({ length: Math.max(0, padTo - shown.length) }, (_, i) => <LogoSlot key={i} n={shown.length + i + 1} />)}
     </div>
   );
 }

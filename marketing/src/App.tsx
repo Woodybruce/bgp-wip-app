@@ -71,7 +71,7 @@ export default function App() {
           <Route path="/news/:slug" component={ArticlePage} />
           <Route path="/case-studies/:slug" component={CaseStudyPage} />
           <Route>
-            <div className="mx-auto max-w-6xl px-4 py-32 text-center">
+            <div className="mx-auto max-w-[1360px] px-4 py-32 text-center">
               <p className="label-caps text-bgp-burgundy">Page not found</p>
             </div>
           </Route>

@@ -59,7 +59,7 @@ export default function ListingDetail() {
   }
   if (!listing) {
     return (
-      <div className="mx-auto max-w-6xl px-4 py-32 text-center">
+      <div className="mx-auto max-w-[1360px] px-4 py-32 text-center">
         <p className="label-caps text-bgp-burgundy">Listing not found</p>
         <p className="mt-4">
           <Link href="/leasing" className="explore-link inline-block">Back to leasing</Link>
@@ -113,7 +113,7 @@ export default function ListingDetail() {
 
   return (
     <div className="pb-24 md:pb-0">
-      <section className="mx-auto max-w-6xl px-4 pt-8 md:pt-10">
+      <section className="mx-auto max-w-[1360px] px-4 pt-8 md:pt-10">
         <p className="label-caps text-bgp-ink/50 border-b border-bgp-ink pb-2">
           <Link href="/leasing" className="hover:text-bgp-wine transition-colors">Leasing</Link>
           <span className="mx-2 text-bgp-wine/40">/</span>
@@ -123,8 +123,8 @@ export default function ListingDetail() {
 
       {/* Wireframe slide 27: photo with the facts panel to its right, then the
           title at left with the headline statement at right. */}
-      <section className="mx-auto max-w-6xl px-4 py-8 md:py-10">
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_240px] gap-10">
+      <section className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
+        <div className="grid grid-cols-1 md:grid-cols-[66fr_8fr_26fr] gap-6 md:gap-0">
           <div>
             <div className="overflow-hidden">
               {images.length > 0 ? (
@@ -135,7 +135,7 @@ export default function ListingDetail() {
             </div>
             <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-10 border-b border-bgp-ink pb-6">
               <div>
-                <h1 className="font-light text-3xl md:text-4xl">{names.title}</h1>
+                <h1 className="font-light text-3xl md:text-5xl">{names.title}</h1>
                 {(names.secondary || listing.addressLine) && (
                   <p className="mt-2 text-[15px] md:text-base text-bgp-ink/80">
                     {[names.secondary, listing.addressLine].filter(Boolean).join(" · ")}
@@ -147,39 +147,45 @@ export default function ListingDetail() {
               </div>
               {headline && <p className="font-bold text-lg md:text-xl text-bgp-ink/85 md:pt-1">{headline.charAt(0).toUpperCase() + headline.slice(1)}.</p>}
             </div>
-            {images.length > 1 && (
-              <div className="mt-3 grid grid-cols-4 gap-3">
-                {images.slice(1, 5).map((f) => (
-                  <img key={f.id} src={fileUrl(f.id)} alt="" className="aspect-[4/3] w-full object-cover" style={{ objectPosition: focalPosition(f) }} />
-                ))}
+            {/* Slide 27: a narrow description beside a photo, then a landscape photo and a lower portrait one. */}
+            <div className="mt-8 grid grid-cols-1 md:grid-cols-[30fr_10fr_60fr] gap-6 md:gap-0 items-start">
+              <div>
+                <p className="text-base text-bgp-ink/80">
+                  {[
+                    formatSqft(listing.sqft),
+                    listing.propertyName && listing.propertyName !== listing.unitName ? `within ${listing.propertyName.replace(/^\[Sample\]\s*/, "")}` : null,
+                    areaLabel(listing) ? `in ${areaLabel(listing)}` : null,
+                  ].filter(Boolean).join(" ") || "Full particulars available on request."}
+                  {" "}Full particulars, floor plans and viewing arrangements from the leasing team below.
+                </p>
+                <p className="mt-3 text-base text-bgp-ink/80 italic">
+                  Draft: a paragraph from the leasing team on the unit, the building and the street, the neighbouring occupiers, and who it would suit.
+                </p>
               </div>
-            )}
-            {plans.length > 0 && (
-              <div className="mt-8">
-                <span className="section-label">Plans</span>
-                <div className={`mt-3 grid gap-3 ${plans.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
-                  {plans.slice(0, 4).map((f) => (
-                    <a key={f.id} href={fileUrl(f.id)} target="_blank" rel="noopener" className="img-frame block border border-bgp-line">
-                      <img src={fileUrl(f.id)} alt={f.fileName || "Plan"} className="w-full object-contain bg-white" />
-                    </a>
-                  ))}
-                </div>
+              <div className="hidden md:block" />
+              {images[1] ? (
+                <img src={fileUrl(images[1].id)} alt="" className="aspect-[16/10] w-full object-cover" style={{ objectPosition: focalPosition(images[1]) }} />
+              ) : (
+                <Placeholder className="aspect-[16/10] w-full" alt={`${displayName} second photo`} label="Photo to follow" />
+              )}
+            </div>
+            <div className="mt-8 grid grid-cols-1 md:grid-cols-[54fr_17fr_29fr] gap-6 md:gap-0 items-start">
+              {images[2] ? (
+                <img src={fileUrl(images[2].id)} alt="" className="aspect-[17/10] w-full object-cover" style={{ objectPosition: focalPosition(images[2]) }} />
+              ) : (
+                <Placeholder className="aspect-[17/10] w-full" alt={`${displayName} third photo`} label="Photo to follow" />
+              )}
+              <div className="hidden md:block" />
+              <div className="md:mt-24">
+                {images[3] ? (
+                  <img src={fileUrl(images[3].id)} alt="" className="aspect-[3/4] w-full object-cover" style={{ objectPosition: focalPosition(images[3]) }} />
+                ) : (
+                  <Placeholder className="aspect-[3/4] w-full" alt={`${displayName} fourth photo`} label="Photo to follow" />
+                )}
               </div>
-            )}
-            <p className="mt-6 text-base text-bgp-ink/80">
-              {[
-                formatSqft(listing.sqft),
-                listing.propertyName && listing.propertyName !== listing.unitName ? `within ${listing.propertyName.replace(/^\[Sample\]\s*/, "")}` : null,
-                areaLabel(listing) ? `in ${areaLabel(listing)}` : null,
-              ].filter(Boolean).join(" ") || "Full particulars available on request."}
-              {" "}Full particulars, floor plans and viewing arrangements from the leasing team below.
-            </p>
-            {/* Slide 27 gives each listing a paragraph of description; the feed has none yet, so the gap shows in italics. */}
-            <p className="mt-3 text-base text-bgp-ink/80 italic">
-              Draft: a paragraph from the leasing team on the unit, the building and the street, the neighbouring occupiers, and who it would suit.
-            </p>
+            </div>
           </div>
-
+          <div className="hidden md:block" />
           <aside>
             <dl className="border-t border-bgp-ink">
               {keyInfo
@@ -195,46 +201,12 @@ export default function ListingDetail() {
               <a href={`mailto:${CONTACT.email}?subject=${mailSubject}`} className="hover:opacity-70">Book viewing</a>
               {brochureHref ? <a href={brochureHref} target="_blank" rel="noreferrer" className="hover:opacity-70">Download</a> : <button onClick={onDownload} className="hover:opacity-70">Download</button>}
             </div>
-            {/* Desktop action stack — on phones these live in the sticky bar */}
-            <div className="mt-8 space-y-3 hidden md:block">
-              <a
-                href={`mailto:${CONTACT.email}?subject=${mailSubject}`}
-                className="btn block"
-              >
-                Book viewing
-              </a>
-              <a
-                href={waLink(listing)}
-                target="_blank"
-                rel="noreferrer"
-                className="btn-outline block"
-              >
-                WhatsApp us
-              </a>
-              <button
-                onClick={onDownload}
-                disabled={generating}
-                className="btn-outline block w-full disabled:opacity-50"
-              >
-                {generating ? "Preparing…" : "Download details"}
-              </button>
-              {brochureHref && (
-                <a
-                  href={brochureHref}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="btn-outline block"
-                >
-                  Download brochure
-                </a>
-              )}
-            </div>
           </aside>
         </div>
       </section>
 
       {/* Location */}
-      <section className="mx-auto max-w-6xl px-4 py-8 md:py-10">
+      <section className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
         <SectionHead title="Location" />
         {hasCoords && isBrowser ? (
           <Suspense fallback={<div className="h-72 md:h-80 w-full bg-bgp-mist" />}><ListingMap lat={lat} lon={lon} className="h-72 md:h-80 w-full" /></Suspense>
@@ -249,7 +221,7 @@ export default function ListingDetail() {
       />
 
       {similar.length > 0 && (
-        <section className="mx-auto max-w-6xl px-4 py-10">
+        <section className="mx-auto max-w-[1360px] px-4 py-7">
           <SectionHead title="Similar properties" sub="By location" />
           <div className="card-strip sm:grid-cols-3 sm:gap-6">
             {similar.map((l) => (
