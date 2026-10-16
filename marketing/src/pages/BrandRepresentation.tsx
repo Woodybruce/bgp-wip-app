@@ -28,6 +28,7 @@ export default function BrandRepresentation() {
       }
       services={BRAND_REP_SERVICES}
       caseStudies={caseStudies.filter((c) => c.service === "Brand Representation")}
+      caseStudyLayout="stacked"
       contacts={contacts.brand_representation}
       contactsBlurb="Our brand representation team supports occupiers from first site to full network."
     />

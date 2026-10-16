@@ -3,7 +3,9 @@ import { Link } from "wouter";
 import KeyContacts from "./KeyContacts";
 import ServiceList from "./ServiceList";
 import Placeholder from "./Placeholder";
-import { Band, Hero, SectionHead } from "./Wire";
+import { Hero, SectionHead } from "./Wire";
+import CaseStudyStrip from "./CaseStudyStrip";
+import { findCaseStudy, useSiteContent } from "../lib/site-content";
 import type { Person } from "../lib/content";
 
 // One layout for the single-page services (Brand Representation, Lease
@@ -22,36 +24,26 @@ export interface ServicePageProps {
   services: Array<{ name: string; detail: string }>;
   quote?: { quote: string; name: string; title: string };
   caseStudies: Array<{ slug: string; title: string; blurb: string; image?: string }>;
+  caseStudyLayout?: "stacked" | "band"; // slide 35 stacks them; slides 38 and 41 end with one band
   contacts: Person[];
   contactsBlurb?: string;
 }
 
-export default function ServicePage({ title, hero, intro, body, clients, clientsBlurb, services, quote, caseStudies, contacts, contactsBlurb }: ServicePageProps) {
+export default function ServicePage({ title, hero, intro, body, clients, clientsBlurb, services, quote, caseStudies, caseStudyLayout = "band", contacts, contactsBlurb }: ServicePageProps) {
+  const content = useSiteContent();
   return (
     <div>
       {/* Wireframe slides 35, 38, 41: statement over the hero, left-aligned
           sections over rules, grey bands for contacts and the case study. */}
       <Hero src={hero.src} alt={hero.alt} label={title} statement={intro} />
 
-      {body && body.length > 0 && (
-        <section className="mx-auto max-w-6xl px-4 py-12 md:py-14">
-          <h1 className="sr-only">{title}</h1>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-12">
-            {body.map((p, i) => (
-              <p key={p.slice(0, 24)} className={`text-base md:text-lg ${i === 0 ? "text-bgp-ink" : "text-bgp-ink/90"}`}>
-                {p.includes(": ") ? <><strong className="text-bgp-ink">{p.split(": ")[0]}:</strong> {p.split(": ").slice(1).join(": ")}</> : p}
-              </p>
-            ))}
-          </div>
-        </section>
-      )}
-
-      <section className="mx-auto max-w-6xl px-4 pb-14">
+      <h1 className="sr-only">{title}</h1>
+      <section className="mx-auto max-w-6xl px-4 pt-12 md:pt-14 pb-10">
         <SectionHead title="A snapshot of clients" sub={clientsBlurb} />
         {clients}
       </section>
 
-      <ServiceList services={services} />
+      <ServiceList services={services} body={body} />
 
       {quote && (
         <section className="mx-auto max-w-6xl px-4 py-14">
@@ -63,7 +55,7 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
         </section>
       )}
 
-      {caseStudies.length > 0 && (
+      {caseStudies.length > 0 && caseStudyLayout === "stacked" && (
         <section className="mx-auto max-w-6xl px-4 py-10">
           <SectionHead title="Case studies" />
           {/* Wireframe slide 35: stacked blocks, text beside image, alternating sides */}
@@ -85,6 +77,9 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
       )}
 
       <KeyContacts people={contacts} blurb={contactsBlurb} />
+      {caseStudies.length > 0 && caseStudyLayout === "band" && (
+        <CaseStudyStrip caseStudies={caseStudies.map((c) => findCaseStudy(content, c.slug)).filter(Boolean) as any} />
+      )}
     </div>
   );
 }

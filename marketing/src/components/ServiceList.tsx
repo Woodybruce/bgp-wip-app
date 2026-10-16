@@ -4,15 +4,28 @@ import { useState } from "react";
 // (Lease Advisory set the pattern; Brand Representation and Consultancy
 // follow it, Woody 2026-10-12). Leasing and Investment have sub-pages
 // instead.
-export default function ServiceList({ services, heading = "What we offer" }: { services: Array<{ name: string; detail: string }>; heading?: string }) {
+export default function ServiceList({ services, heading = "What we offer", body }: { services: Array<{ name: string; detail: string }>; heading?: string; body?: string[] }) {
   const [selected, setSelected] = useState(0);
   const current = services[selected] ?? services[0];
   return (
     <section className="mx-auto max-w-6xl px-4 py-6">
+      {/* Wireframe slides 38 and 41: heading at left with the copy beside it,
+          then the list of services with the detail box to its right. */}
+      <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-x-10 gap-y-4 border-b border-bgp-ink pb-6 mb-8">
+        <h2 className="display text-2xl md:text-3xl">{heading}</h2>
+        {body && body.length > 0 && (
+          <div className="space-y-3 max-w-2xl">
+            {body.map((p, i) => (
+              <p key={p.slice(0, 24)} className={`text-base ${i === 0 ? "font-bold text-bgp-ink" : "text-bgp-ink/85"}`}>
+                {p.includes(": ") ? <><strong className="text-bgp-ink">{p.split(": ")[0]}:</strong> {p.split(": ").slice(1).join(": ")}</> : p}
+              </p>
+            ))}
+          </div>
+        )}
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-10">
         <div>
-          <h2 className="display text-2xl md:text-3xl border-b border-bgp-ink pb-3">{heading}</h2>
-          <ul className="mt-6 space-y-3">
+          <ul className="space-y-3">
             {services.map((s, i) => (
               <li key={s.name}>
                 <button
