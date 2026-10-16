@@ -87,8 +87,8 @@ export default function Investment() {
         )}
       </section>
 
-      <KeyContacts people={INVESTMENT_CONTACTS} blurb="Our investment team would be delighted to discuss current opportunities and our full track record." />
-      <CaseStudyStrip caseStudies={["the-royal-exchange", "19-golden-square", "213-214-upper-street"].map((s) => findCaseStudy(content, s)).filter(Boolean) as any} />
+      <KeyContacts people={INVESTMENT_CONTACTS} band={false} layout="row" />
+      <CaseStudyStrip band caseStudies={["the-royal-exchange", "19-golden-square", "213-214-upper-street"].map((s) => findCaseStudy(content, s)).filter(Boolean) as any} />
     </div>
   );
 }

@@ -8,13 +8,13 @@ import type { CaseStudy } from "../lib/content";
 // with Find out more, an image carousel with arrows and dots at right.
 // With several case studies the arrows step through them; with one they
 // step through its photos.
-export default function CaseStudyStrip({ caseStudy, caseStudies }: { caseStudy?: CaseStudy; caseStudies?: CaseStudy[] }) {
+export default function CaseStudyStrip({ caseStudy, caseStudies, band = false }: { caseStudy?: CaseStudy; caseStudies?: CaseStudy[]; band?: boolean }) {
   const items = (caseStudies && caseStudies.length ? caseStudies : caseStudy ? [caseStudy] : []).filter(Boolean);
   const [index, setIndex] = useState(0);
   const [photo, setPhoto] = useState(0);
   if (!items.length) {
     return (
-      <Strip>
+      <Strip band={band}>
         <p className="text-sm font-bold text-bgp-ink mb-4">Case study</p>
         <div className="grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-8 md:gap-12 items-start">
           <div className="italic">
@@ -39,7 +39,7 @@ export default function CaseStudyStrip({ caseStudy, caseStudies }: { caseStudy?:
     else setPhoto((p) => (p + d + photos.length) % photos.length);
   };
   return (
-    <Strip>
+    <Strip band={band}>
       <p className="text-sm font-bold text-bgp-ink mb-4">Case study</p>
       <div className="grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-8 md:gap-12 items-start">
         <div>
@@ -72,9 +72,16 @@ export default function CaseStudyStrip({ caseStudy, caseStudies }: { caseStudy?:
   );
 }
 
-// Slides 26, 38 and 41: the case study sits on white under the grey key
-// contacts band, with a rule above it.
-function Strip({ children }: { children: React.ReactNode }) {
+// Slides 26, 28 and 31 draw the case study in a grey panel; slides 38 and
+// 41 put it on white under a rule.
+function Strip({ children, band }: { children: React.ReactNode; band: boolean }) {
+  if (band) {
+    return (
+      <section className="mx-auto max-w-6xl px-4 pb-14">
+        <div className="bg-bgp-mist p-6 md:p-8">{children}</div>
+      </section>
+    );
+  }
   return (
     <section className="mx-auto max-w-6xl px-4">
       <div className="border-t border-bgp-ink pt-6 pb-14">{children}</div>

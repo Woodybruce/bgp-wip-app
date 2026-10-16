@@ -193,8 +193,8 @@ export default function Leasing() {
         )}
       </section>
 
-      <KeyContacts people={content.contacts.leasing} blurb="Our leasing team would be delighted to arrange a viewing or share full particulars." />
-      <CaseStudyStrip caseStudies={["lucent-piccadilly", "st-christophers-place", "south-molton-triangle", "canary-wharf"].map((slug) => findCaseStudy(content, slug))} />
+      <KeyContacts people={content.contacts.leasing} band={false} layout="row" />
+      <CaseStudyStrip band caseStudies={["lucent-piccadilly", "st-christophers-place", "south-molton-triangle", "canary-wharf"].map((slug) => findCaseStudy(content, slug))} />
     </div>
   );
 }

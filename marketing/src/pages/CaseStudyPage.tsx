@@ -108,7 +108,7 @@ export default function CaseStudyPage() {
         <MapSlot lat={caseStudy.location?.lat} lon={caseStudy.location?.lon} />
       </section>
 
-      <KeyContacts people={contacts} />
+      <KeyContacts band={false} people={contacts} />
 
       {related.length > 0 && (
         <section className="mx-auto max-w-6xl px-4 py-10">

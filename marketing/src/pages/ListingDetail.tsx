@@ -243,7 +243,7 @@ export default function ListingDetail() {
         )}
       </section>
 
-      <KeyContacts
+      <KeyContacts band={false}
         people={contacts}
         blurb="Our team would be delighted to arrange a viewing or share full particulars."
       />
