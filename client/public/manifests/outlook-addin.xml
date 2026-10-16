@@ -4,7 +4,7 @@
            xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
            xsi:type="MailApp">
   <Id>567f0fe3-79a5-48c2-bf29-287d3a4f9108</Id>
-  <Version>2.0.1</Version>
+  <Version>2.1.0</Version>
   <ProviderName>Bruce Gillingham Pollard</ProviderName>
   <DefaultLocale>en-GB</DefaultLocale>
   <DisplayName DefaultValue="ChatBGP for Outlook"/>
@@ -42,6 +42,8 @@
   <Rule xsi:type="RuleCollection" Mode="Or">
     <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read"/>
     <Rule xsi:type="ItemIs" ItemType="Message" FormType="Edit"/>
+    <Rule xsi:type="ItemIs" ItemType="Appointment" FormType="Read"/>
+    <Rule xsi:type="ItemIs" ItemType="Appointment" FormType="Edit"/>
   </Rule>
   <DisableEntityHighlighting>false</DisableEntityHighlighting>
 
@@ -102,6 +104,54 @@
               </Group>
             </OfficeTab>
           </ExtensionPoint>
+          <!-- Calendar (Woody, 2026-10-15): the pane on meetings you're attending… -->
+          <ExtensionPoint xsi:type="AppointmentAttendeeCommandSurface">
+            <OfficeTab id="TabDefault">
+              <Group id="bgpApptReadGroup">
+                <Label resid="CommandsGroup.Label"/>
+                <Control xsi:type="Button" id="bgpApptReadOpenPaneButton">
+                  <Label resid="TaskpaneButton.Label"/>
+                  <Supertip>
+                    <Title resid="TaskpaneButton.Label"/>
+                    <Description resid="TaskpaneButton.MeetingTooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16"/>
+                    <bt:Image size="32" resid="Icon.32x32"/>
+                    <bt:Image size="80" resid="Icon.80x80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="Taskpane.Url"/>
+                    <SupportsPinning>true</SupportsPinning>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+          <!-- …and on invites you're organising. -->
+          <ExtensionPoint xsi:type="AppointmentOrganizerCommandSurface">
+            <OfficeTab id="TabDefault">
+              <Group id="bgpApptComposeGroup">
+                <Label resid="CommandsGroup.Label"/>
+                <Control xsi:type="Button" id="bgpApptComposeOpenPaneButton">
+                  <Label resid="TaskpaneButton.Label"/>
+                  <Supertip>
+                    <Title resid="TaskpaneButton.Label"/>
+                    <Description resid="TaskpaneButton.MeetingComposeTooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16"/>
+                    <bt:Image size="32" resid="Icon.32x32"/>
+                    <bt:Image size="80" resid="Icon.80x80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="Taskpane.Url"/>
+                    <SupportsPinning>true</SupportsPinning>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
         </DesktopFormFactor>
       </Host>
     </Hosts>
@@ -121,6 +171,8 @@
       <bt:LongStrings>
         <bt:String id="TaskpaneButton.Tooltip" DefaultValue="ChatBGP on this email — summarise, draft a reply with BGP's CRM behind it, look up the sender, file to CRM."/>
         <bt:String id="TaskpaneButton.ComposeTooltip" DefaultValue="ChatBGP while you write — draft, improve and fact-check against BGP's CRM."/>
+        <bt:String id="TaskpaneButton.MeetingTooltip" DefaultValue="Brief me on this meeting: who's coming, our relationship and live deals with them, prep notes and follow-ups."/>
+        <bt:String id="TaskpaneButton.MeetingComposeTooltip" DefaultValue="Help write this invite: agenda, who to include and what we know about them."/>
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>

@@ -15,11 +15,25 @@ export const isCompose = () => {
   const it = item();
   return !!it && typeof it.subject === "object" && typeof it.subject?.getAsync === "function";
 };
+// A calendar item (meeting / appointment) rather than an email (Woody,
+// 2026-10-15: "does it do calendar too?").
+export const isAppointment = () => {
+  const it = item();
+  const t = String(it?.itemType || "").toLowerCase();
+  return t === "appointment" || (!!it && !("from" in it) && ("start" in it || "organizer" in it));
+};
 
 const people = (list: any) => (Array.isArray(list) ? list : []).map((p: any) => p?.displayName ? `${p.displayName} <${p.emailAddress}>` : p?.emailAddress).filter(Boolean);
 
 export interface OpenEmail {
   mode: "read" | "compose";
+  kind?: "message" | "appointment";
+  start?: string;
+  end?: string;
+  location?: string;
+  organizer?: string;
+  required?: string[];
+  optional?: string[];
   subject: string;
   from?: string;
   fromEmail?: string;
@@ -32,10 +46,43 @@ export interface OpenEmail {
   itemId?: string;
 }
 
+const iso = (d: any) => { try { const x = d instanceof Date ? d : new Date(d); return isNaN(x.getTime()) ? undefined : x.toISOString(); } catch { return undefined; } };
+
 export async function readOpenEmail(maxBody = 30000): Promise<OpenEmail | null> {
   const it = item();
   if (!it) return null;
   const Office = office();
+  if (isAppointment()) {
+    if (isCompose()) {
+      const [subject, start, end, location, required, optional, body] = await Promise.all([
+        asyncCall<string>(cb => it.subject.getAsync(cb)).catch(() => ""),
+        asyncCall<any>(cb => it.start.getAsync(cb)).catch(() => null),
+        asyncCall<any>(cb => it.end.getAsync(cb)).catch(() => null),
+        asyncCall<string>(cb => it.location.getAsync(cb)).catch(() => ""),
+        asyncCall<any[]>(cb => it.requiredAttendees.getAsync(cb)).catch(() => []),
+        asyncCall<any[]>(cb => it.optionalAttendees.getAsync(cb)).catch(() => []),
+        asyncCall<string>(cb => it.body.getAsync(Office.CoercionType.Text, cb)).catch(() => ""),
+      ]);
+      return { mode: "compose", kind: "appointment", subject, start: iso(start), end: iso(end), location: String(location || ""), required: people(required), optional: people(optional),
+        to: people(required), cc: people(optional), body: String(body || "").slice(0, maxBody), attachments: [], conversationId: it.conversationId || undefined };
+    }
+    const body = await asyncCall<string>(cb => it.body.getAsync(Office.CoercionType.Text, cb)).catch(() => "");
+    const org = it.organizer;
+    return {
+      mode: "read", kind: "appointment",
+      subject: it.subject || "",
+      start: iso(it.start), end: iso(it.end), location: typeof it.location === "string" ? it.location : "",
+      organizer: org?.displayName ? `${org.displayName} <${org.emailAddress}>` : org?.emailAddress || "",
+      from: org?.displayName || org?.emailAddress || "", fromEmail: org?.emailAddress || "",
+      required: people(it.requiredAttendees), optional: people(it.optionalAttendees),
+      to: people(it.requiredAttendees), cc: people(it.optionalAttendees),
+      date: iso(it.start),
+      body: String(body || "").slice(0, maxBody),
+      attachments: (it.attachments || []).map((a: any) => a.name).filter(Boolean),
+      conversationId: it.conversationId || undefined,
+      itemId: it.itemId || undefined,
+    };
+  }
   if (isCompose()) {
     const [subject, to, cc, body] = await Promise.all([
       asyncCall<string>(cb => it.subject.getAsync(cb)).catch(() => ""),
@@ -60,8 +107,29 @@ export async function readOpenEmail(maxBody = 30000): Promise<OpenEmail | null> 
   };
 }
 
+const when = (e: OpenEmail) => {
+  if (!e.start) return "";
+  const s = new Date(e.start), en = e.end ? new Date(e.end) : null;
+  const d = s.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const t = (x: Date) => x.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  return `${d}, ${t(s)}${en ? `–${t(en)}` : ""}`;
+};
+
 export function emailContext(e: OpenEmail | null): string {
   if (!e) return "";
+  if (e.kind === "appointment") {
+    return [
+      `Mode: ${e.mode === "compose" ? "the user is ORGANISING this meeting (writing the invite)" : "the user has this MEETING open in their calendar"}`,
+      `Meeting: ${e.subject || "(no title)"}`,
+      e.start ? `When: ${when(e)}` : "",
+      e.location ? `Where: ${e.location}` : "",
+      e.organizer ? `Organiser: ${e.organizer}` : "",
+      e.required?.length ? `Attendees: ${e.required.join(", ")}` : "",
+      e.optional?.length ? `Optional: ${e.optional.join(", ")}` : "",
+      e.attachments.length ? `Attachments: ${e.attachments.join(", ")}` : "",
+      `Invite text:\n${e.body.slice(0, 12000)}${e.body.length > 12000 ? "\n…(more — call outlook_read_email)" : ""}`,
+    ].filter(Boolean).join("\n");
+  }
   return [
     `Mode: ${e.mode === "compose" ? "the user is WRITING this message" : "the user is reading this email"}`,
     `Subject: ${e.subject || "(none)"}`,

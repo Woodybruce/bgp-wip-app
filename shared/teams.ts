@@ -88,8 +88,12 @@ export function rosterNameFor(name: string | null | undefined): string | null {
   const parts = n.split(" ");
   const byFirst = TEAM_ROSTER_2026.filter(r => normPerson(r.name).split(" ")[0] === parts[0]);
   if (byFirst.length === 1) return byFirst[0].name;
+  // Surname alone only when the first names agree too ("Peter Wood" →
+  // Pete Wood, "Tracey Wilson" → Tracey Pollard) — not "Johnny Penfold" →
+  // Will Penfold (Woody, 2026-10-15).
   const last = parts[parts.length - 1];
-  const byLast = parts.length > 1 ? TEAM_ROSTER_2026.filter(r => normPerson(r.name).split(" ").pop() === last) : [];
+  const byLast = parts.length > 1 ? TEAM_ROSTER_2026.filter(r => normPerson(r.name).split(" ").pop() === last
+    && normPerson(r.name).split(" ")[0].slice(0, 3) === parts[0].slice(0, 3)) : [];
   return byLast.length === 1 ? byLast[0].name : null;
 }
 /** A person's 2026-10 teams by name (see rosterNameFor). */
