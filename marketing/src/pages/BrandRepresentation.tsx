@@ -30,7 +30,7 @@ export default function BrandRepresentation() {
       {/* A snapshot of clients */}
       <section className="mt-10">
         <h2 className="text-sm font-bold text-bgp-ink border-b border-bgp-ink pb-2 mb-5">A snapshot of clients</h2>
-        <div className="grid grid-cols-4 sm:grid-cols-7 gap-4 max-w-3xl">
+        <div className="grid grid-cols-4 sm:grid-cols-7 gap-4 md:gap-6">
           {clients.map((c) => (
             <ClientCircle key={c.name} client={c} />
           ))}

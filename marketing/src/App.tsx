@@ -50,7 +50,9 @@ function ScrollToTop() {
 
 export default function App() {
   return (
-    <div className="min-h-screen flex flex-col">
+    // Boxed at 1440px so the site stops stretching on wide screens (Woody,
+    // 2026-10-16); the page ground continues either side.
+    <div className="min-h-screen flex flex-col mx-auto w-full max-w-[1440px]">
       <ScrollToTop />
       <Nav />
       <main className="flex-1">

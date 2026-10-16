@@ -414,8 +414,9 @@ export const CASE_STUDIES: CaseStudy[] = [
     service: "Brand Representation",
     blurb: "International / DTC: the New York and Paris label's London home on Davies Street, Mayfair.",
     facts: [["Service", "Brand Representation"], ["Pillar", "International / DTC"], ["Location", "Davies Street, Mayfair"]],
-    location: { lat: 51.5445, lon: -0.1035 },
     location: { lat: 51.5116, lon: -0.1375 },
+    // Stock boutique photo stands in until Harry's Davies Street picture arrives (Woody, 2026-10-16).
+    image: "/images/shop-rails.jpg",
     body: [
       "We acquired The Frankie Shop's London flagship on Davies Street, bringing the New York and Paris label to Mayfair.",
       "A first-to-market UK location secured through our relationships with the estate and a clear view of where the brand's customer already shops.",
