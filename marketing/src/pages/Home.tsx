@@ -46,7 +46,7 @@ export default function Home() {
         ))}
         <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/80 via-bgp-ink/25 to-bgp-ink/35" />
         <div className="relative mx-auto w-full max-w-[1360px] px-4 pb-10 md:pb-9 flex flex-wrap items-end justify-between gap-6">
-          <h1 className="max-w-[62%] font-light text-3xl md:text-4xl leading-[1.1] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>
+          <h1 className="max-w-[62%] font-normal text-3xl md:text-4xl leading-[1.1] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>
             {HERO_STATEMENT}
           </h1>
           <p className="label-caps text-white/85" aria-live="polite">
@@ -82,7 +82,7 @@ export default function Home() {
                 </div>
                 <div className="hidden md:block" />
                 <div className="[direction:ltr]">
-                  <p className="text-2xl leading-snug text-bgp-ink/90">{service.intro}</p>
+                  <p className="text-2xl leading-snug text-bgp-ink">{service.intro}</p>
                   <p className="mt-5"><Link href={`/${service.slug}`} className="explore-link">Find out more</Link></p>
                 </div>
               </div>
@@ -100,7 +100,7 @@ export default function Home() {
       <Band>
         <SectionHead title="News and insights" />
         <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr] gap-8 md:gap-12 mb-10">
-          <p className="text-base text-bgp-ink/90">
+          <p className="text-base text-bgp-ink">
             The latest news, lettings, transactions and opinion from the BGP team across
             leasing, investment, brand representation and placemaking.
           </p>

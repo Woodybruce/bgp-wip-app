@@ -22,7 +22,7 @@ function Tile({ person }: { person: Person }) {
       <p className="mt-3 label-caps font-bold text-bgp-ink">
         <a href={cardUrlFor(person.name)} className="hover:text-bgp-wine" title="Business card">{person.name}</a>
       </p>
-      <div className="mt-1 text-sm text-bgp-ink/75 space-y-0.5">
+      <div className="mt-1 text-sm text-bgp-ink space-y-0.5">
         <p>{person.title}</p>
         <p className="tabular">{person.phone}</p>
         {person.email !== "TBC" && (

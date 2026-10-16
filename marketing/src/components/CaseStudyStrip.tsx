@@ -18,8 +18,8 @@ export default function CaseStudyStrip({ caseStudy, caseStudies, band = false }:
         <p className="text-2xl font-bold text-bgp-ink mb-4">Case study</p>
         <div className="grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-8 md:gap-12 items-start">
           <div className="italic">
-            <h2 className="font-light text-3xl md:text-5xl">Case study title</h2>
-            <p className="mt-5 text-base text-bgp-ink/85">Draft: three or four lines on a recent instruction for this team, the client, the brief and the outcome, to be written by the team.</p>
+            <h2 className="font-normal text-3xl md:text-5xl">Case study title</h2>
+            <p className="mt-5 text-base text-bgp-ink">Draft: three or four lines on a recent instruction for this team, the client, the brief and the outcome, to be written by the team.</p>
             <p className="mt-5"><span className="explore-link">Find out more</span></p>
           </div>
           <Placeholder className="aspect-[16/10] w-full" label="Photo to follow" alt="Case study photo" />
@@ -43,10 +43,10 @@ export default function CaseStudyStrip({ caseStudy, caseStudies, band = false }:
       <p className="text-2xl font-bold text-bgp-ink mb-4">Case study</p>
       <div className="grid grid-cols-1 md:grid-cols-[42fr_58fr] gap-8 md:gap-10 items-start">
         <div>
-          <h2 className={`font-light text-3xl md:text-5xl ${italic}`}>
+          <h2 className={`font-normal text-3xl md:text-5xl ${italic}`}>
             <Link href={`/case-studies/${current.slug}`} className="hover:opacity-80">{current.title}</Link>
           </h2>
-          <div className={`mt-5 space-y-3 text-lg leading-snug text-bgp-ink/85 ${italic}`}>
+          <div className={`mt-5 space-y-3 text-lg leading-snug text-bgp-ink ${italic}`}>
             {[current.blurb, ...(current.body || [])].map((para, k) => <p key={k}>{para}</p>)}
           </div>
           <p className="mt-5"><Link href={`/case-studies/${current.slug}`} className="explore-link">Find out more</Link></p>

@@ -66,7 +66,7 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
               <Link key={cs.slug} href={`/case-studies/${cs.slug}`} className={`group grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-6 md:gap-10 p-5 md:p-7 ${i % 2 ? "" : "bg-bgp-mist md:[direction:rtl]"}`}>
                 <div className="[direction:ltr]">
                   <p className={`label-caps text-bgp-wine ${cs.draft ? "italic" : ""}`}>{cs.title}</p>
-                  <div className={`mt-3 space-y-3 text-base text-bgp-ink/90 ${cs.draft ? "italic" : ""}`}>
+                  <div className={`mt-3 space-y-3 text-base text-bgp-ink ${cs.draft ? "italic" : ""}`}>
                     {[cs.blurb, ...(cs.body || [])].map((para, k) => <p key={k}>{para}</p>)}
                   </div>
                   <p className="mt-4"><span className="explore-link">Read more</span></p>

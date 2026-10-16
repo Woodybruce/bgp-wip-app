@@ -71,10 +71,10 @@ export default function CaseStudyPage() {
             beside them, then an image carousel with arrows and dots. */}
         <div className="mt-8 grid grid-cols-1 md:grid-cols-[63fr_12fr_25fr] gap-6 md:gap-0">
           <div>
-            <h1 className={`font-light text-3xl md:text-5xl ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
+            <h1 className={`font-normal text-3xl md:text-5xl ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
             <div className={`mt-5 space-y-4 ${caseStudy.draft ? "italic" : ""}`}>
               {caseStudy.body.map((para) => (
-                <p key={para.slice(0, 32)} className="text-base text-bgp-ink/85">
+                <p key={para.slice(0, 32)} className="text-base text-bgp-ink">
                   {para}
                 </p>
               ))}
@@ -123,7 +123,7 @@ export default function CaseStudyPage() {
                 <div className="mt-3 border-t border-bgp-wine/30 pt-3">
                   <p className="font-normal text-lg text-bgp-wine">{deal.name}</p>
                   <p className="mt-0.5 label-caps text-bgp-ink/45">{deal.client}</p>
-                  <p className="mt-1.5 text-sm text-bgp-ink/80 tabular">{deal.type === "Transaction" ? "" : deal.type}{deal.price ? ` · ${deal.price}` : ""}</p>
+                  <p className="mt-1.5 text-sm text-bgp-ink tabular">{deal.type === "Transaction" ? "" : deal.type}{deal.price ? ` · ${deal.price}` : ""}</p>
                 </div>
               </Link>
             ))}

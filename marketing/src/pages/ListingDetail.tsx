@@ -135,9 +135,9 @@ export default function ListingDetail() {
             </div>
             <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-10 border-b border-bgp-ink pb-6">
               <div>
-                <h1 className="font-light text-3xl md:text-5xl">{names.title}</h1>
+                <h1 className="font-normal text-3xl md:text-5xl">{names.title}</h1>
                 {(names.secondary || listing.addressLine) && (
-                  <p className="mt-2 text-[15px] md:text-base text-bgp-ink/80">
+                  <p className="mt-2 text-[15px] md:text-base text-bgp-ink">
                     {[names.secondary, listing.addressLine].filter(Boolean).join(" · ")}
                   </p>
                 )}
@@ -145,12 +145,12 @@ export default function ListingDetail() {
                   <p className="mt-4 inline-block bg-bgp-nectar text-bgp-wine label-caps px-3 py-1.5">Under offer</p>
                 )}
               </div>
-              {headline && <p className="font-bold text-lg md:text-xl text-bgp-ink/85 md:pt-1">{headline.charAt(0).toUpperCase() + headline.slice(1)}.</p>}
+              {headline && <p className="font-bold text-lg md:text-xl text-bgp-ink md:pt-1">{headline.charAt(0).toUpperCase() + headline.slice(1)}.</p>}
             </div>
             {/* Slide 27: a narrow description beside a photo, then a landscape photo and a lower portrait one. */}
             <div className="mt-8 grid grid-cols-1 md:grid-cols-[30fr_6fr_64fr] gap-6 md:gap-0 items-start">
               <div>
-                <p className="text-base text-bgp-ink/80">
+                <p className="text-base text-bgp-ink">
                   {[
                     formatSqft(listing.sqft),
                     listing.propertyName && listing.propertyName !== listing.unitName ? `within ${listing.propertyName.replace(/^\[Sample\]\s*/, "")}` : null,
@@ -158,7 +158,7 @@ export default function ListingDetail() {
                   ].filter(Boolean).join(" ") || "Full particulars available on request."}
                   {" "}Full particulars, floor plans and viewing arrangements from the leasing team below.
                 </p>
-                <p className="mt-3 text-base text-bgp-ink/80 italic">
+                <p className="mt-3 text-base text-bgp-ink italic">
                   Draft: a paragraph from the leasing team on the unit, the building and the street, the neighbouring occupiers, and who it would suit.
                 </p>
               </div>

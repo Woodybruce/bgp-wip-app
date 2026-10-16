@@ -60,7 +60,7 @@ export default function Investment() {
                 <p className="label-caps font-bold text-bgp-ink">{deal.name}</p>
                 {deal.address && deal.address !== deal.name && <p className="mt-0.5 text-sm text-bgp-ink/60">{deal.address}</p>}
                 <p className="mt-0.5 text-xs text-bgp-ink/55 uppercase">{deal.client}</p>
-                <p className="mt-1 text-sm text-bgp-ink/80 tabular">
+                <p className="mt-1 text-sm text-bgp-ink tabular">
                   {deal.type === "Transaction" ? "" : deal.type}
                   {deal.type !== "Transaction" && deal.price ? " · " : ""}
                   {deal.price}

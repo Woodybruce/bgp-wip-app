@@ -39,12 +39,12 @@ export default function ArticlePage() {
         <Placeholder className="aspect-[1.31] w-full" src={article.image} alt={article.title} />
         <div className="hidden md:block" />
         <div>
-          <h1 className="font-light text-3xl md:text-4xl text-bgp-wine">{article.title}</h1>
-          <p className="mt-4 text-xl leading-snug text-bgp-ink/75">{article.standfirst}</p>
+          <h1 className="font-normal text-3xl md:text-4xl text-bgp-wine">{article.title}</h1>
+          <p className="mt-4 text-xl leading-snug text-bgp-ink">{article.standfirst}</p>
         </div>
       </div>
 
-      <div className="mt-8 space-y-5 md:ml-[5%] md:mr-[1%] [&>p]:text-base [&>p]:text-bgp-ink/85">
+      <div className="mt-8 space-y-5 md:ml-[5%] md:mr-[1%] [&>p]:text-base [&>p]:text-bgp-ink">
         {article.body ? (
           article.body.map((para, i) => (
             <Fragment key={i}>

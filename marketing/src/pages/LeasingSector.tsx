@@ -45,7 +45,7 @@ export default function LeasingSector() {
         {/* Slide 28: title row with Contact and Download at right; the statement on the next row in the right column;
             a narrow text column beside a wide image; then a landscape and a lower, portrait image. */}
         <div className="flex items-start justify-between gap-8">
-          <h1 className="font-light text-3xl md:text-5xl">{sector.name}</h1>
+          <h1 className="font-normal text-3xl md:text-5xl">{sector.name}</h1>
           <span className="flex flex-col items-end gap-1 shrink-0 label-caps text-bgp-wine">
             <a href="#contact" className="hover:opacity-70">Contact</a>
             <a href="#contact" className="hover:opacity-70">Download</a>
@@ -54,14 +54,14 @@ export default function LeasingSector() {
         {!sector.howWeHelp && (
           <div className="mt-4 grid grid-cols-1 md:grid-cols-[27fr_61fr] md:gap-x-[12%]">
             <div />
-            <p className="font-light text-xl md:text-2xl text-bgp-ink/85">{sector.headline}</p>
+            <p className="font-normal text-xl md:text-2xl text-bgp-ink">{sector.headline}</p>
           </div>
         )}
-        {sector.howWeHelp && <p className="mt-4 font-light text-xl md:text-2xl text-bgp-ink/85 md:w-[60%] md:ml-auto">{sector.headline}</p>}
+        {sector.howWeHelp && <p className="mt-4 font-normal text-xl md:text-2xl text-bgp-ink md:w-[60%] md:ml-auto">{sector.headline}</p>}
         <div className={`mt-8 grid grid-cols-1 gap-10 items-start ${sector.howWeHelp ? "md:grid-cols-[1fr_280px]" : "md:grid-cols-[30fr_64fr] md:gap-x-[6%]"}`}>
           <div className="space-y-4">
             {sector.body.map((p, i) => (
-              <p key={p.slice(0, 24)} className="text-base text-bgp-ink/90">{p}</p>
+              <p key={p.slice(0, 24)} className="text-base text-bgp-ink">{p}</p>
             ))}
           </div>
           {!sector.howWeHelp && (
@@ -135,7 +135,7 @@ export default function LeasingSector() {
                   <div className="border-t border-bgp-wine/30 pt-3 mt-3">
                     <p className="font-normal text-lg text-bgp-wine">{c.name}</p>
                     <p className="mt-0.5 label-caps text-bgp-ink/45">{c.location}</p>
-                    <p className="mt-2 text-base text-bgp-ink/80">{c.blurb}</p>
+                    <p className="mt-2 text-base text-bgp-ink">{c.blurb}</p>
                     <p className="mt-1.5 label-caps text-bgp-ink/45">{c.contacts.join(" · ")}</p>
                   </div>
                 </>
@@ -175,13 +175,13 @@ export function ShoppingCentrePage() {
         </p>
         <div className="grid grid-cols-1 md:grid-cols-[1fr_280px] gap-10 mt-8">
           <div>
-            <h1 className="font-light text-3xl md:text-5xl">{centre.name}</h1>
+            <h1 className="font-normal text-3xl md:text-5xl">{centre.name}</h1>
             <div className="img-frame mt-6">
               <Placeholder className="aspect-[16/9] w-full" src={centre.image} alt={centre.name} stock={CENTRE_STOCK[0]} />
             </div>
-            <p className="mt-6 text-base md:text-lg text-bgp-ink/90">{centre.blurb}</p>
+            <p className="mt-6 text-base md:text-lg text-bgp-ink">{centre.blurb}</p>
             {/* Generic second paragraph, the same on every centre: italic until the team writes each one. */}
-            <p className="mt-4 text-base md:text-lg text-bgp-ink/90 italic">
+            <p className="mt-4 text-base md:text-lg text-bgp-ink italic">
               BGP advises the owners of {centre.name} on leasing strategy, tenant mix and positioning, drawing on our relationships with leading occupiers and our London Estates and High Street teams.
             </p>
             <div className="card-strip sm:grid-cols-3 mt-8">

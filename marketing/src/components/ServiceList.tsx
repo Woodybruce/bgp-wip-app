@@ -19,13 +19,13 @@ export default function ServiceList({ services, heading = "What we offer", body,
             <p className="text-xs font-bold border-b border-bgp-ink pb-2 mb-4">{heading}</p>
             <ul>
               {services.slice(0, 3).map((s) => (
-                <li key={s.name} className="text-base text-bgp-ink/85 border-b border-bgp-line py-3 last:border-0">{s.name}</li>
+                <li key={s.name} className="text-base text-bgp-ink border-b border-bgp-line py-3 last:border-0">{s.name}</li>
               ))}
             </ul>
           </div>
           <div className="space-y-4">
             {(body ?? []).map((p, i) => (
-              <p key={p.slice(0, 24)} className={`text-base ${i === 0 ? "font-bold text-bgp-ink" : "text-bgp-ink/85"}`}>{p}</p>
+              <p key={p.slice(0, 24)} className={`text-base ${i === 0 ? "font-bold text-bgp-ink" : "text-bgp-ink"}`}>{p}</p>
             ))}
           </div>
         </div>
@@ -37,12 +37,12 @@ export default function ServiceList({ services, heading = "What we offer", body,
       {/* Wireframe slides 38 and 41: heading at left with the copy beside it,
           then the list of services with the detail box to its right. */}
       <div className="grid grid-cols-1 md:grid-cols-[46fr_54fr] gap-x-10 gap-y-4 border-t-[3px] border-bgp-ink pt-6 mb-8">
-        <h2 className="font-light text-3xl md:text-5xl text-bgp-ink whitespace-nowrap">{heading}</h2>
+        <h2 className="font-normal text-3xl md:text-5xl text-bgp-ink whitespace-nowrap">{heading}</h2>
         {body && body.length > 0 && (
           <div className="space-y-3">
             {/* Slide 38 sets one short paragraph beside the heading. */}
             {body.slice(0, 1).map((p) => (
-              <p key={p.slice(0, 24)} className="text-2xl leading-snug text-bgp-ink/85">{p}</p>
+              <p key={p.slice(0, 24)} className="text-2xl leading-snug text-bgp-ink">{p}</p>
             ))}
           </div>
         )}
@@ -65,10 +65,10 @@ export default function ServiceList({ services, heading = "What we offer", body,
           </ul>
         </div>
         <div className="bg-bgp-mist p-6 md:p-10 flex flex-col min-h-[20rem]">
-          <p className={`text-base text-bgp-ink/85 ${isDraft(current) ? "italic" : ""}`}>{current.detail}</p>
+          <p className={`text-base text-bgp-ink ${isDraft(current) ? "italic" : ""}`}>{current.detail}</p>
           {/* Slide 38 fills this box with about seven lines; short entries show the gap in italics. */}
           {!isDraft(current) && current.detail.length < 220 && (
-            <p className="mt-3 text-base text-bgp-ink/85 italic">Draft: two or three more sentences from the team on how this works in practice, a recent example, and what it meant for the client.</p>
+            <p className="mt-3 text-base text-bgp-ink italic">Draft: two or three more sentences from the team on how this works in practice, a recent example, and what it meant for the client.</p>
           )}
           <button type="button" onClick={() => setSelected((selected + 1) % padded.length)} aria-label="Next service" className="mt-6 self-end text-4xl leading-none text-bgp-ink hover:text-bgp-wine">→</button>
         </div>

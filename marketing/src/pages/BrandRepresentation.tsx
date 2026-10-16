@@ -23,7 +23,7 @@ export default function BrandRepresentation() {
       <h1 className="sr-only">Brand Representation</h1>
 
       {/* Overview / intro */}
-      <p className="max-w-[62%] font-light text-2xl md:text-4xl leading-[1.1] text-bgp-ink">
+      <p className="max-w-[62%] font-normal text-2xl md:text-4xl leading-[1.1] text-bgp-ink">
         {service.intro}
       </p>
 
@@ -51,7 +51,7 @@ export default function BrandRepresentation() {
                 <div className="hidden md:block" />
                 <div className="[direction:ltr] flex flex-col">
                   {/* Slide 35 gives each case study a full paragraph, so the blurb and body run together. */}
-                  <div className={`space-y-3 text-base md:text-lg leading-snug text-bgp-ink/85 ${cs.draft ? "italic" : ""}`}>
+                  <div className={`space-y-3 text-base md:text-lg leading-snug text-bgp-ink ${cs.draft ? "italic" : ""}`}>
                     {[cs.blurb, ...(cs.body || [])].map((para, k) => <p key={k}>{para}</p>)}
                   </div>
                   <p className="mt-auto pt-6 text-[11px] font-bold text-bgp-ink self-end">Read more</p>
@@ -66,7 +66,7 @@ export default function BrandRepresentation() {
       <section className="mt-12 mb-16 grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-8 md:gap-12 items-start">
         <div>
           <h2 className="text-2xl font-bold text-bgp-ink">Key contacts</h2>
-          <p className="mt-3 text-base md:text-lg leading-snug text-bgp-ink/85">
+          <p className="mt-3 text-base md:text-lg leading-snug text-bgp-ink">
             Our brand representation team supports occupiers from first site to full network. Talk to us about a first UK store, the next ten, or a portfolio review.
           </p>
         </div>

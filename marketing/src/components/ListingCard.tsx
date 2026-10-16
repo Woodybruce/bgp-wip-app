@@ -31,7 +31,7 @@ export default function ListingCard({ listing, wide = false, aspect = "aspect-[8
         <Link href={`/leasing/${listing.id}`} className="label-caps text-bgp-wine hover:opacity-70">{names.title}</Link>
         {type && <span className="label-caps text-bgp-ink/60 whitespace-nowrap shrink-0">{type}</span>}
       </div>
-      <p className="mt-1.5 text-sm text-bgp-ink/80">
+      <p className="mt-1.5 text-sm text-bgp-ink">
         {names.secondary && <>{names.secondary}<br /></>}
         {(listing.addressLine || areaLabel(listing)) && <>{listing.addressLine || areaLabel(listing)}<br /></>}
         <span className="tabular">{details || "Details on application"}</span>

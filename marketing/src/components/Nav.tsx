@@ -97,7 +97,7 @@ export default function Nav() {
                           <ul className="space-y-2">
                             {col.items.map((it) => (
                               <li key={it.label}>
-                                <a href={it.href} className={`text-sm text-bgp-ink/85 hover:text-bgp-wine ${it.label === "Available properties" ? "border-t border-bgp-ink/30 pt-2 mt-1 block" : ""}`}>{it.label}</a>
+                                <a href={it.href} className={`text-sm text-bgp-ink hover:text-bgp-wine ${it.label === "Available properties" ? "border-t border-bgp-ink/30 pt-2 mt-1 block" : ""}`}>{it.label}</a>
                               </li>
                             ))}
                           </ul>

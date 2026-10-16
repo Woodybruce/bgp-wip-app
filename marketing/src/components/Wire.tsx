@@ -29,9 +29,9 @@ export function QuoteBlock({ quote, image, imageAlt = "", imageSide = "right" }:
   const draft = !hasQuote;
   return (
     <section className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
-      <div className={`grid grid-cols-1 gap-8 md:gap-12 items-start ${imageSide === "left" ? "md:grid-cols-[29fr_63fr] md:[direction:rtl]" : "md:grid-cols-[55fr_37fr]"}`}>
+      <div className={`grid grid-cols-1 gap-8 md:gap-12 items-start ${imageSide === "left" ? "md:grid-cols-[63fr_29fr] md:[direction:rtl] md:pl-[8%]" : "md:grid-cols-[55fr_37fr]"}`}>
         <div className={`[direction:ltr] ${draft ? "italic" : ""}`}>
-          <p className="font-light text-xl md:text-2xl text-bgp-ink/85">“{hasQuote ? quote!.quote : DRAFT_QUOTE}”</p>
+          <p className="font-normal text-xl md:text-2xl text-bgp-ink">“{hasQuote ? quote!.quote : DRAFT_QUOTE}”</p>
           <p className="mt-4 label-caps">{quote?.name || "Client name"}</p>
           <p className="text-xs text-bgp-ink/55 uppercase">{quote?.title || "Title, company"}</p>
         </div>
@@ -65,7 +65,7 @@ export function Hero({ src, alt, label, statement, caption, tall = false }: { sr
       <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/80 via-bgp-ink/25 to-bgp-ink/35" />
       <div className="relative mx-auto w-full max-w-[1360px] px-4 pb-8 md:pb-10">
         {label && <p className="label-caps text-white/80 mb-3">{label}</p>}
-        <p className="max-w-[62%] font-light text-2xl md:text-4xl leading-[1.1] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>{statement}</p>
+        <p className="max-w-[62%] font-normal text-2xl md:text-4xl leading-[1.1] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>{statement}</p>
         {caption}
       </div>
     </section>
