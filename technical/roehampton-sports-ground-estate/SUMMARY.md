@@ -17,6 +17,23 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   Eve): data issue sheet, sheets P0001-P0010 and the combined DWG.
 - `service-charge/` — Gerald Eve service charge BUDGETS for The Grange, years ending 24 March
   2024, 2025 and 2026 (budgets, not reconciled year-end accounts).
+- `legal/national-tennis-centre/` — Agreement for Lease 3 July 2003 (two scanned parts), Deed of
+  Novation 2 June 2004, Lease 2 June 2004 (scan), Official Copy Deed of Variation 1 Oct 2011
+  (title TGL239081), LTA Nominees lease plan.
+- `legal/sports-centre/` — AELTG lease plan; Car Parking Licence 28 July 2008; London Electricity
+  sub-station lease 5 Nov 1997, EDF licence to underlet 29 May 2009 and EDF transformer chamber
+  lease 7 Sept 2009. The AELTG lease itself is NOT in the pack yet.
+- `legal/the-grange/` — ITF Licensing (UK) Ltd leases of the North Wing and South Wing (15 July
+  2025), ITIA underlease of the 3rd floor North Wing and licence to underlet (15 July 2025), the
+  1954 Act warning notice and statutory declarations for all three.
+- `legal/title/` — Official copies of register and title plan for freehold titles 139884,
+  239100 and 396768 (editions July/Aug 2026), plus the root-of-title deeds: Grant of Right of
+  Entry 30 Oct 1832, Conveyance 21 Dec 1907, Deed 21 July 1920, Conveyance of Redgates 8 July
+  1929, Agreement 14 June 1937 (official copy and scan), Land Registry correspondence on the
+  1779 rent-charge deed, extracts on the Bank's right of way over part of Clarence House
+  (24 Dec 1907), Agreement as to user of drain 5 Oct 1908, Deed of Covenant for a wall 21 July
+  1920, Agreement for Lease 11 Oct 1966 and Agreement for Land 29 Jan 1969. The old deeds are
+  scans without a text layer.
 
 ## Headline
 - Freehold, c. 38 acres (15.38 ha), owned by the Bank of England since 1908. Metropolitan Open Land,
@@ -67,6 +84,43 @@ The Grange by floor (GIA / NIA sq ft): B 5,562 / 1,946 · G 14,089 / 10,155 · 1
 
 Plans pack: 50 PDFs (A1, 1:100) — Sports Club/Pavilion/Squash 17, The Grange 11 GIA/NIA + 7
 "Existing" architectural sheets incl. elevations + a DWG, Cottages/Lodge 8. No NTC plans.
+
+## National Tennis Centre lease (Lot 1) — from the documents
+- Lease dated 2 June 2004, Bank of England (1) LTA Nominees Ltd (2) All England Lawn Tennis
+  Ground plc as guarantor (3). Term 125 years, 2 June 2004 to 1 June 2129. Title TGL239081.
+  New tenancy under the LT(C)A 1995. Drafted by Freshfields. Preceded by an Agreement for Lease
+  of 3 July 2003 with LTA Ground Ltd, novated to LTA Nominees on 2 June 2004.
+- Deed of release, substitution and variation 1 Oct 2011: AELTG plc RELEASED as guarantor and
+  LTA CLG Ltd (co. 7459469) substituted. Change-of-control covenant: LTA Nominees, LTA Property
+  Ltd and LTA Operations Ltd must remain subsidiaries of the guarantor without landlord consent.
+  The brochure names the guarantor as "Lawn Tennis Association Limited" — confirm that is LTA CLG
+  Ltd renamed, and that the guarantee has not been varied again since 2011.
+- Tenant covenants seen: full repair of the Buildings, outgoings, compliance, landlord entry on
+  7 days' notice. The 2004 lease has a "Redevelopment" clause (cl. 4) and a 25-year "Initial
+  Period" definition — the scan has no text layer, so read these clauses in full before relying on
+  the peppercorn / no-review position in the brochure.
+
+## The Grange leases (Lot 3) — from the documents
+- Two leases to ITF Licensing (UK) Ltd dated 15 July 2025: Whole North Wing and Third Floor South
+  Wing. Term Commencement 1 January 2025, expiring 31 December 2026. South Wing basic rent
+  £102,675 pa; North Wing £98,400 pa (per brochure). Permitted use offices (Class E). Service
+  charge and insurance rent payable in addition. Contracted out of the 1954 Act (statutory
+  declarations 30 April 2025 for both wings).
+- Underlease of 3rd Floor North Wing from ITF to the International Tennis Integrity Agency Ltd,
+  15 July 2025, £97,120 pa, contracted out (warning notice 18 June 2025, declaration 24 June 2025),
+  with the landlord's licence to underlet of the same date.
+- All Grange income therefore ends 31 December 2026 with no security of tenure, consistent with
+  the brochure's "vacant possession achievable December 2026".
+
+## Freehold title — from the official copies
+- Three freehold titles, all registered to The Governor and Company of the Bank of England:
+  139884 (first registered 2 Jan 1908; conveyance 24 Dec with restrictive covenants in the
+  schedule), 239100 (13 Aug 1920; benefit of a right of way over Priory Lane; 1997 lease of an
+  electricity sub-station) and 396768. Editions dated 27 July and 10 Aug 2026.
+- 239100 and 396768 are subject to historic rent-charges totalling £57 created by a Deed of
+  16 December 1779, so far as still payable. Both older titles carry a Registrar's restriction
+  against registering a charge. The 2004 NTC lease is noted on 139884 and 396768.
+- Lot boundaries vs title boundaries have not been checked against the title plans here.
 
 ## The Grange service charge (Gerald Eve budgets)
 | Year ending | Budget | Per sq ft | Notes |
