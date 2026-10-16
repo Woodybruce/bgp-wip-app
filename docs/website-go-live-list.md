@@ -67,6 +67,14 @@ asks for the list; add to it when he says "put it on the list".
   the words and the italics go. Brand Representation rebuilt to slide 35
   exactly, with the site boxed at 1440px so it stops stretching on wide
   screens. Sheets in `docs/wireframe-review/`.
+- Same day, later: Lease Advisory and Consultancy rebuilt to slides 38 and
+  41 (small ruled "A snapshot of clients", light "What we offer" with the
+  detail box and arrow, grey "Additional services" box on Consultancy,
+  case study on white under the grey key contacts band, no quote on Lease
+  Advisory); text fills its column everywhere and case-study blocks show
+  the full paragraph; every shopping centre tile carries a photo; the
+  Leasing rollover is the four teams then Available properties; "Where we
+  act" is now "Leasing teams"; home service blocks carry two paragraphs.
 
 - Website layouts rebuilt to the December 2025 wireframes after Woody's
   side-by-side review (2026-10-16): statement over the hero, left-aligned
