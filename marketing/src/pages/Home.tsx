@@ -46,12 +46,9 @@ export default function Home() {
         ))}
         <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/80 via-bgp-ink/25 to-bgp-ink/35" />
         <div className="relative mx-auto w-full max-w-[1360px] px-4 pb-10 md:pb-9 flex flex-wrap items-end justify-between gap-6">
-          <h1 className="max-w-[62%] font-normal text-3xl md:text-4xl leading-[1.1] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>
+          <h1 className="max-w-[66%] font-normal text-3xl md:text-4xl leading-[1.1] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>
             {HERO_STATEMENT}
           </h1>
-          <p className="label-caps text-white/85" aria-live="polite">
-            {HERO_SLIDES[slideIndex].place} <span className="text-bgp-nectar mx-1" aria-hidden>/</span> {HERO_SLIDES[slideIndex].capability}
-          </p>
         </div>
       </section>
 
@@ -91,7 +88,7 @@ export default function Home() {
           return i % 2 ? (
             <Band key={service.slug}>{inner}</Band>
           ) : (
-            <section key={service.slug} className="mx-auto max-w-[1360px] px-4 py-12 md:py-14">{inner}</section>
+            <section key={service.slug} className="mx-auto max-w-[1360px] px-4 pt-10 pb-12 md:pt-10 md:pb-14">{inner}</section>
           );
         })}
       </div>

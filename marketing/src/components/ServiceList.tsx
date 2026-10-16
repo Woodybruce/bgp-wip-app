@@ -15,17 +15,17 @@ export default function ServiceList({ services, heading = "What we offer", body,
     return (
       <section className="mx-auto max-w-[1360px] px-4 pt-0 pb-12">
         <div className="border-t-[3px] border-bgp-ink pt-10 grid grid-cols-1 md:grid-cols-[46fr_54fr] gap-10 items-start">
-          <div className="bg-bgp-mist p-6 md:p-8 md:mr-[8%]">
+          <div className="bg-bgp-mist p-5 md:p-6 md:mr-[8%]">
             <p className="text-base font-bold border-b-2 border-bgp-ink pb-2 mb-2">{heading}</p>
             <ul>
               {services.slice(0, 3).map((s) => (
-                <li key={s.name} className="text-lg text-bgp-ink border-b border-bgp-ink/40 py-4 last:border-0">{s.name}</li>
+                <li key={s.name} className="text-lg text-bgp-ink border-b border-bgp-ink/40 py-3 last:border-0">{s.name}</li>
               ))}
             </ul>
           </div>
           <div className="space-y-4">
             {(body ?? []).map((p, i) => (
-              <p key={p.slice(0, 24)} className={`text-xl leading-snug ${i === 0 ? "font-bold text-bgp-ink" : "text-bgp-ink"}`}>{p}</p>
+              <p key={p.slice(0, 24)} className={`text-2xl leading-snug ${i === 0 ? "font-bold text-bgp-ink" : "text-bgp-ink"}`}>{p}</p>
             ))}
           </div>
         </div>

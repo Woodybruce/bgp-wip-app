@@ -19,12 +19,12 @@ export default function BrandRepresentation() {
   const clients = BRAND_REP_CLIENTS.slice(0, 14);
 
   return (
-    <div className="mx-auto max-w-[1360px] px-4 pt-10 md:pt-14">
+    <div className="mx-auto max-w-[1360px] px-4 pt-8 md:pt-10">
       <h1 className="sr-only">Brand Representation</h1>
 
       {/* Overview / intro */}
       <p className="max-w-[66%] font-normal text-2xl md:text-4xl leading-[1.1] text-bgp-ink">
-        {service.intro}
+        {service.intro.replace("retail, leisure and hospitality destinations", "destinations")}
       </p>
 
       {/* A snapshot of clients */}
@@ -41,10 +41,10 @@ export default function BrandRepresentation() {
             <Link
               key={cs.slug}
               href={`/case-studies/${cs.slug}`}
-              className={`group block p-5 md:p-6 ${i % 2 ? "" : "bg-bgp-mist"}`}
+              className={`group block px-[2%] py-5 md:py-6 ${i % 2 ? "" : "bg-bgp-mist"}`}
             >
               <p className="text-xs font-bold uppercase text-bgp-ink mb-3">{cs.title}</p>
-              <div className={`grid grid-cols-1 md:grid-cols-[53fr_4fr_37fr] gap-6 md:gap-0 md:pl-[3%] ${i % 2 ? "md:[direction:rtl]" : ""}`}>
+              <div className={`grid grid-cols-1 md:grid-cols-[52fr_4fr_36fr] gap-6 md:gap-0 md:pl-[2%] md:pr-[2%] ${i % 2 ? "md:[direction:rtl]" : ""}`}>
                 <div className="img-frame [direction:ltr]">
                   <Placeholder className="aspect-[4/3] w-full" src={cs.image} alt={cs.title} label="Photo to follow" />
                 </div>
@@ -54,7 +54,7 @@ export default function BrandRepresentation() {
                   <div className={`space-y-3 text-lg md:text-xl leading-snug text-bgp-ink ${cs.draft ? "italic" : ""}`}>
                     {[cs.blurb, ...(cs.body || [])].map((para, k) => <p key={k}>{para}</p>)}
                   </div>
-                  <p className="mt-auto pt-6 text-[11px] font-bold text-bgp-ink self-end">Read more</p>
+                  <p className="mt-auto pt-6 label-caps font-bold text-bgp-ink self-end">Read more</p>
                 </div>
               </div>
             </Link>

@@ -8,7 +8,7 @@ export const SERVICES = [
     name: "Leasing",
     image: "/images/gallery/mayfair-3.jpg",
     intro:
-      "Creating neighbourhoods that people love. We let shops, restaurants, bars and leisure together, so a street or scheme works as one place, across London's leading estates, the UK's landmark shopping centres and the high streets in between, for landlords including The Portman Estate, Grosvenor, The Crown Estate, Landsec and Hammerson.",
+      "Creating neighbourhoods that people love. We let shops, restaurants, bars and leisure together, so a street or scheme works as one place.",
   },
   {
     slug: "investment",
@@ -49,7 +49,7 @@ export const NAV_ITEMS = [
   { label: "Team", href: "/team" },
 ] as const;
 
-export const HERO_STATEMENT = "Great places are built through connected thinking. We combine deep market insight with relentless delivery to create impact and relationships that stand the test of time.";
+export const HERO_STATEMENT = "We combine deep market insight with relentless delivery to create impact and relationships that stand the test of time.";
 
 // Home hero rotates through flagship instructions, one per capability
 // (Woody, 2026-10-12). Crossfades every five seconds.

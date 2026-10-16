@@ -32,8 +32,7 @@ export default function ListingCard({ listing, wide = false, aspect = "aspect-[8
         {type && <span className="label-caps font-bold text-bgp-ink whitespace-nowrap shrink-0">{type}</span>}
       </div>
       <p className="mt-5 text-lg leading-snug text-bgp-ink">
-        {names.secondary && <>{names.secondary}<br /></>}
-        {(listing.addressLine || areaLabel(listing)) && <>{listing.addressLine || areaLabel(listing)}<br /></>}
+        {(listing.addressLine || areaLabel(listing) || names.secondary) && <>{listing.addressLine || areaLabel(listing) || names.secondary}<br /></>}
         <span className="tabular">{details || "Details on application"}</span>
       </p>
       <div className="mt-auto pt-6 flex justify-between border-b-2 border-bgp-ink pb-2">

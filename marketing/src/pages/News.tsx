@@ -78,7 +78,7 @@ export default function News() {
               <span>{i % 2 ? a.date : a.category}</span>
             </div>
             <div className={`grid grid-cols-1 md:grid-cols-[59fr_3fr_38fr] gap-8 md:gap-0 items-start ${i % 2 ? "md:[direction:rtl]" : ""}`}>
-              <div className="img-frame [direction:ltr]"><Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} /></div>
+              <div className="img-frame [direction:ltr]"><Placeholder className="aspect-[1.36] w-full" src={a.image} alt={a.title} /></div>
               <div className="hidden md:block" />
               <div className="[direction:ltr] flex flex-col h-full">
                 <h2 className="font-normal text-3xl md:text-4xl text-bgp-wine group-hover:opacity-80 transition-opacity">{a.title}</h2>
