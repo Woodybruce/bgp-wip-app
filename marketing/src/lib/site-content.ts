@@ -57,16 +57,23 @@ function fromApi(j: any): SiteContent {
   const byGroup = (g: ContactGroup): Person[] => team.filter((p) => p.groups.includes(g) && isDirectorLevel(p)).map(({ groups, ...p }) => p);
   return {
     team: team.map(({ groups, ...p }) => p),
-    caseStudies: (j.caseStudies || []).map((r: any) => ({
-      slug: r.slug,
-      title: r.title,
-      service: r.service,
-      blurb: r.blurb,
-      image: r.imageUrl || undefined,
-      gallery: Array.isArray(r.galleryUrls) ? r.galleryUrls.filter(Boolean) : [],
-      facts: Array.isArray(r.facts) ? r.facts : [],
-      body: r.body || [],
-    })),
+    // A feed row without a photo falls back to the bundled one for that slug
+    // (stock stand-ins live in content.ts until the real pictures arrive).
+    caseStudies: (j.caseStudies || []).map((r: any) => {
+      const b = CASE_STUDIES.find((x) => x.slug === r.slug);
+      return {
+        slug: r.slug,
+        title: r.title,
+        service: r.service,
+        blurb: r.blurb,
+        image: r.imageUrl || b?.image,
+        gallery: Array.isArray(r.galleryUrls) && r.galleryUrls.filter(Boolean).length ? r.galleryUrls.filter(Boolean) : b?.gallery || [],
+        facts: Array.isArray(r.facts) ? r.facts : [],
+        body: r.body || [],
+        location: b?.location,
+        quote: b?.quote,
+      };
+    }),
     articles: (j.news || []).map((r: any) => ({
       slug: r.slug,
       title: r.title,
