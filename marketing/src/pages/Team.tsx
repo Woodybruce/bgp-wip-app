@@ -1,97 +1,62 @@
-import { Link } from "wouter";
 import { Hero } from "../components/Wire";
-import { LEASING_SECTORS, cardUrlFor, teamPagesFor, type Person } from "../lib/content";
+import { cardUrlFor, type Person } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
 import { useTeamPhoto } from "../lib/team-photos";
 
-function Avatar({ person }: { person: Person }) {
+// Built to wireframe slide 49 (Woody, 2026-10-16, "everything" to the
+// wireframes): the group photo with the about blurb over it, then "A-Z
+// contact details" as a grid of black and white headshots five across with
+// name, title, phone, email and LinkedIn. This replaces the grouped list of
+// 2026-10-12; that version is in git history if it is wanted back.
+function Tile({ person }: { person: Person }) {
   const photo = useTeamPhoto(person);
-  if (!photo) return null;
-  return <img src={photo} alt="" className="h-9 w-9 rounded-full object-cover grayscale shrink-0 self-center" />;
+  return (
+    <div className="w-full">
+      {photo ? (
+        <img src={photo} alt={person.name} className="aspect-[9/10] w-full object-cover grayscale" />
+      ) : (
+        <div className="aspect-[9/10] w-full bg-bgp-stone/30 flex items-center justify-center">
+          <span className="italic text-sm text-bgp-stone">Headshot to follow</span>
+        </div>
+      )}
+      <p className="mt-3 label-caps font-bold text-bgp-ink">
+        <a href={cardUrlFor(person.name)} className="hover:text-bgp-wine" title="Business card">{person.name}</a>
+      </p>
+      <div className="mt-1 text-sm text-bgp-ink/75 space-y-0.5">
+        <p>{person.title}</p>
+        <p className="tabular">{person.phone}</p>
+        {person.email !== "TBC" && (
+          <p className="whitespace-nowrap overflow-hidden text-ellipsis">
+            <a href={`mailto:${person.email}`} className="hover:text-bgp-wine">{person.email}</a>
+          </p>
+        )}
+        <p className="italic text-bgp-stone">LinkedIn</p>
+      </div>
+    </div>
+  );
 }
 
 export default function Team() {
   const { team } = useSiteContent();
-  // Grouped by team rather than the wireframe's A–Z grid (Woody, 2026-10-12,
-  // reaffirmed 2026-10-16 after the layout rebuild). A person's team is
-  // what their title says; failing that, the first page they belong to; leadership and
-  // operations bookend the list. Within a team, directors first, then A–Z.
   const surname = (n: string) => n.split(" ").slice(-1)[0];
-  // Seniority order within a team (Charlotte, 2026-10-13), then surname.
-  const rank = (p: Person) => {
-    const t = p.title;
-    if (/managing director|chief operat|equity director|founding director/i.test(t)) return 0;
-    if ((/\bdirector\b|\bhead\b/i.test(t)) && !/associate/i.test(t)) return 1;
-    if (/associate director/i.test(t)) return 2;
-    if (/\bassociate\b|consultant/i.test(t)) return 3;
-    if (/senior surveyor/i.test(t)) return 4;
-    if (/graduate/i.test(t)) return 6;
-    if (/surveyor/i.test(t)) return 5;
-    return 7;
-  };
-  const HR_TEAM: Record<string, string> = { "Shopping Centre": "Shopping Centres", "London Estate": "London Estates", "City": "The City", "High Street": "High Streets", "Investment": "Investment", "Tenant Rep": "Brand Representation", "Lease Advisory": "Lease Advisory" };
-  const groupOf = (p: Person): string => {
-    if (/managing director|chief operat|\bcoo\b/i.test(p.title)) return "Leadership";
-    if (p.team && HR_TEAM[p.team]) return HR_TEAM[p.team];
-    for (const [re, label] of [[/shopping centre/i, "Shopping Centres"], [/london estate/i, "London Estates"], [/\bcity\b/i, "The City"], [/high street/i, "High Streets"], [/investment/i, "Investment"], [/brand rep/i, "Brand Representation"], [/lease advisory|asset management/i, "Lease Advisory"], [/consultan/i, "Consultancy"]] as Array<[RegExp, string]>) {
-      if (re.test(p.title)) return label;
-    }
-    const first = teamPagesFor(p.name)[0];
-    if (first) return first.label;
-    return "Operations";
-  };
-  const KNOWN = ["Leadership", "Leasing", ...LEASING_SECTORS.map((x) => x.name), "Investment", "Brand Representation", "Lease Advisory", "Consultancy", "Operations"];
-  const ORDER = [...KNOWN, ...Array.from(new Set(team.map(groupOf))).filter((l) => !KNOWN.includes(l))];
-  const HREF: Record<string, string> = Object.fromEntries([
-    ["Leasing", "/leasing"],
-    ...LEASING_SECTORS.map((x) => [x.name, `/leasing/sectors/${x.slug}`]),
-    ["Investment", "/investment"], ["Brand Representation", "/brand-representation"], ["Lease Advisory", "/lease-advisory"], ["Consultancy", "/consultancy"],
-  ]);
-  const groups = ORDER.map((label) => ({
-    label,
-    href: HREF[label],
-    people: team.filter((p) => groupOf(p) === label).sort((a, b) => rank(a) - rank(b) || surname(a.name).localeCompare(surname(b.name))),
-  })).filter((g) => g.people.length > 0);
+  const people = [...team].sort((a, b) => surname(a.name).localeCompare(surname(b.name)) || a.name.localeCompare(b.name));
 
   return (
     <div>
       <Hero
         src="/images/office.jpg"
-        alt="The BGP office"
+        alt="The BGP team"
         label="The BGP team"
         statement="Connecting leading brands with the best international locations. Creating neighbourhoods that people love."
+        tall
       />
       <h1 className="sr-only">The BGP team</h1>
 
       <section className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
-        {groups.map((g) => (
-          <div key={g.label} className="mb-14">
-            <div className="flex items-baseline justify-between border-b border-bgp-ink pb-2 mb-2">
-              <h2 className="text-2xl font-bold text-bgp-ink">
-                {g.href ? <Link href={g.href} className="hover:text-bgp-wine transition-colors">{g.label}</Link> : g.label}
-              </h2>
-              <span className="label-caps text-bgp-ink/45 tabular">{g.people.length}</span>
-            </div>
-            {g.people.map((p) => (
-              <div
-                key={p.name}
-                className="group grid grid-cols-1 md:grid-cols-[2.2fr_2fr_1.4fr_2.2fr] gap-x-6 gap-y-0.5 py-4 border-b border-bgp-line items-baseline"
-              >
-                <p className="font-normal text-lg text-bgp-wine flex items-center gap-3">
-                  <Avatar person={p} />
-                  <a href={cardUrlFor(p.name)} className="hover:text-bgp-wine transition-colors" title="Business card">{p.name}</a>
-                </p>
-                <p className="text-base text-bgp-ink/75">{p.title}</p>
-                <p className="text-base tabular text-bgp-ink/85">{p.phone}</p>
-                {p.email !== "TBC" && (
-                  <p className="text-base break-all">
-                    <a href={`mailto:${p.email}`} className="hover:text-bgp-wine transition-colors">{p.email}</a>
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-        ))}
+        <h2 className="text-2xl font-bold text-bgp-ink border-b-[3px] border-bgp-ink pb-2 mb-6">A-Z contact details</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-5 gap-y-10">
+          {people.map((p) => <Tile key={p.name} person={p} />)}
+        </div>
       </section>
     </div>
   );

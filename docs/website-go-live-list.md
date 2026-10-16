@@ -67,6 +67,23 @@ asks for the list; add to it when he says "put it on the list".
   the words and the italics go. Brand Representation rebuilt to slide 35
   exactly, with the site boxed at 1440px so it stops stretching on wide
   screens. Sheets in `docs/wireframe-review/`.
+- Same day, night: the site rescaled to the wireframe frame after Woody's
+  "exact" review. The slides are drawn at a 340px frame; measured against
+  it the type is 1.7% of the width (24px on desktop), the hero is 63% of
+  the width tall with the nav bar inside it, section labels are 2.3%
+  bold, titles 5.4% light, logo circles 9.6% across, contact tiles 16%.
+  All of that is now in `index.css` (root 24px from 1024px), `Nav.tsx`
+  (transparent over a hero until scrolled), `Wire.tsx` and the
+  components. Slide quantities everywhere: fourteen logo circles, three
+  or five contacts, seven services on Lease Advisory and three on
+  Consultancy, three Brand Rep case studies, seven investment deals in
+  the slide's wide/small pattern, eight listings a page, six small news
+  cards; gaps are padded with italic placeholders, extras trimmed. Home
+  lost "We are bgp" and the testimonial and gained the Talk to us bar;
+  Leasing lost the intro copy and team tiles; Investment lost its intro
+  copy; the article body runs full width with a second photo set in; the
+  listing page lost thumbnails, plans and the button stack. Frame-scale
+  sheets in `docs/wireframe-review/`.
 - Same day, evening: full visual audit of every page beside its slide
   (sheets in `docs/wireframe-review/`). Section headings site-wide are
   now small bold text over a rule and page titles large light type, as
