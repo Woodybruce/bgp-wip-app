@@ -15,6 +15,8 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   2525/113 A, 7289-1b.
 - `topographic-survey/` — Warner Surveys topographic survey RT/319/0418 (27 Aug 2019, for Gerald
   Eve): data issue sheet, sheets P0001-P0010 and the combined DWG.
+- `service-charge/` — Gerald Eve service charge BUDGETS for The Grange, years ending 24 March
+  2024, 2025 and 2026 (budgets, not reconciled year-end accounts).
 
 ## Headline
 - Freehold, c. 38 acres (15.38 ha), owned by the Bank of England since 1908. Metropolitan Open Land,
@@ -65,6 +67,24 @@ The Grange by floor (GIA / NIA sq ft): B 5,562 / 1,946 · G 14,089 / 10,155 · 1
 
 Plans pack: 50 PDFs (A1, 1:100) — Sports Club/Pavilion/Squash 17, The Grange 11 GIA/NIA + 7
 "Existing" architectural sheets incl. elevations + a DWG, Cottages/Lodge 8. No NTC plans.
+
+## The Grange service charge (Gerald Eve budgets)
+| Year ending | Budget | Per sq ft | Notes |
+|---|---|---|---|
+| 24 Mar 2024 | £692,101 | £7.80 | Includes demised electricity (£110k); ex-electricity £582,101 |
+| 24 Mar 2025 | £673,186 | £7.59 | Electricity removed and recharged on consumption; gas up c. £60k |
+| 24 Mar 2026 | £695,823 | £7.84 | +3.36%; includes £60,000 exceptional project works (edge protection) |
+
+2026 budget by category: Management £81,375 · Utilities £97,175 · Soft services £319,553 · Hard
+services £136,484 · Insurance £1,500 · Exceptional £60,000.
+
+- Apportionment area is stated as 88,739 sq ft in all three budgets, against 57,705 sq ft GIA /
+  44,429 sq ft NIA in the areas schedule. The budgets carry schedules for other occupiers (AELTC,
+  common parts), so the service charge may cover more than The Grange. Check before using psf.
+- VAT: the 2025 budget says the landlord has NOT elected to waive exemption, while the brochure
+  (and the 2024 budget wording) say The Grange IS opted to tax. Reconcile.
+- Landlord bears the void proportion; with VP from December 2026 the full c. £696k pa falls to
+  the owner until re-let or converted.
 
 ## Planning history (23 applications, 2003–2026, all Wandsworth)
 - 2026/1109 — LDC, temporary construction enclosure for 2025/2066 works. Approved 31/03/2026.
