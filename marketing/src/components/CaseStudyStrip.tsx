@@ -41,7 +41,7 @@ export default function CaseStudyStrip({ caseStudy, caseStudies, band = false }:
   return (
     <Strip band={band}>
       <p className="text-2xl font-bold text-bgp-ink mb-4">Case study</p>
-      <div className="grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-8 md:gap-12 items-start">
+      <div className="grid grid-cols-1 md:grid-cols-[42fr_58fr] gap-8 md:gap-10 items-start">
         <div>
           <h2 className={`font-light text-3xl md:text-5xl ${italic}`}>
             <Link href={`/case-studies/${current.slug}`} className="hover:opacity-80">{current.title}</Link>
@@ -53,7 +53,7 @@ export default function CaseStudyStrip({ caseStudy, caseStudies, band = false }:
         </div>
         <div className="relative">
           <Link href={`/case-studies/${current.slug}`} className="block img-frame">
-            <Placeholder className="aspect-[3/2] w-full" src={shown} alt={current.title} label="Photo to follow" />
+            <Placeholder className="aspect-[7/5] w-full" src={shown} alt={current.title} label="Photo to follow" />
           </Link>
           {steps > 1 && (
             <>

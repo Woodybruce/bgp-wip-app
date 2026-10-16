@@ -75,8 +75,8 @@ export default function BrandRepresentation() {
             <ContactCard key={p.name} person={p} compact />
           ))}
           {Array.from({ length: Math.max(0, 3 - people.length) }, (_, i) => (
-            <div key={i} className="w-full max-w-[14rem] italic text-bgp-stone">
-              <div className="aspect-[9/10] w-full bg-bgp-stone/30" />
+            <div key={i} className="w-full max-w-[9.5rem] italic text-bgp-stone">
+              <div className="aspect-[3/4] w-full bg-bgp-stone/30" />
               <p className="mt-3 label-caps text-bgp-stone">Name {people.length + i + 1}</p>
               <div className="mt-1 text-sm space-y-0.5"><p>Job title</p><p>+44 (0)20 0000 0000</p><p>name@bgp.uk.com</p></div>
             </div>

@@ -38,7 +38,7 @@ export default function LeasingSector() {
       {/* Wireframe slide 28: plain photo, then the title with Contact and
           Download at right, the statement beside the title, description
           beside the lead image, more photos, a location map. */}
-      <Placeholder className="h-64 md:h-[22rem] w-full" src={sector.image} alt={sector.name} />
+      <Placeholder className="h-64 md:h-auto md:aspect-[2.96] w-full" src={sector.image} alt={sector.name} />
 
       <section className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
         <p className="label-caps text-bgp-ink/50 mb-4"><Link href="/leasing" className="hover:text-bgp-wine">Leasing</Link> · {sector.name}</p>
@@ -58,7 +58,7 @@ export default function LeasingSector() {
           </div>
         )}
         {sector.howWeHelp && <p className="mt-4 font-light text-xl md:text-2xl text-bgp-ink/85 md:w-[60%] md:ml-auto">{sector.headline}</p>}
-        <div className={`mt-8 grid grid-cols-1 gap-10 items-start ${sector.howWeHelp ? "md:grid-cols-[1fr_280px]" : "md:grid-cols-[27fr_61fr] md:gap-x-[12%]"}`}>
+        <div className={`mt-8 grid grid-cols-1 gap-10 items-start ${sector.howWeHelp ? "md:grid-cols-[1fr_280px]" : "md:grid-cols-[30fr_64fr] md:gap-x-[6%]"}`}>
           <div className="space-y-4">
             {sector.body.map((p, i) => (
               <p key={p.slice(0, 24)} className="text-base text-bgp-ink/90">{p}</p>
@@ -66,7 +66,7 @@ export default function LeasingSector() {
           </div>
           {!sector.howWeHelp && (
             <figure className="img-frame">
-              <Placeholder className="aspect-[16/10] w-full" src={sector.gallery?.[0]?.src} alt={sector.gallery?.[0]?.caption ?? sector.name} />
+              <Placeholder className="aspect-[1.61] w-full" src={sector.gallery?.[0]?.src} alt={sector.gallery?.[0]?.caption ?? sector.name} />
               {sector.gallery?.[0] && <figcaption className="mt-2 label-caps text-bgp-ink/55">{sector.gallery[0].caption}</figcaption>}
             </figure>
           )}
@@ -85,14 +85,14 @@ export default function LeasingSector() {
 
       {!sector.howWeHelp && (
         <section className="mx-auto max-w-[1360px] px-4 pb-9">
-          <div className="grid grid-cols-1 md:grid-cols-[54fr_17fr_29fr] gap-6 md:gap-0 items-start">
+          <div className="grid grid-cols-1 md:grid-cols-[57fr_12fr_31fr] gap-6 md:gap-0 items-start">
             <figure>
-              <div className="img-frame"><Placeholder className="aspect-[17/10] w-full" src={sector.gallery?.[1]?.src} alt={sector.gallery?.[1]?.caption ?? sector.name} /></div>
+              <div className="img-frame"><Placeholder className="aspect-[1.69] w-full" src={sector.gallery?.[1]?.src} alt={sector.gallery?.[1]?.caption ?? sector.name} /></div>
               {sector.gallery?.[1] && <figcaption className="mt-2 label-caps text-bgp-ink/55">{sector.gallery[1].caption}</figcaption>}
             </figure>
             <div />
-            <figure className="md:mt-24">
-              <div className="img-frame"><Placeholder className="aspect-[3/4] w-full" src={sector.gallery?.[2]?.src} alt={sector.gallery?.[2]?.caption ?? sector.name} /></div>
+            <figure className="md:mt-40">
+              <div className="img-frame"><Placeholder className="aspect-[0.77] w-full" src={sector.gallery?.[2]?.src} alt={sector.gallery?.[2]?.caption ?? sector.name} /></div>
               {sector.gallery?.[2] && <figcaption className="mt-2 label-caps text-bgp-ink/55">{sector.gallery[2].caption}</figcaption>}
             </figure>
           </div>
@@ -150,7 +150,7 @@ export default function LeasingSector() {
 
       <section className="mx-auto max-w-[1360px] px-4 pb-9">
         <SectionHead title="Location" />
-        <MapSlot lat={sector.map?.lat} lon={sector.map?.lon} zoom={sector.map?.zoom} marker={false} pins={sector.map?.pins} className="h-72 md:h-96 w-full" />
+        <MapSlot lat={sector.map?.lat} lon={sector.map?.lon} zoom={sector.map?.zoom} marker={false} pins={sector.map?.pins} className="aspect-[3.38] w-full" />
       </section>
 
       <KeyContacts band={false} people={contacts} />

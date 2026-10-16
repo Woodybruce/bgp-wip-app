@@ -73,22 +73,22 @@ export default function Investment() {
           return (
             <div className="space-y-10">
               {a && (
-                <div className="grid grid-cols-1 md:grid-cols-[51fr_8fr_29fr_12fr] gap-6 md:gap-0 items-end">
-                  <Tile deal={a} aspect="aspect-[8/5]" />
+                <div className="grid grid-cols-1 md:grid-cols-[54fr_13fr_30fr_3fr] gap-6 md:gap-0 items-start">
+                  <Tile deal={a} aspect="aspect-[1.55]" />
                   <div className="hidden md:block" />
-                  {b && <Tile deal={b} aspect="aspect-[5/4]" />}
+                  {b && <Tile deal={b} aspect="aspect-[1.16]" />}
                 </div>
               )}
               {c && (
-                <div className="grid grid-cols-1 md:grid-cols-[29fr_12fr_51fr_8fr] gap-6 md:gap-0 items-end">
-                  <Tile deal={c} aspect="aspect-[5/4]" />
+                <div className="grid grid-cols-1 md:grid-cols-[30fr_13fr_54fr_3fr] gap-6 md:gap-0 items-start">
+                  <Tile deal={c} aspect="aspect-[0.86]" />
                   <div className="hidden md:block" />
-                  {d && <Tile deal={d} aspect="aspect-[8/5]" />}
+                  {d && <Tile deal={d} aspect="aspect-[1.55]" />}
                 </div>
               )}
               {rest.length > 0 && (
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                  {rest.map((deal) => <Tile key={deal.name} deal={deal} aspect="aspect-[3/2]" />)}
+                  {rest.map((deal) => <Tile key={deal.name} deal={deal} aspect="aspect-[8/5]" />)}
                 </div>
               )}
             </div>

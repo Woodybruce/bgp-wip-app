@@ -21,7 +21,7 @@ function Carousel({ photos, alt }: { photos: string[]; alt: string }) {
   const step = (d: number) => setI((x) => (x + d + photos.length) % photos.length);
   return (
     <div className="relative mt-8">
-      <div className="img-frame"><Placeholder className="aspect-[16/10] w-full" src={photos[i]} alt={alt} /></div>
+      <div className="img-frame"><Placeholder className="aspect-[1.69] w-full" src={photos[i]} alt={alt} /></div>
       {photos.length > 1 && (
         <>
           <button type="button" onClick={() => step(-1)} aria-label="Previous photo" className="absolute left-3 top-1/2 -translate-y-1/2 h-9 w-9 flex items-center justify-center bg-bgp-cream/85 text-bgp-wine text-xl hover:bg-bgp-cream">‹</button>
@@ -105,7 +105,7 @@ export default function CaseStudyPage() {
 
       <section className="mx-auto max-w-[1360px] px-4 pb-10">
         <SectionHead title="Location" />
-        <MapSlot lat={caseStudy.location?.lat} lon={caseStudy.location?.lon} />
+        <MapSlot lat={caseStudy.location?.lat} lon={caseStudy.location?.lon} className="aspect-[2.15] w-full" />
       </section>
 
       <KeyContacts band={false} people={contacts} />
@@ -117,7 +117,7 @@ export default function CaseStudyPage() {
             {related.map((deal) => (
               <Link key={deal.name} href="/investment" className="group block">
                 <div className="relative img-frame">
-                  <Placeholder className="aspect-[4/3] w-full" src={deal.image} alt={deal.name} label="Photo to follow" />
+                  <Placeholder className="aspect-[1.85] w-full" src={deal.image} alt={deal.name} label="Photo to follow" />
                   <span className="absolute top-0 right-0 label-caps px-3 py-1.5 bg-bgp-wine text-bgp-cream">{deal.status}</span>
                 </div>
                 <div className="mt-3 border-t border-bgp-wine/30 pt-3">

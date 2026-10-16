@@ -35,7 +35,7 @@ export function QuoteBlock({ quote, image, imageAlt = "", imageSide = "right" }:
           <p className="mt-4 label-caps">{quote?.name || "Client name"}</p>
           <p className="text-xs text-bgp-ink/55 uppercase">{quote?.title || "Title, company"}</p>
         </div>
-        <Placeholder className={`${imageSide === "left" ? "aspect-[3/4]" : "aspect-[4/3]"} w-full [direction:ltr]`} src={image} alt={imageAlt || "Client quote photo"} label="Photo to follow" />
+        <Placeholder className={`${imageSide === "left" ? "aspect-[0.74]" : "aspect-[1.84]"} w-full [direction:ltr]`} src={image} alt={imageAlt || "Client quote photo"} label="Photo to follow" />
       </div>
     </section>
   );

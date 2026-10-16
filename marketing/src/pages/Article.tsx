@@ -35,7 +35,7 @@ export default function ArticlePage() {
 
       {/* Wireframe slide 46: a 54% photo beside the headline and standfirst, then the whole article at full width with a second photo set into it. */}
       <div className="mt-6 grid grid-cols-1 md:grid-cols-[56fr_4fr_40fr] gap-8 md:gap-0 items-start">
-        <Placeholder className="aspect-[7/5] w-full" src={article.image} alt={article.title} />
+        <Placeholder className="aspect-[1.31] w-full" src={article.image} alt={article.title} />
         <div className="hidden md:block" />
         <div>
           <h1 className="font-light text-3xl md:text-4xl text-bgp-wine">{article.title}</h1>
@@ -48,7 +48,7 @@ export default function ArticlePage() {
           article.body.map((para, i) => (
             <Fragment key={i}>
               {i === Math.floor(article.body!.length * 0.55) && (
-                <Placeholder className="aspect-[21/20] w-full md:float-right md:w-[60%] md:ml-10 md:mb-4" alt={`${article.title} second photo`} label="Photo to follow" />
+                <Placeholder className="aspect-[2.02] w-full md:float-right md:w-[56%] md:ml-10 md:mb-4" alt={`${article.title} second photo`} label="Photo to follow" />
               )}
               {para.startsWith("## ") ? <h2 className="text-lg font-bold pt-4">{para.slice(3)}</h2> : <p>{para}</p>}
             </Fragment>

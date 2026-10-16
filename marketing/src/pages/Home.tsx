@@ -78,7 +78,7 @@ export default function Home() {
               <h2 className="text-3xl font-bold text-bgp-ink mb-5">{service.name}</h2>
               <div className={`grid grid-cols-1 md:grid-cols-[57fr_3fr_37fr_3fr] gap-8 md:gap-0 items-start ${i % 2 ? "md:[direction:rtl]" : ""}`}>
                 <div className="img-frame [direction:ltr]">
-                  <Placeholder className="aspect-[8/5] w-full" src={service.image} alt={service.name} />
+                  <Placeholder className="aspect-[1.57] w-full" src={service.image} alt={service.name} />
                 </div>
                 <div className="hidden md:block" />
                 <div className="[direction:ltr]">

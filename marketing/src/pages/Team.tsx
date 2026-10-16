@@ -13,9 +13,9 @@ function Tile({ person }: { person: Person }) {
   return (
     <div className="w-full">
       {photo ? (
-        <img src={photo} alt={person.name} className="aspect-[9/10] w-full object-cover grayscale" />
+        <img src={photo} alt={person.name} className="aspect-[3/4] w-full object-cover grayscale" />
       ) : (
-        <div className="aspect-[9/10] w-full bg-bgp-stone/30 flex items-center justify-center">
+        <div className="aspect-[3/4] w-full bg-bgp-stone/30 flex items-center justify-center">
           <span className="italic text-sm text-bgp-stone">Headshot to follow</span>
         </div>
       )}

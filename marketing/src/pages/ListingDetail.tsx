@@ -128,9 +128,9 @@ export default function ListingDetail() {
           <div>
             <div className="overflow-hidden">
               {images.length > 0 ? (
-                <img src={fileUrl(images[0].id)} alt={displayName} className="aspect-[16/10] w-full object-cover" style={{ objectPosition: focalPosition(images[0]) }} />
+                <img src={fileUrl(images[0].id)} alt={displayName} className="aspect-[1.73] w-full object-cover" style={{ objectPosition: focalPosition(images[0]) }} />
               ) : (
-                <Placeholder className="aspect-[16/10] w-full" src={listing.image} alt={displayName} />
+                <Placeholder className="aspect-[1.73] w-full" src={listing.image} alt={displayName} />
               )}
             </div>
             <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-10 border-b border-bgp-ink pb-6">
@@ -148,7 +148,7 @@ export default function ListingDetail() {
               {headline && <p className="font-bold text-lg md:text-xl text-bgp-ink/85 md:pt-1">{headline.charAt(0).toUpperCase() + headline.slice(1)}.</p>}
             </div>
             {/* Slide 27: a narrow description beside a photo, then a landscape photo and a lower portrait one. */}
-            <div className="mt-8 grid grid-cols-1 md:grid-cols-[30fr_10fr_60fr] gap-6 md:gap-0 items-start">
+            <div className="mt-8 grid grid-cols-1 md:grid-cols-[30fr_6fr_64fr] gap-6 md:gap-0 items-start">
               <div>
                 <p className="text-base text-bgp-ink/80">
                   {[
@@ -164,23 +164,23 @@ export default function ListingDetail() {
               </div>
               <div className="hidden md:block" />
               {images[1] ? (
-                <img src={fileUrl(images[1].id)} alt="" className="aspect-[16/10] w-full object-cover" style={{ objectPosition: focalPosition(images[1]) }} />
+                <img src={fileUrl(images[1].id)} alt="" className="aspect-[1.61] w-full object-cover" style={{ objectPosition: focalPosition(images[1]) }} />
               ) : (
-                <Placeholder className="aspect-[16/10] w-full" alt={`${displayName} second photo`} label="Photo to follow" />
+                <Placeholder className="aspect-[1.61] w-full" alt={`${displayName} second photo`} label="Photo to follow" />
               )}
             </div>
-            <div className="mt-8 grid grid-cols-1 md:grid-cols-[54fr_17fr_29fr] gap-6 md:gap-0 items-start">
+            <div className="mt-8 grid grid-cols-1 md:grid-cols-[57fr_12fr_31fr] gap-6 md:gap-0 items-start">
               {images[2] ? (
-                <img src={fileUrl(images[2].id)} alt="" className="aspect-[17/10] w-full object-cover" style={{ objectPosition: focalPosition(images[2]) }} />
+                <img src={fileUrl(images[2].id)} alt="" className="aspect-[1.67] w-full object-cover" style={{ objectPosition: focalPosition(images[2]) }} />
               ) : (
-                <Placeholder className="aspect-[17/10] w-full" alt={`${displayName} third photo`} label="Photo to follow" />
+                <Placeholder className="aspect-[1.67] w-full" alt={`${displayName} third photo`} label="Photo to follow" />
               )}
               <div className="hidden md:block" />
-              <div className="md:mt-24">
+              <div className="md:mt-40">
                 {images[3] ? (
-                  <img src={fileUrl(images[3].id)} alt="" className="aspect-[3/4] w-full object-cover" style={{ objectPosition: focalPosition(images[3]) }} />
+                  <img src={fileUrl(images[3].id)} alt="" className="aspect-[1.24] w-full object-cover" style={{ objectPosition: focalPosition(images[3]) }} />
                 ) : (
-                  <Placeholder className="aspect-[3/4] w-full" alt={`${displayName} fourth photo`} label="Photo to follow" />
+                  <Placeholder className="aspect-[1.24] w-full" alt={`${displayName} fourth photo`} label="Photo to follow" />
                 )}
               </div>
             </div>
@@ -209,9 +209,9 @@ export default function ListingDetail() {
       <section className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
         <SectionHead title="Location" />
         {hasCoords && isBrowser ? (
-          <Suspense fallback={<div className="h-72 md:h-80 w-full bg-bgp-mist" />}><ListingMap lat={lat} lon={lon} className="h-72 md:h-80 w-full" /></Suspense>
+          <Suspense fallback={<div className="aspect-[1.86] w-full bg-bgp-mist" />}><ListingMap lat={lat} lon={lon} className="aspect-[1.86] w-full" /></Suspense>
         ) : (
-          <Placeholder label={listing.postcode ? `Map — ${listing.postcode}` : "Map TBC"} className="h-72 md:h-80 w-full" stock={false} />
+          <Placeholder label={listing.postcode ? `Map — ${listing.postcode}` : "Map TBC"} className="aspect-[1.86] w-full" stock={false} />
         )}
       </section>
 

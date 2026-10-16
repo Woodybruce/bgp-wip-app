@@ -5,7 +5,7 @@ import { CONTACT } from "../lib/content";
 
 // Wireframe listing card (slide 26): photo, ADDRESS and TYPE as caps
 // labels, a details line, then BOOK VIEWING and DOWNLOAD above a rule.
-export default function ListingCard({ listing, wide = false }: { listing: Listing; wide?: boolean }) {
+export default function ListingCard({ listing, wide = false, aspect = "aspect-[8/7]" }: { listing: Listing; wide?: boolean; aspect?: string }) {
   const img = listing.files.find(isImage);
   const names = listingNames(listing);
   const details = [formatSqft(listing.sqft), listing.rentPoa ? "POA" : formatRent(listing.askingRent)].filter(Boolean).join(", ");
@@ -18,9 +18,9 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
       <Link href={`/leasing/${listing.id}`} className="block group relative">
         <div className="img-frame">
           {img ? (
-            <img src={fileUrl(img.id)} alt={listing.unitName} className="aspect-[3/2] w-full object-cover" style={{ objectPosition: focalPosition(img) }} loading="lazy" />
+            <img src={fileUrl(img.id)} alt={listing.unitName} className={`${aspect} w-full object-cover`} style={{ objectPosition: focalPosition(img) }} loading="lazy" />
           ) : (
-            <Placeholder className="aspect-[3/2] w-full" src={listing.image} alt={listing.unitName} />
+            <Placeholder className={`${aspect} w-full`} src={listing.image} alt={listing.unitName} />
           )}
         </div>
         {listing.marketingStatus === "Under Offer" && (
