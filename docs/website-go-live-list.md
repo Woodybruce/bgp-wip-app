@@ -57,6 +57,14 @@ asks for the list; add to it when he says "put it on the list".
 
 ## Done (keep for the record)
 
+- Website layouts rebuilt to the December 2025 wireframes after Woody's
+  side-by-side review (2026-10-16): statement over the hero, left-aligned
+  headings over rules, grey bands for key contacts and case studies, stats
+  row and alternating service bands on Home, wireframe listing cards and
+  listing page, A to Z headshot grid on Team. Shared primitives in
+  `marketing/src/components/Wire.tsx`. Review note for Emmy and Charlotte:
+  `docs/bgp-website-wireframe-review.pdf`.
+
 - Site brought in line with the BGP Brand Guidelines v1.0 (August 2026,
   `docs/BGP-Brand-Guidelines-v1-2026-08.pdf`): four-colour palette only
   (red accent retired, Feather page ground, Stone bands), Century Gothic Pro
