@@ -57,6 +57,17 @@ asks for the list; add to it when he says "put it on the list".
 
 ## Done (keep for the record)
 
+- Every empty slot on the site now shows something the team can judge
+  (Woody, 2026-10-16): a stock photo tagged "Stock image, to be replaced"
+  where a picture is missing, and draft copy in italics where words are
+  missing or unconfirmed (client quotes on Consultancy, Investment and the
+  investment case studies; the three Lease Advisory summaries; the St
+  Christopher's Place, South Molton Triangle and Canary Wharf leasing
+  copy; a draft case study each for The City and High Streets). Replace
+  the words and the italics go. Brand Representation rebuilt to slide 35
+  exactly, with the site boxed at 1440px so it stops stretching on wide
+  screens. Sheets in `docs/wireframe-review/`.
+
 - Website layouts rebuilt to the December 2025 wireframes after Woody's
   side-by-side review (2026-10-16): statement over the hero, left-aligned
   headings over rules, grey bands for key contacts and case studies, stats

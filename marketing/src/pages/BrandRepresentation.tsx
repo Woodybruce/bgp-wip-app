@@ -53,7 +53,10 @@ export default function BrandRepresentation() {
                   <Placeholder className="aspect-[4/3] w-full" src={cs.image} alt={cs.title} label="Photo to follow" />
                 </div>
                 <div className="[direction:ltr] flex flex-col">
-                  <p className={`text-base md:text-lg leading-snug text-bgp-ink/85 ${cs.draft ? "italic" : ""}`}>{cs.blurb}</p>
+                  {/* Slide 35 gives each case study a full paragraph, so the blurb and body run together. */}
+                  <div className={`space-y-3 text-base md:text-lg leading-snug text-bgp-ink/85 ${cs.draft ? "italic" : ""}`}>
+                    {[cs.blurb, ...(cs.body || [])].map((para, k) => <p key={k}>{para}</p>)}
+                  </div>
                   <p className="mt-auto pt-6 text-[11px] font-bold text-bgp-ink self-end">Read more</p>
                 </div>
               </div>
