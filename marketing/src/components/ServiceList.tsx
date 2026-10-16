@@ -20,7 +20,7 @@ export default function ServiceList({ services, heading = "What we offer", body,
               ))}
             </ul>
           </div>
-          <div className="space-y-4 max-w-2xl">
+          <div className="space-y-4">
             {(body ?? []).map((p, i) => (
               <p key={p.slice(0, 24)} className={`text-base ${i === 0 ? "font-bold text-bgp-ink" : "text-bgp-ink/85"}`}>{p}</p>
             ))}
@@ -36,7 +36,7 @@ export default function ServiceList({ services, heading = "What we offer", body,
       <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-x-10 gap-y-4 border-b border-bgp-ink pb-6 mb-8">
         <h2 className="display text-2xl md:text-3xl">{heading}</h2>
         {body && body.length > 0 && (
-          <div className="space-y-3 max-w-2xl">
+          <div className="space-y-3">
             {body.map((p, i) => (
               <p key={p.slice(0, 24)} className={`text-base ${i === 0 ? "font-bold text-bgp-ink" : "text-bgp-ink/85"}`}>
                 {p.includes(": ") ? <><strong className="text-bgp-ink">{p.split(": ")[0]}:</strong> {p.split(": ").slice(1).join(": ")}</> : p}
@@ -64,7 +64,7 @@ export default function ServiceList({ services, heading = "What we offer", body,
         </div>
         <div className="bg-bgp-mist p-8">
           <p className="label-caps mb-3">{current.name}</p>
-          <p className="text-base md:text-lg text-bgp-ink/85 max-w-xl">{current.detail}</p>
+          <p className="text-base md:text-lg text-bgp-ink/85">{current.detail}</p>
         </div>
       </div>
     </section>

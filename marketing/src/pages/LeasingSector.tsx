@@ -20,6 +20,9 @@ function NotFound() {
   );
 }
 
+// Stock stand-ins for shopping centres without their own photo yet.
+const CENTRE_STOCK = ["/images/food-hall.jpg", "/images/shop-browse.jpg", "/images/cafe.jpg", "/images/shop-menswear.jpg"];
+
 export default function LeasingSector() {
   const [, params] = useRoute("/leasing/sectors/:slug");
   const content = useSiteContent();
@@ -42,7 +45,7 @@ export default function LeasingSector() {
         <div className="grid grid-cols-1 md:grid-cols-[1fr_1.3fr] gap-x-10 gap-y-4 items-start">
           <h1 className="display text-3xl md:text-4xl">{sector.name}</h1>
           <div className="flex items-start justify-between gap-8">
-            <p className="font-light text-xl md:text-2xl text-bgp-ink/85 max-w-md">{sector.headline}</p>
+            <p className="font-light text-xl md:text-2xl text-bgp-ink/85">{sector.headline}</p>
             <span className="flex flex-col items-end gap-1 shrink-0 label-caps text-bgp-wine">
               <a href="#contact" className="hover:opacity-70">Contact</a>
               <a href="#contact" className="hover:opacity-70">Download</a>
@@ -95,20 +98,20 @@ export default function LeasingSector() {
               <span className="section-label">Where we act</span>
               <h2 className="display text-3xl md:text-4xl">Our shopping centres</h2>
             </div>
-            <p className="text-base text-bgp-ink/70 max-w-[28ch]">
+            <p className="text-base text-bgp-ink/70">
               {centres.length} centres across the UK, from London to Glasgow.
             </p>
           </div>
           <div className="card-strip sm:grid-cols-2 lg:grid-cols-3 sm:gap-x-6 sm:gap-y-8">
-            {centres.map((c) => {
+            {centres.map((c, i) => {
+              // Every tile carries a photo; a centre without one shows a
+              // tagged stock stand-in so the grid stays even (Woody, 2026-10-16).
               const inner = (
                 <>
-                  {c.image && (
-                    <div className="img-frame">
-                      <Placeholder className="aspect-[4/3] w-full" src={c.image} alt={c.name} />
-                    </div>
-                  )}
-                  <div className={`border-t border-bgp-wine/30 pt-3 ${c.image ? "mt-3" : ""}`}>
+                  <div className="img-frame">
+                    <Placeholder className="aspect-[4/3] w-full" src={c.image} alt={c.name} stock={CENTRE_STOCK[i % CENTRE_STOCK.length]} />
+                  </div>
+                  <div className="border-t border-bgp-wine/30 pt-3 mt-3">
                     <p className="font-normal text-lg text-bgp-wine">{c.name}</p>
                     <p className="mt-0.5 label-caps text-bgp-ink/45">{c.location}</p>
                     <p className="mt-2 text-base text-bgp-ink/80">{c.blurb}</p>
@@ -152,25 +155,22 @@ export function ShoppingCentrePage() {
         <div className="grid grid-cols-1 md:grid-cols-[1fr_280px] gap-10 mt-8">
           <div>
             <h1 className="display text-3xl md:text-4xl">{centre.name}</h1>
-            {centre.image && (
-              <div className="img-frame mt-6">
-                <Placeholder className="aspect-[16/9] w-full" src={centre.image} alt={centre.name} />
-              </div>
-            )}
-            <p className="mt-6 max-w-2xl text-base md:text-lg text-bgp-ink/90">{centre.blurb}</p>
-            <p className="mt-4 max-w-2xl text-base md:text-lg text-bgp-ink/90">
+            <div className="img-frame mt-6">
+              <Placeholder className="aspect-[16/9] w-full" src={centre.image} alt={centre.name} stock={CENTRE_STOCK[0]} />
+            </div>
+            <p className="mt-6 text-base md:text-lg text-bgp-ink/90">{centre.blurb}</p>
+            {/* Generic second paragraph, the same on every centre: italic until the team writes each one. */}
+            <p className="mt-4 text-base md:text-lg text-bgp-ink/90 italic">
               BGP advises the owners of {centre.name} on leasing strategy, tenant mix and positioning, drawing on our relationships with leading occupiers and our London Estates and High Street teams.
             </p>
-            {centre.gallery && (
-              <div className="card-strip sm:grid-cols-3 mt-8">
-                {centre.gallery.map((g) => (
-                  <figure key={g.src}>
-                    <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={g.src} alt={g.caption} /></div>
-                    <figcaption className="mt-2 label-caps text-bgp-ink/55">{g.caption}</figcaption>
-                  </figure>
-                ))}
-              </div>
-            )}
+            <div className="card-strip sm:grid-cols-3 mt-8">
+              {(centre.gallery ?? [1, 2, 3].map((k) => ({ src: undefined as string | undefined, caption: `Photo ${k} to follow`, stock: CENTRE_STOCK[k % CENTRE_STOCK.length] }))).map((g: { src?: string; caption: string; stock?: string }) => (
+                <figure key={g.caption}>
+                  <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={g.src} alt={g.caption} stock={g.stock} /></div>
+                  <figcaption className={`mt-2 label-caps text-bgp-ink/55 ${g.src ? "" : "italic"}`}>{g.caption}</figcaption>
+                </figure>
+              ))}
+            </div>
           </div>
           <aside className="border-t border-bgp-ink pt-3 self-start">
             {[["Location", centre.location], ["Primary contacts", centre.contacts.join(", ")]].map(([k, v]) => (

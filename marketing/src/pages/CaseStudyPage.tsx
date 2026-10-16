@@ -72,7 +72,7 @@ export default function CaseStudyPage() {
         <div className="mt-8 grid grid-cols-1 md:grid-cols-[1fr_220px] gap-10">
           <div>
             <h1 className={`display text-3xl md:text-4xl ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
-            <div className={`mt-5 space-y-4 max-w-xl ${caseStudy.draft ? "italic" : ""}`}>
+            <div className={`mt-5 space-y-4 ${caseStudy.draft ? "italic" : ""}`}>
               {caseStudy.body.map((para) => (
                 <p key={para.slice(0, 32)} className="text-base text-bgp-ink/85">
                   {para}

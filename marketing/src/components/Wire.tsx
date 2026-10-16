@@ -65,7 +65,7 @@ export function Hero({ src, alt, label, statement, caption, tall = false }: { sr
       <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/80 via-bgp-ink/30 to-bgp-ink/5" />
       <div className="relative mx-auto w-full max-w-6xl px-4 pb-10 md:pb-14">
         {label && <p className="label-caps text-white/80 mb-3">{label}</p>}
-        <p className="max-w-2xl font-light text-2xl md:text-4xl leading-[1.15] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>{statement}</p>
+        <p className="max-w-3xl font-light text-2xl md:text-4xl leading-[1.15] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>{statement}</p>
         {caption}
       </div>
     </section>

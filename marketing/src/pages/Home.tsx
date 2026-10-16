@@ -70,7 +70,7 @@ export default function Home() {
       <section className="mx-auto max-w-6xl px-4 py-14 md:py-16">
         <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr] gap-8 md:gap-12">
           <h2 className="display text-3xl md:text-4xl">{HOME_INTRO.lead}</h2>
-          <div className="space-y-4 max-w-2xl">
+          <div className="space-y-4">
             {HOME_INTRO.body.map((para) => (
               <p key={para.slice(0, 24)} className="text-base md:text-lg text-bgp-ink/90">{para}</p>
             ))}
@@ -90,7 +90,7 @@ export default function Home() {
                   <Placeholder className="aspect-[4/3] w-full" src={service.image} alt={service.name} />
                 </div>
                 <div className="[direction:ltr]">
-                  <p className="text-base md:text-lg text-bgp-ink/90 max-w-md">{service.intro}</p>
+                  <p className="text-base md:text-lg text-bgp-ink/90">{service.intro}</p>
                   <p className="mt-5"><Link href={`/${service.slug}`} className="explore-link">Find out more</Link></p>
                 </div>
               </div>

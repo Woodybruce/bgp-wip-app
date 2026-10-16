@@ -166,7 +166,7 @@ export default function ListingDetail() {
                 </div>
               </div>
             )}
-            <p className="mt-6 max-w-lg text-base text-bgp-ink/80">
+            <p className="mt-6 text-base text-bgp-ink/80">
               {[
                 formatSqft(listing.sqft),
                 listing.propertyName && listing.propertyName !== listing.unitName ? `within ${listing.propertyName.replace(/^\[Sample\]\s*/, "")}` : null,

@@ -81,7 +81,7 @@ export default function News() {
               <div className="img-frame [direction:ltr]"><Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} /></div>
               <div className="[direction:ltr] flex flex-col h-full">
                 <h2 className="font-light text-2xl md:text-3xl text-bgp-wine group-hover:opacity-80 transition-opacity">{a.title}</h2>
-                <p className="mt-4 text-sm text-bgp-ink/85 max-w-sm">{a.standfirst}</p>
+                <p className="mt-4 text-base text-bgp-ink/85">{a.standfirst}</p>
                 <p className="mt-auto pt-6 label-caps text-bgp-ink/60 self-end">Read more</p>
               </div>
             </div>
