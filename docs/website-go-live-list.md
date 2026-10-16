@@ -27,6 +27,11 @@ asks for the list; add to it when he says "put it on the list".
   (Marketing / Team CVs & Photos / Team Photos / 2026 NEW IMAGES); add it to
   the site, HR and card.
 - Bios for everyone on the site (Charlotte). HR `bio` field can feed it.
+- Lease Advisory case study summaries: the three tiles (Hammerson, Landsec,
+  The Royal Exchange) carry the same placeholder sentence (Peter).
+- Case studies for The City and High Streets sector pages.
+- Client quotes for the investment case studies (Jack).
+- Team group photo for the Team page hero (office photo stands in).
 
 ## Awaiting from the team
 
