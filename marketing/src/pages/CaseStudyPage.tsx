@@ -3,6 +3,7 @@ import { Link, useRoute } from "wouter";
 import Placeholder from "../components/Placeholder";
 import KeyContacts from "../components/KeyContacts";
 import { type SiteContent, useSiteContent } from "../lib/site-content";
+import { INVESTMENT_DEALS } from "../lib/content";
 
 const contactsFor = (c: SiteContent["contacts"], service: string) =>
   ({
@@ -35,6 +36,8 @@ export default function CaseStudyPage() {
 
   const others = content.caseStudies.filter((c) => c.slug !== caseStudy.slug).slice(0, 3);
   const contacts = contactsFor(content.contacts, caseStudy.service);
+  // Wireframe: investment case studies end with similar transactions.
+  const related = caseStudy.service === "Investment" ? INVESTMENT_DEALS.filter((d) => !caseStudy.title.includes(d.name.split(",")[0])).slice(0, 3) : [];
 
   return (
     <div>
@@ -86,6 +89,27 @@ export default function CaseStudyPage() {
       </section>
 
       <KeyContacts people={contacts} />
+
+      {related.length > 0 && (
+        <section className="mx-auto max-w-6xl px-4 py-10">
+          <h2 className="display text-2xl md:text-3xl mb-8">Similar transactions</h2>
+          <div className="card-strip sm:grid-cols-3 sm:gap-6">
+            {related.map((deal) => (
+              <Link key={deal.name} href="/investment" className="group block">
+                <div className="relative img-frame">
+                  <Placeholder className="aspect-[4/3] w-full" src={deal.image} alt={deal.name} label="Photo to follow" />
+                  <span className="absolute top-0 right-0 label-caps px-3 py-1.5 bg-bgp-wine text-bgp-cream">{deal.status}</span>
+                </div>
+                <div className="mt-3 border-t border-bgp-wine/30 pt-3">
+                  <p className="font-normal text-lg text-bgp-wine">{deal.name}</p>
+                  <p className="mt-0.5 label-caps text-bgp-ink/45">{deal.client}</p>
+                  <p className="mt-1.5 text-sm text-bgp-ink/80 tabular">{deal.type === "Transaction" ? "" : deal.type}{deal.price ? ` · ${deal.price}` : ""}</p>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="mx-auto max-w-6xl px-4 py-10">
         <h2 className="display text-2xl md:text-3xl mb-8">More case studies</h2>

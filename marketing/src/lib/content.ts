@@ -908,6 +908,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
       "Working closely with our colleagues in Brand Representation, we combine extensive relationships across retail, hospitality and leisure with detailed knowledge of London's property market to create distinctive destinations. From sought after independents to established international brands looking for a London flagship, we identify the right tenant mix to reflect the character of each estate, respond to evolving customer expectations and create memorable places.",
     ],
     contacts: ["Lizzie Knights", "Lucy Cope", "Emily Cann", "Will Penfold"],
+    caseStudies: ["st-christophers-place", "south-molton-triangle", "20-hanover-square"],
   },
   {
     slug: "city",

@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
 import Placeholder from "../components/Placeholder";
@@ -6,8 +7,30 @@ import { findCaseStudy, useSiteContent } from "../lib/site-content";
 
 // Same page shape as before; the copy, the transactions and the photos come
 // from the February 2026 Royal Exchange pitch (Woody, 2026-10-12).
+const INITIAL_VISIBLE = 8;
+
+function Filter({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (v: string) => void }) {
+  return (
+    <label className="label-caps flex items-center gap-1.5 text-bgp-wine">
+      <span className="whitespace-nowrap">{label} <span aria-hidden>{"↘︎"}</span></span>
+      <select value={value} onChange={(e) => onChange(e.target.value)} className="bg-transparent label-caps text-bgp-wine outline-none cursor-pointer hover:opacity-70">
+        <option value="">All</option>
+        {options.map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </label>
+  );
+}
+
 export default function Investment() {
   const content = useSiteContent();
+  // Wireframe: filter row, a short mixed-size grid, expand for the rest
+  // (Woody, 2026-10-16).
+  const [status, setStatus] = useState("");
+  const [type, setType] = useState("");
+  const [expanded, setExpanded] = useState(false);
+  const types = useMemo(() => Array.from(new Set(INVESTMENT_DEALS.map((d) => d.type).filter((t) => t !== "Transaction"))), []);
+  const deals = useMemo(() => INVESTMENT_DEALS.filter((d) => (!status || d.status === status) && (!type || d.type === type)), [status, type]);
+  const shown = expanded || status || type ? deals : deals.slice(0, INITIAL_VISIBLE);
   const INVESTMENT_CONTACTS = content.contacts.investment;
   const service = SERVICES.find((s) => s.slug === "investment")!;
   return (
@@ -37,9 +60,15 @@ export default function Investment() {
           </p>
         </div>
 
+        <div className="flex flex-wrap items-center gap-x-10 gap-y-3 border-y border-bgp-wine/30 py-3 mb-10">
+          <span className="label-caps text-bgp-ink/60">Filter by</span>
+          <Filter label="Status" value={status} options={["Completed", "Under offer"]} onChange={setStatus} />
+          <Filter label="Type" value={type} options={types} onChange={setType} />
+        </div>
+
         <div className="card-strip sm:grid-cols-2 lg:grid-cols-4 sm:gap-x-6 sm:gap-y-12">
-          {INVESTMENT_DEALS.map((deal) => (
-            <div key={deal.name} className="group">
+          {shown.map((deal) => (
+            <div key={deal.name} className={`group ${deal.wide ? "sm:col-span-2" : ""}`}>
               <div className="relative img-frame">
                 <Placeholder className="aspect-[4/3] w-full" src={deal.image} alt={deal.name} label="Photo to follow" />
                 <span className={`absolute top-0 right-0 label-caps px-3 py-1.5 ${deal.status === "Under offer" ? "bg-bgp-nectar text-bgp-wine" : "bg-bgp-wine text-bgp-cream"}`}>
@@ -60,10 +89,17 @@ export default function Investment() {
             </div>
           ))}
         </div>
+        {!expanded && !status && !type && deals.length > INITIAL_VISIBLE && (
+          <p className="mt-10 text-right">
+            <button onClick={() => setExpanded(true)} className="label-caps text-bgp-wine hover:opacity-70">
+              + More transactions ({deals.length - INITIAL_VISIBLE})
+            </button>
+          </p>
+        )}
       </section>
 
-      <CaseStudyStrip caseStudy={findCaseStudy(content, "the-royal-exchange")} />
       <KeyContacts people={INVESTMENT_CONTACTS} />
+      <CaseStudyStrip caseStudy={findCaseStudy(content, "the-royal-exchange")} />
     </div>
   );
 }

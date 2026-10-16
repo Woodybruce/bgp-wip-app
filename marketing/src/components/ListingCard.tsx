@@ -1,11 +1,16 @@
 import { Link } from "wouter";
 import Placeholder from "./Placeholder";
 import { Listing, areaLabel, fileUrl, focalPosition, formatRent, formatSqft, isImage, listingNames, useClassLabel } from "../lib/api";
+import { CONTACT } from "../lib/content";
 
 // v2c card: photo, serif address + TYPE label, details line, CONTACT rule-link
 export default function ListingCard({ listing, wide = false }: { listing: Listing; wide?: boolean }) {
   const img = listing.files.find(isImage);
   const details = [formatSqft(listing.sqft), listing.rentPoa ? "POA" : formatRent(listing.askingRent)].filter(Boolean).join(", ");
+  // Wireframe cards carry Book viewing and Download; the download is the
+  // brochure when the tracker holds one, otherwise the listing page.
+  const brochure = listing.brochureUrl ?? (() => { const f = listing.files.find((x) => x.mimeType === "application/pdf"); return f ? fileUrl(f.id) : null; })();
+  const viewing = `mailto:${CONTACT.email}?subject=${encodeURIComponent(`Viewing request — ${listing.unitName}`)}`;
 
   return (
     // Flex column filling the grid cell so the CONTACT rule sits on the same
@@ -50,11 +55,14 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
         )}
         <span className="tabular">{details || "Details on application"}</span>
       </p>
-      <p className="mt-auto pt-3">
-        <Link href={`/leasing/${listing.id}`} className="rule-link inline-block w-full">
-          Contact
-        </Link>
-      </p>
+      <div className="mt-auto pt-3 flex justify-between border-b border-bgp-wine pb-1">
+        <a href={viewing} className="label-caps text-bgp-wine hover:opacity-70">Book viewing</a>
+        {brochure ? (
+          <a href={brochure} target="_blank" rel="noreferrer" className="label-caps text-bgp-wine hover:opacity-70">Download</a>
+        ) : (
+          <Link href={`/leasing/${listing.id}`} className="label-caps text-bgp-wine hover:opacity-70">Details</Link>
+        )}
+      </div>
     </div>
   );
 }
