@@ -101,8 +101,8 @@ export default function News() {
               <span>{a.category}</span>
               <span>{a.date}</span>
             </div>
-            <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} /></div>
-            <h3 className="mt-3 font-light text-2xl text-bgp-wine group-hover:opacity-80 transition-opacity">{a.title}</h3>
+            <div className="img-frame"><Placeholder className="aspect-square w-full" src={a.image} alt={a.title} /></div>
+            <h3 className="mt-4 font-light text-3xl leading-tight text-bgp-wine group-hover:opacity-80 transition-opacity">{a.title}</h3>
             <p className="mt-2 label-caps text-bgp-ink/50">Read more</p>
           </Link>
         ))}
@@ -110,8 +110,8 @@ export default function News() {
         {!expanded && Array.from({ length: Math.max(0, INITIAL_VISIBLE - visibleRest.length) }, (_, i) => (
           <div key={i} className="block bg-bgp-mist p-4 pb-5 italic text-bgp-stone">
             <div className="flex justify-between label-caps text-bgp-stone mb-3"><span>Category</span><span>Date</span></div>
-            <Placeholder className="aspect-[4/3] w-full" alt={`Draft article ${i + 1}`} />
-            <h3 className="mt-3 font-light text-2xl">Article heading goes here</h3>
+            <Placeholder className="aspect-square w-full" alt={`Draft article ${i + 1}`} />
+            <h3 className="mt-4 font-light text-3xl leading-tight">Article heading goes here</h3>
             <p className="mt-2 label-caps text-bgp-stone">Read more</p>
           </div>
         ))}

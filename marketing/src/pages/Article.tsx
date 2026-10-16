@@ -34,20 +34,21 @@ export default function ArticlePage() {
       </div>
 
       {/* Wireframe slide 46: a 54% photo beside the headline and standfirst, then the whole article at full width with a second photo set into it. */}
-      <div className="mt-6 grid grid-cols-1 md:grid-cols-[54fr_46fr] gap-8 md:gap-12 items-start">
-        <Placeholder className="aspect-[4/3] w-full" src={article.image} alt={article.title} />
+      <div className="mt-6 grid grid-cols-1 md:grid-cols-[56fr_4fr_40fr] gap-8 md:gap-0 items-start">
+        <Placeholder className="aspect-[7/5] w-full" src={article.image} alt={article.title} />
+        <div className="hidden md:block" />
         <div>
           <h1 className="font-light text-3xl md:text-4xl text-bgp-wine">{article.title}</h1>
           <p className="mt-4 text-xl leading-snug text-bgp-ink/75">{article.standfirst}</p>
         </div>
       </div>
 
-      <div className="mt-8 space-y-5 [&>p]:text-base [&>p]:text-bgp-ink/85">
+      <div className="mt-8 space-y-5 md:ml-[8%] md:mr-[4%] [&>p]:text-base [&>p]:text-bgp-ink/85">
         {article.body ? (
           article.body.map((para, i) => (
             <Fragment key={i}>
               {i === Math.floor(article.body!.length * 0.55) && (
-                <Placeholder className="aspect-[4/3] w-full md:float-left md:w-[45%] md:mr-10 md:mb-4" alt={`${article.title} second photo`} label="Photo to follow" />
+                <Placeholder className="aspect-[21/20] w-full md:float-right md:w-[60%] md:ml-10 md:mb-4" alt={`${article.title} second photo`} label="Photo to follow" />
               )}
               {para.startsWith("## ") ? <h2 className="text-lg font-bold pt-4">{para.slice(3)}</h2> : <p>{para}</p>}
             </Fragment>
