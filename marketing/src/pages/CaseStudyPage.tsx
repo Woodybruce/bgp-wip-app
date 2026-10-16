@@ -71,7 +71,7 @@ export default function CaseStudyPage() {
             beside them, then an image carousel with arrows and dots. */}
         <div className="mt-8 grid grid-cols-1 md:grid-cols-[63fr_12fr_25fr] gap-6 md:gap-0">
           <div>
-            <h1 className={`font-light text-3xl md:text-4xl ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
+            <h1 className={`font-light text-3xl md:text-5xl ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
             <div className={`mt-5 space-y-4 ${caseStudy.draft ? "italic" : ""}`}>
               {caseStudy.body.map((para) => (
                 <p key={para.slice(0, 32)} className="text-base text-bgp-ink/85">
@@ -79,7 +79,6 @@ export default function CaseStudyPage() {
                 </p>
               ))}
             </div>
-            {photos.length > 0 && <Carousel photos={photos} alt={caseStudy.title} />}
           </div>
           <div className="hidden md:block" />
           <aside>
@@ -99,6 +98,7 @@ export default function CaseStudyPage() {
             </a>
           </aside>
         </div>
+        {photos.length > 0 && <Carousel photos={photos} alt={caseStudy.title} />}
       </section>
 
       <QuoteBlock quote={caseStudy.quote} imageSide="left" />
