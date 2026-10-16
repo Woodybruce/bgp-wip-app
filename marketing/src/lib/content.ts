@@ -167,6 +167,7 @@ export interface CaseStudy {
   gallery?: string[]; // up to three more photos, shown on the case study page and strip
   facts: Array<[string, string]>;
   body: string[];
+  location?: { lat: number; lon: number }; // wireframe slide 32 location map
 }
 
 // From the projects list on the current site; bodies are short where the team
@@ -290,6 +291,7 @@ export const CASE_STUDIES: CaseStudy[] = [
       "From there the firm's full-service expertise went to work: the Leasing team as incumbent agents, Lease Advisory and Asset Management on regears and renewals, and Investment on the capital structure. Together they delivered the business plan and stabilised a unique retail asset.",
     ],
     facts: [["Service", "Investment"], ["Client", "Ardent"], ["Asset", "Grade I listed luxury retail, City of London"]],
+    location: { lat: 51.5135, lon: -0.0876 },
     image: "/images/investment/royal-exchange-courtyard.jpg",
     gallery: ["/images/case-studies/the-royal-exchange-2.jpg", "/images/case-studies/the-royal-exchange-3.jpg", "/images/case-studies/the-royal-exchange-4.jpg"],
   },
@@ -407,6 +409,8 @@ export const CASE_STUDIES: CaseStudy[] = [
     service: "Brand Representation",
     blurb: "International / DTC: the New York and Paris label's London home on Davies Street, Mayfair.",
     facts: [["Service", "Brand Representation"], ["Pillar", "International / DTC"], ["Location", "Davies Street, Mayfair"]],
+    location: { lat: 51.5445, lon: -0.1035 },
+    location: { lat: 51.5116, lon: -0.1375 },
     body: [
       "We acquired The Frankie Shop's London flagship on Davies Street, bringing the New York and Paris label to Mayfair.",
       "A first-to-market UK location secured through our relationships with the estate and a clear view of where the brand's customer already shops.",
@@ -861,6 +865,7 @@ export interface LeasingSector {
   howWeHelp?: string[];
   contacts: string[];
   caseStudies?: string[]; // case-study slugs shown in a strip on the sector page
+  map?: { lat: number; lon: number; zoom: number; pins: Array<{ lat: number; lon: number; label: string }> }; // wireframe slide 28 location map
 }
 
 export const LEASING_INTRO = {
@@ -909,6 +914,14 @@ export const LEASING_SECTORS: LeasingSector[] = [
     ],
     contacts: ["Lizzie Knights", "Lucy Cope", "Emily Cann", "Will Penfold"],
     caseStudies: ["st-christophers-place", "south-molton-triangle", "20-hanover-square"],
+    map: { lat: 51.5125, lon: -0.1495, zoom: 13, pins: [
+      { lat: 51.5112, lon: -0.1478, label: "Grosvenor, Mayfair" },
+      { lat: 51.4975, lon: -0.1540, label: "Grosvenor, Belgravia" },
+      { lat: 51.5185, lon: -0.1565, label: "The Portman Estate, Marylebone" },
+      { lat: 51.5135, lon: -0.1440, label: "The Crown Estate, Regent Street" },
+      { lat: 51.5142, lon: -0.1495, label: "St Christopher's Place" },
+      { lat: 51.5131, lon: -0.1463, label: "South Molton Triangle" },
+    ] },
   },
   {
     slug: "city",
@@ -922,6 +935,12 @@ export const LEASING_SECTORS: LeasingSector[] = [
       "From exciting hospitality offerings to drive footfall throughout the day to new competitive socialising concepts, we create diverse tenant mixes that reflect the evolving nature of the City of London.",
     ],
     contacts: ["Lizzie Knights", "Peter Wood"],
+    map: { lat: 51.5145, lon: -0.0925, zoom: 14, pins: [
+      { lat: 51.5138, lon: -0.0978, label: "One New Change" },
+      { lat: 51.5135, lon: -0.0876, label: "The Royal Exchange" },
+      { lat: 51.5165, lon: -0.0930, label: "2 Aldermanbury Square" },
+      { lat: 51.5103, lon: -0.0838, label: "1 Lovat Lane, Eastcheap" },
+    ] },
   },
   {
     slug: "high-streets",

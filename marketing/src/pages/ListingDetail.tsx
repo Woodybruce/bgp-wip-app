@@ -177,11 +177,7 @@ export default function ListingDetail() {
           </div>
 
           <aside>
-            <div className="flex justify-between border-b border-bgp-ink pb-2 mb-1">
-              <a href={`mailto:${CONTACT.email}?subject=${mailSubject}`} className="label-caps text-bgp-wine hover:opacity-70">Book viewing</a>
-              {brochureHref ? <a href={brochureHref} target="_blank" rel="noreferrer" className="label-caps text-bgp-wine hover:opacity-70">Download</a> : <button onClick={onDownload} className="label-caps text-bgp-wine hover:opacity-70">Download</button>}
-            </div>
-            <dl>
+            <dl className="border-t border-bgp-ink">
               {keyInfo
                 .filter(([, v]) => v)
                 .map(([k, v]) => (
@@ -191,8 +187,12 @@ export default function ListingDetail() {
                   </div>
                 ))}
             </dl>
+            <div className="mt-4 flex flex-col items-end gap-1 label-caps text-bgp-wine">
+              <a href={`mailto:${CONTACT.email}?subject=${mailSubject}`} className="hover:opacity-70">Book viewing</a>
+              {brochureHref ? <a href={brochureHref} target="_blank" rel="noreferrer" className="hover:opacity-70">Download</a> : <button onClick={onDownload} className="hover:opacity-70">Download</button>}
+            </div>
             {/* Desktop action stack — on phones these live in the sticky bar */}
-            <div className="mt-6 space-y-3 hidden md:block">
+            <div className="mt-8 space-y-3 hidden md:block">
               <a
                 href={`mailto:${CONTACT.email}?subject=${mailSubject}`}
                 className="btn block"

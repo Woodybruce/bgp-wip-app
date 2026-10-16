@@ -1,6 +1,14 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { NAV_ITEMS } from "../lib/content";
+import { LEASING_SECTORS, NAV_ITEMS } from "../lib/content";
+
+// Wireframe slide 22: a rollover menu under Leasing, split into Location,
+// Estates and Type. Location and Type pre-set the availability filters.
+const LEASING_MENU: Array<{ heading: string; items: Array<{ label: string; href: string }> }> = [
+  { heading: "Location", items: [{ label: "London", href: "/leasing?location=London" }, { label: "Rest of UK", href: "/leasing?location=Rest%20of%20UK" }, { label: "View all", href: "/leasing#availability" }] },
+  { heading: "Estates", items: [...LEASING_SECTORS.map((s) => ({ label: s.name, href: `/leasing/sectors/${s.slug}` })), { label: "View all", href: "/leasing" }] },
+  { heading: "Type", items: [{ label: "Café", href: "/leasing?type=Caf%C3%A9" }, { label: "Leisure", href: "/leasing?type=Leisure" }, { label: "Retail", href: "/leasing?type=Retail" }, { label: "Restaurant", href: "/leasing?type=Restaurant" }, { label: "View all", href: "/leasing#availability" }] },
+];
 
 // Sticky compact header. On phones: slim bar (wordmark left, MENU toggle
 // right) with a drop-down panel that overlays the page instead of pushing
@@ -58,18 +66,35 @@ export default function Nav() {
           <nav className="flex items-center">
             {NAV_ITEMS.map((item, i) => {
               const active = location.startsWith(item.href);
+              const menu = item.href === "/leasing";
               return (
-                <span key={item.href} className="flex items-center">
+                <span key={item.href} className={`flex items-center ${menu ? "group/menu relative" : ""}`}>
                   {i > 0 && <span className="mx-3 text-bgp-wine/40">/</span>}
                   <Link
                     href={item.href}
                     data-active={active}
-                    className={`label-caps nav-link whitespace-nowrap transition-colors ${
+                    className={`label-caps nav-link whitespace-nowrap transition-colors py-7 ${
                       active ? "text-bgp-wine" : "text-bgp-wine hover:opacity-70"
                     }`}
                   >
                     {item.label}
                   </Link>
+                  {menu && (
+                    <div className="absolute left-0 top-full z-50 hidden group-hover/menu:grid group-focus-within/menu:grid grid-cols-3 gap-x-10 gap-y-1 bg-bgp-mist px-6 py-5 w-max shadow-[0_16px_40px_-20px_rgba(110,12,37,0.35)]">
+                      {LEASING_MENU.map((col) => (
+                        <div key={col.heading}>
+                          <p className="text-xs font-bold text-bgp-ink mb-2">{col.heading}</p>
+                          <ul className="space-y-1">
+                            {col.items.map((it) => (
+                              <li key={it.label}>
+                                <a href={it.href} className={`text-xs text-bgp-ink/80 hover:text-bgp-wine ${it.label === "View all" ? "italic" : ""}`}>{it.label}</a>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </span>
               );
             })}

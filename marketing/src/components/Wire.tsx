@@ -29,9 +29,9 @@ export function Band({ children, className = "", id }: { children: ReactNode; cl
   );
 }
 
-export function SectionHead({ title, sub, right, as: Tag = "h2" }: { title: ReactNode; sub?: ReactNode; right?: ReactNode; as?: "h1" | "h2" }) {
+export function SectionHead({ title, sub, right, as: Tag = "h2", rule = true }: { title: ReactNode; sub?: ReactNode; right?: ReactNode; as?: "h1" | "h2"; rule?: boolean }) {
   return (
-    <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-2 border-b border-bgp-ink pb-3 mb-8">
+    <div className={`flex flex-wrap items-end justify-between gap-x-8 gap-y-2 ${rule ? "border-b border-bgp-ink pb-3 mb-8" : "mb-6"}`}>
       <div>
         <Tag className="display text-2xl md:text-3xl">{title}</Tag>
         {sub && <p className="mt-1.5 text-sm text-bgp-ink/70">{sub}</p>}

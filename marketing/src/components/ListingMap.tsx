@@ -15,21 +15,22 @@ const MARKER = L.divIcon({
   iconAnchor: [9, 9],
 });
 
-export default function ListingMap({ lat, lon, className = "" }: { lat: number; lon: number; className?: string }) {
+export default function ListingMap({ lat, lon, zoom = 15, marker = true, pins = [], className = "" }: { lat: number; lon: number; zoom?: number; marker?: boolean; pins?: Array<{ lat: number; lon: number; label?: string }>; className?: string }) {
   const el = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!el.current) return;
     const map = L.map(el.current, {
       center: [lat, lon],
-      zoom: 15,
+      zoom,
       scrollWheelZoom: false,
       attributionControl: true,
     });
     L.tileLayer(TILE_URL, { attribution: ATTRIBUTION, maxZoom: 16 }).addTo(map);
-    L.marker([lat, lon], { icon: MARKER, keyboard: false }).addTo(map);
+    if (marker) L.marker([lat, lon], { icon: MARKER, keyboard: false }).addTo(map);
+    for (const p of pins) { const m = L.marker([p.lat, p.lon], { icon: MARKER, keyboard: false }).addTo(map); if (p.label) m.bindTooltip(p.label, { direction: "top", offset: [0, -10] }); }
     return () => { map.remove(); };
-  }, [lat, lon]);
+  }, [lat, lon, zoom, marker, pins.length]);
 
   return <div ref={el} className={`border border-bgp-line ${className}`} aria-label="Location map" />;
 }

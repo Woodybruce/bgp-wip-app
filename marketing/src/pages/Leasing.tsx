@@ -54,8 +54,10 @@ export default function Leasing() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [live, setLive] = useState(true);
   const [loading, setLoading] = useState(true);
-  const [location, setLocation] = useState("");
-  const [type, setType] = useState("");
+  // Deep links from the nav rollover (slide 22): /leasing?location=…&type=…
+  const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+  const [location, setLocation] = useState(params?.get("location") ?? "");
+  const [type, setType] = useState(params?.get("type") ?? "");
   const [size, setSize] = useState("");
   // Nine listings a page with page numbers underneath, so the case studies
   // and contacts are never pushed below a long run (Woody, 2026-10-15).
@@ -129,12 +131,13 @@ export default function Leasing() {
       </section>
 
       {/* Snapshot of available properties */}
-      <section className="mx-auto max-w-6xl px-4 pb-14">
+      <section id="availability" className="mx-auto max-w-6xl px-4 pb-14 scroll-mt-24">
         <SectionHead
+          rule={false}
           title="Snapshot of available properties"
           sub={!live && !loading ? "Showing sample listings. The live availability feed is not connected in this environment." : "Please contact us for full availability"}
         />
-        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-x-10 sm:gap-y-3 border-b border-bgp-wine/30 pb-3 -mt-4">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-x-10 sm:gap-y-3 border-b border-bgp-ink pb-3 -mt-2">
           <span className="label-caps text-bgp-ink/60 py-2.5 sm:py-0 border-b border-bgp-wine/10 sm:border-0">Filter by</span>
           <FilterSelect label="Location" value={location} options={locations} onChange={setLocation} />
           <FilterSelect label="Type" value={type} options={types} onChange={setType} />

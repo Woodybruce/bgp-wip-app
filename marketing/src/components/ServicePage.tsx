@@ -16,12 +16,13 @@ import type { Person } from "../lib/content";
 // the deals board).
 export interface ServicePageProps {
   title: string;
-  hero: { src: string; alt: string; position?: string };
+  hero?: { src: string; alt: string; position?: string }; // slide 35 (Brand Representation) has no photo: the statement sits on white
   intro: string;
   body?: string[];
   clients: ReactNode;
   clientsBlurb?: string;
   services: Array<{ name: string; detail: string }>;
+  servicesVariant?: "panel" | "list"; // slide 41 (Consultancy) draws a static list box
   quote?: { quote: string; name: string; title: string };
   caseStudies: Array<{ slug: string; title: string; blurb: string; image?: string }>;
   caseStudyLayout?: "stacked" | "band"; // slide 35 stacks them; slides 38 and 41 end with one band
@@ -29,13 +30,20 @@ export interface ServicePageProps {
   contactsBlurb?: string;
 }
 
-export default function ServicePage({ title, hero, intro, body, clients, clientsBlurb, services, quote, caseStudies, caseStudyLayout = "band", contacts, contactsBlurb }: ServicePageProps) {
+export default function ServicePage({ title, hero, intro, body, clients, clientsBlurb, services, servicesVariant = "panel", quote, caseStudies, caseStudyLayout = "band", contacts, contactsBlurb }: ServicePageProps) {
   const content = useSiteContent();
   return (
     <div>
       {/* Wireframe slides 35, 38, 41: statement over the hero, left-aligned
           sections over rules, grey bands for contacts and the case study. */}
-      <Hero src={hero.src} alt={hero.alt} label={title} statement={intro} />
+      {hero ? (
+        <Hero src={hero.src} alt={hero.alt} label={title} statement={intro} />
+      ) : (
+        <section className="mx-auto max-w-6xl px-4 pt-12 md:pt-16">
+          <p className="label-caps text-bgp-ink/50 mb-3">{title}</p>
+          <p className="max-w-2xl font-light text-2xl md:text-4xl leading-[1.15] text-bgp-wine">{intro}</p>
+        </section>
+      )}
 
       <h1 className="sr-only">{title}</h1>
       <section className="mx-auto max-w-6xl px-4 pt-12 md:pt-14 pb-10">
@@ -43,7 +51,7 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
         {clients}
       </section>
 
-      <ServiceList services={services} body={body} />
+      <ServiceList services={services} body={body} variant={servicesVariant} />
 
       {quote && (
         <section className="mx-auto max-w-6xl px-4 py-14">
@@ -61,7 +69,7 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
           {/* Wireframe slide 35: stacked blocks, text beside image, alternating sides */}
           <div className="grid grid-cols-1 gap-4">
             {caseStudies.map((cs, i) => (
-              <Link key={cs.slug} href={`/case-studies/${cs.slug}`} className={`group grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-6 md:gap-10 p-5 md:p-7 ${i % 2 ? "bg-bgp-mist md:[direction:rtl]" : "border border-bgp-line"}`}>
+              <Link key={cs.slug} href={`/case-studies/${cs.slug}`} className={`group grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-6 md:gap-10 p-5 md:p-7 ${i % 2 ? "" : "bg-bgp-mist md:[direction:rtl]"}`}>
                 <div className="[direction:ltr]">
                   <p className="label-caps text-bgp-wine">{cs.title}</p>
                   <p className="mt-3 text-base text-bgp-ink/90 max-w-md">{cs.blurb}</p>

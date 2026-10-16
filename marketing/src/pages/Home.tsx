@@ -55,16 +55,16 @@ export default function Home() {
       </section>
 
       {/* Stats row */}
-      <Band className="border-b border-bgp-line">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-8">
+      <section className="mx-auto max-w-6xl px-4 py-10 md:py-12 border-b border-bgp-line">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-8 text-center">
           {STATS.map((s) => (
             <div key={s.caption}>
               <p className="display text-4xl md:text-5xl tabular">{s.value}</p>
-              <p className="mt-2 text-xs text-bgp-ink/70 max-w-[18ch]">{s.caption}</p>
+              <p className="mt-2 text-xs text-bgp-ink/70 max-w-[18ch] mx-auto">{s.caption}</p>
             </div>
           ))}
         </div>
-      </Band>
+      </section>
 
       {/* We are bgp */}
       <section className="mx-auto max-w-6xl px-4 py-14 md:py-16">
@@ -84,8 +84,8 @@ export default function Home() {
         {SERVICES.map((service, i) => {
           const inner = (
             <>
-              <SectionHead title={service.name} />
-              <div className={`grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-start ${i % 2 ? "md:[direction:rtl]" : ""}`}>
+              <SectionHead title={service.name} rule={false} />
+              <div className={`grid grid-cols-1 md:grid-cols-[1.1fr_1fr] gap-8 md:gap-12 items-start ${i % 2 ? "md:[direction:rtl]" : ""}`}>
                 <div className="img-frame [direction:ltr]">
                   <Placeholder className="aspect-[4/3] w-full" src={service.image} alt={service.name} />
                 </div>

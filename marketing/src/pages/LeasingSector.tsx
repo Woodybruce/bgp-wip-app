@@ -2,7 +2,10 @@ import { Link, useRoute } from "wouter";
 import KeyContacts from "../components/KeyContacts";
 import Placeholder from "../components/Placeholder";
 import CaseStudyStrip from "../components/CaseStudyStrip";
-import { Hero, SectionHead } from "../components/Wire";
+import { SectionHead } from "../components/Wire";
+import { Suspense, lazy } from "react";
+const ListingMap = lazy(() => import("../components/ListingMap"));
+const isBrowser = typeof window !== "undefined";
 import { LEASING_SECTORS, SHOPPING_CENTRES, isDirectorLevel, type Person } from "../lib/content";
 import { findCaseStudy, useSiteContent } from "../lib/site-content";
 
@@ -32,11 +35,24 @@ export default function LeasingSector() {
 
   return (
     <div>
-      <Hero src={sector.image} alt={sector.name} label={<><Link href="/leasing" className="hover:text-white">Leasing</Link> · {sector.name}</>} statement={sector.headline} />
+      {/* Wireframe slide 28: plain photo, then the title with Contact and
+          Download at right, the statement beside the title, description
+          beside the lead image, more photos, a location map. */}
+      <Placeholder className="h-64 md:h-[22rem] w-full" src={sector.image} alt={sector.name} />
 
-      <section className="mx-auto max-w-6xl px-4 py-12 md:py-14">
-        <SectionHead as="h1" title={sector.name} right={<a href="#contact" className="label-caps text-bgp-wine hover:opacity-70">Contact</a>} />
-        <div className={`grid grid-cols-1 gap-10 ${sector.howWeHelp ? "md:grid-cols-[1fr_280px]" : "md:grid-cols-[1fr_1.3fr]"}`}>
+      <section className="mx-auto max-w-6xl px-4 py-10 md:py-12">
+        <p className="label-caps text-bgp-ink/50 mb-4"><Link href="/leasing" className="hover:text-bgp-wine">Leasing</Link> · {sector.name}</p>
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_1.3fr] gap-x-10 gap-y-4 items-start">
+          <h1 className="display text-3xl md:text-4xl">{sector.name}</h1>
+          <div className="flex items-start justify-between gap-8">
+            <p className="font-light text-xl md:text-2xl text-bgp-ink/85 max-w-md">{sector.headline}</p>
+            <span className="flex flex-col items-end gap-1 shrink-0 label-caps text-bgp-wine">
+              <a href="#contact" className="hover:opacity-70">Contact</a>
+              <a href="#contact" className="hover:opacity-70">Download</a>
+            </span>
+          </div>
+        </div>
+        <div className={`mt-10 grid grid-cols-1 gap-10 ${sector.howWeHelp ? "md:grid-cols-[1fr_280px]" : "md:grid-cols-[1fr_1.3fr]"}`}>
           <div className="space-y-4">
             {sector.body.map((p, i) => (
               <p key={p.slice(0, 24)} className={`text-base ${i === 0 ? "font-bold text-bgp-ink" : "text-bgp-ink/90"}`}>{p}</p>
@@ -108,6 +124,19 @@ export default function LeasingSector() {
               );
             })}
           </div>
+        </section>
+      )}
+
+      {sector.map && (
+        <section className="mx-auto max-w-6xl px-4 pb-14">
+          <SectionHead title="Location" />
+          {isBrowser ? (
+            <Suspense fallback={<div className="h-72 md:h-96 w-full bg-bgp-mist" />}>
+              <ListingMap lat={sector.map.lat} lon={sector.map.lon} zoom={sector.map.zoom} marker={false} pins={sector.map.pins} className="h-72 md:h-96 w-full" />
+            </Suspense>
+          ) : (
+            <div className="h-72 md:h-96 w-full bg-bgp-mist" />
+          )}
         </section>
       )}
 

@@ -14,6 +14,7 @@ export default function Consultancy() {
       body={CONSULTANCY_BODY}
       clients={<ClientRow clients={CONSULTANCY_CLIENTS} />}
       services={CONSULTANCY_SERVICES}
+      servicesVariant="list"
       quote={CONSULTANCY_TESTIMONIAL}
       caseStudies={caseStudies.filter((c) => c.service === "Consultancy")}
       contacts={contacts.consultancy}
