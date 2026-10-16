@@ -29,7 +29,7 @@ export function ClientCircle({ client }: { client: Client }) {
     // same box on a square canvas (public/brand-logos, 512px), so the marks
     // read at the same optical weight (Woody, 2026-10-16).
     <div
-      className="group h-24 w-24 md:h-28 md:w-28 shrink-0 rounded-full border border-bgp-line bg-white flex items-center justify-center overflow-hidden hover:border-bgp-burgundy/40 transition-colors"
+      className="group h-full w-full aspect-square shrink-0 rounded-full border border-bgp-line bg-white flex items-center justify-center overflow-hidden hover:border-bgp-burgundy/40 transition-colors"
       title={client.name}
     >
       {src ? (
