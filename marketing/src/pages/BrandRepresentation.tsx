@@ -44,10 +44,11 @@ export default function BrandRepresentation() {
               className={`group block p-5 md:p-6 ${i % 2 ? "" : "bg-bgp-mist"}`}
             >
               <p className="text-xs font-bold uppercase text-bgp-ink mb-3">{cs.title}</p>
-              <div className={`grid grid-cols-1 md:grid-cols-[1.2fr_1fr] gap-6 md:gap-8 ${i % 2 ? "md:[direction:rtl]" : ""}`}>
+              <div className={`grid grid-cols-1 md:grid-cols-[56fr_4fr_40fr] gap-6 md:gap-0 ${i % 2 ? "md:[direction:rtl]" : ""}`}>
                 <div className="img-frame [direction:ltr]">
                   <Placeholder className="aspect-[4/3] w-full" src={cs.image} alt={cs.title} label="Photo to follow" />
                 </div>
+                <div className="hidden md:block" />
                 <div className="[direction:ltr] flex flex-col">
                   {/* Slide 35 gives each case study a full paragraph, so the blurb and body run together. */}
                   <div className={`space-y-3 text-base md:text-lg leading-snug text-bgp-ink/85 ${cs.draft ? "italic" : ""}`}>

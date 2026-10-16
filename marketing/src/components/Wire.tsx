@@ -29,13 +29,13 @@ export function QuoteBlock({ quote, image, imageAlt = "", imageSide = "right" }:
   const draft = !hasQuote;
   return (
     <section className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
-      <div className={`grid grid-cols-1 gap-8 md:gap-12 items-start ${imageSide === "left" ? "md:grid-cols-[1fr_1.4fr] md:[direction:rtl]" : "md:grid-cols-[1.4fr_1fr]"}`}>
+      <div className={`grid grid-cols-1 gap-8 md:gap-12 items-start ${imageSide === "left" ? "md:grid-cols-[29fr_63fr] md:[direction:rtl]" : "md:grid-cols-[55fr_37fr]"}`}>
         <div className={`[direction:ltr] ${draft ? "italic" : ""}`}>
           <p className="font-light text-xl md:text-2xl text-bgp-ink/85">“{hasQuote ? quote!.quote : DRAFT_QUOTE}”</p>
           <p className="mt-4 label-caps">{quote?.name || "Client name"}</p>
           <p className="text-xs text-bgp-ink/55 uppercase">{quote?.title || "Title, company"}</p>
         </div>
-        <Placeholder className="aspect-[4/3] w-full max-w-sm [direction:ltr]" src={image} alt={imageAlt || "Client quote photo"} label="Photo to follow" />
+        <Placeholder className={`${imageSide === "left" ? "aspect-[3/4]" : "aspect-[4/3]"} w-full [direction:ltr]`} src={image} alt={imageAlt || "Client quote photo"} label="Photo to follow" />
       </div>
     </section>
   );

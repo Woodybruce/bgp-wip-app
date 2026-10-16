@@ -76,12 +76,13 @@ export default function Home() {
           const inner = (
             <>
               <h2 className="text-3xl font-bold text-bgp-ink mb-5">{service.name}</h2>
-              <div className={`grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-10 items-start ${i % 2 ? "md:[direction:rtl]" : ""}`}>
+              <div className={`grid grid-cols-1 md:grid-cols-[57fr_3fr_37fr_3fr] gap-8 md:gap-0 items-start ${i % 2 ? "md:[direction:rtl]" : ""}`}>
                 <div className="img-frame [direction:ltr]">
-                  <Placeholder className="aspect-[16/10] w-full" src={service.image} alt={service.name} />
+                  <Placeholder className="aspect-[8/5] w-full" src={service.image} alt={service.name} />
                 </div>
+                <div className="hidden md:block" />
                 <div className="[direction:ltr]">
-                  <p className="text-xl leading-snug text-bgp-ink/90">{service.intro}</p>
+                  <p className="text-2xl leading-snug text-bgp-ink/90">{service.intro}</p>
                   <p className="mt-5"><Link href={`/${service.slug}`} className="explore-link">Find out more</Link></p>
                 </div>
               </div>

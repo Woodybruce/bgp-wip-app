@@ -124,7 +124,7 @@ export default function ListingDetail() {
       {/* Wireframe slide 27: photo with the facts panel to its right, then the
           title at left with the headline statement at right. */}
       <section className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
-        <div className="grid grid-cols-1 md:grid-cols-[66fr_8fr_26fr] gap-6 md:gap-0">
+        <div className="grid grid-cols-1 md:grid-cols-[77fr_3fr_20fr] gap-6 md:gap-0">
           <div>
             <div className="overflow-hidden">
               {images.length > 0 ? (
