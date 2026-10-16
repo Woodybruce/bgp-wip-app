@@ -26,7 +26,7 @@ export default function KeyContacts({ people, blurb = "Our team would be delight
   const slots = Array.from({ length: Math.max(0, want - shown.length) }, (_, i) => shown.length + i + 1);
   const inner = layout === "row" ? (
     <div>
-      <h2 className="text-2xl font-bold text-bgp-ink mb-5">Key contacts</h2>
+      <h2 className="text-[1.65rem] font-bold text-bgp-ink mb-5">Key contacts</h2>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-5">
         {shown.map((p) => (
           <ContactCard key={p.name} person={p} compact />
@@ -37,7 +37,7 @@ export default function KeyContacts({ people, blurb = "Our team would be delight
   ) : (
     <div className="grid grid-cols-1 md:grid-cols-[42fr_58fr] gap-8 md:gap-12">
       <div>
-        <h2 className="text-2xl font-bold text-bgp-ink">Key contacts</h2>
+        <h2 className="text-[1.65rem] font-bold text-bgp-ink">Key contacts</h2>
         <p className="mt-3 text-lg text-bgp-ink">{blurb}</p>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-5">

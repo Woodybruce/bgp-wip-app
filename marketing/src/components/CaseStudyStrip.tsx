@@ -15,7 +15,7 @@ export default function CaseStudyStrip({ caseStudy, caseStudies, band = false }:
   if (!items.length) {
     return (
       <Strip band={band}>
-        <p className="text-2xl font-bold text-bgp-ink mb-4">Case study</p>
+        <p className="text-[1.65rem] font-bold text-bgp-ink mb-4">Case study</p>
         <div className="grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-8 md:gap-12 items-start">
           <div className="italic">
             <h2 className="font-normal text-3xl md:text-5xl">Case study title</h2>
@@ -40,7 +40,7 @@ export default function CaseStudyStrip({ caseStudy, caseStudies, band = false }:
   };
   return (
     <Strip band={band}>
-      <p className="text-2xl font-bold text-bgp-ink mb-4">Case study</p>
+      <p className="text-[1.65rem] font-bold text-bgp-ink mb-4">Case study</p>
       <div className="grid grid-cols-1 md:grid-cols-[42fr_58fr] gap-8 md:gap-10 items-start">
         <div>
           <h2 className={`font-normal text-3xl md:text-4xl ${italic}`}>

@@ -26,7 +26,7 @@ export default function ArticlePage() {
 
   return (
     <article className="mx-auto max-w-[1360px] px-4 py-12 md:py-14">
-      <h2 className="text-2xl font-bold text-bgp-ink border-b border-bgp-ink pb-2">News and insights</h2>
+      <h2 className="text-[1.65rem] font-bold text-bgp-ink border-b border-bgp-ink pb-2">News and insights</h2>
 
       <div className="mt-4 bg-bgp-mist px-[3%] pt-5 pb-8">
       <div className="flex flex-wrap justify-between gap-x-6 label-caps text-bgp-ink/60">

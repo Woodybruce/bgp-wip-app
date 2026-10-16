@@ -29,13 +29,13 @@ export default function BrandRepresentation() {
 
       {/* A snapshot of clients */}
       <section className="mt-10">
-        <h2 className="text-2xl font-bold text-bgp-ink border-b-[3px] border-bgp-ink pb-3 mb-8 md:ml-[3%] md:mr-[7%] md:pl-[4%]">A snapshot of clients</h2>
+        <h2 className="text-[1.65rem] font-bold text-bgp-ink border-b-[3px] border-bgp-ink pb-3 mb-8 md:ml-[3%] md:mr-[7%] md:pl-[4%]">A snapshot of clients</h2>
         <ClientRow clients={clients} />
       </section>
 
       {/* Case studies */}
       <section className="mt-10 border-t-[3px] border-bgp-ink pt-6">
-        <h2 className="text-2xl font-bold text-bgp-ink mb-4">Case studies</h2>
+        <h2 className="text-[1.65rem] font-bold text-bgp-ink mb-4">Case studies</h2>
         <div className="grid grid-cols-1 gap-1">
           {studies.map((cs, i) => (
             <Link
@@ -65,7 +65,7 @@ export default function BrandRepresentation() {
       {/* Key contacts */}
       <section className="mt-12 mb-16 grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-8 md:gap-12 items-start">
         <div>
-          <h2 className="text-2xl font-bold text-bgp-ink">Key contacts</h2>
+          <h2 className="text-[1.65rem] font-bold text-bgp-ink">Key contacts</h2>
           <p className="mt-3 text-lg md:text-xl leading-snug text-bgp-ink">
             Our brand representation team supports occupiers from first site to full network. Talk to us about a first UK store, the next ten, or a portfolio review.
           </p>
