@@ -48,7 +48,7 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
 
       <h1 className="sr-only">{title}</h1>
       <section className="mx-auto max-w-[1360px] px-4 pt-12 md:pt-14 pb-10">
-        <h2 className="text-2xl font-bold text-bgp-ink border-b-[3px] border-bgp-ink pb-2 mb-6">A snapshot of clients</h2>
+        <h2 className="text-2xl font-bold text-bgp-ink border-b-[3px] border-bgp-ink pb-3 mb-8 md:ml-[3%] md:mr-[7%] md:pl-[4%]">A snapshot of clients</h2>
         {clientsBlurb && <p className="text-sm text-bgp-ink/70 mb-4">{clientsBlurb}</p>}
         {clients}
       </section>
@@ -66,7 +66,7 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
               <Link key={cs.slug} href={`/case-studies/${cs.slug}`} className={`group grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-6 md:gap-10 p-5 md:p-7 ${i % 2 ? "" : "bg-bgp-mist md:[direction:rtl]"}`}>
                 <div className="[direction:ltr]">
                   <p className={`label-caps text-bgp-wine ${cs.draft ? "italic" : ""}`}>{cs.title}</p>
-                  <div className={`mt-3 space-y-3 text-base text-bgp-ink/90 ${cs.draft ? "italic" : ""}`}>
+                  <div className={`mt-3 space-y-3 text-base text-bgp-ink ${cs.draft ? "italic" : ""}`}>
                     {[cs.blurb, ...(cs.body || [])].map((para, k) => <p key={k}>{para}</p>)}
                   </div>
                   <p className="mt-4"><span className="explore-link">Read more</span></p>

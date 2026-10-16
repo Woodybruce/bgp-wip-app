@@ -35,7 +35,7 @@ export default function News() {
   };
 
   return (
-    <div className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
+    <div className="mx-auto max-w-[1360px] px-4 py-12 md:py-14">
       <SectionHead as="h1" title="News and insights" />
 
       <div className="-mt-4 flex flex-wrap items-center gap-x-8 gap-y-3 border-b border-bgp-wine/30 pb-3">
@@ -72,17 +72,17 @@ export default function News() {
 
       <div className="mt-8 grid grid-cols-1 gap-4">
         {features.map((a, i) => (
-          <Link key={a.slug} href={`/news/${a.slug}`} className="group block bg-bgp-mist p-6 md:p-8">
-            <div className="flex justify-between label-caps text-bgp-ink/50 mb-4">
+          <Link key={a.slug} href={`/news/${a.slug}`} className="group block bg-bgp-mist p-6 md:px-[4.7%] md:pt-10 md:pb-8">
+            <div className="flex justify-between label-caps font-bold text-bgp-ink mb-5">
               <span>{i % 2 ? a.category : a.date}</span>
               <span>{i % 2 ? a.date : a.category}</span>
             </div>
-            <div className={`grid grid-cols-1 md:grid-cols-[56fr_4fr_40fr] gap-8 md:gap-0 items-start ${i % 2 ? "md:[direction:rtl]" : ""}`}>
+            <div className={`grid grid-cols-1 md:grid-cols-[59fr_3fr_38fr] gap-8 md:gap-0 items-start ${i % 2 ? "md:[direction:rtl]" : ""}`}>
               <div className="img-frame [direction:ltr]"><Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} /></div>
               <div className="hidden md:block" />
               <div className="[direction:ltr] flex flex-col h-full">
-                <h2 className="font-light text-3xl md:text-4xl text-bgp-wine group-hover:opacity-80 transition-opacity">{a.title}</h2>
-                <p className="mt-4 text-xl leading-snug text-bgp-ink/85">{a.standfirst}</p>
+                <h2 className="font-normal text-3xl md:text-4xl text-bgp-wine group-hover:opacity-80 transition-opacity">{a.title}</h2>
+                <p className="mt-4 text-xl leading-snug text-bgp-ink">{a.standfirst}</p>
                 <p className="mt-auto pt-6 label-caps text-bgp-ink/60 self-end">Read more</p>
               </div>
             </div>
@@ -102,7 +102,7 @@ export default function News() {
               <span>{a.date}</span>
             </div>
             <div className="img-frame"><Placeholder className="aspect-square w-full" src={a.image} alt={a.title} /></div>
-            <h3 className="mt-4 font-light text-3xl leading-tight text-bgp-wine group-hover:opacity-80 transition-opacity">{a.title}</h3>
+            <h3 className="mt-4 font-normal text-3xl leading-tight text-bgp-wine group-hover:opacity-80 transition-opacity">{a.title}</h3>
             <p className="mt-2 label-caps text-bgp-ink/50">Read more</p>
           </Link>
         ))}
@@ -111,7 +111,7 @@ export default function News() {
           <div key={i} className="block bg-bgp-mist p-4 pb-5 italic text-bgp-stone">
             <div className="flex justify-between label-caps text-bgp-stone mb-3"><span>Category</span><span>Date</span></div>
             <Placeholder className="aspect-square w-full" alt={`Draft article ${i + 1}`} />
-            <h3 className="mt-4 font-light text-3xl leading-tight">Article heading goes here</h3>
+            <h3 className="mt-4 font-normal text-3xl leading-tight">Article heading goes here</h3>
             <p className="mt-2 label-caps text-bgp-stone">Read more</p>
           </div>
         ))}

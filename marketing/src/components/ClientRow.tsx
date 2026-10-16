@@ -64,7 +64,7 @@ export function LogoSlot({ n }: { n: number }) {
 export default function ClientRow({ clients, padTo = 14 }: { clients: Client[]; padTo?: number }) {
   const shown = clients.slice(0, padTo);
   return (
-    <div className="grid grid-cols-4 sm:grid-cols-7 gap-x-3 gap-y-6 max-w-[80%]">
+    <div className="grid grid-cols-4 sm:grid-cols-7 gap-x-[2.6%] gap-y-7 md:ml-[3%] md:mr-[7%]">
       {shown.map((c) => (
         <ClientCircle key={c.name} client={c} />
       ))}

@@ -25,32 +25,33 @@ export default function ArticlePage() {
   }
 
   return (
-    <article className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
+    <article className="mx-auto max-w-[1360px] px-4 py-12 md:py-14">
       <h2 className="text-2xl font-bold text-bgp-ink border-b border-bgp-ink pb-2">News and insights</h2>
 
-      <div className="mt-4 flex flex-wrap justify-between gap-x-6 label-caps text-bgp-ink/50 bg-bgp-mist px-4 py-2">
+      <div className="mt-4 bg-bgp-mist px-[3%] pt-5 pb-8">
+      <div className="flex flex-wrap justify-between gap-x-6 label-caps text-bgp-ink/60">
         <span>{article.date} <span className="mx-2 text-bgp-ink/30">·</span> By {article.author}</span>
         <span>{article.category}</span>
       </div>
 
       {/* Wireframe slide 46: a 54% photo beside the headline and standfirst, then the whole article at full width with a second photo set into it. */}
       <div className="mt-6 grid grid-cols-1 md:grid-cols-[56fr_4fr_40fr] gap-8 md:gap-0 items-start">
-        <Placeholder className="aspect-[7/5] w-full" src={article.image} alt={article.title} />
+        <Placeholder className="aspect-[1.31] w-full" src={article.image} alt={article.title} />
         <div className="hidden md:block" />
         <div>
-          <h1 className="font-light text-3xl md:text-4xl text-bgp-wine">{article.title}</h1>
-          <p className="mt-4 text-xl leading-snug text-bgp-ink/75">{article.standfirst}</p>
+          <h1 className="font-normal text-3xl md:text-4xl text-bgp-wine">{article.title}</h1>
+          <p className="mt-4 text-xl leading-snug text-bgp-ink">{article.standfirst}</p>
         </div>
       </div>
 
-      <div className="mt-8 space-y-5 md:ml-[8%] md:mr-[4%] [&>p]:text-base [&>p]:text-bgp-ink/85">
+      <div className="mt-10 space-y-5 md:ml-[8.5%] md:mr-[5%] [&>p]:text-lg [&>p]:leading-snug [&>p]:text-bgp-ink">
         {article.body ? (
           article.body.map((para, i) => (
             <Fragment key={i}>
               {i === Math.floor(article.body!.length * 0.55) && (
-                <Placeholder className="aspect-[21/20] w-full md:float-right md:w-[60%] md:ml-10 md:mb-4" alt={`${article.title} second photo`} label="Photo to follow" />
+                <Placeholder className="aspect-square w-full md:float-right md:w-[58%] md:ml-10 md:mb-4" alt={`${article.title} second photo`} label="Photo to follow" />
               )}
-              {para.startsWith("## ") ? <h2 className="text-lg font-bold pt-4">{para.slice(3)}</h2> : <p>{para}</p>}
+              {para.startsWith("## ") ? <h2 className="text-lg font-bold pt-6">{para.slice(3)}</h2> : <p>{para}</p>}
             </Fragment>
           ))
         ) : (
@@ -75,6 +76,7 @@ export default function ArticlePage() {
         <Link href="/news" className="label-caps hover:text-bgp-burgundy">
           Back to news &amp; insights
         </Link>
+      </div>
       </div>
     </article>
   );

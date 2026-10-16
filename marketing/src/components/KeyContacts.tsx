@@ -3,8 +3,8 @@ import ContactCard from "./ContactCard";
 // A tile for a person the team has not named yet, in italics.
 function ContactSlot({ n }: { n: number }) {
   return (
-    <div className="w-full max-w-[14rem] italic text-bgp-stone">
-      <div className="aspect-[9/10] w-full bg-bgp-stone/30" />
+    <div className="w-full max-w-[9.5rem] italic text-bgp-stone">
+      <div className="aspect-[3/4] w-full bg-bgp-stone/30" />
       <p className="mt-3 label-caps text-bgp-stone">Name {n}</p>
       <div className="mt-1 text-sm space-y-0.5">
         <p>Job title</p>
@@ -38,7 +38,7 @@ export default function KeyContacts({ people, blurb = "Our team would be delight
     <div className="grid grid-cols-1 md:grid-cols-[42fr_58fr] gap-8 md:gap-12">
       <div>
         <h2 className="text-2xl font-bold text-bgp-ink">Key contacts</h2>
-        <p className="mt-3 text-lg text-bgp-ink/80">{blurb}</p>
+        <p className="mt-3 text-lg text-bgp-ink">{blurb}</p>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-5">
         {shown.map((p) => (

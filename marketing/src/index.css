@@ -24,6 +24,11 @@ a:focus-visible { outline: 2px solid #ff1923; outline-offset: 3px; }
       font-size: 24px;
     }
   }
+  @media (min-width: 1280px) {
+    html {
+      font-size: 26px;
+    }
+  }
   body {
     @apply font-sans text-bgp-ink bg-bgp-cream antialiased;
   }

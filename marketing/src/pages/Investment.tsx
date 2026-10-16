@@ -38,7 +38,7 @@ export default function Investment() {
     <div>
       <Hero src="/images/investment/royal-exchange-interior.jpg" alt="The Royal Exchange, City of London" label="Investment" statement={service.intro} />
 
-      <section className="mx-auto max-w-[1360px] px-4 pb-9">
+      <section className="mx-auto max-w-[1360px] px-4 pt-16 pb-14">
         <SectionHead title="Snapshot of properties" sub="Please contact us for full availability" />
         <div className="flex flex-wrap items-center gap-x-10 gap-y-3 border-b border-bgp-wine/30 pb-3 mb-8 -mt-4">
           <span className="label-caps text-bgp-ink/60">Filter by</span>
@@ -60,7 +60,7 @@ export default function Investment() {
                 <p className="label-caps font-bold text-bgp-ink">{deal.name}</p>
                 {deal.address && deal.address !== deal.name && <p className="mt-0.5 text-sm text-bgp-ink/60">{deal.address}</p>}
                 <p className="mt-0.5 text-xs text-bgp-ink/55 uppercase">{deal.client}</p>
-                <p className="mt-1 text-sm text-bgp-ink/80 tabular">
+                <p className="mt-1 text-sm text-bgp-ink tabular">
                   {deal.type === "Transaction" ? "" : deal.type}
                   {deal.type !== "Transaction" && deal.price ? " · " : ""}
                   {deal.price}
@@ -71,24 +71,24 @@ export default function Investment() {
           );
           const [a, b, c, d, ...rest] = shown;
           return (
-            <div className="space-y-10">
+            <div className="space-y-14">
               {a && (
-                <div className="grid grid-cols-1 md:grid-cols-[51fr_8fr_29fr_12fr] gap-6 md:gap-0 items-end">
-                  <Tile deal={a} aspect="aspect-[8/5]" />
+                <div className="grid grid-cols-1 md:grid-cols-[58fr_9fr_33fr] gap-6 md:gap-0 items-start">
+                  <Tile deal={a} aspect="aspect-[1.55]" />
                   <div className="hidden md:block" />
-                  {b && <Tile deal={b} aspect="aspect-[5/4]" />}
+                  {b && <Tile deal={b} aspect="aspect-[1.16]" />}
                 </div>
               )}
               {c && (
-                <div className="grid grid-cols-1 md:grid-cols-[29fr_12fr_51fr_8fr] gap-6 md:gap-0 items-end">
-                  <Tile deal={c} aspect="aspect-[5/4]" />
+                <div className="grid grid-cols-1 md:grid-cols-[33fr_9fr_58fr] gap-6 md:gap-0 items-start">
+                  <Tile deal={c} aspect="aspect-[0.86]" />
                   <div className="hidden md:block" />
-                  {d && <Tile deal={d} aspect="aspect-[8/5]" />}
+                  {d && <Tile deal={d} aspect="aspect-[1.55]" />}
                 </div>
               )}
               {rest.length > 0 && (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                  {rest.map((deal) => <Tile key={deal.name} deal={deal} aspect="aspect-[3/2]" />)}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-[2.7%] gap-y-10">
+                  {rest.map((deal) => <Tile key={deal.name} deal={deal} aspect="aspect-[8/5]" />)}
                 </div>
               )}
             </div>

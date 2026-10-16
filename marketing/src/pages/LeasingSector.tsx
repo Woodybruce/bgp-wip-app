@@ -38,14 +38,14 @@ export default function LeasingSector() {
       {/* Wireframe slide 28: plain photo, then the title with Contact and
           Download at right, the statement beside the title, description
           beside the lead image, more photos, a location map. */}
-      <Placeholder className="h-64 md:h-[22rem] w-full" src={sector.image} alt={sector.name} />
+      <div data-hero className="-mt-16 md:-mt-24 lg:-mt-28"><Placeholder className="h-64 md:h-auto md:aspect-[2.96] w-full" src={sector.image} alt={sector.name} /></div>
 
-      <section className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
+      <section className="mx-auto max-w-[1360px] px-4 py-12 md:py-14">
         <p className="label-caps text-bgp-ink/50 mb-4"><Link href="/leasing" className="hover:text-bgp-wine">Leasing</Link> · {sector.name}</p>
         {/* Slide 28: title row with Contact and Download at right; the statement on the next row in the right column;
             a narrow text column beside a wide image; then a landscape and a lower, portrait image. */}
         <div className="flex items-start justify-between gap-8">
-          <h1 className="font-light text-3xl md:text-5xl">{sector.name}</h1>
+          <h1 className="font-normal text-3xl md:text-5xl">{sector.name}</h1>
           <span className="flex flex-col items-end gap-1 shrink-0 label-caps text-bgp-wine">
             <a href="#contact" className="hover:opacity-70">Contact</a>
             <a href="#contact" className="hover:opacity-70">Download</a>
@@ -54,19 +54,19 @@ export default function LeasingSector() {
         {!sector.howWeHelp && (
           <div className="mt-4 grid grid-cols-1 md:grid-cols-[27fr_61fr] md:gap-x-[12%]">
             <div />
-            <p className="font-light text-xl md:text-2xl text-bgp-ink/85">{sector.headline}</p>
+            <p className="font-normal text-2xl md:text-3xl leading-snug text-bgp-ink">{sector.headline}</p>
           </div>
         )}
-        {sector.howWeHelp && <p className="mt-4 font-light text-xl md:text-2xl text-bgp-ink/85 md:w-[60%] md:ml-auto">{sector.headline}</p>}
-        <div className={`mt-8 grid grid-cols-1 gap-10 items-start ${sector.howWeHelp ? "md:grid-cols-[1fr_280px]" : "md:grid-cols-[27fr_61fr] md:gap-x-[12%]"}`}>
+        {sector.howWeHelp && <p className="mt-4 font-normal text-xl md:text-2xl text-bgp-ink md:w-[60%] md:ml-auto">{sector.headline}</p>}
+        <div className={`mt-8 grid grid-cols-1 gap-10 items-start ${sector.howWeHelp ? "md:grid-cols-[1fr_280px]" : "md:grid-cols-[30fr_64fr] md:gap-x-[6%]"}`}>
           <div className="space-y-4">
             {sector.body.map((p, i) => (
-              <p key={p.slice(0, 24)} className="text-base text-bgp-ink/90">{p}</p>
+              <p key={p.slice(0, 24)} className="text-lg leading-snug text-bgp-ink">{p}</p>
             ))}
           </div>
           {!sector.howWeHelp && (
             <figure className="img-frame">
-              <Placeholder className="aspect-[16/10] w-full" src={sector.gallery?.[0]?.src} alt={sector.gallery?.[0]?.caption ?? sector.name} />
+              <Placeholder className="aspect-[1.61] w-full" src={sector.gallery?.[0]?.src} alt={sector.gallery?.[0]?.caption ?? sector.name} />
               {sector.gallery?.[0] && <figcaption className="mt-2 label-caps text-bgp-ink/55">{sector.gallery[0].caption}</figcaption>}
             </figure>
           )}
@@ -84,22 +84,22 @@ export default function LeasingSector() {
       </section>
 
       {!sector.howWeHelp && (
-        <section className="mx-auto max-w-[1360px] px-4 pb-9">
-          <div className="grid grid-cols-1 md:grid-cols-[54fr_17fr_29fr] gap-6 md:gap-0 items-start">
+        <section className="mx-auto max-w-[1360px] px-4 pt-16 pb-14">
+          <div className="grid grid-cols-1 md:grid-cols-[57fr_12fr_31fr] gap-6 md:gap-0 items-start">
             <figure>
-              <div className="img-frame"><Placeholder className="aspect-[17/10] w-full" src={sector.gallery?.[1]?.src} alt={sector.gallery?.[1]?.caption ?? sector.name} /></div>
+              <div className="img-frame"><Placeholder className="aspect-[1.69] w-full" src={sector.gallery?.[1]?.src} alt={sector.gallery?.[1]?.caption ?? sector.name} /></div>
               {sector.gallery?.[1] && <figcaption className="mt-2 label-caps text-bgp-ink/55">{sector.gallery[1].caption}</figcaption>}
             </figure>
             <div />
-            <figure className="md:mt-24">
-              <div className="img-frame"><Placeholder className="aspect-[3/4] w-full" src={sector.gallery?.[2]?.src} alt={sector.gallery?.[2]?.caption ?? sector.name} /></div>
+            <figure className="md:mt-40">
+              <div className="img-frame"><Placeholder className="aspect-[0.77] w-full" src={sector.gallery?.[2]?.src} alt={sector.gallery?.[2]?.caption ?? sector.name} /></div>
               {sector.gallery?.[2] && <figcaption className="mt-2 label-caps text-bgp-ink/55">{sector.gallery[2].caption}</figcaption>}
             </figure>
           </div>
         </section>
       )}
       {sector.howWeHelp && sector.gallery && sector.gallery.length > 1 && (
-        <section className="mx-auto max-w-[1360px] px-4 pb-9">
+        <section className="mx-auto max-w-[1360px] px-4 pt-16 pb-14">
           <div className="card-strip sm:grid-cols-3">
             {sector.gallery.map((g) => (
               <figure key={g.src}>
@@ -113,7 +113,7 @@ export default function LeasingSector() {
 
 
       {centres.length > 0 && (
-        <section className="mx-auto max-w-[1360px] px-4 pb-9">
+        <section className="mx-auto max-w-[1360px] px-4 pt-16 pb-14">
           <div className="flex flex-wrap items-end justify-between gap-4 border-b border-bgp-wine/25 pb-6 mb-10">
             <div>
               <span className="section-label">Leasing teams</span>
@@ -135,7 +135,7 @@ export default function LeasingSector() {
                   <div className="border-t border-bgp-wine/30 pt-3 mt-3">
                     <p className="font-normal text-lg text-bgp-wine">{c.name}</p>
                     <p className="mt-0.5 label-caps text-bgp-ink/45">{c.location}</p>
-                    <p className="mt-2 text-base text-bgp-ink/80">{c.blurb}</p>
+                    <p className="mt-2 text-base text-bgp-ink">{c.blurb}</p>
                     <p className="mt-1.5 label-caps text-bgp-ink/45">{c.contacts.join(" · ")}</p>
                   </div>
                 </>
@@ -148,9 +148,9 @@ export default function LeasingSector() {
         </section>
       )}
 
-      <section className="mx-auto max-w-[1360px] px-4 pb-9">
+      <section className="mx-auto max-w-[1360px] px-4 pt-16 pb-14">
         <SectionHead title="Location" />
-        <MapSlot lat={sector.map?.lat} lon={sector.map?.lon} zoom={sector.map?.zoom} marker={false} pins={sector.map?.pins} className="h-72 md:h-96 w-full" />
+        <MapSlot lat={sector.map?.lat} lon={sector.map?.lon} zoom={sector.map?.zoom} marker={false} pins={sector.map?.pins} className="aspect-[3.38] w-full" />
       </section>
 
       <KeyContacts band={false} people={contacts} />
@@ -175,13 +175,13 @@ export function ShoppingCentrePage() {
         </p>
         <div className="grid grid-cols-1 md:grid-cols-[1fr_280px] gap-10 mt-8">
           <div>
-            <h1 className="font-light text-3xl md:text-5xl">{centre.name}</h1>
+            <h1 className="font-normal text-3xl md:text-5xl">{centre.name}</h1>
             <div className="img-frame mt-6">
               <Placeholder className="aspect-[16/9] w-full" src={centre.image} alt={centre.name} stock={CENTRE_STOCK[0]} />
             </div>
-            <p className="mt-6 text-base md:text-lg text-bgp-ink/90">{centre.blurb}</p>
+            <p className="mt-6 text-base md:text-lg text-bgp-ink">{centre.blurb}</p>
             {/* Generic second paragraph, the same on every centre: italic until the team writes each one. */}
-            <p className="mt-4 text-base md:text-lg text-bgp-ink/90 italic">
+            <p className="mt-4 text-base md:text-lg text-bgp-ink italic">
               BGP advises the owners of {centre.name} on leasing strategy, tenant mix and positioning, drawing on our relationships with leading occupiers and our London Estates and High Street teams.
             </p>
             <div className="card-strip sm:grid-cols-3 mt-8">

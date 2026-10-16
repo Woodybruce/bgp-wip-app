@@ -57,7 +57,7 @@ export default function Leasing() {
   // Nine listings a page with page numbers underneath, so the case studies
   // and contacts are never pushed below a long run (Woody, 2026-10-15).
   // Slide 26: a page of listings, then "+ More listings" to extend it.
-  const PAGE_SIZE = 8;
+  const PAGE_SIZE = 10;
   const [page, setPage] = useState(1);
   const gridTop = useRef<HTMLDivElement>(null);
   useEffect(() => { setPage(1); }, [location, type, size]);
@@ -119,7 +119,7 @@ export default function Leasing() {
       {/* Slide 26: the hero runs straight into the listings; the four teams live in the Leasing rollover. */}
 
       {/* Snapshot of available properties */}
-      <section id="availability" className="mx-auto max-w-[1360px] px-4 pb-9 scroll-mt-24">
+      <section id="availability" className="mx-auto max-w-[1360px] px-4 pt-16 pb-14 scroll-mt-24">
         <SectionHead
           rule={false}
           title="Snapshot of available properties"
@@ -137,21 +137,30 @@ export default function Leasing() {
         ) : listings.length === 0 ? (
           <div className="py-16">
             <p className="display text-xl md:text-2xl">Current availability is being updated.</p>
-            <p className="mt-3 text-[15px] text-bgp-ink/80">
+            <p className="mt-3 text-[15px] text-bgp-ink">
               For our latest opportunities, contact the leasing team below.
             </p>
           </div>
         ) : filtered.length === 0 ? (
-          <p className="py-16 text-[15px] text-bgp-ink/80">
+          <p className="py-16 text-[15px] text-bgp-ink">
             Nothing matches those filters. Please contact us for full availability.
           </p>
         ) : (
           <>
-            {/* Slide 26: three across, then a row of two wider cards ("key properties sometimes taking a wider column"). */}
-            <div ref={gridTop} className="scroll-mt-28 mt-8 card-strip sm:grid-cols-2 lg:grid-cols-6 sm:gap-x-6 sm:gap-y-10">
-              {pageItems.map((l, i) => (
-                <div key={l.id} className={`h-full ${(i === 3 || i === 4) && pageItems.length >= 6 ? "lg:col-span-3" : "lg:col-span-2"}`}>
-                  <ListingCard listing={l} />
+            {/* Slide 26, measured: three tiles 29.5% wide at 1.15, then a 61% tile at 1.84 beside a 30% portrait tile at 0.89, then three again. */}
+            <div ref={gridTop} className="scroll-mt-28 mt-12 space-y-14">
+              {Array.from({ length: Math.ceil(pageItems.length / 5) }, (_, r) => pageItems.slice(r * 5, r * 5 + 5)).map((chunk, r) => (
+                <div key={r} className="space-y-14">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-[2.7%] gap-y-14">
+                    {chunk.slice(0, 3).map((l) => <ListingCard key={l.id} listing={l} />)}
+                  </div>
+                  {chunk.length > 3 && (
+                    <div className="grid grid-cols-1 md:grid-cols-[61fr_6fr_30fr_3fr] gap-6 md:gap-0 items-end">
+                      <ListingCard listing={chunk[3]} aspect="aspect-[1.84]" />
+                      <div className="hidden md:block" />
+                      {chunk[4] && <ListingCard listing={chunk[4]} aspect="aspect-[0.89]" />}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -161,8 +170,8 @@ export default function Leasing() {
               </p>
             )}
             {page < pageCount && (
-              <p className="mt-8 text-right">
-                <button type="button" onClick={() => setPage(page + 1)} className="label-caps text-bgp-wine hover:opacity-70">+ More listings ({filtered.length - pageItems.length})</button>
+              <p className="mt-10 text-left">
+                <button type="button" onClick={() => setPage(page + 1)} className="label-caps font-bold text-bgp-ink hover:text-bgp-wine">+ More listings ({filtered.length - pageItems.length})</button>
               </p>
             )}
           </>

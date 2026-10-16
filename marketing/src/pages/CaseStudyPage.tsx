@@ -21,7 +21,7 @@ function Carousel({ photos, alt }: { photos: string[]; alt: string }) {
   const step = (d: number) => setI((x) => (x + d + photos.length) % photos.length);
   return (
     <div className="relative mt-8">
-      <div className="img-frame"><Placeholder className="aspect-[16/10] w-full" src={photos[i]} alt={alt} /></div>
+      <div className="img-frame"><Placeholder className="aspect-[1.69] w-full" src={photos[i]} alt={alt} /></div>
       {photos.length > 1 && (
         <>
           <button type="button" onClick={() => step(-1)} aria-label="Previous photo" className="absolute left-3 top-1/2 -translate-y-1/2 h-9 w-9 flex items-center justify-center bg-bgp-cream/85 text-bgp-wine text-xl hover:bg-bgp-cream">‹</button>
@@ -64,17 +64,15 @@ export default function CaseStudyPage() {
   return (
     <div>
       <section className="mx-auto max-w-[1360px] px-4 py-7">
-        <p className="label-caps border-b border-bgp-ink pb-2 text-bgp-ink/50">
-          Case study · {caseStudy.service}
-        </p>
+        <h2 className="sr-only">Case study · {caseStudy.service}</h2>
         {/* Wireframe slide 32: title and intro at left with the facts panel
             beside them, then an image carousel with arrows and dots. */}
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-[63fr_12fr_25fr] gap-6 md:gap-0">
+        <div className="grid grid-cols-1 md:grid-cols-[63fr_12fr_25fr] gap-6 md:gap-0">
           <div>
-            <h1 className={`font-light text-3xl md:text-5xl ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
+            <h1 className={`font-normal text-3xl md:text-5xl ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
             <div className={`mt-5 space-y-4 ${caseStudy.draft ? "italic" : ""}`}>
               {caseStudy.body.map((para) => (
-                <p key={para.slice(0, 32)} className="text-base text-bgp-ink/85">
+                <p key={para.slice(0, 32)} className="text-base text-bgp-ink">
                   {para}
                 </p>
               ))}
@@ -105,7 +103,7 @@ export default function CaseStudyPage() {
 
       <section className="mx-auto max-w-[1360px] px-4 pb-10">
         <SectionHead title="Location" />
-        <MapSlot lat={caseStudy.location?.lat} lon={caseStudy.location?.lon} />
+        <MapSlot lat={caseStudy.location?.lat} lon={caseStudy.location?.lon} className="aspect-[2.15] w-full" />
       </section>
 
       <KeyContacts band={false} people={contacts} />
@@ -117,13 +115,13 @@ export default function CaseStudyPage() {
             {related.map((deal) => (
               <Link key={deal.name} href="/investment" className="group block">
                 <div className="relative img-frame">
-                  <Placeholder className="aspect-[4/3] w-full" src={deal.image} alt={deal.name} label="Photo to follow" />
+                  <Placeholder className="aspect-[1.85] w-full" src={deal.image} alt={deal.name} label="Photo to follow" />
                   <span className="absolute top-0 right-0 label-caps px-3 py-1.5 bg-bgp-wine text-bgp-cream">{deal.status}</span>
                 </div>
                 <div className="mt-3 border-t border-bgp-wine/30 pt-3">
                   <p className="font-normal text-lg text-bgp-wine">{deal.name}</p>
                   <p className="mt-0.5 label-caps text-bgp-ink/45">{deal.client}</p>
-                  <p className="mt-1.5 text-sm text-bgp-ink/80 tabular">{deal.type === "Transaction" ? "" : deal.type}{deal.price ? ` · ${deal.price}` : ""}</p>
+                  <p className="mt-1.5 text-sm text-bgp-ink tabular">{deal.type === "Transaction" ? "" : deal.type}{deal.price ? ` · ${deal.price}` : ""}</p>
                 </div>
               </Link>
             ))}
