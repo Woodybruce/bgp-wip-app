@@ -2,10 +2,8 @@ import { useEffect } from "react";
 import { Link, useRoute } from "wouter";
 import Placeholder from "../components/Placeholder";
 import KeyContacts from "../components/KeyContacts";
-import { SectionHead } from "../components/Wire";
-import { useState, Suspense, lazy } from "react";
-const ListingMap = lazy(() => import("../components/ListingMap"));
-const isBrowser = typeof window !== "undefined";
+import { MapSlot, QuoteBlock, SectionHead } from "../components/Wire";
+import { useState } from "react";
 import { type SiteContent, useSiteContent } from "../lib/site-content";
 import { INVESTMENT_DEALS } from "../lib/content";
 
@@ -103,16 +101,12 @@ export default function CaseStudyPage() {
         </div>
       </section>
 
-      {caseStudy.location && (
-        <section className="mx-auto max-w-6xl px-4 pb-10">
-          <SectionHead title="Location" />
-          {isBrowser ? (
-            <Suspense fallback={<div className="h-72 md:h-80 w-full bg-bgp-mist" />}><ListingMap lat={caseStudy.location.lat} lon={caseStudy.location.lon} className="h-72 md:h-80 w-full" /></Suspense>
-          ) : (
-            <div className="h-72 md:h-80 w-full bg-bgp-mist" />
-          )}
-        </section>
-      )}
+      <QuoteBlock quote={caseStudy.quote} />
+
+      <section className="mx-auto max-w-6xl px-4 pb-10">
+        <SectionHead title="Location" />
+        <MapSlot lat={caseStudy.location?.lat} lon={caseStudy.location?.lon} />
+      </section>
 
       <KeyContacts people={contacts} />
 

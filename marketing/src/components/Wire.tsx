@@ -1,5 +1,57 @@
 import type { ReactNode } from "react";
+import { Suspense, lazy } from "react";
 import Placeholder from "./Placeholder";
+const ListingMap = lazy(() => import("./ListingMap"));
+const isBrowser = typeof window !== "undefined";
+
+// Dashed slot for copy that has not arrived yet. Same look everywhere so
+// the team can see at a glance what is still owed (Woody, 2026-10-16:
+// "continuity across the whole site").
+export function TextPlaceholder({ label, lines = 3, className = "" }: { label: string; lines?: number; className?: string }) {
+  return (
+    <div className={`border border-dashed border-bgp-stone p-4 ${className}`}>
+      <p className="label-caps text-bgp-stone">{label}</p>
+      <div className="mt-3 space-y-2" aria-hidden>
+        {Array.from({ length: lines }, (_, i) => <div key={i} className="h-2.5 bg-bgp-stone/25" style={{ width: `${[92, 78, 85, 60][i % 4]}%` }} />)}
+      </div>
+    </div>
+  );
+}
+
+// Client quote with photo (slides 32 and 41). A missing quote or photo shows
+// its placeholder rather than dropping the block.
+export function QuoteBlock({ quote, image, imageAlt = "" }: { quote?: { quote: string; name: string; title: string } | null; image?: string; imageAlt?: string }) {
+  const hasQuote = !!quote?.quote && !/^lorem ipsum/i.test(quote.quote);
+  return (
+    <section className="mx-auto max-w-6xl px-4 py-12 md:py-14">
+      <div className="grid grid-cols-1 md:grid-cols-[1.4fr_1fr] gap-8 md:gap-12 items-start">
+        <div>
+          {hasQuote ? (
+            <>
+              <p className="font-light text-xl md:text-2xl text-bgp-ink/85">“{quote!.quote}”</p>
+              <p className="mt-4 label-caps">{quote!.name}</p>
+              <p className="text-xs text-bgp-ink/55 uppercase">{quote!.title}</p>
+            </>
+          ) : (
+            <TextPlaceholder label={quote?.name ? `Client quote to follow: ${quote.name}, ${quote.title}` : "Client quote to follow"} lines={4} />
+          )}
+        </div>
+        <Placeholder className="aspect-[4/3] w-full max-w-sm" src={image} alt={imageAlt} label="Photo to follow" />
+      </div>
+    </section>
+  );
+}
+
+// Location map, or the placeholder slot when there are no coordinates yet.
+export function MapSlot({ lat, lon, zoom = 15, marker = true, pins, className = "h-72 md:h-80 w-full" }: { lat?: number; lon?: number; zoom?: number; marker?: boolean; pins?: Array<{ lat: number; lon: number; label: string }>; className?: string }) {
+  if (lat == null || lon == null) return <Placeholder className={className} label="Map to follow" />;
+  if (!isBrowser) return <div className={`${className} bg-bgp-mist`} />;
+  return (
+    <Suspense fallback={<div className={`${className} bg-bgp-mist`} />}>
+      <ListingMap lat={lat} lon={lon} zoom={zoom} marker={marker} pins={pins ?? []} className={className} />
+    </Suspense>
+  );
+}
 
 // The wireframe's layout primitives (December 2025 deck, slides 22–49):
 // a photo hero with the statement bottom-left, grey bands for secondary

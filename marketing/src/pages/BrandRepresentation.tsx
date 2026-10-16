@@ -9,6 +9,7 @@ export default function BrandRepresentation() {
   return (
     <ServicePage
       title="Brand Representation"
+      hero={{ src: "/images/case-studies/percival-neal-street.jpg", alt: "Percival's store on Neal Street, Seven Dials" }}
       intro={service.intro}
       body={SERVICE_COPY.brandRepresentation.body}
       clientsBlurb="Four pillars, one approach: international labels making their UK debut, independents finding the right street, hospitality operators rolling out, and wellness brands building neighbourhoods."
@@ -27,7 +28,6 @@ export default function BrandRepresentation() {
       }
       services={BRAND_REP_SERVICES}
       caseStudies={caseStudies.filter((c) => c.service === "Brand Representation")}
-      caseStudyLayout="stacked"
       contacts={contacts.brand_representation}
       contactsBlurb="Our brand representation team supports occupiers from first site to full network."
     />

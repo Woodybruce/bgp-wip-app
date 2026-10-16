@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
 import Placeholder from "../components/Placeholder";
-import { Hero, SectionHead } from "../components/Wire";
+import { Hero, QuoteBlock, SectionHead } from "../components/Wire";
 import { INVESTMENT_DEALS, SERVICE_COPY, SERVICES } from "../lib/content";
 import { findCaseStudy, useSiteContent } from "../lib/site-content";
 
@@ -86,6 +86,7 @@ export default function Investment() {
         )}
       </section>
 
+      <QuoteBlock quote={{ quote: "", name: "Client", title: "Investment" }} />
       <KeyContacts people={INVESTMENT_CONTACTS} blurb="Our investment team would be delighted to discuss current opportunities and our full track record." />
       <CaseStudyStrip caseStudies={["the-royal-exchange", "19-golden-square", "213-214-upper-street"].map((s) => findCaseStudy(content, s)).filter(Boolean) as any} />
     </div>

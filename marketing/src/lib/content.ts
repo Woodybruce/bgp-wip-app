@@ -80,8 +80,7 @@ export const TESTIMONIAL = {
 // Consultancy page quote — Cat Jenkins (Northbank BID) has agreed to give
 // one via Tracey; Latin placeholder until it lands (Woody, 2026-10-12).
 export const CONSULTANCY_TESTIMONIAL = {
-  quote:
-    "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.",
+  quote: "", // placeholder until Cat's words arrive; QuoteBlock shows the slot
   name: "Cat Jenkins",
   title: "Northbank BID",
 };
@@ -168,6 +167,7 @@ export interface CaseStudy {
   facts: Array<[string, string]>;
   body: string[];
   location?: { lat: number; lon: number }; // wireframe slide 32 location map
+  quote?: { quote: string; name: string; title: string }; // client quote (slide 32); placeholder shown until supplied
 }
 
 // From the projects list on the current site; bodies are short where the team
@@ -223,6 +223,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     gallery: ["/images/case-studies/landsec/st-davids/st-davids-2.jpg", "/images/case-studies/landsec/gunwharf-quays/gunwharf-quays-5.jpg", "/images/case-studies/landsec/trinity/trinity-2.jpg"],
     blurb: "Strategic advice and leasing across Landsec's shopping centre and outlet portfolio for all food and beverage and leisure.",
     facts: [["Service", "Leasing"], ["Client", "Landsec"], ["Sector", "Shopping centres and outlets"], ["Focus", "F&B and leisure"]],
+    location: { lat: 51.5101, lon: -0.134 },
     body: [
       "We provide strategic advice and leasing across Landsec's shopping centre and outlet portfolio for all F&B and leisure, always considering what is right for the specific asset: curating the best of the national operators, searching out an independent to transform a unique space, or adding a large leisure anchor to a major city centre.",
       "Our team considers what is right for each location while working as part of the internal Landsec team, so that what we deliver is right for the customer.",
@@ -236,6 +237,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     gallery: ["/images/case-studies/landsec/westgate/westgate-7.jpg", "/images/case-studies/landsec/westgate/westgate-1.jpg", "/images/case-studies/landsec/westgate/westgate-9.jpg"],
     blurb: "A rooftop terrace relet with best in class operators, and 100% let for the first time since opening.",
     facts: [["Service", "Leasing"], ["Client", "Landsec"], ["Location", "Oxford"], ["Result", "Rooftop 100% let"]],
+    location: { lat: 51.7509, lon: -1.2641 },
     body: [
       "The rooftop terrace at Westgate, Oxford was an established pitch, but it was lacking dwell time. The team considered what was missing and what would increase footfall and give people reasons to visit this iconic location in the heart of such a historic city.",
       "Together with the in-house team we considered who the customer was, drawing on the research that had been collected and our own knowledge of the city and of mixed-use developments. The strategy we created relocated Mowgli and added Flight Club, Six by Nico and Beefy Boys.",
@@ -250,6 +252,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     gallery: ["/images/case-studies/st-christophers-place-2.jpg", "/images/case-studies/st-christophers-place-3.jpg", "/images/case-studies/st-christophers-place-4.jpg"],
     blurb: "Retail and restaurant leasing across the pedestrian lanes between Oxford Street and Wigmore Street, for Columbia Threadneedle.",
     facts: [["Service", "Leasing"], ["Client", "Columbia Threadneedle"], ["Sector", "Retail & restaurant"], ["Location", "Marylebone, W1"]],
+    location: { lat: 51.5146, lon: -0.1497 },
     body: [
       "St Christopher's Place is a village of independent shops, restaurants and cafés a few steps from Oxford Street. BGP advises Columbia Threadneedle on the leasing strategy and tenant mix for the estate.",
       "The work draws on the Leasing team's occupier relationships and the Brand Representation team's pipeline of emerging brands looking for their first West End address.",
@@ -261,6 +264,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     service: "Leasing",
     blurb: "Retail and restaurant leasing at Grosvenor's new mixed-use quarter between Bond Street and Oxford Street.",
     facts: [["Service", "Leasing"], ["Client", "Grosvenor"], ["Sector", "Retail & restaurant"], ["Location", "Mayfair, W1"]],
+    location: { lat: 51.5131, lon: -0.1463 },
     body: [
       "South Molton Triangle is Grosvenor's largest mixed-use development in the West End, bringing new shops, restaurants and public space to the streets beside the Elizabeth line at Bond Street.",
       "BGP advises Grosvenor on the retail and restaurant leasing, building on the firm's long relationship across the Mayfair and Belgravia estates.",
@@ -274,6 +278,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     service: "Leasing",
     blurb: "More than twenty years advising Canary Wharf Group on the retail, restaurant and leisure mix across the estate's malls and streets.",
     facts: [["Service", "Leasing"], ["Client", "Canary Wharf Group"], ["Sector", "Retail, restaurant & leisure"], ["Location", "Canary Wharf, E14"]],
+    location: { lat: 51.5054, lon: -0.0235 },
     body: [
       "Canary Wharf is one of the largest retail and leisure estates in London, with shopping malls, waterside restaurants and a growing residential population. BGP has advised Canary Wharf Group for more than twenty years.",
       "The instruction spans leasing strategy, tenant mix and the introduction of new restaurant, leisure and lifestyle operators as the estate has broadened from a working district into a seven-day destination.",
@@ -423,6 +428,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     service: "Brand Representation",
     blurb: "Independent / Lifestyle: the London menswear label's store on Neal Street in Seven Dials.",
     facts: [["Service", "Brand Representation"], ["Pillar", "Independent / Lifestyle"], ["Location", "Neal Street, Seven Dials"]],
+    location: { lat: 51.5146, lon: -0.1266 },
     body: [
       "We acquired Percival's Seven Dials store on Neal Street, placing an independent London menswear label at the heart of Covent Garden's best pitch for its customer.",
       "Independent brands need the right street more than the biggest one; our estate relationships put Percival where its audience walks every day.",
@@ -436,6 +442,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     service: "Brand Representation",
     blurb: "Hospitality: the healthy grab-and-go restaurant's site at Loxton Walk.",
     facts: [["Service", "Brand Representation"], ["Pillar", "Hospitality"], ["Location", "Loxton Walk"]],
+    location: { lat: 51.5283, lon: -0.0848 },
     body: [
       "We acquired Atis's Loxton Walk site as part of its London roll-out, seriously tasty bowls and salads for a lunchtime office crowd.",
       "Atis has grown from a single City Road site to a network across London with BGP acquiring each one.",
@@ -449,6 +456,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     service: "Brand Representation",
     blurb: "Wellness: the massage studio's site at Islington Square.",
     facts: [["Service", "Brand Representation"], ["Pillar", "Wellness"], ["Location", "Islington Square"]],
+    location: { lat: 51.5372, lon: -0.1028 },
     body: [
       "We acquired Masaj's studio at Islington Square, extending the wellness brand into a new north London neighbourhood.",
       "Wellness operators want neighbourhoods with daily footfall and a residential catchment; Islington Square gives Masaj both.",
@@ -900,6 +908,17 @@ export const LEASING_SECTORS: LeasingSector[] = [
     howWeHelp: ["Leasing and strategic advice", "Asset management", "Lease consultancy", "Investment advice"],
     contacts: ["Millie Edwards", "Victoria Broadhead", "Emily Dumbell", "Alex Todd", "Ben Sykes", "Kate Martin", "Luke Donohoe"],
     caseStudies: ["landsec", "westgate-oxford"],
+    map: { lat: 52.6, lon: -1.6, zoom: 6, pins: [
+      { lat: 51.4387, lon: 0.2708, label: "Bluewater" },
+      { lat: 52.4777, lon: -1.8942, label: "Bullring, Birmingham" },
+      { lat: 53.7966, lon: -1.5432, label: "Trinity Leeds" },
+      { lat: 53.4036, lon: -2.9868, label: "Liverpool One" },
+      { lat: 51.7509, lon: -1.2641, label: "Westgate Oxford" },
+      { lat: 50.7954, lon: -1.1065, label: "Gunwharf Quays" },
+      { lat: 51.4792, lon: -3.1750, label: "St David's, Cardiff" },
+      { lat: 51.5138, lon: -0.0978, label: "One New Change" },
+      { lat: 55.8629, lon: -4.2540, label: "Buchanan Galleries, Glasgow" },
+    ] },
   },
   {
     slug: "london-estates",
@@ -954,6 +973,12 @@ export const LEASING_SECTORS: LeasingSector[] = [
       "We curate dynamic occupier mixes that reflect the needs and unique characteristics of the communities they serve; taking a long term view to build distinctive high streets that remain vibrant over time.",
     ],
     contacts: ["Lucy Gardiner", "Tracey Pollard", "Libby Evans"],
+    map: { lat: 51.52, lon: -0.17, zoom: 11, pins: [
+      { lat: 51.5185, lon: -0.1565, label: "Chiltern Street, Marylebone" },
+      { lat: 51.5567, lon: -0.1780, label: "Hampstead High Street" },
+      { lat: 51.5725, lon: -0.7769, label: "Marlow" },
+      { lat: 51.5383, lon: -0.1026, label: "Upper Street, Islington" },
+    ] },
   },
 ];
 

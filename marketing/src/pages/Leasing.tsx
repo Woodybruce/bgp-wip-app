@@ -4,9 +4,9 @@ import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
-import { Hero, SectionHead } from "../components/Wire";
+import { Hero, QuoteBlock, SectionHead } from "../components/Wire";
 import { findCaseStudy, useSiteContent } from "../lib/site-content";
-import { LEASING_INTRO, LEASING_SECTORS } from "../lib/content";
+import { LEASING_INTRO, LEASING_SECTORS, TESTIMONIAL } from "../lib/content";
 import { Listing, fetchListings } from "../lib/api";
 
 const SIZE_BANDS = [
@@ -200,6 +200,7 @@ export default function Leasing() {
         )}
       </section>
 
+      <QuoteBlock quote={TESTIMONIAL} image="/images/case-studies/lucent-piccadilly.jpg" imageAlt="Lucent, Piccadilly Lights" />
       <KeyContacts people={content.contacts.leasing} blurb="Our leasing team would be delighted to arrange a viewing or share full particulars." />
       <CaseStudyStrip caseStudies={["lucent-piccadilly", "st-christophers-place", "south-molton-triangle", "canary-wharf"].map((slug) => findCaseStudy(content, slug))} />
     </div>

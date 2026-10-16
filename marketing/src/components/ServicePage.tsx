@@ -3,7 +3,7 @@ import { Link } from "wouter";
 import KeyContacts from "./KeyContacts";
 import ServiceList from "./ServiceList";
 import Placeholder from "./Placeholder";
-import { Hero, SectionHead } from "./Wire";
+import { Hero, QuoteBlock, SectionHead } from "./Wire";
 import CaseStudyStrip from "./CaseStudyStrip";
 import { findCaseStudy, useSiteContent } from "../lib/site-content";
 import type { Person } from "../lib/content";
@@ -53,15 +53,7 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
 
       <ServiceList services={services} body={body} variant={servicesVariant} />
 
-      {quote && (
-        <section className="mx-auto max-w-6xl px-4 py-14">
-          <div className="max-w-2xl border-l-2 border-bgp-wine pl-6">
-            <p className="text-lg font-light text-bgp-ink/80">“{quote.quote}”</p>
-            <p className="label-caps mt-4">{quote.name}</p>
-            <p className="text-xs text-bgp-ink/50 uppercase">{quote.title}</p>
-          </div>
-        </section>
-      )}
+      <QuoteBlock quote={quote} />
 
       {caseStudies.length > 0 && caseStudyLayout === "stacked" && (
         <section className="mx-auto max-w-6xl px-4 py-10">

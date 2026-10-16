@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import Placeholder from "./Placeholder";
-import { Band } from "./Wire";
+import { Band, TextPlaceholder } from "./Wire";
 import type { CaseStudy } from "../lib/content";
 
 // Wireframe case study band: "Case study" label, title and intro at left
@@ -12,7 +12,17 @@ export default function CaseStudyStrip({ caseStudy, caseStudies }: { caseStudy?:
   const items = (caseStudies && caseStudies.length ? caseStudies : caseStudy ? [caseStudy] : []).filter(Boolean);
   const [index, setIndex] = useState(0);
   const [photo, setPhoto] = useState(0);
-  if (!items.length) return null;
+  if (!items.length) {
+    return (
+      <Band>
+        <p className="label-caps text-bgp-ink/60 mb-4">Case study</p>
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-8 md:gap-12 items-start">
+          <TextPlaceholder label="Case study to follow" lines={4} />
+          <Placeholder className="aspect-[16/10] w-full" label="Photo to follow" />
+        </div>
+      </Band>
+    );
+  }
   const current = items[index % items.length];
   const photos = [current.image, ...(current.gallery || [])].filter(Boolean) as string[];
   const shown = photos[photo % Math.max(photos.length, 1)];

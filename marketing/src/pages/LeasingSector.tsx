@@ -2,10 +2,7 @@ import { Link, useRoute } from "wouter";
 import KeyContacts from "../components/KeyContacts";
 import Placeholder from "../components/Placeholder";
 import CaseStudyStrip from "../components/CaseStudyStrip";
-import { SectionHead } from "../components/Wire";
-import { Suspense, lazy } from "react";
-const ListingMap = lazy(() => import("../components/ListingMap"));
-const isBrowser = typeof window !== "undefined";
+import { MapSlot, SectionHead } from "../components/Wire";
 import { LEASING_SECTORS, SHOPPING_CENTRES, isDirectorLevel, type Person } from "../lib/content";
 import { findCaseStudy, useSiteContent } from "../lib/site-content";
 
@@ -127,23 +124,13 @@ export default function LeasingSector() {
         </section>
       )}
 
-      {sector.map && (
-        <section className="mx-auto max-w-6xl px-4 pb-14">
-          <SectionHead title="Location" />
-          {isBrowser ? (
-            <Suspense fallback={<div className="h-72 md:h-96 w-full bg-bgp-mist" />}>
-              <ListingMap lat={sector.map.lat} lon={sector.map.lon} zoom={sector.map.zoom} marker={false} pins={sector.map.pins} className="h-72 md:h-96 w-full" />
-            </Suspense>
-          ) : (
-            <div className="h-72 md:h-96 w-full bg-bgp-mist" />
-          )}
-        </section>
-      )}
+      <section className="mx-auto max-w-6xl px-4 pb-14">
+        <SectionHead title="Location" />
+        <MapSlot lat={sector.map?.lat} lon={sector.map?.lon} zoom={sector.map?.zoom} marker={false} pins={sector.map?.pins} className="h-72 md:h-96 w-full" />
+      </section>
 
-      {contacts.length > 0 && <KeyContacts people={contacts} />}
-      {sector.caseStudies && sector.caseStudies.length > 0 && (
-        <CaseStudyStrip caseStudies={sector.caseStudies.map((slug) => findCaseStudy(content, slug)).filter(Boolean) as any} />
-      )}
+      <KeyContacts people={contacts} />
+      <CaseStudyStrip caseStudies={(sector.caseStudies ?? []).map((slug) => findCaseStudy(content, slug)).filter(Boolean) as any} />
     </div>
   );
 }
