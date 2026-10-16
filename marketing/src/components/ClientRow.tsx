@@ -25,8 +25,11 @@ export function ClientCircle({ client }: { client: Client }) {
   }, [src]);
 
   return (
+    // One circle size on every page, and every logo file is pre-fitted to the
+    // same box on a square canvas (public/brand-logos, 512px), so the marks
+    // read at the same optical weight (Woody, 2026-10-16).
     <div
-      className="group aspect-square rounded-full border border-bgp-line bg-white flex items-center justify-center overflow-hidden hover:border-bgp-burgundy/40 transition-colors"
+      className="group h-24 w-24 md:h-28 md:w-28 shrink-0 rounded-full border border-bgp-line bg-white flex items-center justify-center overflow-hidden hover:border-bgp-burgundy/40 transition-colors"
       title={client.name}
     >
       {src ? (
@@ -34,7 +37,7 @@ export function ClientCircle({ client }: { client: Client }) {
           src={src}
           alt={`${client.name} logo`}
           loading="lazy"
-          className="h-3/5 w-[72%] object-contain"
+          className="h-[70%] w-[70%] object-contain"
           onLoad={() => { loadedRef.current = true; }}
           onError={() => setStep((s) => s + 1)}
         />
@@ -49,7 +52,7 @@ export function ClientCircle({ client }: { client: Client }) {
 
 export default function ClientRow({ clients }: { clients: Client[] }) {
   return (
-    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-6">
+    <div className="flex flex-wrap gap-4">
       {clients.map((c) => (
         <ClientCircle key={c.name} client={c} />
       ))}
