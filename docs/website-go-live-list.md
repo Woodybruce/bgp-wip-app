@@ -62,8 +62,13 @@ asks for the list; add to it when he says "put it on the list".
   headings over rules, grey bands for key contacts and case studies, stats
   row and alternating service bands on Home, wireframe listing cards and
   listing page, A to Z headshot grid on Team. Shared primitives in
-  `marketing/src/components/Wire.tsx`. Review note for Emmy and Charlotte:
-  `docs/bgp-website-wireframe-review.pdf`.
+  `marketing/src/components/Wire.tsx`. Second pass the same day, checked
+  slide by slide in the browser: Leasing rollover menu, stats row, listing
+  page actions, sector page map, Brand Rep with no hero, Consultancy
+  services list, News feature blocks. Kept on purpose: We are bgp +
+  testimonial, Where we act tiles, page numbers, What we offer on Brand
+  Rep, sector pages not estate pages, grouped Team. Review note for Emmy
+  and Charlotte: `docs/bgp-website-wireframe-review.pdf`.
 
 - Site brought in line with the BGP Brand Guidelines v1.0 (August 2026,
   `docs/BGP-Brand-Guidelines-v1-2026-08.pdf`): four-colour palette only
