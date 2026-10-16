@@ -95,7 +95,7 @@ export default function LeasingSector() {
         <section className="mx-auto max-w-6xl px-4 pb-14">
           <div className="flex flex-wrap items-end justify-between gap-4 border-b border-bgp-wine/25 pb-6 mb-10">
             <div>
-              <span className="section-label">Where we act</span>
+              <span className="section-label">Leasing teams</span>
               <h2 className="display text-3xl md:text-4xl">Our shopping centres</h2>
             </div>
             <p className="text-base text-bgp-ink/70">

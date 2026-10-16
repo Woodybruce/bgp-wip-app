@@ -5,7 +5,9 @@ import { useSiteContent } from "../lib/site-content";
 
 export default function LeaseAdvisory() {
   const service = SERVICES.find((s) => s.slug === "lease-advisory")!;
-  const { caseStudies, contacts } = useSiteContent();
+  const { caseStudies, contacts, team } = useSiteContent();
+  // Slide 38 shows three contacts: the feed's directors, then the rest of the team.
+  const people = [...contacts.lease_advisory, ...team.filter((p) => /lease advisory/i.test(p.team || p.title) && !contacts.lease_advisory.some((c) => c.name === p.name))].slice(0, 3);
   return (
     <ServicePage
       title="Lease Advisory"
@@ -15,7 +17,7 @@ export default function LeaseAdvisory() {
       clients={<ClientRow clients={LEASE_ADVISORY_CLIENTS} />}
       services={LEASE_ADVISORY_SERVICES}
       caseStudies={caseStudies.filter((c) => c.service === "Lease Advisory")}
-      contacts={contacts.lease_advisory}
+      contacts={people}
     />
   );
 }

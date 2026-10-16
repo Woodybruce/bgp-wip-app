@@ -4,10 +4,9 @@ import { LEASING_SECTORS, NAV_ITEMS } from "../lib/content";
 
 // Wireframe slide 22: a rollover menu under Leasing, split into Location,
 // Estates and Type. Location and Type pre-set the availability filters.
+// Leasing rollover: the four teams, then the availability list (Woody, 2026-10-16).
 const LEASING_MENU: Array<{ heading: string; items: Array<{ label: string; href: string }> }> = [
-  { heading: "Location", items: [{ label: "London", href: "/leasing?location=London" }, { label: "Rest of UK", href: "/leasing?location=Rest%20of%20UK" }, { label: "View all", href: "/leasing#availability" }] },
-  { heading: "Estates", items: [...LEASING_SECTORS.map((s) => ({ label: s.name, href: `/leasing/sectors/${s.slug}` })), { label: "View all", href: "/leasing" }] },
-  { heading: "Type", items: [{ label: "Café", href: "/leasing?type=Caf%C3%A9" }, { label: "Leisure", href: "/leasing?type=Leisure" }, { label: "Retail", href: "/leasing?type=Retail" }, { label: "Restaurant", href: "/leasing?type=Restaurant" }, { label: "View all", href: "/leasing#availability" }] },
+  { heading: "Leasing", items: [...LEASING_SECTORS.map((s) => ({ label: s.name, href: `/leasing/sectors/${s.slug}` })), { label: "Available properties", href: "/leasing#availability" }] },
 ];
 
 // Sticky compact header. On phones: slim bar (wordmark left, MENU toggle
@@ -80,14 +79,13 @@ export default function Nav() {
                     {item.label}
                   </Link>
                   {menu && (
-                    <div className="absolute left-0 top-full z-50 hidden group-hover/menu:grid group-focus-within/menu:grid grid-cols-3 gap-x-10 gap-y-1 bg-bgp-mist px-6 py-5 w-max shadow-[0_16px_40px_-20px_rgba(110,12,37,0.35)]">
+                    <div className="absolute left-0 top-full z-50 hidden group-hover/menu:grid group-focus-within/menu:grid grid-cols-1 gap-y-1 bg-bgp-mist px-6 py-5 w-max min-w-[14rem] shadow-[0_16px_40px_-20px_rgba(110,12,37,0.35)]">
                       {LEASING_MENU.map((col) => (
                         <div key={col.heading}>
-                          <p className="text-xs font-bold text-bgp-ink mb-2">{col.heading}</p>
-                          <ul className="space-y-1">
+                          <ul className="space-y-2">
                             {col.items.map((it) => (
                               <li key={it.label}>
-                                <a href={it.href} className={`text-xs text-bgp-ink/80 hover:text-bgp-wine ${it.label === "View all" ? "italic" : ""}`}>{it.label}</a>
+                                <a href={it.href} className={`text-sm text-bgp-ink/85 hover:text-bgp-wine ${it.label === "Available properties" ? "border-t border-bgp-ink/30 pt-2 mt-1 block" : ""}`}>{it.label}</a>
                               </li>
                             ))}
                           </ul>

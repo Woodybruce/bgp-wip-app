@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import Placeholder from "./Placeholder";
-import { Band } from "./Wire";
+import type React from "react";
 import type { CaseStudy } from "../lib/content";
 
 // Wireframe case study band: "Case study" label, title and intro at left
@@ -14,17 +14,17 @@ export default function CaseStudyStrip({ caseStudy, caseStudies }: { caseStudy?:
   const [photo, setPhoto] = useState(0);
   if (!items.length) {
     return (
-      <Band>
-        <p className="label-caps text-bgp-ink/60 mb-4">Case study</p>
+      <Strip>
+        <p className="text-sm font-bold text-bgp-ink mb-4">Case study</p>
         <div className="grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-8 md:gap-12 items-start">
           <div className="italic">
-            <h2 className="display text-2xl md:text-3xl">Case study title</h2>
+            <h2 className="font-light text-3xl md:text-4xl">Case study title</h2>
             <p className="mt-5 text-base text-bgp-ink/85">Draft: three or four lines on a recent instruction for this team, the client, the brief and the outcome, to be written by the team.</p>
             <p className="mt-5"><span className="explore-link">Find out more</span></p>
           </div>
           <Placeholder className="aspect-[16/10] w-full" label="Photo to follow" alt="Case study photo" />
         </div>
-      </Band>
+      </Strip>
     );
   }
   const current = items[index % items.length];
@@ -39,11 +39,11 @@ export default function CaseStudyStrip({ caseStudy, caseStudies }: { caseStudy?:
     else setPhoto((p) => (p + d + photos.length) % photos.length);
   };
   return (
-    <Band>
-      <p className="label-caps text-bgp-ink/60 mb-4">Case study</p>
+    <Strip>
+      <p className="text-sm font-bold text-bgp-ink mb-4">Case study</p>
       <div className="grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-8 md:gap-12 items-start">
         <div>
-          <h2 className={`display text-2xl md:text-3xl ${italic}`}>
+          <h2 className={`font-light text-3xl md:text-4xl ${italic}`}>
             <Link href={`/case-studies/${current.slug}`} className="hover:opacity-80">{current.title}</Link>
           </h2>
           <div className={`mt-5 space-y-3 text-base text-bgp-ink/85 ${italic}`}>
@@ -68,6 +68,16 @@ export default function CaseStudyStrip({ caseStudy, caseStudies }: { caseStudy?:
           )}
         </div>
       </div>
-    </Band>
+    </Strip>
+  );
+}
+
+// Slides 26, 38 and 41: the case study sits on white under the grey key
+// contacts band, with a rule above it.
+function Strip({ children }: { children: React.ReactNode }) {
+  return (
+    <section className="mx-auto max-w-6xl px-4">
+      <div className="border-t border-bgp-ink pt-6 pb-14">{children}</div>
+    </section>
   );
 }

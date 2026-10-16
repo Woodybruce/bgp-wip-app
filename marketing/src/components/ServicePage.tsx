@@ -4,6 +4,7 @@ import KeyContacts from "./KeyContacts";
 import ServiceList from "./ServiceList";
 import Placeholder from "./Placeholder";
 import { Hero, QuoteBlock, SectionHead } from "./Wire";
+void SectionHead;
 import CaseStudyStrip from "./CaseStudyStrip";
 import { findCaseStudy, useSiteContent } from "../lib/site-content";
 import type { Person } from "../lib/content";
@@ -47,13 +48,14 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
 
       <h1 className="sr-only">{title}</h1>
       <section className="mx-auto max-w-6xl px-4 pt-12 md:pt-14 pb-10">
-        <SectionHead title="A snapshot of clients" sub={clientsBlurb} />
+        <h2 className="text-sm font-bold text-bgp-ink border-b border-bgp-ink pb-2 mb-5">A snapshot of clients</h2>
+        {clientsBlurb && <p className="text-sm text-bgp-ink/70 mb-4">{clientsBlurb}</p>}
         {clients}
       </section>
 
-      <ServiceList services={services} body={body} variant={servicesVariant} />
+      <ServiceList services={services} body={body} variant={servicesVariant} heading={servicesVariant === "list" ? "Additional services" : "What we offer"} />
 
-      <QuoteBlock quote={quote} />
+      {quote && <QuoteBlock quote={quote} />}
 
       {caseStudies.length > 0 && caseStudyLayout === "stacked" && (
         <section className="mx-auto max-w-6xl px-4 py-10">

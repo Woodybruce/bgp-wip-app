@@ -126,9 +126,9 @@ export default function Leasing() {
         </div>
       </section>
 
-      {/* Where we act: one tile per sector */}
+      {/* Leasing teams: one tile per sector (Woody, 2026-10-16: "where we act change to leasing teams") */}
       <section className="mx-auto max-w-6xl px-4 pb-14">
-        <SectionHead title="Where we act" />
+        <SectionHead title="Leasing teams" />
         <div className={`card-strip sm:grid-cols-2 ${sectors.length > 2 ? "lg:grid-cols-4" : ""}`}>
           {sectors.map((x) => (
             <Link key={x.slug} href={`/leasing/sectors/${x.slug}`} className="group block">

@@ -11,7 +11,7 @@ export default function ServiceList({ services, heading = "What we offer", body,
     // Wireframe slide 41: a grey "Additional services" box at left, the copy at right.
     return (
       <section className="mx-auto max-w-6xl px-4 py-6">
-        <div className="border-t border-bgp-ink pt-8 grid grid-cols-1 md:grid-cols-[300px_1fr] gap-10 items-start">
+        <div className="border-t border-bgp-ink pt-8 grid grid-cols-1 md:grid-cols-[260px_1fr] gap-10 items-start">
           <div className="bg-bgp-mist p-6">
             <p className="text-xs font-bold border-b border-bgp-ink pb-2 mb-4">{heading}</p>
             <ul>
@@ -34,13 +34,11 @@ export default function ServiceList({ services, heading = "What we offer", body,
       {/* Wireframe slides 38 and 41: heading at left with the copy beside it,
           then the list of services with the detail box to its right. */}
       <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-x-10 gap-y-4 border-b border-bgp-ink pb-6 mb-8">
-        <h2 className="display text-2xl md:text-3xl">{heading}</h2>
+        <h2 className="font-light text-2xl md:text-3xl text-bgp-ink">{heading}</h2>
         {body && body.length > 0 && (
           <div className="space-y-3">
-            {body.map((p, i) => (
-              <p key={p.slice(0, 24)} className={`text-base ${i === 0 ? "font-bold text-bgp-ink" : "text-bgp-ink/85"}`}>
-                {p.includes(": ") ? <><strong className="text-bgp-ink">{p.split(": ")[0]}:</strong> {p.split(": ").slice(1).join(": ")}</> : p}
-              </p>
+            {body.map((p) => (
+              <p key={p.slice(0, 24)} className="text-base text-bgp-ink/85">{p}</p>
             ))}
           </div>
         )}
@@ -62,9 +60,9 @@ export default function ServiceList({ services, heading = "What we offer", body,
             ))}
           </ul>
         </div>
-        <div className="bg-bgp-mist p-8">
-          <p className="label-caps mb-3">{current.name}</p>
-          <p className="text-base md:text-lg text-bgp-ink/85">{current.detail}</p>
+        <div className="bg-bgp-mist p-6 md:p-8 flex flex-col">
+          <p className="text-sm text-bgp-ink/85">{current.detail}</p>
+          <button type="button" onClick={() => setSelected((selected + 1) % services.length)} aria-label="Next service" className="mt-6 self-end text-xl leading-none text-bgp-ink hover:text-bgp-wine">→</button>
         </div>
       </div>
     </section>

@@ -5,7 +5,9 @@ import { useSiteContent } from "../lib/site-content";
 
 export default function Consultancy() {
   const service = SERVICES.find((s) => s.slug === "consultancy")!;
-  const { caseStudies, contacts } = useSiteContent();
+  const { caseStudies, contacts, team } = useSiteContent();
+  // Slide 41 shows three contacts: the feed's directors, then the rest of the team.
+  const people = [...contacts.consultancy, ...team.filter((p) => /consultan/i.test(p.team || p.title) && !contacts.consultancy.some((c) => c.name === p.name))].slice(0, 3);
   return (
     <ServicePage
       title="Consultancy"
@@ -14,9 +16,10 @@ export default function Consultancy() {
       body={CONSULTANCY_BODY}
       clients={<ClientRow clients={CONSULTANCY_CLIENTS} />}
       services={CONSULTANCY_SERVICES}
+      servicesVariant="list"
       quote={CONSULTANCY_TESTIMONIAL}
       caseStudies={caseStudies.filter((c) => c.service === "Consultancy")}
-      contacts={contacts.consultancy}
+      contacts={people}
     />
   );
 }
