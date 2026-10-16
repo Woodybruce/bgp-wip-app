@@ -2,7 +2,17 @@ import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
 import { Band, SectionHead } from "../components/Wire";
-import { HERO_SLIDES, HERO_STATEMENT, HOME_INTRO, SERVICES, TESTIMONIAL } from "../lib/content";
+import { CONSULTANCY_BODY, HERO_SLIDES, HERO_STATEMENT, HOME_INTRO, LEASE_ADVISORY_BODY, LEASING_INTRO, SERVICES, SERVICE_COPY, TESTIMONIAL } from "../lib/content";
+
+// Slide 23 gives each service overview about five lines, so each block
+// carries its intro plus one paragraph from its own page.
+const SECOND_PARAGRAPH: Record<string, string> = {
+  leasing: LEASING_INTRO.body[0],
+  investment: SERVICE_COPY.investment.body[0],
+  "brand-representation": SERVICE_COPY.brandRepresentation.body[0],
+  "lease-advisory": LEASE_ADVISORY_BODY[1],
+  consultancy: CONSULTANCY_BODY[1],
+};
 import { useSiteContent } from "../lib/site-content";
 
 // Home per wireframe slides 22–23: hero with the statement bottom-left,
@@ -91,6 +101,7 @@ export default function Home() {
                 </div>
                 <div className="[direction:ltr]">
                   <p className="text-base md:text-lg text-bgp-ink/90">{service.intro}</p>
+                  {SECOND_PARAGRAPH[service.slug] && <p className="mt-3 text-base md:text-lg text-bgp-ink/90">{SECOND_PARAGRAPH[service.slug]}</p>}
                   <p className="mt-5"><Link href={`/${service.slug}`} className="explore-link">Find out more</Link></p>
                 </div>
               </div>

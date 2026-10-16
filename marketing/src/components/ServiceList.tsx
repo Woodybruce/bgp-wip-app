@@ -62,6 +62,10 @@ export default function ServiceList({ services, heading = "What we offer", body,
         </div>
         <div className="bg-bgp-mist p-6 md:p-8 flex flex-col">
           <p className="text-sm text-bgp-ink/85">{current.detail}</p>
+          {/* Slide 38 fills this box with about seven lines; short entries show the gap in italics. */}
+          {current.detail.length < 220 && (
+            <p className="mt-3 text-sm text-bgp-ink/85 italic">Draft: two or three more sentences from the team on how this works in practice, a recent example, and what it meant for the client.</p>
+          )}
           <button type="button" onClick={() => setSelected((selected + 1) % services.length)} aria-label="Next service" className="mt-6 self-end text-xl leading-none text-bgp-ink hover:text-bgp-wine">→</button>
         </div>
       </div>
