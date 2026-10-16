@@ -15,6 +15,11 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   2525/113 A, 7289-1b.
 - `topographic-survey/` — Warner Surveys topographic survey RT/319/0418 (27 Aug 2019, for Gerald
   Eve): data issue sheet, sheets P0001-P0010 and the combined DWG.
+- `analysis/parking-plan.png` — BGP plan of every marked parking bay traced from the Warner
+  topographic survey (sheets registered to the OS grid): 180 bays in the main car park off Bank
+  Lane (wrapping the squash courts) and 18 beside the sports hall exit, 198 in total, against the
+  180 the business plan needs (Third Space 150 + Grange 30). The Grange, cottages and NTC are
+  outside the surveyed area. Check which lot the main car park falls in.
 - `service-charge/` — Gerald Eve service charge BUDGETS for The Grange, years ending 24 March
   2024, 2025 and 2026 (budgets, not reconciled year-end accounts).
 - `legal/national-tennis-centre/` — Agreement for Lease 3 July 2003 (two scanned parts), Deed of
