@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import Placeholder from "./Placeholder";
+import { Band } from "./Wire";
 import type { CaseStudy } from "../lib/content";
 
-// v2c: Stone band, centred headline. With several case studies the
-// arrows step through them in place (Woody, 2026-10-12); the image and
-// "Read more" open the case study.
+// Wireframe case study band: "Case study" label, title and intro at left
+// with Find out more, an image carousel with arrows and dots at right.
+// With several case studies the arrows step through them; with one they
+// step through its photos.
 export default function CaseStudyStrip({ caseStudy, caseStudies }: { caseStudy?: CaseStudy; caseStudies?: CaseStudy[] }) {
   const items = (caseStudies && caseStudies.length ? caseStudies : caseStudy ? [caseStudy] : []).filter(Boolean);
   const [index, setIndex] = useState(0);
@@ -14,49 +16,41 @@ export default function CaseStudyStrip({ caseStudy, caseStudies }: { caseStudy?:
   const current = items[index % items.length];
   const photos = [current.image, ...(current.gallery || [])].filter(Boolean) as string[];
   const shown = photos[photo % Math.max(photos.length, 1)];
-  const step = (d: number) => { setPhoto(0); setIndex((i) => (i + d + items.length) % items.length); };
   const many = items.length > 1;
+  const steps = many ? items.length : photos.length;
+  const at = many ? index : photo;
+  const step = (d: number) => {
+    if (many) { setPhoto(0); setIndex((i) => (i + d + items.length) % items.length); }
+    else setPhoto((p) => (p + d + photos.length) % photos.length);
+  };
   return (
-    <section className="bg-bgp-pink">
-      <div className="mx-auto max-w-6xl px-4 py-16 text-center">
-        <p className="label-caps text-bgp-wine">Case study{many ? ` ${index + 1} of ${items.length}` : ""}</p>
-        <h2 className="display text-4xl md:text-5xl mt-3">{current.title}</h2>
-        <div className="relative mx-auto max-w-3xl mt-8">
-          {many && (
-            <button type="button" onClick={() => step(-1)} aria-label="Previous case study" className="hidden md:block absolute -left-14 top-1/2 -translate-y-1/2 text-bgp-wine text-4xl leading-none px-2 hover:text-bgp-wine">‹</button>
-          )}
-          <Link href={`/case-studies/${current.slug}`} className="block">
-            <Placeholder className="aspect-[16/9] w-full" src={shown} alt={current.title} label="Photo to follow" />
+    <Band>
+      <p className="label-caps text-bgp-ink/60 mb-4">Case study</p>
+      <div className="grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-8 md:gap-12 items-start">
+        <div>
+          <h2 className="display text-2xl md:text-3xl">
+            <Link href={`/case-studies/${current.slug}`} className="hover:opacity-80">{current.title}</Link>
+          </h2>
+          <p className="mt-5 text-base text-bgp-ink/85 max-w-md">{current.blurb}</p>
+          <p className="mt-5"><Link href={`/case-studies/${current.slug}`} className="explore-link">Find out more</Link></p>
+        </div>
+        <div className="relative">
+          <Link href={`/case-studies/${current.slug}`} className="block img-frame">
+            <Placeholder className="aspect-[16/10] w-full" src={shown} alt={current.title} label="Photo to follow" />
           </Link>
-          {many && (
-            <button type="button" onClick={() => step(1)} aria-label="Next case study" className="hidden md:block absolute -right-14 top-1/2 -translate-y-1/2 text-bgp-wine text-4xl leading-none px-2 hover:text-bgp-wine">›</button>
+          {steps > 1 && (
+            <>
+              <button type="button" onClick={() => step(-1)} aria-label="Previous" className="absolute left-3 top-1/2 -translate-y-1/2 h-9 w-9 flex items-center justify-center bg-bgp-cream/85 text-bgp-wine text-xl hover:bg-bgp-cream">‹</button>
+              <button type="button" onClick={() => step(1)} aria-label="Next" className="absolute right-3 top-1/2 -translate-y-1/2 h-9 w-9 flex items-center justify-center bg-bgp-cream/85 text-bgp-wine text-xl hover:bg-bgp-cream">›</button>
+              <div className="absolute bottom-3 inset-x-0 flex justify-center gap-1.5" aria-hidden>
+                {Array.from({ length: steps }, (_, i) => (
+                  <span key={i} className={`h-1.5 w-1.5 rounded-full ${i === at ? "bg-bgp-cream" : "bg-bgp-cream/45"}`} />
+                ))}
+              </div>
+            </>
           )}
         </div>
-        {photos.length > 1 && (
-          <div className="mx-auto max-w-3xl mt-3 grid grid-cols-4 gap-3">
-            {photos.slice(0, 4).map((src, i) => (
-              <button key={src} type="button" onClick={() => setPhoto(i)} aria-label={`Photo ${i + 1}`} className={`img-frame border-2 ${i === photo % photos.length ? "border-bgp-wine" : "border-transparent"}`}>
-                <Placeholder className="aspect-[4/3] w-full" src={src} alt="" />
-              </button>
-            ))}
-          </div>
-        )}
-        {many && (
-          <div className="mt-5 flex justify-center gap-3 md:hidden">
-            <button type="button" onClick={() => step(-1)} aria-label="Previous case study" className="label-caps text-bgp-wine px-3 py-2">‹ Prev</button>
-            <button type="button" onClick={() => step(1)} aria-label="Next case study" className="label-caps text-bgp-wine px-3 py-2">Next ›</button>
-          </div>
-        )}
-        <p className="mx-auto mt-6 max-w-md text-base md:text-lg text-bgp-ink/90">{current.blurb}</p>
-        <p className="mt-5"><Link href={`/case-studies/${current.slug}`} className="explore-link">Read more</Link></p>
-        {many && (
-          <div className="mt-6 flex justify-center gap-2" aria-hidden>
-            {items.map((it, i) => (
-              <button key={it.slug} type="button" onClick={() => { setPhoto(0); setIndex(i); }} className={`h-1.5 w-6 transition-colors ${i === index ? "bg-bgp-wine" : "bg-bgp-wine/25"}`} />
-            ))}
-          </div>
-        )}
       </div>
-    </section>
+    </Band>
   );
 }

@@ -4,6 +4,7 @@ import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
+import { Hero, SectionHead } from "../components/Wire";
 import { findCaseStudy, useSiteContent } from "../lib/site-content";
 import { LEASING_INTRO, LEASING_SECTORS } from "../lib/content";
 import { Listing, fetchListings } from "../lib/api";
@@ -101,59 +102,39 @@ export default function Leasing() {
 
   return (
     <div>
-      <Placeholder className="h-64 md:h-[22rem] w-full" src="/images/gallery/mayfair-3.jpg" alt="North Audley Street, Mayfair" />
-      <section className="mx-auto max-w-3xl px-4 pt-12 pb-8 text-center">
-        <h1 className="display text-4xl md:text-5xl">Leasing</h1>
-        <p className="mt-5 font-light text-xl md:text-2xl text-bgp-wine">{LEASING_INTRO.headline}</p>
-        {LEASING_INTRO.body.map((p) => (
-          <p key={p.slice(0, 24)} className="mt-5 text-base md:text-lg text-bgp-ink/90">{p}</p>
-        ))}
+      <Hero src="/images/gallery/mayfair-3.jpg" alt="North Audley Street, Mayfair" label="Leasing" statement={LEASING_INTRO.headline} />
+
+      <section className="mx-auto max-w-6xl px-4 py-12 md:py-14">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-12">
+          {LEASING_INTRO.body.map((p) => (
+            <p key={p.slice(0, 24)} className="text-base md:text-lg text-bgp-ink/90">{p}</p>
+          ))}
+        </div>
       </section>
 
-      {/* Where we work — one tile per sector */}
+      {/* Where we act: one tile per sector */}
       <section className="mx-auto max-w-6xl px-4 pb-14">
-        {sectors.length === 1 ? (
-          <Link href={`/leasing/sectors/${sectors[0].slug}`} className="group grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
-            <div className="img-frame">
-              <Placeholder className="aspect-[4/3] w-full" src={sectors[0].image} alt={sectors[0].name} />
-            </div>
-            <div>
-              <span className="section-label">Where we act</span>
-              <h2 className="display text-3xl md:text-4xl group-hover:text-bgp-burgundy transition-colors">{sectors[0].name}</h2>
-              <p className="mt-4 text-base md:text-lg text-bgp-ink/90">{sectors[0].headline}</p>
-              <p className="mt-5"><span className="explore-link">Explore</span></p>
-            </div>
-          </Link>
-        ) : (
+        <SectionHead title="Where we act" />
         <div className={`card-strip sm:grid-cols-2 ${sectors.length > 2 ? "lg:grid-cols-4" : ""}`}>
           {sectors.map((x) => (
             <Link key={x.slug} href={`/leasing/sectors/${x.slug}`} className="group block">
               <div className="img-frame">
                 <Placeholder className="aspect-[4/3] w-full" src={x.image} alt={x.name} />
               </div>
-              <p className="label-caps mt-4 group-hover:text-bgp-burgundy transition-colors">
-                {x.name}
-              </p>
-              <p className="mt-3"><span className="explore-link">Explore</span></p>
+              <p className="label-caps mt-3 text-bgp-wine">{x.name}</p>
+              <p className="mt-2"><span className="explore-link">Find out more</span></p>
             </Link>
           ))}
         </div>
-        )}
       </section>
 
-      <section className="mx-auto max-w-3xl px-4 pb-8 text-center">
-        <span className="section-label">Availability</span>
-        <h2 className="display text-3xl md:text-4xl">Current opportunities</h2>
-        {!live && !loading && (
-          <p className="mt-4 text-xs text-bgp-wine">
-            Showing sample listings. The live availability feed is not connected in this environment.
-          </p>
-        )}
-      </section>
-
-      {/* Filter row */}
-      <section className="mx-auto max-w-6xl px-4">
-        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center justify-center gap-x-10 sm:gap-y-3 border-y border-bgp-wine/30 py-2 sm:py-3">
+      {/* Snapshot of available properties */}
+      <section className="mx-auto max-w-6xl px-4 pb-14">
+        <SectionHead
+          title="Snapshot of available properties"
+          sub={!live && !loading ? "Showing sample listings. The live availability feed is not connected in this environment." : "Please contact us for full availability"}
+        />
+        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-x-10 sm:gap-y-3 border-b border-bgp-wine/30 pb-3 -mt-4">
           <span className="label-caps text-bgp-ink/60 py-2.5 sm:py-0 border-b border-bgp-wine/10 sm:border-0">Filter by</span>
           <FilterSelect label="Location" value={location} options={locations} onChange={setLocation} />
           <FilterSelect label="Type" value={type} options={types} onChange={setType} />
@@ -161,25 +142,23 @@ export default function Leasing() {
         </div>
 
         {loading ? (
-          <p className="py-16 text-center label-caps text-bgp-ink/40">Loading availability…</p>
+          <p className="py-16 label-caps text-bgp-ink/40">Loading availability…</p>
         ) : listings.length === 0 ? (
-          <div className="py-16 text-center">
+          <div className="py-16">
             <p className="display text-xl md:text-2xl">Current availability is being updated.</p>
             <p className="mt-3 text-[15px] text-bgp-ink/80">
               For our latest opportunities, contact the leasing team below.
             </p>
           </div>
         ) : filtered.length === 0 ? (
-          <p className="py-16 text-center text-[15px] text-bgp-ink/80">
+          <p className="py-16 text-[15px] text-bgp-ink/80">
             Nothing matches those filters. Please contact us for full availability.
           </p>
         ) : (
           <>
-            {/* Horizontal swipe strip — keeps the case study and contacts in
-                view below instead of pushing them down a long grid */}
-            <div ref={gridTop} className="scroll-mt-28 mt-10 card-strip sm:grid-cols-2 lg:grid-cols-3 sm:gap-x-6 sm:gap-y-12">
-              {pageItems.map((l) => (
-                <div key={l.id} className="h-full">
+            <div ref={gridTop} className="scroll-mt-28 mt-8 card-strip sm:grid-cols-2 lg:grid-cols-3 sm:gap-x-6 sm:gap-y-10">
+              {pageItems.map((l, i) => (
+                <div key={l.id} className={`h-full ${i === 3 && pageItems.length >= 6 ? "lg:col-span-2" : ""}`}>
                   <ListingCard listing={l} />
                 </div>
               ))}
@@ -190,15 +169,15 @@ export default function Leasing() {
               </p>
             )}
             {pageCount > 1 && (
-              <nav aria-label="Listing pages" className="mt-10 flex items-center justify-center gap-2 border-t border-bgp-wine/30 pt-6">
-                <button type="button" onClick={() => goTo(page - 1)} disabled={page === 1} className="label-caps px-3 py-2 text-bgp-wine disabled:text-bgp-ink/30 hover:text-bgp-wine">‹ Prev</button>
+              <nav aria-label="Listing pages" className="mt-10 flex items-center gap-2 border-t border-bgp-wine/30 pt-6">
+                <button type="button" onClick={() => goTo(page - 1)} disabled={page === 1} className="label-caps px-3 py-2 text-bgp-wine disabled:text-bgp-ink/30 hover:opacity-70">‹ Prev</button>
                 {Array.from({ length: pageCount }, (_, i) => i + 1).map((n) => (
                   <button key={n} type="button" onClick={() => goTo(n)} aria-current={n === page ? "page" : undefined}
                     className={`tabular min-w-[2.25rem] px-2 py-2 text-sm border-b-2 transition-colors ${n === page ? "border-bgp-wine text-bgp-wine" : "border-transparent text-bgp-ink/60 hover:text-bgp-wine"}`}>
                     {n}
                   </button>
                 ))}
-                <button type="button" onClick={() => goTo(page + 1)} disabled={page === pageCount} className="label-caps px-3 py-2 text-bgp-wine disabled:text-bgp-ink/30 hover:text-bgp-wine">Next ›</button>
+                <button type="button" onClick={() => goTo(page + 1)} disabled={page === pageCount} className="label-caps px-3 py-2 text-bgp-wine disabled:text-bgp-ink/30 hover:opacity-70">Next ›</button>
                 <span className="ml-4 hidden sm:inline label-caps text-bgp-ink/40">{filtered.length} available</span>
               </nav>
             )}
@@ -206,10 +185,8 @@ export default function Leasing() {
         )}
       </section>
 
-      <div className="mt-16">
-        <CaseStudyStrip caseStudies={["lucent-piccadilly", "st-christophers-place", "south-molton-triangle", "canary-wharf"].map((slug) => findCaseStudy(content, slug))} />
-      </div>
-      <KeyContacts people={content.contacts.leasing} />
+      <KeyContacts people={content.contacts.leasing} blurb="Our leasing team would be delighted to arrange a viewing or share full particulars." />
+      <CaseStudyStrip caseStudies={["lucent-piccadilly", "st-christophers-place", "south-molton-triangle", "canary-wharf"].map((slug) => findCaseStudy(content, slug))} />
     </div>
   );
 }

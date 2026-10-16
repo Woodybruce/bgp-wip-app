@@ -24,23 +24,24 @@ export default function ArticlePage() {
   }
 
   return (
-    <article className="mx-auto max-w-3xl px-4 py-14">
-      <p className="label-caps border-b border-bgp-ink pb-2 text-bgp-ink/50">News and insights</p>
+    <article className="mx-auto max-w-4xl px-4 py-14">
+      <h2 className="display text-2xl md:text-3xl border-b border-bgp-ink pb-3">News and insights</h2>
 
-      <div className="mt-8 flex flex-wrap gap-x-6 label-caps text-bgp-ink/50">
-        <span>{article.date}</span>
-        <span>By {article.author}</span>
+      <div className="mt-4 flex flex-wrap justify-between gap-x-6 label-caps text-bgp-ink/50 bg-bgp-mist px-4 py-2">
+        <span>{article.date} <span className="mx-2 text-bgp-ink/30">·</span> By {article.author}</span>
         <span>{article.category}</span>
       </div>
 
-      <h1 className="mt-4 text-3xl md:text-4xl leading-tight">{article.title}</h1>
-
-      <div className="mt-8 grid grid-cols-1 md:grid-cols-[1fr_220px] gap-8 items-start">
+      {/* Wireframe slide 46: image at left, headline and standfirst beside it */}
+      <div className="mt-6 grid grid-cols-1 md:grid-cols-[1.3fr_1fr] gap-8 items-start">
         <Placeholder className="aspect-[4/3] w-full" src={article.image} alt={article.title} />
-        <p className="text-sm text-bgp-ink/70">{article.standfirst}</p>
+        <div>
+          <h1 className="font-light text-2xl md:text-3xl text-bgp-wine">{article.title}</h1>
+          <p className="mt-4 text-sm text-bgp-ink/75">{article.standfirst}</p>
+        </div>
       </div>
 
-      <div className="mt-10 space-y-5">
+      <div className="mt-10 space-y-5 max-w-3xl">
         {article.body ? (
           article.body.map((para, i) =>
             para.startsWith("## ") ? (

@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import KeyContacts from "./KeyContacts";
 import ServiceList from "./ServiceList";
 import Placeholder from "./Placeholder";
+import { Band, Hero, SectionHead } from "./Wire";
 import type { Person } from "../lib/content";
 
 // One layout for the single-page services (Brand Representation, Lease
@@ -26,20 +27,16 @@ export interface ServicePageProps {
 }
 
 export default function ServicePage({ title, hero, intro, body, clients, clientsBlurb, services, quote, caseStudies, contacts, contactsBlurb }: ServicePageProps) {
-  const cols = caseStudies.length >= 4 ? "sm:grid-cols-2 lg:grid-cols-4" : caseStudies.length === 3 ? "sm:grid-cols-3" : "sm:grid-cols-2";
   return (
     <div>
-      {/* Same opening as Leasing: photo, then the page name as the headline
-          with the team's statement and copy centred beneath (Woody, 2026-10-15) */}
-      <Placeholder className="h-64 md:h-[22rem] w-full" src={hero.src} alt={hero.alt} />
-      <section className="mx-auto max-w-3xl px-4 pt-12 pb-4 text-center">
-        <h1 className="display text-4xl md:text-5xl">{title}</h1>
-        <p className="mt-5 font-light text-xl md:text-2xl text-bgp-wine">{intro}</p>
-      </section>
+      {/* Wireframe slides 35, 38, 41: statement over the hero, left-aligned
+          sections over rules, grey bands for contacts and the case study. */}
+      <Hero src={hero.src} alt={hero.alt} label={title} statement={intro} />
 
       {body && body.length > 0 && (
-        <section className="mx-auto max-w-3xl px-4 pt-4 text-center">
-          <div className="space-y-4">
+        <section className="mx-auto max-w-6xl px-4 py-12 md:py-14">
+          <h1 className="sr-only">{title}</h1>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-12">
             {body.map((p, i) => (
               <p key={p.slice(0, 24)} className={`text-base md:text-lg ${i === 0 ? "text-bgp-ink" : "text-bgp-ink/90"}`}>
                 {p.includes(": ") ? <><strong className="text-bgp-ink">{p.split(": ")[0]}:</strong> {p.split(": ").slice(1).join(": ")}</> : p}
@@ -49,10 +46,8 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
         </section>
       )}
 
-      <section className="mx-auto max-w-6xl px-4 py-14">
-        <h2 className="display text-2xl md:text-3xl mb-3">A snapshot of clients</h2>
-        {clientsBlurb && <p className="max-w-2xl text-base md:text-lg text-bgp-ink/90 mb-10">{clientsBlurb}</p>}
-        {!clientsBlurb && <div className="mb-5" />}
+      <section className="mx-auto max-w-6xl px-4 pb-14">
+        <SectionHead title="A snapshot of clients" sub={clientsBlurb} />
         {clients}
       </section>
 
@@ -61,7 +56,7 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
       {quote && (
         <section className="mx-auto max-w-6xl px-4 py-14">
           <div className="max-w-2xl border-l-2 border-bgp-wine pl-6">
-            <p className="text-lg font-light text-bgp-ink/80">"{quote.quote}"</p>
+            <p className="text-lg font-light text-bgp-ink/80">“{quote.quote}”</p>
             <p className="label-caps mt-4">{quote.name}</p>
             <p className="text-xs text-bgp-ink/50 uppercase">{quote.title}</p>
           </div>
@@ -70,16 +65,19 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
 
       {caseStudies.length > 0 && (
         <section className="mx-auto max-w-6xl px-4 py-10">
-          <span className="section-label">Case studies</span>
-          <div className={`card-strip ${cols} mt-6`}>
-            {caseStudies.map((cs) => (
-              <Link key={cs.slug} href={`/case-studies/${cs.slug}`} className="group block">
-                <div className="img-frame">
-                  <Placeholder className="aspect-[4/3] w-full" src={cs.image} alt={cs.title} label="Photo to follow" />
+          <SectionHead title="Case studies" />
+          {/* Wireframe slide 35: stacked blocks, text beside image, alternating sides */}
+          <div className="grid grid-cols-1 gap-4">
+            {caseStudies.map((cs, i) => (
+              <Link key={cs.slug} href={`/case-studies/${cs.slug}`} className={`group grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-6 md:gap-10 p-5 md:p-7 ${i % 2 ? "bg-bgp-mist md:[direction:rtl]" : "border border-bgp-line"}`}>
+                <div className="[direction:ltr]">
+                  <p className="label-caps text-bgp-wine">{cs.title}</p>
+                  <p className="mt-3 text-base text-bgp-ink/90 max-w-md">{cs.blurb}</p>
+                  <p className="mt-4"><span className="explore-link">Read more</span></p>
                 </div>
-                <p className="label-caps mt-4 group-hover:text-bgp-burgundy transition-colors">{cs.title}</p>
-                <p className="mt-2 text-base md:text-lg text-bgp-ink/90">{cs.blurb}</p>
-                <p className="mt-3"><span className="explore-link">Read more</span></p>
+                <div className="img-frame [direction:ltr]">
+                  <Placeholder className="aspect-[16/10] w-full" src={cs.image} alt={cs.title} label="Photo to follow" />
+                </div>
               </Link>
             ))}
           </div>

@@ -1,34 +1,34 @@
 import { cardUrlFor, type Person } from "../lib/content";
 import { useTeamPhoto } from "../lib/team-photos";
 
-// Initials monogram on blush when no headshot exists — an empty grey
-// placeholder frame read as unfinished, which undermined the premium feel.
+// Compact contact tile per the wireframe key-contacts row: small portrait,
+// caps name, title, phone, email. Initials on Stone when no headshot exists.
 function Monogram({ name }: { name: string }) {
   const initials = name.split(" ").map((n) => n[0]).slice(0, 2).join("");
   return (
-    <div className="aspect-[3/4] w-full bg-bgp-pink/50 border border-bgp-pink flex items-center justify-center">
-      <span className="font-display font-bold text-4xl text-bgp-wine/60">{initials}</span>
+    <div className="aspect-[4/5] w-full bg-bgp-stone/40 flex items-center justify-center">
+      <span className="font-display font-bold text-3xl text-bgp-wine/60">{initials}</span>
     </div>
   );
 }
 
-export default function ContactCard({ person }: { person: Person }) {
+export default function ContactCard({ person, compact = false }: { person: Person; compact?: boolean }) {
   const photo = useTeamPhoto(person);
   return (
-    <div className="w-full group">
+    <div className={`w-full group ${compact ? "max-w-[9.5rem]" : ""}`}>
       <div className="img-frame">
         {photo ? (
-          <img src={photo} alt={person.name} className="aspect-[3/4] w-full object-cover grayscale" />
+          <img src={photo} alt={person.name} className="aspect-[4/5] w-full object-cover grayscale" />
         ) : (
           <Monogram name={person.name} />
         )}
       </div>
-      <p className="label-caps mt-3 text-bgp-wine"><a href={cardUrlFor(person.name)} className="hover:text-bgp-wine" title="Business card">{person.name}</a></p>
-      <div className="mt-1 text-sm text-bgp-ink/70">
+      <p className="label-caps mt-3 text-bgp-wine"><a href={cardUrlFor(person.name)} className="hover:opacity-70" title="Business card">{person.name}</a></p>
+      <div className="mt-1 text-xs text-bgp-ink/70 space-y-0.5">
         <p>{person.title}</p>
         <p className="tabular">{person.phone}</p>
         {person.email !== "TBC" && (
-          <p className="text-[13px] whitespace-nowrap overflow-hidden text-ellipsis">
+          <p className="whitespace-nowrap overflow-hidden text-ellipsis">
             <a href={`mailto:${person.email}`} className="hover:text-bgp-wine">{person.email}</a>
           </p>
         )}

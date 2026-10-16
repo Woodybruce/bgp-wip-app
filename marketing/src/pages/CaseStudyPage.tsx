@@ -2,6 +2,8 @@ import { useEffect } from "react";
 import { Link, useRoute } from "wouter";
 import Placeholder from "../components/Placeholder";
 import KeyContacts from "../components/KeyContacts";
+import { SectionHead } from "../components/Wire";
+import { useState } from "react";
 import { type SiteContent, useSiteContent } from "../lib/site-content";
 import { INVESTMENT_DEALS } from "../lib/content";
 
@@ -13,6 +15,25 @@ const contactsFor = (c: SiteContent["contacts"], service: string) =>
     Consultancy: c.consultancy,
     "Lease Advisory": c.lease_advisory,
   })[service] ?? c.leasing.slice(0, 3);
+
+function Carousel({ photos, alt }: { photos: string[]; alt: string }) {
+  const [i, setI] = useState(0);
+  const step = (d: number) => setI((x) => (x + d + photos.length) % photos.length);
+  return (
+    <div className="relative mt-8">
+      <div className="img-frame"><Placeholder className="aspect-[16/10] w-full" src={photos[i]} alt={alt} /></div>
+      {photos.length > 1 && (
+        <>
+          <button type="button" onClick={() => step(-1)} aria-label="Previous photo" className="absolute left-3 top-1/2 -translate-y-1/2 h-9 w-9 flex items-center justify-center bg-bgp-cream/85 text-bgp-wine text-xl hover:bg-bgp-cream">‹</button>
+          <button type="button" onClick={() => step(1)} aria-label="Next photo" className="absolute right-3 top-1/2 -translate-y-1/2 h-9 w-9 flex items-center justify-center bg-bgp-cream/85 text-bgp-wine text-xl hover:bg-bgp-cream">›</button>
+          <div className="absolute bottom-3 inset-x-0 flex justify-center gap-1.5" aria-hidden>
+            {photos.map((_, k) => <span key={k} className={`h-1.5 w-1.5 rounded-full ${k === i ? "bg-bgp-cream" : "bg-bgp-cream/45"}`} />)}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 export default function CaseStudyPage() {
   const [, params] = useRoute("/case-studies/:slug");
@@ -38,6 +59,7 @@ export default function CaseStudyPage() {
   const contacts = contactsFor(content.contacts, caseStudy.service);
   // Wireframe: investment case studies end with similar transactions.
   const related = caseStudy.service === "Investment" ? INVESTMENT_DEALS.filter((d) => !caseStudy.title.includes(d.name.split(",")[0])).slice(0, 3) : [];
+  const photos = [caseStudy.image, ...(caseStudy.gallery || [])].filter(Boolean) as string[];
 
   return (
     <div>
@@ -45,28 +67,19 @@ export default function CaseStudyPage() {
         <p className="label-caps border-b border-bgp-ink pb-2 text-bgp-ink/50">
           Case study · {caseStudy.service}
         </p>
+        {/* Wireframe slide 32: title and intro at left with the facts panel
+            beside them, then an image carousel with arrows and dots. */}
         <div className="mt-8 grid grid-cols-1 md:grid-cols-[1fr_220px] gap-10">
           <div>
-            <h1 className="display text-3xl md:text-4xl leading-tight">{caseStudy.title}</h1>
-            {caseStudy.image && (
-              <div className="mt-6 img-frame">
-                <Placeholder className="aspect-[16/10] w-full" src={caseStudy.image} alt={caseStudy.title} />
-              </div>
-            )}
-            {caseStudy.gallery && caseStudy.gallery.length > 0 && (
-              <div className={`mt-4 grid gap-4 ${caseStudy.gallery.length >= 3 ? "grid-cols-3" : "grid-cols-2"}`}>
-                {caseStudy.gallery.slice(0, 3).map((src) => (
-                  <div key={src} className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={src} alt={caseStudy.title} /></div>
-                ))}
-              </div>
-            )}
-            <div className="mt-8 space-y-4 max-w-xl">
+            <h1 className="display text-3xl md:text-4xl">{caseStudy.title}</h1>
+            <div className="mt-5 space-y-4 max-w-xl">
               {caseStudy.body.map((para) => (
                 <p key={para.slice(0, 32)} className="text-base text-bgp-ink/85">
                   {para}
                 </p>
               ))}
             </div>
+            {photos.length > 0 && <Carousel photos={photos} alt={caseStudy.title} />}
           </div>
 
           <aside>
@@ -92,7 +105,7 @@ export default function CaseStudyPage() {
 
       {related.length > 0 && (
         <section className="mx-auto max-w-6xl px-4 py-10">
-          <h2 className="display text-2xl md:text-3xl mb-8">Similar transactions</h2>
+          <SectionHead title="Similar transactions" sub="By location" />
           <div className="card-strip sm:grid-cols-3 sm:gap-6">
             {related.map((deal) => (
               <Link key={deal.name} href="/investment" className="group block">
@@ -112,7 +125,7 @@ export default function CaseStudyPage() {
       )}
 
       <section className="mx-auto max-w-6xl px-4 py-10">
-        <h2 className="display text-2xl md:text-3xl mb-8">More case studies</h2>
+        <SectionHead title="More case studies" />
         <div className="card-strip sm:grid-cols-3">
           {others.map((c) => (
             <Link key={c.slug} href={`/case-studies/${c.slug}`} className="group block">

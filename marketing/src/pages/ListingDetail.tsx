@@ -3,6 +3,7 @@ import { Link, useRoute } from "wouter";
 import Placeholder from "../components/Placeholder";
 import ListingCard from "../components/ListingCard";
 import KeyContacts from "../components/KeyContacts";
+import { SectionHead } from "../components/Wire";
 import { Suspense, lazy } from "react";
 // Leaflet touches `window` when it loads, so the map stays out of the
 // build-time render and arrives lazily in the browser.
@@ -113,26 +114,15 @@ export default function ListingDetail() {
   return (
     <div className="pb-24 md:pb-0">
       <section className="mx-auto max-w-6xl px-4 pt-8 md:pt-10">
-        <p className="label-caps text-bgp-ink/50">
+        <p className="label-caps text-bgp-ink/50 border-b border-bgp-ink pb-2">
           <Link href="/leasing" className="hover:text-bgp-wine transition-colors">Leasing</Link>
           <span className="mx-2 text-bgp-wine/40">/</span>
           <span className="text-bgp-wine">{areaLabel(listing) || "Availability"}</span>
         </p>
-        <div className="mt-4 flex flex-wrap items-baseline justify-between gap-x-8 gap-y-2 border-b border-bgp-wine/25 pb-6">
-          <div>
-            {/* Title hierarchy per listingNames: address-named buildings
-                lead with the address, named centres lead with the unit. */}
-            <h1 className="display text-3xl md:text-5xl leading-tight">{names.title}</h1>
-            {(names.secondary || listing.addressLine) && (
-              <p className="mt-2 text-[15px] md:text-base text-bgp-ink/80">
-                {[names.secondary, listing.addressLine].filter(Boolean).join(" · ")}
-              </p>
-            )}
-          </div>
-          {headline && <p className="font-light text-bgp-ink/70 text-lg md:text-xl">{headline}</p>}
-        </div>
       </section>
 
+      {/* Wireframe slide 27: photo with the facts panel to its right, then the
+          title at left with the headline statement at right. */}
       <section className="mx-auto max-w-6xl px-4 py-8 md:py-10">
         <div className="grid grid-cols-1 md:grid-cols-[1fr_240px] gap-10">
           <div>
@@ -142,6 +132,20 @@ export default function ListingDetail() {
               ) : (
                 <Placeholder className="aspect-[16/10] w-full" src={listing.image} alt={displayName} />
               )}
+            </div>
+            <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-10 border-b border-bgp-ink pb-6">
+              <div>
+                <h1 className="display text-3xl md:text-4xl">{names.title}</h1>
+                {(names.secondary || listing.addressLine) && (
+                  <p className="mt-2 text-[15px] md:text-base text-bgp-ink/80">
+                    {[names.secondary, listing.addressLine].filter(Boolean).join(" · ")}
+                  </p>
+                )}
+                {listing.marketingStatus === "Under Offer" && (
+                  <p className="mt-4 inline-block bg-bgp-nectar text-bgp-wine label-caps px-3 py-1.5">Under offer</p>
+                )}
+              </div>
+              {headline && <p className="font-bold text-lg md:text-xl text-bgp-ink/85 md:pt-1">{headline.charAt(0).toUpperCase() + headline.slice(1)}.</p>}
             </div>
             {images.length > 1 && (
               <div className="mt-3 grid grid-cols-4 gap-3">
@@ -162,10 +166,7 @@ export default function ListingDetail() {
                 </div>
               </div>
             )}
-            {listing.marketingStatus === "Under Offer" && (
-              <p className="mt-6 inline-block bg-bgp-burgundy text-bgp-paper label-caps px-3 py-1.5">Under offer</p>
-            )}
-            <p className="mt-6 max-w-lg text-lg text-bgp-ink/80">
+            <p className="mt-6 max-w-lg text-base text-bgp-ink/80">
               {[
                 formatSqft(listing.sqft),
                 listing.propertyName && listing.propertyName !== listing.unitName ? `within ${listing.propertyName.replace(/^\[Sample\]\s*/, "")}` : null,
@@ -176,7 +177,11 @@ export default function ListingDetail() {
           </div>
 
           <aside>
-            <dl className="border-t border-bgp-ink">
+            <div className="flex justify-between border-b border-bgp-ink pb-2 mb-1">
+              <a href={`mailto:${CONTACT.email}?subject=${mailSubject}`} className="label-caps text-bgp-wine hover:opacity-70">Book viewing</a>
+              {brochureHref ? <a href={brochureHref} target="_blank" rel="noreferrer" className="label-caps text-bgp-wine hover:opacity-70">Download</a> : <button onClick={onDownload} className="label-caps text-bgp-wine hover:opacity-70">Download</button>}
+            </div>
+            <dl>
               {keyInfo
                 .filter(([, v]) => v)
                 .map(([k, v]) => (
@@ -226,7 +231,7 @@ export default function ListingDetail() {
 
       {/* Location */}
       <section className="mx-auto max-w-6xl px-4 py-8 md:py-10">
-        <h2 className="display text-2xl md:text-3xl mb-6">Location</h2>
+        <SectionHead title="Location" />
         {hasCoords && isBrowser ? (
           <Suspense fallback={<div className="h-72 md:h-80 w-full bg-bgp-mist" />}><ListingMap lat={lat} lon={lon} className="h-72 md:h-80 w-full" /></Suspense>
         ) : (
@@ -241,7 +246,7 @@ export default function ListingDetail() {
 
       {similar.length > 0 && (
         <section className="mx-auto max-w-6xl px-4 py-10">
-          <h2 className="display text-2xl md:text-3xl mb-8">Similar properties</h2>
+          <SectionHead title="Similar properties" sub="By location" />
           <div className="card-strip sm:grid-cols-3 sm:gap-6">
             {similar.map((l) => (
               <ListingCard key={l.id} listing={l} />

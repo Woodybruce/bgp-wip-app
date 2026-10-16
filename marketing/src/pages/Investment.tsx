@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
 import Placeholder from "../components/Placeholder";
+import { Hero, SectionHead } from "../components/Wire";
 import { INVESTMENT_DEALS, SERVICE_COPY, SERVICES } from "../lib/content";
 import { findCaseStudy, useSiteContent } from "../lib/site-content";
 
@@ -35,32 +36,19 @@ export default function Investment() {
   const service = SERVICES.find((s) => s.slug === "investment")!;
   return (
     <div>
-      <Placeholder className="h-64 md:h-[22rem] w-full" src={service.image} alt="The Royal Exchange, City of London" />
-      <section className="mx-auto max-w-3xl px-4 pt-12 pb-4 text-center">
-        <h1 className="display text-4xl md:text-5xl">Investment</h1>
-        <p className="mt-5 font-light text-xl md:text-2xl text-bgp-wine">{service.intro}</p>
-      </section>
+      <Hero src={service.image} alt="The Royal Exchange, City of London" label="Investment" statement={service.intro} />
 
-      <section className="mx-auto max-w-3xl px-4 pt-4 text-center">
-        <div className="space-y-4">
+      <section className="mx-auto max-w-6xl px-4 py-12 md:py-14">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-12">
           {SERVICE_COPY.investment.body.map((p, i) => (
             <p key={p.slice(0, 24)} className={`text-base md:text-lg ${i === 0 ? "text-bgp-ink" : "text-bgp-ink/90"}`}>{p}</p>
           ))}
         </div>
       </section>
 
-      <section className="mx-auto max-w-6xl px-4 py-16 md:py-20">
-        <div className="flex flex-wrap items-end justify-between gap-4 border-b border-bgp-wine/25 pb-6 mb-10">
-          <div>
-            <span className="section-label">Track record</span>
-            <h2 className="display text-3xl md:text-4xl">A snapshot of recent transactions</h2>
-          </div>
-          <p className="text-base text-bgp-ink/70 max-w-[28ch]">
-            Contact the team for current opportunities and our full track record.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-x-10 gap-y-3 border-y border-bgp-wine/30 py-3 mb-10">
+      <section className="mx-auto max-w-6xl px-4 pb-14">
+        <SectionHead title="Snapshot of properties" sub="Please contact us for full availability" />
+        <div className="flex flex-wrap items-center gap-x-10 gap-y-3 border-b border-bgp-wine/30 pb-3 mb-8 -mt-4">
           <span className="label-caps text-bgp-ink/60">Filter by</span>
           <Filter label="Status" value={status} options={["Completed", "Under offer"]} onChange={setStatus} />
           <Filter label="Type" value={type} options={types} onChange={setType} />
@@ -76,9 +64,9 @@ export default function Investment() {
                 </span>
               </div>
               <div className="mt-3 border-t border-bgp-wine/30 pt-3">
-                <p className="font-normal text-lg text-bgp-wine">{deal.name}</p>
+                <p className="label-caps text-bgp-wine">{deal.name}</p>
                 {deal.address && deal.address !== deal.name && <p className="mt-0.5 text-sm text-bgp-ink/60">{deal.address}</p>}
-                <p className="mt-0.5 label-caps text-bgp-ink/45">{deal.client}</p>
+                <p className="mt-0.5 text-xs text-bgp-ink/55 uppercase">{deal.client}</p>
                 <p className="mt-1.5 text-sm text-bgp-ink/80 tabular">
                   {deal.type === "Transaction" ? "" : deal.type}
                   {deal.type !== "Transaction" && deal.price ? " · " : ""}
@@ -98,8 +86,8 @@ export default function Investment() {
         )}
       </section>
 
-      <KeyContacts people={INVESTMENT_CONTACTS} />
-      <CaseStudyStrip caseStudy={findCaseStudy(content, "the-royal-exchange")} />
+      <KeyContacts people={INVESTMENT_CONTACTS} blurb="Our investment team would be delighted to discuss current opportunities and our full track record." />
+      <CaseStudyStrip caseStudies={["the-royal-exchange", "19-golden-square", "213-214-upper-street"].map((s) => findCaseStudy(content, s)).filter(Boolean) as any} />
     </div>
   );
 }

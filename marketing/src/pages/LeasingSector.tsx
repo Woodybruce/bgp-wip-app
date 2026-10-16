@@ -2,6 +2,7 @@ import { Link, useRoute } from "wouter";
 import KeyContacts from "../components/KeyContacts";
 import Placeholder from "../components/Placeholder";
 import CaseStudyStrip from "../components/CaseStudyStrip";
+import { Hero, SectionHead } from "../components/Wire";
 import { LEASING_SECTORS, SHOPPING_CENTRES, isDirectorLevel, type Person } from "../lib/content";
 import { findCaseStudy, useSiteContent } from "../lib/site-content";
 
@@ -31,21 +32,22 @@ export default function LeasingSector() {
 
   return (
     <div>
-      <Placeholder className="h-64 md:h-[22rem] w-full" src={sector.image} alt={sector.name} />
-      <section className="mx-auto max-w-3xl px-4 pt-12 pb-4 text-center">
-        <p className="section-label"><Link href="/leasing" className="hover:opacity-70">Leasing</Link></p>
-        <h1 className="display text-4xl md:text-5xl">{sector.name}</h1>
-        <p className="mt-5 font-light text-xl md:text-2xl text-bgp-wine">{sector.headline}</p>
-      </section>
+      <Hero src={sector.image} alt={sector.name} label={<><Link href="/leasing" className="hover:text-white">Leasing</Link> · {sector.name}</>} statement={sector.headline} />
 
-      <section className="mx-auto max-w-6xl px-4 py-14">
-        <div className={`grid grid-cols-1 gap-10 ${sector.howWeHelp ? "md:grid-cols-[1fr_280px]" : "md:grid-cols-2"}`}>
+      <section className="mx-auto max-w-6xl px-4 py-12 md:py-14">
+        <SectionHead as="h1" title={sector.name} right={<a href="#contact" className="label-caps text-bgp-wine hover:opacity-70">Contact</a>} />
+        <div className={`grid grid-cols-1 gap-10 ${sector.howWeHelp ? "md:grid-cols-[1fr_280px]" : "md:grid-cols-[1fr_1.3fr]"}`}>
           <div className="space-y-4">
-            <span className="section-label">Our experience</span>
             {sector.body.map((p, i) => (
-              <p key={p.slice(0, 24)} className={`text-base md:text-lg ${i === 0 ? "font-semibold text-bgp-ink" : "text-bgp-ink/90"}`}>{p}</p>
+              <p key={p.slice(0, 24)} className={`text-base ${i === 0 ? "font-bold text-bgp-ink" : "text-bgp-ink/90"}`}>{p}</p>
             ))}
           </div>
+          {!sector.howWeHelp && sector.gallery && sector.gallery[0] && (
+            <figure className="img-frame">
+              <Placeholder className="aspect-[4/3] w-full" src={sector.gallery[0].src} alt={sector.gallery[0].caption} />
+              <figcaption className="mt-2 label-caps text-bgp-ink/55">{sector.gallery[0].caption}</figcaption>
+            </figure>
+          )}
           {sector.howWeHelp && (
             <div className="bg-bgp-mist p-8 self-start">
               <p className="label-caps border-b border-bgp-ink pb-2 mb-6">How we can help</p>
@@ -59,10 +61,10 @@ export default function LeasingSector() {
         </div>
       </section>
 
-      {sector.gallery && (
+      {sector.gallery && sector.gallery.length > 1 && (
         <section className="mx-auto max-w-6xl px-4 pb-14">
           <div className="card-strip sm:grid-cols-3">
-            {sector.gallery.map((g) => (
+            {sector.gallery.slice(sector.howWeHelp ? 0 : 1).map((g) => (
               <figure key={g.src}>
                 <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={g.src} alt={g.caption} /></div>
                 <figcaption className="mt-2 label-caps text-bgp-ink/55">{g.caption}</figcaption>
@@ -72,9 +74,6 @@ export default function LeasingSector() {
         </section>
       )}
 
-      {sector.caseStudies && sector.caseStudies.length > 0 && (
-        <CaseStudyStrip caseStudies={sector.caseStudies.map((slug) => findCaseStudy(content, slug)).filter(Boolean) as any} />
-      )}
 
       {centres.length > 0 && (
         <section className="mx-auto max-w-6xl px-4 pb-14">
@@ -113,6 +112,9 @@ export default function LeasingSector() {
       )}
 
       {contacts.length > 0 && <KeyContacts people={contacts} />}
+      {sector.caseStudies && sector.caseStudies.length > 0 && (
+        <CaseStudyStrip caseStudies={sector.caseStudies.map((slug) => findCaseStudy(content, slug)).filter(Boolean) as any} />
+      )}
     </div>
   );
 }

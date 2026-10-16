@@ -11,7 +11,7 @@ export default function ServiceList({ services, heading = "What we offer" }: { s
     <section className="mx-auto max-w-6xl px-4 py-6">
       <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-10">
         <div>
-          <h2 className="display text-2xl md:text-3xl">{heading}</h2>
+          <h2 className="display text-2xl md:text-3xl border-b border-bgp-ink pb-3">{heading}</h2>
           <ul className="mt-6 space-y-3">
             {services.map((s, i) => (
               <li key={s.name}>
