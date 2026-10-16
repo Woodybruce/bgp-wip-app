@@ -67,6 +67,18 @@ asks for the list; add to it when he says "put it on the list".
   the words and the italics go. Brand Representation rebuilt to slide 35
   exactly, with the site boxed at 1440px so it stops stretching on wide
   screens. Sheets in `docs/wireframe-review/`.
+- Same day, evening: full visual audit of every page beside its slide
+  (sheets in `docs/wireframe-review/`). Section headings site-wide are
+  now small bold text over a rule and page titles large light type, as
+  every slide draws them; Leasing and Investment lost the quote blocks
+  the slides do not have; Leasing shows "+ More listings" instead of page
+  numbers; Investment is three across with the first deal wide; the
+  investment case study puts the quote photo at the left and drops "More
+  case studies"; estate pages have a regular first paragraph; listings
+  show an italic draft description. Investment hero is now the Royal
+  Exchange interior from the TRE marketing folder (Woody). Kept on
+  purpose: "We are bgp" and the Landsec quote on Home, the Leasing teams
+  tiles, grouped Team.
 - Same day, later: Lease Advisory and Consultancy rebuilt to slides 38 and
   41 (small ruled "A snapshot of clients", light "What we offer" with the
   detail box and arrow, grey "Additional services" box on Consultancy,

@@ -174,6 +174,10 @@ export default function ListingDetail() {
               ].filter(Boolean).join(" ") || "Full particulars available on request."}
               {" "}Full particulars, floor plans and viewing arrangements from the leasing team below.
             </p>
+            {/* Slide 27 gives each listing a paragraph of description; the feed has none yet, so the gap shows in italics. */}
+            <p className="mt-3 text-base text-bgp-ink/80 italic">
+              Draft: a paragraph from the leasing team on the unit, the building and the street, the neighbouring occupiers, and who it would suit.
+            </p>
           </div>
 
           <aside>
