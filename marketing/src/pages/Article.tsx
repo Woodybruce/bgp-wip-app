@@ -28,7 +28,8 @@ export default function ArticlePage() {
     <article className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
       <h2 className="text-2xl font-bold text-bgp-ink border-b border-bgp-ink pb-2">News and insights</h2>
 
-      <div className="mt-4 flex flex-wrap justify-between gap-x-6 label-caps text-bgp-ink/50 bg-bgp-mist px-4 py-2">
+      <div className="mt-4 bg-bgp-mist px-[3%] pt-5 pb-8">
+      <div className="flex flex-wrap justify-between gap-x-6 label-caps text-bgp-ink/60">
         <span>{article.date} <span className="mx-2 text-bgp-ink/30">·</span> By {article.author}</span>
         <span>{article.category}</span>
       </div>
@@ -43,7 +44,7 @@ export default function ArticlePage() {
         </div>
       </div>
 
-      <div className="mt-8 space-y-5 md:ml-[8%] md:mr-[4%] [&>p]:text-base [&>p]:text-bgp-ink/85">
+      <div className="mt-8 space-y-5 md:ml-[5%] md:mr-[1%] [&>p]:text-base [&>p]:text-bgp-ink/85">
         {article.body ? (
           article.body.map((para, i) => (
             <Fragment key={i}>
@@ -75,6 +76,7 @@ export default function ArticlePage() {
         <Link href="/news" className="label-caps hover:text-bgp-burgundy">
           Back to news &amp; insights
         </Link>
+      </div>
       </div>
     </article>
   );
