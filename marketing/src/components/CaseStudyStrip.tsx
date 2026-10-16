@@ -43,11 +43,11 @@ export default function CaseStudyStrip({ caseStudy, caseStudies, band = false }:
       <p className="text-2xl font-bold text-bgp-ink mb-4">Case study</p>
       <div className="grid grid-cols-1 md:grid-cols-[42fr_58fr] gap-8 md:gap-10 items-start">
         <div>
-          <h2 className={`font-normal text-3xl md:text-5xl ${italic}`}>
+          <h2 className={`font-normal text-3xl md:text-4xl ${italic}`}>
             <Link href={`/case-studies/${current.slug}`} className="hover:opacity-80">{current.title}</Link>
           </h2>
-          <div className={`mt-5 space-y-3 text-lg leading-snug text-bgp-ink ${italic}`}>
-            {[current.blurb, ...(current.body || [])].map((para, k) => <p key={k}>{para}</p>)}
+          <div className={`mt-5 space-y-3 text-xl leading-snug text-bgp-ink ${italic}`}>
+            <p>{current.blurb}</p>
           </div>
           <p className="mt-5"><Link href={`/case-studies/${current.slug}`} className="explore-link">Find out more</Link></p>
         </div>
@@ -77,8 +77,8 @@ export default function CaseStudyStrip({ caseStudy, caseStudies, band = false }:
 function Strip({ children, band }: { children: React.ReactNode; band: boolean }) {
   if (band) {
     return (
-      <section className="mx-auto max-w-[1360px] px-4 pb-9">
-        <div className="bg-bgp-mist p-6 md:p-8">{children}</div>
+      <section className="mx-auto max-w-[1360px] px-4 pt-16 pb-14">
+        <div className="bg-bgp-mist px-5 py-8 md:px-6 md:py-10">{children}</div>
       </section>
     );
   }

@@ -23,20 +23,20 @@ export default function BrandRepresentation() {
       <h1 className="sr-only">Brand Representation</h1>
 
       {/* Overview / intro */}
-      <p className="max-w-[62%] font-normal text-2xl md:text-4xl leading-[1.1] text-bgp-ink">
+      <p className="max-w-[66%] font-normal text-2xl md:text-4xl leading-[1.1] text-bgp-ink">
         {service.intro}
       </p>
 
       {/* A snapshot of clients */}
       <section className="mt-10">
-        <h2 className="text-2xl font-bold text-bgp-ink border-b-[3px] border-bgp-ink pb-2 mb-6">A snapshot of clients</h2>
+        <h2 className="text-2xl font-bold text-bgp-ink border-b-[3px] border-bgp-ink pb-3 mb-8 md:ml-[3%] md:mr-[7%] md:pl-[4%]">A snapshot of clients</h2>
         <ClientRow clients={clients} />
       </section>
 
       {/* Case studies */}
       <section className="mt-10 border-t-[3px] border-bgp-ink pt-6">
         <h2 className="text-2xl font-bold text-bgp-ink mb-4">Case studies</h2>
-        <div className="grid grid-cols-1 gap-4">
+        <div className="grid grid-cols-1 gap-1">
           {studies.map((cs, i) => (
             <Link
               key={cs.slug}
@@ -44,14 +44,14 @@ export default function BrandRepresentation() {
               className={`group block p-5 md:p-6 ${i % 2 ? "" : "bg-bgp-mist"}`}
             >
               <p className="text-xs font-bold uppercase text-bgp-ink mb-3">{cs.title}</p>
-              <div className={`grid grid-cols-1 md:grid-cols-[56fr_4fr_40fr] gap-6 md:gap-0 ${i % 2 ? "md:[direction:rtl]" : ""}`}>
+              <div className={`grid grid-cols-1 md:grid-cols-[53fr_4fr_37fr] gap-6 md:gap-0 md:pl-[3%] ${i % 2 ? "md:[direction:rtl]" : ""}`}>
                 <div className="img-frame [direction:ltr]">
                   <Placeholder className="aspect-[4/3] w-full" src={cs.image} alt={cs.title} label="Photo to follow" />
                 </div>
                 <div className="hidden md:block" />
                 <div className="[direction:ltr] flex flex-col">
                   {/* Slide 35 gives each case study a full paragraph, so the blurb and body run together. */}
-                  <div className={`space-y-3 text-base md:text-lg leading-snug text-bgp-ink ${cs.draft ? "italic" : ""}`}>
+                  <div className={`space-y-3 text-lg md:text-xl leading-snug text-bgp-ink ${cs.draft ? "italic" : ""}`}>
                     {[cs.blurb, ...(cs.body || [])].map((para, k) => <p key={k}>{para}</p>)}
                   </div>
                   <p className="mt-auto pt-6 text-[11px] font-bold text-bgp-ink self-end">Read more</p>
@@ -66,7 +66,7 @@ export default function BrandRepresentation() {
       <section className="mt-12 mb-16 grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-8 md:gap-12 items-start">
         <div>
           <h2 className="text-2xl font-bold text-bgp-ink">Key contacts</h2>
-          <p className="mt-3 text-base md:text-lg leading-snug text-bgp-ink">
+          <p className="mt-3 text-lg md:text-xl leading-snug text-bgp-ink">
             Our brand representation team supports occupiers from first site to full network. Talk to us about a first UK store, the next ten, or a portfolio review.
           </p>
         </div>

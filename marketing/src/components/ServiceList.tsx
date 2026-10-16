@@ -13,19 +13,19 @@ export default function ServiceList({ services, heading = "What we offer", body,
   if (variant === "list") {
     // Wireframe slide 41: a grey "Additional services" box at left, the copy at right.
     return (
-      <section className="mx-auto max-w-[1360px] px-4 py-6">
-        <div className="border-t-[3px] border-bgp-ink pt-8 grid grid-cols-1 md:grid-cols-[46fr_54fr] gap-10 items-start">
-          <div className="bg-bgp-mist p-6">
-            <p className="text-xs font-bold border-b border-bgp-ink pb-2 mb-4">{heading}</p>
+      <section className="mx-auto max-w-[1360px] px-4 pt-0 pb-12">
+        <div className="border-t-[3px] border-bgp-ink pt-10 grid grid-cols-1 md:grid-cols-[46fr_54fr] gap-10 items-start">
+          <div className="bg-bgp-mist p-6 md:p-8 md:mr-[8%]">
+            <p className="text-base font-bold border-b-2 border-bgp-ink pb-2 mb-2">{heading}</p>
             <ul>
               {services.slice(0, 3).map((s) => (
-                <li key={s.name} className="text-base text-bgp-ink border-b border-bgp-line py-3 last:border-0">{s.name}</li>
+                <li key={s.name} className="text-lg text-bgp-ink border-b border-bgp-ink/40 py-4 last:border-0">{s.name}</li>
               ))}
             </ul>
           </div>
           <div className="space-y-4">
             {(body ?? []).map((p, i) => (
-              <p key={p.slice(0, 24)} className={`text-base ${i === 0 ? "font-bold text-bgp-ink" : "text-bgp-ink"}`}>{p}</p>
+              <p key={p.slice(0, 24)} className={`text-xl leading-snug ${i === 0 ? "font-bold text-bgp-ink" : "text-bgp-ink"}`}>{p}</p>
             ))}
           </div>
         </div>
@@ -33,15 +33,15 @@ export default function ServiceList({ services, heading = "What we offer", body,
     );
   }
   return (
-    <section className="mx-auto max-w-[1360px] px-4 py-6">
+    <section className="mx-auto max-w-[1360px] px-4 pt-0 pb-12">
       {/* Wireframe slides 38 and 41: heading at left with the copy beside it,
           then the list of services with the detail box to its right. */}
-      <div className="grid grid-cols-1 md:grid-cols-[46fr_54fr] gap-x-10 gap-y-4 border-t-[3px] border-bgp-ink pt-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-[46fr_54fr] gap-x-10 gap-y-4 border-t-[3px] border-bgp-ink pt-10 mb-10">
         <h2 className="font-normal text-3xl md:text-5xl text-bgp-ink whitespace-nowrap">{heading}</h2>
         {body && body.length > 0 && (
           <div className="space-y-3">
             {/* Slide 38 sets one short paragraph beside the heading. */}
-            {body.slice(0, 1).map((p) => (
+            {body.slice(0, 1).map((p) => p.split(". ")[0].replace(/\.?$/, ".")).map((p) => (
               <p key={p.slice(0, 24)} className="text-2xl leading-snug text-bgp-ink">{p}</p>
             ))}
           </div>

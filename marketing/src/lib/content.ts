@@ -15,7 +15,7 @@ export const SERVICES = [
     name: "Investment",
     image: "/images/investment/royal-exchange-street.jpg",
     intro:
-      "Acquisition and disposal advice across retail, leisure and mixed-use investments, from single assets to portfolios, for private clients, property companies and institutions.",
+      "Acquisition and disposal advice across retail, leisure and mixed-use investments, from single assets to portfolios.",
   },
   {
     slug: "brand-representation",
@@ -29,7 +29,7 @@ export const SERVICES = [
     name: "Lease Advisory",
     image: "/images/st-christophers-place.jpg",
     intro:
-      "Lease Advisory is a core discipline within BGP's asset management offer, providing landlords and tenants with clear, evidence-led advice across rent reviews, re-gears and lease restructuring.",
+      "Clear, evidence-led advice across rent reviews, re-gears and lease restructuring for landlords and tenants.",
   },
   {
     slug: "consultancy",
@@ -49,7 +49,7 @@ export const NAV_ITEMS = [
   { label: "Team", href: "/team" },
 ] as const;
 
-export const HERO_STATEMENT = "Great places are built through connected thinking.";
+export const HERO_STATEMENT = "Great places are built through connected thinking. We combine deep market insight with relentless delivery to create impact and relationships that stand the test of time.";
 
 // Home hero rotates through flagship instructions, one per capability
 // (Woody, 2026-10-12). Crossfades every five seconds.
@@ -913,7 +913,7 @@ export interface LeasingSector {
 
 export const LEASING_INTRO = {
   headline:
-    "Our industry renowned Leasing team has an outstanding track record in destination placemaking; delivering strategies to attract and retain the best tenants, enhance positioning and drive performance.",
+    "Our industry renowned Leasing team has an outstanding track record in destination placemaking, attracting and retaining the best tenants.",
   body: [
     "Our approach draws on insight gained from extensive relationships with leading occupiers, advanced market intelligence and data analytics, and partnerships with forecasting agencies to shape destinations with lasting appeal.",
     "As trusted advisors to London Estates and institutional landlords, we have led the evolution of flagship shopping centres, built celebrated independent brand hubs, and created world renowned leisure and hospitality destinations.",

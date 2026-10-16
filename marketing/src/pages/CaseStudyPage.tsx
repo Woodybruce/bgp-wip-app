@@ -64,12 +64,10 @@ export default function CaseStudyPage() {
   return (
     <div>
       <section className="mx-auto max-w-[1360px] px-4 py-7">
-        <p className="label-caps border-b border-bgp-ink pb-2 text-bgp-ink/50">
-          Case study · {caseStudy.service}
-        </p>
+        <h2 className="sr-only">Case study · {caseStudy.service}</h2>
         {/* Wireframe slide 32: title and intro at left with the facts panel
             beside them, then an image carousel with arrows and dots. */}
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-[63fr_12fr_25fr] gap-6 md:gap-0">
+        <div className="grid grid-cols-1 md:grid-cols-[63fr_12fr_25fr] gap-6 md:gap-0">
           <div>
             <h1 className={`font-normal text-3xl md:text-5xl ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
             <div className={`mt-5 space-y-4 ${caseStudy.draft ? "italic" : ""}`}>

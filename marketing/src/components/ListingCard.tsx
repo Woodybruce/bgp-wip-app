@@ -27,21 +27,21 @@ export default function ListingCard({ listing, wide = false, aspect = "aspect-[8
           <span className="absolute top-0 right-0 bg-bgp-nectar text-bgp-wine label-caps px-3 py-1.5">Under offer</span>
         )}
       </Link>
-      <div className="mt-3 flex items-baseline justify-between gap-3">
-        <Link href={`/leasing/${listing.id}`} className="label-caps text-bgp-wine hover:opacity-70">{names.title}</Link>
-        {type && <span className="label-caps text-bgp-ink/60 whitespace-nowrap shrink-0">{type}</span>}
+      <div className="mt-2 flex items-baseline justify-between gap-3">
+        <Link href={`/leasing/${listing.id}`} className="label-caps font-bold text-bgp-ink hover:text-bgp-wine">{names.title}</Link>
+        {type && <span className="label-caps font-bold text-bgp-ink whitespace-nowrap shrink-0">{type}</span>}
       </div>
-      <p className="mt-1.5 text-sm text-bgp-ink">
+      <p className="mt-5 text-lg leading-snug text-bgp-ink">
         {names.secondary && <>{names.secondary}<br /></>}
         {(listing.addressLine || areaLabel(listing)) && <>{listing.addressLine || areaLabel(listing)}<br /></>}
         <span className="tabular">{details || "Details on application"}</span>
       </p>
-      <div className="mt-auto pt-3 flex justify-between border-b border-bgp-ink pb-1.5">
-        <a href={viewing} className="label-caps text-bgp-wine hover:opacity-70">Book viewing</a>
+      <div className="mt-auto pt-6 flex justify-between border-b-2 border-bgp-ink pb-2">
+        <a href={viewing} className="label-caps font-bold text-bgp-ink hover:text-bgp-wine">Book viewing</a>
         {brochure ? (
-          <a href={brochure} target="_blank" rel="noreferrer" className="label-caps text-bgp-wine hover:opacity-70">Download</a>
+          <a href={brochure} target="_blank" rel="noreferrer" className="label-caps font-bold text-bgp-ink hover:text-bgp-wine">Download</a>
         ) : (
-          <Link href={`/leasing/${listing.id}`} className="label-caps text-bgp-wine hover:opacity-70">Details</Link>
+          <Link href={`/leasing/${listing.id}`} className="label-caps font-bold text-bgp-ink hover:text-bgp-wine">Details</Link>
         )}
       </div>
     </div>

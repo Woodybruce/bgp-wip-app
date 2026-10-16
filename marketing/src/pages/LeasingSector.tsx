@@ -38,9 +38,9 @@ export default function LeasingSector() {
       {/* Wireframe slide 28: plain photo, then the title with Contact and
           Download at right, the statement beside the title, description
           beside the lead image, more photos, a location map. */}
-      <Placeholder className="h-64 md:h-auto md:aspect-[2.96] w-full" src={sector.image} alt={sector.name} />
+      <div data-hero className="-mt-16 md:-mt-24 lg:-mt-28"><Placeholder className="h-64 md:h-auto md:aspect-[2.96] w-full" src={sector.image} alt={sector.name} /></div>
 
-      <section className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
+      <section className="mx-auto max-w-[1360px] px-4 py-12 md:py-14">
         <p className="label-caps text-bgp-ink/50 mb-4"><Link href="/leasing" className="hover:text-bgp-wine">Leasing</Link> · {sector.name}</p>
         {/* Slide 28: title row with Contact and Download at right; the statement on the next row in the right column;
             a narrow text column beside a wide image; then a landscape and a lower, portrait image. */}
@@ -54,14 +54,14 @@ export default function LeasingSector() {
         {!sector.howWeHelp && (
           <div className="mt-4 grid grid-cols-1 md:grid-cols-[27fr_61fr] md:gap-x-[12%]">
             <div />
-            <p className="font-normal text-xl md:text-2xl text-bgp-ink">{sector.headline}</p>
+            <p className="font-normal text-2xl md:text-3xl leading-snug text-bgp-ink">{sector.headline}</p>
           </div>
         )}
         {sector.howWeHelp && <p className="mt-4 font-normal text-xl md:text-2xl text-bgp-ink md:w-[60%] md:ml-auto">{sector.headline}</p>}
         <div className={`mt-8 grid grid-cols-1 gap-10 items-start ${sector.howWeHelp ? "md:grid-cols-[1fr_280px]" : "md:grid-cols-[30fr_64fr] md:gap-x-[6%]"}`}>
           <div className="space-y-4">
             {sector.body.map((p, i) => (
-              <p key={p.slice(0, 24)} className="text-base text-bgp-ink">{p}</p>
+              <p key={p.slice(0, 24)} className="text-lg leading-snug text-bgp-ink">{p}</p>
             ))}
           </div>
           {!sector.howWeHelp && (
@@ -84,7 +84,7 @@ export default function LeasingSector() {
       </section>
 
       {!sector.howWeHelp && (
-        <section className="mx-auto max-w-[1360px] px-4 pb-9">
+        <section className="mx-auto max-w-[1360px] px-4 pt-16 pb-14">
           <div className="grid grid-cols-1 md:grid-cols-[57fr_12fr_31fr] gap-6 md:gap-0 items-start">
             <figure>
               <div className="img-frame"><Placeholder className="aspect-[1.69] w-full" src={sector.gallery?.[1]?.src} alt={sector.gallery?.[1]?.caption ?? sector.name} /></div>
@@ -99,7 +99,7 @@ export default function LeasingSector() {
         </section>
       )}
       {sector.howWeHelp && sector.gallery && sector.gallery.length > 1 && (
-        <section className="mx-auto max-w-[1360px] px-4 pb-9">
+        <section className="mx-auto max-w-[1360px] px-4 pt-16 pb-14">
           <div className="card-strip sm:grid-cols-3">
             {sector.gallery.map((g) => (
               <figure key={g.src}>
@@ -113,7 +113,7 @@ export default function LeasingSector() {
 
 
       {centres.length > 0 && (
-        <section className="mx-auto max-w-[1360px] px-4 pb-9">
+        <section className="mx-auto max-w-[1360px] px-4 pt-16 pb-14">
           <div className="flex flex-wrap items-end justify-between gap-4 border-b border-bgp-wine/25 pb-6 mb-10">
             <div>
               <span className="section-label">Leasing teams</span>
@@ -148,7 +148,7 @@ export default function LeasingSector() {
         </section>
       )}
 
-      <section className="mx-auto max-w-[1360px] px-4 pb-9">
+      <section className="mx-auto max-w-[1360px] px-4 pt-16 pb-14">
         <SectionHead title="Location" />
         <MapSlot lat={sector.map?.lat} lon={sector.map?.lon} zoom={sector.map?.zoom} marker={false} pins={sector.map?.pins} className="aspect-[3.38] w-full" />
       </section>

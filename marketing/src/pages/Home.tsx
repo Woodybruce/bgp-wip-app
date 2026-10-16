@@ -59,7 +59,7 @@ export default function Home() {
       <a href="#contact" className="block bg-bgp-ink text-bgp-cream text-center label-caps py-2 hover:bg-bgp-wine transition-colors">Talk to us</a>
 
       {/* Stats row, on the grey band as slide 23 draws it */}
-      <section className="bg-bgp-mist"><div className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
+      <section className="bg-bgp-mist"><div className="mx-auto max-w-[1360px] px-4 py-10 md:py-12">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-8 text-center">
           {STATS.map((s) => (
             <div key={s.caption}>
@@ -76,7 +76,7 @@ export default function Home() {
           const inner = (
             <>
               <h2 className="text-3xl font-bold text-bgp-ink mb-5">{service.name}</h2>
-              <div className={`grid grid-cols-1 md:grid-cols-[57fr_3fr_37fr_3fr] gap-8 md:gap-0 items-start ${i % 2 ? "md:[direction:rtl]" : ""}`}>
+              <div className={`grid grid-cols-1 md:grid-cols-[59fr_3fr_38fr] gap-8 md:gap-0 items-start ${i % 2 ? "md:[direction:rtl]" : ""}`}>
                 <div className="img-frame [direction:ltr]">
                   <Placeholder className="aspect-[1.57] w-full" src={service.image} alt={service.name} />
                 </div>
@@ -91,7 +91,7 @@ export default function Home() {
           return i % 2 ? (
             <Band key={service.slug}>{inner}</Band>
           ) : (
-            <section key={service.slug} className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">{inner}</section>
+            <section key={service.slug} className="mx-auto max-w-[1360px] px-4 py-12 md:py-14">{inner}</section>
           );
         })}
       </div>

@@ -25,7 +25,7 @@ export default function ArticlePage() {
   }
 
   return (
-    <article className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
+    <article className="mx-auto max-w-[1360px] px-4 py-12 md:py-14">
       <h2 className="text-2xl font-bold text-bgp-ink border-b border-bgp-ink pb-2">News and insights</h2>
 
       <div className="mt-4 bg-bgp-mist px-[3%] pt-5 pb-8">
@@ -44,14 +44,14 @@ export default function ArticlePage() {
         </div>
       </div>
 
-      <div className="mt-8 space-y-5 md:ml-[5%] md:mr-[1%] [&>p]:text-base [&>p]:text-bgp-ink">
+      <div className="mt-10 space-y-5 md:ml-[8.5%] md:mr-[5%] [&>p]:text-lg [&>p]:leading-snug [&>p]:text-bgp-ink">
         {article.body ? (
           article.body.map((para, i) => (
             <Fragment key={i}>
               {i === Math.floor(article.body!.length * 0.55) && (
-                <Placeholder className="aspect-[2.02] w-full md:float-right md:w-[56%] md:ml-10 md:mb-4" alt={`${article.title} second photo`} label="Photo to follow" />
+                <Placeholder className="aspect-square w-full md:float-right md:w-[58%] md:ml-10 md:mb-4" alt={`${article.title} second photo`} label="Photo to follow" />
               )}
-              {para.startsWith("## ") ? <h2 className="text-lg font-bold pt-4">{para.slice(3)}</h2> : <p>{para}</p>}
+              {para.startsWith("## ") ? <h2 className="text-lg font-bold pt-6">{para.slice(3)}</h2> : <p>{para}</p>}
             </Fragment>
           ))
         ) : (

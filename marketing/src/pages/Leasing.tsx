@@ -119,7 +119,7 @@ export default function Leasing() {
       {/* Slide 26: the hero runs straight into the listings; the four teams live in the Leasing rollover. */}
 
       {/* Snapshot of available properties */}
-      <section id="availability" className="mx-auto max-w-[1360px] px-4 pb-9 scroll-mt-24">
+      <section id="availability" className="mx-auto max-w-[1360px] px-4 pt-16 pb-14 scroll-mt-24">
         <SectionHead
           rule={false}
           title="Snapshot of available properties"
@@ -148,10 +148,10 @@ export default function Leasing() {
         ) : (
           <>
             {/* Slide 26, measured: three tiles 29.5% wide at 1.15, then a 61% tile at 1.84 beside a 30% portrait tile at 0.89, then three again. */}
-            <div ref={gridTop} className="scroll-mt-28 mt-8 space-y-10">
+            <div ref={gridTop} className="scroll-mt-28 mt-12 space-y-14">
               {Array.from({ length: Math.ceil(pageItems.length / 5) }, (_, r) => pageItems.slice(r * 5, r * 5 + 5)).map((chunk, r) => (
-                <div key={r} className="space-y-10">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                <div key={r} className="space-y-14">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-[2.7%] gap-y-14">
                     {chunk.slice(0, 3).map((l) => <ListingCard key={l.id} listing={l} />)}
                   </div>
                   {chunk.length > 3 && (
@@ -170,8 +170,8 @@ export default function Leasing() {
               </p>
             )}
             {page < pageCount && (
-              <p className="mt-8 text-right">
-                <button type="button" onClick={() => setPage(page + 1)} className="label-caps text-bgp-wine hover:opacity-70">+ More listings ({filtered.length - pageItems.length})</button>
+              <p className="mt-10 text-left">
+                <button type="button" onClick={() => setPage(page + 1)} className="label-caps font-bold text-bgp-ink hover:text-bgp-wine">+ More listings ({filtered.length - pageItems.length})</button>
               </p>
             )}
           </>

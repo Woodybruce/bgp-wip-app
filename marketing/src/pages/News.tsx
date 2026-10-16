@@ -35,7 +35,7 @@ export default function News() {
   };
 
   return (
-    <div className="mx-auto max-w-[1360px] px-4 py-7 md:py-8">
+    <div className="mx-auto max-w-[1360px] px-4 py-12 md:py-14">
       <SectionHead as="h1" title="News and insights" />
 
       <div className="-mt-4 flex flex-wrap items-center gap-x-8 gap-y-3 border-b border-bgp-wine/30 pb-3">
@@ -72,12 +72,12 @@ export default function News() {
 
       <div className="mt-8 grid grid-cols-1 gap-4">
         {features.map((a, i) => (
-          <Link key={a.slug} href={`/news/${a.slug}`} className="group block bg-bgp-mist p-6 md:p-8">
-            <div className="flex justify-between label-caps text-bgp-ink/50 mb-4">
+          <Link key={a.slug} href={`/news/${a.slug}`} className="group block bg-bgp-mist p-6 md:px-[4.7%] md:pt-10 md:pb-8">
+            <div className="flex justify-between label-caps font-bold text-bgp-ink mb-5">
               <span>{i % 2 ? a.category : a.date}</span>
               <span>{i % 2 ? a.date : a.category}</span>
             </div>
-            <div className={`grid grid-cols-1 md:grid-cols-[56fr_4fr_40fr] gap-8 md:gap-0 items-start ${i % 2 ? "md:[direction:rtl]" : ""}`}>
+            <div className={`grid grid-cols-1 md:grid-cols-[59fr_3fr_38fr] gap-8 md:gap-0 items-start ${i % 2 ? "md:[direction:rtl]" : ""}`}>
               <div className="img-frame [direction:ltr]"><Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} /></div>
               <div className="hidden md:block" />
               <div className="[direction:ltr] flex flex-col h-full">
