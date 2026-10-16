@@ -5,7 +5,7 @@ import KeyContacts from "../components/KeyContacts";
 import { MapSlot, QuoteBlock, SectionHead } from "../components/Wire";
 import { useState } from "react";
 import { type SiteContent, useSiteContent } from "../lib/site-content";
-import { INVESTMENT_DEALS } from "../lib/content";
+import { CASE_STUDIES, INVESTMENT_DEALS } from "../lib/content";
 
 const contactsFor = (c: SiteContent["contacts"], service: string) =>
   ({
@@ -38,7 +38,7 @@ function Carousel({ photos, alt }: { photos: string[]; alt: string }) {
 export default function CaseStudyPage() {
   const [, params] = useRoute("/case-studies/:slug");
   const content = useSiteContent();
-  const caseStudy = content.caseStudies.find((c) => c.slug === params?.slug);
+  const caseStudy = content.caseStudies.find((c) => c.slug === params?.slug) ?? CASE_STUDIES.find((c) => c.slug === params?.slug);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -71,8 +71,8 @@ export default function CaseStudyPage() {
             beside them, then an image carousel with arrows and dots. */}
         <div className="mt-8 grid grid-cols-1 md:grid-cols-[1fr_220px] gap-10">
           <div>
-            <h1 className="display text-3xl md:text-4xl">{caseStudy.title}</h1>
-            <div className="mt-5 space-y-4 max-w-xl">
+            <h1 className={`display text-3xl md:text-4xl ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
+            <div className={`mt-5 space-y-4 max-w-xl ${caseStudy.draft ? "italic" : ""}`}>
               {caseStudy.body.map((para) => (
                 <p key={para.slice(0, 32)} className="text-base text-bgp-ink/85">
                   {para}

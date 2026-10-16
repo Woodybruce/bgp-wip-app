@@ -24,7 +24,7 @@ export interface ServicePageProps {
   services: Array<{ name: string; detail: string }>;
   servicesVariant?: "panel" | "list"; // slide 41 (Consultancy) draws a static list box
   quote?: { quote: string; name: string; title: string };
-  caseStudies: Array<{ slug: string; title: string; blurb: string; image?: string }>;
+  caseStudies: Array<{ slug: string; title: string; blurb: string; image?: string; draft?: boolean }>;
   caseStudyLayout?: "stacked" | "band"; // slide 35 stacks them; slides 38 and 41 end with one band
   contacts: Person[];
   contactsBlurb?: string;
@@ -63,8 +63,8 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
             {caseStudies.map((cs, i) => (
               <Link key={cs.slug} href={`/case-studies/${cs.slug}`} className={`group grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-6 md:gap-10 p-5 md:p-7 ${i % 2 ? "" : "bg-bgp-mist md:[direction:rtl]"}`}>
                 <div className="[direction:ltr]">
-                  <p className="label-caps text-bgp-wine">{cs.title}</p>
-                  <p className="mt-3 text-base text-bgp-ink/90 max-w-md">{cs.blurb}</p>
+                  <p className={`label-caps text-bgp-wine ${cs.draft ? "italic" : ""}`}>{cs.title}</p>
+                  <p className={`mt-3 text-base text-bgp-ink/90 max-w-md ${cs.draft ? "italic" : ""}`}>{cs.blurb}</p>
                   <p className="mt-4"><span className="explore-link">Read more</span></p>
                 </div>
                 <div className="img-frame [direction:ltr]">

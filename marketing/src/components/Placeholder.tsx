@@ -1,18 +1,45 @@
-// Image slot: renders the photo when src is given, otherwise a wireframe-style
-// placeholder. Current photos are Unsplash stock (free licence) — swap for real
-// BGP photography as it arrives.
+// Image slot: renders the photo when src is given, otherwise a stock photo
+// from the pool below with an italic "Stock image" tag so the team can see
+// what still needs a real picture (Woody, 2026-10-16). Pass stock={false}
+// for slots that are not photos (maps), which keep the wireframe cross.
 import { useEffect, useState } from "react";
+
+const STOCK_POOL = [
+  "/images/shop-boutique.jpg", "/images/shop-menswear.jpg", "/images/shop-browse.jpg", "/images/restaurant.jpg",
+  "/images/cafe.jpg", "/images/bar.jpg", "/images/food-hall.jpg", "/images/gym.jpg", "/images/cinema.jpg",
+  "/images/hero-london.jpg", "/images/city-towers.jpg", "/images/tower-bridge.jpg", "/images/westminster.jpg",
+  "/images/st-christophers-place.jpg", "/images/royal-exchange.jpg", "/images/lease-signing.jpg", "/images/office.jpg",
+];
+const STOCK_BY_WORD: Array<[RegExp, string]> = [
+  [/restaurant|dining|food|kitchen/i, "/images/restaurant.jpg"],
+  [/caf[eé]|coffee/i, "/images/cafe.jpg"],
+  [/bar|pub/i, "/images/bar.jpg"],
+  [/gym|fitness|studio|wellness/i, "/images/gym.jpg"],
+  [/cinema|leisure/i, "/images/cinema.jpg"],
+  [/city|square mile|office/i, "/images/city-towers.jpg"],
+  [/high street|shop|retail|boutique|store|brand/i, "/images/shop-boutique.jpg"],
+  [/invest|deal|sale|acqui/i, "/images/lease-signing.jpg"],
+  [/london|estate|street/i, "/images/st-christophers-place.jpg"],
+];
+export function stockFor(key: string): string {
+  for (const [re, src] of STOCK_BY_WORD) if (re.test(key)) return src;
+  let h = 0;
+  for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return STOCK_POOL[h % STOCK_POOL.length];
+}
 
 export default function Placeholder({
   label = "Image TBC",
   className = "",
   src,
   alt = "",
+  stock,
 }: {
   label?: string;
   className?: string;
   src?: string;
   alt?: string;
+  stock?: string | false;
 }) {
   // A photo that fails to load falls back to the placeholder instead of a
   // broken-image icon (Frankie Shop, 2026-10-13).
@@ -23,6 +50,15 @@ export default function Placeholder({
     // One retry on a momentary drop before falling back (Woody, 2026-10-15).
     const url = retry ? `${src}${src.includes("?") ? "&" : "?"}r=${retry}` : src;
     return <img src={url} alt={alt} loading="lazy" onError={() => (retry ? setFailed(true) : setTimeout(() => setRetry(1), 1500))} className={`object-cover ${className}`} />;
+  }
+  if (stock !== false) {
+    const url = typeof stock === "string" ? stock : stockFor(alt || label);
+    return (
+      <div className={`relative overflow-hidden ${className}`}>
+        <img src={url} alt={alt} loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
+        <span className="absolute left-2 bottom-2 bg-bgp-cream/90 px-2 py-0.5 text-[11px] italic text-bgp-wine">Stock image, to be replaced</span>
+      </div>
+    );
   }
   return (
     <div className={`relative overflow-hidden bg-bgp-mist ${className}`}>

@@ -168,6 +168,7 @@ export interface CaseStudy {
   body: string[];
   location?: { lat: number; lon: number }; // wireframe slide 32 location map
   quote?: { quote: string; name: string; title: string }; // client quote (slide 32); placeholder shown until supplied
+  draft?: boolean; // copy the team still has to confirm or replace; shown in italics (Woody, 2026-10-16)
 }
 
 // From the projects list on the current site; bodies are short where the team
@@ -248,6 +249,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "st-christophers-place",
     title: "St Christopher's Place",
     service: "Leasing",
+    draft: true,
     image: "/images/case-studies/st-christophers-place.jpg",
     gallery: ["/images/case-studies/st-christophers-place-2.jpg", "/images/case-studies/st-christophers-place-3.jpg", "/images/case-studies/st-christophers-place-4.jpg"],
     blurb: "Retail and restaurant leasing across the pedestrian lanes between Oxford Street and Wigmore Street, for Columbia Threadneedle.",
@@ -262,6 +264,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "south-molton-triangle",
     title: "South Molton Triangle",
     service: "Leasing",
+    draft: true,
     blurb: "Retail and restaurant leasing at Grosvenor's new mixed-use quarter between Bond Street and Oxford Street.",
     facts: [["Service", "Leasing"], ["Client", "Grosvenor"], ["Sector", "Retail & restaurant"], ["Location", "Mayfair, W1"]],
     location: { lat: 51.5131, lon: -0.1463 },
@@ -276,6 +279,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "canary-wharf",
     title: "Canary Wharf",
     service: "Leasing",
+    draft: true,
     blurb: "More than twenty years advising Canary Wharf Group on the retail, restaurant and leisure mix across the estate's malls and streets.",
     facts: [["Service", "Leasing"], ["Client", "Canary Wharf Group"], ["Sector", "Retail, restaurant & leisure"], ["Location", "Canary Wharf, E14"]],
     location: { lat: 51.5054, lon: -0.0235 },
@@ -397,6 +401,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: client.toLowerCase().replace(/^the /, "").replace(/[^a-z0-9]+/g, "-") + "-lease-advisory",
     title: client,
     service: "Lease Advisory",
+    draft: true, // Peter to write the real summaries
     blurb: `Lease advisory instruction for ${client}: rent reviews, renewals and restructuring aligned to the asset strategy.`,
     image: { Hammerson: "/images/clients/bullring-interior.jpg", "Land Securities": "/images/clients/victoria-street.jpg", "The Royal Exchange": "/images/royal-exchange.jpg", Bloomberg: "/images/city-towers.jpg" }[client as string],
     gallery: ({ Hammerson: ["/images/gallery/bullring-1.jpg", "/images/gallery/bullring-2.jpg", "/images/gallery/bullring-3.jpg"], "Land Securities": ["/images/gallery/cardinal-1.jpg", "/images/gallery/onc-3.jpg", "/images/gallery/onc-2.jpg"], "The Royal Exchange": ["/images/case-studies/the-royal-exchange-2.jpg", "/images/case-studies/the-royal-exchange-3.jpg", "/images/case-studies/the-royal-exchange-4.jpg"] } as Record<string, string[]>)[client as string],
@@ -464,6 +469,35 @@ export const CASE_STUDIES: CaseStudy[] = [
     ],
     image: "/images/case-studies/masaj-islington-square.jpg",
     gallery: ["/images/case-studies/masaj-islington-square-2.jpg", "/images/case-studies/masaj-islington-square-3.jpg"],
+  },
+  // Draft case studies for the two sector pages with none yet (The City, High
+  // Streets). Shown in italics with a stock photo until the teams write the
+  // real ones (Woody, 2026-10-16).
+  {
+    slug: "city-restaurant-letting-draft",
+    title: "A restaurant letting in the Square Mile",
+    service: "Leasing",
+    draft: true,
+    blurb: "Draft: a recent City instruction for the team to replace. A 4,500 sq ft ground-floor restaurant let on behalf of a landlord client, with the operator trading within nine months of heads of terms.",
+    facts: [["Service", "Leasing"], ["Client", "Client name"], ["Size", "4,500 sq ft"], ["Location", "City of London"]],
+    body: [
+      "Draft: a recent City instruction for the team to replace. A 4,500 sq ft ground-floor restaurant let on behalf of a landlord client, with the operator trading within nine months of heads of terms.",
+      "Draft: two or three sentences on the brief, the operators considered and why the chosen one was right for the building and the street.",
+    ],
+    location: { lat: 51.5138, lon: -0.0978 },
+  },
+  {
+    slug: "high-street-letting-draft",
+    title: "A high street letting",
+    service: "Leasing",
+    draft: true,
+    blurb: "Draft: a recent high street instruction for the team to replace. A corner unit on a London high street re-let to an independent operator after a short void, strengthening the parade for the landlord.",
+    facts: [["Service", "Leasing"], ["Client", "Client name"], ["Size", "1,800 sq ft"], ["Location", "London high street"]],
+    body: [
+      "Draft: a recent high street instruction for the team to replace. A corner unit on a London high street re-let to an independent operator after a short void, strengthening the parade for the landlord.",
+      "Draft: two or three sentences on the brief, the mix the team was building on the street and the outcome for the client.",
+    ],
+    location: { lat: 51.5185, lon: -0.1565 },
   },
 ];
 
@@ -955,6 +989,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
       "From exciting hospitality offerings to drive footfall throughout the day to new competitive socialising concepts, we create diverse tenant mixes that reflect the evolving nature of the City of London.",
     ],
     contacts: ["Lizzie Knights", "Peter Wood"],
+    caseStudies: ["city-restaurant-letting-draft"],
     map: { lat: 51.5145, lon: -0.0925, zoom: 14, pins: [
       { lat: 51.5138, lon: -0.0978, label: "One New Change" },
       { lat: 51.5135, lon: -0.0876, label: "The Royal Exchange" },
@@ -974,6 +1009,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
       "We curate dynamic occupier mixes that reflect the needs and unique characteristics of the communities they serve; taking a long term view to build distinctive high streets that remain vibrant over time.",
     ],
     contacts: ["Lucy Gardiner", "Tracey Pollard", "Libby Evans"],
+    caseStudies: ["high-street-letting-draft"],
     map: { lat: 51.52, lon: -0.17, zoom: 11, pins: [
       { lat: 51.5185, lon: -0.1565, label: "Chiltern Street, Marylebone" },
       { lat: 51.5567, lon: -0.1780, label: "Hampstead High Street" },

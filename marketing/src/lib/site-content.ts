@@ -72,6 +72,7 @@ function fromApi(j: any): SiteContent {
         body: r.body || [],
         location: b?.location,
         quote: b?.quote,
+        draft: b?.draft,
       };
     }),
     articles: (j.news || []).map((r: any) => ({

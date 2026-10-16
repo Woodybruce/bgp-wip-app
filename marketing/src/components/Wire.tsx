@@ -18,25 +18,24 @@ export function TextPlaceholder({ label, lines = 3, className = "" }: { label: s
   );
 }
 
-// Client quote with photo (slides 32 and 41). A missing quote or photo shows
-// its placeholder rather than dropping the block.
+// Draft copy the team still has to replace is set in italics so it can be
+// seen on the page (Woody, 2026-10-16: "in italics where need to change").
+export const DRAFT_QUOTE = "BGP understood what we needed from the space from the first meeting. Their advice was clear and commercial, they moved quickly, and the result was better than we had planned for.";
+
+// Client quote with photo (slides 32 and 41). A missing quote shows draft
+// words in italics; a missing photo shows a stock image.
 export function QuoteBlock({ quote, image, imageAlt = "" }: { quote?: { quote: string; name: string; title: string } | null; image?: string; imageAlt?: string }) {
   const hasQuote = !!quote?.quote && !/^lorem ipsum/i.test(quote.quote);
+  const draft = !hasQuote;
   return (
     <section className="mx-auto max-w-6xl px-4 py-12 md:py-14">
       <div className="grid grid-cols-1 md:grid-cols-[1.4fr_1fr] gap-8 md:gap-12 items-start">
-        <div>
-          {hasQuote ? (
-            <>
-              <p className="font-light text-xl md:text-2xl text-bgp-ink/85">“{quote!.quote}”</p>
-              <p className="mt-4 label-caps">{quote!.name}</p>
-              <p className="text-xs text-bgp-ink/55 uppercase">{quote!.title}</p>
-            </>
-          ) : (
-            <TextPlaceholder label={quote?.name ? `Client quote to follow: ${quote.name}, ${quote.title}` : "Client quote to follow"} lines={4} />
-          )}
+        <div className={draft ? "italic" : ""}>
+          <p className="font-light text-xl md:text-2xl text-bgp-ink/85">“{hasQuote ? quote!.quote : DRAFT_QUOTE}”</p>
+          <p className="mt-4 label-caps">{quote?.name || "Client name"}</p>
+          <p className="text-xs text-bgp-ink/55 uppercase">{quote?.title || "Title, company"}</p>
         </div>
-        <Placeholder className="aspect-[4/3] w-full max-w-sm" src={image} alt={imageAlt} label="Photo to follow" />
+        <Placeholder className="aspect-[4/3] w-full max-w-sm" src={image} alt={imageAlt || "Client quote photo"} label="Photo to follow" />
       </div>
     </section>
   );
@@ -44,7 +43,7 @@ export function QuoteBlock({ quote, image, imageAlt = "" }: { quote?: { quote: s
 
 // Location map, or the placeholder slot when there are no coordinates yet.
 export function MapSlot({ lat, lon, zoom = 15, marker = true, pins, className = "h-72 md:h-80 w-full" }: { lat?: number; lon?: number; zoom?: number; marker?: boolean; pins?: Array<{ lat: number; lon: number; label: string }>; className?: string }) {
-  if (lat == null || lon == null) return <Placeholder className={className} label="Map to follow" />;
+  if (lat == null || lon == null) return <Placeholder className={className} label="Map to follow" stock={false} />;
   if (!isBrowser) return <div className={`${className} bg-bgp-mist`} />;
   return (
     <Suspense fallback={<div className={`${className} bg-bgp-mist`} />}>

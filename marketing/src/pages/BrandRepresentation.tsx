@@ -23,7 +23,7 @@ export default function BrandRepresentation() {
       <h1 className="sr-only">Brand Representation</h1>
 
       {/* Overview / intro */}
-      <p className="max-w-2xl font-light text-2xl md:text-[2rem] leading-[1.2] text-bgp-ink">
+      <p className="max-w-4xl font-light text-2xl md:text-[2.5rem] leading-[1.15] text-bgp-ink">
         {service.intro} {SERVICE_COPY.brandRepresentation.body[0]}
       </p>
 
@@ -53,7 +53,7 @@ export default function BrandRepresentation() {
                   <Placeholder className="aspect-[4/3] w-full" src={cs.image} alt={cs.title} label="Photo to follow" />
                 </div>
                 <div className="[direction:ltr] flex flex-col">
-                  <p className="text-sm text-bgp-ink/85 max-w-xs">{cs.blurb}</p>
+                  <p className={`text-base md:text-lg leading-snug text-bgp-ink/85 ${cs.draft ? "italic" : ""}`}>{cs.blurb}</p>
                   <p className="mt-auto pt-6 text-[11px] font-bold text-bgp-ink self-end">Read more</p>
                 </div>
               </div>
@@ -66,8 +66,8 @@ export default function BrandRepresentation() {
       <section className="mt-12 mb-16 grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-8 md:gap-12 items-start">
         <div>
           <h2 className="text-sm font-bold text-bgp-ink">Key contacts</h2>
-          <p className="mt-3 text-sm text-bgp-ink/85 max-w-[30ch]">
-            Our brand representation team supports occupiers from first site to full network.
+          <p className="mt-3 text-base md:text-lg leading-snug text-bgp-ink/85">
+            Our brand representation team supports occupiers from first site to full network. Talk to us about a first UK store, the next ten, or a portfolio review.
           </p>
         </div>
         <div className="grid grid-cols-3 gap-4">

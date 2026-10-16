@@ -50,9 +50,10 @@ export function ClientCircle({ client }: { client: Client }) {
   );
 }
 
+// Same seven-across grid as Brand Representation (slide 35) on every page.
 export default function ClientRow({ clients }: { clients: Client[] }) {
   return (
-    <div className="flex flex-wrap gap-4">
+    <div className="grid grid-cols-4 sm:grid-cols-7 gap-4 md:gap-6">
       {clients.map((c) => (
         <ClientCircle key={c.name} client={c} />
       ))}
