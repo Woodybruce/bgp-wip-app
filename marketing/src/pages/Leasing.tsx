@@ -54,10 +54,8 @@ export default function Leasing() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [live, setLive] = useState(true);
   const [loading, setLoading] = useState(true);
-  // Deep links from the nav rollover (slide 22): /leasing?location=…&type=…
-  const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
-  const [location, setLocation] = useState(params?.get("location") ?? "");
-  const [type, setType] = useState(params?.get("type") ?? "");
+  const [location, setLocation] = useState("");
+  const [type, setType] = useState("");
   const [size, setSize] = useState("");
   // Nine listings a page with page numbers underneath, so the case studies
   // and contacts are never pushed below a long run (Woody, 2026-10-15).
@@ -71,6 +69,20 @@ export default function Leasing() {
       setListings(listings);
       setLive(live);
       setLoading(false);
+      // Deep links from the nav rollover (slide 22): /leasing?location=…&type=…
+      // Applied after the feed arrives, matched loosely against the options
+      // that exist, and only in the browser so the prerendered HTML hydrates clean.
+      const q = new URLSearchParams(window.location.search);
+      const pick = (want: string | null, options: Array<string | null | undefined>) => {
+        if (!want) return "";
+        const w = want.toLowerCase();
+        return options.find((o) => (o || "").toLowerCase() === w) || options.find((o) => (o || "").toLowerCase().includes(w)) || "";
+      };
+      const loc = pick(q.get("location"), listings.map((l) => l.location));
+      const typ = pick(q.get("type"), listings.map((l) => l.useClass));
+      if (loc) setLocation(loc as string);
+      if (typ) setType(typ as string);
+      if (q.get("location") || q.get("type")) setTimeout(() => document.getElementById("availability")?.scrollIntoView({ block: "start" }), 50);
     });
   }, []);
 
