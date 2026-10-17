@@ -46,7 +46,7 @@ export default function Home() {
         ))}
         <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/80 via-bgp-ink/25 to-bgp-ink/35" />
         <div className="relative mx-auto w-full max-w-[1360px] px-4 pb-10 md:pb-9 flex flex-wrap items-end justify-between gap-6">
-          <h1 className="max-w-[66%] font-normal text-3xl md:text-4xl leading-[1.1] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>
+          <h1 className="max-w-[66%] font-normal text-3xl md:text-[2.73rem] leading-[1.05] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>
             {HERO_STATEMENT}
           </h1>
         </div>
@@ -60,8 +60,8 @@ export default function Home() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-8 text-center">
           {STATS.map((s) => (
             <div key={s.caption}>
-              <p className="display text-4xl md:text-7xl tabular">{s.value}</p>
-              <p className="mt-2 text-xs text-bgp-ink/70 max-w-[18ch] mx-auto">{s.caption}</p>
+              <p className="display text-4xl md:text-[6.1rem] tabular">{s.value}</p>
+              <p className="mt-3 text-[1.5rem] leading-tight text-bgp-ink max-w-[18ch] mx-auto">{s.caption}</p>
             </div>
           ))}
         </div>
@@ -72,15 +72,15 @@ export default function Home() {
         {SERVICES.map((service, i) => {
           const inner = (
             <>
-              <h2 className="text-3xl font-bold text-bgp-ink mb-5">{service.name}</h2>
+              <h2 className="text-[2.77rem] font-bold text-bgp-ink mb-5">{service.name}</h2>
               <div className={`grid grid-cols-1 md:grid-cols-[59fr_3fr_38fr] gap-8 md:gap-0 items-start ${i % 2 ? "md:[direction:rtl]" : ""}`}>
                 <div className="img-frame [direction:ltr]">
                   <Placeholder className="aspect-[1.57] w-full" src={service.image} alt={service.name} />
                 </div>
                 <div className="hidden md:block" />
                 <div className="[direction:ltr]">
-                  <p className="text-2xl leading-snug text-bgp-ink">{service.intro}</p>
-                  <p className="mt-5"><Link href={`/${service.slug}`} className="explore-link">Find out more</Link></p>
+                  <p className="text-[1.96rem] leading-[1.12] text-bgp-ink">{service.intro}</p>
+                  <p className="mt-5"><Link href={`/${service.slug}`} className="explore-link md:text-[1.3rem] font-bold">Find out more</Link></p>
                 </div>
               </div>
             </>

@@ -5,8 +5,8 @@ function ContactSlot({ n }: { n: number }) {
   return (
     <div className="w-full max-w-[9.5rem] italic text-bgp-stone">
       <div className="aspect-[3/4] w-full bg-bgp-stone/30" />
-      <p className="mt-3 label-caps text-bgp-stone">Name {n}</p>
-      <div className="mt-1 text-sm space-y-0.5">
+      <p className="mt-3 label-caps md:text-[0.88rem] text-bgp-stone">Name {n}</p>
+      <div className="mt-1 text-[0.88rem] leading-tight space-y-0">
         <p>Job title</p>
         <p>+44 (0)20 0000 0000</p>
         <p>name@bgp.uk.com</p>
@@ -26,7 +26,7 @@ export default function KeyContacts({ people, blurb = "Our team would be delight
   const slots = Array.from({ length: Math.max(0, want - shown.length) }, (_, i) => shown.length + i + 1);
   const inner = layout === "row" ? (
     <div>
-      <h2 className="text-[1.65rem] font-bold text-bgp-ink mb-5">Key contacts</h2>
+      <h2 className="text-[1.88rem] font-bold text-bgp-ink mb-5">Key contacts</h2>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-5">
         {shown.map((p) => (
           <ContactCard key={p.name} person={p} compact />
@@ -37,8 +37,8 @@ export default function KeyContacts({ people, blurb = "Our team would be delight
   ) : (
     <div className="grid grid-cols-1 md:grid-cols-[42fr_58fr] gap-8 md:gap-12">
       <div>
-        <h2 className="text-[1.65rem] font-bold text-bgp-ink">Key contacts</h2>
-        <p className="mt-3 text-lg text-bgp-ink">{blurb}</p>
+        <h2 className="text-[1.6rem] font-bold text-bgp-ink">Key contacts</h2>
+        <p className="mt-3 text-[1.6rem] leading-[1.12] text-bgp-ink">{blurb}</p>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-5">
         {shown.map((p) => (

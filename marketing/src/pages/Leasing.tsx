@@ -26,14 +26,14 @@ function FilterSelect({
   onChange: (v: string) => void;
 }) {
   return (
-    <label className="label-caps flex items-center justify-between sm:justify-start gap-1.5 text-bgp-wine w-full sm:w-auto py-2.5 sm:py-0 border-b border-bgp-wine/10 sm:border-0">
+    <label className="label-caps md:text-[0.85rem] font-bold flex items-center justify-between sm:justify-start gap-1.5 text-bgp-ink w-full sm:w-auto py-2.5 sm:py-0 border-b border-bgp-wine/10 sm:border-0">
       <span className="whitespace-nowrap">
         {label} <span className="text-bgp-wine" aria-hidden>{"↘︎"}</span>
       </span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="bg-transparent label-caps text-bgp-wine outline-none cursor-pointer hover:text-bgp-wine text-right sm:text-left shrink-0 max-w-[60%] sm:max-w-none [text-align-last:right] sm:[text-align-last:auto]"
+        className="bg-transparent label-caps md:text-[0.85rem] text-bgp-ink outline-none cursor-pointer hover:text-bgp-wine text-right sm:text-left shrink-0 max-w-[60%] sm:max-w-none [text-align-last:right] sm:[text-align-last:auto]"
       >
         <option value="">All</option>
         {options.map((o) => (
@@ -126,7 +126,7 @@ export default function Leasing() {
           sub={!live && !loading ? "Showing sample listings. The live availability feed is not connected in this environment." : "Please contact us for full availability"}
         />
         <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-x-10 sm:gap-y-3 border-b border-bgp-ink pb-3 -mt-2">
-          <span className="label-caps text-bgp-ink/60 py-2.5 sm:py-0 border-b border-bgp-wine/10 sm:border-0">Filter by</span>
+          <span className="label-caps md:text-[1rem] font-bold text-bgp-ink py-2.5 sm:py-0 border-b border-bgp-wine/10 sm:border-0">Filter by</span>
           <FilterSelect label="Location" value={location} options={locations} onChange={setLocation} />
           <FilterSelect label="Type" value={type} options={types} onChange={setType} />
           <FilterSelect label="Size" value={size} options={SIZE_BANDS.map((b) => b.label)} onChange={setSize} />
@@ -171,7 +171,7 @@ export default function Leasing() {
             )}
             {page < pageCount && (
               <p className="mt-10 text-left">
-                <button type="button" onClick={() => setPage(page + 1)} className="label-caps font-bold text-bgp-ink hover:text-bgp-wine">+ More listings ({filtered.length - pageItems.length})</button>
+                <button type="button" onClick={() => setPage(page + 1)} className="label-caps md:text-[1.3rem] font-bold text-bgp-ink hover:text-bgp-wine">+ More listings ({filtered.length - pageItems.length})</button>
               </p>
             )}
           </>

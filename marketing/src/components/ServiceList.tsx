@@ -16,16 +16,16 @@ export default function ServiceList({ services, heading = "What we offer", body,
       <section className="mx-auto max-w-[1360px] px-4 pt-0 pb-12">
         <div className="border-t-[3px] border-bgp-ink pt-10 grid grid-cols-1 md:grid-cols-[46fr_54fr] gap-10 items-start">
           <div className="bg-bgp-mist p-5 md:p-6 md:mr-[8%]">
-            <p className="text-base font-bold border-b-2 border-bgp-ink pb-2 mb-2">{heading}</p>
+            <p className="text-[1.27rem] font-bold border-b-2 border-bgp-ink pb-2 mb-2">{heading}</p>
             <ul>
               {services.slice(0, 3).map((s) => (
-                <li key={s.name} className="text-lg text-bgp-ink border-b border-bgp-ink/40 py-3 last:border-0">{s.name}</li>
+                <li key={s.name} className="text-[1.27rem] leading-tight text-bgp-ink border-b border-bgp-ink/40 py-3 last:border-0">{s.name}</li>
               ))}
             </ul>
           </div>
           <div className="space-y-4">
             {(body ?? []).map((p, i) => (
-              <p key={p.slice(0, 24)} className={`text-2xl leading-snug ${i === 0 ? "font-bold text-bgp-ink" : "text-bgp-ink"}`}>{p}</p>
+              <p key={p.slice(0, 24)} className={`text-[1.65rem] leading-[1.12] ${i === 0 ? "font-bold text-bgp-ink" : "text-bgp-ink"}`}>{p}</p>
             ))}
           </div>
         </div>
@@ -37,12 +37,12 @@ export default function ServiceList({ services, heading = "What we offer", body,
       {/* Wireframe slides 38 and 41: heading at left with the copy beside it,
           then the list of services with the detail box to its right. */}
       <div className="grid grid-cols-1 md:grid-cols-[46fr_54fr] gap-x-10 gap-y-4 border-t-[3px] border-bgp-ink pt-10 mb-10">
-        <h2 className="font-normal text-3xl md:text-5xl text-bgp-ink whitespace-nowrap">{heading}</h2>
+        <h2 className="font-normal text-3xl md:text-[3.4rem] leading-none text-bgp-ink whitespace-nowrap">{heading}</h2>
         {body && body.length > 0 && (
           <div className="space-y-3">
             {/* Slide 38 sets one short paragraph beside the heading. */}
             {body.slice(0, 1).map((p) => p.split(". ")[0].replace(/\.?$/, ".")).map((p) => (
-              <p key={p.slice(0, 24)} className="text-2xl leading-snug text-bgp-ink">{p}</p>
+              <p key={p.slice(0, 24)} className="text-[2.04rem] leading-[1.1] text-bgp-ink">{p}</p>
             ))}
           </div>
         )}
@@ -54,7 +54,7 @@ export default function ServiceList({ services, heading = "What we offer", body,
               <li key={s.name}>
                 <button
                   onClick={() => setSelected(i)}
-                  className={`text-left text-2xl transition-colors ${isDraft(s) ? "italic" : ""} ${
+                  className={`text-left text-[1.6rem] transition-colors ${isDraft(s) ? "italic" : ""} ${
                     selected === i ? "font-bold text-bgp-ink" : "text-bgp-ink/70 hover:text-bgp-wine"
                   }`}
                 >
@@ -65,10 +65,10 @@ export default function ServiceList({ services, heading = "What we offer", body,
           </ul>
         </div>
         <div className="bg-bgp-mist p-6 md:p-10 flex flex-col min-h-[20rem]">
-          <p className={`text-base text-bgp-ink ${isDraft(current) ? "italic" : ""}`}>{current.detail}</p>
+          <p className={`text-[1.35rem] leading-[1.12] text-bgp-ink ${isDraft(current) ? "italic" : ""}`}>{current.detail}</p>
           {/* Slide 38 fills this box with about seven lines; short entries show the gap in italics. */}
           {!isDraft(current) && current.detail.length < 220 && (
-            <p className="mt-3 text-base text-bgp-ink italic">Draft: two or three more sentences from the team on how this works in practice, a recent example, and what it meant for the client.</p>
+            <p className="mt-3 text-[1.35rem] leading-[1.12] text-bgp-ink italic">Draft: two or three more sentences from the team on how this works in practice, a recent example, and what it meant for the client.</p>
           )}
           <button type="button" onClick={() => setSelected((selected + 1) % padded.length)} aria-label="Next service" className="mt-6 self-end text-4xl leading-none text-bgp-ink hover:text-bgp-wine">→</button>
         </div>

@@ -38,7 +38,7 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
       {/* Wireframe slides 35, 38, 41: statement over the hero, left-aligned
           sections over rules, grey bands for contacts and the case study. */}
       {hero ? (
-        <Hero src={hero.src} alt={hero.alt} label={title} statement={intro} />
+        <Hero src={hero.src} alt={hero.alt} label={title} statement={intro} big />
       ) : (
         <section className="mx-auto max-w-[1360px] px-4 pt-12 md:pt-16">
           <p className="label-caps text-bgp-ink/50 mb-3">{title}</p>
@@ -48,7 +48,7 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
 
       <h1 className="sr-only">{title}</h1>
       <section className="mx-auto max-w-[1360px] px-4 pt-12 md:pt-14 pb-10">
-        <h2 className="text-[1.65rem] font-bold text-bgp-ink border-b-[3px] border-bgp-ink pb-3 mb-8 md:ml-[3%] md:mr-[7%] md:pl-[4%]">A snapshot of clients</h2>
+        <h2 className="text-[1.27rem] font-bold text-bgp-ink border-b-[3px] border-bgp-ink pb-3 mb-8 md:ml-[3%] md:mr-[7%] md:pl-[4%]">A snapshot of clients</h2>
         {clientsBlurb && <p className="text-sm text-bgp-ink/70 mb-4">{clientsBlurb}</p>}
         {clients}
       </section>

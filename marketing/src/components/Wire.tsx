@@ -31,9 +31,9 @@ export function QuoteBlock({ quote, image, imageAlt = "", imageSide = "right" }:
     <section className="mx-auto max-w-[1360px] px-4 py-12 md:py-14">
       <div className={`grid grid-cols-1 gap-8 md:gap-12 items-start ${imageSide === "left" ? "md:grid-cols-[55fr_32fr] md:[direction:rtl] md:ml-[8%] md:gap-[5%]" : "md:grid-cols-[49fr_41fr] md:gap-[3%]"}`}>
         <div className={`[direction:ltr] ${draft ? "italic" : ""}`}>
-          <p className="font-normal text-2xl md:text-3xl leading-snug text-bgp-ink">“{hasQuote ? quote!.quote : DRAFT_QUOTE}”</p>
+          <p className="font-normal text-2xl md:text-[2.1rem] leading-[1.12] text-bgp-ink">“{hasQuote ? quote!.quote : DRAFT_QUOTE}”</p>
           <p className="mt-4 label-caps">{quote?.name || "Client name"}</p>
-          <p className="text-xs text-bgp-ink/55 uppercase">{quote?.title || "Title, company"}</p>
+          <p className="label-caps text-bgp-ink">{quote?.title || "Title, company"}</p>
         </div>
         <Placeholder className={`${imageSide === "left" ? "aspect-[0.74]" : "aspect-[1.84]"} w-full [direction:ltr]`} src={image} alt={imageAlt || "Client quote photo"} label="Photo to follow" />
       </div>
@@ -58,14 +58,14 @@ export function MapSlot({ lat, lon, zoom = 15, marker = true, pins, className = 
 // composed from these so the geometry matches the drawings (Woody,
 // 2026-10-16: "clear design mismatches").
 
-export function Hero({ src, alt, label, statement, caption, tall = false }: { src?: string; alt: string; label?: ReactNode; statement: ReactNode; caption?: ReactNode; tall?: boolean }) {
+export function Hero({ src, alt, label, statement, caption, tall = false, big = false }: { src?: string; alt: string; label?: ReactNode; statement: ReactNode; caption?: ReactNode; tall?: boolean; big?: boolean }) {
   return (
     <section data-hero className={`relative flex items-end overflow-hidden -mt-16 md:-mt-24 lg:-mt-28 ${tall ? "h-[min(85vw,100vh)] min-h-[480px]" : "h-[min(63vw,100vh)] min-h-[420px]"}`}>
       <Placeholder className="absolute inset-0 h-full w-full" src={src} alt={alt} />
       <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/80 via-bgp-ink/25 to-bgp-ink/35" />
       <div className="relative mx-auto w-full max-w-[1360px] px-4 pb-8 md:pb-10">
-        {label && <p className="label-caps text-white/80 mb-3">{label}</p>}
-        <p className="max-w-[66%] font-normal text-2xl md:text-4xl leading-[1.1] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>{statement}</p>
+        {label && <p className="label-caps md:text-xs text-white/80 mb-3">{label}</p>}
+        <p className={`max-w-[66%] font-normal text-2xl ${big ? "md:text-[2.54rem]" : "md:text-[2.3rem]"} leading-[1.05] text-white`} style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>{statement}</p>
         {caption}
       </div>
     </section>
@@ -87,8 +87,8 @@ export function SectionHead({ title, sub, right, as: Tag = "h2", rule = true }: 
   return (
     <div className={`flex flex-wrap items-end justify-between gap-x-8 gap-y-2 ${rule ? "border-b-[3px] border-bgp-ink pb-3 mb-8" : "mb-6"}`}>
       <div>
-        <Tag className="text-[1.65rem] font-bold text-bgp-ink">{title}</Tag>
-        {sub && <p className="mt-1 text-sm text-bgp-ink/70">{sub}</p>}
+        <Tag className="text-[1.88rem] font-bold text-bgp-ink">{title}</Tag>
+        {sub && <p className="mt-1 text-[1.3rem] text-bgp-ink">{sub}</p>}
       </div>
       {right}
     </div>

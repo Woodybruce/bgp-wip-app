@@ -127,9 +127,9 @@ export default function ListingDetail() {
             </div>
             <div className="mt-2 border-t-[3px] border-bgp-ink pt-3 flex items-start justify-between gap-6">
               <div>
-                <h1 className="font-normal text-3xl md:text-5xl">{names.title}</h1>
+                <h1 className="font-normal text-3xl md:text-[3.35rem] leading-[0.95]">{names.title}</h1>
                 {(names.secondary || listing.addressLine) && (
-                  <p className="mt-2 text-[15px] md:text-base text-bgp-ink">
+                  <p className="mt-2 text-[1.35rem] text-bgp-ink">
                     {[names.secondary, listing.addressLine].filter(Boolean).join(" · ")}
                   </p>
                 )}
@@ -137,12 +137,12 @@ export default function ListingDetail() {
                   <p className="mt-4 inline-block bg-bgp-nectar text-bgp-wine label-caps px-3 py-1.5">Under offer</p>
                 )}
               </div>
-              <div className="flex flex-col items-end gap-1 label-caps font-bold text-bgp-ink shrink-0">
+              <div className="flex flex-col items-end gap-1 label-caps md:text-[1rem] font-bold text-bgp-ink shrink-0">
                 <a href={`mailto:${CONTACT.email}?subject=${mailSubject}`} className="hover:text-bgp-wine">Book viewing</a>
                 {brochureHref ? <a href={brochureHref} target="_blank" rel="noreferrer" className="hover:text-bgp-wine">Download</a> : <button onClick={onDownload} className="hover:text-bgp-wine">Download</button>}
               </div>
             </div>
-            {headline && <p className="mt-12 md:ml-[35%] md:mr-[6%] font-normal text-2xl md:text-3xl leading-snug text-bgp-ink">{headline.charAt(0).toUpperCase() + headline.slice(1)}.</p>}
+            {headline && <p className="mt-12 md:ml-[35%] md:mr-[6%] font-normal text-2xl md:text-[2.3rem] leading-[1.05] text-bgp-ink">{headline.charAt(0).toUpperCase() + headline.slice(1)}.</p>}
           </div>
           <div className="hidden md:block" />
           <aside>
@@ -151,8 +151,8 @@ export default function ListingDetail() {
                 .filter(([, v]) => v)
                 .map(([k, v]) => (
                   <div key={k} className="border-b border-bgp-line py-3">
-                    <dt className="label-caps text-bgp-ink/50">{k}</dt>
-                    <dd className="mt-1 text-sm tabular">{v}</dd>
+                    <dt className="label-caps md:text-[0.85rem] font-bold text-bgp-ink">{k}</dt>
+                    <dd className="mt-1 text-[1.2rem] leading-tight tabular">{v}</dd>
                   </div>
                 ))}
             </dl>
@@ -161,7 +161,7 @@ export default function ListingDetail() {
             {/* Slide 27: a narrow description beside a photo, then a landscape photo and a lower portrait one. */}
             <div className="mt-16 grid grid-cols-1 md:grid-cols-[26fr_8fr_66fr] gap-6 md:gap-0 items-start">
               <div>
-                <p className="text-lg leading-snug text-bgp-ink">
+                <p className="text-[1.35rem] leading-[1.12] text-bgp-ink">
                   {[
                     formatSqft(listing.sqft),
                     listing.propertyName && listing.propertyName !== listing.unitName ? `within ${listing.propertyName.replace(/^\[Sample\]\s*/, "")}` : null,
@@ -169,7 +169,7 @@ export default function ListingDetail() {
                   ].filter(Boolean).join(" ") || "Full particulars available on request."}
                   {" "}Full particulars, floor plans and viewing arrangements from the leasing team below.
                 </p>
-                <p className="mt-3 text-lg leading-snug text-bgp-ink italic">
+                <p className="mt-3 text-[1.35rem] leading-[1.12] text-bgp-ink italic">
                   Draft: a paragraph from the leasing team on the unit, the building and the street, the neighbouring occupiers, and who it would suit.
                 </p>
               </div>
