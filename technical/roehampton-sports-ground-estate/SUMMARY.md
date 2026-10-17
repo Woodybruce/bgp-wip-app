@@ -23,14 +23,17 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   to Bank Lane, and 18 at The Grange's north-east corner; 198 against the 180 the plan needs.
   The overlay also shows the Third Space demise, the external doors read from the door swings on
   the GIA plans and the three main entrances (Sports Club west door, Pavilion main door, Grange
-  front door by the 2005 ramp). Plan as instructed by Woody (17 Oct 2026): Third Space take the
-  Sports Club, the Squash Courts and the whole permanent Pavilion, 62,360 sq ft GIA; the Club keep
-  only the long-standing temporary pavilion at the Pavilion's north end, 5,793 sq ft measured from
-  the GIA outline and counted inside the scheduled 32,543 sq ft (permanent building 26,750 sq ft).
+  front door by the 2005 ramp). Plan as instructed by Woody (17 Oct 2026): remove the
+  long-standing temporary pavilion at the Pavilion's north end (5,793 sq ft measured from the GIA
+  outline, counted inside the scheduled 32,543 sq ft) rather than split the Pavilion around it;
+  Third Space take the Sports Club and the whole permanent Pavilion, 59,127 sq ft GIA, with the
+  Squash Courts (3,233 sq ft) held back until Third Space say whether they need them. The Club
+  keep the fields and the marquee rights, no building.
   Knight Frank's area schedule gives the same building totals (Sports Club 32,377 GIA / 19,986
   NIA; Pavilion 32,543 GIA / 21,157 NIA).
 - `analysis/third-space-demise.png` — the demise cut through the GIA plans floor by floor, with
-  measured areas: 62,360 sq ft to Third Space, 5,793 sq ft temporary pavilion to the Club. The
+  measured areas: 59,127 sq ft to Third Space (62,360 with the Squash Courts), 5,793 sq ft
+  temporary pavilion removed. The
   fallback splits if Third Space will not take the Pavilion: Option A 35,610 sq ft (Sports Club +
   Squash), Option B 45,840 sq ft (plus the Pavilion east block), Option B+ 49,551 sq ft.
 - `service-charge/` — Gerald Eve service charge BUDGETS for The Grange, years ending 24 March
