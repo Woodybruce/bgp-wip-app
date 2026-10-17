@@ -24,8 +24,10 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   The overlay also shows the Third Space demise and the two existing vehicle gates: the barrier
   entrance off Bank Lane beside the cottage south-west of The Grange (Woody's Google Maps pin,
   51.4584369 -0.255806 = OS 521275 174716, placed on the survey via sheet 10's grid labels) and the
-  exit gate in the Bank Lane boundary south-east of The Grange, where car park A's painted EXIT
-  arrows point. The estate roads at the south-east end of car park A are internal, not an access (Sports Club west door, Pavilion main door, Grange
+  timber gates on Bank Lane 40 m further east, straight into car park A (Woody's Street View pin,
+  51.4582115 -0.2552273 looking east = the hatched gate on the survey; today the car park's exit,
+  its painted EXIT arrows point there). Plan: residents through the barrier, Third Space through
+  the timber gates. The estate roads at the south-east end of car park A are internal, not an access (Sports Club west door, Pavilion main door, Grange
   front door by the 2005 ramp). Plan as instructed by Woody (17 Oct 2026): remove the
   long-standing temporary pavilion at the Pavilion's north end with its link passage and porch
   (4,778 sq ft measured along its own outline on the GIA plan, counted inside the scheduled
