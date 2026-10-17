@@ -89,7 +89,8 @@ th,td{padding:9px 12px;text-align:left;vertical-align:top;border-bottom:1px soli
 th{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);background:var(--soft)}
 td.r,th.r{text-align:right}
 td .num{font-size:13px}
-td.num,.kv dd{white-space:nowrap}
+td.num{white-space:nowrap}
+.kv dd{white-space:normal;overflow-wrap:anywhere}
 #t-value,#t-cost{min-width:0}
 tr.total td{font-weight:700;border-top:2px solid var(--line-strong)}
 tbody tr:last-child td{border-bottom:0}
@@ -109,7 +110,7 @@ ol.tight{margin:0;padding-left:20px;display:grid;gap:5px}
 .move{display:grid;gap:12px;border:1px solid var(--line);background:var(--card);padding:20px 22px;min-width:0}
 .move header{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .move .big{font-family:var(--display);font-size:26px;color:var(--accent);font-variant-numeric:tabular-nums;line-height:1.1}
-.kv{display:grid;grid-template-columns:1fr auto;gap:4px 16px;font-size:13.5px}
+.kv{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.5fr);gap:4px 16px;font-size:13.5px}
 .kv dt{color:var(--muted)}.kv dd{margin:0;text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:13px}
 
 /* underwrite */
@@ -264,8 +265,8 @@ footer .wrap{display:grid;gap:6px}
         <dt>Current rent</dt><dd>£350,000 → £675,000 (2031)</dd>
         <dt>New rent</dt><dd>£100,000 pa</dd>
         <dt>New term</dt><dd>10 years from 2028</dd>
-        <dt>Consents in place</dt><dd>Marquees &amp; grandstands to 2031</dd>
-        <dt>Needs</dt><dd>Agreed surrender, documented before exchange</dd>
+        <dt>Consents in place</dt><dd>Marquees to 2031</dd>
+        <dt>Needs</dt><dd>Agreed surrender before exchange</dd>
       </dl>
       <p class="note">The Club's lease is outside the Act and runs to 2036, so the surrender has to be agreed, not imposed. Their lever is the 2031 break; ours is certainty of tenure for the Qualifying and a rent that falls from £350,000 to £100,000 for a smaller demise. Document the surrender and regrant as a condition of the purchase so the leisure buildings are vacant on completion.</p>
     </article>
