@@ -51,6 +51,9 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   on The Grange is a placeholder value pending Related's residential underwrite.
 - Underwrite (17 Oct 2026): The Grange taken as sold to Related at £7m (Woody); at that figure
   the whole-estate bid for 15% on cost is about £20m, against the £30m working price.
+- `plans/` — the three plans as deliverable files (PNG each, plus one A3 PDF): 1 Third Space demise floor
+  by floor, 2 demise with parking and access routes, 3 the All England Club's new lease. Served from
+  the share page's plans/ folder and linked from its Proposals and Documents sections.
 - `proposals/` — three editable Word documents on BGP letterhead (17 Oct 2026): Heads of Terms to
   Third Space (20 yrs, £30 psf GIA on 60,142 sq ft, 24 months rent free, one year's capital
   contribution, CPI 5-yearly capped 3%, rights to 150 of 162 bays, Gate 2, Qualifying hospitality
