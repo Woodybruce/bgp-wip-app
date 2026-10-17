@@ -84,7 +84,7 @@ export default function Nav() {
                   <Link
                     href={item.href}
                     data-active={active}
-                    className={`label-caps nav-link whitespace-nowrap transition-colors py-7 ${
+                    className={`label-caps md:text-[0.8rem] nav-link whitespace-nowrap transition-colors py-7 ${
                       over ? "text-white hover:opacity-80" : active ? "text-bgp-wine" : "text-bgp-wine hover:opacity-70"
                     }`}
                   >

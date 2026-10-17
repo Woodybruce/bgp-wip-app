@@ -72,7 +72,7 @@ export default function Home() {
         {SERVICES.map((service, i) => {
           const inner = (
             <>
-              <h2 className="text-[1.88rem] font-bold text-bgp-ink mb-[2.2rem]">{service.name}</h2>
+              <h2 className="text-[1.38rem] font-bold text-bgp-ink mb-[2.2rem]">{service.name}</h2>
               <div className={`grid grid-cols-1 gap-8 md:gap-0 items-start ${i % 2 ? "md:grid-cols-[47fr_4fr_49fr] md:[direction:rtl]" : "md:grid-cols-[55fr_4fr_41fr]"}`}>
                 <div className="img-frame [direction:ltr]">
                   <Placeholder className="aspect-[1.57] w-full" src={service.image} alt={service.name} />
