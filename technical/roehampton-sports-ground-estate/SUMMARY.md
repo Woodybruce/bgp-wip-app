@@ -35,6 +35,8 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   keep the fields and the marquee rights, no building.
   Knight Frank's area schedule gives the same building totals (Sports Club 32,377 GIA / 19,986
   NIA; Pavilion 32,543 GIA / 21,157 NIA).
+- Underwrite (17 Oct 2026): The Grange taken as sold to Related at £7m (Woody); at that figure
+  the whole-estate bid for 15% on cost is about £20m, against the £30m working price.
 - `analysis/third-space-demise.png` — the demise cut through the GIA plans floor by floor, with
   measured areas: 60,142 sq ft to Third Space (63,375 with the Squash Courts), 4,778 sq ft
   temporary pavilion, link and porch removed. The

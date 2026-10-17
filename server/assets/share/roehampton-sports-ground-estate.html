@@ -401,7 +401,7 @@ footer .wrap{display:grid;gap:6px}
   <div class="sec-head">
     <div class="eyebrow">Underwrite</div>
     <h2>Commercial underwrite, three-year hold</h2>
-    <p>Every figure in the left-hand panel is a BGP working assumption and can be changed. The model buys the whole estate in January 2027, sells the cottages, does the landlord's works in 2027, starts the Third Space lease in January 2028, takes the Club's surrender and regrants from 2028, and sells the commercial lots at the end of the hold on net initial yields with purchaser's costs deducted. The Grange is treated as sold to Related; leave Related's number blank and the model shows the price Related would need to pay for the bid to clear the target profit on cost. Debt is drawn against costs as they fall, interest is paid from income or equity, and the loan is repaid from sale proceeds.</p>
+    <p>Every figure in the left-hand panel is a BGP working assumption and can be changed. The model buys the whole estate in January 2027, sells the cottages, does the landlord's works in 2027, starts the Third Space lease in January 2028, takes the Club's surrender and regrants from 2028, and sells the commercial lots at the end of the hold on net initial yields with purchaser's costs deducted. The Grange is treated as sold to Related at £7m, Woody's figure; the headline then shows what the bid for the whole estate has to be for the target profit on cost, and clearing Related's number shows instead what the Grange would have to fetch at the purchase price entered. Debt is drawn against costs as they fall, interest is paid from income or equity, and the loan is repaid from sale proceeds.</p>
   </div>
   <div class="uw">
     <aside class="inputs" aria-label="Assumptions">
@@ -436,7 +436,7 @@ footer .wrap{display:grid;gap:6px}
         <div class="field"><label for="in-ntc">National Tennis Centre reversion</label><div class="in"><span>£m</span><input id="in-ntc" type="number" value="0.5" step="0.1" min="0"></div></div>
         <div class="field"><label for="in-gyear">Related take The Grange<small>0 = on completion; else end of that year</small></label><div class="in"><input id="in-gyear" type="number" value="0" step="1" min="0" max="10"><span>yr</span></div></div>
         <div class="field"><label for="in-void">Grange empty costs until then<small>Service charge, rates, insurance</small></label><div class="in"><span>£k</span><input id="in-void" type="number" value="1000" step="50" min="0"><span>pa</span></div></div>
-        <div class="field"><label for="in-grange">Grange price from Related<small>Leave blank to see the breakeven</small></label><div class="in"><span>£m</span><input id="in-grange" type="number" value="" step="0.5" min="0" placeholder="—"></div></div>
+        <div class="field"><label for="in-grange">Grange price from Related<small>£7m per Woody; clear it to see the breakeven</small></label><div class="in"><span>£m</span><input id="in-grange" type="number" value="7" step="0.5" min="0" placeholder="—"></div></div>
       </div>
       <div class="fgroup">
         <div class="eyebrow">Debt</div>
@@ -741,7 +741,7 @@ footer .wrap{display:grid;gap:6px}
 <script>
 (function(){
   const $=id=>document.getElementById(id);
-  const DEF={price:30,pc:6.8,hold:3,target:15,gia:60142,rent:30,rf:2,cap:1,cpi:3.0,works:75,fees:15,ly:7.5,aeltg:100,prem:0,gy:7.0,cott:3.0,ntc:0.5,gyear:0,void:1000,grange:'',ltc:55,fin:7,arr:1.5};
+  const DEF={price:30,pc:6.8,hold:3,target:15,gia:60142,rent:30,rf:2,cap:1,cpi:3.0,works:75,fees:15,ly:7.5,aeltg:100,prem:0,gy:7.0,cott:3.0,ntc:0.5,gyear:0,void:1000,grange:7,ltc:55,fin:7,arr:1.5};
   const ids=Object.keys(DEF);
   const K=['aeltg','prem','void'];
   const num=id=>{const v=parseFloat($('in-'+id).value);return isNaN(v)?0:(K.includes(id)?v*1000:v);};
@@ -759,8 +759,8 @@ footer .wrap{display:grid;gap:6px}
     return (lo+hi)/2;
   }
 
-  function run(grangeVal){
-    const price=num('price')*1e6, pc=num('pc')/100, H=Math.max(1,Math.round(num('hold'))), target=num('target')/100;
+  function run(grangeVal,priceOverride){
+    const price=(priceOverride!==undefined?priceOverride:num('price')*1e6), pc=num('pc')/100, H=Math.max(1,Math.round(num('hold'))), target=num('target')/100;
     const gia=num('gia'), rentpsf=num('rent'), ts=gia*rentpsf, rf=num('rf'), capYrs=num('cap'), cpi=Math.min(num('cpi'),3)/100;
     const works=gia*num('works'), fees=works*num('fees')/100, capC=ts*capYrs, rfC=ts*rf;
     const aeltg=num('aeltg'), prem=num('prem'), ly=num('ly')/100, gy=num('gy')/100;
@@ -821,6 +821,11 @@ footer .wrap{display:grid;gap:6px}
     const yoc=(ts+aeltg)/Math.max(1,costBefore-grangeVal-cott);
     return {H,price,pc,ts,rentAtExit,aeltg,ly,gy,vTs,vAe,ntc,cott,works,fees,capC,rfC,prem,voidC,costBefore,finC,totalCost,income,receipts,profit,poc:profit/totalCost,pogdv:profit/receipts,uirr:irr(unlev),lirr:irr(equity),em:eqIn>0?eqOut/eqIn:NaN,peakEq,peakDebt,coc,yoc,years,grangeVal,target,rf,capYrs,gia};
   }
+  function bidFor(G){
+    const target=num('target')/100; let lo=0,hi=200e6;
+    for(let i=0;i<80;i++){const mid=(lo+hi)/2; if(run(G,mid).poc<target) hi=mid; else lo=mid;}
+    return (lo+hi)/2;
+  }
   function breakeven(){
     const target=num('target')/100; let lo=0,hi=400e6;
     for(let i=0;i<80;i++){const mid=(lo+hi)/2; if(run(mid).poc<target) lo=mid; else hi=mid;}
@@ -839,7 +844,7 @@ footer .wrap{display:grid;gap:6px}
       $('v-grange-l').textContent='The Grange, to Related at breakeven';
     } else {
       $('o-key').textContent=fmtM(m.profit);
-      $('o-key-l').textContent='Profit with Related paying '+fmtM(related)+' for The Grange. Breakeven Grange price for '+Math.round(m.target*100)+'% on cost is '+fmtM(be)+'.';
+      $('o-key-l').textContent='Profit at a '+fmtM(m.price)+' purchase price with Related paying '+fmtM(related)+' for The Grange: '+pct(m.poc)+' on cost. To clear '+Math.round(m.target*100)+'% on cost with the Grange at '+fmtM(related)+', the bid for the whole estate has to be '+fmtM(bidFor(related))+'. At '+fmtM(m.price)+' the Grange would have to fetch '+fmtM(be)+'.';
       $('v-grange-l').textContent='The Grange, to Related';
     }
     $('o-uirr').textContent=pct(m.uirr); $('o-lirr').textContent=pct(m.lirr); $('o-em').textContent=isFinite(m.em)?m.em.toFixed(2)+'x':'—'; $('o-poc').textContent=pct(m.poc); $('o-coc').textContent=pct(m.coc);
@@ -853,7 +858,7 @@ footer .wrap{display:grid;gap:6px}
     // metrics
     $('m-profit').textContent=fmtM(m.profit); $('m-poc').textContent=pct(m.poc); $('m-pogdv').textContent=pct(m.pogdv); $('m-yoc').textContent=pct(m.yoc); $('m-uirr').textContent=pct(m.uirr); $('m-lirr').textContent=pct(m.lirr); $('m-em').textContent=isFinite(m.em)?m.em.toFixed(2)+'x':'—'; $('m-peak').textContent=fmtM(m.peakEq); $('m-coc').textContent=pct(m.coc); $('m-debt').textContent=fmtM(m.peakDebt);
     chart1(m); chart2(m);
-    try{localStorage.setItem('rse-uw6',JSON.stringify(Object.fromEntries(ids.map(k=>[k,$('in-'+k).value]))));}catch(e){}
+    try{localStorage.setItem('rse-uw7',JSON.stringify(Object.fromEntries(ids.map(k=>[k,$('in-'+k).value]))));}catch(e){}
   }
 
   const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
@@ -907,7 +912,7 @@ footer .wrap{display:grid;gap:6px}
     const surplus=198-n; $('pk-surplus').textContent=(surplus>=0?'+':'−')+Math.abs(surplus)+' bays';
   }
 
-  try{const saved=JSON.parse(localStorage.getItem('rse-uw6')||'null'); if(saved){ids.forEach(k=>{if(saved[k]!==undefined)$('in-'+k).value=saved[k];});}}catch(e){}
+  try{const saved=JSON.parse(localStorage.getItem('rse-uw7')||'null'); if(saved){ids.forEach(k=>{if(saved[k]!==undefined)$('in-'+k).value=saved[k];});}}catch(e){}
   ids.forEach(k=>$('in-'+k).addEventListener('input',render));
   ['pk-spaces','pk-sqm'].forEach(k=>$(k).addEventListener('input',parking));
   $('btn-reset').addEventListener('click',()=>{ids.forEach(k=>$('in-'+k).value=DEF[k]);render();});
