@@ -45,7 +45,7 @@ export default function LeasingSector() {
             a narrow text column beside a wide image; then a landscape and a lower, portrait image. */}
         <div className="flex items-start justify-between gap-8">
           <h1 className="font-normal text-3xl md:text-[3.8rem] leading-[0.95]">{sector.name}</h1>
-          <span className="flex flex-col items-end gap-1 shrink-0 label-caps md:text-[1rem] font-bold text-bgp-ink">
+          <span className="flex flex-col items-end gap-1 shrink-0 label-caps font-bold text-bgp-ink">
             <a href="#contact" className="hover:opacity-70">Contact</a>
             <a href="#contact" className="hover:opacity-70">Download</a>
           </span>
@@ -53,14 +53,14 @@ export default function LeasingSector() {
         {!sector.howWeHelp && (
           <div className="mt-6 grid grid-cols-1 md:grid-cols-[33fr_54fr_13fr]">
             <div />
-            <p className="font-normal text-2xl md:text-[2rem] leading-[1.1] text-bgp-ink">{sector.headline}</p>
+            <p className="font-normal text-2xl md:text-[1.92rem] leading-[1.1] text-bgp-ink">{sector.headline}</p>
           </div>
         )}
         {sector.howWeHelp && <p className="mt-4 font-normal text-xl md:text-2xl text-bgp-ink md:w-[60%] md:ml-auto">{sector.headline}</p>}
         <div className={`mt-8 grid grid-cols-1 gap-10 items-start ${sector.howWeHelp ? "md:grid-cols-[1fr_280px]" : "md:grid-cols-[26fr_8fr_66fr] md:gap-0"}`}>
           <div className="space-y-4">
             {sector.body.slice(0, sector.howWeHelp ? undefined : 1).map((p, i) => (
-              <p key={p.slice(0, 24)} className="text-[1.35rem] leading-[1.12] text-bgp-ink">{p}</p>
+              <p key={p.slice(0, 24)} className="text-[1.38rem] leading-[1.12] text-bgp-ink">{p}</p>
             ))}
           </div>
           {!sector.howWeHelp && <div className="hidden md:block" />}

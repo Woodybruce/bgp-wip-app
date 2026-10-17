@@ -12,9 +12,9 @@ const INITIAL_VISIBLE = 7;
 
 function Filter({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (v: string) => void }) {
   return (
-    <label className="label-caps md:text-[0.85rem] font-bold flex items-center gap-1.5 text-bgp-ink">
+    <label className="label-caps md:text-[0.7rem] font-bold flex items-center gap-1.5 text-bgp-ink">
       <span className="whitespace-nowrap">{label} <span aria-hidden>{"↘︎"}</span></span>
-      <select value={value} onChange={(e) => onChange(e.target.value)} className="bg-transparent label-caps md:text-[0.85rem] text-bgp-ink outline-none cursor-pointer hover:opacity-70">
+      <select value={value} onChange={(e) => onChange(e.target.value)} className="bg-transparent label-caps md:text-[0.7rem] text-bgp-ink outline-none cursor-pointer hover:opacity-70">
         <option value="">All</option>
         {options.map((o) => <option key={o} value={o}>{o}</option>)}
       </select>
@@ -41,7 +41,7 @@ export default function Investment() {
       <section className="mx-auto max-w-[1360px] px-4 pt-16 pb-14">
         <SectionHead title="Snapshot of properties" sub="Please contact us for full availability" />
         <div className="flex flex-wrap items-center gap-x-10 gap-y-3 border-b border-bgp-wine/30 pb-3 mb-8 -mt-4">
-          <span className="label-caps md:text-[1rem] font-bold text-bgp-ink">Filter by</span>
+          <span className="label-caps md:text-[0.92rem] font-bold text-bgp-ink">Filter by</span>
           <Filter label="Status" value={status} options={["Completed", "Under offer"]} onChange={setStatus} />
           <Filter label="Type" value={type} options={types} onChange={setType} />
         </div>
@@ -96,7 +96,7 @@ export default function Investment() {
         })()}
         {!expanded && !status && !type && deals.length > INITIAL_VISIBLE && (
           <p className="mt-10 text-right">
-            <button onClick={() => setExpanded(true)} className="label-caps md:text-[1.3rem] font-bold text-bgp-ink hover:text-bgp-wine">
+            <button onClick={() => setExpanded(true)} className="label-caps md:text-[1.15rem] font-bold text-bgp-ink hover:text-bgp-wine">
               + More transactions ({deals.length - INITIAL_VISIBLE})
             </button>
           </p>

@@ -26,10 +26,10 @@ export default function ArticlePage() {
 
   return (
     <article className="mx-auto max-w-[1360px] px-4 py-12 md:py-14">
-      <h2 className="text-[1.88rem] font-bold text-bgp-ink border-b border-bgp-ink pb-2">News and insights</h2>
+      <h2 className="text-[1.73rem] font-bold text-bgp-ink border-b border-bgp-ink pb-2">News and insights</h2>
 
       <div className="mt-4 bg-bgp-mist px-[3%] pt-5 pb-8">
-      <div className="flex flex-wrap justify-between gap-x-6 label-caps md:text-[1.1rem] font-bold text-bgp-ink">
+      <div className="flex flex-wrap justify-between gap-x-6 label-caps md:text-[1.04rem] font-bold text-bgp-ink">
         <span>{article.date} <span className="mx-2 text-bgp-ink/30">·</span> By {article.author}</span>
         <span>{article.category}</span>
       </div>
@@ -39,19 +39,19 @@ export default function ArticlePage() {
         <Placeholder className="aspect-[1.31] w-full" src={article.image} alt={article.title} />
         <div className="hidden md:block" />
         <div>
-          <h1 className="font-normal text-3xl md:text-[2.54rem] leading-[1.05] text-bgp-wine">{article.title}</h1>
-          <p className="mt-4 text-[1.54rem] leading-[1.12] text-bgp-ink">{article.standfirst}</p>
+          <h1 className="font-normal text-3xl md:text-[2.3rem] leading-[1.05] text-bgp-wine">{article.title}</h1>
+          <p className="mt-4 text-[1.35rem] leading-[1.12] text-bgp-ink">{article.standfirst}</p>
         </div>
       </div>
 
-      <div className="mt-10 space-y-5 md:ml-[8.5%] md:mr-[5%] [&>p]:text-[1.27rem] [&>p]:leading-[1.15] [&>p]:text-bgp-ink">
+      <div className="mt-10 space-y-5 md:ml-[8.5%] md:mr-[5%] [&>p]:text-[1.23rem] [&>p]:leading-[1.15] [&>p]:text-bgp-ink">
         {article.body ? (
           article.body.map((para, i) => (
             <Fragment key={i}>
               {i === Math.floor(article.body!.length * 0.55) && (
                 <Placeholder className="aspect-square w-full md:float-right md:w-[58%] md:ml-10 md:mb-4" alt={`${article.title} second photo`} label="Photo to follow" />
               )}
-              {para.startsWith("## ") ? <h2 className="text-[1.27rem] font-bold pt-6">{para.slice(3)}</h2> : <p>{para}</p>}
+              {para.startsWith("## ") ? <h2 className="text-[1.23rem] font-bold pt-6">{para.slice(3)}</h2> : <p>{para}</p>}
             </Fragment>
           ))
         ) : (

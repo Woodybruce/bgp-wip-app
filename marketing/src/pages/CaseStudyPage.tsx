@@ -69,10 +69,10 @@ export default function CaseStudyPage() {
             beside them, then an image carousel with arrows and dots. */}
         <div className="grid grid-cols-1 md:grid-cols-[63fr_12fr_25fr] gap-6 md:gap-0">
           <div>
-            <h1 className={`font-normal text-3xl md:text-[3.35rem] leading-[0.95] ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
+            <h1 className={`font-normal text-3xl md:text-[3.1rem] leading-[0.95] ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
             <div className={`mt-5 space-y-4 ${caseStudy.draft ? "italic" : ""}`}>
               {caseStudy.body.map((para) => (
-                <p key={para.slice(0, 32)} className="text-[1.35rem] leading-[1.12] text-bgp-ink">
+                <p key={para.slice(0, 32)} className="text-[1.23rem] leading-[1.12] text-bgp-ink">
                   {para}
                 </p>
               ))}

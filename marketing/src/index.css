@@ -41,7 +41,7 @@ a:focus-visible { outline: 2px solid #ff1923; outline-offset: 3px; }
   /* Small uppercase labels and CTAs — Lato Medium upper case, letter
      spacing 0 (guidelines p.10; Google Fonts has no Medium, Regular stands in) */
   .label-caps {
-    @apply text-xs md:text-[1.05rem] font-normal uppercase tracking-normal font-sans;
+    @apply text-xs md:text-[0.92rem] font-normal uppercase tracking-normal font-sans;
   }
   /* Sub headings — Lato Light upper case (guidelines p.9) */
   .subhead {
