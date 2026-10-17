@@ -49,6 +49,8 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   an Export to Excel button that writes the current inputs, cash flow and outputs as values.
 - Related (Woody, 17 Oct 2026): partner with BGP on the WHOLE deal, not a buyer of The Grange. The £7m
   on The Grange is a placeholder value pending Related's residential underwrite.
+- Exit (Woody, 17 Oct 2026): everything is sold at once at the end of year 3, including the cottages and
+  The Grange at its £7m placeholder; no Grange holding cost charged (sits in Related's underwrite).
 - Underwrite (17 Oct 2026): The Grange taken as sold to Related at £7m (Woody); at that figure
   the whole-estate bid for 15% on cost is about £20m, against the £30m working price.
 - `plans/` — the three plans as deliverable files (PNG each, plus one A3 PDF): 1 Third Space demise floor
