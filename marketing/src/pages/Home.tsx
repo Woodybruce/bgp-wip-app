@@ -56,12 +56,12 @@ export default function Home() {
       <a href="#contact" className="block bg-bgp-ink text-bgp-cream text-center label-caps md:text-[0.72rem] leading-none py-[0.3rem] hover:bg-bgp-wine transition-colors">Talk to us</a>
 
       {/* Stats row, on the grey band as slide 23 draws it */}
-      <section className="bg-bgp-mist"><div className="mx-auto max-w-[1360px] px-4 py-10 md:py-12">
+      <section className="bg-bgp-mist"><div className="mx-auto max-w-[1360px] px-4 pt-[3rem] pb-[1.6rem]">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-8 text-center">
           {STATS.map((s) => (
             <div key={s.caption}>
               <p className="font-normal text-4xl md:text-[4.65rem] leading-none tabular text-bgp-ink">{s.value}</p>
-              <p className="mt-[1.55rem] text-[1.12rem] leading-[1.25] text-bgp-ink max-w-[20ch] mx-auto">{s.caption}</p>
+              <p className="mt-[1.4rem] text-[1.08rem] leading-[1.25] text-bgp-ink max-w-[20ch] mx-auto">{s.caption}</p>
             </div>
           ))}
         </div>
