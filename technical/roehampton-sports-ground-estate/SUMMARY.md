@@ -56,7 +56,7 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   leisure side (landlord's works nil); The Grange and cottages are redeveloped as residential by the
   partnership; everything is sold as one lot after 3 years.
 - Exit (Woody, 17 Oct 2026): everything is sold at once at the end of year 3, including the cottages and
-  The Grange at its £7m placeholder; no Grange holding cost charged (sits in Related's underwrite).
+  The Grange at BGP's £7m exit valuation (Woody 17 Oct 2026: not a placeholder); no Grange holding cost charged (sits in Related's underwrite).
 - Underwrite (17 Oct 2026): The Grange taken as sold to Related at £7m (Woody); at that figure
   the base case purchase price is £18m (Woody, 17 Oct 2026); debt is one loan on completion at 50% of
   the valuation after the lettings at 9%, no refinance.
