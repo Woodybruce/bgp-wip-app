@@ -60,8 +60,8 @@ export default function Home() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-8 text-center">
           {STATS.map((s) => (
             <div key={s.caption}>
-              <p className="display text-4xl md:text-[4.46rem] tabular">{s.value}</p>
-              <p className="mt-3 text-[1.04rem] leading-tight text-bgp-ink max-w-[20ch] mx-auto">{s.caption}</p>
+              <p className="display text-4xl md:text-[5rem] tabular">{s.value}</p>
+              <p className="mt-3 text-[1.23rem] leading-tight text-bgp-ink max-w-[20ch] mx-auto">{s.caption}</p>
             </div>
           ))}
         </div>
@@ -72,14 +72,14 @@ export default function Home() {
         {SERVICES.map((service, i) => {
           const inner = (
             <>
-              <h2 className="text-[1.38rem] font-bold text-bgp-ink mb-5">{service.name}</h2>
+              <h2 className="text-[1.88rem] font-bold text-bgp-ink mb-5">{service.name}</h2>
               <div className={`grid grid-cols-1 md:grid-cols-[59fr_3fr_38fr] gap-8 md:gap-0 items-start ${i % 2 ? "md:[direction:rtl]" : ""}`}>
                 <div className="img-frame [direction:ltr]">
                   <Placeholder className="aspect-[1.57] w-full" src={service.image} alt={service.name} />
                 </div>
                 <div className="hidden md:block" />
                 <div className="[direction:ltr]">
-                  <p className="text-[1.23rem] leading-[1.12] text-bgp-ink">{service.intro}</p>
+                  <p className="text-[1.5rem] leading-[1.12] text-bgp-ink">{service.intro}</p>
                   <p className="mt-5"><Link href={`/${service.slug}`} className="explore-link md:text-[1rem] font-bold">Find out more</Link></p>
                 </div>
               </div>
