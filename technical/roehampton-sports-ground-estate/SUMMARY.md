@@ -47,6 +47,8 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   workbook (Inputs / Cash flow / Outputs, 263 formulas, recalculated; matches the page at the BGP
   defaults: profit -£7.49m, -17.7% on cost, unlevered IRR -5.4%, levered -23.8%). The page also has
   an Export to Excel button that writes the current inputs, cash flow and outputs as values.
+- Related (Woody, 17 Oct 2026): partner with BGP on the WHOLE deal, not a buyer of The Grange. The £7m
+  on The Grange is a placeholder value pending Related's residential underwrite.
 - Underwrite (17 Oct 2026): The Grange taken as sold to Related at £7m (Woody); at that figure
   the whole-estate bid for 15% on cost is about £20m, against the £30m working price.
 - `proposals/` — three editable Word documents on BGP letterhead (17 Oct 2026): Heads of Terms to
