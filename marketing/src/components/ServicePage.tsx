@@ -48,7 +48,7 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
 
       <h1 className="sr-only">{title}</h1>
       <section className="mx-auto max-w-[1360px] px-4 pt-12 md:pt-14 pb-10">
-        <h2 className="text-2xl font-bold text-bgp-ink border-b-[3px] border-bgp-ink pb-3 mb-8 md:ml-[3%] md:mr-[7%] md:pl-[4%]">A snapshot of clients</h2>
+        <h2 className="text-[1.65rem] font-bold text-bgp-ink border-b-[3px] border-bgp-ink pb-3 mb-8 md:ml-[3%] md:mr-[7%] md:pl-[4%]">A snapshot of clients</h2>
         {clientsBlurb && <p className="text-sm text-bgp-ink/70 mb-4">{clientsBlurb}</p>}
         {clients}
       </section>

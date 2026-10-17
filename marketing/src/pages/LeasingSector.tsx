@@ -40,8 +40,7 @@ export default function LeasingSector() {
           beside the lead image, more photos, a location map. */}
       <div data-hero className="-mt-16 md:-mt-24 lg:-mt-28"><Placeholder className="h-64 md:h-auto md:aspect-[2.96] w-full" src={sector.image} alt={sector.name} /></div>
 
-      <section className="mx-auto max-w-[1360px] px-4 py-12 md:py-14">
-        <p className="label-caps text-bgp-ink/50 mb-4"><Link href="/leasing" className="hover:text-bgp-wine">Leasing</Link> · {sector.name}</p>
+      <section className="mx-auto max-w-[1360px] px-4 pt-8 pb-12 md:pb-14">
         {/* Slide 28: title row with Contact and Download at right; the statement on the next row in the right column;
             a narrow text column beside a wide image; then a landscape and a lower, portrait image. */}
         <div className="flex items-start justify-between gap-8">
@@ -52,18 +51,19 @@ export default function LeasingSector() {
           </span>
         </div>
         {!sector.howWeHelp && (
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-[27fr_61fr] md:gap-x-[12%]">
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-[33fr_54fr_13fr]">
             <div />
             <p className="font-normal text-2xl md:text-3xl leading-snug text-bgp-ink">{sector.headline}</p>
           </div>
         )}
         {sector.howWeHelp && <p className="mt-4 font-normal text-xl md:text-2xl text-bgp-ink md:w-[60%] md:ml-auto">{sector.headline}</p>}
-        <div className={`mt-8 grid grid-cols-1 gap-10 items-start ${sector.howWeHelp ? "md:grid-cols-[1fr_280px]" : "md:grid-cols-[30fr_64fr] md:gap-x-[6%]"}`}>
+        <div className={`mt-8 grid grid-cols-1 gap-10 items-start ${sector.howWeHelp ? "md:grid-cols-[1fr_280px]" : "md:grid-cols-[26fr_8fr_66fr] md:gap-0"}`}>
           <div className="space-y-4">
-            {sector.body.map((p, i) => (
+            {sector.body.slice(0, sector.howWeHelp ? undefined : 1).map((p, i) => (
               <p key={p.slice(0, 24)} className="text-lg leading-snug text-bgp-ink">{p}</p>
             ))}
           </div>
+          {!sector.howWeHelp && <div className="hidden md:block" />}
           {!sector.howWeHelp && (
             <figure className="img-frame">
               <Placeholder className="aspect-[1.61] w-full" src={sector.gallery?.[0]?.src} alt={sector.gallery?.[0]?.caption ?? sector.name} />

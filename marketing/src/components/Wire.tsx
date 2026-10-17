@@ -75,7 +75,7 @@ export function Hero({ src, alt, label, statement, caption, tall = false }: { sr
 export function Band({ children, className = "", id }: { children: ReactNode; className?: string; id?: string }) {
   return (
     <section id={id} className={`bg-bgp-mist ${className}`}>
-      <div className="mx-auto max-w-[1360px] px-4 py-12 md:py-14">{children}</div>
+      <div className="mx-auto max-w-[1360px] px-4 pt-10 pb-12 md:pt-10 md:pb-14">{children}</div>
     </section>
   );
 }
@@ -87,7 +87,7 @@ export function SectionHead({ title, sub, right, as: Tag = "h2", rule = true }: 
   return (
     <div className={`flex flex-wrap items-end justify-between gap-x-8 gap-y-2 ${rule ? "border-b-[3px] border-bgp-ink pb-3 mb-8" : "mb-6"}`}>
       <div>
-        <Tag className="text-2xl font-bold text-bgp-ink">{title}</Tag>
+        <Tag className="text-[1.65rem] font-bold text-bgp-ink">{title}</Tag>
         {sub && <p className="mt-1 text-sm text-bgp-ink/70">{sub}</p>}
       </div>
       {right}

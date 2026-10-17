@@ -113,17 +113,9 @@ export default function ListingDetail() {
 
   return (
     <div className="pb-24 md:pb-0">
-      <section className="mx-auto max-w-[1360px] px-4 pt-8 md:pt-10">
-        <p className="label-caps text-bgp-ink/50 border-b border-bgp-ink pb-2">
-          <Link href="/leasing" className="hover:text-bgp-wine transition-colors">Leasing</Link>
-          <span className="mx-2 text-bgp-wine/40">/</span>
-          <span className="text-bgp-wine">{areaLabel(listing) || "Availability"}</span>
-        </p>
-      </section>
-
       {/* Wireframe slide 27: photo with the facts panel to its right, then the
           title at left with the headline statement at right. */}
-      <section className="mx-auto max-w-[1360px] px-4 py-12 md:py-14">
+      <section className="mx-auto max-w-[1360px] px-4 pt-6 pb-12 md:pb-14">
         <div className="grid grid-cols-1 md:grid-cols-[84fr_3fr_13fr] gap-6 md:gap-0">
           <div>
             <div className="overflow-hidden">
@@ -150,9 +142,24 @@ export default function ListingDetail() {
                 {brochureHref ? <a href={brochureHref} target="_blank" rel="noreferrer" className="hover:text-bgp-wine">Download</a> : <button onClick={onDownload} className="hover:text-bgp-wine">Download</button>}
               </div>
             </div>
-            {headline && <p className="mt-10 md:ml-[35%] font-normal text-2xl md:text-3xl leading-snug text-bgp-ink">{headline.charAt(0).toUpperCase() + headline.slice(1)}.</p>}
+            {headline && <p className="mt-12 md:ml-[35%] md:mr-[6%] font-normal text-2xl md:text-3xl leading-snug text-bgp-ink">{headline.charAt(0).toUpperCase() + headline.slice(1)}.</p>}
+          </div>
+          <div className="hidden md:block" />
+          <aside>
+            <dl className="border-t border-bgp-ink">
+              {keyInfo
+                .filter(([, v]) => v)
+                .map(([k, v]) => (
+                  <div key={k} className="border-b border-bgp-line py-3">
+                    <dt className="label-caps text-bgp-ink/50">{k}</dt>
+                    <dd className="mt-1 text-sm tabular">{v}</dd>
+                  </div>
+                ))}
+            </dl>
+          </aside>
+        </div>
             {/* Slide 27: a narrow description beside a photo, then a landscape photo and a lower portrait one. */}
-            <div className="mt-8 grid grid-cols-1 md:grid-cols-[30fr_6fr_64fr] gap-6 md:gap-0 items-start">
+            <div className="mt-16 grid grid-cols-1 md:grid-cols-[26fr_8fr_66fr] gap-6 md:gap-0 items-start">
               <div>
                 <p className="text-lg leading-snug text-bgp-ink">
                   {[
@@ -173,7 +180,7 @@ export default function ListingDetail() {
                 <Placeholder className="aspect-[1.61] w-full" alt={`${displayName} second photo`} label="Photo to follow" />
               )}
             </div>
-            <div className="mt-8 grid grid-cols-1 md:grid-cols-[57fr_12fr_31fr] gap-6 md:gap-0 items-start">
+            <div className="mt-10 grid grid-cols-1 md:grid-cols-[59fr_9fr_32fr] gap-6 md:gap-0 items-start">
               {images[2] ? (
                 <img src={fileUrl(images[2].id)} alt="" className="aspect-[1.67] w-full object-cover" style={{ objectPosition: focalPosition(images[2]) }} />
               ) : (
@@ -188,21 +195,6 @@ export default function ListingDetail() {
                 )}
               </div>
             </div>
-          </div>
-          <div className="hidden md:block" />
-          <aside>
-            <dl className="border-t border-bgp-ink">
-              {keyInfo
-                .filter(([, v]) => v)
-                .map(([k, v]) => (
-                  <div key={k} className="border-b border-bgp-line py-3">
-                    <dt className="label-caps text-bgp-ink/50">{k}</dt>
-                    <dd className="mt-1 text-sm tabular">{v}</dd>
-                  </div>
-                ))}
-            </dl>
-          </aside>
-        </div>
       </section>
 
       {/* Location */}
