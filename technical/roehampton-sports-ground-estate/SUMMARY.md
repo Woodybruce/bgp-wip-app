@@ -21,12 +21,22 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   (Grange 97%, Pavilion 96%, Squash 85%, Sports Club 80% of outline points within 0.5 m). Marked
   bays: 180 in the main car park south of the Sports Club and east of The Grange, with the drive
   to Bank Lane, and 18 at The Grange's north-east corner; 198 against the 180 the plan needs.
-  The overlay also shows the Third Space demise (Options B and B+) and the Club's retained
-  Pavilion. The long-standing temporary pavilion at the Pavilion's north end measures 5,793 sq ft
-  from the GIA outline and is counted inside the scheduled 32,543 sq ft; the permanent Pavilion
-  building is therefore 26,750 sq ft.
+  The overlay also shows the Third Space demise and the three main entrances, read from the door
+  swings on the GIA plans (Sports Club west door, Pavilion main door, Grange
+  front door by the 2005 ramp). Plan as instructed by Woody (17 Oct 2026): remove the
+  long-standing temporary pavilion at the Pavilion's north end with its link passage and porch
+  (4,778 sq ft measured along its own outline on the GIA plan, counted inside the scheduled
+  32,543 sq ft; the hall's south-west corner stays with the permanent building) rather than split the Pavilion around it;
+  Third Space take the Sports Club and the whole permanent Pavilion, 60,142 sq ft GIA, with the
+  Squash Courts (3,233 sq ft) held back until Third Space say whether they need them. The Club
+  keep the fields and the marquee rights, no building.
+  Knight Frank's area schedule gives the same building totals (Sports Club 32,377 GIA / 19,986
+  NIA; Pavilion 32,543 GIA / 21,157 NIA).
 - `analysis/third-space-demise.png` — the demise cut through the GIA plans floor by floor, with
-  measured areas: Option B 45,840 sq ft, Option B+ 49,551 sq ft to Third Space.
+  measured areas: 60,142 sq ft to Third Space (63,375 with the Squash Courts), 4,778 sq ft
+  temporary pavilion, link and porch removed. The
+  fallback splits if Third Space will not take the Pavilion: Option A 35,610 sq ft (Sports Club +
+  Squash), Option B 45,840 sq ft (plus the Pavilion east block), Option B+ 49,551 sq ft.
 - `service-charge/` — Gerald Eve service charge BUDGETS for The Grange, years ending 24 March
   2024, 2025 and 2026 (budgets, not reconciled year-end accounts).
 - `legal/national-tennis-centre/` — Agreement for Lease 3 July 2003 (two scanned parts), Deed of
