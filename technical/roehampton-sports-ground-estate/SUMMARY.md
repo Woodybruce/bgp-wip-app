@@ -33,9 +33,10 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   (4,778 sq ft measured along its own outline on the GIA plan, counted inside the scheduled
   32,543 sq ft; the hall's south-west corner stays with the permanent building) rather than split the Pavilion around it;
   Third Space take the Sports Club and the whole permanent Pavilion, 60,142 sq ft GIA, with the
-  Squash Courts (3,233 sq ft) excluded. Third Space also take car park A (162 bays) and the fenced
+  Squash Courts (3,233 sq ft) excluded. Third Space also take the fenced
   2G astro pitch (c. 98 x 61 m, digitised from the survey fence) with a 5 m strip for seating and
-  access; see `analysis/demise-plan.png` (demises, gates and routes, 17 Oct 2026). The Club
+  access; car park A (162 bays) by rights, not demise; nothing east of the buildings (LTA land);
+  see `analysis/demise-plan.png` (demise, gates and routes, 17 Oct 2026). The Club
   keep the fields and the marquee rights, no building.
   Knight Frank's area schedule gives the same building totals (Sports Club 32,377 GIA / 19,986
   NIA; Pavilion 32,543 GIA / 21,157 NIA).
