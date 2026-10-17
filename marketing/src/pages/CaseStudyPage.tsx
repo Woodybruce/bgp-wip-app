@@ -69,10 +69,10 @@ export default function CaseStudyPage() {
             beside them, then an image carousel with arrows and dots. */}
         <div className="grid grid-cols-1 md:grid-cols-[63fr_12fr_25fr] gap-6 md:gap-0">
           <div>
-            <h1 className={`font-normal text-3xl md:text-5xl ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
+            <h1 className={`font-normal text-3xl md:text-[3.1rem] leading-[0.95] ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
             <div className={`mt-5 space-y-4 ${caseStudy.draft ? "italic" : ""}`}>
               {caseStudy.body.map((para) => (
-                <p key={para.slice(0, 32)} className="text-base text-bgp-ink">
+                <p key={para.slice(0, 32)} className="text-[1.23rem] leading-[1.12] text-bgp-ink">
                   {para}
                 </p>
               ))}
@@ -83,8 +83,8 @@ export default function CaseStudyPage() {
             <dl className="border-t border-bgp-ink">
               {caseStudy.facts.map(([k, v]) => (
                 <div key={k} className="border-b border-bgp-line py-3">
-                  <dt className="label-caps text-bgp-ink/50">{k}</dt>
-                  <dd className="mt-1 text-sm tabular">{v}</dd>
+                  <dt className="label-caps font-bold text-bgp-ink">{k}</dt>
+                  <dd className="mt-1 label-caps text-bgp-ink tabular">{v}</dd>
                 </div>
               ))}
             </dl>

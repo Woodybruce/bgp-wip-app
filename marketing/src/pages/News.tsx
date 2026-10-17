@@ -73,7 +73,7 @@ export default function News() {
       <div className="mt-8 grid grid-cols-1 gap-4">
         {features.map((a, i) => (
           <Link key={a.slug} href={`/news/${a.slug}`} className="group block bg-bgp-mist p-6 md:px-[4.7%] md:pt-10 md:pb-8">
-            <div className="flex justify-between label-caps font-bold text-bgp-ink mb-5">
+            <div className="flex justify-between label-caps md:text-[1.04rem] font-bold text-bgp-ink mb-5">
               <span>{i % 2 ? a.category : a.date}</span>
               <span>{i % 2 ? a.date : a.category}</span>
             </div>
@@ -81,9 +81,9 @@ export default function News() {
               <div className="img-frame [direction:ltr]"><Placeholder className="aspect-[1.36] w-full" src={a.image} alt={a.title} /></div>
               <div className="hidden md:block" />
               <div className="[direction:ltr] flex flex-col h-full">
-                <h2 className="font-normal text-3xl md:text-4xl text-bgp-wine group-hover:opacity-80 transition-opacity">{a.title}</h2>
-                <p className="mt-4 text-xl leading-snug text-bgp-ink">{a.standfirst}</p>
-                <p className="mt-auto pt-6 label-caps text-bgp-ink/60 self-end">Read more</p>
+                <h2 className="font-normal text-3xl md:text-[2.3rem] leading-[1.05] text-bgp-wine group-hover:opacity-80 transition-opacity">{a.title}</h2>
+                <p className="mt-4 text-[1.23rem] leading-[1.12] text-bgp-ink">{a.standfirst}</p>
+                <p className="mt-auto pt-6 label-caps md:text-[0.88rem] text-bgp-ink self-end">Read more</p>
               </div>
             </div>
           </Link>
@@ -97,12 +97,12 @@ export default function News() {
       <div className="mt-4 card-strip sm:grid-cols-3 sm:gap-4">
         {visibleRest.map((a) => (
           <Link key={a.slug} href={`/news/${a.slug}`} className="group block bg-bgp-mist p-4 pb-5">
-            <div className="flex justify-between label-caps text-bgp-ink/60 mb-3">
+            <div className="flex justify-between label-caps md:text-[1.04rem] font-bold text-bgp-ink mb-3">
               <span>{a.category}</span>
               <span>{a.date}</span>
             </div>
             <div className="img-frame"><Placeholder className="aspect-square w-full" src={a.image} alt={a.title} /></div>
-            <h3 className="mt-4 font-normal text-3xl leading-tight text-bgp-wine group-hover:opacity-80 transition-opacity">{a.title}</h3>
+            <h3 className="mt-4 font-normal text-[2.3rem] leading-[1.05] text-bgp-wine group-hover:opacity-80 transition-opacity">{a.title}</h3>
             <p className="mt-2 label-caps text-bgp-ink/50">Read more</p>
           </Link>
         ))}
@@ -111,7 +111,7 @@ export default function News() {
           <div key={i} className="block bg-bgp-mist p-4 pb-5 italic text-bgp-stone">
             <div className="flex justify-between label-caps text-bgp-stone mb-3"><span>Category</span><span>Date</span></div>
             <Placeholder className="aspect-square w-full" alt={`Draft article ${i + 1}`} />
-            <h3 className="mt-4 font-normal text-3xl leading-tight">Article heading goes here</h3>
+            <h3 className="mt-4 font-normal text-[2.3rem] leading-[1.05]">Article heading goes here</h3>
             <p className="mt-2 label-caps text-bgp-stone">Read more</p>
           </div>
         ))}

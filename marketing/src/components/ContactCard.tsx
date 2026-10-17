@@ -23,8 +23,8 @@ export default function ContactCard({ person, compact = false }: { person: Perso
           <Monogram name={person.name} />
         )}
       </div>
-      <p className="label-caps mt-3 text-bgp-wine"><a href={cardUrlFor(person.name)} className="hover:opacity-70" title="Business card">{person.name}</a></p>
-      <div className="mt-1 text-sm text-bgp-ink/70 space-y-0.5">
+      <p className="label-caps md:text-[0.88rem] leading-none mt-3 text-bgp-ink font-bold"><a href={cardUrlFor(person.name)} className="hover:opacity-70" title="Business card">{person.name}</a></p>
+      <div className="mt-1 text-[0.88rem] leading-tight text-bgp-ink space-y-0">
         <p>{person.title}</p>
         <p className="tabular">{person.phone}</p>
         {person.email !== "TBC" && (
