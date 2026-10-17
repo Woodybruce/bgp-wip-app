@@ -23,7 +23,7 @@ export default function BrandRepresentation() {
       <h1 className="sr-only">Brand Representation</h1>
 
       {/* Overview / intro */}
-      <p className="max-w-[66%] font-light text-2xl md:text-[2.2rem] leading-[1.1] text-bgp-ink">
+      <p className="max-w-[60%] font-normal text-2xl md:text-[2rem] leading-[1.12] text-bgp-ink">
         {service.intro.replace("retail, leisure and hospitality destinations", "destinations")}
       </p>
 

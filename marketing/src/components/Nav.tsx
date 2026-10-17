@@ -69,10 +69,10 @@ export default function Nav() {
         )}
 
         {/* Desktop bar */}
-        <div className="hidden md:flex items-center justify-between h-24 lg:h-28">
+        <div className="hidden md:flex items-center justify-between h-24 lg:h-32">
           <Link href="/" aria-label="Bruce Gillingham Pollard home" className="shrink-0">
             {/* Frame logo, never below the 50px minimum (guidelines p.3); the slide draws it larger */}
-            <img src={over ? "/brand/bgp-frame-white.svg" : "/brand/bgp-frame-bordeaux.svg"} alt="bgp" className="h-[50px] lg:h-[68px] w-auto" />
+            <img src={over ? "/brand/bgp-frame-white.svg" : "/brand/bgp-frame-bordeaux.svg"} alt="bgp" className="h-[50px] lg:h-[96px] w-auto" />
           </Link>
           <nav className="flex items-center">
             {NAV_ITEMS.map((item, i) => {
@@ -84,7 +84,7 @@ export default function Nav() {
                   <Link
                     href={item.href}
                     data-active={active}
-                    className={`label-caps md:text-[0.8rem] nav-link whitespace-nowrap transition-colors py-7 ${
+                    className={`label-caps md:text-[0.68rem] font-bold nav-link whitespace-nowrap transition-colors py-7 ${
                       over ? "text-white hover:opacity-80" : active ? "text-bgp-wine" : "text-bgp-wine hover:opacity-70"
                     }`}
                   >
@@ -109,7 +109,6 @@ export default function Nav() {
               );
             })}
           </nav>
-          <span className="w-8 shrink-0" aria-hidden />
         </div>
       </div>
 
