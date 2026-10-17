@@ -46,7 +46,7 @@ export default function Home() {
         ))}
         <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/80 via-bgp-ink/25 to-bgp-ink/35" />
         <div className="relative mx-auto w-full max-w-[1360px] px-4 pb-10 md:pb-9 flex flex-wrap items-end justify-between gap-6">
-          <h1 className="max-w-[66%] font-normal text-3xl md:text-[2.08rem] leading-[1.05] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>
+          <h1 className="max-w-[66%] font-light text-3xl md:text-[1.9rem] leading-[1.1] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>
             {HERO_STATEMENT}
           </h1>
         </div>
@@ -60,8 +60,8 @@ export default function Home() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-8 text-center">
           {STATS.map((s) => (
             <div key={s.caption}>
-              <p className="display text-4xl md:text-[5rem] tabular">{s.value}</p>
-              <p className="mt-3 text-[1.23rem] leading-tight text-bgp-ink max-w-[20ch] mx-auto">{s.caption}</p>
+              <p className="font-normal text-4xl md:text-[4.3rem] leading-none tabular text-bgp-ink">{s.value}</p>
+              <p className="mt-3 text-[1rem] leading-tight text-bgp-ink max-w-[20ch] mx-auto">{s.caption}</p>
             </div>
           ))}
         </div>
