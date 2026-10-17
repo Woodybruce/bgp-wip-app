@@ -34,7 +34,7 @@ export default function Home() {
   return (
     <div>
       {/* Hero: rotating flagship instructions, statement bottom-left */}
-      <section data-hero className="relative flex items-end -mt-16 md:-mt-24 lg:-mt-28 h-[min(63vw,100vh)] min-h-[420px] overflow-hidden">
+      <section data-hero className="relative flex items-end -mt-16 md:-mt-24 lg:-mt-32 h-[min(63vw,100vh)] min-h-[420px] overflow-hidden">
         {HERO_SLIDES.map((slide, i) => (
           <img
             key={slide.src}
@@ -45,8 +45,8 @@ export default function Home() {
           />
         ))}
         <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/80 via-bgp-ink/25 to-bgp-ink/35" />
-        <div className="relative mx-auto w-full max-w-[1360px] px-4 pb-10 md:pb-9 flex flex-wrap items-end justify-between gap-6">
-          <h1 className="max-w-[66%] font-light text-3xl md:text-[1.9rem] leading-[1.1] text-white" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>
+        <div className="relative mx-auto w-full max-w-[1360px] px-4 pb-10 md:pb-[2.6rem] flex flex-wrap items-end justify-between gap-6">
+          <h1 className="max-w-[58%] font-normal text-3xl md:text-[2rem] leading-[1.12] text-white" style={{ textShadow: "0 1px 3px rgba(0,0,0,0.35)" }}>
             {HERO_STATEMENT}
           </h1>
         </div>

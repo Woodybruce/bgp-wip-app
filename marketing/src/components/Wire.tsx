@@ -60,12 +60,12 @@ export function MapSlot({ lat, lon, zoom = 15, marker = true, pins, className = 
 
 export function Hero({ src, alt, label, statement, caption, tall = false, big = false }: { src?: string; alt: string; label?: ReactNode; statement: ReactNode; caption?: ReactNode; tall?: boolean; big?: boolean }) {
   return (
-    <section data-hero className={`relative flex items-end overflow-hidden -mt-16 md:-mt-24 lg:-mt-28 ${tall ? "h-[min(85vw,100vh)] min-h-[480px]" : "h-[min(63vw,100vh)] min-h-[420px]"}`}>
+    <section data-hero className={`relative flex items-end overflow-hidden -mt-16 md:-mt-24 lg:-mt-32 ${tall ? "h-[min(85vw,100vh)] min-h-[480px]" : "h-[min(63vw,100vh)] min-h-[420px]"}`}>
       <Placeholder className="absolute inset-0 h-full w-full" src={src} alt={alt} />
       <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/80 via-bgp-ink/25 to-bgp-ink/35" />
-      <div className="relative mx-auto w-full max-w-[1360px] px-4 pb-8 md:pb-10">
+      <div className="relative mx-auto w-full max-w-[1360px] px-4 pb-8 md:pb-[2.6rem]">
         {label && <p className="label-caps md:text-xs text-white/80 mb-3">{label}</p>}
-        <p className={`max-w-[66%] font-light text-2xl md:text-[2.2rem] leading-[1.1] text-white`} style={{ textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>{statement}</p>
+        <p className={`max-w-[60%] font-normal text-2xl md:text-[2rem] leading-[1.12] text-white`} style={{ textShadow: "0 1px 3px rgba(0,0,0,0.35)" }}>{statement}</p>
         {caption}
       </div>
     </section>

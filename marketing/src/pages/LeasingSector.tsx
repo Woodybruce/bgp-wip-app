@@ -38,7 +38,7 @@ export default function LeasingSector() {
       {/* Wireframe slide 28: plain photo, then the title with Contact and
           Download at right, the statement beside the title, description
           beside the lead image, more photos, a location map. */}
-      <div data-hero className="-mt-16 md:-mt-24 lg:-mt-28"><Placeholder className="h-64 md:h-auto md:aspect-[2.96] w-full" src={sector.image} alt={sector.name} /></div>
+      <div data-hero className="-mt-16 md:-mt-24 lg:-mt-32"><Placeholder className="h-64 md:h-auto md:aspect-[2.96] w-full" src={sector.image} alt={sector.name} /></div>
 
       <section className="mx-auto max-w-[1360px] px-4 pt-8 pb-12 md:pb-14">
         {/* Slide 28: title row with Contact and Download at right; the statement on the next row in the right column;
