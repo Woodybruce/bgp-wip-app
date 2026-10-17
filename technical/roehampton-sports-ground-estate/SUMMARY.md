@@ -21,17 +21,30 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   (Grange 97%, Pavilion 96%, Squash 85%, Sports Club 80% of outline points within 0.5 m). Marked
   bays: 180 in the main car park south of the Sports Club and east of The Grange, with the drive
   to Bank Lane, and 18 at The Grange's north-east corner; 198 against the 180 the plan needs.
-  The overlay also shows the Third Space demise and the three main entrances, read from the door
-  swings on the GIA plans (Sports Club west door, Pavilion main door, Grange
+  The overlay also shows the Third Space demise and the two existing vehicle gates: the barrier
+  entrance off Bank Lane beside the cottage south-west of The Grange (Woody's Google Maps pin,
+  51.4584369 -0.255806 = OS 521275 174716, placed on the survey via sheet 10's grid labels) and the
+  timber gates on Bank Lane 40 m further east, straight into car park A (Woody's Street View pin,
+  51.4582115 -0.2552273 looking east = the hatched gate on the survey; today the car park's exit,
+  its painted EXIT arrows point there). Plan: residents through the barrier, Third Space through
+  the timber gates. The estate roads at the south-east end of car park A are internal, not an access (Sports Club west door, Pavilion main door, Grange
   front door by the 2005 ramp). Plan as instructed by Woody (17 Oct 2026): remove the
   long-standing temporary pavilion at the Pavilion's north end with its link passage and porch
   (4,778 sq ft measured along its own outline on the GIA plan, counted inside the scheduled
   32,543 sq ft; the hall's south-west corner stays with the permanent building) rather than split the Pavilion around it;
   Third Space take the Sports Club and the whole permanent Pavilion, 60,142 sq ft GIA, with the
-  Squash Courts (3,233 sq ft) held back until Third Space say whether they need them. The Club
+  Squash Courts (3,233 sq ft) excluded. Third Space also take the fenced
+  2G astro pitch (c. 98 x 61 m, digitised from the survey fence) with a 5 m strip for seating and
+  access; car park A (162 bays) by rights, not demise; nothing east of the buildings (LTA land);
+  see `analysis/demise-plan.png` (demise, gates and routes, 17 Oct 2026). The Club
   keep the fields and the marquee rights, no building.
   Knight Frank's area schedule gives the same building totals (Sports Club 32,377 GIA / 19,986
   NIA; Pavilion 32,543 GIA / 21,157 NIA).
+- Community: saveboe.org (Bank of England Centre Members' Group) has campaigned since 2019 for the
+  Sports Centre and pool; Wandsworth ACV listing 1/19 of the playing fields, listed 1 Aug 2019,
+  moratorium to March 2020, expired 2024 (register PDF checked 17 Oct 2026).
+- Underwrite (17 Oct 2026): The Grange taken as sold to Related at £7m (Woody); at that figure
+  the whole-estate bid for 15% on cost is about £20m, against the £30m working price.
 - `analysis/third-space-demise.png` — the demise cut through the GIA plans floor by floor, with
   measured areas: 60,142 sq ft to Third Space (63,375 with the Squash Courts), 4,778 sq ft
   temporary pavilion, link and porch removed. The
