@@ -21,8 +21,11 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   (Grange 97%, Pavilion 96%, Squash 85%, Sports Club 80% of outline points within 0.5 m). Marked
   bays: 180 in the main car park south of the Sports Club and east of The Grange, with the drive
   to Bank Lane, and 18 at The Grange's north-east corner; 198 against the 180 the plan needs.
-  The overlay also shows the Third Space demise and the three main entrances, read from the door
-  swings on the GIA plans (Sports Club west door, Pavilion main door, Grange
+  The overlay also shows the Third Space demise and the two existing vehicle accesses read from the
+  survey: the Bank Lane gate in the southern boundary beside The Grange's south end (Access 1,
+  residential; car park A's painted EXIT arrows point to it) and the kerbed estate road joining the
+  south-east end of car park A (Access 2, Third Space; runs north-east towards the Tennis Centre and
+  Priory Lane, rights over the LTA demise to be checked) (Sports Club west door, Pavilion main door, Grange
   front door by the 2005 ramp). Plan as instructed by Woody (17 Oct 2026): remove the
   long-standing temporary pavilion at the Pavilion's north end with its link passage and porch
   (4,778 sq ft measured along its own outline on the GIA plan, counted inside the scheduled
