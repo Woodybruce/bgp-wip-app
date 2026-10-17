@@ -45,6 +45,15 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   moratorium to March 2020, expired 2024 (register PDF checked 17 Oct 2026).
 - Underwrite (17 Oct 2026): The Grange taken as sold to Related at £7m (Woody); at that figure
   the whole-estate bid for 15% on cost is about £20m, against the £30m working price.
+- `proposals/` — three editable Word documents on BGP letterhead (17 Oct 2026): Heads of Terms to
+  Third Space (20 yrs, £30 psf GIA on 60,142 sq ft, 24 months rent free, one year's capital
+  contribution, CPI 5-yearly capped 3%, rights to 150 of 162 bays, Gate 2, Qualifying hospitality
+  option); Proposal to the AELTC (surrender of the 2021 lease, new 10-year lease of the fields,
+  temporary pavilion and squash courts at £100k, break once the Qualifying moves to Wimbledon Park,
+  annual event plan); Offer letter to Knight Frank for Related ([£20m], conditions on the surrender
+  and regrant, Third Space AFL and Class MA). Copies served publicly from the share page's docs/.
+- Temporary pavilion (Woody, 17 Oct 2026): NOT removed after all; it and the Squash Courts stay
+  with the Club for the Qualifying, outside the Third Space demise.
 - `analysis/third-space-demise.png` — the demise cut through the GIA plans floor by floor, with
   measured areas: 60,142 sq ft to Third Space (63,375 with the Squash Courts), 4,778 sq ft
   temporary pavilion, link and porch removed. The
