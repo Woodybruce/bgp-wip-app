@@ -15,11 +15,18 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   2525/113 A, 7289-1b.
 - `topographic-survey/` — Warner Surveys topographic survey RT/319/0418 (27 Aug 2019, for Gerald
   Eve): data issue sheet, sheets P0001-P0010 and the combined DWG.
-- `analysis/parking-plan.png` — BGP plan of every marked parking bay traced from the Warner
-  topographic survey (sheets registered to the OS grid): 180 bays in the main car park off Bank
-  Lane (wrapping the squash courts) and 18 beside the sports hall exit, 198 in total, against the
-  180 the business plan needs (Third Space 150 + Grange 30). The Grange, cottages and NTC are
-  outside the surveyed area. Check which lot the main car park falls in.
+- `analysis/parking-plan.png` and `analysis/site-overlay.png` — BGP plans built from the Warner
+  topographic survey (ten sheets registered to the OS grid and turned north-up; the sheets are
+  drawn with north to the right) with the Principal Plans GIA outlines registered onto them
+  (Grange 97%, Pavilion 96%, Squash 85%, Sports Club 80% of outline points within 0.5 m). Marked
+  bays: 180 in the main car park south of the Sports Club and east of The Grange, with the drive
+  to Bank Lane, and 18 at The Grange's north-east corner; 198 against the 180 the plan needs.
+  The overlay also shows the Third Space demise (Options B and B+) and the Club's retained
+  Pavilion. The long-standing temporary pavilion at the Pavilion's north end measures 5,793 sq ft
+  from the GIA outline and is counted inside the scheduled 32,543 sq ft; the permanent Pavilion
+  building is therefore 26,750 sq ft.
+- `analysis/third-space-demise.png` — the demise cut through the GIA plans floor by floor, with
+  measured areas: Option B 45,840 sq ft, Option B+ 49,551 sq ft to Third Space.
 - `service-charge/` — Gerald Eve service charge BUDGETS for The Grange, years ending 24 March
   2024, 2025 and 2026 (budgets, not reconciled year-end accounts).
 - `legal/national-tennis-centre/` — Agreement for Lease 3 July 2003 (two scanned parts), Deed of
