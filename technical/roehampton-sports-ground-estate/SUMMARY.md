@@ -58,7 +58,8 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
 - Exit (Woody, 17 Oct 2026): everything is sold at once at the end of year 3, including the cottages and
   The Grange at its £7m placeholder; no Grange holding cost charged (sits in Related's underwrite).
 - Underwrite (17 Oct 2026): The Grange taken as sold to Related at £7m (Woody); at that figure
-  the whole-estate bid for 15% on cost is about £20m, against the £30m working price.
+  the base case purchase price is £18m (Woody, 17 Oct 2026); debt is one loan on completion at 50% of
+  the valuation after the lettings at 9%, no refinance.
 - `plans/` — the three plans as deliverable files (PNG each, plus one A3 PDF): 1 Third Space demise floor
   by floor, 2 demise with parking and access routes, 3 the All England Club's new lease. Served from
   the share page's plans/ folder and linked from its Proposals and Documents sections.
