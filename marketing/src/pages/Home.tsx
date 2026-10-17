@@ -72,8 +72,8 @@ export default function Home() {
         {SERVICES.map((service, i) => {
           const inner = (
             <>
-              <h2 className="text-[1.88rem] font-bold text-bgp-ink mb-5">{service.name}</h2>
-              <div className={`grid grid-cols-1 md:grid-cols-[59fr_3fr_38fr] gap-8 md:gap-0 items-start ${i % 2 ? "md:[direction:rtl]" : ""}`}>
+              <h2 className="text-[1.88rem] font-bold text-bgp-ink mb-[2.2rem]">{service.name}</h2>
+              <div className={`grid grid-cols-1 gap-8 md:gap-0 items-start ${i % 2 ? "md:grid-cols-[47fr_4fr_49fr] md:[direction:rtl]" : "md:grid-cols-[55fr_4fr_41fr]"}`}>
                 <div className="img-frame [direction:ltr]">
                   <Placeholder className="aspect-[1.57] w-full" src={service.image} alt={service.name} />
                 </div>
@@ -86,9 +86,9 @@ export default function Home() {
             </>
           );
           return i % 2 ? (
-            <Band key={service.slug}>{inner}</Band>
+            <Band key={service.slug} className="[&>div]:pt-[3.3rem] [&>div]:pb-[1.4rem]">{inner}</Band>
           ) : (
-            <section key={service.slug} className="mx-auto max-w-[1360px] px-4 pt-10 pb-12 md:pt-10 md:pb-14">{inner}</section>
+            <section key={service.slug} className="mx-auto max-w-[1360px] px-4 pt-[3.3rem] pb-[1.4rem]">{inner}</section>
           );
         })}
       </div>
