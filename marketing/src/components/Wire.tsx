@@ -60,7 +60,7 @@ export function MapSlot({ lat, lon, zoom = 15, marker = true, pins, className = 
 
 export function Hero({ src, alt, label, statement, caption, tall = false, big = false }: { src?: string; alt: string; label?: ReactNode; statement: ReactNode; caption?: ReactNode; tall?: boolean; big?: boolean }) {
   return (
-    <section data-hero className={`relative flex items-end overflow-hidden -mt-16 md:-mt-24 lg:-mt-32 ${tall ? "h-[min(85vw,100vh)] min-h-[480px]" : "h-[min(63vw,100vh)] min-h-[420px]"}`}>
+    <section data-hero className={`relative flex items-end overflow-hidden -mt-16 md:-mt-24 lg:-mt-32 ${tall ? "h-[min(85vw,100vh)] min-h-[480px]" : "h-[min(60vw,100vh)] min-h-[420px]"}`}>
       <Placeholder className="absolute inset-0 h-full w-full" src={src} alt={alt} />
       <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/80 via-bgp-ink/25 to-bgp-ink/35" />
       <div className="relative mx-auto w-full max-w-[1360px] px-4 pb-8 md:pb-[2.6rem]">

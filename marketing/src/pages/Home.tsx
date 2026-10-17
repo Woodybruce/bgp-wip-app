@@ -34,7 +34,7 @@ export default function Home() {
   return (
     <div>
       {/* Hero: rotating flagship instructions, statement bottom-left */}
-      <section data-hero className="relative flex items-end -mt-16 md:-mt-24 lg:-mt-32 h-[min(63vw,100vh)] min-h-[420px] overflow-hidden">
+      <section data-hero className="relative flex items-end -mt-16 md:-mt-24 lg:-mt-32 h-[min(60vw,100vh)] min-h-[420px] overflow-hidden">
         {HERO_SLIDES.map((slide, i) => (
           <img
             key={slide.src}
@@ -45,7 +45,7 @@ export default function Home() {
           />
         ))}
         <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/80 via-bgp-ink/25 to-bgp-ink/35" />
-        <div className="relative mx-auto w-full max-w-[1360px] px-4 pb-10 md:pb-[2.6rem] flex flex-wrap items-end justify-between gap-6">
+        <div className="relative mx-auto w-full max-w-[1360px] px-4 pb-10 md:pb-[2.45rem] flex flex-wrap items-end justify-between gap-6">
           <h1 className="max-w-[58%] font-normal text-3xl md:text-[2rem] leading-[1.12] text-white" style={{ textShadow: "0 1px 3px rgba(0,0,0,0.35)" }}>
             {HERO_STATEMENT}
           </h1>
@@ -53,15 +53,15 @@ export default function Home() {
       </section>
 
       {/* Slide 23: a slim dark Talk to us bar under the hero, then the stats. */}
-      <a href="#contact" className="block bg-bgp-ink text-bgp-cream text-center label-caps py-2 hover:bg-bgp-wine transition-colors">Talk to us</a>
+      <a href="#contact" className="block bg-bgp-ink text-bgp-cream text-center label-caps md:text-[0.72rem] leading-none py-[0.3rem] hover:bg-bgp-wine transition-colors">Talk to us</a>
 
       {/* Stats row, on the grey band as slide 23 draws it */}
       <section className="bg-bgp-mist"><div className="mx-auto max-w-[1360px] px-4 py-10 md:py-12">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-8 text-center">
           {STATS.map((s) => (
             <div key={s.caption}>
-              <p className="font-normal text-4xl md:text-[4.3rem] leading-none tabular text-bgp-ink">{s.value}</p>
-              <p className="mt-3 text-[1rem] leading-tight text-bgp-ink max-w-[20ch] mx-auto">{s.caption}</p>
+              <p className="font-normal text-4xl md:text-[4.65rem] leading-none tabular text-bgp-ink">{s.value}</p>
+              <p className="mt-[1.55rem] text-[1.12rem] leading-[1.25] text-bgp-ink max-w-[20ch] mx-auto">{s.caption}</p>
             </div>
           ))}
         </div>
@@ -72,23 +72,23 @@ export default function Home() {
         {SERVICES.map((service, i) => {
           const inner = (
             <>
-              <h2 className="text-[1.62rem] font-bold text-bgp-ink mb-[2.2rem]">{service.name}</h2>
-              <div className={`grid grid-cols-1 gap-8 md:gap-0 items-start ${i % 2 ? "md:grid-cols-[47fr_4fr_49fr] md:[direction:rtl]" : "md:grid-cols-[55fr_4fr_41fr]"}`}>
+              <h2 className="text-[2.27rem] leading-[1.1] font-bold text-bgp-ink mb-[2.15rem]">{service.name}</h2>
+              <div className={`grid grid-cols-1 gap-8 md:gap-0 items-start ${i % 2 ? "md:grid-cols-[47fr_4fr_49fr] md:[direction:rtl]" : "md:grid-cols-[55fr_7.5fr_37.5fr]"}`}>
                 <div className="img-frame [direction:ltr]">
                   <Placeholder className="aspect-[1.57] w-full" src={service.image} alt={service.name} />
                 </div>
                 <div className="hidden md:block" />
                 <div className="[direction:ltr]">
-                  <p className="text-[1.5rem] leading-[1.12] text-bgp-ink">{service.intro}</p>
-                  <p className="mt-5"><Link href={`/${service.slug}`} className="explore-link md:text-[1rem] font-bold">Find out more</Link></p>
+                  <p className="text-[1.5rem] leading-[1.2] text-bgp-ink">{service.intro}</p>
+                  <p className="mt-[0.9rem]"><Link href={`/${service.slug}`} className="explore-link md:text-[1.15rem] font-bold">Find out more</Link></p>
                 </div>
               </div>
             </>
           );
           return i % 2 ? (
-            <Band key={service.slug} className="[&>div]:pt-[3.3rem] [&>div]:pb-[1.4rem]">{inner}</Band>
+            <Band key={service.slug} className="[&>div]:pt-[2.55rem] [&>div]:pb-[3.7rem]">{inner}</Band>
           ) : (
-            <section key={service.slug} className="mx-auto max-w-[1360px] px-4 pt-[3.3rem] pb-[1.4rem]">{inner}</section>
+            <section key={service.slug} className="mx-auto max-w-[1360px] px-4 pt-[2.55rem] pb-[3.7rem]">{inner}</section>
           );
         })}
       </div>
