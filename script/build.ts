@@ -1,7 +1,7 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
 import { rm, readFile, writeFile, copyFile, mkdir } from "fs/promises";
-import { existsSync } from "fs";
+import { existsSync, readdirSync } from "fs";
 import pg from "pg";
 import sharp from "sharp";
 import path from "node:path";
@@ -340,6 +340,14 @@ async function buildAll() {
       if (existsSync(`server/assets/${f}`)) {
         await copyFile(`server/assets/${f}`, outputPath(`server/assets/${f}`));
         console.log(`copied server/assets/${f} to dist/server/assets/`);
+      }
+    }
+    // Staff-only shared pages served by GET /api/share/:slug (server/index.ts)
+    if (existsSync("server/assets/share")) {
+      await mkdir(outputPath("server/assets/share"), { recursive: true });
+      for (const f of readdirSync("server/assets/share")) {
+        await copyFile(`server/assets/share/${f}`, outputPath(`server/assets/share/${f}`));
+        console.log(`copied server/assets/share/${f} to dist/server/assets/share/`);
       }
     }
   }
