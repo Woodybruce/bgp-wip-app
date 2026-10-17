@@ -49,6 +49,12 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   an Export to Excel button that writes the current inputs, cash flow and outputs as values.
 - Related (Woody, 17 Oct 2026): partner with BGP on the WHOLE deal, not a buyer of The Grange. The £7m
   on The Grange is a placeholder value pending Related's residential underwrite.
+- Residential placeholder (Woody, 17 Oct 2026): the cottages are inside the £7m with The Grange, one lump;
+  no separate cottage receipt.
+- Deal mechanics (Woody, 17 Oct 2026): purchase, Third Space lease (with the capital contribution paid)
+  and the Club's surrender and regrant all complete on the SAME DAY; nothing more is spent on the
+  leisure side (landlord's works nil); The Grange and cottages are redeveloped as residential by the
+  partnership; everything is sold as one lot after 3 years.
 - Exit (Woody, 17 Oct 2026): everything is sold at once at the end of year 3, including the cottages and
   The Grange at its £7m placeholder; no Grange holding cost charged (sits in Related's underwrite).
 - Underwrite (17 Oct 2026): The Grange taken as sold to Related at £7m (Woody); at that figure
