@@ -77,8 +77,9 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
 - `analysis/aeltc-plan.png` — the Club's new lease (17 Oct 2026): the 2021 AELTG lease plan
   (legal/sports-centre/AELTG_Lease_Plan.pdf) registered onto the survey by linework correlation
   (3.7 px/m, no rotation; courts, buildings and boundaries align) and the new demise drawn as the
-  2021 demise less the Third Space buildings parcel and the pitch, plus the Squash Courts: c. 9.5 ha
-  against 10.7 ha surrendered. FINDING: the 2021 lease plan EXCLUDES The Grange and car park A (the
+  2021 demise less the Third Space buildings parcel and the pitch, less the land round the leisure
+  buildings and the eastern strip (Woody, 17 Oct 2026), plus the Squash Courts: c. 8.1 ha against
+  10.6 ha surrendered. FINDING: the 2021 lease plan EXCLUDES The Grange and car park A (the
   white cut-out around the Grange runs down to Bank Lane), so car park A never has to come back
   from the Club. The LTA's 2008 Car Parking Licence (legal/sports-centre) is for 30 spaces at
   £18,000 pa, two months' notice, working days only, on the landlord's retained estate.
