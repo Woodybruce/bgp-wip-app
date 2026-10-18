@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Suspense, lazy, useEffect, useState } from "react";
 import Placeholder from "./Placeholder";
+import "./wire-typography.css";
 const ListingMap = lazy(() => import("./ListingMap"));
 
 // Dashed slot for copy that has not arrived yet. Same look everywhere so
@@ -27,7 +28,7 @@ export function QuoteBlock({ quote, image, imageAlt = "", imageSide = "right" }:
   const hasQuote = !!quote?.quote && !/^lorem ipsum/i.test(quote.quote);
   const draft = !hasQuote;
   return (
-    <section className="site-container section-space">
+    <section className="wire-quote site-container section-space">
       <div className={`grid grid-cols-1 gap-8 md:gap-16 items-center ${imageSide === "left" ? "md:grid-cols-[1.4fr_1fr] md:[direction:rtl]" : "md:grid-cols-[1fr_1.2fr]"}`}>
         <div className={`[direction:ltr] ${draft ? "italic" : ""}`}>
           {draft && <p className="label-caps mb-4 not-italic">Placeholder client quotation</p>}
@@ -70,7 +71,7 @@ export function MapSlot({ lat, lon, zoom = 15, marker = true, pins, className = 
 
 export function Hero({ src, alt, label, statement, caption, tall = false, big = false }: { src?: string; alt: string; label?: ReactNode; statement: ReactNode; caption?: ReactNode; tall?: boolean; big?: boolean }) {
   return (
-    <section data-hero className={`site-hero ${tall ? "site-hero--tall" : ""}`}>
+    <section data-hero className={`wire-hero site-hero ${big ? "wire-hero--big" : ""} ${tall ? "site-hero--tall" : ""}`}>
       <Placeholder className="absolute inset-0 h-full w-full" src={src} alt={alt} />
       <div className="hero-shade" />
       <div className="site-container hero-content">
@@ -94,7 +95,7 @@ export function Band({ children, className = "", id }: { children: ReactNode; cl
 // uppercase Century Gothic Pro Bold display typography.
 export function SectionHead({ title, sub, right, as: Tag = "h2", rule = true }: { title: ReactNode; sub?: ReactNode; right?: ReactNode; as?: "h1" | "h2"; rule?: boolean }) {
   return (
-    <div className={`flex flex-wrap items-end justify-between gap-x-8 gap-y-4 ${rule ? "border-b border-bgp-wine pb-5 mb-8 md:mb-10" : "mb-8"}`}>
+    <div className={`wire-section-head flex flex-wrap items-end justify-between gap-x-8 gap-y-4 ${rule ? "border-b border-bgp-wine pb-5 mb-8 md:mb-10" : "mb-8"}`}>
       <div>
         <Tag className="section-title">{title}</Tag>
         {sub && <p className="mt-3 body-copy text-bgp-ink">{sub}</p>}

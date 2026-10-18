@@ -3,6 +3,7 @@ import { Link, useRoute } from "wouter";
 import Placeholder from "../components/Placeholder";
 import { useSiteContent } from "../lib/site-content";
 import { isNewsPlaceholder, NEWS_PLACEHOLDERS, PLACEHOLDER_ARTICLE_BODY } from "../lib/news-placeholders";
+import "./news-article.css";
 
 function ArticleGallery({ image, title, placeholder }: { image?: string; title: string; placeholder: boolean }) {
   const [selected, setSelected] = useState(0);
@@ -97,22 +98,22 @@ export default function ArticlePage() {
     : -1;
 
   return (
-    <article className="site-container section-space">
-      <p className="mb-8 border-b border-bgp-ink pb-4 text-lg font-bold"><Link href="/news">News and insights</Link></p>
+    <article className="article-page site-container section-space">
+      <p className="article-section-label mb-8 border-b border-bgp-ink pb-4 font-bold"><Link href="/news">News and insights</Link></p>
       <div className="bg-bgp-mist p-5 md:p-10 lg:p-12">
-        <div className="label-caps flex flex-wrap justify-between gap-x-6 gap-y-3">
+        <div className="article-meta label-caps flex flex-wrap justify-between gap-x-6 gap-y-3">
           <div className="flex flex-wrap gap-x-6 gap-y-3"><span>{article.date}</span><span>{article.author ? `By ${article.author}` : "Author to follow"}</span></div>
           <span>{article.category}</span>
         </div>
         <div className="mt-7 grid grid-cols-1 items-start gap-8 md:grid-cols-[3fr_2fr] md:gap-10">
           <ArticleGallery key={article.slug} image={article.image} title={article.title} placeholder={placeholder} />
           <div className="min-w-0">
-            <h1 className="section-title">{article.title}</h1>
-            {article.standfirst && <p className="body-copy mt-6">{article.standfirst}</p>}
+            <h1 className="article-title section-title">{article.title}</h1>
+            {article.standfirst && <p className="article-standfirst body-copy mt-6">{article.standfirst}</p>}
           </div>
         </div>
 
-        <div className="mx-auto mt-10 flow-root w-full space-y-6 md:mt-14 md:w-[84%]">
+        <div className="article-body mx-auto mt-10 flow-root w-full md:mt-14 md:w-[84%]">
           {(placeholder || missingBody) && <p className="label-caps border-y border-bgp-wine/25 py-3 text-bgp-wine">Placeholder article copy · final text to follow</p>}
           {bodyParagraphs.map((paragraph, index) => (
             <Fragment key={index}>
@@ -123,13 +124,13 @@ export default function ArticlePage() {
                 </figure>
               )}
               {paragraph.startsWith("## ")
-                ? <h2 className="clear-both pt-4 text-xl font-light leading-[1.2]">{paragraph.slice(3)}</h2>
+                ? <h2 className="clear-both font-light leading-[1.2]">{paragraph.slice(3)}</h2>
                 : <p className="body-copy text-bgp-ink">{paragraph}</p>}
             </Fragment>
           ))}
         </div>
 
-        <div className="mx-auto mt-12 flex w-full flex-wrap items-center justify-between gap-6 border-t border-bgp-ink pt-5 md:w-[84%]">
+        <div className="article-sharing mx-auto mt-12 flex w-full flex-wrap items-center justify-between gap-6 border-t border-bgp-ink pt-5 md:w-[84%]">
           <ArticleShare key={article.slug} slug={article.slug} title={article.title} />
           <Link href="/news" className="explore-link">Back to news &amp; insights</Link>
         </div>

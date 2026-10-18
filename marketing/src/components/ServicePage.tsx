@@ -25,21 +25,21 @@ export interface ServicePageProps {
 
 export default function ServicePage({ title, hero, intro, body, clients, clientsBlurb, services, servicesVariant = "panel", quote, caseStudies, caseStudyLayout = "band", contacts, contactsBlurb }: ServicePageProps) {
   return (
-    <div>
+    <div className="service-page">
       {hero ? (
         <Hero src={hero.src} alt={hero.alt} label={title} statement={intro} big />
       ) : (
         <section className="site-container section-space">
           <p className="label-caps mb-5">{title}</p>
-          <p className="intro-copy max-w-4xl">{intro}</p>
+          <p className="service-page__intro intro-copy max-w-4xl">{intro}</p>
         </section>
       )}
       <h1 className="sr-only">{title}</h1>
 
       <section className="site-container section-space">
         <div className="client-snapshot mx-auto w-full max-w-[1100px] md:w-[84.2%]">
-          <h2 className="mb-6 border-b border-bgp-ink pb-4 text-lg font-bold">A snapshot of clients</h2>
-          {clientsBlurb && <p className="body-copy mb-6">{clientsBlurb}</p>}
+          <h2 className="service-page__client-heading mb-6 border-b border-bgp-ink pb-4 font-bold">A snapshot of clients</h2>
+          {clientsBlurb && <p className="service-page__client-copy body-copy mb-6">{clientsBlurb}</p>}
           {clients}
         </div>
       </section>
@@ -48,7 +48,7 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
       {quote && <QuoteBlock quote={quote} />}
 
       {caseStudies.length > 0 && caseStudyLayout === "stacked" && (
-        <section className="site-container section-space">
+        <section className="service-case-cards site-container section-space">
           <h2 className="section-title mb-8 border-t border-bgp-ink pt-8">Case studies</h2>
           <div className="space-y-6">
             {caseStudies.map((study, index) => (

@@ -82,6 +82,52 @@
   .btn-outline { @apply border border-bgp-wine text-bgp-wine hover:bg-bgp-wine hover:text-bgp-cream; }
   .explore-link { @apply label-caps inline-flex min-h-11 items-center gap-3 text-bgp-wine transition-opacity hover:opacity-70; }
   .explore-link::after { content: "\2197\FE0E"; font-size: 1.2em; }
+  .case-study-strip__inner { padding-block: clamp(32px, 4.44vw, 64px); }
+  .case-study-strip__label {
+    font-size: clamp(1.375rem, 3.125vw, 2.8125rem);
+    font-weight: 700;
+    margin-bottom: clamp(24px, 3.34vw, 48px);
+  }
+  .case-study-strip__grid { display: grid; gap: 32px; }
+  .case-study-strip__title {
+    font-size: clamp(2.5rem, 6.25vw, 5.625rem);
+    overflow-wrap: anywhere;
+    text-wrap: balance;
+  }
+  .case-study-strip__copy {
+    @apply font-sans font-medium;
+    font-size: clamp(1.25rem, 2.64vw, 2.375rem);
+    line-height: 1.2;
+    margin-top: clamp(24px, 3.34vw, 48px);
+  }
+  .case-study-strip__link {
+    font-size: clamp(1rem, 1.945vw, 1.75rem);
+    margin-top: clamp(20px, 2.23vw, 32px);
+  }
+  .listing-card__label {
+    @apply font-sans uppercase;
+    font-size: clamp(1rem, 1.74vw, 1.5625rem);
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+  }
+  .listing-card__details {
+    @apply font-sans font-medium;
+    font-size: clamp(1.25rem, 2.435vw, 2.1875rem);
+    line-height: 1.2;
+    margin-top: clamp(20px, 2.5vw, 36px);
+  }
+  .home-page .hero-statement { font-size: clamp(1.875rem, 3.82vw, 3.4375rem); }
+  .home-page .home-service__title { font-size: clamp(2rem, 4.17vw, 3.75rem); }
+  .home-page .home-service__copy .intro-copy { font-size: clamp(1.375rem, 2.64vw, 2.375rem); }
+  .home-page .explore-link { font-size: clamp(1rem, 1.945vw, 1.75rem); }
+  .home-stat-value { font-size: clamp(3rem, 8.47vw, 7.625rem); }
+  .home-stat-caption { font-size: clamp(1rem, 2.08vw, 1.875rem); }
+  .home-news .body-copy { font-size: clamp(1.375rem, 3.06vw, 2.75rem); }
+  .home-news .label-caps { font-size: clamp(1rem, 1.53vw, 1.375rem); }
+  .home-news h3 { font-size: clamp(1.375rem, 2.5vw, 2.25rem); }
+  @media (min-width: 768px) {
+    .case-study-strip__grid { grid-template-columns: 2fr 3fr; gap: clamp(32px, 4.44vw, 64px); }
+  }
   .rule-link { @apply label-caps inline-block border-b border-bgp-wine pb-2 text-bgp-wine transition-opacity hover:opacity-70; }
   .section-label { @apply label-caps mb-4 block text-bgp-wine; }
   .tabular { font-variant-numeric: tabular-nums; }

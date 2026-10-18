@@ -8,6 +8,7 @@ import { useState } from "react";
 import { type SiteContent, useSiteContent } from "../lib/site-content";
 import { CASE_STUDIES, INVESTMENT_DEALS } from "../lib/content";
 import { investmentCaseStudySlug } from "../lib/investment-links";
+import "../property-typography.css";
 
 const contactsFor = (c: SiteContent["contacts"], service: string) =>
   ({
@@ -87,32 +88,32 @@ export default function CaseStudyPage() {
   const needsOverview = overview.join(" ").trim().length < 220;
 
   return (
-    <div>
+    <div className="property-page property-case-study">
       <section className="site-container section-space">
         <h2 className="sr-only">Case study · {caseStudy.service}</h2>
         {/* Wireframe slide 32: title and intro at left with the facts panel
             beside them, then an image carousel with arrows and dots. */}
         <div className="grid grid-cols-1 md:grid-cols-[63fr_12fr_25fr] gap-y-10 md:gap-0">
           <div className="min-w-0">
-            <h1 className={`display text-[clamp(32px,4vw,56px)] ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
+            <h1 className={`display property-title ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
             <div className={`mt-7 max-w-[58ch] space-y-5 ${caseStudy.draft ? "italic" : ""}`}>
-              {caseStudy.draft && <p className="label-caps text-bgp-wine not-italic">Draft copy — for review</p>}
+              {caseStudy.draft && <p className="label-caps property-eyebrow text-bgp-wine not-italic">Draft copy — for review</p>}
               {overview.map((para) => (
-                <p key={para.slice(0, 32)} className="body-copy text-bgp-ink">
+                <p key={para.slice(0, 32)} className="body-copy property-body text-bgp-ink">
                   {para}
                 </p>
               ))}
               {needsOverview && (
                 <div>
-                  <p className="label-caps text-bgp-wine mb-3 not-italic">Placeholder copy — project overview</p>
-                  <p className="body-copy text-bgp-ink italic">The completed overview will explain the client's brief, the character of the property and the advice provided by the BGP team. It will describe the approach and include the confirmed outcome once the project details have been reviewed.</p>
+                  <p className="label-caps property-eyebrow text-bgp-wine mb-3 not-italic">Placeholder copy — project overview</p>
+                  <p className="body-copy property-body text-bgp-ink italic">The completed overview will explain the client's brief, the character of the property and the advice provided by the BGP team. It will describe the approach and include the confirmed outcome once the project details have been reviewed.</p>
                 </div>
               )}
             </div>
           </div>
           <div className="hidden md:block" />
           <aside className="min-w-0 self-start md:border-l md:border-bgp-wine md:pl-6">
-            <dl className="grid grid-cols-2 gap-x-6 border-t border-bgp-wine md:block md:border-t-0">
+            <dl className="property-facts grid grid-cols-2 gap-x-6 border-t border-bgp-wine md:block md:border-t-0">
               {caseStudy.facts.map(([k, v]) => (
                 <div key={k} className="min-w-0 border-b border-bgp-line py-3 md:border-0 md:pt-0 md:pb-5">
                   <dt className="label-caps font-bold text-bgp-wine">{k}</dt>

@@ -36,7 +36,7 @@ export default function Home() {
   }, [paused]);
 
   return (
-    <div>
+    <div className="home-page">
       <section data-hero className="site-hero" aria-label="BGP places and expertise">
         {HERO_SLIDES.map((slide, i) => (
           <img
@@ -77,8 +77,8 @@ export default function Home() {
         <div className="site-container grid grid-cols-2 gap-x-6 gap-y-10 py-12 text-center md:grid-cols-4 md:py-16">
           {STATS.map((s) => (
             <div key={s.caption}>
-              <p className="font-sans font-light text-[clamp(3rem,5.7vw,5.125rem)] leading-none tabular text-bgp-wine">{s.value}</p>
-              <p className="mx-auto mt-4 max-w-[20ch] text-base leading-[1.2] lg:text-lg">{s.caption}</p>
+              <p className="home-stat-value font-sans font-light leading-none tabular text-bgp-wine">{s.value}</p>
+              <p className="home-stat-caption mx-auto mt-4 max-w-[20ch] leading-[1.2]">{s.caption}</p>
             </div>
           ))}
         </div>
@@ -101,7 +101,7 @@ export default function Home() {
         ))}
       </div>
 
-      <Link href="/news" aria-label="Explore news and insights" className="group block">
+      <Link href="/news" aria-label="Explore news and insights" className="home-news group block">
       <Band>
         <SectionHead title="News and insights" />
         <div className="mb-10 flex flex-col items-start gap-4">

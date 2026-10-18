@@ -1,13 +1,20 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { cardUrlFor, type Person } from "../lib/content";
 import { useTeamPhoto } from "../lib/team-photos";
 
-export default function ContactCard({ person, compact = false }: { person: Person; compact?: boolean }) {
+export default function ContactCard({ person }: { person: Person; compact?: boolean }) {
   const photo = useTeamPhoto(person);
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [photo]);
   const phoneHref = person.phone.replace(/\(0\)/g, "").replace(/[^\d+]/g, "");
   const emailBreak = person.email.indexOf("@") + 1;
+  const emailNameParts = person.email.slice(0, emailBreak).split(/(?=[._+-])/);
+  const emailDomain = person.email.slice(emailBreak);
+  // Optional breaks at the brand's name boundaries keep the complete address
+  // readable in narrow cards without splitting arbitrary words or characters.
+  const domainParts = emailDomain.toLowerCase() === "brucegillinghampollard.com"
+    ? [emailDomain.slice(0, 5), emailDomain.slice(5, 15), emailDomain.slice(15)]
+    : emailDomain.split(/(?=[.-])/);
 
   return (
     <div className="min-w-0 w-full">
@@ -21,20 +28,20 @@ export default function ContactCard({ person, compact = false }: { person: Perso
           </div>
         )}
       </a>
-      <h3 className="mt-4 text-[14px] font-bold uppercase leading-[1.2] text-bgp-ink">
+      <h3 className="mt-4 text-[clamp(16px,1.46vw,21px)] font-bold uppercase leading-[1.1] text-bgp-ink">
         <a href={cardUrlFor(person.name)} className="hover:text-bgp-wine">{person.name}</a>
       </h3>
-      <div className={`mt-2 space-y-1 leading-[1.4] text-bgp-ink ${compact ? "text-[14px]" : "text-[15px]"}`}>
+      <div className="text-[clamp(16px,1.46vw,21px)] leading-[1.1] text-bgp-ink">
         {person.title && <p>{person.title}</p>}
         {person.phone && <p><a href={`tel:${phoneHref}`} className="tabular hover:text-bgp-wine">{person.phone}</a></p>}
         {person.email && person.email !== "TBC" && (
-          <p className="[overflow-wrap:anywhere]">
+          <p>
             <a href={`mailto:${person.email}`} className="hover:text-bgp-wine">
-              {person.email.slice(0, emailBreak)}<wbr />{person.email.slice(emailBreak)}
+              {emailNameParts.map((part, index) => <Fragment key={index}>{index > 0 && <wbr />}{part}</Fragment>)}<wbr />{domainParts.map((part, index) => <Fragment key={index}>{index > 0 && <wbr />}{part}</Fragment>)}
             </a>
           </p>
         )}
-        <p className="text-xs italic text-bgp-wine/75">LinkedIn profile to follow</p>
+        <p className="mt-1 text-[clamp(14px,1.25vw,18px)] italic text-bgp-wine/75">LinkedIn profile to follow</p>
       </div>
     </div>
   );

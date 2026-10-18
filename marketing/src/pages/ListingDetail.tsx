@@ -13,6 +13,7 @@ import { CONTACT, LEASING_CONTACTS, OFFICE_PHONE, type Person } from "../lib/con
 import { useSiteContent } from "../lib/site-content";
 import { Listing, areaLabel, fetchListing, fetchListings, fileUrl, focalPosition, formatSqft, isImage, listingNames, rentLabel, useClassLabel } from "../lib/api";
 import { downloadParticulars } from "../lib/particulars-pdf";
+import "../property-typography.css";
 
 // WhatsApp goes to the unit's own agent from the letting tracker (the first
 // one with a mobile, phones from HR), else the head of the leasing contact
@@ -118,7 +119,7 @@ export default function ListingDetail() {
   };
 
   return (
-    <div className="pb-24 md:pb-0">
+    <div className="property-page property-listing pb-24 md:pb-0">
       {/* Wireframe slide 27: photo with the facts panel to its right, then the
           title at left with the headline statement at right. */}
       <section className="site-container section-space">
@@ -133,9 +134,9 @@ export default function ListingDetail() {
             </div>
             <div className="mt-3 flex flex-col items-start justify-between gap-5 border-t border-bgp-wine pt-5 sm:flex-row sm:gap-6">
               <div className="min-w-0">
-                <h1 className="display text-[clamp(32px,4vw,56px)]">{names.title}</h1>
+                <h1 className="display property-title">{names.title}</h1>
                 {(names.secondary || listing.addressLine) && (
-                  <p className="mt-3 body-copy text-bgp-ink">
+                  <p className="mt-3 body-copy property-body text-bgp-ink">
                     {[names.secondary, listing.addressLine].filter(Boolean).join(" · ")}
                   </p>
                 )}
@@ -143,28 +144,15 @@ export default function ListingDetail() {
                   <p className="mt-4 inline-block bg-bgp-nectar text-bgp-wine label-caps px-3 py-1.5">Under offer</p>
                 )}
               </div>
-              <div className="flex shrink-0 gap-5 label-caps font-bold text-bgp-wine sm:flex-col sm:items-end sm:gap-2">
+              <div className="property-actions flex shrink-0 gap-5 label-caps font-bold text-bgp-wine sm:flex-col sm:items-end sm:gap-2">
                 <a href={`mailto:${CONTACT.email}?subject=${mailSubject}`} className="hover:text-bgp-wine">Book viewing</a>
                 {brochureHref ? <a href={brochureHref} target="_blank" rel="noreferrer" className="hover:text-bgp-wine">Download</a> : <button onClick={onDownload} className="hover:text-bgp-wine">Download</button>}
               </div>
             </div>
-            <div className="mt-10 md:ml-[34%] md:mr-[3%] lg:mt-14">
-              {headline.length >= 100 ? (
-                <p className="intro-copy text-bgp-ink">{headline.charAt(0).toUpperCase() + headline.slice(1)}.</p>
-              ) : (
-                <div>
-                  <p className="label-caps text-bgp-wine mb-3">Placeholder introduction</p>
-                  <p className="intro-copy text-bgp-ink">
-                    {headline && <>{headline.charAt(0).toUpperCase() + headline.slice(1)}. </>}
-                    <span className="italic">An introduction to the property's setting, character and opportunity will follow.</span>
-                  </p>
-                </div>
-              )}
-            </div>
           </div>
           <div className="hidden lg:block" />
           <aside className="min-w-0">
-            <dl className="grid grid-cols-2 gap-x-6 border-t border-bgp-wine lg:block">
+            <dl className="property-facts grid grid-cols-2 gap-x-6 border-t border-bgp-wine lg:block">
               {summaryInfo.map(([k, v]) => (
                   <div key={k} className="min-w-0 border-b border-bgp-line py-3">
                     <dt className="label-caps font-bold text-bgp-wine">{k}</dt>
@@ -174,10 +162,23 @@ export default function ListingDetail() {
             </dl>
           </aside>
         </div>
+        <div className="mt-10 md:ml-[34%] md:mr-[3%] lg:mt-14">
+          {headline.length >= 100 ? (
+            <p className="intro-copy property-intro text-bgp-ink">{headline.charAt(0).toUpperCase() + headline.slice(1)}.</p>
+          ) : (
+            <div>
+              <p className="label-caps property-eyebrow text-bgp-wine mb-3">Placeholder introduction</p>
+              <p className="intro-copy property-intro text-bgp-ink">
+                {headline && <>{headline.charAt(0).toUpperCase() + headline.slice(1)}. </>}
+                <span className="italic">An introduction to the property's setting, character and opportunity will follow.</span>
+              </p>
+            </div>
+          )}
+        </div>
             {/* Slide 27: a narrow description beside a photo, then a landscape photo and a lower portrait one. */}
             <div className="mt-12 grid grid-cols-1 gap-y-8 md:mt-20 md:grid-cols-[26fr_8fr_66fr] md:gap-0 items-start">
               <div>
-                <p className="body-copy text-bgp-ink">
+                <p className="body-copy property-body text-bgp-ink">
                   {[
                     formatSqft(listing.sqft),
                     listing.propertyName && listing.propertyName !== listing.unitName ? `within ${listing.propertyName.replace(/^\[Sample\]\s*/, "")}` : null,
@@ -186,8 +187,8 @@ export default function ListingDetail() {
                   {" "}Full particulars, floor plans and viewing arrangements from the leasing team below.
                 </p>
                 <div className="mt-6">
-                  <p className="label-caps text-bgp-wine mb-3">Placeholder copy — property overview</p>
-                  <p className="body-copy text-bgp-ink italic">
+                  <p className="label-caps property-eyebrow text-bgp-wine mb-3">Placeholder copy — property overview</p>
+                  <p className="body-copy property-body text-bgp-ink italic">
                     This paragraph will describe the unit, the building and the surrounding street. The leasing team will add the property's defining features, its relationship to neighbouring occupiers and the types of business it could accommodate. Property-specific wording is awaiting review.
                   </p>
                 </div>
@@ -216,10 +217,10 @@ export default function ListingDetail() {
             </div>
         <details className="group mt-12 border-y border-bgp-wine/30 md:mt-16">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-6 py-5 text-bgp-wine [&::-webkit-details-marker]:hidden">
-            <h2 className="label-caps font-bold">Property details</h2>
+            <h2 className="label-caps property-eyebrow font-bold">Property details</h2>
             <span aria-hidden className="text-2xl leading-none transition-transform group-open:rotate-45">+</span>
           </summary>
-          <dl className="grid grid-cols-1 gap-x-8 pb-6 sm:grid-cols-2 lg:grid-cols-3">
+          <dl className="property-commercial-facts grid grid-cols-1 gap-x-8 pb-6 sm:grid-cols-2 lg:grid-cols-3">
             {keyInfo.filter(([, value]) => value).map(([label, value]) => (
               <div key={label} className="min-w-0 border-t border-bgp-line py-4">
                 <dt className="label-caps font-bold text-bgp-wine">{label}</dt>

@@ -5,6 +5,7 @@ import CaseStudyStrip from "../components/CaseStudyStrip";
 import { MapSlot, SectionHead } from "../components/Wire";
 import { LEASING_SECTORS, SHOPPING_CENTRES, isDirectorLevel, type Person } from "../lib/content";
 import { findCaseStudy, useSiteContent } from "../lib/site-content";
+import "../property-typography.css";
 
 export const peopleNamed = (team: Person[], names: string[]): Person[] =>
   names.map((n) => team.find((p) => p.name === n)).filter((p): p is Person => !!p && isDirectorLevel(p));
@@ -38,7 +39,7 @@ export default function LeasingSector() {
   }
 
   return (
-    <div>
+    <div className="property-page property-estate">
       {/* Wireframe slide 28: plain photo, then the title with Contact and
           Download at right, the statement beside the title, description
           beside the lead image, more photos, a location map. */}
@@ -51,8 +52,8 @@ export default function LeasingSector() {
         {/* Slide 28: title row with Contact and Download at right; the statement on the next row in the right column;
             a narrow text column beside a wide image; then a landscape and a lower, portrait image. */}
         <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-5">
-          <h1 className="display text-[clamp(32px,4.5vw,64px)]">{sector.name}</h1>
-          <span className="flex shrink-0 gap-5 label-caps font-bold text-bgp-wine sm:flex-col sm:items-end sm:gap-2">
+          <h1 className="display property-title">{sector.name}</h1>
+          <span className="property-actions flex shrink-0 gap-5 label-caps font-bold text-bgp-wine sm:flex-col sm:items-end sm:gap-2">
             <a href="#contact" className="hover:opacity-70">Contact</a>
             <a href="#contact" className="hover:opacity-70">Request brochure</a>
           </span>
@@ -60,19 +61,19 @@ export default function LeasingSector() {
         {!sector.howWeHelp && (
           <div className="mt-8 grid grid-cols-1 md:mt-12 md:grid-cols-[33fr_60fr_7fr]">
             <div className="hidden md:block" />
-            <p className="intro-copy text-bgp-ink">{sector.headline}</p>
+            <p className="intro-copy property-intro text-bgp-ink">{sector.headline}</p>
           </div>
         )}
-        {sector.howWeHelp && <p className="mt-8 intro-copy text-bgp-ink md:mt-12 md:w-[60%] md:ml-auto">{sector.headline}</p>}
+        {sector.howWeHelp && <p className="mt-8 intro-copy property-intro text-bgp-ink md:mt-12 md:w-[60%] md:ml-auto">{sector.headline}</p>}
         <div className={`mt-10 grid grid-cols-1 gap-10 items-start md:mt-14 ${sector.howWeHelp ? "lg:grid-cols-[minmax(0,1fr)_280px] lg:gap-20" : "lg:grid-cols-[26fr_8fr_66fr] lg:gap-0"}`}>
           <div className="min-w-0 space-y-5">
             {sector.body.map((p) => (
-              <p key={p.slice(0, 24)} className="body-copy text-bgp-ink">{p}</p>
+              <p key={p.slice(0, 24)} className="body-copy property-body text-bgp-ink">{p}</p>
             ))}
             {!sector.howWeHelp && sector.body.join(" ").length < 280 && (
               <div>
-                <p className="label-caps text-bgp-wine mb-3">Placeholder copy — sector overview</p>
-                <p className="body-copy text-bgp-ink italic">This space will describe the team's approach to the area, the character of the destinations it advises on and the priorities of their owners. A short, approved example will illustrate how that advice translates into a leasing strategy.</p>
+                <p className="label-caps property-eyebrow text-bgp-wine mb-3">Placeholder copy — sector overview</p>
+                <p className="body-copy property-body text-bgp-ink italic">This space will describe the team's approach to the area, the character of the destinations it advises on and the priorities of their owners. A short, approved example will illustrate how that advice translates into a leasing strategy.</p>
               </div>
             )}
           </div>
@@ -85,7 +86,7 @@ export default function LeasingSector() {
           )}
           {sector.howWeHelp && (
             <div className="bg-bgp-mist p-8 self-start">
-              <p className="label-caps font-bold text-bgp-wine border-b border-bgp-wine pb-3 mb-6">How we can help</p>
+              <p className="label-caps property-eyebrow font-bold text-bgp-wine border-b border-bgp-wine pb-3 mb-6">How we can help</p>
               <ul className="space-y-4">
                 {sector.howWeHelp.map((s) => (
                   <li key={s} className="body-copy text-bgp-ink border-b border-bgp-line pb-4">{s}</li>
@@ -184,7 +185,7 @@ export function ShoppingCentrePage() {
     gallery.push({ caption: "Placeholder image — centre photography to follow", stock: CENTRE_STOCK[gallery.length] });
   }
   return (
-    <div>
+    <div className="property-page property-estate">
       <section className="site-container section-space">
         <p className="label-caps border-b border-bgp-ink pb-2 text-bgp-ink/50">
           <Link href="/leasing" className="hover:text-bgp-wine">Leasing</Link> ·{" "}
@@ -192,14 +193,14 @@ export function ShoppingCentrePage() {
         </p>
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_260px] gap-10 lg:gap-16 mt-8">
           <div className="min-w-0">
-            <h1 className="display text-[clamp(32px,4vw,56px)]">{centre.name}</h1>
+            <h1 className="display property-title">{centre.name}</h1>
             <div className="img-frame mt-6">
               <Placeholder className="aspect-[16/9] w-full" src={centre.image} alt={centre.name} stock={CENTRE_STOCK[0]} />
             </div>
-            <p className="mt-6 body-copy text-bgp-ink">{centre.blurb}</p>
+            <p className="mt-6 body-copy property-body text-bgp-ink">{centre.blurb}</p>
             <div className="mt-6">
-              <p className="label-caps text-bgp-wine mb-3">Placeholder copy — centre overview</p>
-              <p className="body-copy text-bgp-ink italic">The completed overview will describe {centre.name}'s setting, its mix of shopping, dining and leisure, and the brief for the BGP team. It will explain the centre's role within its local area and introduce the leasing priorities once the owner and team have approved the wording.</p>
+              <p className="label-caps property-eyebrow text-bgp-wine mb-3">Placeholder copy — centre overview</p>
+              <p className="body-copy property-body text-bgp-ink italic">The completed overview will describe {centre.name}'s setting, its mix of shopping, dining and leisure, and the brief for the BGP team. It will explain the centre's role within its local area and introduce the leasing priorities once the owner and team have approved the wording.</p>
             </div>
             <div className="grid grid-cols-1 gap-x-6 gap-y-10 sm:grid-cols-2 lg:grid-cols-3 mt-8">
               {gallery.map((g, index) => (

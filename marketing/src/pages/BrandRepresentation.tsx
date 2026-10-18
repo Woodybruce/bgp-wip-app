@@ -4,6 +4,7 @@ import KeyContacts from "../components/KeyContacts";
 import Placeholder from "../components/Placeholder";
 import { BRAND_REP_CLIENTS, SERVICES } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
+import "../components/wire-typography.css";
 
 export default function BrandRepresentation() {
   const service = SERVICES.find((item) => item.slug === "brand-representation")!;
@@ -12,21 +13,21 @@ export default function BrandRepresentation() {
   const people = [...contacts.brand_representation, ...team.filter((person) => person.team === "Tenant Rep" && !contacts.brand_representation.some((contact) => contact.name === person.name))].slice(0, 3);
 
   return (
-    <div>
+    <div className="brand-representation">
       <section className="site-container section-space">
         <h1 className="label-caps mb-7 text-bgp-wine">Brand Representation</h1>
-        <p className="intro-copy max-w-[920px] text-bgp-ink">{service.intro}</p>
+        <p className="brand-representation__intro intro-copy max-w-[920px] text-bgp-ink">{service.intro}</p>
       </section>
 
       <section className="site-container pb-14 md:pb-20">
         <div className="client-snapshot mx-auto w-full max-w-[1100px] md:w-[84.2%]">
-          <h2 className="mb-6 border-b border-bgp-ink pb-4 text-lg font-bold">A snapshot of clients</h2>
+          <h2 className="brand-representation__client-heading mb-6 border-b border-bgp-ink pb-4 font-bold">A snapshot of clients</h2>
           <ClientRow clients={BRAND_REP_CLIENTS} initialCount={14} minimumSlots={14} />
         </div>
       </section>
 
       {studies.length > 0 && (
-        <section className="site-container pb-12 md:pb-20">
+        <section className="service-case-cards site-container pb-12 md:pb-20">
           <h2 className="section-title mb-8 border-t border-bgp-ink pt-10">Case studies</h2>
           <div className="space-y-6">
             {studies.map((study, index) => {

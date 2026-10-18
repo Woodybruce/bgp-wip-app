@@ -21,18 +21,18 @@ export default function CaseStudyStrip({ caseStudy, caseStudies, band = false }:
 
   return (
     <Strip band={band}>
-      <h2 className="mb-8 text-lg font-bold">Case study</h2>
-      <div className="grid grid-cols-1 gap-8 md:grid-cols-[2fr_3fr] md:gap-12 lg:gap-16">
+      <h2 className="case-study-strip__label">Case study</h2>
+      <div className="case-study-strip__grid">
         <div className="flex flex-col items-start">
-          <h3 className={`section-title ${current.draft ? "italic" : ""}`}>
+          <h3 className={`display case-study-strip__title ${current.draft ? "italic" : ""}`}>
             <Link href={`/case-studies/${current.slug}`} className="hover:opacity-80">{current.title}</Link>
           </h3>
-          <p className={`body-copy mt-6 ${current.draft ? "italic" : ""}`}>{current.blurb}</p>
-          <Link href={`/case-studies/${current.slug}`} className="explore-link mt-8">Find out more</Link>
+          <p className={`case-study-strip__copy ${current.draft ? "italic" : ""}`}>{current.blurb}</p>
+          <Link href={`/case-studies/${current.slug}`} className="explore-link case-study-strip__link">Find out more</Link>
         </div>
         <div className="relative self-start" role="region" aria-roledescription="carousel" aria-label="Case studies">
           <Link href={`/case-studies/${current.slug}`} className="block img-frame">
-            <Placeholder className="aspect-[3/2] w-full" src={shown} alt={current.title} label="Photo to follow" />
+            <Placeholder className="aspect-[302/215] w-full" src={shown} alt={current.title} label="Photo to follow" />
           </Link>
           {steps > 1 && (
             <>
@@ -55,8 +55,8 @@ export default function CaseStudyStrip({ caseStudy, caseStudies, band = false }:
 
 function Strip({ children, band }: { children: ReactNode; band: boolean }) {
   return (
-    <section className={band ? "bg-bgp-mist" : ""}>
-      <div className="site-container section-space">{children}</div>
+    <section className={`case-study-strip ${band ? "bg-bgp-mist" : ""}`}>
+      <div className="site-container case-study-strip__inner">{children}</div>
     </section>
   );
 }

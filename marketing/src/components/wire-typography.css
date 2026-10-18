@@ -1,0 +1,95 @@
+/* Sizes normalized from the supplied page panels at 1440px wide.
+   Slides 26/31 use 55px hero copy; slides 35/38/41 use 60px intros.
+   Keep brand typefaces, casing and leading while restoring that scale. */
+.wire-hero .hero-statement {
+  font-size: clamp(30px, 3.8195vw, 55px);
+}
+
+.wire-hero--big .hero-statement {
+  font-size: clamp(30px, 4.1667vw, 60px);
+}
+
+.wire-section-head .section-title,
+.service-case-cards > .section-title {
+  font-size: clamp(28px, 3.125vw, 45px);
+}
+
+.wire-section-head .body-copy {
+  font-size: clamp(18px, 2.1528vw, 31px);
+  line-height: 1.2;
+}
+
+.wire-quote .intro-copy {
+  font-size: clamp(26px, 3.4723vw, 50px);
+  line-height: 1.2;
+}
+
+.wire-quote .label-caps {
+  font-size: clamp(15px, 1.7362vw, 25px);
+}
+
+.service-page .service-page__intro,
+.brand-representation .brand-representation__intro {
+  font-size: clamp(30px, 4.1667vw, 60px);
+  line-height: 1.2;
+}
+
+.service-page .service-page__client-heading,
+.brand-representation .brand-representation__client-heading {
+  font-size: clamp(20px, 2.0834vw, 30px);
+  line-height: 1.2;
+}
+
+.service-page .service-page__client-copy,
+.service-case-cards .body-copy {
+  font-size: clamp(20px, 2.6389vw, 38px);
+  line-height: 1.2;
+}
+
+.service-case-cards h3.label-caps {
+  font-size: clamp(20px, 2.0834vw, 30px);
+  line-height: 1.2;
+}
+
+.service-case-cards .explore-link {
+  font-size: clamp(15px, 1.6667vw, 24px);
+}
+
+/* Slide 38 distinguishes the large service introduction from the
+   selectable list and its smaller detail panel. */
+.service-list .service-list__heading {
+  font-size: clamp(36px, 5.5556vw, 80px);
+  text-wrap: balance;
+}
+
+.service-list .service-list__intro .body-copy {
+  font-size: clamp(24px, 3.3334vw, 48px);
+  line-height: 1.2;
+}
+
+.service-list .service-list__tab {
+  font-size: clamp(20px, 2.5vw, 36px);
+}
+
+.service-list .service-list__detail h3,
+.service-list .service-list__detail .body-copy,
+.service-list .service-list__supporting .body-copy {
+  font-size: clamp(19px, 2.2223vw, 32px);
+  line-height: 1.2;
+}
+
+/* Slide 41 uses a 30px sidebar alongside a 39px service narrative. */
+.service-list .service-list__sidebar-heading,
+.service-list .service-list__sidebar-copy {
+  font-size: clamp(19px, 2.0834vw, 30px);
+  line-height: 1.2;
+}
+
+.service-list .service-list__narrative .body-copy {
+  font-size: clamp(21px, 2.7084vw, 39px);
+  line-height: 1.2;
+}
+
+.service-list .service-list__narrative > * + * {
+  margin-top: clamp(20px, 2.5vw, 36px);
+}
