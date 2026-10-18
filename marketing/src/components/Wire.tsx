@@ -20,7 +20,7 @@ export function TextPlaceholder({ label, lines = 3, className = "" }: { label: s
 
 // Draft copy the team still has to replace is set in italics so it can be
 // seen on the page (Woody, 2026-10-16: "in italics where need to change").
-export const DRAFT_QUOTE = "BGP understood what we needed from the space from the first meeting. Their advice was clear and commercial, they moved quickly, and the result was better than we had planned for.";
+export const DRAFT_QUOTE = "Client quote to follow.";
 
 // Client quote with photo (slides 32 and 41). A missing quote shows draft
 // words in italics; a missing photo shows a stock image.
@@ -28,10 +28,10 @@ export function QuoteBlock({ quote, image, imageAlt = "", imageSide = "right" }:
   const hasQuote = !!quote?.quote && !/^lorem ipsum/i.test(quote.quote);
   const draft = !hasQuote;
   return (
-    <section className="mx-auto max-w-[1360px] px-4 py-12 md:py-14">
-      <div className={`grid grid-cols-1 gap-8 md:gap-12 items-start ${imageSide === "left" ? "md:grid-cols-[55fr_32fr] md:[direction:rtl] md:ml-[8%] md:gap-[5%]" : "md:grid-cols-[49fr_41fr] md:gap-[3%]"}`}>
+    <section className="site-container section-space">
+      <div className={`grid grid-cols-1 gap-8 md:gap-16 items-center ${imageSide === "left" ? "md:grid-cols-[1.4fr_1fr] md:[direction:rtl]" : "md:grid-cols-[1fr_1.2fr]"}`}>
         <div className={`[direction:ltr] ${draft ? "italic" : ""}`}>
-          <p className="font-normal text-2xl md:text-[1.92rem] leading-[1.12] text-bgp-ink">“{hasQuote ? quote!.quote : DRAFT_QUOTE}”</p>
+          <blockquote className="intro-copy text-bgp-wine">{hasQuote ? `“${quote!.quote}”` : DRAFT_QUOTE}</blockquote>
           <p className="mt-4 label-caps">{quote?.name || "Client name"}</p>
           <p className="label-caps text-bgp-ink">{quote?.title || "Title, company"}</p>
         </div>
@@ -60,12 +60,12 @@ export function MapSlot({ lat, lon, zoom = 15, marker = true, pins, className = 
 
 export function Hero({ src, alt, label, statement, caption, tall = false, big = false }: { src?: string; alt: string; label?: ReactNode; statement: ReactNode; caption?: ReactNode; tall?: boolean; big?: boolean }) {
   return (
-    <section data-hero className={`relative flex items-end overflow-hidden -mt-16 md:-mt-24 lg:-mt-32 ${tall ? "h-[min(85vw,100vh)] min-h-[480px]" : "h-[min(60vw,100vh)] min-h-[420px]"}`}>
+    <section data-hero className={`site-hero ${tall ? "site-hero--tall" : ""}`}>
       <Placeholder className="absolute inset-0 h-full w-full" src={src} alt={alt} />
-      <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/80 via-bgp-ink/25 to-bgp-ink/35" />
-      <div className="relative mx-auto w-full max-w-[1360px] px-4 pb-8 md:pb-[2.6rem]">
-        {label && <p className="label-caps md:text-xs text-white/80 mb-3">{label}</p>}
-        <p className={`max-w-[60%] font-normal text-2xl md:text-[2rem] leading-[1.12] text-white`} style={{ textShadow: "0 1px 3px rgba(0,0,0,0.35)" }}>{statement}</p>
+      <div className="hero-shade" />
+      <div className="site-container hero-content">
+        {label && <p className="label-caps text-bgp-cream mb-5">{label}</p>}
+        <p className={`hero-statement ${big ? "lg:max-w-[24ch]" : ""}`}>{statement}</p>
         {caption}
       </div>
     </section>
@@ -75,20 +75,19 @@ export function Hero({ src, alt, label, statement, caption, tall = false, big = 
 export function Band({ children, className = "", id }: { children: ReactNode; className?: string; id?: string }) {
   return (
     <section id={id} className={`bg-bgp-mist ${className}`}>
-      <div className="mx-auto max-w-[1360px] px-4 pt-10 pb-12 md:pt-10 md:pb-14">{children}</div>
+      <div className="site-container section-space">{children}</div>
     </section>
   );
 }
 
-// Section headings on every slide are small bold text over a rule (slides
-// 26, 28, 31, 32, 35, 38, 41, 45); page and case-study titles are large
-// light type. Brand Rep set the pattern on 2026-10-16; the rest follow.
+// Use the wireframes' heading-and-rule structure with the brand guide's
+// uppercase Century Gothic Pro Bold display typography.
 export function SectionHead({ title, sub, right, as: Tag = "h2", rule = true }: { title: ReactNode; sub?: ReactNode; right?: ReactNode; as?: "h1" | "h2"; rule?: boolean }) {
   return (
-    <div className={`flex flex-wrap items-end justify-between gap-x-8 gap-y-2 ${rule ? "border-b-[3px] border-bgp-ink pb-3 mb-8" : "mb-6"}`}>
+    <div className={`flex flex-wrap items-end justify-between gap-x-8 gap-y-4 ${rule ? "border-b border-bgp-wine pb-5 mb-8 md:mb-10" : "mb-8"}`}>
       <div>
-        <Tag className="text-[1.73rem] font-bold text-bgp-ink">{title}</Tag>
-        {sub && <p className="mt-1 text-[1.04rem] text-bgp-ink">{sub}</p>}
+        <Tag className="section-title">{title}</Tag>
+        {sub && <p className="mt-3 body-copy text-bgp-ink">{sub}</p>}
       </div>
       {right}
     </div>

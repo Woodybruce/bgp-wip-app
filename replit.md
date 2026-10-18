@@ -3,6 +3,14 @@
 ## Overview
 The BGP Dashboard is a comprehensive property management solution for Bruce Gillingham Pollard, consolidating operations, property tracking, news curation, and contact management into a single, intelligent platform. It features a native PostgreSQL CRM with integrated AI capabilities to enhance efficiency and provide market insights for property management in key London areas, aiming to replace disparate systems.
 
+## Marketing brand and wireframe alignment (18 October 2026)
+
+Woody requested that the existing marketing website follow `Website Wireframe[72].key` and `DBP_238_In House Creds_BGP_Brand Guidelines_V1.pdf`. The Keynote's 31 embedded wireframe pages provide page structure; the brand guide supplies typography, colour and logo rules. The marketing site now uses Century Gothic Pro Bold uppercase display text, licensed Adobe font loading, locally hosted Lato Light/Medium and the exact Bordeaux/Nectar/Stone/Feather palette. A stable 16px base, shared page widths and spacing, and a correctly sized framed logo replace the previous viewport-dependent scaling.
+
+The home page uses five alternating service rows; property pages retain live listings and working filters; Brand Representation uses client logos and case-study rows; Advisory and Consultancy have distinct service layouts; Team uses five portrait columns on desktop; News and articles follow the editorial layouts. Navigation, contact cards, footer, carousel controls and mobile stacking share the same system. Existing API endpoints, newsletter submission, brochure URLs, maps, property identifiers and content sources remain in place. There are no dashboard, schema or production data changes.
+
+Content gaps remain explicit: the listing feed has no estate field for the wireframe's Estates filter, investment records lack normalized location/size/date fields, a team group photograph is still needed, and Consultancy needs an approved client quote. Existing draft content is retained; missing quotes and links are not invented. Desktop and phone checks covered eight main pages and four detail templates, plus navigation keyboard behavior, listing filtering and service/case-study interactions. TypeScript and the production build pass; all 59 static routes prerender. This work is prepared on a separate branch; publication is a separate step under the repository's no-push-without-request rule.
+
 ## Audit decisions and fixes (6 September 2026)
 
 Woody confirmed that clients retain full editing abilities for all authorised properties and deals, including shared records and ChatBGP workflows. Fix access checks at record boundaries; do not replace client editing with blanket staff-only/read-only rules. Experian has no active account and is legacy cleanup. The diagnostic audit page/routes and integration-health credential prompts were removed; Goad data attribution is separate.

@@ -3,15 +3,9 @@ import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
 import { Band, SectionHead } from "../components/Wire";
 import { HERO_SLIDES, HERO_STATEMENT, SERVICES } from "../lib/content";
-
 import { useSiteContent } from "../lib/site-content";
 
-// Home per wireframe slides 22–23: hero with the statement bottom-left,
-// a row of stats, five service blocks on alternating bands with the image
-// beside the copy, then News and insights on a band. All figures real:
-// transactions/brands from brucegillinghampollard.com, £62m = LondonMetric
-// Waitrose portfolio, 7m sq ft advised, 20+ years = Canary Wharf instruction.
-const STATS: Array<{ value: string; caption: string }> = [
+const STATS = [
   { value: "244", caption: "Leasing transactions completed" },
   { value: "£62m", caption: "Largest single transaction" },
   { value: "66", caption: "Brands advised in the UK and abroad" },
@@ -25,90 +19,100 @@ export default function Home() {
     .filter((a): a is NonNullable<typeof a> => !!a);
   const homeArticles = featured.length === 3 ? featured : articles.slice(0, 3);
   const [slideIndex, setSlideIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+
   useEffect(() => {
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
-    const id = setInterval(() => setSlideIndex((i) => (i + 1) % HERO_SLIDES.length), 5000);
-    return () => clearInterval(id);
+    const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const applyPreference = () => { if (preference.matches) setPaused(true); };
+    applyPreference();
+    preference.addEventListener("change", applyPreference);
+    return () => preference.removeEventListener("change", applyPreference);
   }, []);
+
+  useEffect(() => {
+    if (paused) return;
+    const id = setInterval(() => setSlideIndex((i) => (i + 1) % HERO_SLIDES.length), 7000);
+    return () => clearInterval(id);
+  }, [paused]);
 
   return (
     <div>
-      {/* Hero: rotating flagship instructions, statement bottom-left */}
-      <section data-hero className="relative flex items-end -mt-16 md:-mt-24 lg:-mt-32 h-[min(60vw,100vh)] min-h-[420px] overflow-hidden">
+      <section data-hero className="site-hero" aria-label="BGP places and expertise">
         {HERO_SLIDES.map((slide, i) => (
           <img
             key={slide.src}
             src={slide.src}
-            alt={slide.alt}
+            alt={i === slideIndex ? slide.alt : ""}
+            aria-hidden={i !== slideIndex}
             loading={i === 0 ? "eager" : "lazy"}
-            className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-[1500ms] ease-in-out ${i === slideIndex ? "opacity-100" : "opacity-0"}`}
+            className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-1000 ${i === slideIndex ? "opacity-100" : "opacity-0"}`}
           />
         ))}
-        <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/80 via-bgp-ink/25 to-bgp-ink/35" />
-        <div className="relative mx-auto w-full max-w-[1360px] px-4 pb-10 md:pb-[2.45rem] flex flex-wrap items-end justify-between gap-6">
-          <h1 className="max-w-[58%] font-normal text-3xl md:text-[2rem] leading-[1.12] text-white" style={{ textShadow: "0 1px 3px rgba(0,0,0,0.35)" }}>
-            {HERO_STATEMENT}
-          </h1>
+        <div className="hero-shade" />
+        <div className="site-container hero-content">
+          <h1 className="hero-statement max-w-[24ch]">{HERO_STATEMENT}</h1>
+          <div className="mt-7 flex items-center gap-1 text-bgp-cream md:absolute md:bottom-12 md:right-12 md:mt-0" aria-label="Hero photographs">
+            {HERO_SLIDES.map((slide, i) => (
+              <button
+                key={slide.src}
+                type="button"
+                aria-label={`Show photograph ${i + 1}: ${slide.alt}`}
+                aria-pressed={slideIndex === i}
+                className="flex h-11 w-9 items-center justify-center"
+                onClick={() => { setSlideIndex(i); setPaused(true); }}
+              >
+                <span className={`h-1.5 w-6 ${slideIndex === i ? "bg-bgp-nectar" : "bg-bgp-cream/50"}`} />
+              </button>
+            ))}
+            <button type="button" aria-label={paused ? "Play slideshow" : "Pause slideshow"} onClick={() => setPaused(!paused)} className="ml-2 flex h-11 w-11 items-center justify-center border border-bgp-cream/40 text-sm">
+              <span aria-hidden>{paused ? "▶" : "Ⅱ"}</span>
+            </button>
+          </div>
         </div>
       </section>
 
-      {/* Slide 23: a slim dark Talk to us bar under the hero, then the stats. */}
-      <a href="#contact" className="block bg-bgp-ink text-bgp-cream text-center label-caps md:text-[0.72rem] leading-none py-[0.3rem] hover:bg-bgp-wine transition-colors">Talk to us</a>
+      <a href="#contact" className="label-caps flex min-h-11 items-center justify-center bg-bgp-wine text-bgp-cream transition-colors hover:bg-bgp-ink">Talk to us</a>
 
-      {/* Stats row, on the grey band as slide 23 draws it */}
-      <section className="bg-bgp-mist"><div className="mx-auto max-w-[1360px] px-4 pt-[3rem] pb-[1.6rem]">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-8 text-center">
+      <section className="bg-bgp-mist" aria-label="BGP in numbers">
+        <div className="site-container grid grid-cols-2 gap-x-6 gap-y-10 py-12 text-center md:grid-cols-4 md:py-16">
           {STATS.map((s) => (
             <div key={s.caption}>
-              <p className="font-normal text-4xl md:text-[4.65rem] leading-none tabular text-bgp-ink">{s.value}</p>
-              <p className="mt-[1.4rem] text-[1.08rem] leading-[1.25] text-bgp-ink max-w-[20ch] mx-auto">{s.caption}</p>
+              <p className="font-sans font-light text-[clamp(3rem,5.7vw,5.125rem)] leading-none tabular text-bgp-wine">{s.value}</p>
+              <p className="mx-auto mt-4 max-w-[20ch] text-base leading-[1.2] lg:text-lg">{s.caption}</p>
             </div>
           ))}
         </div>
-      </div></section>
+      </section>
 
-      {/* Service overviews on alternating bands */}
       <div id="services">
-        {SERVICES.map((service, i) => {
-          const inner = (
-            <>
-              <h2 className="text-[2.27rem] leading-[1.1] font-bold text-bgp-ink mb-[2.15rem]">{service.name}</h2>
-              <div className={`grid grid-cols-1 gap-8 md:gap-0 items-start ${i % 2 ? "md:grid-cols-[47fr_4fr_49fr] md:[direction:rtl]" : "md:grid-cols-[55fr_7.5fr_37.5fr]"}`}>
-                <div className="img-frame [direction:ltr]">
-                  <Placeholder className="aspect-[1.57] w-full" src={service.image} alt={service.name} />
-                </div>
-                <div className="hidden md:block" />
-                <div className="[direction:ltr]">
-                  <p className="text-[1.5rem] leading-[1.2] text-bgp-ink">{service.intro}</p>
-                  <p className="mt-[0.9rem]"><Link href={`/${service.slug}`} className="explore-link md:text-[1.15rem] font-bold">Find out more</Link></p>
-                </div>
+        {SERVICES.map((service, i) => (
+          <section key={service.slug} className={i % 2 ? "bg-bgp-mist" : ""}>
+            <div className={`site-container section-space grid grid-cols-1 gap-x-12 gap-y-6 lg:gap-x-20 ${i % 2 ? "md:grid-cols-[.85fr_1.15fr]" : "md:grid-cols-[1.15fr_.85fr]"}`}>
+              <h2 className={`section-title ${i % 2 ? "md:col-start-1 md:row-start-1 md:self-end" : "md:col-span-2"}`}>{service.name}</h2>
+              <div className={`img-frame ${i % 2 ? "md:col-start-2 md:row-span-2 md:row-start-1" : "md:col-start-1 md:row-start-2"}`}>
+                <Placeholder className="aspect-[3/2] w-full" src={service.image} alt={service.name} />
               </div>
-            </>
-          );
-          return i % 2 ? (
-            <Band key={service.slug} className="[&>div]:pt-[2.55rem] [&>div]:pb-[3.7rem]">{inner}</Band>
-          ) : (
-            <section key={service.slug} className="mx-auto max-w-[1360px] px-4 pt-[2.55rem] pb-[3.7rem]">{inner}</section>
-          );
-        })}
+              <div className={i % 2 ? "md:col-start-1 md:row-start-2" : "md:col-start-2 md:row-start-2"}>
+                <p className="intro-copy max-w-[30ch]">{service.intro}</p>
+                <Link href={`/${service.slug}`} className="explore-link mt-5">Find out more<span className="sr-only"> about {service.name}</span></Link>
+              </div>
+            </div>
+          </section>
+        ))}
       </div>
 
-      {/* News & insights */}
       <Band>
         <SectionHead title="News and insights" />
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr] gap-8 md:gap-12 mb-10">
-          <p className="text-base text-bgp-ink">
-            The latest news, lettings, transactions and opinion from the BGP team across
-            leasing, investment, brand representation and placemaking.
-          </p>
-          <p><Link href="/news" className="explore-link">Find out more</Link></p>
+        <div className="mb-10 flex flex-col items-start justify-between gap-4 md:flex-row md:gap-12">
+          <p className="body-copy max-w-[52ch]">The latest news, lettings, transactions and opinion from the BGP team across leasing, investment, brand representation and placemaking.</p>
+          <Link href="/news" className="explore-link shrink-0">Find out more</Link>
         </div>
-        <div className="card-strip sm:grid-cols-3 sm:gap-8">
+        <div className="grid grid-cols-1 gap-10 sm:grid-cols-3 sm:gap-8">
           {homeArticles.map((a) => (
             <Link key={a.slug} href={`/news/${a.slug}`} className="group block">
-              <p className="label-caps text-bgp-ink/60 mb-3">{a.category}</p>
-              <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} /></div>
-              <p className="mt-3 text-sm font-bold group-hover:text-bgp-wine transition-colors">{a.title}</p>
+              <p className="label-caps text-bgp-wine mb-3">{a.category}</p>
+              <div className="img-frame"><Placeholder className="aspect-square w-full" src={a.image} alt={a.title} /></div>
+              <h3 className="mt-5 font-sans font-medium text-xl leading-[1.2] text-bgp-wine group-hover:underline underline-offset-4">{a.title}</h3>
             </Link>
           ))}
         </div>

@@ -1,88 +1,55 @@
 import { Link } from "wouter";
 import ClientRow from "../components/ClientRow";
-import ContactCard from "../components/ContactCard";
+import KeyContacts from "../components/KeyContacts";
 import Placeholder from "../components/Placeholder";
 import { BRAND_REP_CLIENTS, SERVICES } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
 
-// Built to wireframe slide 35 exactly (Woody, 2026-10-16): no hero photo,
-// the intro as large light text at the top, a flat two-row grid of client
-// circles under a small ruled heading, three stacked case-study blocks
-// alternating grey and white, then key contacts on white. Nothing else.
 export default function BrandRepresentation() {
-  const service = SERVICES.find((s) => s.slug === "brand-representation")!;
+  const service = SERVICES.find((item) => item.slug === "brand-representation")!;
   const { caseStudies, contacts, team } = useSiteContent();
-  const studies = caseStudies.filter((c) => c.service === "Brand Representation").slice(0, 3);
-  // Slide 35 shows three contacts: the two directors from the feed, then the
-  // next person on the Brand Representation team.
-  const people = [...contacts.brand_representation, ...team.filter((p) => p.team === "Tenant Rep" && !contacts.brand_representation.some((c) => c.name === p.name))].slice(0, 3);
-  const clients = BRAND_REP_CLIENTS.slice(0, 14);
+  const studies = caseStudies.filter((study) => study.service === "Brand Representation").slice(0, 4);
+  const people = [...contacts.brand_representation, ...team.filter((person) => person.team === "Tenant Rep" && !contacts.brand_representation.some((contact) => contact.name === person.name))].slice(0, 3);
 
   return (
-    <div className="mx-auto max-w-[1360px] px-4 pt-8 md:pt-10">
-      <h1 className="sr-only">Brand Representation</h1>
-
-      {/* Overview / intro */}
-      <p className="max-w-[60%] font-normal text-2xl md:text-[2rem] leading-[1.12] text-bgp-ink">
-        {service.intro.replace("retail, leisure and hospitality destinations", "destinations")}
-      </p>
-
-      {/* A snapshot of clients */}
-      <section className="mt-10">
-        <h2 className="text-[1.12rem] font-bold text-bgp-ink border-b-[3px] border-bgp-ink pb-3 mb-8 md:ml-[3%] md:mr-[7%] md:pl-[4%]">A snapshot of clients</h2>
-        <ClientRow clients={clients} />
+    <div>
+      <section className="site-container section-space">
+        <h1 className="label-caps mb-7 text-bgp-wine">Brand Representation</h1>
+        <p className="intro-copy max-w-[920px] text-bgp-ink">{service.intro}</p>
       </section>
 
-      {/* Case studies */}
-      <section className="mt-10 border-t-[3px] border-bgp-ink pt-6">
-        <h2 className="text-[1.73rem] font-bold text-bgp-ink mb-4">Case studies</h2>
-        <div className="grid grid-cols-1 gap-1">
-          {studies.map((cs, i) => (
-            <Link
-              key={cs.slug}
-              href={`/case-studies/${cs.slug}`}
-              className={`group block px-[2%] py-5 md:py-6 ${i % 2 ? "" : "bg-bgp-mist"}`}
-            >
-              <p className="text-[1.15rem] font-bold uppercase text-bgp-ink mb-3">{cs.title}</p>
-              <div className={`grid grid-cols-1 md:grid-cols-[52fr_4fr_36fr] gap-6 md:gap-0 md:pl-[2%] md:pr-[2%] ${i % 2 ? "md:[direction:rtl]" : ""}`}>
-                <div className="img-frame [direction:ltr]">
-                  <Placeholder className="aspect-[4/3] w-full" src={cs.image} alt={cs.title} label="Photo to follow" />
-                </div>
-                <div className="hidden md:block" />
-                <div className="[direction:ltr] flex flex-col">
-                  {/* Slide 35 gives each case study a full paragraph, so the blurb and body run together. */}
-                  <div className={`space-y-3 text-lg md:text-[1.38rem] leading-[1.12] text-bgp-ink ${cs.draft ? "italic" : ""}`}>
-                    {[cs.blurb, ...(cs.body || [])].map((para, k) => <p key={k}>{para}</p>)}
+      <section className="site-container pb-14 md:pb-20">
+        <h2 className="mb-8 border-b border-bgp-ink pb-4 text-lg font-bold">A snapshot of clients</h2>
+        <ClientRow clients={BRAND_REP_CLIENTS} />
+      </section>
+
+      {studies.length > 0 && (
+        <section className="site-container pb-12 md:pb-20">
+          <h2 className="section-title mb-8 border-t border-bgp-ink pt-10">Case studies</h2>
+          <div className="space-y-6">
+            {studies.map((study, index) => {
+              const excerpt = study.body.find((paragraph) => paragraph.trim() && paragraph.trim() !== study.blurb.trim() && !paragraph.startsWith("## "));
+              return (
+              <Link key={study.slug} href={`/case-studies/${study.slug}`} className="group block bg-bgp-mist p-5 md:p-8">
+                <h3 className="label-caps mb-5">{study.title}</h3>
+                <div className={`grid grid-cols-1 gap-7 md:gap-10 ${index % 2 ? "md:grid-cols-[2fr_3fr]" : "md:grid-cols-[3fr_2fr]"}`}>
+                  <div className={`img-frame ${index % 2 ? "md:order-2" : ""}`}>
+                    <Placeholder className="aspect-[4/3] w-full" src={study.image} alt={study.title} label="Photo to follow" />
                   </div>
-                  <p className="mt-auto pt-6 label-caps md:text-[0.88rem] text-bgp-ink self-end">Read more</p>
+                  <div className="flex flex-col items-start">
+                    <p className={`body-copy ${study.draft ? "italic" : ""}`}>{study.blurb}</p>
+                    {excerpt && <p className={`body-copy mt-5 ${study.draft ? "italic" : ""}`}>{excerpt}</p>}
+                    <span className="explore-link mt-auto pt-8">Read more</span>
+                  </div>
                 </div>
-              </div>
-            </Link>
-          ))}
-        </div>
-      </section>
+              </Link>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
-      {/* Key contacts */}
-      <section className="mt-12 mb-16 grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-8 md:gap-12 items-start">
-        <div>
-          <h2 className="text-[1.46rem] font-bold text-bgp-ink">Key contacts</h2>
-          <p className="mt-3 text-[1.38rem] leading-[1.12] text-bgp-ink">
-            Our brand representation team supports occupiers from first site to full network. Talk to us about a first UK store, the next ten, or a portfolio review.
-          </p>
-        </div>
-        <div className="grid grid-cols-3 gap-4">
-          {people.map((p) => (
-            <ContactCard key={p.name} person={p} compact />
-          ))}
-          {Array.from({ length: Math.max(0, 3 - people.length) }, (_, i) => (
-            <div key={i} className="w-full max-w-[9.5rem] italic text-bgp-stone">
-              <div className="aspect-[3/4] w-full bg-bgp-stone/30" />
-              <p className="mt-3 label-caps text-bgp-stone">Name {people.length + i + 1}</p>
-              <div className="mt-1 text-sm space-y-0.5"><p>Job title</p><p>+44 (0)20 0000 0000</p><p>name@bgp.uk.com</p></div>
-            </div>
-          ))}
-        </div>
-      </section>
+      <KeyContacts people={people} band={false} blurb="Our brand representation team supports occupiers from first site to full network. Talk to us about a first UK store, the next ten, or a portfolio review." />
     </div>
   );
 }

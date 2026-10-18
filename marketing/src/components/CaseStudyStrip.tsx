@@ -1,67 +1,48 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "wouter";
 import Placeholder from "./Placeholder";
-import type React from "react";
 import type { CaseStudy } from "../lib/content";
 
-// Wireframe case study band: "Case study" label, title and intro at left
-// with Find out more, an image carousel with arrows and dots at right.
-// With several case studies the arrows step through them; with one they
-// step through its photos.
 export default function CaseStudyStrip({ caseStudy, caseStudies, band = false }: { caseStudy?: CaseStudy; caseStudies?: CaseStudy[]; band?: boolean }) {
-  const items = (caseStudies && caseStudies.length ? caseStudies : caseStudy ? [caseStudy] : []).filter(Boolean);
+  const items = (caseStudies?.length ? caseStudies : caseStudy ? [caseStudy] : []).filter(Boolean);
   const [index, setIndex] = useState(0);
   const [photo, setPhoto] = useState(0);
-  if (!items.length) {
-    return (
-      <Strip band={band}>
-        <p className="text-[1.73rem] font-bold text-bgp-ink mb-4">Case study</p>
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_1.4fr] gap-8 md:gap-12 items-start">
-          <div className="italic">
-            <h2 className="font-normal text-3xl md:text-[3.35rem] leading-[0.95]">Case study title</h2>
-            <p className="mt-5 text-base text-bgp-ink">Draft: three or four lines on a recent instruction for this team, the client, the brief and the outcome, to be written by the team.</p>
-            <p className="mt-5"><span className="explore-link">Find out more</span></p>
-          </div>
-          <Placeholder className="aspect-[16/10] w-full" label="Photo to follow" alt="Case study photo" />
-        </div>
-      </Strip>
-    );
-  }
+  if (!items.length) return null;
   const current = items[index % items.length];
-  const italic = current.draft ? "italic" : "";
   const photos = [current.image, ...(current.gallery || [])].filter(Boolean) as string[];
   const shown = photos[photo % Math.max(photos.length, 1)];
   const many = items.length > 1;
   const steps = many ? items.length : photos.length;
-  const at = many ? index : photo;
-  const step = (d: number) => {
-    if (many) { setPhoto(0); setIndex((i) => (i + d + items.length) % items.length); }
-    else setPhoto((p) => (p + d + photos.length) % photos.length);
+  const at = (many ? index : photo) % Math.max(steps, 1);
+  const goTo = (next: number) => {
+    if (many) { setPhoto(0); setIndex((next + items.length) % items.length); }
+    else if (photos.length) setPhoto((next + photos.length) % photos.length);
   };
+
   return (
     <Strip band={band}>
-      <p className="text-[1.73rem] font-bold text-bgp-ink mb-4">Case study</p>
-      <div className="grid grid-cols-1 md:grid-cols-[42fr_58fr] gap-8 md:gap-10 items-start">
-        <div>
-          <h2 className={`font-normal text-3xl md:text-[3.35rem] leading-[0.95] ${italic}`}>
+      <h2 className="mb-8 text-lg font-bold">Case study</h2>
+      <div className="grid grid-cols-1 gap-8 md:grid-cols-[2fr_3fr] md:gap-12 lg:gap-16">
+        <div className="flex flex-col items-start">
+          <h3 className={`section-title ${current.draft ? "italic" : ""}`}>
             <Link href={`/case-studies/${current.slug}`} className="hover:opacity-80">{current.title}</Link>
-          </h2>
-          <div className={`mt-6 space-y-3 text-[1.38rem] leading-[1.12] text-bgp-ink ${italic}`}>
-            <p>{current.blurb}</p>
-          </div>
-          <p className="mt-5"><Link href={`/case-studies/${current.slug}`} className="explore-link md:text-[1rem] font-bold">Find out more</Link></p>
+          </h3>
+          <p className={`body-copy mt-6 ${current.draft ? "italic" : ""}`}>{current.blurb}</p>
+          <Link href={`/case-studies/${current.slug}`} className="explore-link mt-8">Find out more</Link>
         </div>
-        <div className="relative">
+        <div className="relative self-start" role="region" aria-roledescription="carousel" aria-label="Case studies">
           <Link href={`/case-studies/${current.slug}`} className="block img-frame">
-            <Placeholder className="aspect-[7/5] w-full" src={shown} alt={current.title} label="Photo to follow" />
+            <Placeholder className="aspect-[3/2] w-full" src={shown} alt={current.title} label="Photo to follow" />
           </Link>
           {steps > 1 && (
             <>
-              <button type="button" onClick={() => step(-1)} aria-label="Previous" className="absolute left-3 top-1/2 -translate-y-1/2 h-9 w-9 flex items-center justify-center bg-bgp-cream/85 text-bgp-wine text-xl hover:bg-bgp-cream">‹</button>
-              <button type="button" onClick={() => step(1)} aria-label="Next" className="absolute right-3 top-1/2 -translate-y-1/2 h-9 w-9 flex items-center justify-center bg-bgp-cream/85 text-bgp-wine text-xl hover:bg-bgp-cream">›</button>
-              <div className="absolute bottom-3 inset-x-0 flex justify-center gap-1.5" aria-hidden>
-                {Array.from({ length: steps }, (_, i) => (
-                  <span key={i} className={`h-1.5 w-1.5 rounded-full ${i === at ? "bg-bgp-cream" : "bg-bgp-cream/45"}`} />
+              <button type="button" onClick={() => goTo(at - 1)} aria-label="Previous case study or photograph" className="absolute left-3 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center bg-bgp-cream/90 text-3xl text-bgp-wine hover:bg-bgp-cream">‹</button>
+              <button type="button" onClick={() => goTo(at + 1)} aria-label="Next case study or photograph" className="absolute right-3 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center bg-bgp-cream/90 text-3xl text-bgp-wine hover:bg-bgp-cream">›</button>
+              <div className="absolute inset-x-0 bottom-1 flex justify-center">
+                {Array.from({ length: steps }, (_, step) => (
+                  <button type="button" key={step} onClick={() => goTo(step)} aria-label={`Show ${many ? "case study" : "photograph"} ${step + 1}`} aria-current={step === at ? "true" : undefined} className="flex h-11 w-8 items-center justify-center">
+                    <span className={`h-2 w-2 rounded-full ${step === at ? "bg-white" : "bg-white/50"}`} />
+                  </button>
                 ))}
               </div>
             </>
@@ -72,19 +53,10 @@ export default function CaseStudyStrip({ caseStudy, caseStudies, band = false }:
   );
 }
 
-// Slides 26, 28 and 31 draw the case study in a grey panel; slides 38 and
-// 41 put it on white under a rule.
-function Strip({ children, band }: { children: React.ReactNode; band: boolean }) {
-  if (band) {
-    return (
-      <section className="mx-auto max-w-[1360px] px-4 pt-16 pb-14">
-        <div className="bg-bgp-mist px-5 py-8 md:px-6 md:py-10">{children}</div>
-      </section>
-    );
-  }
+function Strip({ children, band }: { children: ReactNode; band: boolean }) {
   return (
-    <section className="mx-auto max-w-[1360px] px-4">
-      <div className="border-t-[3px] border-bgp-ink pt-6 pb-12">{children}</div>
+    <section className={band ? "bg-bgp-mist" : ""}>
+      <div className="site-container section-space">{children}</div>
     </section>
   );
 }

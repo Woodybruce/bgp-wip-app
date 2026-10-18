@@ -1,129 +1,205 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { LEASING_SECTORS, NAV_ITEMS } from "../lib/content";
 
-// Wireframe slide 22: a rollover menu under Leasing, split into Location,
-// Estates and Type. Location and Type pre-set the availability filters.
-// Leasing rollover: the four teams, then the availability list (Woody, 2026-10-16).
-const LEASING_MENU: Array<{ heading: string; items: Array<{ label: string; href: string }> }> = [
-  { heading: "Leasing", items: [...LEASING_SECTORS.map((s) => ({ label: s.name, href: `/leasing/sectors/${s.slug}` })), { label: "Available properties", href: "/leasing#availability" }] },
+// Keep the four established leasing teams and the availability link.
+const LEASING_LINKS = [
+  ...LEASING_SECTORS.map((sector) => ({ label: sector.name, href: `/leasing/sectors/${sector.slug}` })),
+  { label: "Available properties", href: "/leasing#availability" },
 ];
 
-// Sticky compact header. On phones: slim bar (wordmark left, MENU toggle
-// right) with a drop-down panel that overlays the page instead of pushing
-// it down. On desktop: the centred inline nav, kept in view while scrolling.
+function Chevron({ expanded }: { expanded: boolean }) {
+  return (
+    <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="none" className={`transition-transform ${expanded ? "rotate-180" : ""}`}>
+      <path d="m2.5 4.25 3.5 3.5 3.5-3.5" stroke="currentColor" strokeWidth="1.25" />
+    </svg>
+  );
+}
+
 export default function Nav() {
   const [location] = useLocation();
   const [open, setOpen] = useState(false);
-  // The slides draw the bar inside the hero photo: transparent with white text
-  // at the top of a hero page, cream once scrolled or on pages without a hero.
+  const [leasingOpen, setLeasingOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [hasHero, setHasHero] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
+  const mobileToggleRef = useRef<HTMLButtonElement>(null);
+  const leasingToggleRef = useRef<HTMLButtonElement>(null);
+  const leasingMenuRef = useRef<HTMLUListElement>(null);
+
+  const closeMenus = () => {
+    setOpen(false);
+    setLeasingOpen(false);
+  };
+
   useEffect(() => {
-    const on = () => setScrolled(window.scrollY > 40);
-    on();
-    window.addEventListener("scroll", on, { passive: true });
-    return () => window.removeEventListener("scroll", on);
+    const onScroll = () => setScrolled(window.scrollY > 40);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
   }, []);
-  useEffect(() => { setHasHero(!!document.querySelector("[data-hero]")); }, [location]);
-  const over = hasHero && !scrolled && !open;
+
+  useEffect(() => {
+    closeMenus();
+    setHasHero(Boolean(document.querySelector("[data-hero]")));
+  }, [location]);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (!headerRef.current?.contains(event.target as Node)) closeMenus();
+    };
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || (!open && !leasingOpen)) return;
+      event.preventDefault();
+      if (open) mobileToggleRef.current?.focus();
+      else leasingToggleRef.current?.focus();
+      closeMenus();
+    };
+    const breakpoint = window.matchMedia("(min-width: 1024px)");
+    const onBreakpoint = () => closeMenus();
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onEscape);
+    breakpoint.addEventListener("change", onBreakpoint);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onEscape);
+      breakpoint.removeEventListener("change", onBreakpoint);
+    };
+  }, [open, leasingOpen]);
+
+  const overHero = hasHero && !scrolled && !open;
+  const logo = overHero ? "/brand/bgp-frame-white.svg" : "/brand/bgp-frame-bordeaux.svg";
+  const foreground = overHero ? "text-white" : "text-bgp-wine";
 
   return (
     <>
-    <header className={`sticky top-0 z-50 border-b transition-colors ${over ? "bg-transparent border-transparent" : "bg-bgp-cream/95 backdrop-blur border-bgp-wine/10"}`}>
-      <div className="relative mx-auto max-w-[1360px] px-4">
-        {/* Phone bar */}
-        <div className="flex md:hidden items-center justify-between h-16">
-          <Link href="/" aria-label="Bruce Gillingham Pollard home" onClick={() => setOpen(false)}>
-            <img src="/brand/bgp-frame-bordeaux.svg" alt="bgp" className="h-[50px] w-auto" />
+      <header
+        ref={headerRef}
+        className={`sticky top-0 z-50 h-[var(--site-header-height)] border-b ${overHero ? "border-transparent bg-transparent text-white" : "border-bgp-wine/15 bg-bgp-cream text-bgp-wine"}`}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) closeMenus();
+        }}
+      >
+        <div className="site-container relative flex h-full items-center justify-between gap-8">
+          <Link href="/" aria-label="Bruce Gillingham Pollard home" onClick={closeMenus} className="shrink-0">
+            <img src={logo} alt="" width="99" height="64" className="h-[50px] w-auto lg:h-16" />
           </Link>
+
           <button
-            className="label-caps text-bgp-wine px-2 py-2 -mr-2"
-            onClick={() => setOpen(!open)}
+            ref={mobileToggleRef}
+            type="button"
+            className={`flex min-h-11 items-center gap-3 py-3 text-sm font-medium uppercase lg:hidden ${foreground}`}
+            onClick={() => { setOpen(!open); setLeasingOpen(false); }}
             aria-expanded={open}
-            aria-label={open ? "Close menu" : "Open menu"}
+            aria-controls="mobile-navigation"
+            aria-label={open ? "Close navigation" : "Open navigation"}
           >
-            {open ? "Close ✕" : "Menu"}
+            {open ? "Close" : "Menu"}
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" className={foreground}>
+              {open ? <path d="m4 4 12 12M16 4 4 16" /> : <path d="M2 6h16M2 14h16" />}
+            </svg>
           </button>
-        </div>
 
-        {/* Phone drop-down — overlays content, so the page never jumps */}
-        {open && (
-          <nav className="md:hidden absolute inset-x-0 top-full bg-bgp-cream border-b border-bgp-wine/15 shadow-[0_16px_40px_-20px_rgba(110,12,37,0.35)]">
-            {NAV_ITEMS.map((item) => {
-              const active = location.startsWith(item.href);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => setOpen(false)}
-                  className={`block px-4 py-3.5 label-caps border-t border-bgp-wine/10 ${
-                    active ? "text-bgp-wine" : "text-bgp-wine"
-                  }`}
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
-          </nav>
-        )}
-
-        {/* Desktop bar */}
-        <div className="hidden md:flex items-center justify-between h-24 lg:h-32">
-          <Link href="/" aria-label="Bruce Gillingham Pollard home" className="shrink-0">
-            {/* Frame logo, never below the 50px minimum (guidelines p.3); the slide draws it larger */}
-            <img src={over ? "/brand/bgp-frame-white.svg" : "/brand/bgp-frame-bordeaux.svg"} alt="bgp" className="h-[50px] lg:h-[96px] w-auto" />
-          </Link>
-          <nav className="flex items-center">
-            {NAV_ITEMS.map((item, i) => {
-              const active = location.startsWith(item.href);
-              const menu = item.href === "/leasing";
-              return (
-                <span key={item.href} className={`flex items-center ${menu ? "group/menu relative" : ""}`}>
-                  {i > 0 && <span className={`mx-3 ${over ? "text-white/50" : "text-bgp-wine/40"}`}>/</span>}
-                  <Link
-                    href={item.href}
-                    data-active={active}
-                    className={`label-caps md:text-[0.68rem] font-bold nav-link whitespace-nowrap transition-colors py-7 ${
-                      over ? "text-white hover:opacity-80" : active ? "text-bgp-wine" : "text-bgp-wine hover:opacity-70"
-                    }`}
+          <nav aria-label="Main navigation" className={`hidden lg:block ${foreground}`}>
+            <ul className="flex items-center text-xs font-medium uppercase leading-none xl:text-[13px]">
+              {NAV_ITEMS.map((item, index) => {
+                const active = location === item.href || location.startsWith(`${item.href}/`);
+                const isLeasing = item.href === "/leasing";
+                return (
+                  <li
+                    key={item.href}
+                    className="relative flex items-center"
+                    onPointerEnter={isLeasing ? (event) => { if (event.pointerType === "mouse") setLeasingOpen(true); } : undefined}
+                    onPointerLeave={isLeasing ? (event) => { if (!event.currentTarget.contains(document.activeElement)) setLeasingOpen(false); } : undefined}
+                    onBlur={isLeasing ? (event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setLeasingOpen(false); } : undefined}
                   >
-                    {item.label}
-                  </Link>
-                  {menu && (
-                    <div className="absolute left-0 top-full z-50 hidden group-hover/menu:grid group-focus-within/menu:grid grid-cols-1 gap-y-1 bg-bgp-mist px-6 py-5 w-max min-w-[14rem] shadow-[0_16px_40px_-20px_rgba(110,12,37,0.35)]">
-                      {LEASING_MENU.map((col) => (
-                        <div key={col.heading}>
-                          <ul className="space-y-2">
-                            {col.items.map((it) => (
-                              <li key={it.label}>
-                                <a href={it.href} className={`text-sm text-bgp-ink hover:text-bgp-wine ${it.label === "Available properties" ? "border-t border-bgp-ink/30 pt-2 mt-1 block" : ""}`}>{it.label}</a>
+                    {index > 0 && <span aria-hidden="true" className="mx-2.5 opacity-50 xl:mx-3.5">/</span>}
+                    <Link
+                      href={item.href}
+                      onClick={closeMenus}
+                      aria-current={active ? "page" : undefined}
+                      className={`whitespace-nowrap py-5 underline-offset-[6px] hover:underline ${active ? "underline" : ""}`}
+                    >
+                      {item.label}
+                    </Link>
+                    {isLeasing && (
+                      <>
+                        <button
+                          ref={leasingToggleRef}
+                          type="button"
+                          aria-expanded={leasingOpen}
+                          aria-controls="leasing-navigation"
+                          aria-label={leasingOpen ? "Close Leasing menu" : "Open Leasing menu"}
+                          className="ml-1 flex min-h-11 w-6 items-center justify-center"
+                          onClick={() => setLeasingOpen(!leasingOpen)}
+                          onKeyDown={(event) => {
+                            if (event.key !== "ArrowDown") return;
+                            event.preventDefault();
+                            setLeasingOpen(true);
+                            window.requestAnimationFrame(() => leasingMenuRef.current?.querySelector<HTMLAnchorElement>("a")?.focus());
+                          }}
+                        >
+                          <Chevron expanded={leasingOpen} />
+                        </button>
+                        {leasingOpen && (
+                          <ul
+                            id="leasing-navigation"
+                            ref={leasingMenuRef}
+                            className="absolute left-0 top-full w-64 border border-bgp-wine/15 bg-bgp-cream px-6 py-4 text-sm font-medium normal-case leading-snug text-bgp-wine"
+                          >
+                            {LEASING_LINKS.map((link, linkIndex) => (
+                              <li key={link.href} className={linkIndex === LEASING_LINKS.length - 1 ? "mt-2 border-t border-bgp-wine/20 pt-2" : ""}>
+                                <a href={link.href} onClick={closeMenus} className="block py-2.5 underline-offset-4 hover:underline">{link.label}</a>
                               </li>
                             ))}
                           </ul>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </span>
-              );
-            })}
+                        )}
+                      </>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           </nav>
         </div>
-      </div>
 
-    </header>
+        {open && (
+          <nav id="mobile-navigation" aria-label="Main navigation" className="absolute inset-x-0 top-full max-h-[calc(100dvh-var(--site-header-height))] overflow-y-auto border-b border-bgp-wine/20 bg-bgp-cream text-bgp-wine lg:hidden">
+            <ul className="site-container pb-6">
+              {NAV_ITEMS.map((item) => {
+                const active = location === item.href || location.startsWith(`${item.href}/`);
+                const isLeasing = item.href === "/leasing";
+                return (
+                  <li key={item.href} className="border-t border-bgp-wine/15">
+                    <div className="flex items-center justify-between">
+                      <Link href={item.href} onClick={closeMenus} aria-current={active ? "page" : undefined} className={`flex-1 py-4 text-sm font-medium uppercase underline-offset-4 ${active ? "underline" : ""}`}>
+                        {item.label}
+                      </Link>
+                      {isLeasing && (
+                        <button type="button" className="flex h-12 w-12 items-center justify-center" aria-label={leasingOpen ? "Close Leasing menu" : "Open Leasing menu"} aria-expanded={leasingOpen} aria-controls="mobile-leasing-navigation" onClick={() => setLeasingOpen(!leasingOpen)}>
+                          <Chevron expanded={leasingOpen} />
+                        </button>
+                      )}
+                    </div>
+                    {isLeasing && leasingOpen && (
+                      <ul id="mobile-leasing-navigation" className="pb-3 pl-4 text-sm">
+                        {LEASING_LINKS.map((link) => (
+                          <li key={link.href}><a href={link.href} onClick={closeMenus} className="block py-3 underline-offset-4 hover:underline">{link.label}</a></li>
+                        ))}
+                      </ul>
+                    )}
+                  </li>
+                );
+              })}
+              <li className="border-t border-bgp-wine/15"><a href="#contact" onClick={closeMenus} className="block py-4 text-sm font-medium uppercase">Talk to us</a></li>
+            </ul>
+          </nav>
+        )}
+      </header>
 
-    {/* TALK TO US — fixed edge tab. Desktop only (on phones it overlapped
-        the menu button). Lives OUTSIDE the header: backdrop-blur on the
-        sticky bar turns it into the containing block for fixed children,
-        which pinned this tab inside the header and mangled it. */}
-    <a
-      href="#contact"
-      className="hidden md:block fixed right-0 top-1/2 z-40 -translate-y-1/2 bg-bgp-wine text-bgp-nectar label-caps px-2.5 py-4 [writing-mode:vertical-rl] hover:bg-bgp-ink transition-colors"
-    >
-      Talk to us
-    </a>
+      <a href="#contact" className="fixed right-0 top-1/2 z-40 hidden -translate-y-1/2 bg-bgp-wine px-3 py-5 text-xs font-medium uppercase text-bgp-nectar transition-colors [writing-mode:vertical-rl] hover:bg-bgp-ink lg:block">
+        Talk to us
+      </a>
     </>
   );
 }

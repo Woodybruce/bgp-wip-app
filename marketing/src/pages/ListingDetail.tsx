@@ -59,7 +59,7 @@ export default function ListingDetail() {
   }
   if (!listing) {
     return (
-      <div className="mx-auto max-w-[1360px] px-4 py-32 text-center">
+      <div className="site-container py-32 text-center">
         <p className="label-caps text-bgp-burgundy">Listing not found</p>
         <p className="mt-4">
           <Link href="/leasing" className="explore-link inline-block">Back to leasing</Link>
@@ -115,9 +115,9 @@ export default function ListingDetail() {
     <div className="pb-24 md:pb-0">
       {/* Wireframe slide 27: photo with the facts panel to its right, then the
           title at left with the headline statement at right. */}
-      <section className="mx-auto max-w-[1360px] px-4 pt-6 pb-12 md:pb-14">
-        <div className="grid grid-cols-1 md:grid-cols-[84fr_3fr_13fr] gap-6 md:gap-0">
-          <div>
+      <section className="site-container section-space">
+        <div className="grid grid-cols-1 gap-y-10 lg:grid-cols-[76fr_4fr_20fr] lg:gap-0">
+          <div className="min-w-0">
             <div className="overflow-hidden">
               {images.length > 0 ? (
                 <img src={fileUrl(images[0].id)} alt={displayName} className="aspect-[1.73] w-full object-cover" style={{ objectPosition: focalPosition(images[0]) }} />
@@ -125,11 +125,11 @@ export default function ListingDetail() {
                 <Placeholder className="aspect-[1.73] w-full" src={listing.image} alt={displayName} />
               )}
             </div>
-            <div className="mt-2 border-t-[3px] border-bgp-ink pt-3 flex items-start justify-between gap-6">
-              <div>
-                <h1 className="font-normal text-3xl md:text-[3.1rem] leading-[0.95]">{names.title}</h1>
+            <div className="mt-3 flex flex-col items-start justify-between gap-5 border-t border-bgp-wine pt-5 sm:flex-row sm:gap-6">
+              <div className="min-w-0">
+                <h1 className="display text-[clamp(32px,4vw,56px)]">{names.title}</h1>
                 {(names.secondary || listing.addressLine) && (
-                  <p className="mt-2 text-[1.23rem] text-bgp-ink">
+                  <p className="mt-3 body-copy text-bgp-ink">
                     {[names.secondary, listing.addressLine].filter(Boolean).join(" · ")}
                   </p>
                 )}
@@ -137,31 +137,31 @@ export default function ListingDetail() {
                   <p className="mt-4 inline-block bg-bgp-nectar text-bgp-wine label-caps px-3 py-1.5">Under offer</p>
                 )}
               </div>
-              <div className="flex flex-col items-end gap-1 label-caps font-bold text-bgp-ink shrink-0">
+              <div className="flex shrink-0 gap-5 label-caps font-bold text-bgp-wine sm:flex-col sm:items-end sm:gap-2">
                 <a href={`mailto:${CONTACT.email}?subject=${mailSubject}`} className="hover:text-bgp-wine">Book viewing</a>
                 {brochureHref ? <a href={brochureHref} target="_blank" rel="noreferrer" className="hover:text-bgp-wine">Download</a> : <button onClick={onDownload} className="hover:text-bgp-wine">Download</button>}
               </div>
             </div>
-            {headline && <p className="mt-12 md:ml-[35%] md:mr-[6%] font-normal text-2xl md:text-[1.8rem] leading-[1.05] text-bgp-ink">{headline.charAt(0).toUpperCase() + headline.slice(1)}.</p>}
+            {headline && <p className="mt-10 intro-copy text-bgp-ink md:ml-[34%] md:mr-[3%] lg:mt-14">{headline.charAt(0).toUpperCase() + headline.slice(1)}.</p>}
           </div>
-          <div className="hidden md:block" />
-          <aside>
-            <dl className="border-t border-bgp-ink">
+          <div className="hidden lg:block" />
+          <aside className="min-w-0">
+            <dl className="grid grid-cols-2 gap-x-6 border-t border-bgp-wine lg:block">
               {keyInfo
                 .filter(([, v]) => v)
                 .map(([k, v]) => (
-                  <div key={k} className="border-b border-bgp-line py-3">
-                    <dt className="label-caps font-bold text-bgp-ink">{k}</dt>
-                    <dd className="mt-1 text-[1.12rem] leading-tight tabular">{v}</dd>
+                  <div key={k} className="min-w-0 border-b border-bgp-line py-3">
+                    <dt className="label-caps font-bold text-bgp-wine">{k}</dt>
+                    <dd className="mt-1 text-base leading-snug tabular break-words">{v}</dd>
                   </div>
                 ))}
             </dl>
           </aside>
         </div>
             {/* Slide 27: a narrow description beside a photo, then a landscape photo and a lower portrait one. */}
-            <div className="mt-16 grid grid-cols-1 md:grid-cols-[26fr_8fr_66fr] gap-6 md:gap-0 items-start">
+            <div className="mt-12 grid grid-cols-1 gap-y-8 md:mt-20 md:grid-cols-[26fr_8fr_66fr] md:gap-0 items-start">
               <div>
-                <p className="text-[1.23rem] leading-[1.12] text-bgp-ink">
+                <p className="body-copy text-bgp-ink">
                   {[
                     formatSqft(listing.sqft),
                     listing.propertyName && listing.propertyName !== listing.unitName ? `within ${listing.propertyName.replace(/^\[Sample\]\s*/, "")}` : null,
@@ -169,7 +169,7 @@ export default function ListingDetail() {
                   ].filter(Boolean).join(" ") || "Full particulars available on request."}
                   {" "}Full particulars, floor plans and viewing arrangements from the leasing team below.
                 </p>
-                <p className="mt-3 text-[1.23rem] leading-[1.12] text-bgp-ink italic">
+                <p className="mt-3 body-copy text-bgp-ink italic">
                   Draft: a paragraph from the leasing team on the unit, the building and the street, the neighbouring occupiers, and who it would suit.
                 </p>
               </div>
@@ -187,23 +187,23 @@ export default function ListingDetail() {
                 <Placeholder className="aspect-[1.67] w-full" alt={`${displayName} third photo`} label="Photo to follow" />
               )}
               <div className="hidden md:block" />
-              <div className="md:mt-40">
+              <div className="md:mt-24 lg:mt-36">
                 {images[3] ? (
-                  <img src={fileUrl(images[3].id)} alt="" className="aspect-[1.24] w-full object-cover" style={{ objectPosition: focalPosition(images[3]) }} />
+                  <img src={fileUrl(images[3].id)} alt="" className="aspect-[1.24] w-full object-cover md:aspect-[0.89]" style={{ objectPosition: focalPosition(images[3]) }} />
                 ) : (
-                  <Placeholder className="aspect-[1.24] w-full" alt={`${displayName} fourth photo`} label="Photo to follow" />
+                  <Placeholder className="aspect-[1.24] w-full md:aspect-[0.89]" alt={`${displayName} fourth photo`} label="Photo to follow" />
                 )}
               </div>
             </div>
       </section>
 
       {/* Location */}
-      <section className="mx-auto max-w-[1360px] px-4 py-12 md:py-14">
+      <section className="site-container section-space">
         <SectionHead title="Location" />
         {hasCoords && isBrowser ? (
-          <Suspense fallback={<div className="aspect-[1.86] w-full bg-bgp-mist" />}><ListingMap lat={lat} lon={lon} className="aspect-[1.86] w-full" /></Suspense>
+          <Suspense fallback={<div className="aspect-[1.2] w-full bg-bgp-mist md:aspect-[1.86]" />}><ListingMap lat={lat} lon={lon} className="aspect-[1.2] w-full md:aspect-[1.86]" /></Suspense>
         ) : (
-          <Placeholder label={listing.postcode ? `Map — ${listing.postcode}` : "Map TBC"} className="aspect-[1.86] w-full" stock={false} />
+          <Placeholder label={listing.postcode ? `Map — ${listing.postcode}` : "Map TBC"} className="aspect-[1.2] w-full md:aspect-[1.86]" stock={false} />
         )}
       </section>
 
@@ -213,9 +213,9 @@ export default function ListingDetail() {
       />
 
       {similar.length > 0 && (
-        <section className="mx-auto max-w-[1360px] px-4 py-7">
+        <section className="site-container section-space">
           <SectionHead title="Similar properties" sub="By location" />
-          <div className="card-strip sm:grid-cols-3 sm:gap-6">
+          <div className="grid grid-cols-1 gap-x-6 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
             {similar.map((l) => (
               <ListingCard key={l.id} listing={l} />
             ))}
@@ -224,10 +224,10 @@ export default function ListingDetail() {
       )}
 
       {/* Phone: sticky action bar so viewing/download are always a thumb away */}
-      <div className="fixed inset-x-0 bottom-0 z-40 md:hidden bg-bgp-cream/95 backdrop-blur border-t border-bgp-wine/20 px-3 py-2.5 flex gap-2">
+      <div className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 gap-2 border-t border-bgp-wine/20 bg-bgp-cream/95 px-3 pt-2.5 pb-[max(10px,env(safe-area-inset-bottom))] backdrop-blur md:hidden">
         <a
           href={`mailto:${CONTACT.email}?subject=${mailSubject}`}
-          className="btn flex-1"
+          className="btn min-w-0 px-2 text-xs"
         >
           Book viewing
         </a>
@@ -235,14 +235,14 @@ export default function ListingDetail() {
           href={waLink(listing)}
           target="_blank"
           rel="noreferrer"
-          className="btn-outline flex-1"
+          className="btn-outline min-w-0 px-2 text-xs"
         >
           WhatsApp
         </a>
         <button
           onClick={onDownload}
           disabled={generating}
-          className="btn-outline flex-1 disabled:opacity-50"
+          className="btn-outline min-w-0 px-2 text-xs disabled:opacity-50"
         >
           {generating ? "…" : "Details PDF"}
         </button>
