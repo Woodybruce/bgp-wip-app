@@ -6,7 +6,6 @@ export default function ContactCard({ person, compact = false }: { person: Perso
   const photo = useTeamPhoto(person);
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [photo]);
-  const initials = person.name.split(" ").map((part) => part[0]).slice(0, 2).join("");
   const phoneHref = person.phone.replace(/\(0\)/g, "").replace(/[^\d+]/g, "");
   const emailBreak = person.email.indexOf("@") + 1;
 
@@ -16,8 +15,9 @@ export default function ContactCard({ person, compact = false }: { person: Perso
         {photo && !failed ? (
           <img src={photo} alt={person.name} loading="lazy" onError={() => setFailed(true)} className="aspect-[3/4] w-full object-cover grayscale" />
         ) : (
-          <div className="aspect-[3/4] w-full bg-bgp-stone/30 flex items-center justify-center">
-            <span className="font-display text-4xl text-bgp-wine/60" aria-hidden="true">{initials}</span>
+          <div className="relative aspect-[3/4] w-full overflow-hidden bg-bgp-stone/30">
+            <img src="/images/placeholders/portrait.svg" alt={`${person.name}: portrait to follow`} className="h-full w-full object-cover grayscale" />
+            <span className="absolute inset-x-2 bottom-2 bg-bgp-cream/95 px-2 py-1 text-center text-xs italic text-bgp-wine">Portrait to follow</span>
           </div>
         )}
       </a>

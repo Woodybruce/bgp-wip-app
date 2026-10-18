@@ -32,6 +32,10 @@ export default function LeasingSector() {
   const contacts = peopleNamed(team, sector.contacts);
   // Photographed centres lead the grid so the image tiles sit together.
   const centres = sector.slug === "shopping-centres" ? [...SHOPPING_CENTRES].sort((a, b) => a.name.localeCompare(b.name)) : [];
+  const sectorGallery: Array<{ src?: string; caption: string; stock?: string }> = [...(sector.gallery || [])];
+  while (sectorGallery.length < 3) {
+    sectorGallery.push({ caption: "Placeholder image — destination photography to follow", stock: CENTRE_STOCK[sectorGallery.length] });
+  }
 
   return (
     <div>
@@ -65,6 +69,12 @@ export default function LeasingSector() {
             {sector.body.map((p) => (
               <p key={p.slice(0, 24)} className="body-copy text-bgp-ink">{p}</p>
             ))}
+            {!sector.howWeHelp && sector.body.join(" ").length < 280 && (
+              <div>
+                <p className="label-caps text-bgp-wine mb-3">Placeholder copy — sector overview</p>
+                <p className="body-copy text-bgp-ink italic">This space will describe the team's approach to the area, the character of the destinations it advises on and the priorities of their owners. A short, approved example will illustrate how that advice translates into a leasing strategy.</p>
+              </div>
+            )}
           </div>
           {!sector.howWeHelp && <div className="hidden lg:block" />}
           {!sector.howWeHelp && (
@@ -101,12 +111,12 @@ export default function LeasingSector() {
           </div>
         </section>
       )}
-      {sector.howWeHelp && sector.gallery && sector.gallery.length > 1 && (
+      {sector.howWeHelp && (
         <section className="site-container section-space">
           <div className="grid grid-cols-1 gap-x-6 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
-            {sector.gallery.map((g) => (
-              <figure key={g.src}>
-                <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={g.src} alt={g.caption} /></div>
+            {sectorGallery.map((g, index) => (
+              <figure key={g.src || `placeholder-${index}`}>
+                <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={g.src} stock={g.stock} alt={g.caption} /></div>
                 <figcaption className="mt-2 label-caps text-bgp-ink/55">{g.caption}</figcaption>
               </figure>
             ))}
@@ -169,6 +179,10 @@ export function ShoppingCentrePage() {
   const centre = SHOPPING_CENTRES.find((c) => c.slug === params?.slug);
   if (!centre) return <NotFound />;
   const contacts = peopleNamed(team, centre.contacts);
+  const gallery: Array<{ src?: string; caption: string; stock?: string }> = [...(centre.gallery || [])];
+  while (gallery.length < 3) {
+    gallery.push({ caption: "Placeholder image — centre photography to follow", stock: CENTRE_STOCK[gallery.length] });
+  }
   return (
     <div>
       <section className="site-container section-space">
@@ -183,13 +197,13 @@ export function ShoppingCentrePage() {
               <Placeholder className="aspect-[16/9] w-full" src={centre.image} alt={centre.name} stock={CENTRE_STOCK[0]} />
             </div>
             <p className="mt-6 body-copy text-bgp-ink">{centre.blurb}</p>
-            {/* Generic second paragraph, the same on every centre: italic until the team writes each one. */}
-            <p className="mt-4 body-copy text-bgp-ink italic">
-              BGP advises the owners of {centre.name} on leasing strategy, tenant mix and positioning, drawing on our relationships with leading occupiers and our London Estates and High Street teams.
-            </p>
+            <div className="mt-6">
+              <p className="label-caps text-bgp-wine mb-3">Placeholder copy — centre overview</p>
+              <p className="body-copy text-bgp-ink italic">The completed overview will describe {centre.name}'s setting, its mix of shopping, dining and leisure, and the brief for the BGP team. It will explain the centre's role within its local area and introduce the leasing priorities once the owner and team have approved the wording.</p>
+            </div>
             <div className="grid grid-cols-1 gap-x-6 gap-y-10 sm:grid-cols-2 lg:grid-cols-3 mt-8">
-              {(centre.gallery ?? [1, 2, 3].map((k) => ({ src: undefined as string | undefined, caption: `Photo ${k} to follow`, stock: CENTRE_STOCK[k % CENTRE_STOCK.length] }))).map((g: { src?: string; caption: string; stock?: string }) => (
-                <figure key={g.caption}>
+              {gallery.map((g, index) => (
+                <figure key={g.src || `placeholder-${index}`}>
                   <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={g.src} alt={g.caption} stock={g.stock} /></div>
                   <figcaption className={`mt-2 label-caps text-bgp-ink/55 ${g.src ? "" : "italic"}`}>{g.caption}</figcaption>
                 </figure>

@@ -2,11 +2,12 @@ import { useEffect } from "react";
 import { Link, useRoute } from "wouter";
 import Placeholder from "../components/Placeholder";
 import { useSiteContent } from "../lib/site-content";
+import { isNewsPlaceholder, NEWS_PLACEHOLDERS, PLACEHOLDER_ARTICLE_BODY } from "../lib/news-placeholders";
 
 export default function ArticlePage() {
   const [, params] = useRoute("/news/:slug");
   const { articles } = useSiteContent();
-  const article = articles.find((item) => item.slug === params?.slug);
+  const article = articles.find((item) => item.slug === params?.slug) ?? NEWS_PLACEHOLDERS.find((item) => item.slug === params?.slug);
 
   useEffect(() => { window.scrollTo(0, 0); }, [params?.slug]);
 
@@ -19,19 +20,22 @@ export default function ArticlePage() {
     );
   }
 
-  const body = article.body ?? [];
-  const bodyParagraphs = body[0]?.trim() === article.standfirst.trim() ? body.slice(1) : body;
+  const placeholder = isNewsPlaceholder(article);
+  const suppliedBody = article.body ?? [];
+  const distinctBody = suppliedBody[0]?.trim() === article.standfirst.trim() ? suppliedBody.slice(1) : suppliedBody;
+  const missingBody = !distinctBody.some((paragraph) => paragraph.trim());
+  const bodyParagraphs = missingBody ? PLACEHOLDER_ARTICLE_BODY : distinctBody;
 
   return (
     <article className="site-container section-space">
       <p className="mb-8 border-b border-bgp-ink pb-4 text-lg font-bold"><Link href="/news">News and insights</Link></p>
       <div className="bg-bgp-mist p-5 md:p-10 lg:p-12">
         <div className="label-caps flex flex-wrap justify-between gap-x-6 gap-y-3">
-          <div className="flex flex-wrap gap-x-6 gap-y-3"><span>{article.date}</span><span>By {article.author}</span></div>
+          <div className="flex flex-wrap gap-x-6 gap-y-3"><span>{article.date}</span><span>{article.author ? `By ${article.author}` : "Author to follow"}</span></div>
           <span>{article.category}</span>
         </div>
         <div className="mt-7 grid grid-cols-1 items-start gap-8 md:grid-cols-[3fr_2fr] md:gap-10">
-          <Placeholder className="aspect-[4/3] w-full" src={article.image} alt={article.title} label="Photo to follow" />
+          <Placeholder className="aspect-[4/3] w-full" src={placeholder ? undefined : article.image} stock={placeholder ? article.image : undefined} alt={placeholder ? "Illustrative stock photograph for an article placeholder" : article.title} label="Photo to follow" />
           <div className="min-w-0">
             <h1 className="section-title">{article.title}</h1>
             {article.standfirst && <p className="body-copy mt-6">{article.standfirst}</p>}
@@ -39,11 +43,12 @@ export default function ArticlePage() {
         </div>
 
         <div className="mx-auto mt-10 max-w-[780px] space-y-6 md:mt-14">
-          {body.length ? bodyParagraphs.map((paragraph, index) => (
+          {(placeholder || missingBody) && <p className="label-caps border-y border-bgp-wine/25 py-3 text-bgp-wine">Placeholder article copy · final text to follow</p>}
+          {bodyParagraphs.map((paragraph, index) => (
             paragraph.startsWith("## ")
               ? <h2 key={index} className="pt-4 text-xl font-light leading-[1.2]">{paragraph.slice(3)}</h2>
               : <p key={index} className="body-copy text-bgp-ink">{paragraph}</p>
-          )) : <p className="body-copy italic text-bgp-ink/70">Full article to follow.</p>}
+          ))}
         </div>
 
         <div className="mt-12 flex flex-wrap items-center justify-between gap-6 border-t border-bgp-ink pt-5">

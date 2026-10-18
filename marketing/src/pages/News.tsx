@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
 import { SectionHead } from "../components/Wire";
 import { useSiteContent } from "../lib/site-content";
+import { isNewsPlaceholder, withNewsPlaceholders } from "../lib/news-placeholders";
 
 const INITIAL_VISIBLE = 6;
 
@@ -13,8 +14,9 @@ export default function News() {
   const { articles } = useSiteContent();
   const types = useMemo(() => Array.from(new Set(articles.map((article) => article.category).filter((type) => type !== "News" && type !== "Opinion"))), [articles]);
   const filtered = articles.filter((article) => (!kind || article.category === kind) && (!category || article.category === category));
-  const features = filtered.slice(0, 3);
-  const rest = filtered.slice(3);
+  const displayed = !kind && !category ? withNewsPlaceholders(filtered) : filtered;
+  const features = displayed.slice(0, 3);
+  const rest = displayed.slice(3);
   const visibleRest = expanded ? rest : rest.slice(0, INITIAL_VISIBLE);
 
   const toggleKind = (next: "News" | "Opinion") => {
@@ -50,7 +52,7 @@ export default function News() {
               <span>{index % 2 ? article.date : article.category}</span>
             </div>
             <div className={`grid grid-cols-1 gap-7 md:gap-10 ${index % 2 ? "md:grid-cols-[2fr_3fr]" : "md:grid-cols-[3fr_2fr]"}`}>
-              <div className={`img-frame ${index % 2 ? "md:order-2" : ""}`}><Placeholder className="aspect-[4/3] w-full" src={article.image} alt={article.title} label="Photo to follow" /></div>
+              <div className={`img-frame ${index % 2 ? "md:order-2" : ""}`}><Placeholder className="aspect-[4/3] w-full" src={isNewsPlaceholder(article) ? undefined : article.image} stock={isNewsPlaceholder(article) ? article.image : undefined} alt={isNewsPlaceholder(article) ? "Illustrative stock photograph for an article placeholder" : article.title} label="Photo to follow" /></div>
               <div className="flex min-w-0 flex-col items-start">
                 <h2 className="section-title group-hover:opacity-75">{article.title}</h2>
                 {article.standfirst && <p className="body-copy mt-6">{article.standfirst}</p>}
@@ -61,14 +63,14 @@ export default function News() {
         ))}
       </div>
 
-      {filtered.length === 0 && <p className="body-copy py-16">Nothing in that category yet.</p>}
+      {displayed.length === 0 && <p className="body-copy py-16">Nothing in that category yet.</p>}
 
       {visibleRest.length > 0 && (
         <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {visibleRest.map((article) => (
             <Link key={article.slug} href={`/news/${article.slug}`} className="group flex min-w-0 flex-col bg-bgp-mist p-5">
               <div className="label-caps mb-4 flex flex-wrap justify-between gap-2"><span>{article.category}</span><span>{article.date}</span></div>
-              <div className="img-frame"><Placeholder className="aspect-square w-full" src={article.image} alt={article.title} label="Photo to follow" /></div>
+              <div className="img-frame"><Placeholder className="aspect-square w-full" src={isNewsPlaceholder(article) ? undefined : article.image} stock={isNewsPlaceholder(article) ? article.image : undefined} alt={isNewsPlaceholder(article) ? "Illustrative stock photograph for an article placeholder" : article.title} label="Photo to follow" /></div>
               <h2 className="mt-5 font-display text-[26px] font-bold uppercase leading-[1.05] tracking-[-0.03em] text-bgp-wine group-hover:opacity-75">{article.title}</h2>
               <span className="explore-link mt-auto self-start pt-6">Read more</span>
             </Link>

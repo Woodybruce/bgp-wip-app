@@ -3,7 +3,7 @@ import { Link, useRoute } from "wouter";
 import Placeholder from "../components/Placeholder";
 import ListingCard from "../components/ListingCard";
 import KeyContacts from "../components/KeyContacts";
-import { SectionHead } from "../components/Wire";
+import { MapSlot, SectionHead } from "../components/Wire";
 import { Suspense, lazy } from "react";
 // Leaflet touches `window` when it loads, so the map stays out of the
 // build-time render and arrives lazily in the browser.
@@ -142,7 +142,15 @@ export default function ListingDetail() {
                 {brochureHref ? <a href={brochureHref} target="_blank" rel="noreferrer" className="hover:text-bgp-wine">Download</a> : <button onClick={onDownload} className="hover:text-bgp-wine">Download</button>}
               </div>
             </div>
-            {headline && <p className="mt-10 intro-copy text-bgp-ink md:ml-[34%] md:mr-[3%] lg:mt-14">{headline.charAt(0).toUpperCase() + headline.slice(1)}.</p>}
+            <div className="mt-10 md:ml-[34%] md:mr-[3%] lg:mt-14">
+              {headline && <p className="intro-copy text-bgp-ink">{headline.charAt(0).toUpperCase() + headline.slice(1)}.</p>}
+              {headline.length < 100 && (
+                <div className={headline ? "mt-5" : ""}>
+                  <p className="label-caps text-bgp-wine mb-3">Placeholder introduction</p>
+                  <p className="intro-copy text-bgp-ink italic">A short introduction will describe the property's setting, character and the opportunity for its next occupier.</p>
+                </div>
+              )}
+            </div>
           </div>
           <div className="hidden lg:block" />
           <aside className="min-w-0">
@@ -169,29 +177,32 @@ export default function ListingDetail() {
                   ].filter(Boolean).join(" ") || "Full particulars available on request."}
                   {" "}Full particulars, floor plans and viewing arrangements from the leasing team below.
                 </p>
-                <p className="mt-3 body-copy text-bgp-ink italic">
-                  Draft: a paragraph from the leasing team on the unit, the building and the street, the neighbouring occupiers, and who it would suit.
-                </p>
+                <div className="mt-6">
+                  <p className="label-caps text-bgp-wine mb-3">Placeholder copy — property overview</p>
+                  <p className="body-copy text-bgp-ink italic">
+                    This paragraph will describe the unit, the building and the surrounding street. The leasing team will add the property's defining features, its relationship to neighbouring occupiers and the types of business it could accommodate. Property-specific wording is awaiting review.
+                  </p>
+                </div>
               </div>
               <div className="hidden md:block" />
               {images[1] ? (
                 <img src={fileUrl(images[1].id)} alt="" className="aspect-[1.61] w-full object-cover" style={{ objectPosition: focalPosition(images[1]) }} />
               ) : (
-                <Placeholder className="aspect-[1.61] w-full" alt={`${displayName} second photo`} label="Photo to follow" />
+                <Placeholder className="aspect-[1.61] w-full" alt="Placeholder image of a retail interior" label="Property interior photography to follow" stock="/images/shop-browse.jpg" />
               )}
             </div>
             <div className="mt-10 grid grid-cols-1 md:grid-cols-[59fr_9fr_32fr] gap-6 md:gap-0 items-start">
               {images[2] ? (
                 <img src={fileUrl(images[2].id)} alt="" className="aspect-[1.67] w-full object-cover" style={{ objectPosition: focalPosition(images[2]) }} />
               ) : (
-                <Placeholder className="aspect-[1.67] w-full" alt={`${displayName} third photo`} label="Photo to follow" />
+                <Placeholder className="aspect-[1.67] w-full" alt="Placeholder image of a London streetscape" label="Local area photography to follow" stock="/images/st-christophers-place.jpg" />
               )}
               <div className="hidden md:block" />
               <div className="md:mt-24 lg:mt-36">
                 {images[3] ? (
                   <img src={fileUrl(images[3].id)} alt="" className="aspect-[1.24] w-full object-cover md:aspect-[0.89]" style={{ objectPosition: focalPosition(images[3]) }} />
                 ) : (
-                  <Placeholder className="aspect-[1.24] w-full md:aspect-[0.89]" alt={`${displayName} fourth photo`} label="Photo to follow" />
+                  <Placeholder className="aspect-[1.24] w-full md:aspect-[0.89]" alt="Placeholder image of a shop interior" label="Property detail photography to follow" stock="/images/shop-menswear.jpg" />
                 )}
               </div>
             </div>
@@ -203,7 +214,7 @@ export default function ListingDetail() {
         {hasCoords && isBrowser ? (
           <Suspense fallback={<div className="aspect-[1.2] w-full bg-bgp-mist md:aspect-[1.86]" />}><ListingMap lat={lat} lon={lon} className="aspect-[1.2] w-full md:aspect-[1.86]" /></Suspense>
         ) : (
-          <Placeholder label={listing.postcode ? `Map — ${listing.postcode}` : "Map TBC"} className="aspect-[1.2] w-full md:aspect-[1.86]" stock={false} />
+          <MapSlot className="aspect-[1.2] w-full md:aspect-[1.86]" />
         )}
       </section>
 

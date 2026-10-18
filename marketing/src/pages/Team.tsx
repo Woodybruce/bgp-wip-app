@@ -14,6 +14,7 @@ export default function Team() {
         alt="Office interior"
         label="The BGP team"
         statement="Connecting leading brands with the best international locations. Creating neighbourhoods that people love."
+        caption={<p className="mt-5 text-sm italic text-bgp-cream">Placeholder photograph — team image to follow</p>}
         tall
       />
       <h1 className="sr-only">The BGP team</h1>

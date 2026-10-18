@@ -1,8 +1,15 @@
 // Image slot: renders the photo when src is given, otherwise a stock photo
-// from the pool below with an italic "Stock image" tag so the team can see
+// from the pool below with an italic placeholder tag so the team can see
 // what still needs a real picture (Woody, 2026-10-16). Pass stock={false}
 // for slots that are not photos (maps), which keep the wireframe cross.
 import { useEffect, useState } from "react";
+
+// These bundled assets are documented stand-ins for Golden Square, Upper
+// Street and Frankie Shop. Keep their temporary status visible even when
+// a content record supplies them through its normal image field.
+const KNOWN_PLACEHOLDER_IMAGES = new Set([
+  "/images/city-towers.jpg", "/images/shop-boutique.jpg", "/images/shop-rails.jpg",
+]);
 
 const STOCK_POOL = [
   "/images/shop-boutique.jpg", "/images/shop-menswear.jpg", "/images/shop-browse.jpg", "/images/restaurant.jpg",
@@ -46,17 +53,18 @@ export default function Placeholder({
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
   useEffect(() => { setFailed(false); setRetry(0); }, [src]);
-  if (src && !failed) {
+  const suppliedPlaceholder = !!src && KNOWN_PLACEHOLDER_IMAGES.has(src);
+  if (src && !failed && !suppliedPlaceholder) {
     // One retry on a momentary drop before falling back (Woody, 2026-10-15).
     const url = retry ? `${src}${src.includes("?") ? "&" : "?"}r=${retry}` : src;
     return <img src={url} alt={alt} loading="lazy" onError={() => (retry ? setFailed(true) : setTimeout(() => setRetry(1), 1500))} className={`object-cover ${className}`} />;
   }
   if (stock !== false) {
-    const url = typeof stock === "string" ? stock : stockFor(alt || label);
+    const url = suppliedPlaceholder && !failed ? src : typeof stock === "string" ? stock : stockFor(alt || label);
     return (
       <div className={`relative overflow-hidden ${className}`}>
         <img src={url} alt={alt} loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
-        <span className="absolute left-2 bottom-2 bg-bgp-cream/90 px-2 py-0.5 text-[11px] italic text-bgp-wine">Stock image, to be replaced</span>
+        <span className="absolute left-2 bottom-2 bg-bgp-cream/90 px-2 py-0.5 text-[11px] italic text-bgp-wine">Placeholder image — to be replaced</span>
       </div>
     );
   }

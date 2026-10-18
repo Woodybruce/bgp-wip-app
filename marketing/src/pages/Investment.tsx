@@ -10,12 +10,12 @@ import { findCaseStudy, useSiteContent } from "../lib/site-content";
 // from the February 2026 Royal Exchange pitch (Woody, 2026-10-12).
 const INITIAL_VISIBLE = 7;
 
-function Filter({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (v: string) => void }) {
+function Filter({ label, value = "", options = [], onChange, unavailable = false }: { label: string; value?: string; options?: string[]; onChange?: (v: string) => void; unavailable?: boolean }) {
   return (
     <label className="label-caps flex min-w-0 items-center justify-between gap-3 text-bgp-wine w-full sm:w-auto py-2 border-b border-bgp-wine/15 sm:border-0">
       <span className="whitespace-nowrap">{label} <span aria-hidden>{"↘︎"}</span></span>
-      <select value={value} onChange={(e) => onChange(e.target.value)} className="min-w-0 max-w-[65%] cursor-pointer bg-transparent py-2 pr-1 label-caps text-bgp-ink hover:text-bgp-wine sm:max-w-[210px]">
-        <option value="">All</option>
+      <select value={value} disabled={unavailable} aria-label={`${label} filter${unavailable ? " — placeholder, to follow" : ""}`} onChange={(e) => onChange?.(e.target.value)} className="min-w-0 max-w-[65%] cursor-pointer bg-transparent py-2 pr-1 label-caps text-bgp-ink hover:text-bgp-wine disabled:cursor-not-allowed disabled:italic disabled:text-bgp-wine/60 disabled:opacity-100 sm:max-w-[210px]">
+        <option value="">{unavailable ? "To follow" : "All"}</option>
         {options.map((o) => <option key={o} value={o}>{o}</option>)}
       </select>
     </label>
@@ -45,8 +45,10 @@ export default function Investment() {
         <SectionHead rule={false} title="Snapshot of properties" sub="Please contact us for full availability" />
         <div className="mb-8 flex flex-col items-stretch gap-x-8 border-b border-bgp-wine pb-2 sm:flex-row sm:flex-wrap sm:items-center md:mb-10">
           <span className="label-caps font-bold text-bgp-wine py-2">Filter by</span>
+          <Filter label="Location" unavailable />
           <Filter label="Status" value={status} options={["Completed", "Under offer"]} onChange={setStatus} />
           <Filter label="Type" value={type} options={types} onChange={setType} />
+          <Filter label="Size" unavailable />
         </div>
 
         {/* Slide 31: a wide tile and a small one, then a small and a wide, then three across. */}
@@ -63,11 +65,11 @@ export default function Investment() {
                 <h3 className="label-caps font-bold text-bgp-wine">{deal.name}</h3>
                 {deal.address && deal.address !== deal.name && <p className="mt-0.5 label-caps text-bgp-ink">{deal.address}</p>}
                 <p className="mt-0.5 label-caps text-bgp-ink">{deal.client}</p>
+                {deal.type !== "Transaction" && <p className="mt-1 label-caps text-bgp-ink">{deal.type}</p>}
                 <p className="mt-1 label-caps text-bgp-ink tabular">
-                  {deal.type === "Transaction" ? "" : deal.type}
-                  {deal.type !== "Transaction" && deal.price ? " · " : ""}
-                  {deal.price}
-                  {deal.capRate ? ` / cap rate ${deal.capRate}` : ""}
+                  {deal.price || "Price not disclosed"}
+                  {" / "}
+                  {deal.capRate ? `Cap rate ${deal.capRate}` : <span className="italic text-bgp-wine/70">Yield to follow</span>}
                 </p>
               </div>
             </article>

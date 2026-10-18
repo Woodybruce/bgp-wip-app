@@ -40,6 +40,29 @@
     padding-inline: clamp(20px, 3.34vw, 48px);
   }
   .section-space { padding-block: clamp(48px, 6.1vw, 88px); }
+  .home-service {
+    display: grid;
+    grid-template-areas: "title" "image" "copy";
+    gap: 24px;
+    padding-block: 32px;
+  }
+  .home-service__title { grid-area: title; }
+  .home-service__image { grid-area: image; align-self: start; }
+  .home-service__copy { grid-area: copy; align-self: start; }
+  @media (min-width: 768px) {
+    .home-service {
+      grid-template-columns: 3fr 2fr;
+      grid-template-areas: "title title" "image copy";
+      gap: 24px clamp(32px, 3.34vw, 48px);
+      padding-block: 48px;
+    }
+    .home-service--reverse {
+      grid-template-columns: 2fr 3fr;
+      grid-template-rows: auto 1fr;
+      grid-template-areas: "title image" "copy image";
+      row-gap: 16px;
+    }
+  }
   .display {
     @apply font-display font-bold uppercase text-bgp-wine;
     letter-spacing: -0.03em;

@@ -16,22 +16,35 @@ const contactsFor = (c: SiteContent["contacts"], service: string) =>
     "Lease Advisory": c.lease_advisory,
   })[service] ?? c.leasing.slice(0, 3);
 
-function Carousel({ photos, alt }: { photos: string[]; alt: string }) {
+type GalleryPhoto = { src?: string; stock?: string; alt?: string };
+
+const GALLERY_PLACEHOLDERS: GalleryPhoto[] = [
+  { stock: "/images/shop-browse.jpg", alt: "Placeholder image of a retail interior" },
+  { stock: "/images/st-christophers-place.jpg", alt: "Placeholder image of a London streetscape" },
+  { stock: "/images/restaurant.jpg", alt: "Placeholder image of a restaurant interior" },
+];
+
+function Carousel({ photos, alt }: { photos: GalleryPhoto[]; alt: string }) {
   const [i, setI] = useState(0);
   const step = (d: number) => setI((x) => (x + d + photos.length) % photos.length);
+  const activeIndex = i % photos.length;
+  const photo = photos[activeIndex];
   return (
-    <div className="relative mt-10 md:mt-16">
-      <div className="img-frame"><Placeholder className="aspect-[1.69] w-full" src={photos[i]} alt={alt} /></div>
+    <figure className="mt-10 md:mt-16">
+      <div className="relative">
+      <div className="img-frame"><Placeholder className="aspect-[1.69] w-full" src={photo.src} stock={photo.stock} alt={photo.alt || alt} label="Project photography to follow" /></div>
       {photos.length > 1 && (
         <>
           <button type="button" onClick={() => step(-1)} aria-label="Previous photo" className="absolute left-3 top-1/2 -translate-y-1/2 h-11 w-11 flex items-center justify-center bg-bgp-cream/90 text-bgp-wine text-3xl hover:bg-bgp-cream">‹</button>
           <button type="button" onClick={() => step(1)} aria-label="Next photo" className="absolute right-3 top-1/2 -translate-y-1/2 h-11 w-11 flex items-center justify-center bg-bgp-cream/90 text-bgp-wine text-3xl hover:bg-bgp-cream">›</button>
           <div className="absolute bottom-3 inset-x-0 flex justify-center gap-1.5" aria-hidden>
-            {photos.map((_, k) => <span key={k} className={`h-1.5 w-1.5 rounded-full ${k === i ? "bg-bgp-cream" : "bg-bgp-cream/45"}`} />)}
+            {photos.map((_, k) => <span key={k} className={`h-1.5 w-1.5 rounded-full ${k === activeIndex ? "bg-bgp-cream" : "bg-bgp-cream/45"}`} />)}
           </div>
         </>
       )}
-    </div>
+      </div>
+      {!photo.src && <figcaption className="mt-3 label-caps text-bgp-wine">Placeholder gallery image — project photography to follow</figcaption>}
+    </figure>
   );
 }
 
@@ -59,7 +72,16 @@ export default function CaseStudyPage() {
   const contacts = contactsFor(content.contacts, caseStudy.service);
   // Wireframe: investment case studies end with similar transactions.
   const related = caseStudy.service === "Investment" ? INVESTMENT_DEALS.filter((d) => !caseStudy.title.includes(d.name.split(",")[0])).slice(0, 3) : [];
-  const photos = [caseStudy.image, ...(caseStudy.gallery || [])].filter(Boolean) as string[];
+  const photos: GalleryPhoto[] = [caseStudy.image, ...(caseStudy.gallery || [])]
+    .filter((src): src is string => !!src)
+    .map((src) => ({ src }));
+  while (photos.length < 3) photos.push(GALLERY_PLACEHOLDERS[photos.length]);
+  const overview = caseStudy.body.map((para, index) => /^Draft:/i.test(para)
+    ? index === 0
+      ? "Placeholder copy: this case study will introduce a confirmed instruction, the property and the client's objectives. It will set out the starting point for the project and explain the brief given to the BGP team."
+      : "Placeholder copy: the team will describe its advice, the work undertaken and the verified outcome. Project names, dates and results will be added after the case study has been reviewed."
+    : para);
+  const needsOverview = overview.join(" ").trim().length < 220;
 
   return (
     <div>
@@ -71,11 +93,18 @@ export default function CaseStudyPage() {
           <div className="min-w-0">
             <h1 className={`display text-[clamp(32px,4vw,56px)] ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
             <div className={`mt-7 max-w-[58ch] space-y-5 ${caseStudy.draft ? "italic" : ""}`}>
-              {caseStudy.body.map((para) => (
+              {caseStudy.draft && <p className="label-caps text-bgp-wine not-italic">Draft copy — for review</p>}
+              {overview.map((para) => (
                 <p key={para.slice(0, 32)} className="body-copy text-bgp-ink">
                   {para}
                 </p>
               ))}
+              {needsOverview && (
+                <div>
+                  <p className="label-caps text-bgp-wine mb-3 not-italic">Placeholder copy — project overview</p>
+                  <p className="body-copy text-bgp-ink italic">The completed overview will explain the client's brief, the character of the property and the advice provided by the BGP team. It will describe the approach and include the confirmed outcome once the project details have been reviewed.</p>
+                </div>
+              )}
             </div>
           </div>
           <div className="hidden md:block" />
@@ -96,7 +125,7 @@ export default function CaseStudyPage() {
             </a>
           </aside>
         </div>
-        {photos.length > 0 && <Carousel key={caseStudy.slug} photos={photos} alt={caseStudy.title} />}
+        <Carousel key={caseStudy.slug} photos={photos} alt={caseStudy.title} />
       </section>
 
       <QuoteBlock quote={caseStudy.quote} imageSide="left" />

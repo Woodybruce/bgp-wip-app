@@ -86,13 +86,13 @@ export default function Home() {
 
       <div id="services">
         {SERVICES.map((service, i) => (
-          <section key={service.slug} className={i % 2 ? "bg-bgp-mist" : ""}>
-            <div className={`site-container section-space grid grid-cols-1 gap-x-12 gap-y-6 lg:gap-x-20 ${i % 2 ? "md:grid-cols-[.85fr_1.15fr]" : "md:grid-cols-[1.15fr_.85fr]"}`}>
-              <h2 className={`section-title ${i % 2 ? "md:col-start-1 md:row-start-1 md:self-end" : "md:col-span-2"}`}>{service.name}</h2>
-              <div className={`img-frame ${i % 2 ? "md:col-start-2 md:row-span-2 md:row-start-1" : "md:col-start-1 md:row-start-2"}`}>
+          <section key={service.slug} className={i % 2 ? "bg-bgp-stone/[.08]" : ""}>
+            <div className={`site-container home-service ${i % 2 ? "home-service--reverse" : ""}`}>
+              <h2 className="section-title home-service__title">{service.name}</h2>
+              <div className="img-frame home-service__image">
                 <Placeholder className="aspect-[3/2] w-full" src={service.image} alt={service.name} />
               </div>
-              <div className={i % 2 ? "md:col-start-1 md:row-start-2" : "md:col-start-2 md:row-start-2"}>
+              <div className="home-service__copy">
                 <p className="intro-copy max-w-[30ch]">{service.intro}</p>
                 <Link href={`/${service.slug}`} className="explore-link mt-5">Find out more<span className="sr-only"> about {service.name}</span></Link>
               </div>
