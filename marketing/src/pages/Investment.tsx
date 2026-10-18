@@ -43,8 +43,8 @@ export default function Investment() {
 
       <section className="site-container section-space">
         <SectionHead rule={false} title="Snapshot of properties" sub="Please contact us for full availability" />
-        <div className="mb-8 flex flex-col items-stretch gap-x-8 border-b border-bgp-wine pb-2 sm:flex-row sm:flex-wrap sm:items-center md:mb-10">
-          <span className="label-caps font-bold text-bgp-wine py-2">Filter by</span>
+        <div className="property-filters mb-8 flex flex-col items-stretch gap-x-8 border-b border-bgp-wine pb-2 sm:flex-row sm:flex-wrap sm:items-center md:mb-10">
+          <span className="property-filters__label label-caps font-bold text-bgp-wine py-2">Filter by</span>
           <Filter label="Location" unavailable />
           <Filter label="Status" value={status} options={["Completed", "Under offer"]} onChange={setStatus} />
           <Filter label="Type" value={type} options={types} onChange={setType} />
@@ -82,7 +82,7 @@ export default function Investment() {
         {deals.length === 0 && <p className="body-copy py-12">No transactions match these filters.</p>}
         {!expanded && !status && !type && deals.length > INITIAL_VISIBLE && (
           <p className="mt-10">
-            <button onClick={() => setExpanded(true)} className="label-caps font-bold text-bgp-wine py-3 hover:opacity-70">
+            <button onClick={() => setExpanded(true)} className="property-more label-caps font-bold text-bgp-wine py-3 hover:opacity-70">
               + More transactions ({deals.length - INITIAL_VISIBLE})
             </button>
           </p>

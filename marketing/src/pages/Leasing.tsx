@@ -135,8 +135,8 @@ export default function Leasing() {
           title="Snapshot of available properties"
           sub={!live && !loading ? "Showing sample listings. The live availability feed is not connected in this environment." : "Please contact us for full availability"}
         />
-        <div className="flex flex-col items-stretch gap-x-8 border-b border-bgp-wine pb-2 sm:flex-row sm:flex-wrap sm:items-center">
-          <span className="label-caps font-bold text-bgp-wine py-2">Filter by</span>
+        <div className="property-filters flex flex-col items-stretch gap-x-8 border-b border-bgp-wine pb-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <span className="property-filters__label label-caps font-bold text-bgp-wine py-2">Filter by</span>
           <FilterSelect label="Location" value={location} options={location && !locations.includes(location) ? [location, ...locations] : locations} onChange={setLocation} />
           <FilterSelect label="Estates" unavailable />
           <FilterSelect label="Type" value={type} options={type && !types.includes(type) ? [type, ...types] : types} onChange={setType} />
@@ -176,7 +176,7 @@ export default function Leasing() {
             </div>
             {page < pageCount && (
               <p className="mt-10 text-left">
-                <button type="button" onClick={() => setPage(page + 1)} className="label-caps font-bold text-bgp-wine py-3 hover:opacity-70">+ More listings ({filtered.length - pageItems.length})</button>
+                <button type="button" onClick={() => setPage(page + 1)} className="property-more label-caps font-bold text-bgp-wine py-3 hover:opacity-70">+ More listings ({filtered.length - pageItems.length})</button>
               </p>
             )}
           </>
