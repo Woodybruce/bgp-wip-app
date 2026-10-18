@@ -14,7 +14,7 @@ export default function LeaseAdvisory() {
       hero={{ src: "/images/clients/birmingham-st-martins.jpg", alt: "St Martin's Square, Birmingham" }}
       intro={service.intro}
       body={LEASE_ADVISORY_BODY}
-      clients={<ClientRow clients={LEASE_ADVISORY_CLIENTS} fillLastRow />}
+      clients={<ClientRow clients={LEASE_ADVISORY_CLIENTS} minimumSlots={14} />}
       services={LEASE_ADVISORY_SERVICES}
       caseStudies={caseStudies.filter((c) => c.service === "Lease Advisory")}
       contacts={people}

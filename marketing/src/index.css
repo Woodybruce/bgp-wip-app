@@ -62,6 +62,7 @@
       grid-template-areas: "title image" "copy image";
       row-gap: 16px;
     }
+    .home-service--balanced { grid-template-columns: 1fr 1fr; }
   }
   .display {
     @apply font-display font-bold uppercase text-bgp-wine;
@@ -110,8 +111,8 @@
   .hero-content { @apply relative w-full; padding-bottom: clamp(40px, 4.5vw, 64px); }
   .hero-statement {
     @apply display text-bgp-cream;
-    max-width: 20ch;
-    font-size: clamp(1.875rem, 3.45vw, 3.125rem);
+    max-width: 32ch;
+    font-size: clamp(1.875rem, 3.2vw, 2.875rem);
     text-wrap: balance;
   }
   @media (min-width: 768px) {

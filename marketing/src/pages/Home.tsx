@@ -50,7 +50,7 @@ export default function Home() {
         ))}
         <div className="hero-shade" />
         <div className="site-container hero-content">
-          <h1 className="hero-statement max-w-[24ch]">{HERO_STATEMENT}</h1>
+          <h1 className="hero-statement">{HERO_STATEMENT}</h1>
           <div className="mt-7 flex items-center gap-1 text-bgp-cream md:absolute md:bottom-12 md:right-12 md:mt-0" aria-label="Hero photographs">
             {HERO_SLIDES.map((slide, i) => (
               <button
@@ -87,10 +87,10 @@ export default function Home() {
       <div id="services">
         {SERVICES.map((service, i) => (
           <section key={service.slug} className={i % 2 ? "bg-bgp-stone/[.08]" : ""}>
-            <div className={`site-container home-service ${i % 2 ? "home-service--reverse" : ""}`}>
+            <div className={`site-container home-service ${i % 2 ? "home-service--reverse" : ""} ${i === 1 || i === 2 || i === 4 ? "home-service--balanced" : ""}`}>
               <h2 className="section-title home-service__title">{service.name}</h2>
               <div className="img-frame home-service__image">
-                <Placeholder className="aspect-[3/2] w-full" src={service.image} alt={service.name} />
+                <Placeholder className={`${i === 0 ? "aspect-[1.56]" : i === 1 ? "aspect-square" : "aspect-[8/7]"} w-full`} src={service.image} alt={service.name} />
               </div>
               <div className="home-service__copy">
                 <p className="intro-copy max-w-[30ch]">{service.intro}</p>
@@ -101,22 +101,24 @@ export default function Home() {
         ))}
       </div>
 
+      <Link href="/news" aria-label="Explore news and insights" className="group block">
       <Band>
         <SectionHead title="News and insights" />
-        <div className="mb-10 flex flex-col items-start justify-between gap-4 md:flex-row md:gap-12">
+        <div className="mb-10 flex flex-col items-start gap-4">
           <p className="body-copy max-w-[52ch]">The latest news, lettings, transactions and opinion from the BGP team across leasing, investment, brand representation and placemaking.</p>
-          <Link href="/news" className="explore-link shrink-0">Find out more</Link>
+          <span className="explore-link">Find out more</span>
         </div>
         <div className="grid grid-cols-1 gap-10 sm:grid-cols-3 sm:gap-8">
           {homeArticles.map((a) => (
-            <Link key={a.slug} href={`/news/${a.slug}`} className="group block">
+            <div key={a.slug}>
               <p className="label-caps text-bgp-wine mb-3">{a.category}</p>
               <div className="img-frame"><Placeholder className="aspect-square w-full" src={a.image} alt={a.title} /></div>
               <h3 className="mt-5 font-sans font-medium text-xl leading-[1.2] text-bgp-wine group-hover:underline underline-offset-4">{a.title}</h3>
-            </Link>
+            </div>
           ))}
         </div>
       </Band>
+      </Link>
     </div>
   );
 }

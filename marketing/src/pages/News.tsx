@@ -18,6 +18,7 @@ export default function News() {
   const features = displayed.slice(0, 3);
   const rest = displayed.slice(3);
   const visibleRest = expanded ? rest : rest.slice(0, INITIAL_VISIBLE);
+  const archiveRows = Array.from({ length: Math.ceil(visibleRest.length / 3) }, (_, index) => visibleRest.slice(index * 3, index * 3 + 3));
 
   const toggleKind = (next: "News" | "Opinion") => {
     setKind((current) => current === next ? "" : next);
@@ -66,14 +67,18 @@ export default function News() {
       {displayed.length === 0 && <p className="body-copy py-16">Nothing in that category yet.</p>}
 
       {visibleRest.length > 0 && (
-        <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {visibleRest.map((article) => (
-            <Link key={article.slug} href={`/news/${article.slug}`} className="group flex min-w-0 flex-col bg-bgp-mist p-5">
-              <div className="label-caps mb-4 flex flex-wrap justify-between gap-2"><span>{article.category}</span><span>{article.date}</span></div>
-              <div className="img-frame"><Placeholder className="aspect-square w-full" src={isNewsPlaceholder(article) ? undefined : article.image} stock={isNewsPlaceholder(article) ? article.image : undefined} alt={isNewsPlaceholder(article) ? "Illustrative stock photograph for an article placeholder" : article.title} label="Photo to follow" /></div>
-              <h2 className="mt-5 font-display text-[26px] font-bold uppercase leading-[1.05] tracking-[-0.03em] text-bgp-wine group-hover:opacity-75">{article.title}</h2>
-              <span className="explore-link mt-auto self-start pt-6">Read more</span>
-            </Link>
+        <div className="mt-6 space-y-6">
+          {archiveRows.map((row) => (
+            <div key={row[0].slug} className="grid grid-cols-1 gap-x-2 gap-y-8 bg-bgp-mist p-3 md:grid-cols-3 md:p-0">
+              {row.map((article) => (
+                <Link key={article.slug} href={`/news/${article.slug}`} className="group flex min-w-0 flex-col pb-3">
+                  <div className="label-caps mb-2 flex flex-wrap justify-between gap-2 px-1 pt-2"><span>{article.category}</span><span>{article.date}</span></div>
+                  <div className="img-frame"><Placeholder className="aspect-square w-full" src={isNewsPlaceholder(article) ? undefined : article.image} stock={isNewsPlaceholder(article) ? article.image : undefined} alt={isNewsPlaceholder(article) ? "Illustrative stock photograph for an article placeholder" : article.title} label="Photo to follow" /></div>
+                  <h2 className="mt-3 px-1 font-display text-[26px] font-bold uppercase leading-[1.05] tracking-[-0.03em] text-bgp-wine group-hover:opacity-75">{article.title}</h2>
+                  <span className="explore-link mt-auto self-start px-1 pt-5">Read more</span>
+                </Link>
+              ))}
+            </div>
           ))}
         </div>
       )}

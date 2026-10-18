@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import Placeholder from "./Placeholder";
 const ListingMap = lazy(() => import("./ListingMap"));
-const isBrowser = typeof window !== "undefined";
 
 // Dashed slot for copy that has not arrived yet. Same look everywhere so
 // the team can see at a glance what is still owed (Woody, 2026-10-16:
@@ -44,13 +43,18 @@ export function QuoteBlock({ quote, image, imageAlt = "", imageSide = "right" }:
 
 // Location map, or the placeholder slot when there are no coordinates yet.
 export function MapSlot({ lat, lon, zoom = 15, marker = true, pins, className = "h-72 md:h-80 w-full" }: { lat?: number; lon?: number; zoom?: number; marker?: boolean; pins?: Array<{ lat: number; lon: number; label: string }>; className?: string }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
   if (lat == null || lon == null) return (
     <div className={`relative overflow-hidden bg-bgp-mist ${className}`}>
       <img src="/images/placeholders/map.svg" alt="Illustrative map placeholder; property location to follow" className="h-full w-full object-cover" />
       <span className="absolute bottom-3 left-3 bg-bgp-cream/95 px-3 py-2 text-sm italic text-bgp-wine">Illustrative map — location to follow</span>
     </div>
   );
-  if (!isBrowser) return <div className={`${className} bg-bgp-mist`} />;
+  // The server and first browser render must have the same tree. Leaflet
+  // starts only after hydration, rather than replacing a bare server div
+  // with a Suspense boundary during the initial browser render.
+  if (!mounted) return <div className={`${className} bg-bgp-mist`} />;
   return (
     <Suspense fallback={<div className={`${className} bg-bgp-mist`} />}>
       <ListingMap lat={lat} lon={lon} zoom={zoom} marker={marker} pins={pins ?? []} className={className} />
@@ -71,7 +75,7 @@ export function Hero({ src, alt, label, statement, caption, tall = false, big = 
       <div className="hero-shade" />
       <div className="site-container hero-content">
         {label && <p className="label-caps text-bgp-cream mb-5">{label}</p>}
-        <p className={`hero-statement ${big ? "lg:max-w-[24ch]" : ""}`}>{statement}</p>
+        <p className={`hero-statement ${big ? "lg:max-w-[32ch]" : ""}`}>{statement}</p>
         {caption}
       </div>
     </section>

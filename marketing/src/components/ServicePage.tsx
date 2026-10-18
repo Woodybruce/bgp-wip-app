@@ -37,9 +37,11 @@ export default function ServicePage({ title, hero, intro, body, clients, clients
       <h1 className="sr-only">{title}</h1>
 
       <section className="site-container section-space">
-        <h2 className="mb-8 border-b border-bgp-ink pb-4 text-lg font-bold">A snapshot of clients</h2>
-        {clientsBlurb && <p className="body-copy mb-6">{clientsBlurb}</p>}
-        {clients}
+        <div className="client-snapshot mx-auto w-full max-w-[1100px] md:w-[84.2%]">
+          <h2 className="mb-6 border-b border-bgp-ink pb-4 text-lg font-bold">A snapshot of clients</h2>
+          {clientsBlurb && <p className="body-copy mb-6">{clientsBlurb}</p>}
+          {clients}
+        </div>
       </section>
 
       <ServiceList services={services} body={body} variant={servicesVariant} heading={servicesVariant === "list" ? "Additional services" : "What we offer"} />

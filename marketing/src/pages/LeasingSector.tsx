@@ -166,7 +166,7 @@ export default function LeasingSector() {
         <MapSlot lat={sector.map?.lat} lon={sector.map?.lon} zoom={sector.map?.zoom} marker={false} pins={sector.map?.pins} className="aspect-[1.2] w-full md:aspect-[3.38]" />
       </section>
 
-      <KeyContacts band={false} people={contacts} />
+      <KeyContacts band={false} people={contacts} minimumSlots={3} />
       <CaseStudyStrip band caseStudies={(sector.caseStudies ?? []).map((slug) => findCaseStudy(content, slug)).filter(Boolean) as any} />
     </div>
   );
@@ -221,7 +221,7 @@ export function ShoppingCentrePage() {
           </aside>
         </div>
       </section>
-      {contacts.length > 0 && <KeyContacts band={false} people={contacts} />}
+      <KeyContacts band={false} people={contacts} minimumSlots={3} />
     </div>
   );
 }

@@ -34,6 +34,7 @@ export default function ContactCard({ person, compact = false }: { person: Perso
             </a>
           </p>
         )}
+        <p className="text-xs italic text-bgp-wine/75">LinkedIn profile to follow</p>
       </div>
     </div>
   );

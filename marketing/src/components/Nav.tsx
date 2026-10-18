@@ -1,12 +1,54 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { LEASING_SECTORS, NAV_ITEMS } from "../lib/content";
+import { fetchListings, type Listing } from "../lib/api";
 
-// Keep the four established leasing teams and the availability link.
-const LEASING_LINKS = [
-  ...LEASING_SECTORS.map((sector) => ({ label: sector.name, href: `/leasing/sectors/${sector.slug}` })),
-  { label: "Available properties", href: "/leasing#availability" },
-];
+// These four destinations remain the primary way into the leasing teams.
+const LEASING_LINKS = ["shopping-centres", "london-estates", "high-streets", "city"]
+  .map((slug) => LEASING_SECTORS.find((sector) => sector.slug === slug))
+  .filter((sector): sector is typeof LEASING_SECTORS[number] => Boolean(sector))
+  .map((sector) => ({ label: sector.name, href: `/leasing/sectors/${sector.slug}` }));
+
+function LeasingLinks({ listings, loading, onNavigate }: { listings: Listing[]; loading: boolean; onNavigate: () => void }) {
+  const locations = Array.from(new Set(listings.map((listing) => listing.location).filter((value): value is string => Boolean(value)))).sort();
+  const types = Array.from(new Set(listings.map((listing) => listing.useClass).filter((value): value is string => Boolean(value)))).sort();
+  const linkClass = "block py-2 underline-offset-4 hover:underline";
+
+  return (
+    <>
+      <p className="mb-2 text-xs font-medium uppercase">Our leasing teams</p>
+      <ul className="grid grid-cols-2 gap-x-6 gap-y-1 border-b border-bgp-wine/20 pb-4 lg:grid-cols-4">
+        {LEASING_LINKS.map((link) => (
+          <li key={link.href}><a href={link.href} onClick={onNavigate} className={`${linkClass} font-bold`}>{link.label}</a></li>
+        ))}
+      </ul>
+      <div className="grid grid-cols-1 gap-5 pt-5 sm:grid-cols-3 sm:gap-7">
+        <div>
+          <h3 className="mb-1 font-bold">Location</h3>
+          <ul>
+            {locations.map((location) => <li key={location}><a href={`/leasing?location=${encodeURIComponent(location)}#availability`} onClick={onNavigate} className={linkClass}>{location}</a></li>)}
+          </ul>
+          {!locations.length && <p className="py-2 text-sm italic">{loading ? "Loading locations…" : "Locations to follow"}</p>}
+          <a href="/leasing#availability" onClick={onNavigate} className={`${linkClass} italic`}>View all locations</a>
+        </div>
+        <div>
+          <h3 className="mb-1 font-bold">Estates</h3>
+          <p className="py-2 text-sm italic">Estate availability to follow</p>
+          <a href="/leasing/sectors/london-estates" onClick={onNavigate} className={linkClass}>Explore London Estates</a>
+        </div>
+        <div>
+          <h3 className="mb-1 font-bold">Type</h3>
+          <ul>
+            {types.map((type) => <li key={type}><a href={`/leasing?type=${encodeURIComponent(type)}#availability`} onClick={onNavigate} className={linkClass}>{type === "E" ? "Class E" : type}</a></li>)}
+          </ul>
+          {!types.length && <p className="py-2 text-sm italic">{loading ? "Loading property types…" : "Property types to follow"}</p>}
+          <a href="/leasing#availability" onClick={onNavigate} className={`${linkClass} italic`}>View all types</a>
+        </div>
+      </div>
+      <a href="/leasing#availability" onClick={onNavigate} className="mt-5 block border-t border-bgp-wine/20 pt-4 font-medium underline-offset-4 hover:underline">View all available properties ↗</a>
+    </>
+  );
+}
 
 function Chevron({ expanded }: { expanded: boolean }) {
   return (
@@ -22,15 +64,30 @@ export default function Nav() {
   const [leasingOpen, setLeasingOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [hasHero, setHasHero] = useState(false);
+  const [listings, setListings] = useState<Listing[]>([]);
+  const [loadingListings, setLoadingListings] = useState(true);
   const headerRef = useRef<HTMLElement>(null);
   const mobileToggleRef = useRef<HTMLButtonElement>(null);
   const leasingToggleRef = useRef<HTMLButtonElement>(null);
-  const leasingMenuRef = useRef<HTMLUListElement>(null);
+  const leasingMenuRef = useRef<HTMLDivElement>(null);
+  const openedByHover = useRef(false);
 
   const closeMenus = () => {
+    openedByHover.current = false;
     setOpen(false);
     setLeasingOpen(false);
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchListings().then((result) => {
+      if (!cancelled) {
+        setListings(result.listings);
+        setLoadingListings(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 40);
@@ -100,18 +157,33 @@ export default function Nav() {
             </svg>
           </button>
 
-          <nav aria-label="Main navigation" className={`hidden lg:block ${foreground}`}>
-            <ul className="flex items-center text-xs font-medium uppercase leading-none xl:text-[13px]">
+          <nav aria-label="Main navigation" className={`hidden h-full lg:block ${foreground}`}>
+            <ul className="flex h-full items-center text-xs font-medium uppercase leading-none xl:text-[13px]">
               {NAV_ITEMS.map((item, index) => {
                 const active = location === item.href || location.startsWith(`${item.href}/`);
                 const isLeasing = item.href === "/leasing";
                 return (
                   <li
                     key={item.href}
-                    className="relative flex items-center"
-                    onPointerEnter={isLeasing ? (event) => { if (event.pointerType === "mouse") setLeasingOpen(true); } : undefined}
-                    onPointerLeave={isLeasing ? (event) => { if (!event.currentTarget.contains(document.activeElement)) setLeasingOpen(false); } : undefined}
-                    onBlur={isLeasing ? (event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setLeasingOpen(false); } : undefined}
+                    className="flex h-full items-center"
+                    onPointerEnter={isLeasing ? (event) => {
+                      if (event.pointerType === "mouse" && !leasingOpen) {
+                        openedByHover.current = true;
+                        setLeasingOpen(true);
+                      }
+                    } : undefined}
+                    onPointerLeave={isLeasing ? (event) => {
+                      if (!event.currentTarget.contains(document.activeElement)) {
+                        openedByHover.current = false;
+                        setLeasingOpen(false);
+                      }
+                    } : undefined}
+                    onBlur={isLeasing ? (event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                        openedByHover.current = false;
+                        setLeasingOpen(false);
+                      }
+                    } : undefined}
                   >
                     {index > 0 && <span aria-hidden="true" className="mx-2.5 opacity-50 xl:mx-3.5">/</span>}
                     <Link
@@ -131,10 +203,16 @@ export default function Nav() {
                           aria-controls="leasing-navigation"
                           aria-label={leasingOpen ? "Close Leasing menu" : "Open Leasing menu"}
                           className="ml-1 flex min-h-11 w-6 items-center justify-center"
-                          onClick={() => setLeasingOpen(!leasingOpen)}
+                          onClick={() => {
+                            // A click after hover pins the open menu instead of immediately closing it.
+                            if (openedByHover.current) setLeasingOpen(true);
+                            else setLeasingOpen((current) => !current);
+                            openedByHover.current = false;
+                          }}
                           onKeyDown={(event) => {
                             if (event.key !== "ArrowDown") return;
                             event.preventDefault();
+                            openedByHover.current = false;
                             setLeasingOpen(true);
                             window.requestAnimationFrame(() => leasingMenuRef.current?.querySelector<HTMLAnchorElement>("a")?.focus());
                           }}
@@ -142,17 +220,13 @@ export default function Nav() {
                           <Chevron expanded={leasingOpen} />
                         </button>
                         {leasingOpen && (
-                          <ul
+                          <div
                             id="leasing-navigation"
                             ref={leasingMenuRef}
-                            className="absolute left-0 top-full w-64 border border-bgp-wine/15 bg-bgp-cream px-6 py-4 text-sm font-medium normal-case leading-snug text-bgp-wine"
+                            className="absolute left-1/2 top-full max-h-[calc(100dvh-var(--site-header-height))] w-[min(760px,calc(100vw-96px))] -translate-x-1/2 overflow-y-auto border border-bgp-wine/15 bg-bgp-cream p-7 text-base font-medium normal-case leading-snug text-bgp-wine"
                           >
-                            {LEASING_LINKS.map((link, linkIndex) => (
-                              <li key={link.href} className={linkIndex === LEASING_LINKS.length - 1 ? "mt-2 border-t border-bgp-wine/20 pt-2" : ""}>
-                                <a href={link.href} onClick={closeMenus} className="block py-2.5 underline-offset-4 hover:underline">{link.label}</a>
-                              </li>
-                            ))}
-                          </ul>
+                            <LeasingLinks listings={listings} loading={loadingListings} onNavigate={closeMenus} />
+                          </div>
                         )}
                       </>
                     )}
@@ -182,11 +256,9 @@ export default function Nav() {
                       )}
                     </div>
                     {isLeasing && leasingOpen && (
-                      <ul id="mobile-leasing-navigation" className="pb-3 pl-4 text-sm">
-                        {LEASING_LINKS.map((link) => (
-                          <li key={link.href}><a href={link.href} onClick={closeMenus} className="block py-3 underline-offset-4 hover:underline">{link.label}</a></li>
-                        ))}
-                      </ul>
+                      <div id="mobile-leasing-navigation" className="pb-6 pt-2 text-sm">
+                        <LeasingLinks listings={listings} loading={loadingListings} onNavigate={closeMenus} />
+                      </div>
                     )}
                   </li>
                 );

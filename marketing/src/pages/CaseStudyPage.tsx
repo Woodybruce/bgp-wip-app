@@ -2,10 +2,12 @@ import { useEffect } from "react";
 import { Link, useRoute } from "wouter";
 import Placeholder from "../components/Placeholder";
 import KeyContacts from "../components/KeyContacts";
+import InvestmentCard from "../components/InvestmentCard";
 import { MapSlot, QuoteBlock, SectionHead } from "../components/Wire";
 import { useState } from "react";
 import { type SiteContent, useSiteContent } from "../lib/site-content";
 import { CASE_STUDIES, INVESTMENT_DEALS } from "../lib/content";
+import { investmentCaseStudySlug } from "../lib/investment-links";
 
 const contactsFor = (c: SiteContent["contacts"], service: string) =>
   ({
@@ -70,8 +72,9 @@ export default function CaseStudyPage() {
 
   const others = content.caseStudies.filter((c) => c.slug !== caseStudy.slug).slice(0, 3);
   const contacts = contactsFor(content.contacts, caseStudy.service);
-  // Wireframe: investment case studies end with similar transactions.
-  const related = caseStudy.service === "Investment" ? INVESTMENT_DEALS.filter((d) => !caseStudy.title.includes(d.name.split(",")[0])).slice(0, 3) : [];
+  // Location/date metadata is not available for these transactions. Present
+  // the selection as more transactions without claiming geographical similarity.
+  const related = caseStudy.service === "Investment" ? INVESTMENT_DEALS.filter((deal) => investmentCaseStudySlug(deal) !== caseStudy.slug).slice(0, 3) : [];
   const photos: GalleryPhoto[] = [caseStudy.image, ...(caseStudy.gallery || [])]
     .filter((src): src is string => !!src)
     .map((src) => ({ src }));
@@ -135,24 +138,14 @@ export default function CaseStudyPage() {
         <MapSlot lat={caseStudy.location?.lat} lon={caseStudy.location?.lon} className="aspect-[1.2] w-full md:aspect-[2.15]" />
       </section>
 
-      <KeyContacts band={false} people={contacts} />
+      <KeyContacts band={false} people={contacts} minimumSlots={3} />
 
       {related.length > 0 && (
         <section className="site-container section-space">
-          <SectionHead title="Similar transactions" sub="By location" />
+          <SectionHead title="More investment transactions" />
           <div className="grid grid-cols-1 gap-x-6 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
             {related.map((deal) => (
-              <Link key={deal.name} href="/investment" className="group block">
-                <div className="relative img-frame">
-                  <Placeholder className="aspect-[1.85] w-full" src={deal.image} alt={deal.name} label="Photo to follow" />
-                  <span className="absolute inset-x-0 top-0 label-caps px-3 py-2 text-right bg-bgp-wine text-bgp-cream">{deal.status}</span>
-                </div>
-                <div className="mt-3 border-t border-bgp-wine/30 pt-3">
-                  <h3 className="label-caps font-bold text-bgp-wine">{deal.name}</h3>
-                  <p className="mt-0.5 label-caps text-bgp-ink/45">{deal.client}</p>
-                  <p className="mt-1.5 text-sm text-bgp-ink tabular">{deal.type === "Transaction" ? "" : deal.type}{deal.price ? ` · ${deal.price}` : ""}</p>
-                </div>
-              </Link>
+              <InvestmentCard key={deal.name} deal={deal} aspect="aspect-[8/5]" />
             ))}
           </div>
         </section>

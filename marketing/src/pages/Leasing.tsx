@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearch } from "wouter";
 import ListingCard from "../components/ListingCard";
 import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
@@ -52,6 +53,7 @@ function FilterSelect({
 
 export default function Leasing() {
   const content = useSiteContent();
+  const search = useSearch();
   const [listings, setListings] = useState<Listing[]>([]);
   const [live, setLive] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -59,9 +61,10 @@ export default function Leasing() {
   const [type, setType] = useState("");
   const [size, setSize] = useState("");
   // Slide 26: a short mixed-size grid, then "+ More listings" to extend it.
-  const PAGE_SIZE = 10;
+  const PAGE_SIZE = 8;
   const [page, setPage] = useState(1);
   const gridTop = useRef<HTMLDivElement>(null);
+  const appliedSearch = useRef<string | null>(null);
   useEffect(() => { setPage(1); }, [location, type, size]);
 
   useEffect(() => {
@@ -69,22 +72,31 @@ export default function Leasing() {
       setListings(listings);
       setLive(live);
       setLoading(false);
-      // Deep links from the nav rollover (slide 22): /leasing?location=…&type=…
-      // Applied after the feed arrives, matched loosely against the options
-      // that exist, and only in the browser so the prerendered HTML hydrates clean.
-      const q = new URLSearchParams(window.location.search);
-      const pick = (want: string | null, options: Array<string | null | undefined>) => {
-        if (!want) return "";
-        const w = want.toLowerCase();
-        return options.find((o) => (o || "").toLowerCase() === w) || options.find((o) => (o || "").toLowerCase().includes(w)) || "";
-      };
-      const loc = pick(q.get("location"), listings.map((l) => l.location));
-      const typ = pick(q.get("type"), listings.map((l) => l.useClass));
-      if (loc) setLocation(loc as string);
-      if (typ) setType(typ as string);
-      if (q.get("location") || q.get("type")) setTimeout(() => document.getElementById("availability")?.scrollIntoView({ block: "start" }), 50);
     });
   }, []);
+
+  useEffect(() => {
+    // Apply each URL search only after the feed arrives. Browser history and
+    // same-page navigation update the filters; ordinary dropdown choices do not
+    // get overwritten when the search string has stayed the same.
+    if (loading || appliedSearch.current === search) return;
+    appliedSearch.current = search;
+    const q = new URLSearchParams(search);
+    const pick = (want: string | null, options: Array<string | null | undefined>) => {
+      if (!want) return "";
+      const w = want.toLowerCase();
+      return options.find((option) => (option || "").toLowerCase() === w)
+        || options.find((option) => (option || "").toLowerCase().includes(w))
+        || want;
+    };
+    setLocation(pick(q.get("location"), listings.map((listing) => listing.location)));
+    setType(pick(q.get("type"), listings.map((listing) => listing.useClass)));
+    setSize("");
+    setPage(1);
+    if (!q.get("location") && !q.get("type")) return;
+    const frame = window.requestAnimationFrame(() => document.getElementById("availability")?.scrollIntoView({ block: "start" }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [search, loading, listings]);
 
   const locations = useMemo(
     () => Array.from(new Set(listings.map((l) => l.location).filter(Boolean))) as string[],
@@ -125,9 +137,9 @@ export default function Leasing() {
         />
         <div className="flex flex-col items-stretch gap-x-8 border-b border-bgp-wine pb-2 sm:flex-row sm:flex-wrap sm:items-center">
           <span className="label-caps font-bold text-bgp-wine py-2">Filter by</span>
-          <FilterSelect label="Location" value={location} options={locations} onChange={setLocation} />
+          <FilterSelect label="Location" value={location} options={location && !locations.includes(location) ? [location, ...locations] : locations} onChange={setLocation} />
           <FilterSelect label="Estates" unavailable />
-          <FilterSelect label="Type" value={type} options={types} onChange={setType} />
+          <FilterSelect label="Type" value={type} options={type && !types.includes(type) ? [type, ...types] : types} onChange={setType} />
           <FilterSelect label="Size" value={size} options={SIZE_BANDS.map((b) => b.label)} onChange={setSize} />
         </div>
 
@@ -171,7 +183,7 @@ export default function Leasing() {
         )}
       </section>
 
-      <KeyContacts people={content.contacts.leasing} band={false} layout="row" />
+      <KeyContacts people={content.contacts.leasing} band={false} layout="row" minimumSlots={5} />
       <CaseStudyStrip band caseStudies={["lucent-piccadilly", "st-christophers-place", "south-molton-triangle", "canary-wharf"].map((slug) => findCaseStudy(content, slug))} />
     </div>
   );

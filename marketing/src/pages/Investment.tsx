@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
-import Placeholder from "../components/Placeholder";
+import InvestmentCard from "../components/InvestmentCard";
 import { Hero, SectionHead } from "../components/Wire";
 import { INVESTMENT_DEALS, SERVICES } from "../lib/content";
 import { findCaseStudy, useSiteContent } from "../lib/site-content";
@@ -53,27 +53,7 @@ export default function Investment() {
 
         {/* Slide 31: a wide tile and a small one, then a small and a wide, then three across. */}
         {(() => {
-          const Tile = ({ deal, aspect }: { deal: (typeof shown)[number]; aspect: string }) => (
-            <article className="group min-w-0">
-              <div className="relative img-frame">
-                <Placeholder className={`${aspect} w-full`} src={deal.image} alt={deal.name} label="Photo to follow" />
-                <span className={`absolute inset-x-0 top-0 label-caps px-3 py-2 text-right ${deal.status === "Under offer" ? "bg-bgp-nectar text-bgp-wine" : "bg-bgp-wine text-bgp-cream"}`}>
-                  {deal.status}
-                </span>
-              </div>
-              <div className="mt-3">
-                <h3 className="label-caps font-bold text-bgp-wine">{deal.name}</h3>
-                {deal.address && deal.address !== deal.name && <p className="mt-0.5 label-caps text-bgp-ink">{deal.address}</p>}
-                <p className="mt-0.5 label-caps text-bgp-ink">{deal.client}</p>
-                {deal.type !== "Transaction" && <p className="mt-1 label-caps text-bgp-ink">{deal.type}</p>}
-                <p className="mt-1 label-caps text-bgp-ink tabular">
-                  {deal.price || "Price not disclosed"}
-                  {" / "}
-                  {deal.capRate ? `Cap rate ${deal.capRate}` : <span className="italic text-bgp-wine/70">Yield to follow</span>}
-                </p>
-              </div>
-            </article>
-          );
+          const Tile = InvestmentCard;
           const [a, b, c, d, ...rest] = shown;
           return (
             <div className="space-y-12 md:space-y-16">
@@ -109,7 +89,7 @@ export default function Investment() {
         )}
       </section>
 
-      <KeyContacts people={INVESTMENT_CONTACTS} band={false} layout="row" />
+      <KeyContacts people={INVESTMENT_CONTACTS} band={false} layout="row" minimumSlots={5} />
       <CaseStudyStrip band caseStudies={["the-royal-exchange", "19-golden-square", "213-214-upper-street"].map((s) => findCaseStudy(content, s)).filter(Boolean) as any} />
     </div>
   );

@@ -98,9 +98,15 @@ export default function ListingDetail() {
     ["EPC", listing.epcRating || "Available on request"],
     ["Legal costs", "Each party to bear their own legal costs"],
   ];
+  const summaryInfo: Array<[string, string]> = [
+    ["Location", areaLabel(listing) || "Location to follow"],
+    ["Size", formatSqft(listing.sqft) || "Size to follow"],
+    ["Price", rentLabel(listing)],
+    ["Transport", "Details to follow"],
+  ];
   const unitAgents: Person[] = (listing.agents || []).map((a) => ({
     name: a.name,
-    title: "BGP Leasing",
+    title: siteContent.team.find((person) => person.name === a.name)?.title || "BGP Leasing",
     phone: a.phone || OFFICE_PHONE,
     email: a.email || CONTACT.email,
   }));
@@ -116,7 +122,7 @@ export default function ListingDetail() {
       {/* Wireframe slide 27: photo with the facts panel to its right, then the
           title at left with the headline statement at right. */}
       <section className="site-container section-space">
-        <div className="grid grid-cols-1 gap-y-10 lg:grid-cols-[76fr_4fr_20fr] lg:gap-0">
+        <div className="grid grid-cols-1 gap-y-10 lg:grid-cols-[84fr_3fr_13fr] lg:gap-0">
           <div className="min-w-0">
             <div className="overflow-hidden">
               {images.length > 0 ? (
@@ -143,11 +149,15 @@ export default function ListingDetail() {
               </div>
             </div>
             <div className="mt-10 md:ml-[34%] md:mr-[3%] lg:mt-14">
-              {headline && <p className="intro-copy text-bgp-ink">{headline.charAt(0).toUpperCase() + headline.slice(1)}.</p>}
-              {headline.length < 100 && (
-                <div className={headline ? "mt-5" : ""}>
+              {headline.length >= 100 ? (
+                <p className="intro-copy text-bgp-ink">{headline.charAt(0).toUpperCase() + headline.slice(1)}.</p>
+              ) : (
+                <div>
                   <p className="label-caps text-bgp-wine mb-3">Placeholder introduction</p>
-                  <p className="intro-copy text-bgp-ink italic">A short introduction will describe the property's setting, character and the opportunity for its next occupier.</p>
+                  <p className="intro-copy text-bgp-ink">
+                    {headline && <>{headline.charAt(0).toUpperCase() + headline.slice(1)}. </>}
+                    <span className="italic">An introduction to the property's setting, character and opportunity will follow.</span>
+                  </p>
                 </div>
               )}
             </div>
@@ -155,12 +165,10 @@ export default function ListingDetail() {
           <div className="hidden lg:block" />
           <aside className="min-w-0">
             <dl className="grid grid-cols-2 gap-x-6 border-t border-bgp-wine lg:block">
-              {keyInfo
-                .filter(([, v]) => v)
-                .map(([k, v]) => (
+              {summaryInfo.map(([k, v]) => (
                   <div key={k} className="min-w-0 border-b border-bgp-line py-3">
                     <dt className="label-caps font-bold text-bgp-wine">{k}</dt>
-                    <dd className="mt-1 text-base leading-snug tabular break-words">{v}</dd>
+                    <dd className={`mt-1 text-sm leading-snug tabular break-words ${k === "Transport" ? "italic text-bgp-ink/70" : ""}`}>{v}</dd>
                   </div>
                 ))}
             </dl>
@@ -206,6 +214,20 @@ export default function ListingDetail() {
                 )}
               </div>
             </div>
+        <details className="group mt-12 border-y border-bgp-wine/30 md:mt-16">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-6 py-5 text-bgp-wine [&::-webkit-details-marker]:hidden">
+            <h2 className="label-caps font-bold">Property details</h2>
+            <span aria-hidden className="text-2xl leading-none transition-transform group-open:rotate-45">+</span>
+          </summary>
+          <dl className="grid grid-cols-1 gap-x-8 pb-6 sm:grid-cols-2 lg:grid-cols-3">
+            {keyInfo.filter(([, value]) => value).map(([label, value]) => (
+              <div key={label} className="min-w-0 border-t border-bgp-line py-4">
+                <dt className="label-caps font-bold text-bgp-wine">{label}</dt>
+                <dd className="mt-2 text-base leading-snug tabular break-words">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </details>
       </section>
 
       {/* Location */}
@@ -220,6 +242,7 @@ export default function ListingDetail() {
 
       <KeyContacts band={false}
         people={contacts}
+        minimumSlots={3}
         blurb="Our team would be delighted to arrange a viewing or share full particulars."
       />
 

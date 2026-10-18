@@ -19,8 +19,10 @@ export default function BrandRepresentation() {
       </section>
 
       <section className="site-container pb-14 md:pb-20">
-        <h2 className="mb-8 border-b border-bgp-ink pb-4 text-lg font-bold">A snapshot of clients</h2>
-        <ClientRow clients={BRAND_REP_CLIENTS} />
+        <div className="client-snapshot mx-auto w-full max-w-[1100px] md:w-[84.2%]">
+          <h2 className="mb-6 border-b border-bgp-ink pb-4 text-lg font-bold">A snapshot of clients</h2>
+          <ClientRow clients={BRAND_REP_CLIENTS} initialCount={14} minimumSlots={14} />
+        </div>
       </section>
 
       {studies.length > 0 && (
