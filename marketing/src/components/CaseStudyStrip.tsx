@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "wouter";
 import Placeholder from "./Placeholder";
+import FittedHeading from "./FittedHeading";
 import type { CaseStudy } from "../lib/content";
 
 export default function CaseStudyStrip({ caseStudy, caseStudies, band = false }: { caseStudy?: CaseStudy; caseStudies?: CaseStudy[]; band?: boolean }) {
@@ -23,10 +24,10 @@ export default function CaseStudyStrip({ caseStudy, caseStudies, band = false }:
     <Strip band={band}>
       <h2 className="case-study-strip__label">Case study</h2>
       <div className="case-study-strip__grid">
-        <div className="flex flex-col items-start">
-          <h3 className={`display case-study-strip__title ${current.draft ? "italic" : ""}`}>
+        <div className="flex min-w-0 flex-col items-start">
+          <FittedHeading as="h3" className={`display case-study-strip__title ${current.draft ? "italic" : ""}`}>
             <Link href={`/case-studies/${current.slug}`} className="hover:opacity-80">{current.title}</Link>
-          </h3>
+          </FittedHeading>
           <p className={`case-study-strip__copy ${current.draft ? "italic" : ""}`}>{current.blurb}</p>
           <Link href={`/case-studies/${current.slug}`} className="explore-link case-study-strip__link">Find out more</Link>
         </div>

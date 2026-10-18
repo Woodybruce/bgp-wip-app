@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
+import FittedHeading from "../components/FittedHeading";
 import { SectionHead } from "../components/Wire";
 import { useSiteContent } from "../lib/site-content";
 import { isNewsPlaceholder, withNewsPlaceholders } from "../lib/news-placeholders";
@@ -56,7 +57,7 @@ export default function News() {
             <div className={`grid grid-cols-1 gap-7 md:gap-10 ${index % 2 ? "md:grid-cols-[2fr_3fr]" : "md:grid-cols-[3fr_2fr]"}`}>
               <div className={`img-frame ${index % 2 ? "md:order-2" : ""}`}><Placeholder className="aspect-[4/3] w-full" src={isNewsPlaceholder(article) ? undefined : article.image} stock={isNewsPlaceholder(article) ? article.image : undefined} alt={isNewsPlaceholder(article) ? "Illustrative stock photograph for an article placeholder" : article.title} label="Photo to follow" /></div>
               <div className="flex min-w-0 flex-col items-start">
-                <h2 className="news-feature-title section-title group-hover:opacity-75">{article.title}</h2>
+                <FittedHeading className="news-feature-title section-title group-hover:opacity-75">{article.title}</FittedHeading>
                 {article.standfirst && <p className="news-feature-copy body-copy mt-6">{article.standfirst}</p>}
                 <span className="news-read-more explore-link mt-auto pt-8">Read more</span>
               </div>
@@ -75,7 +76,7 @@ export default function News() {
                 <Link key={article.slug} href={`/news/${article.slug}`} className="group flex min-w-0 flex-col pb-3">
                   <div className="news-meta label-caps mb-2 flex flex-wrap justify-between gap-2 px-1 pt-2"><span>{article.category}</span><span>{article.date}</span></div>
                   <div className="img-frame"><Placeholder className="aspect-square w-full" src={isNewsPlaceholder(article) ? undefined : article.image} stock={isNewsPlaceholder(article) ? article.image : undefined} alt={isNewsPlaceholder(article) ? "Illustrative stock photograph for an article placeholder" : article.title} label="Photo to follow" /></div>
-                  <h2 className="news-archive-title mt-3 px-1 font-display font-bold uppercase leading-none tracking-[-0.03em] text-bgp-wine group-hover:opacity-75">{article.title}</h2>
+                  <FittedHeading className="news-archive-title mt-3 px-1 font-display font-bold uppercase leading-none tracking-[-0.03em] text-bgp-wine group-hover:opacity-75">{article.title}</FittedHeading>
                   <span className="news-read-more explore-link mt-auto self-start px-1 pt-5">Read more</span>
                 </Link>
               ))}

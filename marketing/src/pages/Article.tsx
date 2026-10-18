@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useId, useState } from "react";
 import { Link, useRoute } from "wouter";
 import Placeholder from "../components/Placeholder";
+import FittedHeading from "../components/FittedHeading";
 import { useSiteContent } from "../lib/site-content";
 import { isNewsPlaceholder, NEWS_PLACEHOLDERS, PLACEHOLDER_ARTICLE_BODY } from "../lib/news-placeholders";
 import "./news-article.css";
@@ -108,7 +109,7 @@ export default function ArticlePage() {
         <div className="mt-7 grid grid-cols-1 items-start gap-8 md:grid-cols-[3fr_2fr] md:gap-10">
           <ArticleGallery key={article.slug} image={article.image} title={article.title} placeholder={placeholder} />
           <div className="min-w-0">
-            <h1 className="article-title section-title">{article.title}</h1>
+            <FittedHeading as="h1" className="article-title section-title">{article.title}</FittedHeading>
             {article.standfirst && <p className="article-standfirst body-copy mt-6">{article.standfirst}</p>}
           </div>
         </div>

@@ -346,3 +346,7 @@ records `provider: "kimi"` so cost reports stay accurate per provider.
 
 Set on Railway with: `npm run railway -- set MOONSHOT_API_KEY <key>` then
 `npm run railway -- set CHATBGP_PROVIDER kimi`.
+
+### Wireframe review: intact headline words (18 October 2026)
+- Case-study and News/article headlines retain the measured design scale unless their longest word exceeds the column. A scoped fitted heading measures the loaded typeface and recalculates on title or width changes, preventing split words without truncating content.
+- Verified Hammerson, St Christopher's, Corporation and Neighbourhood at desktop width, with short titles retaining their original size; phone layout remains within the viewport. TypeScript and the 59-route production build pass.

@@ -91,7 +91,7 @@
   .case-study-strip__grid { display: grid; gap: 32px; }
   .case-study-strip__title {
     font-size: clamp(2.5rem, 6.25vw, 5.625rem);
-    overflow-wrap: anywhere;
+    overflow-wrap: normal;
     text-wrap: balance;
   }
   .case-study-strip__copy {
@@ -166,3 +166,6 @@
     .site-hero--tall { height: min(68vw, 960px); }
   }
 }
+
+/* Headlines keep words intact; FittedHeading only reduces oversized words. */
+.fitted-heading { width: 100%; min-width: 0; overflow-wrap: normal; word-break: normal; }

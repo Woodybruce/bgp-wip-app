@@ -12,7 +12,7 @@
   font-size: clamp(32px, 4.1667vw, 60px);
   line-height: 1;
   text-wrap: balance;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
 }
 
 .news-page .news-feature-copy {
