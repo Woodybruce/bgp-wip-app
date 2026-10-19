@@ -51,6 +51,9 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   on The Grange is a placeholder value pending Related's residential underwrite.
 - Residential placeholder (Woody, 17 Oct 2026): the cottages are inside the £7m with The Grange, one lump;
   no separate cottage receipt.
+- Demise (Woody, 19 Oct 2026): the Third Space parcel also takes the terrace on the Pavilion's garden
+  (west / south-west) side, c. 7 m off the wall, and the 8 m approach from the Pavilion's south corner to
+  the Sports Club door; buildings parcel now c. 5,670 sq m, whole demise c. 1.3 ha with the pitch.
 - Deal mechanics (Woody, 17 Oct 2026): purchase, Third Space lease (with the capital contribution paid)
   and the Club's surrender and regrant all complete on the SAME DAY; nothing more is spent on the
   leisure side (landlord's works nil); The Grange and cottages are redeveloped as residential by the
