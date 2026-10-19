@@ -42,8 +42,13 @@ export const titleFor = (path: string) => {
 function ScrollToTop() {
   const [location] = useLocation();
   useEffect(() => {
-    window.scrollTo(0, 0);
+    const frame = window.requestAnimationFrame(() => {
+      const target = window.location.hash ? document.getElementById(decodeURIComponent(window.location.hash.slice(1))) : null;
+      if (target) target.scrollIntoView();
+      else window.scrollTo(0, 0);
+    });
     document.title = titleFor(location);
+    return () => window.cancelAnimationFrame(frame);
   }, [location]);
   return null;
 }

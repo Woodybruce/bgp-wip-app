@@ -1,77 +1,76 @@
-import { useState } from "react";
+import { useId, useState } from "react";
+import "./wire-typography.css";
 
-// "What we offer" — the same list-plus-panel on every service page
-// (Lease Advisory set the pattern; Brand Representation and Consultancy
-// follow it, Woody 2026-10-12). Leasing and Investment have sub-pages
-// instead.
 export default function ServiceList({ services, heading = "What we offer", body, variant = "panel" }: { services: Array<{ name: string; detail: string }>; heading?: string; body?: string[]; variant?: "panel" | "list" }) {
   const [selected, setSelected] = useState(0);
-  // Slide 38 lists seven services; slide 41 lists three. Missing ones show in italics.
-  const padded: Array<{ name: string; detail: string; draft?: boolean }> = [...services, ...Array.from({ length: Math.max(0, 7 - services.length) }, (_, i) => ({ name: `Service ${services.length + i + 1} to follow`, detail: "Draft: a short paragraph on this service, what it covers and a recent example, to be written by the team.", draft: true }))];
-  const current = padded[selected] ?? padded[0];
-  const isDraft = (s: { draft?: boolean }) => !!s.draft;
+  const id = useId();
+  const current = services[selected] ?? services[0];
+  const [lead, ...supportingCopy] = body ?? [];
+  if (!services.length && !body?.length) return null;
+
   if (variant === "list") {
-    // Wireframe slide 41: a grey "Additional services" box at left, the copy at right.
     return (
-      <section className="mx-auto max-w-[1360px] px-4 pt-0 pb-12">
-        <div className="border-t-[3px] border-bgp-ink pt-10 grid grid-cols-1 md:grid-cols-[46fr_54fr] gap-10 items-start">
-          <div className="bg-bgp-mist p-5 md:p-6 md:mr-[8%]">
-            <p className="text-[1.12rem] font-bold border-b-2 border-bgp-ink pb-2 mb-2">{heading}</p>
-            <ul>
-              {services.slice(0, 3).map((s) => (
-                <li key={s.name} className="text-[1.04rem] leading-tight text-bgp-ink border-b border-bgp-ink/40 py-3 last:border-0">{s.name}</li>
-              ))}
+      <section className="service-list service-list--list site-container pb-14 md:pb-20">
+        <div className="grid grid-cols-1 gap-10 border-t border-bgp-ink pt-10 md:grid-cols-[2fr_3fr] md:gap-16 md:pt-14">
+          <div className="bg-bgp-mist p-6 md:p-8">
+            <h2 className="service-list__sidebar-heading font-bold border-b border-bgp-ink pb-4">{heading}</h2>
+            <ul className="divide-y divide-bgp-ink/25">
+              {services.map((service) => <li key={service.name} className="service-list__sidebar-copy body-copy py-4 last:pb-0">{service.name}</li>)}
             </ul>
           </div>
-          <div className="space-y-4">
-            {(body ?? []).map((p, i) => (
-              <p key={p.slice(0, 24)} className={`text-[1.38rem] leading-[1.12] ${i === 0 ? "font-bold text-bgp-ink" : "text-bgp-ink"}`}>{p}</p>
-            ))}
+          <div className="service-list__narrative space-y-5">
+            {(body ?? []).map((paragraph, index) => <p key={paragraph} className={`body-copy ${index === 0 ? "font-bold" : ""}`}>{paragraph}</p>)}
           </div>
         </div>
       </section>
     );
   }
+
   return (
-    <section className="mx-auto max-w-[1360px] px-4 pt-0 pb-12">
-      {/* Wireframe slides 38 and 41: heading at left with the copy beside it,
-          then the list of services with the detail box to its right. */}
-      <div className="grid grid-cols-1 md:grid-cols-[46fr_54fr] gap-x-10 gap-y-4 border-t-[3px] border-bgp-ink pt-10 mb-10">
-        <h2 className="font-normal text-3xl md:text-[3.1rem] leading-none text-bgp-ink whitespace-nowrap">{heading}</h2>
-        {body && body.length > 0 && (
-          <div className="space-y-3">
-            {/* Slide 38 sets one short paragraph beside the heading. */}
-            {body.slice(0, 1).map((p) => p.split(". ")[0].replace(/\.?$/, ".")).map((p) => (
-              <p key={p.slice(0, 24)} className="text-[1.73rem] leading-[1.1] text-bgp-ink">{p}</p>
-            ))}
+    <section className="service-list service-list--panel site-container pb-14 md:pb-20">
+      <div className="grid grid-cols-1 gap-x-16 gap-y-8 border-t border-bgp-ink pt-10 md:grid-cols-[2fr_3fr] md:pt-14">
+        <h2 className="service-list__heading section-title">{heading}</h2>
+        <div className="service-list__intro">{lead && <p className="body-copy">{lead}</p>}</div>
+        <div role="tablist" aria-label={heading} aria-orientation="vertical" className="flex flex-col items-start gap-1">
+          {services.map((service, index) => (
+            <button
+              key={service.name}
+              id={`${id}-tab-${index}`}
+              role="tab"
+              type="button"
+              aria-selected={selected === index}
+              aria-controls={`${id}-panel`}
+              tabIndex={selected === index ? 0 : -1}
+              onClick={() => setSelected(index)}
+              onKeyDown={(event) => {
+                let next: number;
+                if (event.key === "ArrowDown") next = (index + 1) % services.length;
+                else if (event.key === "ArrowUp") next = (index - 1 + services.length) % services.length;
+                else if (event.key === "Home") next = 0;
+                else if (event.key === "End") next = services.length - 1;
+                else return;
+                event.preventDefault();
+                setSelected(next);
+                document.getElementById(`${id}-tab-${next}`)?.focus();
+              }}
+              className={`service-list__tab min-h-11 py-2 text-left leading-[1.2] hover:text-bgp-wine ${selected === index ? "font-bold text-bgp-wine" : "text-bgp-ink"}`}
+            >
+              <span className="mr-3" aria-hidden="true">—</span>{service.name}
+            </button>
+          ))}
+        </div>
+        {current && (
+          <div id={`${id}-panel`} role="tabpanel" aria-labelledby={`${id}-tab-${selected}`} tabIndex={0} className="service-list__detail flex min-h-[240px] flex-col bg-bgp-mist p-7 md:p-10">
+            <h3 className="font-bold">{current.name}</h3>
+            <p className="body-copy mt-4">{current.detail}</p>
+            {services.length > 1 && <button type="button" onClick={() => setSelected((selected + 1) % services.length)} aria-label="Next service" className="mt-auto min-h-11 min-w-11 self-end pt-6 text-3xl text-bgp-wine">→</button>}
           </div>
         )}
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-[46fr_54fr] gap-10">
-        <div>
-          <ul className="space-y-4">
-            {padded.map((s, i) => (
-              <li key={s.name}>
-                <button
-                  onClick={() => setSelected(i)}
-                  className={`text-left text-[1.38rem] transition-colors ${isDraft(s) ? "italic" : ""} ${
-                    selected === i ? "font-bold text-bgp-ink" : "text-bgp-ink/70 hover:text-bgp-wine"
-                  }`}
-                >
-                  <span className="mr-2" aria-hidden>—</span>{s.name}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div className="bg-bgp-mist p-6 md:p-10 flex flex-col min-h-[20rem]">
-          <p className={`text-[1.35rem] leading-[1.12] text-bgp-ink ${isDraft(current) ? "italic" : ""}`}>{current.detail}</p>
-          {/* Slide 38 fills this box with about seven lines; short entries show the gap in italics. */}
-          {!isDraft(current) && current.detail.length < 220 && (
-            <p className="mt-3 text-[1.35rem] leading-[1.12] text-bgp-ink italic">Draft: two or three more sentences from the team on how this works in practice, a recent example, and what it meant for the client.</p>
-          )}
-          <button type="button" onClick={() => setSelected((selected + 1) % padded.length)} aria-label="Next service" className="mt-6 self-end text-4xl leading-none text-bgp-ink hover:text-bgp-wine">→</button>
-        </div>
+        {supportingCopy.length > 0 && (
+          <div className="service-list__supporting space-y-5 md:col-start-2">
+            {supportingCopy.map((paragraph) => <p key={paragraph} className="body-copy">{paragraph}</p>)}
+          </div>
+        )}
       </div>
     </section>
   );

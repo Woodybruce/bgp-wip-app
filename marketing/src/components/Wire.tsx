@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import Placeholder from "./Placeholder";
+import "./wire-typography.css";
 const ListingMap = lazy(() => import("./ListingMap"));
-const isBrowser = typeof window !== "undefined";
 
 // Dashed slot for copy that has not arrived yet. Same look everywhere so
 // the team can see at a glance what is still owed (Woody, 2026-10-16:
@@ -20,7 +20,7 @@ export function TextPlaceholder({ label, lines = 3, className = "" }: { label: s
 
 // Draft copy the team still has to replace is set in italics so it can be
 // seen on the page (Woody, 2026-10-16: "in italics where need to change").
-export const DRAFT_QUOTE = "BGP understood what we needed from the space from the first meeting. Their advice was clear and commercial, they moved quickly, and the result was better than we had planned for.";
+export const DRAFT_QUOTE = "This space will feature a client's perspective on the brief, the advice provided and the experience of working with our team. The approved quotation will describe the project's priorities, the approach taken and the outcome.";
 
 // Client quote with photo (slides 32 and 41). A missing quote shows draft
 // words in italics; a missing photo shows a stock image.
@@ -28,14 +28,15 @@ export function QuoteBlock({ quote, image, imageAlt = "", imageSide = "right" }:
   const hasQuote = !!quote?.quote && !/^lorem ipsum/i.test(quote.quote);
   const draft = !hasQuote;
   return (
-    <section className="mx-auto max-w-[1360px] px-4 py-12 md:py-14">
-      <div className={`grid grid-cols-1 gap-8 md:gap-12 items-start ${imageSide === "left" ? "md:grid-cols-[55fr_32fr] md:[direction:rtl] md:ml-[8%] md:gap-[5%]" : "md:grid-cols-[49fr_41fr] md:gap-[3%]"}`}>
+    <section className="wire-quote site-container section-space">
+      <div className={`grid grid-cols-1 gap-8 md:gap-16 items-center ${imageSide === "left" ? "md:grid-cols-[1.4fr_1fr] md:[direction:rtl]" : "md:grid-cols-[1fr_1.2fr]"}`}>
         <div className={`[direction:ltr] ${draft ? "italic" : ""}`}>
-          <p className="font-normal text-2xl md:text-[1.92rem] leading-[1.12] text-bgp-ink">“{hasQuote ? quote!.quote : DRAFT_QUOTE}”</p>
-          <p className="mt-4 label-caps">{quote?.name || "Client name"}</p>
-          <p className="label-caps text-bgp-ink">{quote?.title || "Title, company"}</p>
+          {draft && <p className="label-caps mb-4 not-italic">Placeholder client quotation</p>}
+          <blockquote className="intro-copy text-bgp-wine">{hasQuote ? `“${quote!.quote}”` : DRAFT_QUOTE}</blockquote>
+          <p className="mt-4 label-caps">{hasQuote ? quote?.name || "Client name" : "Client name to follow"}</p>
+          <p className="label-caps text-bgp-ink">{hasQuote ? quote?.title || "Title, company" : "Title and company to follow"}</p>
         </div>
-        <Placeholder className={`${imageSide === "left" ? "aspect-[0.74]" : "aspect-[1.84]"} w-full [direction:ltr]`} src={image} alt={imageAlt || "Client quote photo"} label="Photo to follow" />
+        <Placeholder className={`${imageSide === "left" ? "aspect-[3/4] max-w-[320px] justify-self-end" : "aspect-[4/3]"} w-full [direction:ltr]`} src={image} stock={imageSide === "left" ? "/images/placeholders/portrait.svg" : "/images/lease-signing.jpg"} alt={imageAlt || "Placeholder client photograph"} label="Photo to follow" />
       </div>
     </section>
   );
@@ -43,8 +44,18 @@ export function QuoteBlock({ quote, image, imageAlt = "", imageSide = "right" }:
 
 // Location map, or the placeholder slot when there are no coordinates yet.
 export function MapSlot({ lat, lon, zoom = 15, marker = true, pins, className = "h-72 md:h-80 w-full" }: { lat?: number; lon?: number; zoom?: number; marker?: boolean; pins?: Array<{ lat: number; lon: number; label: string }>; className?: string }) {
-  if (lat == null || lon == null) return <Placeholder className={className} label="Map to follow" stock={false} />;
-  if (!isBrowser) return <div className={`${className} bg-bgp-mist`} />;
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  if (lat == null || lon == null) return (
+    <div className={`relative overflow-hidden bg-bgp-mist ${className}`}>
+      <img src="/images/placeholders/map.svg" alt="Illustrative map placeholder; property location to follow" className="h-full w-full object-cover" />
+      <span className="absolute bottom-3 left-3 bg-bgp-cream/95 px-3 py-2 text-sm italic text-bgp-wine">Illustrative map — location to follow</span>
+    </div>
+  );
+  // The server and first browser render must have the same tree. Leaflet
+  // starts only after hydration, rather than replacing a bare server div
+  // with a Suspense boundary during the initial browser render.
+  if (!mounted) return <div className={`${className} bg-bgp-mist`} />;
   return (
     <Suspense fallback={<div className={`${className} bg-bgp-mist`} />}>
       <ListingMap lat={lat} lon={lon} zoom={zoom} marker={marker} pins={pins ?? []} className={className} />
@@ -60,12 +71,12 @@ export function MapSlot({ lat, lon, zoom = 15, marker = true, pins, className = 
 
 export function Hero({ src, alt, label, statement, caption, tall = false, big = false }: { src?: string; alt: string; label?: ReactNode; statement: ReactNode; caption?: ReactNode; tall?: boolean; big?: boolean }) {
   return (
-    <section data-hero className={`relative flex items-end overflow-hidden -mt-16 md:-mt-24 lg:-mt-32 ${tall ? "h-[min(85vw,100vh)] min-h-[480px]" : "h-[min(60vw,100vh)] min-h-[420px]"}`}>
+    <section data-hero className={`wire-hero site-hero ${big ? "wire-hero--big" : ""} ${tall ? "site-hero--tall" : ""}`}>
       <Placeholder className="absolute inset-0 h-full w-full" src={src} alt={alt} />
-      <div className="absolute inset-0 bg-gradient-to-t from-bgp-ink/80 via-bgp-ink/25 to-bgp-ink/35" />
-      <div className="relative mx-auto w-full max-w-[1360px] px-4 pb-8 md:pb-[2.6rem]">
-        {label && <p className="label-caps md:text-xs text-white/80 mb-3">{label}</p>}
-        <p className={`max-w-[60%] font-normal text-2xl md:text-[2rem] leading-[1.12] text-white`} style={{ textShadow: "0 1px 3px rgba(0,0,0,0.35)" }}>{statement}</p>
+      <div className="hero-shade" />
+      <div className="site-container hero-content">
+        {label && <p className="label-caps text-bgp-cream mb-5">{label}</p>}
+        <p className={`hero-statement ${big ? "lg:max-w-[32ch]" : ""}`}>{statement}</p>
         {caption}
       </div>
     </section>
@@ -75,20 +86,19 @@ export function Hero({ src, alt, label, statement, caption, tall = false, big = 
 export function Band({ children, className = "", id }: { children: ReactNode; className?: string; id?: string }) {
   return (
     <section id={id} className={`bg-bgp-mist ${className}`}>
-      <div className="mx-auto max-w-[1360px] px-4 pt-10 pb-12 md:pt-10 md:pb-14">{children}</div>
+      <div className="site-container section-space">{children}</div>
     </section>
   );
 }
 
-// Section headings on every slide are small bold text over a rule (slides
-// 26, 28, 31, 32, 35, 38, 41, 45); page and case-study titles are large
-// light type. Brand Rep set the pattern on 2026-10-16; the rest follow.
+// Use the wireframes' heading-and-rule structure with the brand guide's
+// uppercase Century Gothic Pro Bold display typography.
 export function SectionHead({ title, sub, right, as: Tag = "h2", rule = true }: { title: ReactNode; sub?: ReactNode; right?: ReactNode; as?: "h1" | "h2"; rule?: boolean }) {
   return (
-    <div className={`flex flex-wrap items-end justify-between gap-x-8 gap-y-2 ${rule ? "border-b-[3px] border-bgp-ink pb-3 mb-8" : "mb-6"}`}>
+    <div className={`wire-section-head flex flex-wrap items-end justify-between gap-x-8 gap-y-4 ${rule ? "border-b border-bgp-wine pb-5 mb-8 md:mb-10" : "mb-8"}`}>
       <div>
-        <Tag className="text-[1.73rem] font-bold text-bgp-ink">{title}</Tag>
-        {sub && <p className="mt-1 text-[1.04rem] text-bgp-ink">{sub}</p>}
+        <Tag className="section-title">{title}</Tag>
+        {sub && <p className="mt-3 body-copy text-bgp-ink">{sub}</p>}
       </div>
       {right}
     </div>

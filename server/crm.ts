@@ -7633,7 +7633,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const teamStrLower = Array.isArray(deal.team)
           ? deal.team.join(",").toLowerCase()
           : String(deal.team || "").toLowerCase();
-        const isTenantRepTeam = /tenant\s*rep/.test(teamStrLower);
+        const isTenantRepTeam = /tenant\s*rep/.test(teamStrLower) || (deal as any).bgpActingFor === "tenant";
         const lookup = (id: string | null | undefined) => (id ? compMap.get(id) || null : null);
         const clientByRole =
           dt === "Sale"              ? lookup((deal as any).vendorId) :
