@@ -58,7 +58,7 @@ export const TEAM_ROSTER_2026: Array<{ name: string; teams: BgpTeamName[] }> = [
   { name: "Pete Wood", teams: ["Lease Advisory", "City"] },
   { name: "Tom Cater", teams: ["Lease Advisory"] },
   { name: "Harry Elliott", teams: ["Tenant Rep"] },
-  { name: "Carly Cunliffe", teams: ["Tenant Rep"] },
+  { name: "Carly Cunliffe", teams: ["Tenant Rep", "Shopping Centre", "London Estate"] }, // + Shopping Centre, London Estate (Woody, 2026-10-19)
   { name: "Beth Emmens", teams: ["Tenant Rep"] },
 ];
 export const NO_TEAM_ROSTER_2026 = ["Woody Bruce", "Rupert Bentley Smith", "Charlotte Roberts", "Layla O'Driscoll", "Cara Milligan", "Harriette Walker Clark", "Nick Goodman", "Emily Mitchell"];
