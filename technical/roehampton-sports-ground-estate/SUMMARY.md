@@ -51,9 +51,13 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   on The Grange is a placeholder value pending Related's residential underwrite.
 - Residential placeholder (Woody, 17 Oct 2026): the cottages are inside the £7m with The Grange, one lump;
   no separate cottage receipt.
-- Demise (Woody, 19 Oct 2026): the Third Space parcel also takes the terrace on the Pavilion's garden
-  (west / south-west) side, c. 7 m off the wall, and the 8 m approach from the Pavilion's south corner to
-  the Sports Club door; buildings parcel now c. 5,670 sq m, whole demise c. 1.3 ha with the pitch.
+- Demise (Woody, 19 Oct 2026, red line on a Google aerial): ONE parcel of c. 1.5 ha (15,270 sq m) for the
+  operator: Sports Club + permanent Pavilion, the garden and forecourt west of the Pavilion to the field
+  edge, the grounds east and south of the Sports Club to the NTC fence and the eastern boundary, and the
+  2G pitch; squash courts (+2.5 m) and temporary pavilion (+2.5 m) out. Polygon in `gia/ts_demise.json`
+  (frame coords) shared by demiseplan.py and aeltcplan.py, so the Club's lease (c. 7.9 ha) is the exact
+  complement. David Lloyd now also interested (19 Oct): `tools/demiseplan.py <S> dl` makes the same plan
+  branded for them (img/david-lloyd-plan.png, proposals PDF).
 - Deal mechanics (Woody, 17 Oct 2026): purchase, Third Space lease (with the capital contribution paid)
   and the Club's surrender and regrant all complete on the SAME DAY; nothing more is spent on the
   leisure side (landlord's works nil); The Grange and cottages are redeveloped as residential by the
