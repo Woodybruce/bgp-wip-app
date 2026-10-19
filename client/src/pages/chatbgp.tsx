@@ -2631,6 +2631,16 @@ export default function ChatBGP() {
       const res = await fetch(`/api/chat/threads/${threadId}`, { credentials: "include" });
       if (res.ok) {
         const data = await res.json();
+        // Team chats (gossip included) belong in the Team Chat panel — loaded
+        // here they rendered as untitled AI chats with everyone's messages
+        // as your own bubbles. Push links and the panel's expand button land
+        // here with team thread ids.
+        if (data.isAiChat === false) {
+          setActiveThreadId(null);
+          setMessages([]);
+          window.dispatchEvent(new CustomEvent("bgp:open-team-thread", { detail: { threadId } }));
+          return;
+        }
         const loaded: LocalMessage[] = (data.messages || []).map((m: any) => ({
           id: m.id,
           role: m.role as "user" | "assistant",

@@ -3004,7 +3004,11 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
               // the ?thread= param the page only had activeThreadId in
               // context but never loaded its messages — the "it clears when
               // I expand / move screen" complaint.
-              onClick={() => navigate(activeThreadId ? `/chatbgp?thread=${activeThreadId}` : "/chatbgp")}
+              // A team chat doesn't go full screen — the page opens fresh.
+              onClick={() => {
+                if (activeThreadId && !isActiveThreadAi) setActiveThreadId(null);
+                navigate(activeThreadId && isActiveThreadAi ? `/chatbgp?thread=${activeThreadId}` : "/chatbgp");
+              }}
               data-testid="button-panel-expand"
               title="Open full screen"
             >

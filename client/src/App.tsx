@@ -442,13 +442,31 @@ function AuthenticatedApp() {
   // The /chatbgp Messages list shows team chats too; clicking one there
   // fires this event so the Team Chat panel opens pinned on that thread
   // (the panel owns team messaging — sockets, typing, members).
+  // The desktop /chatbgp page has no panel mounted, so a click there (or a
+  // team-chat link landing there) steps back to the last page and hands the
+  // thread over once the panel is mounted.
+  const pendingTeamThreadRef = useRef<string | null>(null);
   useEffect(() => {
-    const onOpenTeamThread = () => { setChatPinned(true); setChatOpen(true); };
+    const onOpenTeamThread = (e: Event) => {
+      setChatPinned(true);
+      setChatOpen(true);
+      if (window.location.pathname === "/chatbgp") {
+        pendingTeamThreadRef.current = (e as CustomEvent).detail?.threadId || null;
+        if (window.history.length > 1) window.history.back();
+        else navigate("/");
+      }
+    };
     window.addEventListener("bgp:open-team-thread", onOpenTeamThread);
     return () => window.removeEventListener("bgp:open-team-thread", onOpenTeamThread);
   }, [setChatOpen]);
   const [location, navigate] = useLocation();
   const isChatBGP = location === "/chatbgp";
+  useEffect(() => {
+    const threadId = pendingTeamThreadRef.current;
+    if (isChatBGP || !threadId) return;
+    pendingTeamThreadRef.current = null;
+    window.dispatchEvent(new CustomEvent("bgp:open-team-thread", { detail: { threadId } }));
+  }, [isChatBGP]);
 
   // Sidebar open state is owned here so we can auto-collapse it when
   // ChatBGP opens (otherwise the main content gets squeezed between
