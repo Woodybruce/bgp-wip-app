@@ -1329,24 +1329,61 @@ function PricingCell({
   );
 }
 
-// Consolidated Client + Xero contact cell. Stacks client (landlord)
-// over the linked Xero billing contact. Click opens a popover with
-// the landlord picker (inline-create wired) and the Xero contact
-// picker (which writes id + cached name/account/address in one go).
+// Which party is OUR client on this deal. Mirrors the WIP report's role
+// pick (server/crm.ts) so the cell edits the company the report shows —
+// a Lease Disposal for the current tenant used to only offer landlords
+// (Carly, 2026-10-19).
+type ClientField = "landlordId" | "tenantId" | "vendorId" | "purchaserId";
+function clientFieldFor(deal: any): ClientField {
+  const dt = deal.dealType || "";
+  const team = (Array.isArray(deal.team) ? deal.team.join(",") : String(deal.team || "")).toLowerCase();
+  if (dt === "Sale") return "vendorId";
+  if (dt === "Purchase") return "purchaserId";
+  if (dt === "Lease Acquisition" || dt === "Lease Disposal") return "tenantId";
+  if (/tenant\s*rep/.test(team) || deal.bgpActingFor === "tenant") return "tenantId";
+  return "landlordId";
+}
+
+const CLIENT_CREATE_TYPE: Record<ClientField, string> = {
+  landlordId: "Landlord / Client",
+  tenantId: "Tenant",
+  vendorId: "Vendor",
+  purchaserId: "Purchaser",
+};
+
+function clientOptionsFor(field: ClientField, companies: CrmCompany[], currentId: string | null) {
+  const t = (c: CrmCompany) => c.companyType || "";
+  const ownerTypes = (c: CrmCompany) => t(c) === "Landlord" || t(c) === "Landlord / Client" || t(c) === "Client";
+  const pick =
+    field === "tenantId" ? (c: CrmCompany) => t(c).startsWith("Tenant") || t(c) === "Client" || t(c) === "Landlord / Client"
+    : field === "vendorId" ? (c: CrmCompany) => t(c) === "Vendor" || ownerTypes(c)
+    : field === "purchaserId" ? (c: CrmCompany) => t(c) === "Purchaser" || t(c) === "Investor" || t(c) === "Vendor" || ownerTypes(c)
+    : ownerTypes;
+  return companies.filter(c => pick(c) || c.id === currentId).map(c => ({ id: c.id, name: c.name }));
+}
+
+// Consolidated Client + Xero contact cell. Stacks the client (whichever
+// party clientFieldFor picks) over the linked Xero billing contact. Click
+// opens a popover with the client picker (inline-create wired) and the
+// Xero contact picker (which writes id + cached name/account/address in
+// one go).
 function ClientXeroCell({
-  deal, companies, onLandlordSave, onLandlordCreate, onXeroChange,
+  deal, companies, onClientSave, onClientCreate, onXeroChange,
 }: {
   deal: any;
   companies: CrmCompany[];
-  onLandlordSave: (v: string | null) => void;
-  onLandlordCreate: (name: string) => Promise<void> | void;
+  onClientSave: (field: ClientField, v: string | null) => void;
+  onClientCreate: (field: ClientField, companyType: string, name: string) => Promise<void> | void;
   onXeroChange: (c: { ContactID: string; Name: string; AccountNumber: string | null; BillingAddress: any } | null) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const clientField = clientFieldFor(deal);
+  const clientId: string | null = deal[clientField] || null;
+  const clientRoleLabel = { landlordId: "landlord", tenantId: "tenant", vendorId: "vendor", purchaserId: "purchaser" }[clientField];
   // No "Linked client" stand-in — it read as a real client name. An
   // unresolved link shows "—" like an empty one (Woody, 2026-09-27).
-  const clientName = deal.landlordId
-    ? (companies.find(c => c.id === deal.landlordId)?.name || null)
+  const clientName = clientId
+    ? (companies.find(c => c.id === clientId)?.name || null)
     : null;
   const xeroName = (deal as any).xeroContactName || null;
   const xeroAcct = (deal as any).xeroAccountNumber || null;
@@ -1384,14 +1421,17 @@ function ClientXeroCell({
         <div className="grid grid-cols-[80px_1fr] items-center gap-2">
           <Label className="text-xs text-muted-foreground">Client</Label>
           <InlineLinkSelect
-            value={deal.landlordId}
-            options={companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name }))}
-            href={deal.landlordId ? `/companies/${deal.landlordId}` : undefined}
-            onSave={onLandlordSave}
-            onCreate={(name) => onLandlordCreate(name)}
-            placeholder="Link client"
+            value={clientId}
+            options={clientOptionsFor(clientField, companies, clientId)}
+            href={clientId ? `/companies/${clientId}` : undefined}
+            onSave={(v) => onClientSave(clientField, v || null)}
+            onCreate={(name) => onClientCreate(clientField, CLIENT_CREATE_TYPE[clientField], name)}
+            placeholder={`Link ${clientRoleLabel}`}
           />
         </div>
+        <p className="text-[10px] text-muted-foreground pl-[88px] -mt-1.5">
+          {deal.dealType ? `${deal.dealType}: ` : ""}client is the {clientRoleLabel}
+        </p>
         <div className="grid grid-cols-[80px_1fr] items-start gap-2">
           <Label className="text-xs text-muted-foreground pt-1.5">Xero contact</Label>
           <XeroContactPicker
@@ -6790,21 +6830,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           <ClientXeroCell
                             deal={deal}
                             companies={companies}
-                            onLandlordSave={(v) => handleInlineSave(deal.id, "landlordId", v)}
-                            onLandlordCreate={async (name) => {
-                              try {
-                                const r = await apiRequest("POST", "/api/crm/companies", {
-                                  name: name.trim(),
-                                  companyType: "Landlord / Client",
-                                });
-                                const created = await r.json();
-                                queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-                                handleInlineSave(deal.id, "landlordId", String(created.id));
-                                toast({ title: "Client created", description: `${created.name || name} added.` });
-                              } catch (e: any) {
-                                toast({ title: "Create failed", description: e?.message || "Try again", variant: "destructive" });
-                              }
-                            }}
+                            onClientSave={(field, v) => handleInlineSave(deal.id, field, v)}
+                            onClientCreate={(field, companyType, name) => createCompanyForDeal(deal.id, field, companyType, name)}
                             onXeroChange={(c) => {
                               // One Xero pick = four deal fields to keep
                               // the cached billing snapshot in sync.
