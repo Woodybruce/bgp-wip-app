@@ -56,8 +56,10 @@ PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth pla
   edge, the grounds east and south of the Sports Club to the NTC fence and the eastern boundary, and the
   2G pitch; squash courts (+2.5 m) and temporary pavilion (+2.5 m) out. Polygon in `gia/ts_demise.json`
   (frame coords) shared by demiseplan.py and aeltcplan.py, so the Club's lease (c. 7.9 ha) is the exact
-  complement. David Lloyd now also interested (19 Oct): `tools/demiseplan.py <S> dl` makes the same plan
-  branded for them (img/david-lloyd-plan.png, proposals PDF).
+  complement. David Lloyd now also interested (19 Oct). `tools/pack.py [ts|dl]` builds an operator DEMISE PACK
+  per operator (proposals/`Roehampton - <op> - demise pack.pdf`, 3 A3 sheets: site plan from
+  demiseplan.py, floor-by-floor from demise.py, areas schedule rendered from HTML): both scripts take
+  `dl` to brand for David Lloyd. Temporary pavilion hatched + labelled excluded on the site plan.
 - Deal mechanics (Woody, 17 Oct 2026): purchase, Third Space lease (with the capital contribution paid)
   and the Club's surrender and regrant all complete on the SAME DAY; nothing more is spent on the
   leisure side (landlord's works nil); The Grange and cottages are redeveloped as residential by the
