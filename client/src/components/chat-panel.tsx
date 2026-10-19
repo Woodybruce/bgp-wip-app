@@ -1354,9 +1354,12 @@ interface ChatPanelProps {
   // Reports whether a draft (text or attached files) is in the composer, so
   // the hover-peek shell can refuse to tuck the panel away mid-draft.
   onDraftChange?: (hasDraft: boolean) => void;
+  // Full-width on the desktop /chatbgp page, opened straight onto a team chat.
+  fullPage?: boolean;
+  initialThreadId?: string;
 }
 
-export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftChange }: ChatPanelProps) {
+export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftChange, fullPage, initialThreadId }: ChatPanelProps) {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
@@ -2816,6 +2819,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
       const threadId = (e as CustomEvent).detail?.threadId;
       if (threadId) handleSelectThread(threadId);
     };
+    if (initialThreadId) handleSelectThread(initialThreadId);
     window.addEventListener("bgp:open-team-thread", onOpenTeamThread);
     return () => window.removeEventListener("bgp:open-team-thread", onOpenTeamThread);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2860,7 +2864,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   // focus / drag events.
   return (
     <div
-      className={`h-full w-full fixed inset-0 z-50 md:static md:w-[340px] md:ml-6 md:z-auto shrink-0 border-l bg-background flex flex-col ${open ? "" : "hidden"}`}
+      className={fullPage
+        ? "h-full w-full max-w-3xl border-x bg-background flex flex-col relative"
+        : `h-full w-full fixed inset-0 z-50 md:static md:w-[340px] md:ml-6 md:z-auto shrink-0 border-l bg-background flex flex-col ${open ? "" : "hidden"}`}
       data-testid="chat-panel"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
@@ -2994,7 +3000,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
               />
             </>
           )}
-          {view === "chat" && (
+          {view === "chat" && !fullPage && (
             <Button
               variant="ghost"
               size="icon"
@@ -3004,11 +3010,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
               // the ?thread= param the page only had activeThreadId in
               // context but never loaded its messages — the "it clears when
               // I expand / move screen" complaint.
-              // A team chat doesn't go full screen — the page opens fresh.
-              onClick={() => {
-                if (activeThreadId && !isActiveThreadAi) setActiveThreadId(null);
-                navigate(activeThreadId && isActiveThreadAi ? `/chatbgp?thread=${activeThreadId}` : "/chatbgp");
-              }}
+              onClick={() => navigate(activeThreadId ? `/chatbgp?thread=${activeThreadId}` : "/chatbgp")}
               data-testid="button-panel-expand"
               title="Open full screen"
             >
@@ -3020,6 +3022,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
             size="icon"
             className="h-7 w-7"
             onClick={onClose}
+            title={fullPage ? "Back to ChatBGP" : undefined}
             data-testid="button-panel-close"
           >
             <X className="w-4 h-4" />

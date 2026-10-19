@@ -2638,6 +2638,7 @@ export default function ChatBGP() {
         if (data.isAiChat === false) {
           setActiveThreadId(null);
           setMessages([]);
+          if (window.location.search.includes("thread=")) window.history.replaceState({}, "", window.location.pathname);
           window.dispatchEvent(new CustomEvent("bgp:open-team-thread", { detail: { threadId } }));
           return;
         }
