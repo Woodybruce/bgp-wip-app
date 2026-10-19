@@ -54,7 +54,7 @@ export const TEAM_ROSTER_2026: Array<{ name: string; teams: BgpTeamName[] }> = [
   { name: "Will Penfold", teams: ["London Estate"] },
   { name: "Lucy Gardiner", teams: ["High Street", "Shopping Centre"] }, // + Shopping Centre (Layla, 2026-10-13)
   { name: "Tracey Pollard", teams: ["High Street", "London Estate"] }, // + London Estate (Layla, 2026-10-13)
-  { name: "Libby Evans", teams: ["High Street"] },
+  { name: "Libby Evans", teams: ["High Street", "London Estate"] }, // + London Estate (Woody, 2026-10-19)
   { name: "Pete Wood", teams: ["Lease Advisory", "City"] },
   { name: "Tom Cater", teams: ["Lease Advisory"] },
   { name: "Harry Elliott", teams: ["Tenant Rep"] },
