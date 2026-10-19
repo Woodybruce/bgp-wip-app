@@ -270,3 +270,25 @@ services £136,484 · Insurance £1,500 · Exceptional £60,000.
   (King, Holgate LJJ, Dingemans SPT), judgment RESERVED, expected ~3 months; separate statutory-trust appeal has
   permission (Jul 2026), hearing by 15 Jul 2027; Supreme Court possible. No construction start date; AELTC talk of
   early 2030s for the show court; new grass needs c. 2 years to mature before a Qualifying can be played.
+
+## Nick's observations (19 Oct 2026) and the Lighthouse survey: base case rebuilt
+- Nick: Third Space will want a developer's shell (Pavilion partitions stripped, new ground-floor link or recladding
+  of the bridge link, Sports Club stripped back, roofs/glazing/elevations good for 20 years); they have asked for
+  TWO years' capital contribution and ONE year rent free; the demise should extend the terrace and take a large
+  arrival area on the car park side; a January 2027 lease start is unrealistic (works 3 months minimum); the HoTs
+  need alienation and the other institutional terms.
+- Lighthouse Surveyors vendor's survey (inspected Aug 2019, report 23 Aug 2020, Annexure 2 to the 2021 lease; M&E by
+  Troup Bywaters + Anders): immediate/short-term backlog £13.85m at 2019 prices: Pavilion £4.18m (fabric £2.5m +
+  M&E £1.68m), Sports hall & pool £4.665m (fabric £3.0m incl. concrete carbonation + M&E £1.665m), Squash £477k,
+  The Grange £3.795m (fabric £2.5m + M&E £1.295m), cottages £418k, externals £300k. Excludes fees, VAT, contingency,
+  fit-out. The Club's lease excused them from all of it (schedule of condition; pool M&E carve-out).
+- Base case now: completion Jan 2027 (purchase + surrender/regrant + agreement for lease); landlord's works to
+  developer's shell in 2027 at £130 psf (fabric items inflated + strip-out + link; M&E to the tenant's fit-out),
+  fees 15%; lease on handover target Q2 2027; capital contribution 2 years (£3.61m) on handover; rent free 1 year;
+  Third Space rent from 2028; exit end-2029. At £18m: profit −£1.0m (−2.8% on cost), uIRR 4.1%, lIRR −2.7%,
+  bid for 15% on cost c. £[see page]. The Grange's £3.8m backlog sits in Related's underwrite against the £7m value.
+- Plan 2 / packs: arrival area added on the car park side (between the squash courts and the pitch strip, down to the
+  first car park A bays); whole parcel c. 1.54 ha. HoTs rewritten: lease start on PC of landlord's works, 12 months
+  RF, 2 years' capital, works spec, alienation (assignment whole w/ AGA, underletting whole or per building, group
+  sharing, charging), repair from shell with warranties, insurance, service charge cap, user, alterations, inside
+  the Act, costs/VAT.
