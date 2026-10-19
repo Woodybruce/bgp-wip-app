@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { isGossipThread } from "@/components/gossip-summary";
+import { ChatPanel } from "@/components/chat-panel";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getQueryFn, apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -2127,8 +2128,9 @@ export default function ChatBGP() {
   }, [threads]);
 
   // Team chats join the same Messages list (one screen, WhatsApp-style —
-  // Woody, 2026-08-21). Clicking one opens the Team Chat panel on that
-  // thread; the panel owns team messaging (sockets, typing, members).
+  // Woody, 2026-08-21). Clicking one shows it in the main area through the
+  // Team Chat panel (it owns team messaging — sockets, typing, members),
+  // with this list staying alongside.
   const teamThreads = useMemo(() => {
     if (!threads) return [];
     const mine = threads.filter((t: any) => {
@@ -2147,6 +2149,10 @@ export default function ChatBGP() {
     return mine.sort((a: any, b: any) => Number(isGossipThread(b)) - Number(isGossipThread(a)) || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }, [threads, currentUser?.id, searchQuery]);
   const [showAllTeamThreads, setShowAllTeamThreads] = useState(false);
+  const activeTeamThread = useMemo(
+    () => (activeThreadId && threads?.find((t) => t.id === activeThreadId && !t.isAiChat)) || null,
+    [threads, activeThreadId]
+  );
 
   const filteredThreads = useMemo(() => {
     if (!searchQuery.trim()) return aiThreads;
@@ -2631,15 +2637,11 @@ export default function ChatBGP() {
       const res = await fetch(`/api/chat/threads/${threadId}`, { credentials: "include" });
       if (res.ok) {
         const data = await res.json();
-        // Team chats (gossip included) belong in the Team Chat panel — loaded
-        // here they rendered as untitled AI chats with everyone's messages
-        // as your own bubbles. Push links and the panel's expand button land
-        // here with team thread ids.
+        // Team chats (gossip included) render through the team chat view
+        // below (activeTeamThread) — loaded as AI messages they showed as
+        // untitled chats with everyone's messages as your own bubbles.
         if (data.isAiChat === false) {
-          setActiveThreadId(null);
           setMessages([]);
-          if (window.location.search.includes("thread=")) window.history.replaceState({}, "", window.location.pathname);
-          window.dispatchEvent(new CustomEvent("bgp:open-team-thread", { detail: { threadId } }));
           return;
         }
         const loaded: LocalMessage[] = (data.messages || []).map((m: any) => ({
@@ -3397,8 +3399,8 @@ export default function ChatBGP() {
                     key={t.id}
                     className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-muted/60 transition-colors text-left"
                     onClick={() => {
-                      setSidebarOpen(false);
-                      window.dispatchEvent(new CustomEvent("bgp:open-team-thread", { detail: { threadId: t.id } }));
+                      handleNewChat();
+                      setActiveThreadId(t.id);
                     }}
                     data-testid={`button-team-thread-${t.id}`}
                   >
@@ -3517,6 +3519,17 @@ export default function ChatBGP() {
         </div>
       </div>
 
+      {activeTeamThread ? (
+      <div className="flex-1 flex min-w-0 h-full overflow-hidden">
+        <ChatPanel
+          key={activeTeamThread.id}
+          open
+          fullPage
+          initialThreadId={activeTeamThread.id}
+          onClose={handleNewChat}
+        />
+      </div>
+      ) : (
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
         <div className="flex items-center gap-2.5 px-3 py-2.5 border-b shrink-0">
           {headerSearchOpen ? (
@@ -4270,6 +4283,7 @@ export default function ChatBGP() {
           )}
         </div>
       </div>
+      )}
 
       <NewPropertyDialog
         open={newPropertyOpen}

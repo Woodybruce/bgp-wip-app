@@ -461,7 +461,7 @@ function MessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, 
       className={`flex ${isOwn ? "justify-end" : "justify-start"}`}
       data-testid={`panel-message-${message.role}`}
     >
-      <div className={`max-w-[85%] ${isOwn ? "items-end" : "items-start"}`}>
+      <div className={`max-w-[85%] md:max-w-[min(85%,42rem)] ${isOwn ? "items-end" : "items-start"}`}>
         {showName && message.userName && (
           <div className={`text-[11px] font-semibold mb-0.5 ${getNameColor(message.userName)}`}>{message.userName}</div>
         )}
@@ -1354,7 +1354,8 @@ interface ChatPanelProps {
   // Reports whether a draft (text or attached files) is in the composer, so
   // the hover-peek shell can refuse to tuck the panel away mid-draft.
   onDraftChange?: (hasDraft: boolean) => void;
-  // Full-width on the desktop /chatbgp page, opened straight onto a team chat.
+  // Fills the main area of the desktop /chatbgp page, opened straight onto a
+  // team chat (the page's chat list stays alongside).
   fullPage?: boolean;
   initialThreadId?: string;
 }
@@ -2865,7 +2866,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   return (
     <div
       className={fullPage
-        ? "h-full w-full max-w-3xl border-x bg-background flex flex-col relative"
+        ? "h-full w-full min-w-0 bg-background flex flex-col relative"
         : `h-full w-full fixed inset-0 z-50 md:static md:w-[340px] md:ml-6 md:z-auto shrink-0 border-l bg-background flex flex-col ${open ? "" : "hidden"}`}
       data-testid="chat-panel"
       onDragEnter={handleDragEnter}
@@ -3017,16 +3018,17 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
               <Maximize2 className="w-3.5 h-3.5" />
             </Button>
           )}
+          {!fullPage && (
           <Button
             variant="ghost"
             size="icon"
             className="h-7 w-7"
             onClick={onClose}
-            title={fullPage ? "Back to ChatBGP" : undefined}
             data-testid="button-panel-close"
           >
             <X className="w-4 h-4" />
           </Button>
+          )}
         </div>
       </div>
 

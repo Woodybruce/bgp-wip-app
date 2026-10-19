@@ -442,37 +442,13 @@ function AuthenticatedApp() {
   // The /chatbgp Messages list shows team chats too; clicking one there
   // fires this event so the Team Chat panel opens pinned on that thread
   // (the panel owns team messaging — sockets, typing, members).
-  // On the desktop /chatbgp page there's no side panel — a team chat clicked
-  // there (or a team-chat link landing there) opens the panel full-width in
-  // place of the page, and closing it returns to the ChatBGP page.
-  const chatState = useChatBGPState();
-  const [fullPageTeamThread, setFullPageTeamThread] = useState<string | null>(null);
-  const pageThreadBeforeTeamRef = useRef<string | null>(null);
   useEffect(() => {
-    const onOpenTeamThread = (e: Event) => {
-      if (window.location.pathname === "/chatbgp") {
-        const threadId = (e as CustomEvent).detail?.threadId;
-        if (!threadId) return;
-        setFullPageTeamThread(prev => {
-          if (!prev) pageThreadBeforeTeamRef.current = chatState.activeThreadId;
-          return threadId;
-        });
-        return;
-      }
-      setChatPinned(true);
-      setChatOpen(true);
-    };
+    const onOpenTeamThread = () => { setChatPinned(true); setChatOpen(true); };
     window.addEventListener("bgp:open-team-thread", onOpenTeamThread);
     return () => window.removeEventListener("bgp:open-team-thread", onOpenTeamThread);
-  }, [setChatOpen, chatState.activeThreadId]);
-  const closeFullPageTeamThread = () => {
-    chatState.setActiveThreadId(pageThreadBeforeTeamRef.current);
-    pageThreadBeforeTeamRef.current = null;
-    setFullPageTeamThread(null);
-  };
+  }, [setChatOpen]);
   const [location, navigate] = useLocation();
   const isChatBGP = location === "/chatbgp";
-  useEffect(() => { if (!isChatBGP) setFullPageTeamThread(null); }, [isChatBGP]);
 
   // Sidebar open state is owned here so we can auto-collapse it when
   // ChatBGP opens (otherwise the main content gets squeezed between
@@ -713,10 +689,8 @@ function AuthenticatedApp() {
               onClick={() => {
                 // Back to the last non-chat page so the in-progress board
                 // (pathway/CRM/whatever) stays mounted underneath. Falls back
-                // to dashboard only on a cold-open of /chatbgp. A full-width
-                // team chat steps back to the ChatBGP page first.
-                if (fullPageTeamThread) closeFullPageTeamThread();
-                else if (window.history.length > 1) window.history.back();
+                // to dashboard only on a cold-open of /chatbgp.
+                if (window.history.length > 1) window.history.back();
                 else navigate("/");
               }}
               className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
@@ -742,21 +716,9 @@ function AuthenticatedApp() {
           </div>
         </header>
         <div className="flex-1 min-h-0 overflow-hidden">
-          {fullPageTeamThread ? (
-            <div className="h-full flex justify-center">
-              <ChatPanel
-                key={fullPageTeamThread}
-                open
-                fullPage
-                initialThreadId={fullPageTeamThread}
-                onClose={closeFullPageTeamThread}
-              />
-            </div>
-          ) : (
-            <Suspense fallback={<PageLoader />}>
-              <ChatBGP />
-            </Suspense>
-          )}
+          <Suspense fallback={<PageLoader />}>
+            <ChatBGP />
+          </Suspense>
         </div>
       </div>
     );
