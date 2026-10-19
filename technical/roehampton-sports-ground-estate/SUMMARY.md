@@ -239,3 +239,34 @@ services £136,484 · Insurance £1,500 · Exceptional £60,000.
 - 2004/4502 — permanent marquee for 250 at pavilion. Withdrawn.
 - 2003/2964 — the National Tennis Centre consent (indoor courts, accommodation, LTA offices, new
   Priory Lane access, replacement courts/pitches for BoE Sports Club, grounds building). Approved.
+
+## AELTG 2021 lease and agreement for lease (OCR'd 19 Oct 2026; text files beside the PDFs in legal/sports-centre)
+- Parties: Bank of England to The All England Lawn Tennis Ground plc, NO guarantor. Term 29 Jun 2021 to 31 Jul 2036,
+  contracted out. Nil premium (£35k paid for grounds equipment; gym kit left free). 2005 AELTC contract terminated.
+- LR9: no renewal right, no option/pre-emption over the reversion, no landlord right to call for the lease. No
+  landlord break or redevelopment break.
+- Rent £350k; reviewed every 1 Aug from 2026 to CPI, collar 1% / cap 3% (so c. £360.5k now); £675k from 1 Aug 2031.
+- Tenant break 31 Jul 2031 on >= 2 years' notice (deadline 31 Jul 2029); conditions rent paid + VP, landlord may waive.
+- Alienation: no assignment at all; no underletting of any part before the Break Date, after only with consent.
+- Repair: FRI capped to a photographic Schedule of Condition; no obligation for Lighthouse 2020 survey historic items;
+  NO obligation to repair/keep working the pool M&E or sports hall equipment. Dilaps leverage therefore weak.
+- Use: D2 sport/leisure + Qualifying + community sport; cl 9.1.3 Club MUST operate a community sports facility
+  throughout the term (outdoor facilities + changing rooms). 9.2: no parking on Estate Roads without landlord consent
+  (absolute discretion). 9.3.1 not left unoccupied > 3 months.
+- Car park = Common Part (outside demise). Club right: non-exclusive, spaces designated by landlord, ONLY outside
+  8am-6pm Mon-Fri. Gate 2 exclusive to the Club only during the Qualifying Competition Period (1 May-31 Jul max);
+  during that period they may park anywhere on their own demise incl. grass.
+- Service charge (Sched 5): fair proportion of estate costs incl. roads, car park operation, landscaping, security at
+  the main gate 7am-7pm daily, managing agents, improvements "in accordance with good estate management".
+  Landlord insures; Club pays Insurance Rent. Landlord's costs of enforcement/s146/dilaps recoverable (7.4).
+- Landlord reservations (Sched 2): build/alter/extend anything on the Estate on 2 months' notice + agreed method
+  statement (minimise during Qualifying); right of way over the roads and open areas within the Club's demise.
+- Planning: Club may not apply for planning permission without landlord consent (not unreasonably withheld), 11.1.3.
+  Estate regulations binding if reasonable (11.3). Alterations need consent save non-structural (8.3).
+- Forfeiture: non-payment 15 working days; material breach after notice; NO re-entry during the Qualifying Period
+  except for rent. Clause 23: landlord to use reasonable endeavours to minimise impact on the Qualifying, but the
+  lease terms prevail over clause 23.
+- Wimbledon Park status (19 Oct 2026): Court of Appeal heard Save Wimbledon Park's planning JR appeal 7-8 Oct 2026
+  (King, Holgate LJJ, Dingemans SPT), judgment RESERVED, expected ~3 months; separate statutory-trust appeal has
+  permission (Jul 2026), hearing by 15 Jul 2027; Supreme Court possible. No construction start date; AELTC talk of
+  early 2030s for the show court; new grass needs c. 2 years to mature before a Qualifying can be played.
