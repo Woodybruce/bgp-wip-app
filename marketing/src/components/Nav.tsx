@@ -124,7 +124,7 @@ export default function Nav() {
       }}
     >
       <div className="site-container redesign-nav__inner">
-        <Link href="/" aria-label="Bruce Gillingham Pollard home" onClick={closeMenus} className="redesign-nav__logo">
+        <Link href="/" aria-label="BGP home" onClick={closeMenus} className="redesign-nav__logo">
           <img src="/brand/bgp-block-bordeaux.svg" alt="" width="77" height="50" />
         </Link>
 

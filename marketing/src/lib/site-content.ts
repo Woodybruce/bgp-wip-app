@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { CASE_STUDY_IMAGE_OVERRIDES } from "./design-imagery";
+import { brandCopy } from "./brand";
 import {
   ARTICLES,
   BRAND_REP_CONTACTS,
@@ -64,13 +65,13 @@ function fromApi(j: any): SiteContent {
       const b = CASE_STUDIES.find((x) => x.slug === r.slug);
       return {
         slug: r.slug,
-        title: r.title,
+        title: brandCopy(r.title || ""),
         service: r.service,
-        blurb: r.blurb,
+        blurb: brandCopy(r.blurb || ""),
         image: CASE_STUDY_IMAGE_OVERRIDES[r.slug] || r.imageUrl || b?.image,
         gallery: Array.isArray(r.galleryUrls) && r.galleryUrls.filter(Boolean).length ? r.galleryUrls.filter(Boolean) : b?.gallery || [],
         facts: Array.isArray(r.facts) ? r.facts : [],
-        body: r.body || [],
+        body: (r.body || []).map(brandCopy),
         location: b?.location,
         quote: b?.quote,
         draft: b?.draft,
@@ -78,12 +79,12 @@ function fromApi(j: any): SiteContent {
     }),
     articles: (j.news || []).map((r: any) => ({
       slug: r.slug,
-      title: r.title,
+      title: brandCopy(r.title || ""),
       category: r.category || "News",
       date: r.date || "",
-      author: r.author || "BGP",
-      standfirst: r.standfirst || "",
-      body: r.body ?? null,
+      author: brandCopy(r.author || "BGP"),
+      standfirst: brandCopy(r.standfirst || ""),
+      body: r.body?.map(brandCopy) ?? null,
       image: r.imageUrl || undefined,
     })),
     contacts: {

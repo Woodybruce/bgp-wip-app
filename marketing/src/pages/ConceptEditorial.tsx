@@ -20,7 +20,7 @@ export default function ConceptEditorial() {
   const selectedPlace = places[placeIndex];
   const coverStory = caseStudies.find(story => story.slug === "percival-neal-street");
   const leasing = SERVICES.find(service => service.slug === "leasing")!;
-  const stories = ["atis-loxton-walk", "masaj-islington-square"]
+  const stories = ["the-royal-exchange", "masaj-islington-square"]
     .map(slug => caseStudies.find(story => story.slug === slug))
     .filter((story): story is NonNullable<typeof story> => !!story);
   const people = ["Charlotte Roberts", "Harry Elliott", "Peter Wood"]
@@ -39,7 +39,6 @@ export default function ConceptEditorial() {
         <Link href="/concepts/editorial" className="ce-logo" aria-label="BGP Editorial home">
           <img src="/brand/bgp-block-bordeaux.svg" width="77" height="50" alt="BGP" />
         </Link>
-        <p className="ce-header-note">Bruce Gillingham<br />Pollard</p>
         <nav className="ce-desktop-nav" aria-label="Main navigation">
           <a href="#ce-stories">Case studies</a>
           <a href="#ce-expertise">Expertise</a>
@@ -59,7 +58,7 @@ export default function ConceptEditorial() {
       <div id="ce-content">
         <section className="ce-hero ce-wrap" aria-labelledby="ce-title">
           <div className="ce-hero-copy">
-            <p className="ce-kicker">Bruce Gillingham Pollard</p>
+            <p className="ce-kicker">BGP</p>
             <h1 id="ce-title">{HOME_INTRO.lead.split(" ").slice(0, -1).join(" ")}{" "}<em>{HOME_INTRO.lead.split(" ").slice(-1)[0]}</em></h1>
             <p className="ce-hero-intro">{HERO_STATEMENT}</p>
             <a href="#ce-stories" className="ce-line-link">View case studies</a>
@@ -78,7 +77,7 @@ export default function ConceptEditorial() {
         </section>
 
         <section className="ce-intro ce-wrap" aria-labelledby="ce-intro-heading">
-          <p className="ce-kicker">Bruce Gillingham Pollard</p>
+          <p className="ce-kicker">BGP</p>
           <div className="ce-intro-grid">
             <h2 id="ce-intro-heading">About <em>BGP</em></h2>
             <div className="ce-intro-copy">{HOME_INTRO.body.map(paragraph => <p key={paragraph}>{paragraph}</p>)}</div>
@@ -86,7 +85,7 @@ export default function ConceptEditorial() {
         </section>
 
         <section className="ce-stories ce-wrap" id="ce-stories" aria-labelledby="ce-stories-heading">
-          <div className="ce-section-rule"><p className="ce-kicker">01 / Brand Representation</p><h2 id="ce-stories-heading">Case <em>studies</em></h2><Link href="/brand-representation" className="ce-line-link">Brand Representation</Link></div>
+          <div className="ce-section-rule"><p className="ce-kicker">01 / BGP</p><h2 id="ce-stories-heading">Case <em>studies</em></h2><a href="#ce-expertise" className="ce-line-link">Expertise</a></div>
           <div className="ce-stories-grid">
             {stories.map((story, index) => <Link key={story.slug} href={`/case-studies/${story.slug}`} className={`ce-story ce-story-${index + 1}`}>
               <div className="ce-story-image"><img src={story.image} alt={story.title} loading="lazy" /></div>
@@ -119,7 +118,7 @@ export default function ConceptEditorial() {
         <section className="ce-journal ce-wrap" id="ce-journal" aria-label="BGP journal and social posts"><NewsSocialBoard compact /></section>
 
         <section className="ce-people ce-wrap" aria-labelledby="ce-people-heading">
-          <div className="ce-people-heading"><p className="ce-kicker">Bruce Gillingham Pollard</p><h2 id="ce-people-heading">The BGP <em>team</em></h2><Link href="/team" className="ce-line-link">View the team</Link></div>
+          <div className="ce-people-heading"><p className="ce-kicker">BGP</p><h2 id="ce-people-heading">The BGP <em>team</em></h2><Link href="/team" className="ce-line-link">View the team</Link></div>
           <div className="ce-portraits">{people.map(person => <Link key={person.name} href="/team" className="ce-person"><img src={person.photo} alt={person.name} loading="lazy" /><h3>{person.name}</h3><p>{person.title}</p></Link>)}</div>
         </section>
       </div>
@@ -128,7 +127,7 @@ export default function ConceptEditorial() {
         <div className="ce-wrap">
           <div className="ce-footer-invitation"><p className="ce-kicker">Contact</p><a href={`mailto:${CONTACT.email}`}>Talk to <em>us</em></a></div>
           <div className="ce-footer-details"><address>{CONTACT.addressLines.map(line => <span key={line}>{line}</span>)}</address><div><a href={`tel:${CONTACT.phone.replace(/[^+\d]/g, "")}`}>{CONTACT.phone}</a><a href={`mailto:${CONTACT.email}`}>{CONTACT.email}</a></div><div><a href="https://www.instagram.com/brucegillinghampollard/" target="_blank" rel="noreferrer">Instagram</a><a href="https://www.linkedin.com/company/bruce-gillingham-pollard" target="_blank" rel="noreferrer">LinkedIn</a></div></div>
-          <div className="ce-footer-base"><img src="/brand/bgp-block-nectar.svg" width="77" height="50" alt="BGP" /><p>© {new Date().getFullYear()} Bruce Gillingham Pollard</p><a href="https://www.brucegillinghampollard.com/privacy/" target="_blank" rel="noreferrer">Privacy policy</a></div>
+          <div className="ce-footer-base"><img src="/brand/bgp-block-nectar.svg" width="77" height="50" alt="BGP" /><p>© {new Date().getFullYear()} BGP</p><a href="https://www.brucegillinghampollard.com/privacy/" target="_blank" rel="noreferrer">Privacy policy</a></div>
         </div>
       </footer>
     </div>

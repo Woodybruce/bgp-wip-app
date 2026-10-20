@@ -2,13 +2,12 @@ import { useRef, useState } from "react";
 import { Link } from "wouter";
 import { CONTACT, HERO_STATEMENT, HOME_INTRO, LEASING_SECTORS, SERVICES } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
-import { ATIS_IMAGE, ATIS_IMAGE_ALT } from "../lib/design-imagery";
 import NewsSocialBoard from "../components/NewsSocialBoard";
 import "./concept-pulse.css";
 
 const spotlights = [
   { image: "/images/hero/portman-chiltern-street.jpg", alt: "Independent shops and cafés on Chiltern Street, Marylebone", place: "The Portman Estate", kind: "London Estates", href: "/leasing/sectors/london-estates" },
-  { image: ATIS_IMAGE, alt: ATIS_IMAGE_ALT, place: "atis, Loxton Walk", kind: "Brand Representation", href: "/case-studies/atis-loxton-walk" },
+  { image: "/images/investment/royal-exchange-courtyard.jpg", alt: "The Royal Exchange terrace with its stone columns, cafés and flowers", place: "The Royal Exchange", kind: "Investment", href: "/case-studies/the-royal-exchange" },
   { image: "/images/case-studies/landsec/westgate/westgate-8.jpg", alt: "The rooftop restaurant terrace at Westgate Oxford", place: "Westgate, Oxford", kind: "Shopping Centres", href: "/case-studies/westgate-oxford" },
 ];
 const places = [
@@ -39,8 +38,7 @@ export default function ConceptPulse() {
       <header className="cp-header" onKeyDown={event => {
         if (event.key === "Escape" && menuOpen) { setMenuOpen(false); menuButton.current?.focus(); }
       }}>
-        <Link href="/concepts/pulse" className="cp-logo" aria-label="Bruce Gillingham Pollard home"><img src="/brand/bgp-block-nectar.svg" alt="" width="77" height="50" /></Link>
-        <p className="cp-header-signature">Bruce Gillingham<br />Pollard</p>
+        <Link href="/concepts/pulse" className="cp-logo" aria-label="BGP home"><img src="/brand/bgp-block-nectar.svg" alt="" width="77" height="50" /></Link>
         <button type="button" ref={menuButton} className="cp-menu-button" aria-expanded={menuOpen} aria-controls="cp-navigation" onClick={() => setMenuOpen(!menuOpen)}>{menuOpen ? "Close" : "Menu"}<span aria-hidden="true">{menuOpen ? "−" : "+"}</span></button>
         <nav id="cp-navigation" className={`cp-nav${menuOpen ? " is-open" : ""}`} aria-label="Main navigation">
           <a href="#cp-work" onClick={() => setMenuOpen(false)}>Case studies</a>
@@ -65,7 +63,7 @@ export default function ConceptPulse() {
 
       <section className="cp-about cp-wrap" aria-labelledby="cp-about-title">
         <p className="cp-label"><span>01 /</span> About BGP</p>
-        <div><h2 id="cp-about-title">Bruce Gillingham<br /><span>Pollard</span></h2>
+        <div><h2 id="cp-about-title">About BGP</h2>
           <div className="cp-about-copy">{HOME_INTRO.body.map(paragraph => <p key={paragraph}>{paragraph}</p>)}</div>
         </div>
       </section>
@@ -102,7 +100,7 @@ export default function ConceptPulse() {
 
       <div className="cp-journal cp-wrap" id="cp-journal"><NewsSocialBoard compact /></div>
 
-      <footer className="cp-footer" id="cp-contact"><div className="cp-wrap"><p className="cp-label">Contact</p><a href={`mailto:${CONTACT.email}`} className="cp-footer-invitation">Talk to us.</a><div className="cp-contact-details"><a href={`tel:${CONTACT.phone.replace(/\D/g, "")}`}>{CONTACT.phone}</a><address>{CONTACT.addressLines.join(", ")}</address><div><a href="https://www.linkedin.com/company/bruce-gillingham-pollard" target="_blank" rel="noreferrer">LinkedIn</a><a href="https://www.instagram.com/brucegillinghampollard/" target="_blank" rel="noreferrer">Instagram</a></div></div><div className="cp-footer-base"><Link href="/concepts/pulse" aria-label="Bruce Gillingham Pollard home"><img src="/brand/bgp-block-nectar.svg" alt="" width="77" height="50" /></Link><span>© {new Date().getFullYear()} Bruce Gillingham Pollard</span><a href="https://www.brucegillinghampollard.com/privacy/" target="_blank" rel="noreferrer">Privacy policy</a></div></div></footer>
+      <footer className="cp-footer" id="cp-contact"><div className="cp-wrap"><p className="cp-label">Contact</p><a href={`mailto:${CONTACT.email}`} className="cp-footer-invitation">Talk to us.</a><div className="cp-contact-details"><a href={`tel:${CONTACT.phone.replace(/\D/g, "")}`}>{CONTACT.phone}</a><address>{CONTACT.addressLines.join(", ")}</address><div><a href="https://www.linkedin.com/company/bruce-gillingham-pollard" target="_blank" rel="noreferrer">LinkedIn</a><a href="https://www.instagram.com/brucegillinghampollard/" target="_blank" rel="noreferrer">Instagram</a></div></div><div className="cp-footer-base"><Link href="/concepts/pulse" aria-label="BGP home"><img src="/brand/bgp-block-nectar.svg" alt="" width="77" height="50" /></Link><span>© {new Date().getFullYear()} BGP</span><a href="https://www.brucegillinghampollard.com/privacy/" target="_blank" rel="noreferrer">Privacy policy</a></div></div></footer>
     </div>
   );
 }

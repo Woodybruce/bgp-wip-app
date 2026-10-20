@@ -2,13 +2,11 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { HERO_STATEMENT, HOME_INTRO, LEASING_SECTORS, SERVICES, TESTIMONIAL } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
-import { ATIS_IMAGE, ATIS_IMAGE_ALT } from "../lib/design-imagery";
 import NewsSocialBoard from "../components/NewsSocialBoard";
 import "./home-redesign.css";
 
 const scenes = [
   { image: "/images/hero/portman-chiltern-street.jpg", alt: "Independent shops and cafés along Chiltern Street", title: "The Portman Estate", label: "London Estates", href: "/leasing/sectors/london-estates" },
-  { image: ATIS_IMAGE, alt: ATIS_IMAGE_ALT, title: "atis, Loxton Walk", label: "Brand representation", href: "/case-studies/atis-loxton-walk" },
   { image: "/images/case-studies/landsec/westgate/westgate-8.jpg", alt: "The restaurant terrace at Westgate, Oxford", title: "Westgate, Oxford", label: "Shopping Centres", href: "/case-studies/westgate-oxford" },
   { image: "/images/hero/royal-exchange.jpg", alt: "The Royal Exchange in the City of London", title: "The Royal Exchange", label: "Investment", href: "/case-studies/the-royal-exchange" },
 ];
@@ -44,7 +42,6 @@ export default function Home() {
   return (
     <div className="new-home">
       <section className="retail-intro" aria-labelledby="retail-title">
-        <p className="retail-eyebrow">Bruce Gillingham Pollard</p>
         <h1 id="retail-title">{HOME_INTRO.lead}</h1>
         <p className="retail-intro__line">{HERO_STATEMENT}</p>
         <div className="retail-actions">
@@ -62,15 +59,14 @@ export default function Home() {
           </div>
         </div>
         <div className="retail-stage__controls">
-          <p>Bruce Gillingham Pollard</p>
           <div aria-label="Choose a featured place" className="retail-stage__dots">
             {scenes.map((item, index) => <button type="button" key={item.title} aria-label={`Show ${item.title}`} aria-pressed={scene === index} onClick={() => setScene(index)}><span /></button>)}
-            <span className="retail-stage__number" aria-hidden>0{scene + 1} / 04</span>
+            <span className="retail-stage__number" aria-hidden>0{scene + 1} / {String(scenes.length).padStart(2, "0")}</span>
           </div>
         </div>
       </section>
       <section className="retail-about retail-wrap" aria-labelledby="about-heading">
-        <div><h2 id="about-heading">Bruce Gillingham<br /><span>Pollard</span></h2></div>
+        <div><h2 id="about-heading">About BGP</h2></div>
         <div className="retail-about__copy">
           <p>{HOME_INTRO.body[0]}</p>
           <details><summary>Find out more <span aria-hidden>+</span></summary><div>{HOME_INTRO.body.slice(1).map(paragraph => <p key={paragraph}>{paragraph}</p>)}</div></details>

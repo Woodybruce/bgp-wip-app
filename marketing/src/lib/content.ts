@@ -789,7 +789,7 @@ export const ARTICLES: Article[] = [
   },
   {
     slug: "millie-edwards-joins-leasing-team",
-    title: "Bruce Gillingham Pollard Appoints Millie Edwards to Leasing Team and Announces Promotions",
+    title: "BGP Appoints Millie Edwards to Leasing Team and Announces Promotions",
     category: "News",
     date: "2025",
     author: "BGP",
@@ -807,7 +807,7 @@ export const ARTICLES: Article[] = [
   },
   {
     slug: "kilburn-mews",
-    title: "Bruce Gillingham Pollard Appointed to Lease Kilburn Mews",
+    title: "BGP Appointed to Lease Kilburn Mews",
     category: "News",
     date: "2025",
     author: "BGP",

@@ -66,7 +66,7 @@ export default function Footer() {
 
       <div className="redesign-footer__base">
         <div className="site-container redesign-footer__base-inner">
-          <Link href="/" aria-label="Bruce Gillingham Pollard home" className="redesign-footer__logo">
+          <Link href="/" aria-label="BGP home" className="redesign-footer__logo">
             <img src="/brand/bgp-block-nectar.svg" alt="" width="77" height="50" />
           </Link>
           <div className="redesign-footer__legal">
@@ -74,7 +74,7 @@ export default function Footer() {
               <a href="https://www.brucegillinghampollard.com/privacy/" target="_blank" rel="noreferrer">Privacy policy</a>
               <a href="https://www.brucegillinghampollard.com/terms-and-conditions/" target="_blank" rel="noreferrer">Terms and conditions</a>
             </div>
-            <p>© Bruce Gillingham Pollard 2013–{new Date().getFullYear()}. All registered trademarks.</p>
+            <p>© BGP 2013–{new Date().getFullYear()}. All registered trademarks.</p>
           </div>
           <div className="redesign-footer__social">
             <a href="https://www.linkedin.com/company/bruce-gillingham-pollard" target="_blank" rel="noreferrer" aria-label="BGP on LinkedIn">LinkedIn</a>

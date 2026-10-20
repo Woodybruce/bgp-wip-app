@@ -8,7 +8,7 @@
 .new-home h2 { font-size:clamp(36px,3.5vw,54px); line-height:1.08; font-weight:600; letter-spacing:-.045em; text-wrap:balance; }
 .new-home h2>span { color:var(--retail-muted); }
 .new-home .retail-eyebrow { font-size:12px; letter-spacing:.12em; text-transform:uppercase; font-weight:600; color:var(--retail-muted); }
-.retail-intro { padding:65px 24px 46px; text-align:center; }
+.retail-intro { padding:44px 24px 36px; text-align:center; }
 .retail-intro .retail-eyebrow { margin-bottom:18px; }
 .new-home .retail-intro h1 { font-size:clamp(48px,6.7vw,96px); font-weight:600; letter-spacing:-.065em; line-height:1.06; text-wrap:balance; }
 .retail-intro h1 span { color:var(--retail-accent); }
@@ -28,17 +28,17 @@
 .new-home .retail-stage__caption h2 { font-size:clamp(26px,2.8vw,40px); font-weight:500; letter-spacing:-.035em; }
 .retail-round-link { display:flex; align-items:center; justify-content:center; min-width:66px; height:44px; border:1px solid #ffffff9c; border-radius:22px; padding-inline:14px; font-size:14px; transition:background .2s; }
 .retail-round-link:hover { background:#ffffff30; }
-.retail-stage__controls { padding:12px 16px; display:flex; align-items:center; justify-content:space-between; color:var(--retail-muted); font-size:12px; }
+.retail-stage__controls { padding:4px 16px; display:flex; align-items:center; justify-content:flex-end; color:var(--retail-muted); font-size:12px; }
 .retail-stage__dots { display:flex; align-items:center; gap:2px; }
 .retail-stage__dots button { display:grid; place-items:center; width:32px; height:44px; }
 .retail-stage__dots button span { height:5px; width:5px; border-radius:5px; background:#b5b6b0; transition:width .2s; }
 .retail-stage__dots button[aria-pressed=true] span { background:var(--retail-accent); width:22px; }
 .retail-stage__number { padding-left:16px; font-variant-numeric:tabular-nums; font-size:11px; letter-spacing:.05em; }
-.retail-about { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:64px; padding-block:clamp(56px,6.1vw,88px); }
+.retail-about { display:grid; grid-template-columns:minmax(0,.7fr) minmax(0,1.3fr); gap:40px; padding-block:24px 48px; }
 .retail-about .retail-eyebrow { margin-bottom:22px; }
-.retail-about__copy { max-width:565px; }
-.retail-about__copy>p { font-size:25px; line-height:1.45; letter-spacing:-.02em; }
-.retail-about details { margin-top:23px; font-size:16px; }
+.retail-about__copy { max-width:72ch; }
+.retail-about__copy>p { font-size:clamp(20px,1.6vw,23px); line-height:1.45; letter-spacing:-.02em; }
+.retail-about details { margin-top:12px; font-size:16px; }
 .retail-about summary { display:flex; gap:24px; align-items:center; cursor:pointer; color:var(--retail-accent); min-height:44px; list-style:none; width:fit-content; }
 .retail-about summary::-webkit-details-marker { display:none; }
 .retail-about details[open] summary span { transform:rotate(45deg); }
@@ -96,7 +96,7 @@
   .retail-work__grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
   .retail-project__image { height:auto; aspect-ratio:4/3; max-height:360px; }
   .new-home .retail-project h3 { font-size:22px; }
-  .retail-about { gap:44px; }
+  .retail-about { gap:32px; }
   .retail-expertise__grid { gap:32px; }
   .retail-service h3 button { font-size:20px; }
   .retail-people { grid-template-columns:1fr; gap:32px; }
@@ -114,7 +114,7 @@
 @media(max-width:700px) {
   .retail-wrap { width:calc(100% - 40px); }
   .new-home h2 { font-size:clamp(30px,8vw,36px); line-height:1.12; }
-  .retail-intro { padding:42px 20px 30px; }
+  .retail-intro { padding:28px 20px; }
   .new-home .retail-intro h1 { font-size:clamp(44px,11.5vw,70px); letter-spacing:-.055em; }
   .retail-intro__line { max-width:340px; }
   .retail-actions { gap:14px; margin-top:23px; }
@@ -128,7 +128,7 @@
   .retail-stage__controls>p { max-width:125px; font-size:10px; }
   .retail-stage__dots button { width:25px; }
   .retail-stage__number { padding-left:7px; font-size:10px; }
-  .retail-about { padding-block:56px; }
+  .retail-about { padding-block:20px 36px; gap:20px; }
   .retail-about__copy>p { font-size:20px; line-height:1.5; }
   .retail-section-head { flex-direction:column; align-items:start; gap:18px; margin-bottom:28px; }
   .retail-work { padding-block:58px; }
