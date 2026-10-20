@@ -2,12 +2,13 @@ import { useRef, useState } from "react";
 import { Link } from "wouter";
 import { CONTACT, HERO_STATEMENT, HOME_INTRO, LEASING_SECTORS, SERVICES } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
+import { ATIS_IMAGE, ATIS_IMAGE_ALT } from "../lib/design-imagery";
 import NewsSocialBoard from "../components/NewsSocialBoard";
 import "./concept-pulse.css";
 
 const spotlights = [
   { image: "/images/hero/portman-chiltern-street.jpg", alt: "Independent shops and cafés on Chiltern Street, Marylebone", place: "The Portman Estate", kind: "London Estates", href: "/leasing/sectors/london-estates" },
-  { image: "/images/case-studies/atis-loxton-walk.jpg", alt: "People gathering outside atis on Loxton Walk", place: "atis, Loxton Walk", kind: "Brand Representation", href: "/case-studies/atis-loxton-walk" },
+  { image: ATIS_IMAGE, alt: ATIS_IMAGE_ALT, place: "atis, Loxton Walk", kind: "Brand Representation", href: "/case-studies/atis-loxton-walk" },
   { image: "/images/case-studies/landsec/westgate/westgate-8.jpg", alt: "The rooftop restaurant terrace at Westgate Oxford", place: "Westgate, Oxford", kind: "Shopping Centres", href: "/case-studies/westgate-oxford" },
 ];
 const places = [

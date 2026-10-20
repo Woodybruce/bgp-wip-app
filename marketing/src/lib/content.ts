@@ -1,6 +1,7 @@
 // Site copy. Sourced from the current brucegillinghampollard.com site, the
 // dashboard team directory, the December 2025 wireframe deck and Emmy's
 // "Website copy 7 Oct" document (went live 2026-10-12).
+import { ATIS_IMAGE } from "./design-imagery";
 
 export const SERVICES = [
   {
@@ -453,7 +454,7 @@ export const CASE_STUDIES: CaseStudy[] = [
       "We acquired Atis's Loxton Walk site as part of its London roll-out, seriously tasty bowls and salads for a lunchtime office crowd.",
       "Atis has grown from a single City Road site to a network across London with BGP acquiring each one.",
     ],
-    image: "/images/case-studies/atis-loxton-walk.jpg",
+    image: ATIS_IMAGE,
     gallery: ["/images/case-studies/atis-loxton-walk-2.jpg", "/images/case-studies/atis-loxton-walk-3.jpg"],
   },
   {

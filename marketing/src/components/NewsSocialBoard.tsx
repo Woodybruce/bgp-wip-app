@@ -48,7 +48,7 @@ function SocialCard({ post }: { post: SocialPost }) {
     <article className="nsb-social-card">
       <a className="nsb-social-link" href={post.url} target="_blank" rel="noopener noreferrer" aria-label={`${post.title} View ${post.account} on ${post.provider} (opens in a new tab)`}>
         <div className="nsb-social-image">
-          <img src={post.image} alt={post.imageAlt} width={post.imageWidth} height={post.imageHeight} loading="lazy" />
+          <img src={post.image} alt={post.imageAlt} width={post.imageWidth} height={post.imageHeight} style={{ objectPosition: post.imagePosition }} loading="lazy" />
           <span className="nsb-social-badge"><ProviderIcon provider={post.provider} />{post.provider}</span>
         </div>
         <div className="nsb-social-copy">

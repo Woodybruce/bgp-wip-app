@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CASE_STUDY_IMAGE_OVERRIDES } from "./design-imagery";
 import {
   ARTICLES,
   BRAND_REP_CONTACTS,
@@ -66,7 +67,7 @@ function fromApi(j: any): SiteContent {
         title: r.title,
         service: r.service,
         blurb: r.blurb,
-        image: r.imageUrl || b?.image,
+        image: CASE_STUDY_IMAGE_OVERRIDES[r.slug] || r.imageUrl || b?.image,
         gallery: Array.isArray(r.galleryUrls) && r.galleryUrls.filter(Boolean).length ? r.galleryUrls.filter(Boolean) : b?.gallery || [],
         facts: Array.isArray(r.facts) ? r.facts : [],
         body: r.body || [],
