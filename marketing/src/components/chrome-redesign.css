@@ -109,7 +109,7 @@ html:root { --site-header-height: 76px; }
   position: absolute;
   top: 100%;
   inset-inline: 0;
-  max-height: calc(100dvh - var(--site-header-height));
+  max-height: calc(100dvh - var(--site-header-height) - var(--preview-dock-space, 0px));
   overflow-y: auto;
   overscroll-behavior: contain;
   border-bottom: 1px solid rgb(36 36 36 / 10%);

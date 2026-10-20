@@ -188,7 +188,10 @@
   .ce-hero h1 { font-size: clamp(43px, 10.5vw, 76px); line-height: 1.07; margin: 20px 0 0; letter-spacing: -.055em; }
   .ce-hero-intro { padding-top: 21px; font-size: 14px; }
   .ce-hero-copy > .ce-line-link { margin-top: 13px; }
-  .ce-hero-small { display: none; }
+  .ce-hero-small { display:grid; grid-template-columns:100px minmax(0,1fr); align-items:center; gap:16px; margin-top:24px; }
+  .ce-hero-small > img { height:88px; }
+  .ce-hero-small > span { align-items:start; padding-top:0; }
+  .ce-hero-small .ce-serif { font-size:22px; }
   .ce-cover { width: 100%; }
   .ce-cover-image { flex: none; min-height: 0; aspect-ratio: .85; }
   .ce-cover-image img { object-position: center 49%; }

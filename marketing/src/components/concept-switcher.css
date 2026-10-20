@@ -13,13 +13,22 @@
 .concept-switcher nav a:hover { background:#f3eeec; }
 .concept-switcher nav a[aria-current=page] { background:#6e0c25; color:#fff; }
 .concept-switcher a:focus-visible { outline:2px solid #6e0c25; outline-offset:2px; }
-.redesign-layout { padding-bottom:86px; }
+.concept-switcher__phone { display:flex; align-items:center; min-height:44px; padding:9px 14px; border-left:1px solid #ded8d3; white-space:nowrap; color:#6e0c25; }
+.concept-switcher__phone:hover { text-decoration:underline; }
+.concept-switcher__phone>span:last-child { display:none; }
+.redesign-layout { --preview-dock-space:86px; padding-bottom:var(--preview-dock-space); }
+.redesign-layout--preview { --preview-dock-space:0px; }
+.redesign-layout--preview .concept-pulse { padding-bottom:0; }
+.redesign-layout--preview .ce-footer { padding-bottom:40px; }
 @media(max-width:600px) {
-  .concept-switcher { gap:7px; padding:6px; width:calc(100% - 24px); }
-  .concept-switcher__label { font-size:11px; padding-left:6px; }
-  .concept-switcher__label>span { font-size:8px; max-width:35px; white-space:normal; }
+  .concept-switcher { gap:3px; padding:6px; width:calc(100% - 24px); }
+  .concept-switcher__label { display:none; }
   .concept-switcher nav { flex:1; justify-content:space-between; gap:2px; }
   .concept-switcher nav a { padding:8px 9px; gap:4px; font-size:12px; }
   .concept-switcher nav a>span { font-size:9px; }
+  .concept-switcher__phone { padding-inline:9px; font-size:12px; }
+  .concept-switcher__phone>span:first-child { display:none; }
+  .concept-switcher__phone>span:last-child { display:inline; }
+  .concept-switcher nav a>span { display:none; }
 }
 @media(print) { .concept-switcher { display:none; } }

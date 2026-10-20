@@ -1,0 +1,38 @@
+.concept-compare { min-height:100vh; background:#f2f0ec; color:#262522; padding:32px clamp(16px,3vw,48px) 56px; font-family:Lato,Arial,sans-serif; }
+.concept-compare__header { max-width:1600px; margin:0 auto 30px; }
+.concept-compare__intro { display:flex; align-items:center; justify-content:space-between; gap:24px; }
+.concept-compare__intro p { font-size:12px; text-transform:uppercase; letter-spacing:.12em; color:#6e0c25; margin:0 0 10px; }
+.concept-compare__intro h1 { font-size:clamp(26px,3vw,40px); font-weight:600; letter-spacing:-.04em; line-height:1.1; }
+.concept-compare__open { flex-shrink:0; min-height:44px; display:flex; align-items:center; padding:10px 18px; border:1px solid #b9b0a9; border-radius:24px; font-size:13px; background:#fff; }
+.concept-compare__controls { display:flex; flex-wrap:wrap; justify-content:space-between; gap:16px; margin-top:24px; }
+.concept-compare__choices { display:flex; gap:3px; border:1px solid #d8d3ce; border-radius:9px; background:#fff; padding:4px; }
+.concept-compare__choices button { padding:10px 20px; min-height:44px; font-size:14px; border-radius:5px; white-space:nowrap; }
+.concept-compare__choices button:hover { background:#f3eeec; }
+.concept-compare__choices button[aria-pressed=true] { background:#6e0c25; color:#fff; }
+.concept-compare__hint { margin-top:16px; color:#706a65; font-size:13px; line-height:1.5; }
+.concept-compare__stage { max-width:1600px; margin:auto; display:grid; gap:32px; align-items:start; }
+.concept-compare__stage--both { grid-template-columns:minmax(0,1fr) minmax(280px,350px); }
+.concept-compare__stage--phone { max-width:414px; }
+.concept-compare__stage--desktop { max-width:1464px; }
+.device-preview { min-width:0; }
+.device-preview__label { display:flex; align-items:baseline; justify-content:space-between; margin:0 4px 12px; }
+.device-preview__label h2 { font-size:16px; font-weight:600; }
+.device-preview__label span { font-size:12px; color:#706a65; }
+.device-preview__shell { background:#292826; padding:10px; border:1px solid #1d1c1a; box-shadow:0 12px 36px #29262218; border-radius:14px; }
+.device-preview--phone .device-preview__shell { border-radius:30px; }
+.device-preview__canvas { position:relative; width:100%; margin:auto; overflow:hidden; background:#fff; border-radius:5px; }
+.device-preview--phone .device-preview__canvas { border-radius:20px; }
+.device-preview__canvas iframe { display:block; border:0; max-width:none; transform-origin:top left; background:#fff; }
+@media(max-width:1000px) {
+  .concept-compare__stage--both { grid-template-columns:1fr; }
+  .concept-compare__stage--both .device-preview--phone { width:100%; max-width:414px; margin:auto; }
+}
+@media(max-width:600px) {
+  .concept-compare { padding:22px 12px 36px; }
+  .concept-compare__intro { align-items:start; flex-direction:column; gap:16px; }
+  .concept-compare__controls { gap:10px; }
+  .concept-compare__choices { width:100%; }
+  .concept-compare__choices button { flex:1; padding-inline:8px; font-size:13px; }
+  .concept-compare__hint { font-size:12px; }
+  .concept-compare__header { margin-bottom:22px; }
+}

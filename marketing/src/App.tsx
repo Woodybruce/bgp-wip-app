@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Route, Switch, useLocation } from "wouter";
 import Nav from "./components/Nav";
 import Footer from "./components/Footer";
@@ -6,6 +6,7 @@ import Home from "./pages/Home";
 import ConceptEditorial from "./pages/ConceptEditorial";
 import ConceptPulse from "./pages/ConceptPulse";
 import ConceptSwitcher from "./components/ConceptSwitcher";
+import ConceptCompare from "./pages/ConceptCompare";
 import Leasing from "./pages/Leasing";
 import ListingDetail from "./pages/ListingDetail";
 import Investment from "./pages/Investment";
@@ -22,6 +23,7 @@ import LeasingSector, { ShoppingCentrePage } from "./pages/LeasingSector";
 // should land at the top. Plain #hash anchors don't change the route, so
 // in-page jumps (services, contact) are unaffected.
 export const TITLES: Array<[RegExp, string]> = [
+  [/^\/concepts\/compare$/, "Phone & desktop comparison"],
   [/^\/concepts\/editorial$/, "Editorial concept"],
   [/^\/concepts\/pulse$/, "Pulse concept"],
   [/^\/leasing\/sectors\/shopping-centres\/.+/, "Shopping centres · Leasing"],
@@ -60,14 +62,18 @@ function ScrollToTop() {
 
 export default function App() {
   const [location] = useLocation();
-  const bespokeConcept = location === "/concepts/editorial" || location === "/concepts/pulse";
+  const [embedded, setEmbedded] = useState(false);
+  useEffect(() => { setEmbedded(window.self !== window.top); }, []);
+  const comparison = location === "/concepts/compare";
+  const bespokeConcept = comparison || location === "/concepts/editorial" || location === "/concepts/pulse";
   return (
-    <div className="redesign-layout min-h-screen flex flex-col mx-auto w-full">
+    <div className={`redesign-layout${embedded || comparison ? " redesign-layout--preview" : ""} min-h-screen flex flex-col mx-auto w-full`}>
       <ScrollToTop />
       {!bespokeConcept && <Nav />}
       <main className="flex-1">
         <Switch>
           <Route path="/" component={Home} />
+          <Route path="/concepts/compare" component={ConceptCompare} />
           <Route path="/concepts/editorial" component={ConceptEditorial} />
           <Route path="/concepts/pulse" component={ConceptPulse} />
           <Route path="/leasing" component={Leasing} />
@@ -90,7 +96,7 @@ export default function App() {
         </Switch>
       </main>
       {!bespokeConcept && <Footer />}
-      <ConceptSwitcher />
+      {!embedded && !comparison && <ConceptSwitcher />}
     </div>
   );
 }
