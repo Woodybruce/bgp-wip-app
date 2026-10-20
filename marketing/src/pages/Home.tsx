@@ -93,8 +93,8 @@ export default function Home() {
         <div className="retail-expertise__grid">
           <div className="retail-expertise__image"><img key={service.image} src={service.image} alt={service.name} loading="lazy" /></div>
           <div className="retail-services">
-            {SERVICES.map((item, index) => <div key={item.slug} className={`retail-service ${expertise === item.slug ? "is-open" : ""}`}>
-              <h3><button type="button" aria-expanded={expertise === item.slug} aria-controls={`service-${item.slug}`} onClick={() => setExpertise(expertise === item.slug ? "" : item.slug)}><span className="retail-service__index">0{index + 1}</span>{item.name}<span className="retail-service__toggle" aria-hidden>{expertise === item.slug ? "−" : "+"}</span></button></h3>
+            {SERVICES.map(item => <div key={item.slug} className={`retail-service ${expertise === item.slug ? "is-open" : ""}`}>
+              <h3><button type="button" aria-expanded={expertise === item.slug} aria-controls={`service-${item.slug}`} onClick={() => setExpertise(expertise === item.slug ? "" : item.slug)}>{item.name}<span className="retail-service__toggle" aria-hidden>{expertise === item.slug ? "−" : "+"}</span></button></h3>
               <div id={`service-${item.slug}`} hidden={expertise !== item.slug}><p>{item.intro}</p><Link href={`/${item.slug}`} className="retail-text-link">Explore {item.name.toLowerCase()}</Link></div>
             </div>)}
           </div>
