@@ -3,6 +3,9 @@ import { Route, Switch, useLocation } from "wouter";
 import Nav from "./components/Nav";
 import Footer from "./components/Footer";
 import Home from "./pages/Home";
+import ConceptEditorial from "./pages/ConceptEditorial";
+import ConceptPulse from "./pages/ConceptPulse";
+import ConceptSwitcher from "./components/ConceptSwitcher";
 import Leasing from "./pages/Leasing";
 import ListingDetail from "./pages/ListingDetail";
 import Investment from "./pages/Investment";
@@ -19,6 +22,8 @@ import LeasingSector, { ShoppingCentrePage } from "./pages/LeasingSector";
 // should land at the top. Plain #hash anchors don't change the route, so
 // in-page jumps (services, contact) are unaffected.
 export const TITLES: Array<[RegExp, string]> = [
+  [/^\/concepts\/editorial$/, "Editorial concept"],
+  [/^\/concepts\/pulse$/, "Pulse concept"],
   [/^\/leasing\/sectors\/shopping-centres\/.+/, "Shopping centres · Leasing"],
   [/^\/leasing\/sectors\/shopping-centres/, "Shopping Centres · Leasing"],
   [/^\/leasing\/sectors\/london-estates/, "London Estates · Leasing"],
@@ -54,13 +59,17 @@ function ScrollToTop() {
 }
 
 export default function App() {
+  const [location] = useLocation();
+  const bespokeConcept = location === "/concepts/editorial" || location === "/concepts/pulse";
   return (
     <div className="redesign-layout min-h-screen flex flex-col mx-auto w-full">
       <ScrollToTop />
-      <Nav />
+      {!bespokeConcept && <Nav />}
       <main className="flex-1">
         <Switch>
           <Route path="/" component={Home} />
+          <Route path="/concepts/editorial" component={ConceptEditorial} />
+          <Route path="/concepts/pulse" component={ConceptPulse} />
           <Route path="/leasing" component={Leasing} />
           <Route path="/leasing/sectors/shopping-centres/:slug" component={ShoppingCentrePage} />
           <Route path="/leasing/sectors/:slug" component={LeasingSector} />
@@ -80,7 +89,8 @@ export default function App() {
           </Route>
         </Switch>
       </main>
-      <Footer />
+      {!bespokeConcept && <Footer />}
+      <ConceptSwitcher />
     </div>
   );
 }
