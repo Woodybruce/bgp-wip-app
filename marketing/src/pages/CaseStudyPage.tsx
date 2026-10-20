@@ -38,8 +38,8 @@ function Carousel({ photos, alt }: { photos: GalleryPhoto[]; alt: string }) {
       <div className="img-frame"><Placeholder className="aspect-[1.69] w-full" src={photo.src} stock={photo.stock} alt={photo.alt || alt} label="Project photography to follow" /></div>
       {photos.length > 1 && (
         <>
-          <button type="button" onClick={() => step(-1)} aria-label="Previous photo" className="absolute left-3 top-1/2 -translate-y-1/2 h-11 w-11 flex items-center justify-center bg-bgp-cream/90 text-bgp-wine text-3xl hover:bg-bgp-cream">‹</button>
-          <button type="button" onClick={() => step(1)} aria-label="Next photo" className="absolute right-3 top-1/2 -translate-y-1/2 h-11 w-11 flex items-center justify-center bg-bgp-cream/90 text-bgp-wine text-3xl hover:bg-bgp-cream">›</button>
+          <button type="button" onClick={() => step(-1)} aria-label="Previous photo" className="absolute left-3 top-1/2 -translate-y-1/2 min-h-11 min-w-20 flex items-center justify-center bg-bgp-cream/90 px-3 text-bgp-wine text-sm hover:bg-bgp-cream">Previous</button>
+          <button type="button" onClick={() => step(1)} aria-label="Next photo" className="absolute right-3 top-1/2 -translate-y-1/2 min-h-11 min-w-20 flex items-center justify-center bg-bgp-cream/90 px-3 text-bgp-wine text-sm hover:bg-bgp-cream">Next</button>
           <div className="absolute bottom-3 inset-x-0 flex justify-center gap-1.5" aria-hidden>
             {photos.map((_, k) => <span key={k} className={`h-1.5 w-1.5 rounded-full ${k === activeIndex ? "bg-bgp-cream" : "bg-bgp-cream/45"}`} />)}
           </div>
@@ -92,7 +92,7 @@ export default function CaseStudyPage() {
       <section className="site-container section-space">
         <h2 className="sr-only">Case study · {caseStudy.service}</h2>
         {/* Wireframe slide 32: title and intro at left with the facts panel
-            beside them, then an image carousel with arrows and dots. */}
+            beside them, then an image carousel with controls and dots. */}
         <div className="grid grid-cols-1 md:grid-cols-[63fr_12fr_25fr] gap-y-10 md:gap-0">
           <div className="min-w-0">
             <h1 className={`display property-title ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>

@@ -13,8 +13,8 @@ const INITIAL_VISIBLE = 7;
 function Filter({ label, value = "", options = [], onChange, unavailable = false }: { label: string; value?: string; options?: string[]; onChange?: (v: string) => void; unavailable?: boolean }) {
   return (
     <label className="label-caps flex min-w-0 items-center justify-between gap-3 text-bgp-wine w-full sm:w-auto py-2 border-b border-bgp-wine/15 sm:border-0">
-      <span className="whitespace-nowrap">{label} <span aria-hidden>{"↘︎"}</span></span>
-      <select value={value} disabled={unavailable} aria-label={`${label} filter${unavailable ? " — placeholder, to follow" : ""}`} onChange={(e) => onChange?.(e.target.value)} className="min-w-0 max-w-[65%] cursor-pointer bg-transparent py-2 pr-1 label-caps text-bgp-ink hover:text-bgp-wine disabled:cursor-not-allowed disabled:italic disabled:text-bgp-wine/60 disabled:opacity-100 sm:max-w-[210px]">
+      <span className="whitespace-nowrap">{label}</span>
+      <select value={value} disabled={unavailable} aria-label={`${label} filter${unavailable ? " — placeholder, to follow" : ""}`} onChange={(e) => onChange?.(e.target.value)} className="min-w-0 max-w-[65%] appearance-none cursor-pointer bg-transparent py-2 pr-1 label-caps text-bgp-ink hover:text-bgp-wine disabled:cursor-not-allowed disabled:italic disabled:text-bgp-wine/60 disabled:opacity-100 sm:max-w-[210px]">
         <option value="">{unavailable ? "To follow" : "All"}</option>
         {options.map((o) => <option key={o} value={o}>{o}</option>)}
       </select>

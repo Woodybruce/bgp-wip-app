@@ -37,8 +37,8 @@ export default function CaseStudyStrip({ caseStudy, caseStudies, band = false }:
           </Link>
           {steps > 1 && (
             <>
-              <button type="button" onClick={() => goTo(at - 1)} aria-label="Previous case study or photograph" className="absolute left-3 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center bg-bgp-cream/90 text-3xl text-bgp-wine hover:bg-bgp-cream">‹</button>
-              <button type="button" onClick={() => goTo(at + 1)} aria-label="Next case study or photograph" className="absolute right-3 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center bg-bgp-cream/90 text-3xl text-bgp-wine hover:bg-bgp-cream">›</button>
+              <button type="button" onClick={() => goTo(at - 1)} aria-label="Previous case study or photograph" className="absolute left-3 top-1/2 flex min-h-11 min-w-20 -translate-y-1/2 items-center justify-center bg-bgp-cream/90 px-3 text-sm text-bgp-wine hover:bg-bgp-cream">Previous</button>
+              <button type="button" onClick={() => goTo(at + 1)} aria-label="Next case study or photograph" className="absolute right-3 top-1/2 flex min-h-11 min-w-20 -translate-y-1/2 items-center justify-center bg-bgp-cream/90 px-3 text-sm text-bgp-wine hover:bg-bgp-cream">Next</button>
               <div className="absolute inset-x-0 bottom-1 flex justify-center">
                 {Array.from({ length: steps }, (_, step) => (
                   <button type="button" key={step} onClick={() => goTo(step)} aria-label={`Show ${many ? "case study" : "photograph"} ${step + 1}`} aria-current={step === at ? "true" : undefined} className="flex h-11 w-8 items-center justify-center">

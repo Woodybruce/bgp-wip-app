@@ -14,31 +14,13 @@ const FEATURED_SLUGS = [
   "adieu-2025",
 ];
 
-// Sentence case for existing titles; unfamiliar dashboard titles retain their
-// supplied spelling, including brand names and acronyms.
-const DISPLAY_TITLES: Record<string, string> = {
-  "The Enduring Appeal of the Portman Estate": "The enduring appeal of the Portman Estate",
-  "Behind the Brand | YOLK": "Behind the brand: YOLK",
-  "Wellness is No Longer an Afterthought; It's a Placemaking Essential":
-    "Wellness is no longer an afterthought; it’s a placemaking essential",
-};
 const IMAGE_ALTS: Record<string, string> = {
   "/images/anna-nina.jpg": "Independent shops and red-brick buildings on Chiltern Street",
   "/images/news-yolk.jpg": "Customers outside YOLK’s London shopfront",
   "/images/hero-london.jpg": "The River Thames, Tower Bridge and the London skyline",
   "/images/gym.jpg": "Weights and people training in a gym",
 };
-const titleFor = (article: Article) => DISPLAY_TITLES[article.title] ?? article.title;
-
-function Arrow({ direction = "right" }: { direction?: "left" | "right" | "out" }) {
-  return (
-    <svg className="nsb-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-      {direction === "out" ? <path d="M6 18 18 6M6 6h12v12" />
-        : direction === "left" ? <path d="M20 12H4m7-7-7 7 7 7" />
-          : <path d="M4 12h16m-7-7 7 7-7 7" />}
-    </svg>
-  );
-}
+const titleFor = (article: Article) => article.title;
 
 function ProviderIcon({ provider }: { provider: SocialPost["provider"] }) {
   return (
@@ -56,7 +38,7 @@ function ArticleImage({ article }: { article: Article }) {
     <div className={`nsb-article-image${!article.image || failed ? " nsb-article-image--empty" : ""}`}>
       {article.image && !failed
         ? <img src={article.image} alt={IMAGE_ALTS[article.image] ?? article.title} loading="lazy" onError={() => setFailed(true)} />
-        : <span className="nsb-image-wordmark" aria-hidden="true">BGP<span>Journal</span></span>}
+        : <span className="nsb-image-wordmark" aria-hidden="true">BGP<span>News</span></span>}
     </div>
   );
 }
@@ -71,7 +53,7 @@ function SocialCard({ post }: { post: SocialPost }) {
         </div>
         <div className="nsb-social-copy">
           <div><p className="nsb-meta">{post.account} on {post.provider}</p><h3>{post.title}</h3></div>
-          <span className="nsb-social-open"><Arrow direction="out" /></span>
+
         </div>
       </a>
     </article>
@@ -101,7 +83,7 @@ function FeaturedCarousel({ articles }: { articles: Article[] }) {
             <p className="nsb-meta"><span>{article.category}</span>{article.date && <span>{article.date}</span>}</p>
             <h3>{titleFor(article)}</h3>
             {article.standfirst && <p className="nsb-feature-description">{article.standfirst}</p>}
-            <span className="nsb-text-link">Read the story <Arrow /></span>
+            <span className="nsb-text-link">Read the story</span>
           </div>
         </Link>
       </article>
@@ -116,8 +98,8 @@ function FeaturedCarousel({ articles }: { articles: Article[] }) {
             ))}
           </div>
           <div className="nsb-carousel-arrows">
-            <button type="button" aria-label="Previous story" aria-controls={id} onClick={() => move(-1)}><Arrow direction="left" /></button>
-            <button type="button" aria-label="Next story" aria-controls={id} onClick={() => move(1)}><Arrow /></button>
+            <button type="button" aria-label="Previous story" aria-controls={id} onClick={() => move(-1)}>Previous</button>
+            <button type="button" aria-label="Next story" aria-controls={id} onClick={() => move(1)}>Next</button>
           </div>
         </div>
       )}
@@ -133,7 +115,7 @@ function ArticleCard({ article }: { article: Article }) {
         <p className="nsb-meta"><span>{article.category}</span>{article.date && <span>{article.date}</span>}</p>
         <h3>{titleFor(article)}</h3>
         {article.author && <p className="nsb-author">By {article.author}</p>}
-        <span className="nsb-text-link">Read the story <Arrow /></span>
+        <span className="nsb-text-link">Read the story</span>
       </Link>
     </article>
   );
@@ -158,10 +140,10 @@ export default function NewsSocialBoard({ compact = false }: { compact?: boolean
   return (
     <section className={`news-social-board${compact ? " news-social-board--compact" : ""}`} aria-labelledby={`${id}-title`}>
       <div className="nsb-heading">
-        <div><p className="nsb-eyebrow">The BGP journal</p><Heading id={`${id}-title`}>News, views &amp; conversations.</Heading></div>
+        <div><p className="nsb-eyebrow">BGP</p><Heading id={`${id}-title`}>News and insights</Heading></div>
         <div className="nsb-heading-aside">
-          <p>Ideas, openings and the people shaping the places we spend time.</p>
-          {compact && <Link href="/news" className="nsb-text-link">Explore the journal <Arrow /></Link>}
+          <p>The latest news, lettings, transactions and opinion from the BGP team across leasing, investment, brand representation and placemaking.</p>
+          {compact && <Link href="/news" className="nsb-text-link">Find out more</Link>}
         </div>
       </div>
 
@@ -187,7 +169,7 @@ export default function NewsSocialBoard({ compact = false }: { compact?: boolean
         )}
         {showArchive && (
           <div className={`nsb-archive${filter !== "All" ? " nsb-archive--filtered" : ""}`}>
-            {filter === "All" && <div className="nsb-archive-heading"><h2>From the journal</h2><p>{articles.length} {articles.length === 1 ? "story" : "stories"}</p></div>}
+            {filter === "All" && <div className="nsb-archive-heading"><h2>News</h2><p>{articles.length} {articles.length === 1 ? "story" : "stories"}</p></div>}
             {filter !== "All" && <h2 className="nsb-sr-only">{filter} stories</h2>}
             {filtered.length > 0
               ? <div className="nsb-article-grid">{filtered.map((article) => <ArticleCard key={article.slug} article={article} />)}</div>

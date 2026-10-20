@@ -26,7 +26,7 @@ export default function Footer() {
         <div className="redesign-footer__invitation">
           <p className="redesign-footer__eyebrow">Contact</p>
           <h2>Talk to us.</h2>
-          <a href={`tel:${CONTACT.phone.replace(/[^+\d]/g, "")}`} className="redesign-footer__phone">{CONTACT.phone}<span aria-hidden="true">↗</span></a>
+          <a href={`tel:${CONTACT.phone.replace(/[^+\d]/g, "")}`} className="redesign-footer__phone">{CONTACT.phone}</a>
         </div>
 
         <div className="redesign-footer__details">
@@ -54,7 +54,7 @@ export default function Footer() {
                 placeholder="Email address"
               />
               <button type="submit" disabled={status === "sending"}>
-                {status === "sending" ? "Signing up…" : <>Sign up <span aria-hidden="true">↗</span></>}
+                {status === "sending" ? "Signing up…" : "Sign up"}
               </button>
             </div>
             <p id="newsletter-status" role="status" aria-live="polite" className={status === "done" || status === "error" ? "redesign-footer__status" : "sr-only"}>
@@ -77,8 +77,8 @@ export default function Footer() {
             <p>© Bruce Gillingham Pollard 2013–{new Date().getFullYear()}. All registered trademarks.</p>
           </div>
           <div className="redesign-footer__social">
-            <a href="https://www.linkedin.com/company/bruce-gillingham-pollard" target="_blank" rel="noreferrer" aria-label="BGP on LinkedIn">LinkedIn<span aria-hidden="true">↗</span></a>
-            <a href="https://www.instagram.com/brucegillinghampollard/" target="_blank" rel="noreferrer" aria-label="BGP on Instagram">Instagram<span aria-hidden="true">↗</span></a>
+            <a href="https://www.linkedin.com/company/bruce-gillingham-pollard" target="_blank" rel="noreferrer" aria-label="BGP on LinkedIn">LinkedIn</a>
+            <a href="https://www.instagram.com/brucegillinghampollard/" target="_blank" rel="noreferrer" aria-label="BGP on Instagram">Instagram</a>
           </div>
         </div>
       </div>

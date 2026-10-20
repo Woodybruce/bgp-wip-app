@@ -35,11 +35,9 @@ const LINKS: NavigationLink[] = [
   { label: "News & social", href: "/news" },
 ];
 
-function Chevron({ expanded }: { expanded: boolean }) {
+function DisclosureIndicator({ expanded }: { expanded: boolean }) {
   return (
-    <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="none" className={`redesign-nav__chevron${expanded ? " is-open" : ""}`}>
-      <path d="m2.5 4.25 3.5 3.5 3.5-3.5" stroke="currentColor" strokeWidth="1.25" />
-    </svg>
+    <span aria-hidden="true" className="redesign-nav__indicator">{expanded ? "−" : "+"}</span>
   );
 }
 
@@ -105,11 +103,11 @@ export default function Nav() {
         <li key={link.href}>
           {link.href.includes("#") ? (
             <a href={link.href} onClick={closeMenus}>
-              {link.label}<span aria-hidden="true">↗</span>
+              {link.label}
             </a>
           ) : (
             <Link href={link.href} onClick={closeMenus} aria-current={location === link.href ? "page" : undefined}>
-              {link.label}<span aria-hidden="true">↗</span>
+              {link.label}
             </Link>
           )}
         </li>
@@ -149,7 +147,7 @@ export default function Nav() {
                     focusGroup(group.id);
                   }}
                 >
-                  {group.label}<Chevron expanded={expanded === group.id} />
+                  {group.label}<DisclosureIndicator expanded={expanded === group.id} />
                 </button>
                 {expanded === group.id && (
                   <div id={`desktop-${group.id}-navigation`} className="redesign-nav__dropdown">
@@ -163,7 +161,7 @@ export default function Nav() {
                 <Link href={link.href} onClick={closeMenus} aria-current={isActive(link.href) ? "page" : undefined} className="redesign-nav__link">{link.label}</Link>
               </li>
             ))}
-            <li><a href="#contact" onClick={closeMenus} className="redesign-nav__contact">Talk to us<span aria-hidden="true">↗</span></a></li>
+            <li><a href="#contact" onClick={closeMenus} className="redesign-nav__contact">Talk to us</a></li>
           </ul>
         </nav>
 
@@ -201,17 +199,17 @@ export default function Nav() {
                     focusGroup(group.id, true);
                   }}
                 >
-                  {group.label}<Chevron expanded={expanded === group.id} />
+                  {group.label}<DisclosureIndicator expanded={expanded === group.id} />
                 </button>
                 {expanded === group.id && <div id={`mobile-${group.id}-navigation`} className="redesign-nav__mobile-group">{groupLinks(group.links)}</div>}
               </li>
             ))}
             {LINKS.map((link) => (
               <li key={link.href}>
-                <Link href={link.href} onClick={closeMenus} aria-current={isActive(link.href) ? "page" : undefined} className="redesign-nav__mobile-link">{link.label}<span aria-hidden="true">↗</span></Link>
+                <Link href={link.href} onClick={closeMenus} aria-current={isActive(link.href) ? "page" : undefined} className="redesign-nav__mobile-link">{link.label}</Link>
               </li>
             ))}
-            <li><a href="#contact" onClick={closeMenus} className="redesign-nav__mobile-link redesign-nav__mobile-contact">Talk to us<span aria-hidden="true">↗</span></a></li>
+            <li><a href="#contact" onClick={closeMenus} className="redesign-nav__mobile-link redesign-nav__mobile-contact">Talk to us</a></li>
           </ul>
         </nav>
       )}

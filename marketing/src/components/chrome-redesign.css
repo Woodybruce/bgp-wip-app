@@ -74,8 +74,7 @@ html:root { --site-header-height: 76px; }
   transition: color 160ms ease, background 160ms ease;
 }
 .redesign-nav__contact:hover { background: #6e0c25; color: #fff; }
-.redesign-nav__chevron { flex-shrink: 0; transition: transform 160ms ease; }
-.redesign-nav__chevron.is-open { transform: rotate(180deg); }
+.redesign-nav__indicator { flex-shrink: 0; width: 12px; text-align: center; font-size: 16px; line-height: 1; }
 .redesign-nav__dropdown {
   position: absolute;
   top: calc(100% + 15px);
@@ -105,8 +104,6 @@ html:root { --site-header-height: 76px; }
 .redesign-nav__dropdown a[aria-current="page"],
 .redesign-nav__mobile-group a:hover,
 .redesign-nav__mobile-group a[aria-current="page"] { background: #f8f9ee; color: #6e0c25; }
-.redesign-nav__dropdown a span,
-.redesign-nav__mobile-group a span { opacity: .55; }
 .redesign-nav__mobile-toggle { gap: 12px; }
 .redesign-nav__mobile {
   position: absolute;
@@ -237,6 +234,5 @@ html:root { --site-header-height: 76px; }
 
 @media (prefers-reduced-motion: reduce) {
   .redesign-nav__link,
-  .redesign-nav__contact,
-  .redesign-nav__chevron { transition: none; }
+  .redesign-nav__contact { transition: none; }
 }

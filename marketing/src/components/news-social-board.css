@@ -31,11 +31,8 @@
 .nsb-heading-aside { max-width: 330px; flex-shrink: 0; color: var(--nsb-muted); }
 .nsb-heading-aside p { font-size: 18px; line-height: 1.55; }
 .news-social-board .nsb-heading-aside .nsb-text-link { margin-top: 18px; }
-.nsb-arrow { width: 22px; height: 22px; flex-shrink: 0; }
 .nsb-provider-icon { width: 17px; height: 17px; flex-shrink: 0; }
 .news-social-board .nsb-text-link { display: inline-flex; align-items: center; gap: 14px; min-height: 44px; color: var(--nsb-accent); font-size: 16px; font-weight: 600; }
-.nsb-text-link .nsb-arrow { transition: transform .2s ease; }
-.nsb-text-link:hover .nsb-arrow { transform: translateX(4px); }
 .nsb-mosaic { display: grid; grid-template-columns: minmax(0, 1.48fr) minmax(0, 1fr); gap: 36px; align-items: stretch; }
 .nsb-feature { min-width: 0; display: flex; flex-direction: column; }
 .nsb-feature-story { min-width: 0; flex: 1; }
@@ -61,7 +58,7 @@
 .nsb-carousel-dots button { width: 36px; height: 44px; display: grid; place-items: center; padding: 0; background: transparent; border: 0; }
 .nsb-carousel-dots button span { width: 5px; height: 5px; background: #aaa99f; border-radius: 9px; transition: width .2s ease; }
 .nsb-carousel-dots button[aria-pressed="true"] span { width: 24px; background: var(--nsb-accent); }
-.nsb-carousel-arrows button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 1px solid var(--nsb-line); border-radius: 50%; background: transparent; color: var(--nsb-ink); transition: background .2s ease; }
+.nsb-carousel-arrows button { display: grid; place-items: center; min-width: 48px; height: 44px; padding: 0 12px; border: 1px solid var(--nsb-line); border-radius: 4px; background: transparent; color: var(--nsb-ink); font-size: 12px; transition: background .2s ease; }
 .nsb-carousel-arrows button:hover { background: #eeeee6; }
 .nsb-social-column { min-width: 0; display: grid; grid-template-rows: 1fr 1fr; gap: 28px; }
 .nsb-social-card { min-width: 0; min-height: 0; }
@@ -131,7 +128,7 @@
   .nsb-filters { gap: 0; padding-bottom: 24px; }
   .nsb-filters button { padding-inline: 17px; }
   .nsb-carousel-dots button { width: 26px; }
-  .nsb-carousel-controls { gap: 8px; }
+  .nsb-carousel-controls { gap: 8px; flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) {
   .news-social-board *,

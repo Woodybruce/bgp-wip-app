@@ -22,8 +22,8 @@ function ArticleGallery({ image, title, placeholder }: { image?: string; title: 
       <div id={id} className="[&>div>span]:bottom-auto [&>div>span]:top-2">
         <Placeholder className="aspect-[4/3] w-full" src={photo.src} stock={photo.stock} alt={photo.alt} label="Photo to follow" />
       </div>
-      <button type="button" aria-label="Previous article photograph" aria-controls={id} onClick={() => setSelected((current) => (current + photos.length - 1) % photos.length)} className="absolute left-2 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center bg-bgp-cream/85 text-3xl text-bgp-wine hover:bg-bgp-cream">‹</button>
-      <button type="button" aria-label="Next article photograph" aria-controls={id} onClick={() => setSelected((current) => (current + 1) % photos.length)} className="absolute right-2 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center bg-bgp-cream/85 text-3xl text-bgp-wine hover:bg-bgp-cream">›</button>
+      <button type="button" aria-label="Previous article photograph" aria-controls={id} onClick={() => setSelected((current) => (current + photos.length - 1) % photos.length)} className="absolute left-2 top-1/2 flex min-h-11 min-w-20 -translate-y-1/2 items-center justify-center bg-bgp-cream/85 px-3 text-sm text-bgp-wine hover:bg-bgp-cream">Previous</button>
+      <button type="button" aria-label="Next article photograph" aria-controls={id} onClick={() => setSelected((current) => (current + 1) % photos.length)} className="absolute right-2 top-1/2 flex min-h-11 min-w-20 -translate-y-1/2 items-center justify-center bg-bgp-cream/85 px-3 text-sm text-bgp-wine hover:bg-bgp-cream">Next</button>
       <div className="absolute inset-x-0 bottom-1 flex justify-center">
         {photos.map((_, index) => (
           <button key={index} type="button" aria-label={`Show article photograph ${index + 1}`} aria-controls={id} aria-pressed={selected === index} onClick={() => setSelected(index)} className="flex h-11 w-11 items-center justify-center">
@@ -63,8 +63,8 @@ function ArticleShare({ slug, title }: { slug: string; title: string }) {
         <a href={`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(url)}`} target="_blank" rel="noreferrer" aria-label="Share on LinkedIn" title="Share on LinkedIn" className="flex h-11 w-11 items-center justify-center text-bgp-wine hover:opacity-70">
           <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M20.45 20.45h-3.55v-5.57c0-1.33-.03-3.04-1.85-3.04-1.86 0-2.14 1.45-2.14 2.94v5.67H9.35V9h3.41v1.56h.05c.47-.9 1.63-1.85 3.36-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12zM7.12 20.45H3.56V9h3.56v11.45z" /></svg>
         </a>
-        <button type="button" onClick={shareOrCopy} aria-label="Share article or copy link" title="Share article or copy link" className="flex h-11 w-11 items-center justify-center text-bgp-wine hover:opacity-70">
-          <svg aria-hidden="true" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 15V3m-4 4 4-4 4 4M7 11H4v10h16V11h-3" /></svg>
+        <button type="button" onClick={shareOrCopy} aria-label="Share article or copy link" title="Share article or copy link" className="flex min-h-11 items-center justify-center px-3 text-sm text-bgp-wine hover:opacity-70">
+          Share or copy link
         </button>
         <span role="status" className="text-sm text-bgp-wine">{message}</span>
       </div>

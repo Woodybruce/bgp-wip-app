@@ -63,7 +63,7 @@ export default function ServiceList({ services, heading = "What we offer", body,
           <div id={`${id}-panel`} role="tabpanel" aria-labelledby={`${id}-tab-${selected}`} tabIndex={0} className="service-list__detail flex min-h-[240px] flex-col bg-bgp-mist p-7 md:p-10">
             <h3 className="font-bold">{current.name}</h3>
             <p className="body-copy mt-4">{current.detail}</p>
-            {services.length > 1 && <button type="button" onClick={() => setSelected((selected + 1) % services.length)} aria-label="Next service" className="mt-auto min-h-11 min-w-11 self-end pt-6 text-3xl text-bgp-wine">→</button>}
+            {services.length > 1 && <button type="button" onClick={() => setSelected((selected + 1) % services.length)} aria-label="Next service" className="mt-auto min-h-11 min-w-11 self-end px-3 pt-6 text-base text-bgp-wine underline-offset-4 hover:underline">Next</button>}
           </div>
         )}
         {supportingCopy.length > 0 && (

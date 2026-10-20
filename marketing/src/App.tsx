@@ -50,7 +50,7 @@ function ScrollToTop() {
     const frame = window.requestAnimationFrame(() => {
       const target = window.location.hash ? document.getElementById(decodeURIComponent(window.location.hash.slice(1))) : null;
       if (target) target.scrollIntoView();
-      else window.scrollTo(0, 0);
+      else window.scrollTo({ top: 0, left: 0, behavior: "instant" });
     });
     document.title = titleFor(location);
     return () => window.cancelAnimationFrame(frame);
