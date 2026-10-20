@@ -1,6 +1,7 @@
 import type { PlanPoint } from "./plan-geometry";
 
 export interface EvidencePlanShareSettings {
+  accessMode?: "view" | "edit";
   label: string;
   entryIds: string[];
   documentEntryIds: string[];
@@ -20,6 +21,11 @@ export interface EvidencePlanShareSaveRequest extends EvidencePlanShareSettings 
 export interface EvidencePlanShareRevokeRequest { expectedShare: ExpectedEvidencePlanShare }
 
 export interface EvidencePlanShareResponse { share: EvidencePlanShare | null }
+export interface EvidencePlanShareAccess {
+  accessMode: "view" | "edit";
+  planName: string;
+  planId?: string;
+}
 
 export interface SharedEvidenceUnitFacts {
   leaseStart: string | null;

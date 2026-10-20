@@ -11,8 +11,9 @@
 //   • swap the background plan any time — outlines and data stay put
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useRoute } from "wouter";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEvidencePlanTransport } from "@/lib/evidence-plan-transport";
+import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { containedMarker, isValidPolygon, moveMarkerInside } from "@shared/plan-geometry";
@@ -63,7 +64,7 @@ type Entry = {
   transaction_type: string | null; transaction_date: string | null; size_sqft: string | null;
   zone_a: string | null; net_zone_a?: string | null; itza: string | null; headline_rent: string | null; net_effective: string | null;
   term: string | null; concession: string | null; notes: string | null; source_key: string | null;
-  created_at?: string | null;
+  created_at?: string | null; document_url?: string | null;
 };
 
 const fmtMoney = (v: any) => {
@@ -119,6 +120,7 @@ const EVIDENCE_TYPE_META: Record<string, { label: string; colour: string }> = {
 // ── List page ─────────────────────────────────────────────────────────────
 function PlanList() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [, navigate] = useLocation();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -238,21 +240,29 @@ function PlanList() {
 }
 
 // ── Plan viewer / editor ──────────────────────────────────────────────────
-function PlanView({ planId }: { planId: string }) {
+export function PlanView({ planId }: { planId: string }) {
   const { toast } = useToast();
+  const transport = useEvidencePlanTransport();
+  const apiRequest = transport.request;
+  const queryClient = useQueryClient();
   const isMobile = useIsMobile();
-  const { data: viewer } = useQuery<{ id: string }>({ queryKey: ["/api/auth/me"] });
+  const { data: viewer } = useQuery<{ id: string }>({
+    queryKey: ["/api/auth/me"], enabled: !transport.external,
+    queryFn: async () => (await apiRequest("GET", "/api/auth/me")).json(),
+  });
+  const preferenceIdentity = transport.viewerIdentity ?? (transport.external ? "external" : viewer?.id);
   const [, navigate] = useLocation();
   const { data, isLoading } = useQuery<{ plan: any; levels: PlanLevel[]; units: PlanUnit[]; entries: Entry[]; matters: Matter[]; jobs: any[]; schedule_rows?: any[] }>({
     queryKey: ["/api/evidence-plans", planId],
-    queryFn: async () => {
-      const r = await fetch(`/api/evidence-plans/${planId}`, { credentials: "include", headers: getAuthHeaders() });
+    queryFn: async ({ signal }) => {
+      const r = await transport.fetch(`/api/evidence-plans/${planId}`, { signal });
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },
     // Detection/extraction jobs run server-side — keep the plan fresh while
     // one is in flight so outlines and evidence appear as they land.
-    refetchInterval: (query: any) => (query.state.data?.jobs?.length ? 4000 : false),
+    refetchInterval: (query: any) => (query.state.data?.jobs?.length ? 4000 : transport.external ? 30000 : false),
+    refetchOnWindowFocus: transport.external ? "always" : undefined,
   });
 
   // Viewport: zoom + pan via CSS transform on the plan surface.
@@ -277,18 +287,18 @@ function PlanView({ planId }: { planId: string }) {
   const [hideRedInk, setHideRedInk] = useState(false);
   const [numberLabels, setNumberLabels] = useState(false);
   const [markerPreference, setMarkerPreference] = useState<{ userId: string; mode: PlanMarkerMode }>({ userId: "", mode: "compact" });
-  const markerMode = markerPreference.userId === viewer?.id ? markerPreference.mode : "compact";
+  const markerMode = markerPreference.userId === preferenceIdentity ? markerPreference.mode : "compact";
   const [compareRents, setCompareRents] = useState(false);
   useEffect(() => {
-    if (!viewer?.id) return;
+    if (!preferenceIdentity) return;
     let mode: PlanMarkerMode = "compact";
-    try { mode = parsePlanMarkerMode(localStorage.getItem(`bgp-ep-label-mode:${viewer.id}`)); } catch { /* Storage can be unavailable in private browsers. */ }
-    setMarkerPreference({ userId: viewer.id, mode });
-  }, [viewer?.id]);
+    try { if (!transport.external) mode = parsePlanMarkerMode(localStorage.getItem(`bgp-ep-label-mode:${preferenceIdentity}`)); } catch { /* Storage can be unavailable in private browsers. */ }
+    setMarkerPreference({ userId: preferenceIdentity, mode });
+  }, [preferenceIdentity, transport.external]);
   const chooseMarkerMode = (mode: PlanMarkerMode) => {
-    if (!viewer?.id) return;
-    setMarkerPreference({ userId: viewer.id, mode });
-    try { localStorage.setItem(`bgp-ep-label-mode:${viewer.id}`, mode); } catch { /* Keep the current choice usable without persistence. */ }
+    if (!preferenceIdentity) return;
+    setMarkerPreference({ userId: preferenceIdentity, mode });
+    try { if (!transport.external) localStorage.setItem(`bgp-ep-label-mode:${preferenceIdentity}`, mode); } catch { /* Keep the current choice usable without persistence. */ }
   };
   const [cropping, setCropping] = useState(false);
   const [cropRect, setCropRect] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
@@ -303,6 +313,12 @@ function PlanView({ planId }: { planId: string }) {
   const tsInputRef = useRef<HTMLInputElement>(null);
   const tafInputRef = useRef<HTMLInputElement>(null);
   const tafFolderRef = useRef<HTMLInputElement>(null);
+  const tafPollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tafAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    tafAbort.current?.abort();
+    if (tafPollTimer.current) clearTimeout(tafPollTimer.current);
+  }, [planId, transport]);
 
   const plan = data?.plan;
   const levels = data?.levels || [];
@@ -315,7 +331,11 @@ function PlanView({ planId }: { planId: string }) {
   const completedScan = useRef<string | null>(null);
   const { data: scanJob } = useQuery<any>({
     queryKey: ["/api/evidence-plans/jobs", scanJobId], enabled: !!scanJobId,
-    queryFn: async () => (await apiRequest("GET", `/api/evidence-plans/jobs/${scanJobId}`)).json(),
+    queryFn: async ({ signal }) => {
+      const response = await transport.fetch(`/api/evidence-plans/jobs/${scanJobId}`, { signal });
+      if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
+      return response.json();
+    },
     refetchInterval: query => query.state.data?.status === "running" ? 2000 : false,
   });
   const [activeLevelId, setActiveLevelId] = useState<string | null>(null);
@@ -345,7 +365,11 @@ function PlanView({ planId }: { planId: string }) {
   const scanReview = useQuery<ScanReviewResponse>({
     queryKey: ["/api/evidence-plans", planId, "scan-review", activeLevel?.id],
     enabled: !!activeLevel?.id,
-    queryFn: async () => (await apiRequest("GET", `/api/evidence-plans/${planId}/scan-review?levelId=${encodeURIComponent(activeLevel!.id)}`)).json(),
+    queryFn: async ({ signal }) => {
+      const response = await transport.fetch(`/api/evidence-plans/${planId}/scan-review?levelId=${encodeURIComponent(activeLevel!.id)}`, { signal });
+      if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
+      return response.json();
+    },
     staleTime: 0, retry: false,
   });
   const outlineDisplay = useMemo(() => planOutlineDisplay(levelUnits, scanReview.isError ? null : scanReview.data?.review, {
@@ -461,7 +485,7 @@ function PlanView({ planId }: { planId: string }) {
       invalidate();
     } catch (e: any) { toast({ title: "Couldn't save colour", description: e.message, variant: "destructive" }); }
   };
-  const [showZa, setShowZa] = useState<boolean>(() => { try { return localStorage.getItem("bgp-ep-za") !== "0"; } catch { return true; } });
+  const [showZa, setShowZa] = useState<boolean>(() => { try { return transport.external || localStorage.getItem("bgp-ep-za") !== "0"; } catch { return true; } });
 
   const hasBg = !!activeLevel?.background_key;
   const aspect = hasBg && activeLevel?.background_width ? (activeLevel.background_height || 1) / activeLevel.background_width : 0.7;
@@ -585,9 +609,9 @@ function PlanView({ planId }: { planId: string }) {
       // file to the canonical importer so the property's schedule (the
       // single source of truth) is what gets filled; the plan overlays it.
       const linkedTs = kind === "import-tenancy" ? plan?.property_id || null : null;
-      if (linkedTs) fd.append("propertyId", linkedTs);
-      const url = linkedTs ? `/api/tenancy-schedule/import-excel` : `/api/evidence-plans/${planId}/${kind}`;
-      const r = await fetch(url, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
+      if (linkedTs && !transport.external) fd.append("propertyId", linkedTs);
+      const url = kind === "import-tenancy" ? transport.tenancyImportUrl(planId, linkedTs) : `/api/evidence-plans/${planId}/${kind}`;
+      const r = await transport.fetch(url, { method: "POST", body: fd });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Upload failed");
       invalidate();
@@ -614,21 +638,35 @@ function PlanView({ planId }: { planId: string }) {
       toast({ title: "No TAFs found", description: "Pick PDFs, a zip, or a folder containing PDFs.", variant: "destructive" });
       return;
     }
+    tafAbort.current?.abort();
+    if (tafPollTimer.current) clearTimeout(tafPollTimer.current);
+    const controller = new AbortController();
+    tafAbort.current = controller;
     setBusy("ingest-taf");
     try {
       const fd = new FormData();
       for (const f of usable) fd.append("file", f);
-      const r = await fetch(`/api/evidence-plans/${planId}/ingest-taf`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
+      const r = await transport.fetch(`/api/evidence-plans/${planId}/ingest-taf`, { method: "POST", body: fd, signal: controller.signal });
       const j = await r.json();
+      if (controller.signal.aborted) return;
       if (!r.ok) throw new Error(j.error || "Upload failed");
       setTafJob({ status: "running", done_docs: 0, total_docs: j.docs });
       toast({ title: "TAF extraction started", description: `${j.docs} document${j.docs === 1 ? "" : "s"} uploaded — evidence appears as each one is read.`
         + (j.skipped > 0 ? ` ${j.skipped} more PDF${j.skipped === 1 ? " was" : "s were"} over the ${j.docs}-document limit — upload them in a second batch.` : "") });
       const poll = async () => {
+        if (controller.signal.aborted) return;
         try {
-          const jr = await fetch(`/api/evidence-plans/jobs/${j.jobId}`, { credentials: "include", headers: getAuthHeaders() });
-          if (!jr.ok) throw new Error();
+          const jr = await transport.fetch(`/api/evidence-plans/jobs/${j.jobId}`, { signal: controller.signal });
+          if (!jr.ok) {
+            if (transport.external && [401, 403, 404, 410].includes(jr.status)) {
+              controller.abort();
+              setBusy(null); setTafJob(null);
+              return;
+            }
+            throw new Error();
+          }
           const job = await jr.json();
+          if (controller.signal.aborted) return;
           setTafJob(job);
           if (job.status === "done") {
             invalidate();
@@ -639,12 +677,13 @@ function PlanView({ planId }: { planId: string }) {
             setBusy(null); setTafJob(null);
           } else {
             invalidate();
-            setTimeout(poll, 4000);
+            tafPollTimer.current = setTimeout(poll, 4000);
           }
-        } catch { setTimeout(poll, 6000); }
+        } catch { if (!controller.signal.aborted) tafPollTimer.current = setTimeout(poll, 6000); }
       };
-      setTimeout(poll, 4000);
+      tafPollTimer.current = setTimeout(poll, 4000);
     } catch (e: any) {
+      if (controller.signal.aborted) return;
       toast({ title: "Upload failed", description: e.message, variant: "destructive" });
       setBusy(null);
     }
@@ -661,18 +700,18 @@ function PlanView({ planId }: { planId: string }) {
     <div ref={fsRef} className="flex flex-col h-[calc(100dvh-var(--mobile-top,0px))] md:h-full bg-background">
       {/* Header */}
       <div className="px-4 py-3 border-b border-border flex items-center gap-2 flex-wrap bg-background">
-        <button onClick={() => navigate("/evidence-plans")} className="text-sm text-muted-foreground hover:text-foreground">←</button>
+        {!transport.external && <button onClick={() => navigate("/evidence-plans")} className="text-sm text-muted-foreground hover:text-foreground">←</button>}
         <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight truncate">{plan.name}</h1>
           <p className="text-[11px] text-muted-foreground">
-            {units.length} units · {entries.length} evidence entries{unlinkedCount ? ` · ${unlinkedCount} unlinked` : ""} ·{" "}
+            {units.length} units · {entries.length} evidence entries{unlinkedCount ? ` · ${unlinkedCount} unlinked` : ""}{!transport.external && <> ·{" "}
             <button className="underline underline-offset-2 hover:text-foreground" onClick={() => setLinkingProperty(true)} data-testid="button-link-property">
               {plan.property_name || "link to a property"}
-            </button>
+            </button></>}
           </p>
         </div>
         <div className="ml-auto flex items-center gap-1.5 flex-wrap">
-          <Button variant="outline" size="sm" onClick={async () => { if (document.fullscreenElement) await document.exitFullscreen?.().catch(() => undefined); setShareOpen(true); }} data-testid="button-share-evidence-plan">Share with client</Button>
+          {!transport.external && <Button variant="outline" size="sm" onClick={async () => { if (document.fullscreenElement) await document.exitFullscreen?.().catch(() => undefined); setShareOpen(true); }} data-testid="button-share-evidence-plan">Share with client</Button>}
           {detectRunning ? (
             <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground rounded-full border border-border px-2.5 py-1" data-testid="detect-indicator">
               <Sparkles className="w-3 h-3" /> {scanJob?.status === "running" && scanJob.total_docs > 1 ? `Scanning · ${scanJob.done_docs} / ${scanJob.total_docs} sections` : "Reading the plan…"}
@@ -691,7 +730,7 @@ function PlanView({ planId }: { planId: string }) {
           <Button variant={drawing ? "default" : "outline"} size="sm" disabled={!hasBg} onClick={() => { stopDrawing(); setCleanPlan(false); draftBackgroundKey.current = activeLevel?.background_key || null; setDrawing(!drawing); setCropping(false); setDetailsOpen(false); }} data-testid="pill-draw-unit">
             <Pencil className="w-3 h-3 mr-1 inline" />{drawing ? "Drawing unit" : "Draw unit"}
           </Button>
-          {plan.property_id && (
+          {!transport.external && plan.property_id && (
             <Button variant="outline" size="sm" onClick={() => navigate(`/tenancy-schedule/${plan.property_id}`)} data-testid="button-open-ts">
               <FileSpreadsheet className="w-3.5 h-3.5 mr-1" /> Tenancy schedule
             </Button>
@@ -739,7 +778,7 @@ function PlanView({ planId }: { planId: string }) {
         <Pill active={hideRedInk} disabled={!hasBg} onClick={() => setHideRedInk(v => !v)} data-testid="view-hide-red">Hide red ink</Pill>
         <Pill active={strongLines} disabled={!hasBg} onClick={() => setStrongLines(v => !v)} data-testid="view-strong-lines">Darker lines</Pill>
         <Button variant="outline" size="sm" onClick={() => setReviewOpen(true)} data-testid="button-review-plan">Review & clean up</Button>
-        {activeLevel?.source_pdf_url && <Button variant="outline" size="sm" asChild><a href={activeLevel.source_pdf_url} target="_blank" rel="noreferrer" data-testid="link-original-plan">Original PDF</a></Button>}
+        {activeLevel && transport.originalPlanUrl(activeLevel.id, activeLevel.source_pdf_url) && <Button variant="outline" size="sm" asChild><a href={transport.originalPlanUrl(activeLevel.id, activeLevel.source_pdf_url)!} target="_blank" rel="noreferrer" referrerPolicy="no-referrer" data-testid="link-original-plan">Original PDF</a></Button>}
         <span className="text-[11px] text-muted-foreground">{hideRedInk ? "Hides red/orange ink, including text and symbols; original kept." : strongLines ? "Contrast enhanced for viewing; source unchanged." : "Original image tones."}</span>
       </div>
       {!cleanPlan && numberLabels && <p className="px-4 py-2 text-sm text-muted-foreground border-b border-border">Select a unit and use Edit to set its number. Drag its label to position it; numbers are not guessed from neighbouring shops.</p>}
@@ -748,8 +787,8 @@ function PlanView({ planId }: { planId: string }) {
         onSelect={id => { const unit = units.find(u => u.id === id); stopDrawing(); setCleanPlan(false); setActiveLevelId(unit?.level_id || levels[0]?.id || null); setZoom(1); setPan({ x: 0, y: 0 }); selectUnit(id); }} />
       {activeLevel && <EvidencePlanScanReview key={activeLevel.id} open={scanReviewOpen} onOpenChange={setScanReviewOpen} planId={planId} level={activeLevel} onSaved={() => { setScanReport(null); invalidate(); }} onRefresh={refreshUnits} scanRunning={detectRunning} />}
 
-      <LinkPropertyDialog open={linkingProperty} onOpenChange={setLinkingProperty} plan={plan} onSaved={invalidate} />
-      <EvidencePlanShareDialog planId={planId} planName={plan.name} entries={entries} open={shareOpen} onOpenChange={setShareOpen} />
+      {!transport.external && <LinkPropertyDialog open={linkingProperty} onOpenChange={setLinkingProperty} plan={plan} onSaved={invalidate} />}
+      {!transport.external && <EvidencePlanShareDialog planId={planId} planName={plan.name} entries={entries} open={shareOpen} onOpenChange={setShareOpen} />}
       <Dialog open={importReviewRows.length > 0} onOpenChange={open => { if (!open) setImportReviewRows([]); }}>
         <DialogContent className="max-w-3xl max-h-[85dvh] overflow-y-auto">
           <DialogHeader><DialogTitle>Review imported tenancy entries</DialogTitle><DialogDescription>New entries have been added. The differences below need a decision before existing schedule information is changed.</DialogDescription></DialogHeader>
@@ -818,14 +857,14 @@ function PlanView({ planId }: { planId: string }) {
         <div role="group" aria-label="Plan label style" className="flex items-center gap-1.5 flex-wrap">
           <span className="text-[11px] text-muted-foreground mr-1">Labels</span>
           {([['compact', 'Compact labels'], ['circles', 'Circles'], ['dots', 'Dots only']] as const).map(([mode, label]) =>
-            <Pill key={mode} active={markerMode === mode} aria-pressed={markerMode === mode} disabled={!viewer?.id}
+            <Pill key={mode} active={markerMode === mode} aria-pressed={markerMode === mode} disabled={!preferenceIdentity}
               onClick={() => chooseMarkerMode(mode)} data-testid={`plan-label-mode-${mode}`}>{label}</Pill>)}
         </div>
         {markerMode === "compact" && <Pill active={compareRents && showZa} aria-pressed={compareRents && showZa}
           onClick={() => {
             const next = !(compareRents && showZa);
             setCompareRents(next);
-            if (next) { setShowZa(true); try { localStorage.setItem("bgp-ep-za", "1"); } catch {} }
+            if (next) { setShowZa(true); try { if (!transport.external) localStorage.setItem("bgp-ep-za", "1"); } catch {} }
           }} data-testid="plan-compare-rents">Compare rents</Pill>}
         <span className="text-[11px] text-muted-foreground">Zoom in for more labels. Select any unit for its details.</span>
       </div>}
@@ -843,7 +882,7 @@ function PlanView({ planId }: { planId: string }) {
             </label>
           ))}
           <Pill active={showZa} aria-pressed={showZa}
-            onClick={() => setShowZa(s => { try { localStorage.setItem("bgp-ep-za", s ? "0" : "1"); } catch {} return !s; })}
+            onClick={() => setShowZa(s => { try { if (!transport.external) localStorage.setItem("bgp-ep-za", s ? "0" : "1"); } catch {} return !s; })}
             data-testid="button-toggle-za">
             £ ZA
           </Pill>
@@ -949,7 +988,7 @@ function PlanView({ planId }: { planId: string }) {
                   if (drawing) finishOutline();
                 }}
               >
-                <img src={`/api/evidence-plans/levels/${activeLevel!.id}/background?v=${encodeURIComponent(activeLevel!.background_key || "")}${hideRedInk ? "&hideRed=1" : ""}`} alt={`${plan.name} — ${activeLevel?.name || "plan"}`} className="absolute inset-0 w-full h-full" style={{ filter: strongLines ? "contrast(1.7)" : "none" }} draggable={false} data-testid="plan-background-image" />
+                <img src={transport.url(`/api/evidence-plans/levels/${activeLevel!.id}/background?v=${encodeURIComponent(activeLevel!.background_key || "")}${hideRedInk ? "&hideRed=1" : ""}`)} referrerPolicy="no-referrer" alt={`${plan.name} — ${activeLevel?.name || "plan"}`} className="absolute inset-0 w-full h-full" style={{ filter: strongLines ? "contrast(1.7)" : "none" }} draggable={false} data-testid="plan-background-image" />
                 <svg className="absolute inset-0 w-full h-full" viewBox={`0 0 ${aspect >= 1 ? 100 : 100} ${100 * aspect}`} preserveAspectRatio="none" style={{ pointerEvents: "none" }}>
                   {overlaysVisible && selected && outlineDisplay.placement.get(selected.id) === "needs_review" && isValidPolygon(selected.polygon) && (
                     <polygon points={planOutlinePoints(selected.polygon!, 100, 100 * aspect)} fill="none" stroke="hsl(var(--muted-foreground))"
@@ -1251,6 +1290,7 @@ function LinkPropertyDialog({ open, onOpenChange, plan, onSaved }: {
 
 function UnlinkedEvidence({ entries, units, levels, onSaved, initiallyOpen = false }: { entries: Entry[]; units: PlanUnit[]; levels: PlanLevel[]; onSaved: () => void; initiallyOpen?: boolean }) {
   const { toast } = useToast();
+  const { request: apiRequest } = useEvidencePlanTransport();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [open, setOpen] = useState(initiallyOpen);
@@ -1338,6 +1378,9 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
   onClose: () => void; onSave: (patch: any) => Promise<unknown>; onDeleted: () => void; onRedraw: (mode: "draw" | "trace") => void;
 }) {
   const { toast } = useToast();
+  const transport = useEvidencePlanTransport();
+  const apiRequest = transport.request;
+  const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<any>({});
   const [originalForm, setOriginalForm] = useState<any>({});
@@ -1517,7 +1560,7 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
           {evidenceHasNumber(summaryEntry.itza) && fact("ITZA sq ft", Number(summaryEntry.itza).toLocaleString("en-GB"))}
           {summaryEntry.term && fact("Term", summaryEntry.term)}
         </div>
-        {summaryEntry.source_key && <a href={`/api/evidence-plans/source?key=${encodeURIComponent(summaryEntry.source_key)}`} target="_blank" rel="noreferrer" className="block text-xs underline underline-offset-2">Download source document</a>}
+        {transport.sourceDocumentUrl(summaryEntry) && <a href={transport.sourceDocumentUrl(summaryEntry)!} target="_blank" rel="noreferrer" referrerPolicy="no-referrer" className="block text-xs underline underline-offset-2">Download source document</a>}
         {!editing && (evidenceHasNumber(summaryEntry.size_sqft) || evidenceHasNumber(summaryEntry.headline_rent)) && <Button variant="outline" size="sm" className="min-h-11 whitespace-normal" onClick={() => { setUseEvidenceSize(false); setUseEvidencePassingRent(false); setReviewEntryId(summaryEntry.id); }} data-testid="button-review-evidence-facts">Review for unit details</Button>}
       </section>}
 
@@ -1626,7 +1669,7 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
         <Button className="mt-2" size="sm" disabled={!scheduleId || saving} onClick={linkSchedule} data-testid="button-link-unit-schedule">{saving ? "Saving link…" : "Link schedule row"}</Button>
       </details>}
 
-      {matters.length > 0 && (
+      {!transport.external && matters.length > 0 && (
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Lease advisory jobs</h3>
           <div className="space-y-1.5">
@@ -1699,8 +1742,8 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
                 )}
                 <div className="flex items-center gap-2 mt-1">
                   <Button variant="ghost" size="sm" onClick={() => startEvidence(e)} data-testid={`button-edit-evidence-${e.id}`}>Edit evidence</Button>
-                  {e.source_key && (
-                    <a href={`/api/evidence-plans/source?key=${encodeURIComponent(e.source_key)}`} target="_blank" rel="noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground hover:underline">Download source document</a>
+                  {transport.sourceDocumentUrl(e) && (
+                    <a href={transport.sourceDocumentUrl(e)!} target="_blank" rel="noreferrer" referrerPolicy="no-referrer" className="text-[11px] text-muted-foreground hover:text-foreground hover:underline">Download source document</a>
                   )}
                   <button
                     className="text-[11px] text-muted-foreground hover:text-destructive ml-auto"

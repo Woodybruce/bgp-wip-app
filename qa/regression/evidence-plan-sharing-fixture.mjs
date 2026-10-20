@@ -115,11 +115,12 @@ export async function createSharingFixture(createRouters, initializeSchema) {
     server = app.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const baseUrl = `http://127.0.0.1:${server.address().port}`;
-    const request = async (url, { method = 'GET', body, user, headers = {} } = {}) => {
+    const request = async (url, { method = 'GET', body, user, headers = {}, signal } = {}) => {
+      const multipart = body instanceof FormData;
       const response = await fetch(baseUrl + url, {
-        method, headers: { ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+        method, signal, headers: { ...(body !== undefined && !multipart ? { 'content-type': 'application/json' } : {}),
           ...(user ? { 'x-test-user': user } : {}), ...headers },
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        ...(body !== undefined ? { body: multipart ? body : JSON.stringify(body) } : {}),
       });
       const text = await response.text();
       let json = null;

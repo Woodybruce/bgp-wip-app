@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, Loader2, ScanLine } from "lucide-react";
 import type { PlanScanReview, ScanReviewAssignment, ScanReviewCandidate, ScanReviewResponse, ScanReviewUnit } from "@shared/plan-scan-review";
 import { interiorPoint, isValidPolygon, pointInPolygon, type PlanPoint } from "@shared/plan-geometry";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useEvidencePlanTransport } from "@/lib/evidence-plan-transport";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,10 +35,17 @@ export function EvidencePlanScanReview({ open, onOpenChange, planId, level, onSa
   onSaved: () => void; onRefresh: () => void; scanRunning: boolean;
 }) {
   const isMobile = useIsMobile();
+  const transport = useEvidencePlanTransport();
+  const apiRequest = transport.request;
+  const queryClient = useQueryClient();
   const queryKey = ["/api/evidence-plans", planId, "scan-review", level.id];
   const result = useQuery<ScanReviewResponse>({
     queryKey, enabled: open,
-    queryFn: async () => (await apiRequest("GET", `/api/evidence-plans/${planId}/scan-review?levelId=${encodeURIComponent(level.id)}`)).json(),
+    queryFn: async ({ signal }) => {
+      const response = await transport.fetch(`/api/evidence-plans/${planId}/scan-review?levelId=${encodeURIComponent(level.id)}`, { signal });
+      if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
+      return response.json();
+    },
     refetchOnMount: "always", refetchInterval: false, staleTime: 0,
   });
   const review = result.data?.review;
@@ -183,7 +190,7 @@ export function EvidencePlanScanReview({ open, onOpenChange, planId, level, onSa
             <div className="flex flex-wrap gap-2"><Pill active={!zoomSelected} onClick={() => setZoomSelected(false)} data-testid="scan-review-full-plan">Full plan</Pill><Pill active={zoomSelected} disabled={!selected} onClick={() => setZoomSelected(true)} data-testid="scan-review-zoom">Selected unit</Pill></div>
             {inspectedOldUnit && <div className="flex flex-wrap items-center gap-2"><p className="text-sm flex-1">Old outline: <strong>{inspectedOldUnit.unitRef}</strong>{inspectedOldUnit.tenantName ? ` · ${inspectedOldUnit.tenantName}` : ""}</p><Button variant="outline" size="sm" onClick={() => setInspectedOldId(null)} data-testid="scan-review-return-candidate">Return to detected boundary</Button></div>}
             <svg viewBox={viewBox} role="group" aria-label="Detected boundaries on the source plan. Select a boundary to review its unit." className="w-full h-[32dvh] md:h-[49dvh] min-h-56 rounded-lg border border-border bg-muted/30" data-testid="scan-review-preview">
-              <image href={`/api/evidence-plans/levels/${level.id}/background?v=${encodeURIComponent(level.background_key || "")}`} x="0" y="0" width={width} height={height} />
+              <image href={transport.url(`/api/evidence-plans/levels/${level.id}/background?v=${encodeURIComponent(level.background_key || "")}`)} x="0" y="0" width={width} height={height} />
               {comparisonUnit && isValidPolygon(comparisonUnit.polygon) && <polygon points={points(comparisonUnit.polygon!)} fill={inspectedOldUnit ? "hsl(var(--foreground) / .12)" : "none"} stroke="hsl(var(--foreground))" strokeWidth={2} strokeDasharray="6 4" vectorEffect="non-scaling-stroke" pointerEvents="none" data-testid="scan-review-old-outline" />}
               {review.candidates.filter(candidate => candidate.id !== selectedId).map(candidate => <polygon key={candidate.id} points={points(candidate.polygon)} fill="hsl(var(--primary) / 0.08)" stroke={queued[candidate.id] ? "hsl(var(--foreground))" : "hsl(var(--primary) / 0.55)"} strokeWidth={queued[candidate.id] ? 2 : 1} vectorEffect="non-scaling-stroke" className="cursor-pointer" role="button" tabIndex={0} aria-label={`Review boundary ${candidate.unitRef}`} data-testid={`scan-candidate-outline-${candidate.id}`} onClick={() => selectCandidate(candidate.id)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectCandidate(candidate.id); } }}><title>{candidate.unitRef} · {candidate.tenantName || "Tenant not read"}</title></polygon>)}
               {selected && !inspectedOldUnit && <polygon points={points(selected.polygon)} fill="hsl(var(--primary) / 0.18)" stroke="hsl(var(--primary))" strokeWidth={3} vectorEffect="non-scaling-stroke" pointerEvents="none" data-testid="scan-review-selected-outline" />}

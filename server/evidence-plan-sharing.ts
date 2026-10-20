@@ -36,6 +36,9 @@ export async function ensureEvidencePlanShareSchema(db: EvidenceShareQuery): Pro
     revoked_at TIMESTAMPTZ,
     CHECK (document_entry_ids <@ entry_ids)
   )`);
+  // Existing read-only links retain their original capability.
+  await db.query(`ALTER TABLE evidence_plan_shares ADD COLUMN IF NOT EXISTS
+    access_mode TEXT NOT NULL DEFAULT 'view' CHECK (access_mode IN ('view', 'edit'))`);
   await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS evidence_plan_shares_one_active
     ON evidence_plan_shares (plan_id) WHERE revoked_at IS NULL`);
 }
@@ -124,9 +127,10 @@ export function createEvidencePlanSharingRouters(deps: EvidencePlanSharingDepend
       await ready();
       db = await deps.db.connect();
       await db.query("BEGIN");
+      if (expected) await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`evidence-plan-share:${expected.id}`]);
       const plan = (await db.query("SELECT id FROM evidence_plans WHERE id = $1 FOR UPDATE", [id])).rows[0];
       if (!plan) throw new EvidencePlanShareError(404, "Plan not found");
-      const existing = (await db.query("SELECT id, updated_at FROM evidence_plan_shares WHERE plan_id = $1 AND revoked_at IS NULL FOR UPDATE", [id])).rows[0];
+      const existing = (await db.query("SELECT id, updated_at, access_mode FROM evidence_plan_shares WHERE plan_id = $1 AND revoked_at IS NULL FOR UPDATE", [id])).rows[0];
       assertExpectedEvidencePlanShare(existing, expected);
       const entries = (await db.query(`SELECT id, source_key FROM evidence_plan_entries
         WHERE plan_id = $1 AND id = ANY($2::uuid[]) FOR SHARE`, [id, settings.entryIds])).rows;
@@ -135,15 +139,20 @@ export function createEvidencePlanSharingRouters(deps: EvidencePlanSharingDepend
       if (settings.documentEntryIds.some(entryId => !documents.has(entryId))) throw new EvidencePlanShareError(400, "Selected documents must have a source file");
       const values = [settings.label, settings.entryIds, settings.documentEntryIds, settings.includeUnitFacts];
       let share;
-      if (existing) {
+      const accessChanged = existing && existing.access_mode !== settings.accessMode;
+      if (accessChanged) {
+        await db.query(`UPDATE evidence_plan_shares SET revoked_at=now(),
+          updated_at=GREATEST(clock_timestamp(), updated_at + interval '1 millisecond') WHERE id=$1`, [existing.id]);
+      }
+      if (existing && !accessChanged) {
         share = (await db.query(`UPDATE evidence_plan_shares SET label=$1, entry_ids=$2::uuid[],
           document_entry_ids=$3::uuid[], include_unit_facts=$4,
           updated_at=GREATEST(clock_timestamp(), updated_at + interval '1 millisecond') WHERE id=$5 RETURNING *`, [...values, existing.id])).rows[0];
       } else {
         const token = tokenFactory();
         if (!EVIDENCE_SHARE_TOKEN.test(token)) throw new Error("Invalid token generator");
-        share = (await db.query(`INSERT INTO evidence_plan_shares (label, entry_ids, document_entry_ids, include_unit_facts, plan_id, token)
-          VALUES ($1,$2::uuid[],$3::uuid[],$4,$5,$6) RETURNING *`, [...values, id, token])).rows[0];
+        share = (await db.query(`INSERT INTO evidence_plan_shares (label, entry_ids, document_entry_ids, include_unit_facts, plan_id, token, access_mode)
+          VALUES ($1,$2::uuid[],$3::uuid[],$4,$5,$6,$7) RETURNING *`, [...values, id, token, settings.accessMode])).rows[0];
       }
       await db.query("COMMIT");
       res.json({ share: presentEvidencePlanShare(share) });
@@ -160,6 +169,7 @@ export function createEvidencePlanSharingRouters(deps: EvidencePlanSharingDepend
       await ready();
       db = await deps.db.connect();
       await db.query("BEGIN");
+      if (expected) await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`evidence-plan-share:${expected.id}`]);
       const plan = (await db.query("SELECT id FROM evidence_plans WHERE id = $1 FOR UPDATE", [id])).rows[0];
       if (!plan) throw new EvidencePlanShareError(404, "Plan not found");
       const existing = (await db.query("SELECT id, updated_at FROM evidence_plan_shares WHERE plan_id=$1 AND revoked_at IS NULL FOR UPDATE", [id])).rows[0];
@@ -220,6 +230,17 @@ export function createEvidencePlanSharingRouters(deps: EvidencePlanSharingDepend
             share.document_entry_ids.includes(entry.id) && entry.source_key ? `${base}/entries/${entry.id}/document` : undefined)) };
       });
       res.json(payload);
+    } catch (error) { respondError(res, error); }
+  });
+
+  publicRouter.get(`${publicBase}/access`, async (req, res) => {
+    try {
+      let access;
+      await withShare(req, async (_db, share) => {
+        access = { accessMode: share.access_mode, planName: share.plan_name,
+          ...(share.access_mode === "edit" ? { planId: share.plan_id } : {}) };
+      });
+      res.json(access);
     } catch (error) { respondError(res, error); }
   });
 

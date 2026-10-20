@@ -64,6 +64,77 @@ test('staff see no share initially and save a stable active link without duplica
   assert.equal((await fixture.db.query('SELECT count(*) FROM evidence_plan_shares WHERE revoked_at IS NULL')).rows[0].count, '1');
 });
 
+test('old clients and a migrated pre-mode share keep read-only access', async () => {
+  const first = await share();
+  assert.equal(first.accessMode, 'view', 'Omitting accessMode must not grant editing');
+  await fixture.db.query('ALTER TABLE evidence_plan_shares DROP COLUMN access_mode');
+  await ensureEvidencePlanShareSchema(fixture.db);
+  const migrated = await currentShare();
+  assert.equal(migrated.token, first.token);
+  assert.equal(migrated.accessMode, 'view');
+  const access = await fixture.request(`${publicPlan(first.token)}/access`);
+  assert.equal(access.status, 200, access.text);
+  safeHeaders(access);
+  assert.deepEqual(access.json, { accessMode: 'view', planName: 'Shared scheme' });
+  assert.equal((await fixture.request(publicPlan(first.token))).status, 200);
+});
+
+test('the access descriptor reveals an editor plan ID only for an explicit edit capability', async () => {
+  const { token } = await share({ accessMode: 'edit' });
+  const access = await fixture.request(`${publicPlan(token)}/access`);
+  assert.equal(access.status, 200, access.text);
+  safeHeaders(access);
+  assert.deepEqual(access.json, { accessMode: 'edit', planName: 'Shared scheme', planId: ids.plan });
+  for (const denied of ['invalid', 'A'.repeat(43)]) {
+    assert.equal((await fixture.request(`${publicPlan(denied)}/access`)).status, 404);
+  }
+  await revoke();
+  assert.equal((await fixture.request(`${publicPlan(token)}/access`)).status, 404);
+});
+
+test('changing either access mode rotates the capability and permanently revokes previous URLs', async () => {
+  const view = await share();
+  const edit = await share({ accessMode: 'edit' });
+  const replacementView = await share({ accessMode: 'view' });
+  assert.equal(new Set([view.token, edit.token, replacementView.token]).size, 3);
+  assert.equal(new Set([view.id, edit.id, replacementView.id]).size, 3);
+  for (const expired of [view, edit]) {
+    for (const method of ['GET', 'HEAD']) {
+      for (const url of [publicPlan(expired.token), `${publicPlan(expired.token)}/access`, image(expired.token), document(expired.token)]) {
+        const response = await fixture.request(url, { method });
+        assert.equal(response.status, 404, `${method} ${url}: ${response.text}`);
+        safeHeaders(response);
+      }
+    }
+  }
+  const rows = (await fixture.db.query('SELECT token,access_mode,revoked_at FROM evidence_plan_shares')).rows;
+  assert.equal(rows.filter(row => !row.revoked_at).length, 1);
+  assert.equal(rows.filter(row => row.revoked_at).length, 2);
+  assert.equal((await fixture.request(`${publicPlan(replacementView.token)}/access`)).json.accessMode, 'view');
+});
+
+test('editing share settings without a capability change preserves the explicit edit token', async () => {
+  const first = await share({ accessMode: 'edit' });
+  const revised = await share({ accessMode: 'edit', label: 'Updated editing invitation', entryIds: [], documentEntryIds: [] });
+  assert.equal(revised.id, first.id);
+  assert.equal(revised.token, first.token);
+  assert.equal(revised.accessMode, 'edit');
+  assert.notEqual(revised.updatedAt, first.updatedAt);
+  assert.equal((await fixture.db.query('SELECT count(*) FROM evidence_plan_shares')).rows[0].count, '1');
+});
+
+test('a stale tab cannot widen or replace the active capability after a mode rotation', async () => {
+  const first = await share();
+  const editor = await share({ accessMode: 'edit' });
+  for (const mode of ['view', 'edit']) {
+    const response = await fixture.request(management(), { method: 'PUT', user: 'staff',
+      body: settings({ accessMode: mode, expectedShare: expected(first) }) });
+    assert.equal(response.status, 409, response.text);
+  }
+  assert.deepEqual(await currentShare(), editor);
+  assert.equal((await fixture.request(`${publicPlan(first.token)}/access`)).status, 404);
+});
+
 test('a stale authenticated session for a deleted user cannot manage shares', async () => {
   for (const method of ['GET', 'PUT', 'POST']) {
     const response = await fixture.request(management() + (method === 'POST' ? '/revoke' : ''), {
@@ -304,6 +375,7 @@ test('settings reject malformed IDs, unsupported values and document selections 
     settings({ entryIds: [ids.otherEntry] }), settings({ entryIds: [id(999)] }),
     settings({ documentEntryIds: [ids.unselectedEntry] }), settings({ documentEntryIds: [ids.otherEntry] }),
     settings({ documentEntryIds: 'all' }), settings({ includeUnitFacts: 'true' }),
+    ...['admin', 'EDIT', '', true, null, 1, ['edit']].map(accessMode => settings({ accessMode })),
     settings({ includeUnitFacts: null }), settings({ token: 'chosen-token' }), settings({ source_key: fileKeys.otherDoc }),
     settings({ expectedShare: 'none' }), settings({ expectedShare: {} }),
     settings({ expectedShare: { id: ids.plan, updatedAt: 'not-a-date' } }),

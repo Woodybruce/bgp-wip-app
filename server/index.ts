@@ -3745,6 +3745,7 @@ import brandPackRouter from "./brand-pack";
 import dealVerdictsRouter from "./deal-verdicts";
 import evidencePlanRouter from "./evidence-plan";
 import { evidencePlanSharePublicRouter, evidencePlanShareStaffRouter } from "./evidence-plan-sharing";
+import { evidencePlanEditorRouter } from "./evidence-plan-editor";
 import dealDocsRouter from "./deal-docs";
 import weeklyReportRouter, { runWeeklyClientReports } from "./weekly-report";
 import dealReportRouter from "./deal-report";
@@ -4177,6 +4178,7 @@ app.use("/api/branding/assets", express.static(
   // Token-scoped read-only access works for anonymous and client accounts.
   // Run before session gates so old/deactivated account cookies cannot block
   // token-authorized images. Management retains the staff and client gates.
+  app.use(evidencePlanEditorRouter);
   app.use(evidencePlanSharePublicRouter);
 
   setupAuth(app);

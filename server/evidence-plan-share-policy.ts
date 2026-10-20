@@ -11,11 +11,13 @@ export class EvidencePlanShareError extends Error {
 export function validateEvidencePlanShareSettings(body: unknown): EvidencePlanShareSettings {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new EvidencePlanShareError(400, "Share settings are required");
   const value = body as Record<string, unknown>;
-  if (Object.keys(value).some(key => !["label", "entryIds", "documentEntryIds", "includeUnitFacts", "expectedShare"].includes(key))) {
+  if (Object.keys(value).some(key => !["label", "entryIds", "documentEntryIds", "includeUnitFacts", "expectedShare", "accessMode"].includes(key))) {
     throw new EvidencePlanShareError(400, "Unknown share setting");
   }
   if (typeof value.label !== "string" || value.label.length > 160) throw new EvidencePlanShareError(400, "Label must be text of at most 160 characters");
   if (typeof value.includeUnitFacts !== "boolean") throw new EvidencePlanShareError(400, "Choose whether to include unit facts");
+  const accessMode = value.accessMode === undefined ? "view" : value.accessMode;
+  if (accessMode !== "view" && accessMode !== "edit") throw new EvidencePlanShareError(400, "Choose view or edit access");
   const ids = (key: string): string[] => {
     const list = value[key];
     if (!Array.isArray(list) || list.length > 10000 || list.some(id => typeof id !== "string" || !EVIDENCE_SHARE_UUID.test(id))) {
@@ -25,7 +27,7 @@ export function validateEvidencePlanShareSettings(body: unknown): EvidencePlanSh
   };
   const entryIds = ids("entryIds"), documentEntryIds = ids("documentEntryIds");
   if (documentEntryIds.some(id => !entryIds.includes(id))) throw new EvidencePlanShareError(400, "Documents must belong to selected evidence");
-  return { label: value.label.trim(), entryIds, documentEntryIds, includeUnitFacts: value.includeUnitFacts };
+  return { label: value.label.trim(), entryIds, documentEntryIds, includeUnitFacts: value.includeUnitFacts, accessMode };
 }
 
 export const shareText = (value: unknown): string | null => typeof value === "string" ? value : null;
@@ -46,7 +48,7 @@ export function shareTimestamp(value: unknown): string | null {
 }
 
 export function presentEvidencePlanShare(row: any): EvidencePlanShare {
-  return { id: row.id, label: row.label, token: row.token, entryIds: row.entry_ids,
+  return { id: row.id, label: row.label, token: row.token, entryIds: row.entry_ids, accessMode: row.access_mode === "edit" ? "edit" : "view",
     documentEntryIds: row.document_entry_ids, includeUnitFacts: row.include_unit_facts,
     createdAt: shareTimestamp(row.created_at)!, updatedAt: shareTimestamp(row.updated_at)!, revokedAt: shareTimestamp(row.revoked_at) };
 }
