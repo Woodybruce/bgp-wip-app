@@ -1023,17 +1023,45 @@ async function parseEvidencePdf(buffer: Buffer, digest: string): Promise<{ candi
   const MAX_PAGES = 8;
   const pages: Buffer[] = [];
   for (let p = 1; p <= MAX_PAGES + 1; p++) {
-    const buf = await rasterisePdfPage({ pdfBuffer: buffer, page: p, dpi: 150 });
+    const buf = await rasterisePdfPage({ pdfBuffer: buffer, page: p, dpi: 130 });
     if (!buf) break;
     pages.push(buf);
   }
   if (!pages.length) throw new EvidencePlanError(400, "This PDF could not be opened. Check it isn't password-protected and try again");
   const warnings: string[] = [];
   if (pages.length > MAX_PAGES) { pages.length = MAX_PAGES; warnings.push(`Only the first ${MAX_PAGES} pages were read. For a longer tranche, use Add TAFs at the top of the plan.`); }
-  const content: any[] = pages.map(buf => ({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: buf.toString("base64") } }));
-  content.push({ type: "text", text: TAF_PROMPT });
-  const msg = await anthropic.messages.create({ model: "claude-sonnet-4-6", max_tokens: 8000, messages: [{ role: "user", content }] });
-  const text = msg.content.filter((blk: any) => blk.type === "text").map((blk: any) => blk.text).join("");
+  // The read used to throw straight into a bare "could not be read" with no
+  // log, so a busy model or a slow 8-page pack looked like a broken PDF
+  // (Pete, 2026-10-20: "keep getting this"). Now: a 40s budget per attempt
+  // (under Railway's edge limit), one retry on busy / timeout with fewer
+  // pages, and the real reason logged and shown.
+  const ask = async (imgs: Buffer[], timeoutMs: number) => {
+    const content: any[] = imgs.map(buf => ({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: buf.toString("base64") } }));
+    content.push({ type: "text", text: TAF_PROMPT });
+    const msg = await anthropic.messages.create({ model: "claude-sonnet-4-6", max_tokens: 8000, messages: [{ role: "user", content }] }, { timeout: timeoutMs, maxRetries: 0 });
+    return msg.content.filter((blk: any) => blk.type === "text").map((blk: any) => blk.text).join("");
+  };
+  let text: string;
+  try {
+    text = await ask(pages, 40_000);
+  } catch (e: any) {
+    const status = Number(e?.status || e?.statusCode || 0);
+    const detail = String(e?.message || e).slice(0, 300);
+    console.error(`[evidence-plan] TAF PDF read failed (${status || e?.name || "error"}): ${detail}`);
+    const busy = status === 429 || status === 529 || status >= 500 || /timeout|timed out|overloaded|ECONNRESET/i.test(detail);
+    if (status === 401 || status === 403) throw new EvidencePlanError(502, "The AI reader isn't accepting BGP's key right now — tell Woody. Meanwhile add the evidence by hand");
+    if (status === 400 && /credit|billing|quota/i.test(detail)) throw new EvidencePlanError(502, "The AI account needs topping up — tell Woody. Meanwhile add the evidence by hand");
+    if (!busy) throw new EvidencePlanError(502, `The PDF could not be read (${detail.slice(0, 120)}). Try again, or add the evidence by hand`);
+    const fewer = pages.slice(0, Math.min(4, pages.length));
+    if (fewer.length < pages.length) warnings.push(`The AI reader was slow, so only the first ${fewer.length} pages were read this time. Check the figures, or try again for the full document.`);
+    try {
+      await new Promise(r => setTimeout(r, 1500));
+      text = await ask(fewer, 40_000);
+    } catch (e2: any) {
+      console.error(`[evidence-plan] TAF PDF retry failed: ${String(e2?.message || e2).slice(0, 300)}`);
+      throw new EvidencePlanError(502, "The AI reader is busy right now — try again in a minute, or add the evidence by hand");
+    }
+  }
   const parsedJson = extractJsonObject(text);
   const tafs: any[] = Array.isArray(parsedJson?.tafs) ? parsedJson.tafs : [];
   const num = (v: any) => { const n = Number(String(v ?? "").replace(/[£,\s]/g, "")); return v != null && v !== "" && Number.isFinite(n) ? n : null; };
