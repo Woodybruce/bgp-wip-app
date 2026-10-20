@@ -3744,6 +3744,7 @@ import tradingNamesRouter from "./trading-names";
 import brandPackRouter from "./brand-pack";
 import dealVerdictsRouter from "./deal-verdicts";
 import evidencePlanRouter from "./evidence-plan";
+import { evidencePlanSharePublicRouter, evidencePlanShareStaffRouter } from "./evidence-plan-sharing";
 import dealDocsRouter from "./deal-docs";
 import weeklyReportRouter, { runWeeklyClientReports } from "./weekly-report";
 import dealReportRouter from "./deal-report";
@@ -3994,7 +3995,9 @@ const apiLimiter = rateLimit({
   // Key authenticated traffic by its bearer token instead; anonymous
   // traffic falls back to the (IPv6-safe) IP key.
   keyGenerator: (req) =>
-    req.headers.authorization || ipKeyGenerator(req.ip || ""),
+    (req.originalUrl || req.path).toLowerCase().startsWith("/api/public/evidence-plans/")
+      ? ipKeyGenerator(req.ip || "")
+      : req.headers.authorization || ipKeyGenerator(req.ip || ""),
   skip: (req) => {
     // Dev/QA runs everything from one IP (two harness personas + HMR), so the
     // per-IP bucket trips on ordinary page loads. The limiter is a prod
@@ -4123,6 +4126,7 @@ export function log(message: string, source = "express") {
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
+  const logPath = path.replace(/^(\/api\/public\/evidence-plans\/)[^/]+/i, "$1[redacted]");
   let capturedJsonResponse: Record<string, any> | undefined = undefined;
 
   const originalResJson = res.json;
@@ -4138,7 +4142,7 @@ app.use((req, res, next) => {
       // can fire ~200 times per page load. They're cached by the browser
       // for 24h on 404, but the first paint is still noisy.
       if (path.startsWith("/api/brand-logo/") && res.statusCode === 404) return;
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+      let logLine = `${req.method} ${logPath} ${res.statusCode} in ${duration}ms`;
       const safeToLogRoutes = ["/api/config/", "/api/push/", "/api/heartbeat"];
       const isSafeToLog = safeToLogRoutes.some(r => path.startsWith(r));
       if (capturedJsonResponse && isSafeToLog) {
@@ -4149,6 +4153,13 @@ app.use((req, res, next) => {
     }
   });
 
+  next();
+});
+
+app.use("/evidence-plan-share", (_req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  res.set("Referrer-Policy", "no-referrer");
+  res.set("X-Robots-Tag", "noindex, nofollow, noarchive");
   next();
 });
 
@@ -4163,6 +4174,11 @@ app.use("/api/branding/assets", express.static(
 ));
 
 (async () => {
+  // Token-scoped read-only access works for anonymous and client accounts.
+  // Run before session gates so old/deactivated account cookies cannot block
+  // token-authorized images. Management retains the staff and client gates.
+  app.use(evidencePlanSharePublicRouter);
+
   setupAuth(app);
 
   // ── Client default-deny backstop ──────────────────────────────────────
@@ -4810,6 +4826,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(brandPackRouter);
   app.use(dealVerdictsRouter);
   app.use(evidencePlanRouter);
+  app.use(evidencePlanShareStaffRouter);
   // Interactive-plan demo for Pete (Brent Cross evidence map, 2026-08-21).
   // Unguessable path in lieu of auth so it opens with one click from an
   // email — same exposure class as attaching the deck itself.

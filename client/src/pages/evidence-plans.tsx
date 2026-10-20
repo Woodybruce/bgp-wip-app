@@ -30,6 +30,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EvidencePlanReview } from "@/components/evidence-plan-review";
 import { EvidencePlanScanReview } from "@/components/evidence-plan-scan-review";
 import { EvidenceUnitUpload } from "@/components/evidence-unit-upload";
+import { EvidencePlanShareDialog } from "@/components/evidence-plan-share-dialog";
 import { TenancyImportReview, type TenancyImportReviewRow } from "@/components/tenancy-import-review";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
@@ -325,6 +326,7 @@ function PlanView({ planId }: { planId: string }) {
   // panel; Esc or the button exits.
   const fsRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   useEffect(() => {
     const onFs = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener("fullscreenchange", onFs);
@@ -670,6 +672,7 @@ function PlanView({ planId }: { planId: string }) {
           </p>
         </div>
         <div className="ml-auto flex items-center gap-1.5 flex-wrap">
+          <Button variant="outline" size="sm" onClick={async () => { if (document.fullscreenElement) await document.exitFullscreen?.().catch(() => undefined); setShareOpen(true); }} data-testid="button-share-evidence-plan">Share with client</Button>
           {detectRunning ? (
             <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground rounded-full border border-border px-2.5 py-1" data-testid="detect-indicator">
               <Sparkles className="w-3 h-3" /> {scanJob?.status === "running" && scanJob.total_docs > 1 ? `Scanning · ${scanJob.done_docs} / ${scanJob.total_docs} sections` : "Reading the plan…"}
@@ -746,6 +749,7 @@ function PlanView({ planId }: { planId: string }) {
       {activeLevel && <EvidencePlanScanReview key={activeLevel.id} open={scanReviewOpen} onOpenChange={setScanReviewOpen} planId={planId} level={activeLevel} onSaved={() => { setScanReport(null); invalidate(); }} onRefresh={refreshUnits} scanRunning={detectRunning} />}
 
       <LinkPropertyDialog open={linkingProperty} onOpenChange={setLinkingProperty} plan={plan} onSaved={invalidate} />
+      <EvidencePlanShareDialog planId={planId} planName={plan.name} entries={entries} open={shareOpen} onOpenChange={setShareOpen} />
       <Dialog open={importReviewRows.length > 0} onOpenChange={open => { if (!open) setImportReviewRows([]); }}>
         <DialogContent className="max-w-3xl max-h-[85dvh] overflow-y-auto">
           <DialogHeader><DialogTitle>Review imported tenancy entries</DialogTitle><DialogDescription>New entries have been added. The differences below need a decision before existing schedule information is changed.</DialogDescription></DialogHeader>
