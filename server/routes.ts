@@ -2868,6 +2868,14 @@ export async function registerRoutes(
     res.json(xeroUsage());
   });
 
+  // Live check of every AI key the app holds (Woody, 2026-10-20: the
+  // evidence-plan PDF reader was being refused with a 401 and nothing said
+  // which key was dead). One tiny request per key; reports ok / the error.
+  app.get("/api/admin/ai-keys", requireAuth, requireAdmin, async (_req, res) => {
+    const { checkAiKeys } = await import("./ai-key-check");
+    res.json(await checkAiKeys());
+  });
+
   app.get("/api/admin/schema-drift", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const { listSchemaDrift } = await import("./schema-drift");
