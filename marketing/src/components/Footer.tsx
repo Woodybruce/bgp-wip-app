@@ -21,63 +21,67 @@ export default function Footer() {
   };
 
   return (
-    <footer id="contact" className="bg-bgp-wine text-bgp-cream">
-      <div className="site-container grid gap-x-10 gap-y-10 py-10 sm:grid-cols-2 lg:grid-cols-12 lg:gap-x-12 lg:py-12">
-        <div className="sm:col-span-2 lg:col-span-6">
-          <Link href="/" aria-label="Bruce Gillingham Pollard home" className="inline-block">
-            <img src="/brand/bgp-frame-nectar.svg" alt="" width="99" height="64" className="h-16 w-auto" />
-          </Link>
-          <div className="mt-8 flex flex-wrap gap-x-6 gap-y-3 text-xs text-bgp-cream/85">
-            <a href="https://www.brucegillinghampollard.com/privacy/" target="_blank" rel="noreferrer" className="underline-offset-4 hover:underline">Privacy policy</a>
-            <a href="https://www.brucegillinghampollard.com/terms-and-conditions/" target="_blank" rel="noreferrer" className="underline-offset-4 hover:underline">Terms and conditions</a>
-          </div>
-          <p className="mt-4 max-w-sm text-xs leading-relaxed text-bgp-cream/80">© Bruce Gillingham Pollard 2013–{new Date().getFullYear()}. All registered trademarks.</p>
+    <footer id="contact" className="redesign-footer">
+      <div className="site-container redesign-footer__main">
+        <div className="redesign-footer__invitation">
+          <p className="redesign-footer__eyebrow">Contact</p>
+          <h2>Talk to us.</h2>
+          <a href={`tel:${CONTACT.phone.replace(/[^+\d]/g, "")}`} className="redesign-footer__phone">{CONTACT.phone}<span aria-hidden="true">↗</span></a>
         </div>
 
-        <div className="min-w-0 lg:col-span-3">
-          <h2 className="mb-5 text-sm font-medium uppercase text-bgp-nectar">Contact</h2>
-          <address className="text-sm not-italic leading-relaxed">
+        <div className="redesign-footer__details">
+          <address>
             {CONTACT.addressLines.map((line) => <p key={line}>{line}</p>)}
-            <p className="mt-5"><a href={`tel:${CONTACT.phone.replace(/[^+\d]/g, "")}`} className="tabular underline-offset-4 hover:underline">{CONTACT.phone}</a></p>
-            <p className="mt-1"><a href={`mailto:${CONTACT.email}`} className="break-words underline-offset-4 hover:underline">{CONTACT.email}</a></p>
+            <a href={`mailto:${CONTACT.email}`} className="redesign-footer__email">{CONTACT.email}</a>
           </address>
         </div>
 
-        <div className="min-w-0 lg:col-span-3">
-          <h2 className="mb-5 text-sm font-medium uppercase text-bgp-nectar">Newsletter</h2>
-          <p id="newsletter-description" className="mb-3 max-w-xs text-sm leading-relaxed">Keep up to date with BGP.</p>
-          <form onSubmit={onSubmit} className="max-w-sm">
-            <label htmlFor="newsletter-email" className="sr-only">Email address</label>
-            <input
-              id="newsletter-email"
-              name="email"
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(event) => { setEmail(event.target.value); if (status === "done" || status === "error") setStatus("idle"); }}
-              aria-describedby="newsletter-description newsletter-status"
-              placeholder="Email address"
-              className="w-full rounded-none border-0 border-b border-bgp-nectar bg-transparent px-0 py-3 text-base text-bgp-cream placeholder:text-bgp-cream/75 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-bgp-nectar"
-            />
-            <button type="submit" disabled={status === "sending"} className="mt-3 flex min-h-11 items-center gap-3 text-sm font-medium text-bgp-cream underline-offset-4 hover:underline disabled:opacity-60">
-              {status === "sending" ? "Signing up…" : <>Sign up <span aria-hidden="true">⟶</span></>}
-            </button>
-            <p id="newsletter-status" role="status" aria-live="polite" className={status === "done" || status === "error" ? "mt-2 text-sm leading-relaxed text-bgp-nectar" : "sr-only"}>
+        <div className="redesign-footer__newsletter">
+          <h2 className="redesign-footer__eyebrow">Newsletter</h2>
+          <p id="newsletter-description">Keep up to date with BGP.</p>
+          <form onSubmit={onSubmit}>
+            <div className="redesign-footer__signup">
+              <label htmlFor="newsletter-email" className="sr-only">Email address</label>
+              <input
+                id="newsletter-email"
+                name="email"
+                type="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(event) => { setEmail(event.target.value); if (status === "done" || status === "error") setStatus("idle"); }}
+                aria-describedby="newsletter-description newsletter-status"
+                placeholder="Email address"
+              />
+              <button type="submit" disabled={status === "sending"}>
+                {status === "sending" ? "Signing up…" : <>Sign up <span aria-hidden="true">↗</span></>}
+              </button>
+            </div>
+            <p id="newsletter-status" role="status" aria-live="polite" className={status === "done" || status === "error" ? "redesign-footer__status" : "sr-only"}>
               {status === "done" ? "Thanks — you're signed up." : status === "error" ? "Something went wrong — please try again." : status === "sending" ? "Signing up…" : ""}
             </p>
           </form>
-          <div className="mt-3 flex items-center gap-6 text-bgp-nectar">
-            <a href="https://www.linkedin.com/company/bruce-gillingham-pollard" target="_blank" rel="noreferrer" aria-label="BGP on LinkedIn" className="flex min-h-11 min-w-11 items-center hover:text-bgp-cream">
-              <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M20.45 20.45h-3.55v-5.57c0-1.33-.03-3.04-1.85-3.04-1.86 0-2.14 1.45-2.14 2.94v5.67H9.35V9h3.41v1.56h.05c.47-.9 1.63-1.85 3.36-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12zM7.12 20.45H3.56V9h3.56v11.45z" /></svg>
-            </a>
-            <a href="https://www.instagram.com/brucegillinghampollard/" target="_blank" rel="noreferrer" aria-label="BGP on Instagram" className="flex min-h-11 min-w-11 items-center hover:text-bgp-cream">
-              <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="3" y="3" width="18" height="18" rx="5" /><circle cx="12" cy="12" r="4" /><circle cx="17.2" cy="6.8" r="0.8" fill="currentColor" stroke="none" /></svg>
-            </a>
-          </div>
         </div>
       </div>
 
+      <div className="redesign-footer__base">
+        <div className="site-container redesign-footer__base-inner">
+          <Link href="/" aria-label="Bruce Gillingham Pollard home" className="redesign-footer__logo">
+            <img src="/brand/bgp-block-nectar.svg" alt="" width="77" height="50" />
+          </Link>
+          <div className="redesign-footer__legal">
+            <div className="redesign-footer__legal-links">
+              <a href="https://www.brucegillinghampollard.com/privacy/" target="_blank" rel="noreferrer">Privacy policy</a>
+              <a href="https://www.brucegillinghampollard.com/terms-and-conditions/" target="_blank" rel="noreferrer">Terms and conditions</a>
+            </div>
+            <p>© Bruce Gillingham Pollard 2013–{new Date().getFullYear()}. All registered trademarks.</p>
+          </div>
+          <div className="redesign-footer__social">
+            <a href="https://www.linkedin.com/company/bruce-gillingham-pollard" target="_blank" rel="noreferrer" aria-label="BGP on LinkedIn">LinkedIn<span aria-hidden="true">↗</span></a>
+            <a href="https://www.instagram.com/brucegillinghampollard/" target="_blank" rel="noreferrer" aria-label="BGP on Instagram">Instagram<span aria-hidden="true">↗</span></a>
+          </div>
+        </div>
+      </div>
     </footer>
   );
 }

@@ -1,124 +1,124 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "wouter";
-import Placeholder from "../components/Placeholder";
-import { Band, SectionHead } from "../components/Wire";
-import { HERO_SLIDES, HERO_STATEMENT, SERVICES } from "../lib/content";
+import { HERO_STATEMENT, HOME_INTRO, LEASING_SECTORS, SERVICES, TESTIMONIAL } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
+import NewsSocialBoard from "../components/NewsSocialBoard";
+import "./home-redesign.css";
 
-const STATS = [
-  { value: "244", caption: "Leasing transactions completed" },
-  { value: "£62m", caption: "Largest single transaction" },
-  { value: "66", caption: "Brands advised in the UK and abroad" },
-  { value: "20+", caption: "Years advising Canary Wharf Group" },
+const scenes = [
+  { image: "/images/hero/portman-chiltern-street.jpg", alt: "Independent shops and cafés along Chiltern Street", title: "The Portman Estate", label: "London Estates", href: "/leasing/sectors/london-estates" },
+  { image: "/images/case-studies/atis-loxton-walk.jpg", alt: "People outside atis on Loxton Walk", title: "atis, Loxton Walk", label: "Brand representation", href: "/case-studies/atis-loxton-walk" },
+  { image: "/images/case-studies/landsec/westgate/westgate-8.jpg", alt: "The restaurant terrace at Westgate, Oxford", title: "Westgate, Oxford", label: "Shopping Centres", href: "/case-studies/westgate-oxford" },
+  { image: "/images/hero/royal-exchange.jpg", alt: "The Royal Exchange in the City of London", title: "The Royal Exchange", label: "Investment", href: "/case-studies/the-royal-exchange" },
+];
+const sectorOrder = ["shopping-centres", "london-estates", "high-streets", "city"];
+const sectorImages: Record<string, string> = {
+  "shopping-centres": "/images/case-studies/landsec/trinity/trinity-2.jpg",
+  "london-estates": "/images/gallery/chiltern-street.jpg",
+  "high-streets": "/images/st-christophers-place.jpg",
+  city: "/images/hero/canary-wharf.jpg",
+};
+// Existing homepage figures, with their original scope.
+const figures = [
+  ["244", "Leasing transactions completed"],
+  ["£62m", "Largest single transaction"],
+  ["66", "Brands advised in the UK and abroad"],
+  ["20+", "Years advising Canary Wharf Group"],
 ];
 
 export default function Home() {
-  const { articles } = useSiteContent();
-  const featured = ["behind-the-brand-yolk", "ardent-royal-exchange", "enduring-appeal-portman-estate"]
-    .map((slug) => articles.find((x) => x.slug === slug))
-    .filter((a): a is NonNullable<typeof a> => !!a);
-  const homeArticles = featured.length === 3 ? featured : articles.slice(0, 3);
-  const [slideIndex, setSlideIndex] = useState(0);
-  const [paused, setPaused] = useState(false);
-
-  useEffect(() => {
-    const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const applyPreference = () => { if (preference.matches) setPaused(true); };
-    applyPreference();
-    preference.addEventListener("change", applyPreference);
-    return () => preference.removeEventListener("change", applyPreference);
-  }, []);
-
-  useEffect(() => {
-    if (paused) return;
-    const id = setInterval(() => setSlideIndex((i) => (i + 1) % HERO_SLIDES.length), 7000);
-    return () => clearInterval(id);
-  }, [paused]);
+  const { caseStudies, team } = useSiteContent();
+  const [scene, setScene] = useState(0);
+  const [expertise, setExpertise] = useState("leasing");
+  const current = scenes[scene];
+  const service = SERVICES.find(item => item.slug === expertise) || SERVICES[0];
+  const projects = ["westgate-oxford", "percival-neal-street", "the-royal-exchange"]
+    .map(slug => caseStudies.find(project => project.slug === slug))
+    .filter((project): project is NonNullable<typeof project> => !!project?.image);
+  const sectors = sectorOrder.map(slug => LEASING_SECTORS.find(item => item.slug === slug)!);
+  const people = ["Charlotte Roberts", "Harry Elliott", "Peter Wood", "Tracey Pollard"]
+    .map(name => team.find(person => person.name === name))
+    .filter((person): person is NonNullable<typeof person> => !!person?.photo);
 
   return (
-    <div className="home-page">
-      <section data-hero className="site-hero" aria-label="BGP places and expertise">
-        {HERO_SLIDES.map((slide, i) => (
-          <img
-            key={slide.src}
-            src={slide.src}
-            alt={i === slideIndex ? slide.alt : ""}
-            aria-hidden={i !== slideIndex}
-            loading={i === 0 ? "eager" : "lazy"}
-            className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-1000 ${i === slideIndex ? "opacity-100" : "opacity-0"}`}
-          />
-        ))}
-        <div className="hero-shade" />
-        <div className="site-container hero-content">
-          <h1 className="hero-statement">{HERO_STATEMENT}</h1>
-          <div className="mt-7 flex items-center gap-1 text-bgp-cream md:absolute md:bottom-12 md:right-12 md:mt-0" aria-label="Hero photographs">
-            {HERO_SLIDES.map((slide, i) => (
-              <button
-                key={slide.src}
-                type="button"
-                aria-label={`Show photograph ${i + 1}: ${slide.alt}`}
-                aria-pressed={slideIndex === i}
-                className="flex h-11 w-9 items-center justify-center"
-                onClick={() => { setSlideIndex(i); setPaused(true); }}
-              >
-                <span className={`h-1.5 w-6 ${slideIndex === i ? "bg-bgp-nectar" : "bg-bgp-cream/50"}`} />
-              </button>
-            ))}
-            <button type="button" aria-label={paused ? "Play slideshow" : "Pause slideshow"} onClick={() => setPaused(!paused)} className="ml-2 flex h-11 w-11 items-center justify-center border border-bgp-cream/40 text-sm">
-              <span aria-hidden>{paused ? "▶" : "Ⅱ"}</span>
-            </button>
+    <div className="new-home">
+      <section className="retail-intro" aria-labelledby="retail-title">
+        <p className="retail-eyebrow">Retail. Leisure. Hospitality.</p>
+        <h1 id="retail-title">Places people <span>love.</span></h1>
+        <p className="retail-intro__line">Connecting ambitious brands, exceptional places and the people behind them.</p>
+        <div className="retail-actions">
+          <a href="#our-places" className="retail-button">Explore our world <span aria-hidden>↗</span></a>
+          <Link href="/leasing#availability" className="retail-text-link">Find your next space <span aria-hidden>→</span></Link>
+        </div>
+      </section>
+      <section className="retail-stage" aria-label="Places and brands we work with">
+        <div className="retail-stage__photograph">
+          <img key={current.image} src={current.image} alt={current.alt} loading="eager" />
+          <div className="retail-stage__shade" />
+          <div className="retail-stage__caption" aria-live="polite">
+            <div><p>{current.label}</p><h2>{current.title}</h2></div>
+            <Link href={current.href} className="retail-round-link" aria-label={`Explore ${current.title}`}><span aria-hidden>↗</span></Link>
+          </div>
+        </div>
+        <div className="retail-stage__controls">
+          <p>Different places. One shared ambition.</p>
+          <div aria-label="Choose a featured place" className="retail-stage__dots">
+            {scenes.map((item, index) => <button type="button" key={item.title} aria-label={`Show ${item.title}`} aria-pressed={scene === index} onClick={() => setScene(index)}><span /></button>)}
+            <span className="retail-stage__number" aria-hidden>0{scene + 1} / 04</span>
           </div>
         </div>
       </section>
-
-      <a href="#contact" className="label-caps flex min-h-11 items-center justify-center bg-bgp-wine text-bgp-cream transition-colors hover:bg-bgp-ink">Talk to us</a>
-
-      <section className="bg-bgp-mist" aria-label="BGP in numbers">
-        <div className="site-container grid grid-cols-2 gap-x-6 gap-y-10 py-12 text-center md:grid-cols-4 md:py-16">
-          {STATS.map((s) => (
-            <div key={s.caption}>
-              <p className="home-stat-value font-sans font-light leading-none tabular text-bgp-wine">{s.value}</p>
-              <p className="home-stat-caption mx-auto mt-4 max-w-[20ch] leading-[1.2]">{s.caption}</p>
-            </div>
-          ))}
+      <section className="retail-about retail-wrap" aria-labelledby="about-heading">
+        <div><p className="retail-eyebrow">Bruce Gillingham Pollard</p><h2 id="about-heading">Independent minds.<br /><span>Shared ambition.</span></h2></div>
+        <div className="retail-about__copy">
+          <p>{HERO_STATEMENT}</p>
+          <details><summary>Get to know BGP <span aria-hidden>+</span></summary><div>{HOME_INTRO.body.map(paragraph => <p key={paragraph}>{paragraph}</p>)}</div></details>
         </div>
       </section>
-
-      <div id="services">
-        {SERVICES.map((service, i) => (
-          <section key={service.slug} className={i % 2 ? "bg-bgp-stone/[.08]" : ""}>
-            <div className={`site-container home-service ${i % 2 ? "home-service--reverse" : ""} ${i === 1 || i === 2 || i === 4 ? "home-service--balanced" : ""}`}>
-              <h2 className="section-title home-service__title">{service.name}</h2>
-              <div className="img-frame home-service__image">
-                <Placeholder className={`${i === 0 ? "aspect-[1.56]" : i === 1 ? "aspect-square" : "aspect-[8/7]"} w-full`} src={service.image} alt={service.name} />
-              </div>
-              <div className="home-service__copy">
-                <p className="intro-copy max-w-[30ch]">{service.intro}</p>
-                <Link href={`/${service.slug}`} className="explore-link mt-5">Find out more<span className="sr-only"> about {service.name}</span></Link>
-              </div>
-            </div>
-          </section>
-        ))}
-      </div>
-
-      <Link href="/news" aria-label="Explore news and insights" className="home-news group block">
-      <Band>
-        <SectionHead title="News and insights" />
-        <div className="mb-10 flex flex-col items-start gap-4">
-          <p className="body-copy max-w-[52ch]">The latest news, lettings, transactions and opinion from the BGP team across leasing, investment, brand representation and placemaking.</p>
-          <span className="explore-link">Find out more</span>
+      <section className="retail-work" id="our-work" aria-labelledby="work-heading">
+        <div className="retail-wrap retail-section-head">
+          <div><p className="retail-eyebrow">A few of our stories</p><h2 id="work-heading">Expertise, out in the world.</h2></div>
+          <Link href="/leasing" className="retail-text-link">Discover our work <span aria-hidden>→</span></Link>
         </div>
-        <div className="grid grid-cols-1 gap-10 sm:grid-cols-3 sm:gap-8">
-          {homeArticles.map((a) => (
-            <div key={a.slug}>
-              <p className="label-caps text-bgp-wine mb-3">{a.category}</p>
-              <div className="img-frame"><Placeholder className="aspect-square w-full" src={a.image} alt={a.title} /></div>
-              <h3 className="mt-5 font-sans font-medium text-xl leading-[1.2] text-bgp-wine group-hover:underline underline-offset-4">{a.title}</h3>
-            </div>
-          ))}
+        <div className="retail-work__grid retail-wrap">
+          {projects.map((project, index) => <Link key={project.slug} href={`/case-studies/${project.slug}`} className={`retail-project retail-project--${index + 1}`}>
+            <div className="retail-project__image"><img src={project.image} alt={project.title} loading="lazy" /><span className="retail-project__arrow" aria-hidden>↗</span></div>
+            <div className="retail-project__caption"><p className="retail-eyebrow">{project.service}</p><h3>{project.title}</h3><p>{project.blurb}</p></div>
+          </Link>)}
         </div>
-      </Band>
-      </Link>
+      </section>
+      <section className="retail-expertise retail-wrap" id="expertise" aria-labelledby="expertise-heading">
+        <div className="retail-section-head"><div><p className="retail-eyebrow">Five specialisms. One team.</p><h2 id="expertise-heading">The bigger picture.<br /><span>Every detail.</span></h2></div><p className="retail-section-note">{HOME_INTRO.servicesHeading}</p></div>
+        <div className="retail-expertise__grid">
+          <div className="retail-expertise__image"><img key={service.image} src={service.image} alt={service.name} loading="lazy" /></div>
+          <div className="retail-services">
+            {SERVICES.map((item, index) => <div key={item.slug} className={`retail-service ${expertise === item.slug ? "is-open" : ""}`}>
+              <h3><button type="button" aria-expanded={expertise === item.slug} aria-controls={`service-${item.slug}`} onClick={() => setExpertise(expertise === item.slug ? "" : item.slug)}><span className="retail-service__index">0{index + 1}</span>{item.name}<span className="retail-service__toggle" aria-hidden>{expertise === item.slug ? "−" : "+"}</span></button></h3>
+              <div id={`service-${item.slug}`} hidden={expertise !== item.slug}><p>{item.intro}</p><Link href={`/${item.slug}`} className="retail-text-link">Explore {item.name.toLowerCase()} <span aria-hidden>→</span></Link></div>
+            </div>)}
+          </div>
+        </div>
+      </section>
+      <section className="retail-places" id="our-places" aria-labelledby="places-heading">
+        <div className="retail-wrap retail-section-head"><div><p className="retail-eyebrow">Our places</p><h2 id="places-heading">A feel for every location.</h2></div><Link href="/leasing#availability" className="retail-text-link">View available properties <span aria-hidden>→</span></Link></div>
+        <div className="retail-places__grid retail-wrap">
+          {sectors.map(sector => <Link key={sector.slug} href={`/leasing/sectors/${sector.slug}`} className="retail-place">
+            <div><img src={sectorImages[sector.slug]} alt={sector.name} loading="lazy" /></div>
+            <h3>{sector.name}<span aria-hidden>↗</span></h3>
+          </Link>)}
+        </div>
+      </section>
+      <section className="retail-quote retail-wrap" aria-label="Client perspective">
+        <p className="retail-eyebrow">In good company</p>
+        <blockquote>“{TESTIMONIAL.quote}”</blockquote>
+        <p className="retail-quote__author">{TESTIMONIAL.name}<span>{TESTIMONIAL.title}</span></p>
+        <div className="retail-figures" aria-label="BGP in numbers">{figures.map(([value, caption]) => <div key={caption}><p>{value}</p><span>{caption}</span></div>)}</div>
+      </section>
+      <div className="retail-journal"><div className="retail-wrap"><NewsSocialBoard compact /></div></div>
+      <section className="retail-people retail-wrap" aria-labelledby="people-heading">
+        <div><p className="retail-eyebrow">The people behind the places</p><h2 id="people-heading">Good chemistry.<br /><span>Great company.</span></h2><Link href="/team" className="retail-text-link">Meet the team <span aria-hidden>→</span></Link></div>
+        <div className="retail-people__portraits">{people.map(person => <Link key={person.name} href="/team" aria-label={`Meet ${person.name}`}><img src={person.photo} alt={person.name} loading="lazy" /><span>{person.name}</span></Link>)}</div>
+      </section>
     </div>
   );
 }
