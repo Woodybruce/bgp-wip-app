@@ -20,7 +20,8 @@ import crypto from "crypto";
 import multer from "multer";
 import ExcelJS from "exceljs";
 import Anthropic from "@anthropic-ai/sdk";
-import { requireAuth } from "./auth";
+import { requireAuth as staffRequireAuth } from "./auth";
+import { isEvidencePlanEditorRequest, assertEvidencePlanEditorScope, evidencePlanEditorPropertyAllowed, trackEvidencePlanEditorOperation } from "./evidence-plan-editor-access";
 import { pool } from "./db";
 import { saveFile, getFile } from "./file-storage";
 import { rasterisePdfPage } from "./pdf-image-extract";
@@ -33,6 +34,12 @@ import { applyPlanScanReview, buildPlanScanReview, persistPlanScanReview, PlanSc
 import { resolveEvidenceScheduleMatch } from "./evidence-plan-schedule";
 import { parseEvidenceWorkbook } from "./evidence-plan-workbook";
 
+// Only the scoped adapter can install this in-process request context. A URL,
+// cookie, or caller-supplied header can never bypass the normal staff guard.
+const requireAuth: typeof staffRequireAuth = async (req, res, next) => {
+  if (isEvidencePlanEditorRequest(req)) { next(); return; }
+  return staffRequireAuth(req, res, next);
+};
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -242,6 +249,7 @@ async function relinkAllEntries(planId: string, db: any = pool): Promise<number>
   const { rows: entries } = await db.query(`SELECT id, unit_ref, tenant FROM evidence_plan_entries WHERE plan_id = $1 AND unit_id IS NULL`, [planId]);
   if (units.length === 0 || entries.length === 0) return 0;
   const { rows: plans } = await db.query(`SELECT property_id FROM evidence_plans WHERE id = $1`, [planId]);
+  assertEvidencePlanEditorScope(planId, plans[0]?.property_id || null);
   const schedule = await evidenceScheduleRows(plans[0]?.property_id || null, db);
   const byRef = new Map<string, string | null>();
   const byTenant = new Map<string, string | null>(); // null = ambiguous
@@ -326,6 +334,7 @@ async function planOr404(planId: string, res: Response): Promise<any | null> {
   }
   const { rows } = await pool.query(`SELECT * FROM evidence_plans WHERE id = $1`, [planId]);
   if (!rows[0]) { res.status(404).json({ error: "Plan not found" }); return null; }
+  assertEvidencePlanEditorScope(planId, rows[0].property_id);
   return rows[0];
 }
 
@@ -493,7 +502,16 @@ router.get("/api/evidence-plans/:id", requireAuth, async (req: Request, res: Res
 // Rename the plan or link/unlink its CRM property. Linking makes that
 // property's tenancy schedule the plan's source of truth for unit facts.
 router.put("/api/evidence-plans/:id", requireAuth, async (req: Request, res: Response) => {
+  let binding: any;
   try {
+    if ("propertyId" in (req.body || {})) {
+      if (isEvidencePlanEditorRequest(req)) return res.status(403).json({ error: "Property links are managed by staff" });
+      // Shared imports use the shared form of this lock. The linked property
+      // cannot change while an editor request is reading or writing its facts.
+      binding = await pool.connect();
+      await binding.query("BEGIN");
+      await binding.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`evidence-plan-binding:${String(req.params.id).toLowerCase()}`]);
+    }
     const plan = await planOr404(String(req.params.id), res);
     if (!plan) return;
     const sets: string[] = [];
@@ -529,6 +547,7 @@ router.put("/api/evidence-plans/:id", requireAuth, async (req: Request, res: Res
     // grounding for detection — so empty levels get read now.
     if (req.body?.propertyId) void autoDetectEmptyLevels(plan.id);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+  finally { if (binding) { await binding.query("COMMIT").catch(() => {}); binding.release(); } }
 });
 
 // Swap the background — outlines and data stay (Pete's "new scheme plan
@@ -541,6 +560,10 @@ router.post("/api/evidence-plans/:id/background", requireAuth, upload.single("ba
     if (!plan) return;
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
     await healLevels(plan);
+    if (isEvidencePlanEditorRequest(req) && req.body?.levelId) {
+      const chosen = await pool.query("SELECT id FROM evidence_plan_levels WHERE id=$1 AND plan_id=$2", [req.body.levelId, plan.id]);
+      if (!chosen.rows.length) return res.status(404).json({ error: "Choose a level from this shared plan" });
+    }
     const pages = await renderPlanPages(plan.id, req.file);
     await applyBackgroundPages(plan.id, pages, req.body?.levelId ? String(req.body.levelId) : null);
     const levels = await planLevels(plan.id);
@@ -774,6 +797,7 @@ export async function saveEvidenceUnit(
     }
     const plan = (await db.query(`SELECT * FROM evidence_plans WHERE id = $1 FOR SHARE`, [unit.plan_id])).rows[0];
     if (!plan) throw new EvidencePlanError(404, "Plan not found");
+    assertEvidencePlanEditorScope(unit.plan_id, plan.property_id);
     if (!(await canEditProperty(plan.property_id))) throw new EvidencePlanError(403, "Not available for this account");
     // Lock this property's schedule before matching, including duplicate refs,
     // then validate the row the editor actually displayed before any updates.
@@ -870,7 +894,7 @@ router.put("/api/evidence-plans/units/:unitId", requireAuth, async (req: Request
     const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
     const scope = await resolveCompanyScope(req as any);
     res.json(await saveEvidenceUnit(String(req.params.unitId), req.body,
-      async propertyId => !scope || !!propertyId && await isPropertyInScope(scope, propertyId)));
+      async propertyId => evidencePlanEditorPropertyAllowed(propertyId) ?? (!scope || !!propertyId && await isPropertyInScope(scope, propertyId))));
   } catch (e: any) { res.status(e instanceof EvidencePlanError ? e.status : 500).json({ error: e.message }); }
 });
 
@@ -881,6 +905,7 @@ router.delete("/api/evidence-plans/units/:unitId", requireAuth, async (req: Requ
     const unitId = String(req.params.unitId);
     const unit = (await db.query(`SELECT id, plan_id FROM evidence_plan_units WHERE id = $1 FOR UPDATE`, [unitId])).rows[0];
     if (!unit) throw new EvidencePlanError(404, "Unit not found");
+    assertEvidencePlanEditorScope(unit.plan_id);
     await db.query(`UPDATE evidence_plan_entries SET unit_id = NULL WHERE unit_id = $1`, [unitId]);
     await db.query(`DELETE FROM evidence_plan_units WHERE id = $1`, [unitId]);
     await db.query(`UPDATE evidence_plans SET updated_at = now() WHERE id = $1`, [unit.plan_id]);
@@ -934,6 +959,7 @@ export async function saveEvidenceEntry(planId: string | null, entryId: string |
     if (entryId && !existing) throw new EvidencePlanError(404, "Entry not found");
     if (existing && existing.unit_id !== before?.unit_id) throw new EvidencePlanError(409, "This evidence was moved to another unit. Reload it before saving.");
     const targetPlan = existing?.plan_id || planId;
+    assertEvidencePlanEditorScope(targetPlan);
     const plan = (await db.query(`SELECT id FROM evidence_plans WHERE id = $1 FOR SHARE`, [targetPlan])).rows[0];
     if (!plan) throw new EvidencePlanError(404, "Plan not found");
     if (patch.unitId) {
@@ -1047,9 +1073,10 @@ export async function importUnitEvidence(req: Request): Promise<any> {
   const { rows: [unit] } = await pool.query(`SELECT u.id, u.unit_ref, p.property_id FROM evidence_plan_units u
     JOIN evidence_plans p ON p.id = u.plan_id WHERE u.id = $1 AND u.plan_id = $2`, [unitId, planId]);
   if (!unit) throw new EvidencePlanError(404, "This unit was not found in the selected evidence plan. Reload the plan and try again");
+  assertEvidencePlanEditorScope(planId, unit.property_id);
   const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
   const scope = await resolveCompanyScope(req as any);
-  if (scope && (!unit.property_id || !await isPropertyInScope(scope, unit.property_id))) throw new EvidencePlanError(403, "You do not have access to this property's evidence plan");
+  if (!isEvidencePlanEditorRequest(req) && scope && (!unit.property_id || !await isPropertyInScope(scope, unit.property_id))) throw new EvidencePlanError(403, "You do not have access to this property's evidence plan");
   const digest = crypto.createHash("sha256").update(file.buffer).digest("hex");
   let parsed;
   if (isPdf) {
@@ -1453,6 +1480,7 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
   const heartbeat = setInterval(() => { void bump("error = error", []).catch(() => { inactive = true; }); }, 30000);
   heartbeat.unref?.();
   try {
+    assertEvidencePlanEditorScope(planId, propertyId);
     await checkpoint("Finding enclosed regions on the original plan…", 0);
     const { findPlanUnitRegions, traceDetectedPlanUnit, planPolygonsOverlap } = await import("./plan-unit-detection");
     const { isValidPolygon, pointInPolygon, polygonArea, boundaryDistance } = await import("@shared/plan-geometry");
@@ -1559,6 +1587,9 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
       await connection.query("BEGIN");
       const liveLevel = (await connection.query("SELECT background_key FROM evidence_plan_levels WHERE id = $1 AND plan_id = $2 FOR UPDATE", [level.id, planId])).rows[0];
       if (!liveLevel || liveLevel.background_key !== level.background_key) throw new Error("The plan image changed during scanning. Existing units are unchanged; scan the current image again.");
+      const livePlan = (await connection.query("SELECT id, property_id FROM evidence_plans WHERE id=$1 FOR SHARE", [planId])).rows[0];
+      if (!livePlan) throw new Error("The evidence plan was removed while scanning.");
+      assertEvidencePlanEditorScope(planId, livePlan.property_id);
       const liveJob = (await connection.query(`SELECT id FROM evidence_plan_jobs WHERE id = $1 AND status = 'running'
         AND updated_at > now() - interval '3 minutes' AND created_at > now() - interval '30 minutes' FOR UPDATE`, [jobId])).rows[0];
       if (!liveJob || inactive) throw new Error("This scan expired before saving. Existing outlines and information are unchanged.");
@@ -1700,6 +1731,7 @@ async function autoDetectEmptyLevels(planId: string): Promise<void> {
     if (!process.env.ANTHROPIC_API_KEY) return;
     const { rows: [plan] } = await pool.query(`SELECT * FROM evidence_plans WHERE id = $1`, [planId]);
     if (!plan) return;
+    assertEvidencePlanEditorScope(planId, plan.property_id);
     const levels = await planLevels(planId);
     for (const level of levels) {
       if (!level.background_key) continue;
@@ -1736,7 +1768,7 @@ router.get("/api/evidence-plans/:planId/scan-review", requireAuth, async (req: R
     const scope = await resolveCompanyScope(req as any);
     res.json(await readPlanScanReview(pool, String(req.params.planId), {
       levelId: String(req.query.levelId || ""), ...(req.query.jobId ? { jobId: String(req.query.jobId) } : {}),
-    }, async propertyId => !scope || !!propertyId && await isPropertyInScope(scope, propertyId)));
+    }, async propertyId => evidencePlanEditorPropertyAllowed(propertyId) ?? (!scope || !!propertyId && await isPropertyInScope(scope, propertyId))));
   } catch (error: any) { res.status(error instanceof PlanScanReviewError ? error.status : 500).json({ error: error.message }); }
 });
 
@@ -1745,7 +1777,7 @@ router.post("/api/evidence-plans/:planId/scan-review/:jobId/apply", requireAuth,
     const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
     const scope = await resolveCompanyScope(req as any);
     res.json(await applyPlanScanReview(pool, String(req.params.planId), String(req.params.jobId), req.body,
-      async propertyId => !scope || !!propertyId && await isPropertyInScope(scope, propertyId), normaliseUnitRef));
+      async propertyId => evidencePlanEditorPropertyAllowed(propertyId) ?? (!scope || !!propertyId && await isPropertyInScope(scope, propertyId)), normaliseUnitRef));
   } catch (error: any) { res.status(error instanceof PlanScanReviewError ? error.status : 500).json({ error: error.message }); }
 });
 
@@ -1761,7 +1793,7 @@ router.get("/api/evidence-plans/jobs/:jobId", requireAuth, async (req: Request, 
       const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
       const scope = await resolveCompanyScope(req as any);
       const result = await readPlanScanReview(pool, job.plan_id, { levelId: job.level_id, jobId: job.id },
-        async propertyId => !scope || !!propertyId && await isPropertyInScope(scope, propertyId));
+        async propertyId => evidencePlanEditorPropertyAllowed(propertyId) ?? (!scope || !!propertyId && await isPropertyInScope(scope, propertyId)));
       job.reviewSummary = result.review?.summary || null;
     }
     res.json(job);
@@ -1792,4 +1824,18 @@ router.get("/api/evidence-plans/source", requireAuth, async (req: Request, res: 
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// Express does not expose an async handler-completion promise to a parent
+// router. Track it only for the scoped editor so an aborted HTTP response does
+// not release its grant lock before the actual mutation has finished.
+for (const layer of (router as any).stack) {
+  for (const handler of layer.route?.stack || []) {
+    const original = handler.handle;
+    handler.handle = (req: Request, res: Response, next: any) => {
+      const result = original(req, res, next);
+      trackEvidencePlanEditorOperation(req, result);
+      if (isEvidencePlanEditorRequest(req) && result && typeof result.then === "function") void Promise.resolve(result).catch(next);
+      return result;
+    };
+  }
+}
 export default router;

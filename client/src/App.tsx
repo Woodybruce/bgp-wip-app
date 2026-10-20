@@ -117,6 +117,7 @@ const PathwayPortfolio = lazy(() => import("@/pages/pathway-portfolio"));
 const TenantRep = lazy(() => import("@/pages/tenant-rep"));
 const PlaMatters = lazy(() => import("@/pages/pla-matters"));
 const EvidencePlans = lazy(() => import("@/pages/evidence-plans"));
+const EvidencePlanShare = lazy(() => import("@/pages/evidence-plan-shared-editor"));
 const WestminsterRestaurants = lazy(() => import("@/pages/westminster-restaurants"));
 const DocumentBriefs = lazy(() => import("@/pages/document-briefs"));
 const DocumentStudioV2 = lazy(() => import("@/pages/document-studio"));
@@ -985,6 +986,22 @@ function OldUrlBanner() {
 }
 
 function App() {
+  const [location] = useLocation();
+  // Shared plans have their own scoped surface. Keep staff session probes,
+  // persisted CRM data and the internal document viewer out of this page.
+  if (/^\/evidence-plan-share(?:\/|$)/.test(location)) {
+    return (
+      <div className="light scheme-bgp">
+        <TooltipProvider>
+          <ErrorBoundary name="Shared evidence plan">
+            <Suspense fallback={<PageLoader />}>
+              <EvidencePlanShare />
+            </Suspense>
+          </ErrorBoundary>
+        </TooltipProvider>
+      </div>
+    );
+  }
   // Restore page data for reuse after AppContent validates the session;
   // use memory only when localStorage is unavailable.
   const Provider: any = persistOptions ? PersistQueryClientProvider : QueryClientProvider;

@@ -115,6 +115,7 @@ interface SavedWipFilters {
   projects?: string[];
   statuses: string[];
   fiscalYears: number[];
+  search?: string;
   detailSort: { column: string; direction: SortDirection };
 }
 
@@ -928,7 +929,7 @@ export default function WipReport() {
   // Free-text quick search across the row's names — much faster than the
   // dropdowns for "find the Bluewater deal" on desktop, and the primary way
   // to navigate on the phone.
-  const [searchText, setSearchText] = useState("");
+  const [searchText, setSearchText] = useState(savedFilters?.search || "");
   const [phoneFiltersOpen, setPhoneFiltersOpen] = useState(false);
   const summaryRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLDivElement>(null);
@@ -1122,13 +1123,14 @@ export default function WipReport() {
         projects: [...selectedProjects],
         statuses: [...selectedStatuses],
         fiscalYears: [...selectedFiscalYears],
+        search: searchText,
         detailSort,
       };
       sessionStorage.setItem(WIP_FILTERS_STORAGE_KEY, JSON.stringify(snapshot));
     } catch {
       // storage unavailable — filters just won't survive navigation
     }
-  }, [activeTab, selectedClients, selectedTeams, selectedMonths, selectedAgents, selectedProjects, selectedStatuses, selectedFiscalYears, detailSort]);
+  }, [activeTab, selectedClients, selectedTeams, selectedMonths, selectedAgents, selectedProjects, selectedStatuses, selectedFiscalYears, searchText, detailSort]);
 
   // A dropdown with nothing ticked applies no filter; any tick narrows.
   // One predicate for the list AND the phone boards. `skip` leaves out one
