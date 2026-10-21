@@ -24,6 +24,7 @@
 // first archaeology call returns fast and the second one has data.
 // ─────────────────────────────────────────────────────────────────────────
 import { pool } from "./db";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { graphRequest } from "./shared-mailbox";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -295,7 +296,7 @@ export function isolateSignatureText(htmlBody: string): string {
 async function extractFieldsFromSignature(signatureText: string, email: string): Promise<Partial<EmailSignature> | null> {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) return null;
-  const client = new Anthropic({ apiKey: key });
+  const client = new Anthropic({ apiKey: key, ...anthropicWorkspaceOptions() });
   try {
     const resp = await client.messages.create({
       model: "claude-haiku-4-5-20251001",

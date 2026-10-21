@@ -14,6 +14,7 @@
 // contract as the PDF pipeline's inlineGoogleStaticMaps).
 // ─────────────────────────────────────────────────────────────────────────
 import * as fs from "fs";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import * as path from "path";
 import crypto from "crypto";
 import { saveFile } from "./file-storage";
@@ -116,7 +117,7 @@ async function specFromClaude(prompt: string): Promise<DeckSpec> {
   const baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY
     ? process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
     : undefined;
-  const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
+  const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}), ...anthropicWorkspaceOptions() });
   const { DESIGN_MODEL } = await import("./doc-engine");
   const model: string = DESIGN_MODEL;
   const params: any = { model, max_tokens: 8000, messages: [{ role: "user", content: prompt }] };

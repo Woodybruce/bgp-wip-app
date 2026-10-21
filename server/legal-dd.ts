@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { requireAuth } from "./auth";
 import multer from "multer";
 import path from "path";
@@ -163,6 +164,7 @@ function getAnthropicClient() {
     ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
       ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
       : {}),
+    ...anthropicWorkspaceOptions(),
   });
 }
 

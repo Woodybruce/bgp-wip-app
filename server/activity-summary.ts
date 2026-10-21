@@ -1,3 +1,4 @@
+import { getAnthropicClient } from "./utils/anthropic-client";
 // The canonical activity feed — data behind ActivitySummary, fourth of the
 // summary family (tracker / deals / properties / activity). One endpoint,
 // two sections from the two tables everything already writes to:
@@ -358,7 +359,7 @@ router.post("/api/interactions/:id/summarise", requireAuth, async (req: Request,
     }
 
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const client = getAnthropicClient(true);
     const msg = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 220,

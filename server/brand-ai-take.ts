@@ -12,6 +12,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { safeParseJSON } from "./utils/anthropic-client";
 import crypto from "crypto";
 import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
@@ -21,7 +22,7 @@ import { readBrandCoreRefresh, startBrandCoreRefresh } from "./brand-core-refres
 import { isBrandNewsRelevant, isBrandSignalRelevant } from "./brand-news-relevance";
 
 const router = Router();
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 
 // Tab-level summaries are quick reads — Haiku is fine. Sonnet/Opus only on retry.
 const MODEL_PRIMARY = "claude-haiku-4-5-20251001";

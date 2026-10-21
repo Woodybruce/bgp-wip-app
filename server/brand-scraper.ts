@@ -24,11 +24,12 @@ import { requireAuth, requireAdmin } from "./auth";
 import { pool } from "./db";
 import { scraperFetch, isScraperApiAvailable } from "./utils/scraperapi";
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { safeParseJSON } from "./utils/anthropic-client";
 import crypto from "crypto";
 
 const router = Router();
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 
 const HAIKU = "claude-haiku-4-5-20251001";
 

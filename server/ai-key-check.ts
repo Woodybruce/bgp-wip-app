@@ -32,11 +32,17 @@ async function probeOpenAI(): Promise<KeyStatus> {
   }
 }
 
-export async function checkAiKeys(): Promise<{ checkedAt: string; provider: string; keys: KeyStatus[] }> {
+export async function checkAiKeys(): Promise<{ checkedAt: string; provider: string; workspaceIdSet: boolean; keys: KeyStatus[] }> {
   const keys = await Promise.all([
     probeAnthropic("Anthropic direct (ANTHROPIC_API_KEY)", process.env.ANTHROPIC_API_KEY),
     probeAnthropic("Anthropic integration (AI_INTEGRATIONS_ANTHROPIC_API_KEY)", process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY, process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL),
     probeOpenAI(),
   ]);
-  return { checkedAt: new Date().toISOString(), provider: process.env.CHATBGP_PROVIDER || process.env.AI_PROVIDER || "anthropic", keys };
+  return {
+    checkedAt: new Date().toISOString(),
+    provider: process.env.CHATBGP_PROVIDER || process.env.AI_PROVIDER || "anthropic",
+    // A user-scoped key (sk-ant-usr-…) is refused without this header.
+    workspaceIdSet: !!process.env.ANTHROPIC_WORKSPACE_ID,
+    keys,
+  };
 }

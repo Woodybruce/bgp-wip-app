@@ -8,9 +8,10 @@
 // and returns structured fields that callers can merge into the requirement
 // record, overriding the noisy source metadata when confidence is high.
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { extractImagesFromPdf, rasterisePdfPage } from "./pdf-image-extract";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 
 export interface ParsedRequirement {
   brandName: string | null;

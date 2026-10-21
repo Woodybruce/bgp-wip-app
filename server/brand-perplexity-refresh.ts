@@ -19,11 +19,12 @@ import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { safeParseJSON } from "./utils/anthropic-client";
 import { invalidateBrandAiTake } from "./brand-ai-take";
 
 const router = Router();
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 
 const HAIKU = "claude-haiku-4-5-20251001";
 

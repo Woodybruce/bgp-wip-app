@@ -1,3 +1,4 @@
+import { getAnthropicClient } from "./utils/anthropic-client";
 // Property Asset Brief — the client-facing operational dashboard for
 // a property. Everything except the weekly focus and asset-lead
 // commentary is derived live so the leasing team don't have to
@@ -692,7 +693,7 @@ router.post("/api/properties/:id/bgp-commentary/regenerate", requireAuth, async 
     if (!Array.isArray(currentTasks)) return res.status(409).json({ error: "Commentary was kept unchanged because the task response was incomplete." });
 
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const client = getAnthropicClient(true);
 
     const fmtMoney = (p: number | null | undefined) => p == null ? "—" : `£${Math.round(Number(p) / 100).toLocaleString()}`;
     // No fee figures in the prompt: the generated prose is stored on the

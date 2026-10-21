@@ -25,6 +25,7 @@
 //     file" — names + roles inferred from email patterns.
 // ─────────────────────────────────────────────────────────────────────────
 import { Router, type Request, type Response } from "express";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { enrichSignaturesForDomain, getCachedSignatures, type EmailSignature } from "./email-signature-enrich";
@@ -856,7 +857,7 @@ router.get("/api/admin/email-signatures/debug/:email", requireAuth, async (req: 
       trace.outcome = "no_anthropic_key";
       return res.json(trace);
     }
-    const client = new Anthropic({ apiKey: key });
+    const client = new Anthropic({ apiKey: key, ...anthropicWorkspaceOptions() });
     const resp = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 400,

@@ -1052,6 +1052,7 @@ async function parseEvidencePdf(buffer: Buffer, digest: string): Promise<{ candi
     const detail = String(e?.message || e).slice(0, 300);
     console.error(`[evidence-plan] TAF PDF read failed (${status || e?.name || "error"}): ${detail}`);
     const busy = status === 429 || status === 529 || status >= 500 || /timeout|timed out|overloaded|ECONNRESET/i.test(detail);
+    if (/workspace/i.test(detail)) throw new EvidencePlanError(502, "Anthropic needs the workspace ID with BGP's key — Woody needs to set ANTHROPIC_WORKSPACE_ID in Railway (chatbgp.app/api/admin/ai-keys shows the state). Meanwhile add the evidence by hand");
     if (status === 401 || status === 403) throw new EvidencePlanError(502, "Anthropic is rejecting BGP's API key (ANTHROPIC_API_KEY in Railway) — Woody needs to replace it; admins can see which keys work at chatbgp.app/api/admin/ai-keys. Meanwhile add the evidence by hand");
     if (status === 400 && /credit|billing|quota/i.test(detail)) throw new EvidencePlanError(502, "The AI account needs topping up — tell Woody. Meanwhile add the evidence by hand");
     if (!busy) throw new EvidencePlanError(502, `The PDF could not be read (${detail.slice(0, 120)}). Try again, or add the evidence by hand`);

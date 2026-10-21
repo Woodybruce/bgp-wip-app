@@ -17,6 +17,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import { getBrandIdentity } from "./brand-identity";
 import { readBrandFactReview } from "./brand-fact-review";
@@ -26,7 +27,7 @@ import { CLIENT_CRM_CATEGORIES } from "@shared/tenant-categories";
 import { BRAND_PREPARATION_STAGES, readPreparationStates, runPreparationStage, shouldEnqueueOnPageOpen, summarizeBrandPreparation, type BrandPreparationStage, type PreparationOutcome } from "./brand-preparation-jobs";
 
 const router = Router();
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 // Brand enrichment runs once per tracked brand and feeds every downstream
 // decision (concept pitch, backer detail, rollout status). Use Opus for best
 // factual accuracy, fall back to Sonnet then Haiku on failure.

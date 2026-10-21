@@ -1,4 +1,5 @@
 import type { Express, Request, Response, NextFunction } from "express";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { requireAuth } from "./auth";
 import { logAiUsage } from "./api-usage";
 import { pool } from "./db";
@@ -1179,7 +1180,7 @@ async function visionApproveImage(buf: Buffer, purpose: "building" | "tenant" | 
       .resize({ width: 768, height: 768, fit: "inside", withoutEnlargement: true })
       .jpeg({ quality: 80 }).toBuffer();
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const anthropic = new Anthropic();
+    const anthropic = new Anthropic({ ...anthropicWorkspaceOptions() });
     const criteria = purpose === "building"
       ? "a clear EXTERIOR photograph of the commercial building or its facade"
       : purpose === "tenant"
@@ -2643,7 +2644,7 @@ export function registerImageStudioRoutes(app: Express) {
       const mediaType = image.mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 
       const { default: Anthropic } = await import("@anthropic-ai/sdk");
-      const anthropic = new Anthropic();
+      const anthropic = new Anthropic({ ...anthropicWorkspaceOptions() });
 
       const response = await anthropic.messages.create({
         model: "claude-sonnet-4-6",
@@ -2701,7 +2702,7 @@ export function registerImageStudioRoutes(app: Express) {
   async function runAiTagJob(ids: string[]): Promise<void> {
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
     const sharpMod = (await import("sharp")).default;
-    const anthropic = new Anthropic();
+    const anthropic = new Anthropic({ ...anthropicWorkspaceOptions() });
 
     // Anthropic vision rejects images >10 MB after base64 encoding. We
     // downscale anything large to a 1568px long edge (Claude's recommended

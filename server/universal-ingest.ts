@@ -29,6 +29,7 @@
  * - SharePoint share-link resolution via existing Graph integration.
  */
 import Anthropic from "@anthropic-ai/sdk";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import XLSX from "xlsx-js-style";
 import crypto from "crypto";
 import { pool } from "./db";
@@ -939,7 +940,7 @@ export function listIngestTargets(): IngestTarget[] {
 /** Ask Claude if this file likely contains data for multiple target tables. */
 async function classifyMultiTarget(file: ReadFileResult): Promise<Array<{ target: IngestTarget; confidence: "high" | "medium" | "low" }>> {
   const sample = file.text.slice(0, 4000);
-  const client = new Anthropic();
+  const client = new Anthropic({ ...anthropicWorkspaceOptions() });
   const msg = await client.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 256,

@@ -1,3 +1,4 @@
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, TEAM_LEADS_2026, isHrPerson, rosterNameFor, rosterTeamsFor, samePerson, staffGroupFor } from "@shared/teams";
 import type { Express } from "express";
 import { pool } from "./db";
@@ -2919,7 +2920,7 @@ export function setupHrRoutes(app: Express) {
       try {
         const Anthropic = (await import("@anthropic-ai/sdk")).default;
         
-        const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const client = getAnthropicClient(true);
         const dealsList = deals.map((d: any) => `- ${d.name} | ${d.status} | £${(parseFloat(d.fee) || 0).toLocaleString()} | tenant: ${d.tenant || "?"} | landlord: ${d.landlord || "?"} | type: ${d.deal_type || "?"} | team: ${(d.team || []).join(",")}`).join("\n");
         const msg = await client.messages.create({
           model: "claude-sonnet-4-6",
@@ -2980,7 +2981,7 @@ Return ONLY valid JSON.`,
       try {
         const Anthropic = (await import("@anthropic-ai/sdk")).default;
         
-        const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const client = getAnthropicClient(true);
         const msg = await client.messages.create({
           model: "claude-sonnet-4-6",
           max_tokens: 800,
@@ -3929,7 +3930,7 @@ Return ONLY JSON.`,
       // bullets + the financial outcome + manager notes and ask for
       // section-structured output we then drop into the DOCX template.
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const client = getAnthropicClient(true);
 
       const formatPence = (p: number | null | undefined) => p == null ? "—" : `£${Math.round(p / 100).toLocaleString()}`;
 
@@ -4153,7 +4154,7 @@ Rules: British English, no exclamation marks, no "I'm pleased to" / "delighted" 
     try {
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
       
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const client = getAnthropicClient(true);
 
       const msg = await client.messages.create({
         model: "claude-sonnet-4-6",
@@ -4292,7 +4293,7 @@ Return ONLY valid JSON, nothing else.`,
 
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
 
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const client = getAnthropicClient(true);
 
       const msg = await client.messages.create({
         model: "claude-sonnet-4-6",
@@ -4392,7 +4393,7 @@ Return ONLY JSON.`,
       let aiSummary = "";
       try {
         const Anthropic = (await import("@anthropic-ai/sdk")).default;
-        const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const client = getAnthropicClient(true);
         const dealsList = dealsRes.rows.slice(0, 20).map((d: any) => `- ${d.name} (${d.status}, £${(parseFloat(d.fee) || 0).toLocaleString()})`).join("\n");
         const msg = await client.messages.create({
           model: "claude-sonnet-4-6",
@@ -4842,7 +4843,7 @@ Return ONLY JSON.`,
       try {
         const Anthropic = (await import("@anthropic-ai/sdk")).default;
         
-        const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const client = getAnthropicClient(true);
         const dealsList = dealsRes.rows.map((d: any) => `- ${d.name} (${d.status}, £${(parseFloat(d.fee) || 0).toLocaleString()})`).join("\n");
         const reviewsList = reviewsRes.rows.map((rev: any) => `${rev.period}: target £${((rev.fees_target_pence || 0) / 100).toLocaleString()}, achieved £${((rev.fees_achieved_pence || 0) / 100).toLocaleString()}`).join("\n");
         const compsList = compsRes.rows.map((c: any) => `${c.competency} (L${c.level})`).join(", ");
@@ -4981,7 +4982,7 @@ Use the language and tone of BGP's review docs.`,
 
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
       
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const client = getAnthropicClient(true);
       const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
 
       const results: Array<{ team: string; summary: string }> = [];
