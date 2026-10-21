@@ -79,15 +79,15 @@ export function DoubleBillMark({ size = 32, className }: { size?: number; classN
 
 export function DoubleBillWordmark({ height = 48, className }: { height?: number; className?: string }) {
   const id = useId().replace(/[^a-zA-Z0-9]/g, "");
-  const w = Math.round((248 / 56) * height);
+  const w = Math.round((300 / 56) * height);
   return (
-    <svg width={w} height={height} viewBox="0 0 248 56" role="img" aria-label="Double Bill, leisure parks" className={className}>
+    <svg width={w} height={height} viewBox="0 0 300 56" role="img" aria-label="Double Bill, leisure parks" className={className}>
       <GoldDefs id={id} />
       <Badge id={id} />
       <text x="68" y="30" fontFamily="'Bodoni Moda','Didot','Bodoni 72','Playfair Display',Georgia,serif" fontWeight="700" fontSize="26" letterSpacing="1.6" fill={`url(#${id}-gold)`}>DOUBLE BILL</text>
-      <line x1="69" y1="37.5" x2="156" y2="37.5" stroke={`url(#${id}-gold)`} strokeWidth=".8" />
-      <path d="M160 34.5 l3 3 -3 3 -3 -3z" fill={`url(#${id}-gold)`} />
-      <line x1="164" y1="37.5" x2="246" y2="37.5" stroke={`url(#${id}-gold)`} strokeWidth=".8" />
+      <line x1="69" y1="37.5" x2="178" y2="37.5" stroke={`url(#${id}-gold)`} strokeWidth=".8" />
+      <path d="M182 34.5 l3 3 -3 3 -3 -3z" fill={`url(#${id}-gold)`} />
+      <line x1="186" y1="37.5" x2="298" y2="37.5" stroke={`url(#${id}-gold)`} strokeWidth=".8" />
       <text x="69" y="50" fontFamily="'Instrument Sans','Segoe UI',system-ui,sans-serif" fontWeight="600" fontSize="9.5" letterSpacing="3.6" className="fill-muted-foreground">LEISURE PARKS</text>
     </svg>
   );

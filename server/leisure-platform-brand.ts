@@ -100,9 +100,9 @@ export function monogramSvg(size = 40, opts: MarkOpts = {}): string {
  */
 export function wordmarkSvg(height = 48, opts: MarkOpts = {}): string {
   const id = opts.id || "dbw";
-  const w = Math.round((248 / 56) * height);
+  const w = Math.round((300 / 56) * height);
   const desc = opts.onLight ? "#6E6A62" : "#D9CDB0";
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${height}" viewBox="0 0 248 56" role="img" aria-label="Double Bill, leisure parks">
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${height}" viewBox="0 0 300 56" role="img" aria-label="Double Bill, leisure parks">
   ${goldDefs(id)}
   <rect x="1.25" y="1.25" width="53.5" height="53.5" rx="11" fill="url(#${id}-velvet)" stroke="url(#${id}-gold)" stroke-width="1.5"/>
   <rect x="4.5" y="4.5" width="47" height="47" rx="8.5" fill="none" stroke="url(#${id}-gold)" stroke-width=".6" opacity=".7"/>
@@ -110,9 +110,9 @@ export function wordmarkSvg(height = 48, opts: MarkOpts = {}): string {
   <g transform="rotate(-14 24 32)"><rect x="14" y="20" width="19" height="23" rx="3" fill="url(#${id}-ivory)"/><circle cx="14" cy="31.5" r="2.4" fill="#141830"/><circle cx="33" cy="31.5" r="2.4" fill="#141830"/></g>
   <g transform="rotate(9 32 26)"><rect x="22" y="14" width="19" height="23" rx="3" fill="url(#${id}-gold)"/><circle cx="22" cy="25.5" r="2.4" fill="#141830"/><circle cx="41" cy="25.5" r="2.4" fill="#141830"/><rect x="26.5" y="20" width="10" height="1.8" rx=".9" fill="#2A1E0A" opacity=".55"/><rect x="26.5" y="24.5" width="6.5" height="1.8" rx=".9" fill="#2A1E0A" opacity=".55"/></g>
   <text x="68" y="30" font-family="'Bodoni Moda','Didot','Bodoni 72','Playfair Display',Georgia,serif" font-weight="700" font-size="26" letter-spacing="1.6" fill="url(#${id}-gold)">DOUBLE BILL</text>
-  <line x1="69" y1="37.5" x2="156" y2="37.5" stroke="url(#${id}-gold)" stroke-width=".8"/>
-  <path d="M160 34.5 l3 3 -3 3 -3 -3z" fill="url(#${id}-gold)"/>
-  <line x1="164" y1="37.5" x2="246" y2="37.5" stroke="url(#${id}-gold)" stroke-width=".8"/>
+  <line x1="69" y1="37.5" x2="178" y2="37.5" stroke="url(#${id}-gold)" stroke-width=".8"/>
+  <path d="M182 34.5 l3 3 -3 3 -3 -3z" fill="url(#${id}-gold)"/>
+  <line x1="186" y1="37.5" x2="298" y2="37.5" stroke="url(#${id}-gold)" stroke-width=".8"/>
   <text x="69" y="50" font-family="'Instrument Sans','Segoe UI',system-ui,sans-serif" font-weight="600" font-size="9.5" letter-spacing="3.6" fill="${desc}">LEISURE PARKS</text>
 </svg>`;
 }
