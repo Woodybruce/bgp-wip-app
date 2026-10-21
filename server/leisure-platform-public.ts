@@ -107,69 +107,72 @@ export function renderLeisurePlatformPage(opts: { dataRoomBase: string | null; f
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="${BRAND.googleFontsHref}">
 <style>
-/* Double Bill: ink letterboard header, house-lights amber as the one accent, dense data tables below pill tabs. */
-:root{--bg:${c.screen.light};--fg:${c.ink.light};--muted:${c.muted.light};--line:${c.line.light};--card:${c.card.light};--accent:${c.houselights.light};--ink:${c.ink.light};--on-ink:#F6F6F2;--good:${c.good.light};--warn:${c.warn.light};--bad:${c.usher.light};
---display:"Bricolage Grotesque",${BRAND.type.display.fallback};--body:"Instrument Sans",${BRAND.type.body.fallback};--mono:"JetBrains Mono",${BRAND.type.mono.fallback}}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:${c.screen.dark};--fg:#F1F2F6;--muted:${c.muted.dark};--line:${c.line.dark};--card:${c.card.dark};--accent:${c.houselights.dark};--ink:${c.ink.dark};--on-ink:#F6F6F2;--good:${c.good.dark};--warn:${c.warn.dark};--bad:${c.usher.dark};color-scheme:dark}}
-:root[data-theme="dark"]{--bg:${c.screen.dark};--fg:#F1F2F6;--muted:${c.muted.dark};--line:${c.line.dark};--card:${c.card.dark};--accent:${c.houselights.dark};--ink:${c.ink.dark};--on-ink:#F6F6F2;--good:${c.good.dark};--warn:${c.warn.dark};--bad:${c.usher.dark};color-scheme:dark}
+/* Double Bill v2: a marquee. Midnight-velvet band with a bulb strip, champagne-gold sheen as the one accent, ivory paper below, Bodoni display over Instrument Sans text and JetBrains Mono data. */
+:root{--bg:${c.ivory.light};--fg:${c.ink.light};--muted:${c.muted.light};--line:${c.line.light};--card:${c.card.light};--gold:${c.gold.light};--gold-hi:${c.goldHi.light};--gold-lo:${c.goldLo.light};--midnight:${c.midnight.light};--velvet:${c.velvet.light};--on-dark:#F4ECDC;--good:${c.good.light};--warn:${c.warn.light};--bad:${c.usher.light};--link:${c.goldLo.light};
+--display:"Bodoni Moda",${BRAND.type.display.fallback};--body:"Instrument Sans",${BRAND.type.body.fallback};--mono:"JetBrains Mono",${BRAND.type.mono.fallback}}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:${c.ivory.dark};--fg:${c.ink.dark};--muted:${c.muted.dark};--line:${c.line.dark};--card:${c.card.dark};--gold:${c.gold.dark};--gold-hi:${c.goldHi.dark};--gold-lo:${c.goldLo.dark};--midnight:${c.midnight.dark};--velvet:${c.velvet.dark};--on-dark:#F4ECDC;--good:${c.good.dark};--warn:${c.warn.dark};--bad:${c.usher.dark};--link:${c.gold.dark};color-scheme:dark}}
+:root[data-theme="dark"]{--bg:${c.ivory.dark};--fg:${c.ink.dark};--muted:${c.muted.dark};--line:${c.line.dark};--card:${c.card.dark};--gold:${c.gold.dark};--gold-hi:${c.goldHi.dark};--gold-lo:${c.goldLo.dark};--midnight:${c.midnight.dark};--velvet:${c.velvet.dark};--on-dark:#F4ECDC;--good:${c.good.dark};--warn:${c.warn.dark};--bad:${c.usher.dark};--link:${c.gold.dark};color-scheme:dark}
 body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:14px;line-height:1.45}
-.band{background:var(--ink);color:var(--on-ink)}
-.band .in{max-width:1360px;margin:0 auto;padding-block:18px 22px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-wrap:wrap;gap:14px 28px;align-items:flex-end;justify-content:space-between}
-.band h1{font-family:var(--display);font-weight:800;font-size:clamp(28px,4.5vw,44px);line-height:.98;letter-spacing:-.02em;margin:10px 0 6px;text-wrap:balance}
-.band .lede{color:#C9CCD6;max-width:66ch;margin:0;font-size:14.5px}
-.band .tag{font-family:var(--display);font-weight:700;color:var(--accent);font-size:15px;letter-spacing:-.01em}
-.band .links a{display:inline-block;margin-left:10px;color:var(--on-ink);font-weight:600;text-decoration:none;border:1px solid rgba(246,246,242,.35);border-radius:999px;padding:7px 14px}
-.band .links a:hover{border-color:var(--accent);color:var(--accent)}
+.band{background:radial-gradient(120% 140% at 0% 0%,var(--velvet) 0%,#141830 48%,var(--midnight) 100%);color:var(--on-dark);position:relative}
+.band:after{content:"";display:block;height:7px;background-image:radial-gradient(circle at 6px 3.5px,var(--gold-hi) 0 1.4px,var(--gold) 1.5px 2.1px,transparent 2.3px);background-size:14px 7px;background-repeat:repeat-x;border-top:1px solid var(--gold);background-color:var(--midnight)}
+.band .in{max-width:1360px;margin:0 auto;padding-block:22px 26px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-wrap:wrap;gap:16px 28px;align-items:flex-end;justify-content:space-between}
+.band h1{font-family:var(--display);font-weight:700;font-size:clamp(28px,4.4vw,46px);line-height:1.02;letter-spacing:.005em;margin:14px 0 8px;text-wrap:balance;color:#FBF5E8}
+.band .lede{color:#CFC6B2;max-width:66ch;margin:0;font-size:14.5px}
+.band .tag{font-family:var(--display);font-style:italic;font-weight:600;font-size:17px;letter-spacing:.01em;background:linear-gradient(135deg,var(--gold-hi),var(--gold) 55%,var(--gold-lo));-webkit-background-clip:text;background-clip:text;color:transparent}
+.band .links a{display:inline-block;margin-left:10px;color:var(--gold-hi);font-weight:600;text-decoration:none;border:1px solid var(--gold);border-radius:999px;padding:7px 16px;letter-spacing:.04em;font-size:12.5px;text-transform:uppercase}
+.band .links a:hover{background:var(--gold);color:var(--midnight)}
 .wm{display:block}
 .wrap{max-width:1360px;margin:0 auto;padding-block:18px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
-.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-bottom:6px}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-lo);margin-bottom:8px}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:18px}
-.stat{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:10px 12px;min-width:0;border-top:3px solid var(--accent)}
-.sl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
-.sv{font-family:var(--display);font-weight:800;font-size:24px;letter-spacing:-.02em;font-variant-numeric:tabular-nums;margin:2px 0}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;min-width:0;position:relative}
+.stat:before{content:"";position:absolute;left:14px;right:14px;top:0;height:2px;background:linear-gradient(90deg,var(--gold-hi),var(--gold) 50%,var(--gold-lo))}
+.sl{font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+.sv{font-family:var(--display);font-weight:700;font-size:28px;letter-spacing:.005em;font-variant-numeric:tabular-nums;margin:3px 0 1px}
 .sc{font-size:11px;color:var(--muted)}
-.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 14px}
-.tab{font-family:var(--body);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:999px;padding:6px 12px;cursor:pointer}
-.tab[aria-selected="true"]{background:var(--ink);color:var(--on-ink);border-color:transparent;box-shadow:inset 0 -3px 0 var(--accent)}
-.tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 16px}
+.tab{font-family:var(--body);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:999px;padding:7px 14px;cursor:pointer}
+.tab[aria-selected="true"]{background:var(--midnight);color:var(--gold-hi);border-color:var(--gold)}
+.tab:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 section{display:none}section.on{display:block}
-h2{font-family:var(--display);font-weight:800;font-size:24px;letter-spacing:-.02em;margin:0 0 4px;text-wrap:balance}
+h2{font-family:var(--display);font-weight:700;font-size:28px;letter-spacing:.005em;margin:0 0 4px;text-wrap:balance}
+h2:after{content:"";display:block;width:56px;height:2px;margin:8px 0 10px;background:linear-gradient(90deg,var(--gold-hi),var(--gold-lo))}
 .note{color:var(--muted);font-size:13px;max-width:80ch;margin:0 0 12px}
-.tw{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:6px}
+.tw{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:8px}
 table{border-collapse:collapse;width:100%;font-size:12.5px}
-th{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;background:color-mix(in srgb,var(--card) 94%,var(--fg))}
+th{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600;padding:9px 10px;border-bottom:1px solid var(--gold);white-space:nowrap;background:color-mix(in srgb,var(--card) 94%,var(--gold))}
 td{padding:8px 10px;border-top:1px solid var(--line);vertical-align:top;min-width:0}
 .al{text-align:left}.ar{text-align:right}.ac{text-align:center}
 .num,.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .sub{color:var(--muted);font-size:11.5px}
 .bad{color:var(--bad);font-size:11.5px}
-.chip{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;border-radius:999px;padding:2px 8px;border:1px solid var(--line);color:var(--muted)}
+.chip{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;border-radius:999px;padding:2px 8px;border:1px solid var(--line);color:var(--muted)}
 .chip.confirmed{color:var(--good);border-color:var(--good)}.chip.likely{color:var(--warn);border-color:var(--warn)}
-.chip.priA{color:var(--good);border-color:var(--good)}.chip.priB{color:var(--accent);border-color:var(--accent)}
+.chip.priA{color:var(--good);border-color:var(--good)}.chip.priB{color:var(--gold-lo);border-color:var(--gold)}
 .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
-.board{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:12px;min-width:0}
-.board h3{font-family:var(--mono);font-size:10.5px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+.board{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;min-width:0}
+.board h3{font-family:var(--mono);font-size:10.5px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-lo);margin:0 0 8px}
 .board .tw{border:0;background:transparent}
 .kv{display:flex;justify-content:space-between;gap:12px;font-size:12.5px;padding:6px 0;border-top:1px solid var(--line)}.kv:first-of-type{border-top:0}
-.kv a{color:var(--accent);text-decoration:none}
+.kv a{color:var(--link);text-decoration:none}
 .fact{font-size:12.5px;padding:5px 0;border-top:1px solid var(--line)}.fact:first-of-type{border-top:0}.fact span{color:var(--muted)}
-a{color:var(--accent)}
+a{color:var(--link)}
 ul{padding-left:18px;margin:0}li{margin:4px 0}
 .sw{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
-.swatch{border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--card)}
+.swatch{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--card)}
 .swatch i{display:block;height:54px}.swatch b{display:block;font-size:12px;padding:6px 8px 0}.swatch span{display:block;font-size:11px;color:var(--muted);padding:0 8px 8px}
-.type-d{font-family:var(--display);font-weight:800;font-size:30px;letter-spacing:-.02em;line-height:1}
+.type-d{font-family:var(--display);font-weight:700;font-size:34px;letter-spacing:.005em;line-height:1.05}
 .type-b{font-family:var(--body);font-size:14px}.type-m{font-family:var(--mono);font-size:13px}
 .markbox{display:flex;flex-wrap:wrap;gap:16px;align-items:center}
-.markbox .dark{background:var(--ink);color:var(--on-ink);border-radius:6px;padding:16px 20px}
-.markbox .light{background:#fff;color:${c.ink.light};border:1px solid var(--line);border-radius:6px;padding:16px 20px}
-footer{margin-top:28px;color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:12px;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
+.markbox .dark{background:radial-gradient(120% 140% at 0% 0%,${c.velvet.light} 0%,#141830 48%,${c.midnight.light} 100%);border-radius:8px;padding:18px 22px}
+.markbox .light{background:${c.card.light};border:1px solid var(--line);border-radius:8px;padding:18px 22px}
+footer{margin-top:28px;color:var(--muted);font-size:12px;border-top:1px solid var(--gold);padding-top:12px;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>`;
 
   const body = `<div class="band"><div class="in">
   <div>
-    <span class="wm">${wordmarkSvg(48, { ink: "#F6F6F2", accent: c.houselights.dark, paper: c.ink.light })}</span>
+    <span class="wm">${wordmarkSvg(56, { id: "hdr" })}</span>
     <h1>The L&amp;G Leisure Fund and the parks that come next</h1>
     <p class="lede">${esc(BRAND.line)}</p>
   </div>
@@ -251,27 +254,27 @@ footer{margin-top:28px;color:var(--muted);font-size:12px;border-top:1px solid va
   <div class="grid2">
     <div class="board"><h3>Marks</h3>
       <div class="markbox">
-        <div class="light">${wordmarkSvg(56, { ink: c.ink.light, accent: c.houselights.light, paper: "#FFFFFF" })}</div>
-        <div class="dark">${wordmarkSvg(56, { ink: "#F6F6F2", accent: c.houselights.dark, paper: c.ink.light })}</div>
-        <div class="light">${monogramSvg(56, { ink: c.ink.light, accent: c.houselights.light, paper: "#FFFFFF" })}</div>
+        <div class="dark">${wordmarkSvg(64, { id: "wmd" })}</div>
+        <div class="light">${wordmarkSvg(64, { id: "wml", onLight: true })}</div>
+        <div class="dark">${monogramSvg(72, { id: "mkd" })}</div>
       </div>
-      <p class="sub" style="margin:10px 0 0">Two ticket stubs, fanned: ink behind, house-lights amber in front. Minimum height 24px for the mark, 32px for the wordmark. Clear space of one stub all round. The amber is never recoloured.</p>
+      <p class="sub" style="margin:10px 0 0">The marquee badge: a midnight-velvet ground with a bulb-lit gold border and the two ticket stubs inside, ivory behind and gold in front. The wordmark sets DOUBLE BILL in Bodoni with the gold sheen over a hairline and diamond. Minimum height 28px for the badge, 40px for the wordmark; clear space of one bulb-row all round; the gold is never flattened to a single colour on print.</p>
     </div>
     <div class="board"><h3>Voice</h3><ul>${BRAND.voice.map((v) => `<li>${esc(v)}</li>`).join("")}<li>${esc(BRAND.parkNaming)}</li></ul></div>
     <div class="board"><h3>Colour</h3>
-      <div class="sw">${Object.entries(c).map(([k, v]) => `<div class="swatch"><i style="background:${v.light}"></i><b>${esc(k === "houselights" ? "House lights" : k === "usher" ? "Usher red" : k[0].toUpperCase() + k.slice(1))}</b><span class="mono">${v.light} · ${v.dark}</span></div>`).join("")}</div>
-      <p class="sub" style="margin:10px 0 0">Amber is the only accent. Good, warn and usher red carry meaning, never decoration. No gradients, no shadows.</p>
+      <div class="sw">${Object.entries(c).map(([k, v]) => `<div class="swatch"><i style="background:${k === "gold" ? "linear-gradient(135deg,#F6E6B2,#D4B165 45%,#C19A45 70%,#8F6E2A)" : v.light}"></i><b>${esc(k === "goldHi" ? "Gold highlight" : k === "goldLo" ? "Gold shadow" : k === "usher" ? "Usher red" : k === "gold" ? "Champagne gold" : k[0].toUpperCase() + k.slice(1))}</b><span class="mono">${v.light} · ${v.dark}</span></div>`).join("")}</div>
+      <p class="sub" style="margin:10px 0 0">Champagne gold is the only accent, always as the three-stop sheen on marks and rules. Good, warn and usher red carry meaning, never decoration. Midnight and velvet are grounds, never type colours on ivory.</p>
     </div>
     <div class="board"><h3>Type</h3>
-      <div class="type-d">Twice the night out.</div>
-      <p class="sub" style="margin:4px 0 10px">Bricolage Grotesque 800 for the wordmark, titles and big numbers.</p>
+      <div class="type-d"><em>Twice the night out.</em></div>
+      <p class="sub" style="margin:4px 0 10px">Bodoni Moda 700 for the wordmark, titles and big numbers; italic for the tagline.</p>
       <div class="type-b">Instrument Sans for everything people read: 14px, generous line height, labels tracked out in capitals.</div>
       <div class="type-m" style="margin-top:8px">JetBrains Mono · £219.2m · 7.7% · CH430688 · 2026-03-31</div>
     </div>
   </div>
 </section>
 
-<footer>${monogramSvg(22, { ink: c.muted.light, accent: c.houselights.light, paper: c.screen.light })}<span>A Double Bill paper, prepared by Bruce Gillingham Pollard. Research snapshot assembled 21 October 2026 from AREF, Companies House, HM Land Registry charge records, L&amp;G releases, agents' schedules and trade press. Not investment advice; figures marked unverified in the paper remain so here.</span></footer>
+<footer>${monogramSvg(28, { id: "ftr" })}<span>A Double Bill paper, prepared by Bruce Gillingham Pollard. Research snapshot assembled 21 October 2026 from AREF, Companies House, HM Land Registry charge records, L&amp;G releases, agents' schedules and trade press. Not investment advice; figures marked unverified in the paper remain so here.</span></footer>
 </div>
 <script>
 (function(){

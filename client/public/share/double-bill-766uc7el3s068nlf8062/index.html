@@ -1,72 +1,86 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Double Bill</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,600;6..96,700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
-/* Double Bill: ink letterboard header, house-lights amber as the one accent, dense data tables below pill tabs. */
-:root{--bg:#F3F3EF;--fg:#131A2B;--muted:#6B7080;--line:#DDDFE4;--card:#FFFFFF;--accent:#E89A1C;--ink:#131A2B;--on-ink:#F6F6F2;--good:#2C8C63;--warn:#9C6A00;--bad:#C9423E;
---display:"Bricolage Grotesque","Arial Narrow", "Helvetica Neue", Arial, sans-serif;--body:"Instrument Sans","Segoe UI", system-ui, sans-serif;--mono:"JetBrains Mono",ui-monospace, Menlo, monospace}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#161B29;--fg:#F1F2F6;--muted:#A3A9B8;--line:#2B3245;--card:#1D2334;--accent:#F0B142;--ink:#0E1320;--on-ink:#F6F6F2;--good:#6FCB9B;--warn:#E0B45A;--bad:#F08A86;color-scheme:dark}}
-:root[data-theme="dark"]{--bg:#161B29;--fg:#F1F2F6;--muted:#A3A9B8;--line:#2B3245;--card:#1D2334;--accent:#F0B142;--ink:#0E1320;--on-ink:#F6F6F2;--good:#6FCB9B;--warn:#E0B45A;--bad:#F08A86;color-scheme:dark}
+/* Double Bill v2: a marquee. Midnight-velvet band with a bulb strip, champagne-gold sheen as the one accent, ivory paper below, Bodoni display over Instrument Sans text and JetBrains Mono data. */
+:root{--bg:#F6F1E6;--fg:#171A26;--muted:#6E6A62;--line:#E4DCCB;--card:#FFFDF8;--gold:#C9A24E;--gold-hi:#F3DFA0;--gold-lo:#8F6E2A;--midnight:#0B0F1F;--velvet:#4A1024;--on-dark:#F4ECDC;--good:#2C7D5B;--warn:#9A6B12;--bad:#B5383A;--link:#8F6E2A;
+--display:"Bodoni Moda","Didot", "Bodoni 72", "Playfair Display", Georgia, serif;--body:"Instrument Sans","Segoe UI", system-ui, sans-serif;--mono:"JetBrains Mono",ui-monospace, Menlo, monospace}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#121626;--fg:#F1ECE1;--muted:#A9A396;--line:#2C3147;--card:#1A1F32;--gold:#D9B86A;--gold-hi:#F6E6B2;--gold-lo:#A6823A;--midnight:#070A16;--velvet:#3A0C1C;--on-dark:#F4ECDC;--good:#6FCB9B;--warn:#E0B45A;--bad:#F08A86;--link:#D9B86A;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#121626;--fg:#F1ECE1;--muted:#A9A396;--line:#2C3147;--card:#1A1F32;--gold:#D9B86A;--gold-hi:#F6E6B2;--gold-lo:#A6823A;--midnight:#070A16;--velvet:#3A0C1C;--on-dark:#F4ECDC;--good:#6FCB9B;--warn:#E0B45A;--bad:#F08A86;--link:#D9B86A;color-scheme:dark}
 body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:14px;line-height:1.45}
-.band{background:var(--ink);color:var(--on-ink)}
-.band .in{max-width:1360px;margin:0 auto;padding-block:18px 22px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-wrap:wrap;gap:14px 28px;align-items:flex-end;justify-content:space-between}
-.band h1{font-family:var(--display);font-weight:800;font-size:clamp(28px,4.5vw,44px);line-height:.98;letter-spacing:-.02em;margin:10px 0 6px;text-wrap:balance}
-.band .lede{color:#C9CCD6;max-width:66ch;margin:0;font-size:14.5px}
-.band .tag{font-family:var(--display);font-weight:700;color:var(--accent);font-size:15px;letter-spacing:-.01em}
-.band .links a{display:inline-block;margin-left:10px;color:var(--on-ink);font-weight:600;text-decoration:none;border:1px solid rgba(246,246,242,.35);border-radius:999px;padding:7px 14px}
-.band .links a:hover{border-color:var(--accent);color:var(--accent)}
+.band{background:radial-gradient(120% 140% at 0% 0%,var(--velvet) 0%,#141830 48%,var(--midnight) 100%);color:var(--on-dark);position:relative}
+.band:after{content:"";display:block;height:7px;background-image:radial-gradient(circle at 6px 3.5px,var(--gold-hi) 0 1.4px,var(--gold) 1.5px 2.1px,transparent 2.3px);background-size:14px 7px;background-repeat:repeat-x;border-top:1px solid var(--gold);background-color:var(--midnight)}
+.band .in{max-width:1360px;margin:0 auto;padding-block:22px 26px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-wrap:wrap;gap:16px 28px;align-items:flex-end;justify-content:space-between}
+.band h1{font-family:var(--display);font-weight:700;font-size:clamp(28px,4.4vw,46px);line-height:1.02;letter-spacing:.005em;margin:14px 0 8px;text-wrap:balance;color:#FBF5E8}
+.band .lede{color:#CFC6B2;max-width:66ch;margin:0;font-size:14.5px}
+.band .tag{font-family:var(--display);font-style:italic;font-weight:600;font-size:17px;letter-spacing:.01em;background:linear-gradient(135deg,var(--gold-hi),var(--gold) 55%,var(--gold-lo));-webkit-background-clip:text;background-clip:text;color:transparent}
+.band .links a{display:inline-block;margin-left:10px;color:var(--gold-hi);font-weight:600;text-decoration:none;border:1px solid var(--gold);border-radius:999px;padding:7px 16px;letter-spacing:.04em;font-size:12.5px;text-transform:uppercase}
+.band .links a:hover{background:var(--gold);color:var(--midnight)}
 .wm{display:block}
 .wrap{max-width:1360px;margin:0 auto;padding-block:18px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
-.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-bottom:6px}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-lo);margin-bottom:8px}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:18px}
-.stat{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:10px 12px;min-width:0;border-top:3px solid var(--accent)}
-.sl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
-.sv{font-family:var(--display);font-weight:800;font-size:24px;letter-spacing:-.02em;font-variant-numeric:tabular-nums;margin:2px 0}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;min-width:0;position:relative}
+.stat:before{content:"";position:absolute;left:14px;right:14px;top:0;height:2px;background:linear-gradient(90deg,var(--gold-hi),var(--gold) 50%,var(--gold-lo))}
+.sl{font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+.sv{font-family:var(--display);font-weight:700;font-size:28px;letter-spacing:.005em;font-variant-numeric:tabular-nums;margin:3px 0 1px}
 .sc{font-size:11px;color:var(--muted)}
-.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 14px}
-.tab{font-family:var(--body);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:999px;padding:6px 12px;cursor:pointer}
-.tab[aria-selected="true"]{background:var(--ink);color:var(--on-ink);border-color:transparent;box-shadow:inset 0 -3px 0 var(--accent)}
-.tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 16px}
+.tab{font-family:var(--body);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:999px;padding:7px 14px;cursor:pointer}
+.tab[aria-selected="true"]{background:var(--midnight);color:var(--gold-hi);border-color:var(--gold)}
+.tab:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 section{display:none}section.on{display:block}
-h2{font-family:var(--display);font-weight:800;font-size:24px;letter-spacing:-.02em;margin:0 0 4px;text-wrap:balance}
+h2{font-family:var(--display);font-weight:700;font-size:28px;letter-spacing:.005em;margin:0 0 4px;text-wrap:balance}
+h2:after{content:"";display:block;width:56px;height:2px;margin:8px 0 10px;background:linear-gradient(90deg,var(--gold-hi),var(--gold-lo))}
 .note{color:var(--muted);font-size:13px;max-width:80ch;margin:0 0 12px}
-.tw{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:6px}
+.tw{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:8px}
 table{border-collapse:collapse;width:100%;font-size:12.5px}
-th{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;background:color-mix(in srgb,var(--card) 94%,var(--fg))}
+th{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600;padding:9px 10px;border-bottom:1px solid var(--gold);white-space:nowrap;background:color-mix(in srgb,var(--card) 94%,var(--gold))}
 td{padding:8px 10px;border-top:1px solid var(--line);vertical-align:top;min-width:0}
 .al{text-align:left}.ar{text-align:right}.ac{text-align:center}
 .num,.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .sub{color:var(--muted);font-size:11.5px}
 .bad{color:var(--bad);font-size:11.5px}
-.chip{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;border-radius:999px;padding:2px 8px;border:1px solid var(--line);color:var(--muted)}
+.chip{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;border-radius:999px;padding:2px 8px;border:1px solid var(--line);color:var(--muted)}
 .chip.confirmed{color:var(--good);border-color:var(--good)}.chip.likely{color:var(--warn);border-color:var(--warn)}
-.chip.priA{color:var(--good);border-color:var(--good)}.chip.priB{color:var(--accent);border-color:var(--accent)}
+.chip.priA{color:var(--good);border-color:var(--good)}.chip.priB{color:var(--gold-lo);border-color:var(--gold)}
 .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
-.board{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:12px;min-width:0}
-.board h3{font-family:var(--mono);font-size:10.5px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+.board{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;min-width:0}
+.board h3{font-family:var(--mono);font-size:10.5px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-lo);margin:0 0 8px}
 .board .tw{border:0;background:transparent}
 .kv{display:flex;justify-content:space-between;gap:12px;font-size:12.5px;padding:6px 0;border-top:1px solid var(--line)}.kv:first-of-type{border-top:0}
-.kv a{color:var(--accent);text-decoration:none}
+.kv a{color:var(--link);text-decoration:none}
 .fact{font-size:12.5px;padding:5px 0;border-top:1px solid var(--line)}.fact:first-of-type{border-top:0}.fact span{color:var(--muted)}
-a{color:var(--accent)}
+a{color:var(--link)}
 ul{padding-left:18px;margin:0}li{margin:4px 0}
 .sw{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
-.swatch{border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--card)}
+.swatch{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--card)}
 .swatch i{display:block;height:54px}.swatch b{display:block;font-size:12px;padding:6px 8px 0}.swatch span{display:block;font-size:11px;color:var(--muted);padding:0 8px 8px}
-.type-d{font-family:var(--display);font-weight:800;font-size:30px;letter-spacing:-.02em;line-height:1}
+.type-d{font-family:var(--display);font-weight:700;font-size:34px;letter-spacing:.005em;line-height:1.05}
 .type-b{font-family:var(--body);font-size:14px}.type-m{font-family:var(--mono);font-size:13px}
 .markbox{display:flex;flex-wrap:wrap;gap:16px;align-items:center}
-.markbox .dark{background:var(--ink);color:var(--on-ink);border-radius:6px;padding:16px 20px}
-.markbox .light{background:#fff;color:#131A2B;border:1px solid var(--line);border-radius:6px;padding:16px 20px}
-footer{margin-top:28px;color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:12px;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
+.markbox .dark{background:radial-gradient(120% 140% at 0% 0%,#4A1024 0%,#141830 48%,#0B0F1F 100%);border-radius:8px;padding:18px 22px}
+.markbox .light{background:#FFFDF8;border:1px solid var(--line);border-radius:8px;padding:18px 22px}
+footer{margin-top:28px;color:var(--muted);font-size:12px;border-top:1px solid var(--gold);padding-top:12px;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style></head><body style="margin:0"><div class="band"><div class="in">
   <div>
-    <span class="wm"><svg xmlns="http://www.w3.org/2000/svg" width="207" height="48" viewBox="0 0 190 44" role="img" aria-label="Double Bill, leisure parks">
-  <g transform="translate(0 2)"><g transform="rotate(-12 18 22)"><rect x="4" y="8" width="26" height="30" rx="4" fill="#F6F6F2"/><circle cx="4" cy="23" r="3" fill="#131A2B"/><circle cx="30" cy="23" r="3" fill="#131A2B"/></g>
-  <g transform="rotate(8 26 20)"><rect x="14" y="4" width="26" height="30" rx="4" fill="#F0B142"/><circle cx="14" cy="19" r="3" fill="#131A2B"/><circle cx="40" cy="19" r="3" fill="#131A2B"/><rect x="20" y="12" width="14" height="2.4" rx="1.2" fill="#131A2B" opacity=".9"/><rect x="20" y="18" width="9" height="2.4" rx="1.2" fill="#131A2B" opacity=".9"/></g></g>
-  <text x="54" y="21" font-family="'Bricolage Grotesque','Arial Narrow',Arial,sans-serif" font-weight="800" font-size="19" letter-spacing="-0.4" fill="#F6F6F2">DOUBLE BILL</text>
-  <text x="55" y="36" font-family="'Instrument Sans','Segoe UI',system-ui,sans-serif" font-weight="600" font-size="9.5" letter-spacing="2.2" fill="#F0B142">LEISURE PARKS</text>
+    <span class="wm"><svg xmlns="http://www.w3.org/2000/svg" width="248" height="56" viewBox="0 0 248 56" role="img" aria-label="Double Bill, leisure parks">
+  <defs>
+    <linearGradient id="hdr-gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F6E6B2"/><stop offset=".45" stop-color="#D4B165"/><stop offset=".7" stop-color="#C19A45"/><stop offset="1" stop-color="#8F6E2A"/></linearGradient>
+    <linearGradient id="hdr-ivory" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFCF3"/><stop offset="1" stop-color="#E9E0CC"/></linearGradient>
+    <radialGradient id="hdr-velvet" cx=".3" cy=".2" r="1"><stop offset="0" stop-color="#4A1024"/><stop offset=".55" stop-color="#141830"/><stop offset="1" stop-color="#0B0F1F"/></radialGradient>
+  </defs>
+  <rect x="1.25" y="1.25" width="53.5" height="53.5" rx="11" fill="url(#hdr-velvet)" stroke="url(#hdr-gold)" stroke-width="1.5"/>
+  <rect x="4.5" y="4.5" width="47" height="47" rx="8.5" fill="none" stroke="url(#hdr-gold)" stroke-width=".6" opacity=".7"/>
+  <circle cx="6.5" cy="6.5" r="1.5" fill="url(#hdr-gold)"/><circle cx="6.5" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="49.5" r="1.5" fill="url(#hdr-gold)"/><circle cx="6.5" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="15.1" cy="6.5" r="1.5" fill="url(#hdr-gold)"/><circle cx="15.1" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="15.1" cy="49.5" r="1.5" fill="url(#hdr-gold)"/><circle cx="15.1" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="23.7" cy="6.5" r="1.5" fill="url(#hdr-gold)"/><circle cx="23.7" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="23.7" cy="49.5" r="1.5" fill="url(#hdr-gold)"/><circle cx="23.7" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="32.3" cy="6.5" r="1.5" fill="url(#hdr-gold)"/><circle cx="32.3" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="32.3" cy="49.5" r="1.5" fill="url(#hdr-gold)"/><circle cx="32.3" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="40.9" cy="6.5" r="1.5" fill="url(#hdr-gold)"/><circle cx="40.9" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="40.9" cy="49.5" r="1.5" fill="url(#hdr-gold)"/><circle cx="40.9" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="6.5" r="1.5" fill="url(#hdr-gold)"/><circle cx="49.5" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="49.5" r="1.5" fill="url(#hdr-gold)"/><circle cx="49.5" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="15.1" r="1.5" fill="url(#hdr-gold)"/><circle cx="6.5" cy="15.1" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="15.1" r="1.5" fill="url(#hdr-gold)"/><circle cx="49.5" cy="15.1" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="23.7" r="1.5" fill="url(#hdr-gold)"/><circle cx="6.5" cy="23.7" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="23.7" r="1.5" fill="url(#hdr-gold)"/><circle cx="49.5" cy="23.7" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="32.3" r="1.5" fill="url(#hdr-gold)"/><circle cx="6.5" cy="32.3" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="32.3" r="1.5" fill="url(#hdr-gold)"/><circle cx="49.5" cy="32.3" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="40.9" r="1.5" fill="url(#hdr-gold)"/><circle cx="6.5" cy="40.9" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="40.9" r="1.5" fill="url(#hdr-gold)"/><circle cx="49.5" cy="40.9" r="0.6" fill="#FFF7DD"/>
+  <g transform="rotate(-14 24 32)"><rect x="14" y="20" width="19" height="23" rx="3" fill="url(#hdr-ivory)"/><circle cx="14" cy="31.5" r="2.4" fill="#141830"/><circle cx="33" cy="31.5" r="2.4" fill="#141830"/></g>
+  <g transform="rotate(9 32 26)"><rect x="22" y="14" width="19" height="23" rx="3" fill="url(#hdr-gold)"/><circle cx="22" cy="25.5" r="2.4" fill="#141830"/><circle cx="41" cy="25.5" r="2.4" fill="#141830"/><rect x="26.5" y="20" width="10" height="1.8" rx=".9" fill="#2A1E0A" opacity=".55"/><rect x="26.5" y="24.5" width="6.5" height="1.8" rx=".9" fill="#2A1E0A" opacity=".55"/></g>
+  <text x="68" y="30" font-family="'Bodoni Moda','Didot','Bodoni 72','Playfair Display',Georgia,serif" font-weight="700" font-size="26" letter-spacing="1.6" fill="url(#hdr-gold)">DOUBLE BILL</text>
+  <line x1="69" y1="37.5" x2="156" y2="37.5" stroke="url(#hdr-gold)" stroke-width=".8"/>
+  <path d="M160 34.5 l3 3 -3 3 -3 -3z" fill="url(#hdr-gold)"/>
+  <line x1="164" y1="37.5" x2="246" y2="37.5" stroke="url(#hdr-gold)" stroke-width=".8"/>
+  <text x="69" y="50" font-family="'Instrument Sans','Segoe UI',system-ui,sans-serif" font-weight="600" font-size="9.5" letter-spacing="3.6" fill="#D9CDB0">LEISURE PARKS</text>
 </svg></span>
     <h1>The L&amp;G Leisure Fund and the parks that come next</h1>
     <p class="lede">Cinema-anchored leisure parks, run again: film, then the rest of the night, on one site with one landlord who cares.</p>
@@ -149,42 +163,80 @@ footer{margin-top:28px;color:var(--muted);font-size:12px;border-top:1px solid va
   <div class="grid2">
     <div class="board"><h3>Marks</h3>
       <div class="markbox">
-        <div class="light"><svg xmlns="http://www.w3.org/2000/svg" width="242" height="56" viewBox="0 0 190 44" role="img" aria-label="Double Bill, leisure parks">
-  <g transform="translate(0 2)"><g transform="rotate(-12 18 22)"><rect x="4" y="8" width="26" height="30" rx="4" fill="#131A2B"/><circle cx="4" cy="23" r="3" fill="#FFFFFF"/><circle cx="30" cy="23" r="3" fill="#FFFFFF"/></g>
-  <g transform="rotate(8 26 20)"><rect x="14" y="4" width="26" height="30" rx="4" fill="#E89A1C"/><circle cx="14" cy="19" r="3" fill="#FFFFFF"/><circle cx="40" cy="19" r="3" fill="#FFFFFF"/><rect x="20" y="12" width="14" height="2.4" rx="1.2" fill="#FFFFFF" opacity=".9"/><rect x="20" y="18" width="9" height="2.4" rx="1.2" fill="#FFFFFF" opacity=".9"/></g></g>
-  <text x="54" y="21" font-family="'Bricolage Grotesque','Arial Narrow',Arial,sans-serif" font-weight="800" font-size="19" letter-spacing="-0.4" fill="#131A2B">DOUBLE BILL</text>
-  <text x="55" y="36" font-family="'Instrument Sans','Segoe UI',system-ui,sans-serif" font-weight="600" font-size="9.5" letter-spacing="2.2" fill="#E89A1C">LEISURE PARKS</text>
+        <div class="dark"><svg xmlns="http://www.w3.org/2000/svg" width="283" height="64" viewBox="0 0 248 56" role="img" aria-label="Double Bill, leisure parks">
+  <defs>
+    <linearGradient id="wmd-gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F6E6B2"/><stop offset=".45" stop-color="#D4B165"/><stop offset=".7" stop-color="#C19A45"/><stop offset="1" stop-color="#8F6E2A"/></linearGradient>
+    <linearGradient id="wmd-ivory" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFCF3"/><stop offset="1" stop-color="#E9E0CC"/></linearGradient>
+    <radialGradient id="wmd-velvet" cx=".3" cy=".2" r="1"><stop offset="0" stop-color="#4A1024"/><stop offset=".55" stop-color="#141830"/><stop offset="1" stop-color="#0B0F1F"/></radialGradient>
+  </defs>
+  <rect x="1.25" y="1.25" width="53.5" height="53.5" rx="11" fill="url(#wmd-velvet)" stroke="url(#wmd-gold)" stroke-width="1.5"/>
+  <rect x="4.5" y="4.5" width="47" height="47" rx="8.5" fill="none" stroke="url(#wmd-gold)" stroke-width=".6" opacity=".7"/>
+  <circle cx="6.5" cy="6.5" r="1.5" fill="url(#wmd-gold)"/><circle cx="6.5" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="49.5" r="1.5" fill="url(#wmd-gold)"/><circle cx="6.5" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="15.1" cy="6.5" r="1.5" fill="url(#wmd-gold)"/><circle cx="15.1" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="15.1" cy="49.5" r="1.5" fill="url(#wmd-gold)"/><circle cx="15.1" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="23.7" cy="6.5" r="1.5" fill="url(#wmd-gold)"/><circle cx="23.7" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="23.7" cy="49.5" r="1.5" fill="url(#wmd-gold)"/><circle cx="23.7" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="32.3" cy="6.5" r="1.5" fill="url(#wmd-gold)"/><circle cx="32.3" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="32.3" cy="49.5" r="1.5" fill="url(#wmd-gold)"/><circle cx="32.3" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="40.9" cy="6.5" r="1.5" fill="url(#wmd-gold)"/><circle cx="40.9" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="40.9" cy="49.5" r="1.5" fill="url(#wmd-gold)"/><circle cx="40.9" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="6.5" r="1.5" fill="url(#wmd-gold)"/><circle cx="49.5" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="49.5" r="1.5" fill="url(#wmd-gold)"/><circle cx="49.5" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="15.1" r="1.5" fill="url(#wmd-gold)"/><circle cx="6.5" cy="15.1" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="15.1" r="1.5" fill="url(#wmd-gold)"/><circle cx="49.5" cy="15.1" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="23.7" r="1.5" fill="url(#wmd-gold)"/><circle cx="6.5" cy="23.7" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="23.7" r="1.5" fill="url(#wmd-gold)"/><circle cx="49.5" cy="23.7" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="32.3" r="1.5" fill="url(#wmd-gold)"/><circle cx="6.5" cy="32.3" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="32.3" r="1.5" fill="url(#wmd-gold)"/><circle cx="49.5" cy="32.3" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="40.9" r="1.5" fill="url(#wmd-gold)"/><circle cx="6.5" cy="40.9" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="40.9" r="1.5" fill="url(#wmd-gold)"/><circle cx="49.5" cy="40.9" r="0.6" fill="#FFF7DD"/>
+  <g transform="rotate(-14 24 32)"><rect x="14" y="20" width="19" height="23" rx="3" fill="url(#wmd-ivory)"/><circle cx="14" cy="31.5" r="2.4" fill="#141830"/><circle cx="33" cy="31.5" r="2.4" fill="#141830"/></g>
+  <g transform="rotate(9 32 26)"><rect x="22" y="14" width="19" height="23" rx="3" fill="url(#wmd-gold)"/><circle cx="22" cy="25.5" r="2.4" fill="#141830"/><circle cx="41" cy="25.5" r="2.4" fill="#141830"/><rect x="26.5" y="20" width="10" height="1.8" rx=".9" fill="#2A1E0A" opacity=".55"/><rect x="26.5" y="24.5" width="6.5" height="1.8" rx=".9" fill="#2A1E0A" opacity=".55"/></g>
+  <text x="68" y="30" font-family="'Bodoni Moda','Didot','Bodoni 72','Playfair Display',Georgia,serif" font-weight="700" font-size="26" letter-spacing="1.6" fill="url(#wmd-gold)">DOUBLE BILL</text>
+  <line x1="69" y1="37.5" x2="156" y2="37.5" stroke="url(#wmd-gold)" stroke-width=".8"/>
+  <path d="M160 34.5 l3 3 -3 3 -3 -3z" fill="url(#wmd-gold)"/>
+  <line x1="164" y1="37.5" x2="246" y2="37.5" stroke="url(#wmd-gold)" stroke-width=".8"/>
+  <text x="69" y="50" font-family="'Instrument Sans','Segoe UI',system-ui,sans-serif" font-weight="600" font-size="9.5" letter-spacing="3.6" fill="#D9CDB0">LEISURE PARKS</text>
 </svg></div>
-        <div class="dark"><svg xmlns="http://www.w3.org/2000/svg" width="242" height="56" viewBox="0 0 190 44" role="img" aria-label="Double Bill, leisure parks">
-  <g transform="translate(0 2)"><g transform="rotate(-12 18 22)"><rect x="4" y="8" width="26" height="30" rx="4" fill="#F6F6F2"/><circle cx="4" cy="23" r="3" fill="#131A2B"/><circle cx="30" cy="23" r="3" fill="#131A2B"/></g>
-  <g transform="rotate(8 26 20)"><rect x="14" y="4" width="26" height="30" rx="4" fill="#F0B142"/><circle cx="14" cy="19" r="3" fill="#131A2B"/><circle cx="40" cy="19" r="3" fill="#131A2B"/><rect x="20" y="12" width="14" height="2.4" rx="1.2" fill="#131A2B" opacity=".9"/><rect x="20" y="18" width="9" height="2.4" rx="1.2" fill="#131A2B" opacity=".9"/></g></g>
-  <text x="54" y="21" font-family="'Bricolage Grotesque','Arial Narrow',Arial,sans-serif" font-weight="800" font-size="19" letter-spacing="-0.4" fill="#F6F6F2">DOUBLE BILL</text>
-  <text x="55" y="36" font-family="'Instrument Sans','Segoe UI',system-ui,sans-serif" font-weight="600" font-size="9.5" letter-spacing="2.2" fill="#F0B142">LEISURE PARKS</text>
+        <div class="light"><svg xmlns="http://www.w3.org/2000/svg" width="283" height="64" viewBox="0 0 248 56" role="img" aria-label="Double Bill, leisure parks">
+  <defs>
+    <linearGradient id="wml-gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F6E6B2"/><stop offset=".45" stop-color="#D4B165"/><stop offset=".7" stop-color="#C19A45"/><stop offset="1" stop-color="#8F6E2A"/></linearGradient>
+    <linearGradient id="wml-ivory" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFCF3"/><stop offset="1" stop-color="#E9E0CC"/></linearGradient>
+    <radialGradient id="wml-velvet" cx=".3" cy=".2" r="1"><stop offset="0" stop-color="#4A1024"/><stop offset=".55" stop-color="#141830"/><stop offset="1" stop-color="#0B0F1F"/></radialGradient>
+  </defs>
+  <rect x="1.25" y="1.25" width="53.5" height="53.5" rx="11" fill="url(#wml-velvet)" stroke="url(#wml-gold)" stroke-width="1.5"/>
+  <rect x="4.5" y="4.5" width="47" height="47" rx="8.5" fill="none" stroke="url(#wml-gold)" stroke-width=".6" opacity=".7"/>
+  <circle cx="6.5" cy="6.5" r="1.5" fill="url(#wml-gold)"/><circle cx="6.5" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="49.5" r="1.5" fill="url(#wml-gold)"/><circle cx="6.5" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="15.1" cy="6.5" r="1.5" fill="url(#wml-gold)"/><circle cx="15.1" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="15.1" cy="49.5" r="1.5" fill="url(#wml-gold)"/><circle cx="15.1" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="23.7" cy="6.5" r="1.5" fill="url(#wml-gold)"/><circle cx="23.7" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="23.7" cy="49.5" r="1.5" fill="url(#wml-gold)"/><circle cx="23.7" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="32.3" cy="6.5" r="1.5" fill="url(#wml-gold)"/><circle cx="32.3" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="32.3" cy="49.5" r="1.5" fill="url(#wml-gold)"/><circle cx="32.3" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="40.9" cy="6.5" r="1.5" fill="url(#wml-gold)"/><circle cx="40.9" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="40.9" cy="49.5" r="1.5" fill="url(#wml-gold)"/><circle cx="40.9" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="6.5" r="1.5" fill="url(#wml-gold)"/><circle cx="49.5" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="49.5" r="1.5" fill="url(#wml-gold)"/><circle cx="49.5" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="15.1" r="1.5" fill="url(#wml-gold)"/><circle cx="6.5" cy="15.1" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="15.1" r="1.5" fill="url(#wml-gold)"/><circle cx="49.5" cy="15.1" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="23.7" r="1.5" fill="url(#wml-gold)"/><circle cx="6.5" cy="23.7" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="23.7" r="1.5" fill="url(#wml-gold)"/><circle cx="49.5" cy="23.7" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="32.3" r="1.5" fill="url(#wml-gold)"/><circle cx="6.5" cy="32.3" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="32.3" r="1.5" fill="url(#wml-gold)"/><circle cx="49.5" cy="32.3" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="40.9" r="1.5" fill="url(#wml-gold)"/><circle cx="6.5" cy="40.9" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="40.9" r="1.5" fill="url(#wml-gold)"/><circle cx="49.5" cy="40.9" r="0.6" fill="#FFF7DD"/>
+  <g transform="rotate(-14 24 32)"><rect x="14" y="20" width="19" height="23" rx="3" fill="url(#wml-ivory)"/><circle cx="14" cy="31.5" r="2.4" fill="#141830"/><circle cx="33" cy="31.5" r="2.4" fill="#141830"/></g>
+  <g transform="rotate(9 32 26)"><rect x="22" y="14" width="19" height="23" rx="3" fill="url(#wml-gold)"/><circle cx="22" cy="25.5" r="2.4" fill="#141830"/><circle cx="41" cy="25.5" r="2.4" fill="#141830"/><rect x="26.5" y="20" width="10" height="1.8" rx=".9" fill="#2A1E0A" opacity=".55"/><rect x="26.5" y="24.5" width="6.5" height="1.8" rx=".9" fill="#2A1E0A" opacity=".55"/></g>
+  <text x="68" y="30" font-family="'Bodoni Moda','Didot','Bodoni 72','Playfair Display',Georgia,serif" font-weight="700" font-size="26" letter-spacing="1.6" fill="url(#wml-gold)">DOUBLE BILL</text>
+  <line x1="69" y1="37.5" x2="156" y2="37.5" stroke="url(#wml-gold)" stroke-width=".8"/>
+  <path d="M160 34.5 l3 3 -3 3 -3 -3z" fill="url(#wml-gold)"/>
+  <line x1="164" y1="37.5" x2="246" y2="37.5" stroke="url(#wml-gold)" stroke-width=".8"/>
+  <text x="69" y="50" font-family="'Instrument Sans','Segoe UI',system-ui,sans-serif" font-weight="600" font-size="9.5" letter-spacing="3.6" fill="#6E6A62">LEISURE PARKS</text>
 </svg></div>
-        <div class="light"><svg xmlns="http://www.w3.org/2000/svg" width="62" height="56" viewBox="0 0 44 40" role="img" aria-label="Double Bill">
-  <g transform="rotate(-12 18 22)"><rect x="4" y="8" width="26" height="30" rx="4" fill="#131A2B"/><circle cx="4" cy="23" r="3" fill="#FFFFFF"/><circle cx="30" cy="23" r="3" fill="#FFFFFF"/></g>
-  <g transform="rotate(8 26 20)"><rect x="14" y="4" width="26" height="30" rx="4" fill="#E89A1C"/><circle cx="14" cy="19" r="3" fill="#FFFFFF"/><circle cx="40" cy="19" r="3" fill="#FFFFFF"/><rect x="20" y="12" width="14" height="2.4" rx="1.2" fill="#FFFFFF" opacity=".9"/><rect x="20" y="18" width="9" height="2.4" rx="1.2" fill="#FFFFFF" opacity=".9"/></g>
+        <div class="dark"><svg xmlns="http://www.w3.org/2000/svg" width="72" height="72" viewBox="0 0 56 56" role="img" aria-label="Double Bill">
+  <defs>
+    <linearGradient id="mkd-gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F6E6B2"/><stop offset=".45" stop-color="#D4B165"/><stop offset=".7" stop-color="#C19A45"/><stop offset="1" stop-color="#8F6E2A"/></linearGradient>
+    <linearGradient id="mkd-ivory" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFCF3"/><stop offset="1" stop-color="#E9E0CC"/></linearGradient>
+    <radialGradient id="mkd-velvet" cx=".3" cy=".2" r="1"><stop offset="0" stop-color="#4A1024"/><stop offset=".55" stop-color="#141830"/><stop offset="1" stop-color="#0B0F1F"/></radialGradient>
+  </defs>
+  <rect x="1.25" y="1.25" width="53.5" height="53.5" rx="11" fill="url(#mkd-velvet)" stroke="url(#mkd-gold)" stroke-width="1.5"/>
+  <rect x="4.5" y="4.5" width="47" height="47" rx="8.5" fill="none" stroke="url(#mkd-gold)" stroke-width=".6" opacity=".7"/>
+  <circle cx="6.5" cy="6.5" r="1.5" fill="url(#mkd-gold)"/><circle cx="6.5" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="49.5" r="1.5" fill="url(#mkd-gold)"/><circle cx="6.5" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="15.1" cy="6.5" r="1.5" fill="url(#mkd-gold)"/><circle cx="15.1" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="15.1" cy="49.5" r="1.5" fill="url(#mkd-gold)"/><circle cx="15.1" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="23.7" cy="6.5" r="1.5" fill="url(#mkd-gold)"/><circle cx="23.7" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="23.7" cy="49.5" r="1.5" fill="url(#mkd-gold)"/><circle cx="23.7" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="32.3" cy="6.5" r="1.5" fill="url(#mkd-gold)"/><circle cx="32.3" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="32.3" cy="49.5" r="1.5" fill="url(#mkd-gold)"/><circle cx="32.3" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="40.9" cy="6.5" r="1.5" fill="url(#mkd-gold)"/><circle cx="40.9" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="40.9" cy="49.5" r="1.5" fill="url(#mkd-gold)"/><circle cx="40.9" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="6.5" r="1.5" fill="url(#mkd-gold)"/><circle cx="49.5" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="49.5" r="1.5" fill="url(#mkd-gold)"/><circle cx="49.5" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="15.1" r="1.5" fill="url(#mkd-gold)"/><circle cx="6.5" cy="15.1" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="15.1" r="1.5" fill="url(#mkd-gold)"/><circle cx="49.5" cy="15.1" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="23.7" r="1.5" fill="url(#mkd-gold)"/><circle cx="6.5" cy="23.7" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="23.7" r="1.5" fill="url(#mkd-gold)"/><circle cx="49.5" cy="23.7" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="32.3" r="1.5" fill="url(#mkd-gold)"/><circle cx="6.5" cy="32.3" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="32.3" r="1.5" fill="url(#mkd-gold)"/><circle cx="49.5" cy="32.3" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="40.9" r="1.5" fill="url(#mkd-gold)"/><circle cx="6.5" cy="40.9" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="40.9" r="1.5" fill="url(#mkd-gold)"/><circle cx="49.5" cy="40.9" r="0.6" fill="#FFF7DD"/>
+  <g transform="rotate(-14 24 32)"><rect x="14" y="20" width="19" height="23" rx="3" fill="url(#mkd-ivory)"/><circle cx="14" cy="31.5" r="2.4" fill="#141830"/><circle cx="33" cy="31.5" r="2.4" fill="#141830"/></g>
+  <g transform="rotate(9 32 26)"><rect x="22" y="14" width="19" height="23" rx="3" fill="url(#mkd-gold)"/><circle cx="22" cy="25.5" r="2.4" fill="#141830"/><circle cx="41" cy="25.5" r="2.4" fill="#141830"/><rect x="26.5" y="20" width="10" height="1.8" rx=".9" fill="#2A1E0A" opacity=".55"/><rect x="26.5" y="24.5" width="6.5" height="1.8" rx=".9" fill="#2A1E0A" opacity=".55"/></g>
 </svg></div>
       </div>
-      <p class="sub" style="margin:10px 0 0">Two ticket stubs, fanned: ink behind, house-lights amber in front. Minimum height 24px for the mark, 32px for the wordmark. Clear space of one stub all round. The amber is never recoloured.</p>
+      <p class="sub" style="margin:10px 0 0">The marquee badge: a midnight-velvet ground with a bulb-lit gold border and the two ticket stubs inside, ivory behind and gold in front. The wordmark sets DOUBLE BILL in Bodoni with the gold sheen over a hairline and diamond. Minimum height 28px for the badge, 40px for the wordmark; clear space of one bulb-row all round; the gold is never flattened to a single colour on print.</p>
     </div>
     <div class="board"><h3>Voice</h3><ul><li>Short sentences. Plain words. British spelling.</li><li>Talk about nights out, not footfall; occupiers by name, never 'tenants' on anything a visitor sees.</li><li>One number per sentence. The mark does the shouting; the copy stays calm.</li><li>Never 'destination', 'experiential' or 'curated'.</li><li>Parks keep their own names (Valley Centertainment, BH2, Coliseum). Double Bill signs the landlord line: 'A Double Bill park'.</li></ul></div>
     <div class="board"><h3>Colour</h3>
-      <div class="sw"><div class="swatch"><i style="background:#131A2B"></i><b>Ink</b><span class="mono">#131A2B · #0E1320</span></div><div class="swatch"><i style="background:#F3F3EF"></i><b>Screen</b><span class="mono">#F3F3EF · #161B29</span></div><div class="swatch"><i style="background:#FFFFFF"></i><b>Card</b><span class="mono">#FFFFFF · #1D2334</span></div><div class="swatch"><i style="background:#E89A1C"></i><b>House lights</b><span class="mono">#E89A1C · #F0B142</span></div><div class="swatch"><i style="background:#C9423E"></i><b>Usher red</b><span class="mono">#C9423E · #F08A86</span></div><div class="swatch"><i style="background:#2C8C63"></i><b>Good</b><span class="mono">#2C8C63 · #6FCB9B</span></div><div class="swatch"><i style="background:#9C6A00"></i><b>Warn</b><span class="mono">#9C6A00 · #E0B45A</span></div><div class="swatch"><i style="background:#6B7080"></i><b>Muted</b><span class="mono">#6B7080 · #A3A9B8</span></div><div class="swatch"><i style="background:#DDDFE4"></i><b>Line</b><span class="mono">#DDDFE4 · #2B3245</span></div></div>
-      <p class="sub" style="margin:10px 0 0">Amber is the only accent. Good, warn and usher red carry meaning, never decoration. No gradients, no shadows.</p>
+      <div class="sw"><div class="swatch"><i style="background:#0B0F1F"></i><b>Midnight</b><span class="mono">#0B0F1F · #070A16</span></div><div class="swatch"><i style="background:#4A1024"></i><b>Velvet</b><span class="mono">#4A1024 · #3A0C1C</span></div><div class="swatch"><i style="background:linear-gradient(135deg,#F6E6B2,#D4B165 45%,#C19A45 70%,#8F6E2A)"></i><b>Champagne gold</b><span class="mono">#C9A24E · #D9B86A</span></div><div class="swatch"><i style="background:#F3DFA0"></i><b>Gold highlight</b><span class="mono">#F3DFA0 · #F6E6B2</span></div><div class="swatch"><i style="background:#8F6E2A"></i><b>Gold shadow</b><span class="mono">#8F6E2A · #A6823A</span></div><div class="swatch"><i style="background:#F6F1E6"></i><b>Ivory</b><span class="mono">#F6F1E6 · #121626</span></div><div class="swatch"><i style="background:#FFFDF8"></i><b>Card</b><span class="mono">#FFFDF8 · #1A1F32</span></div><div class="swatch"><i style="background:#171A26"></i><b>Ink</b><span class="mono">#171A26 · #F1ECE1</span></div><div class="swatch"><i style="background:#6E6A62"></i><b>Muted</b><span class="mono">#6E6A62 · #A9A396</span></div><div class="swatch"><i style="background:#E4DCCB"></i><b>Line</b><span class="mono">#E4DCCB · #2C3147</span></div><div class="swatch"><i style="background:#2C7D5B"></i><b>Good</b><span class="mono">#2C7D5B · #6FCB9B</span></div><div class="swatch"><i style="background:#9A6B12"></i><b>Warn</b><span class="mono">#9A6B12 · #E0B45A</span></div><div class="swatch"><i style="background:#B5383A"></i><b>Usher red</b><span class="mono">#B5383A · #F08A86</span></div></div>
+      <p class="sub" style="margin:10px 0 0">Champagne gold is the only accent, always as the three-stop sheen on marks and rules. Good, warn and usher red carry meaning, never decoration. Midnight and velvet are grounds, never type colours on ivory.</p>
     </div>
     <div class="board"><h3>Type</h3>
-      <div class="type-d">Twice the night out.</div>
-      <p class="sub" style="margin:4px 0 10px">Bricolage Grotesque 800 for the wordmark, titles and big numbers.</p>
+      <div class="type-d"><em>Twice the night out.</em></div>
+      <p class="sub" style="margin:4px 0 10px">Bodoni Moda 700 for the wordmark, titles and big numbers; italic for the tagline.</p>
       <div class="type-b">Instrument Sans for everything people read: 14px, generous line height, labels tracked out in capitals.</div>
       <div class="type-m" style="margin-top:8px">JetBrains Mono · £219.2m · 7.7% · CH430688 · 2026-03-31</div>
     </div>
   </div>
 </section>
 
-<footer><svg xmlns="http://www.w3.org/2000/svg" width="24" height="22" viewBox="0 0 44 40" role="img" aria-label="Double Bill">
-  <g transform="rotate(-12 18 22)"><rect x="4" y="8" width="26" height="30" rx="4" fill="#6B7080"/><circle cx="4" cy="23" r="3" fill="#F3F3EF"/><circle cx="30" cy="23" r="3" fill="#F3F3EF"/></g>
-  <g transform="rotate(8 26 20)"><rect x="14" y="4" width="26" height="30" rx="4" fill="#E89A1C"/><circle cx="14" cy="19" r="3" fill="#F3F3EF"/><circle cx="40" cy="19" r="3" fill="#F3F3EF"/><rect x="20" y="12" width="14" height="2.4" rx="1.2" fill="#F3F3EF" opacity=".9"/><rect x="20" y="18" width="9" height="2.4" rx="1.2" fill="#F3F3EF" opacity=".9"/></g>
+<footer><svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 56 56" role="img" aria-label="Double Bill">
+  <defs>
+    <linearGradient id="ftr-gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F6E6B2"/><stop offset=".45" stop-color="#D4B165"/><stop offset=".7" stop-color="#C19A45"/><stop offset="1" stop-color="#8F6E2A"/></linearGradient>
+    <linearGradient id="ftr-ivory" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFCF3"/><stop offset="1" stop-color="#E9E0CC"/></linearGradient>
+    <radialGradient id="ftr-velvet" cx=".3" cy=".2" r="1"><stop offset="0" stop-color="#4A1024"/><stop offset=".55" stop-color="#141830"/><stop offset="1" stop-color="#0B0F1F"/></radialGradient>
+  </defs>
+  <rect x="1.25" y="1.25" width="53.5" height="53.5" rx="11" fill="url(#ftr-velvet)" stroke="url(#ftr-gold)" stroke-width="1.5"/>
+  <rect x="4.5" y="4.5" width="47" height="47" rx="8.5" fill="none" stroke="url(#ftr-gold)" stroke-width=".6" opacity=".7"/>
+  <circle cx="6.5" cy="6.5" r="1.5" fill="url(#ftr-gold)"/><circle cx="6.5" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="49.5" r="1.5" fill="url(#ftr-gold)"/><circle cx="6.5" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="15.1" cy="6.5" r="1.5" fill="url(#ftr-gold)"/><circle cx="15.1" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="15.1" cy="49.5" r="1.5" fill="url(#ftr-gold)"/><circle cx="15.1" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="23.7" cy="6.5" r="1.5" fill="url(#ftr-gold)"/><circle cx="23.7" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="23.7" cy="49.5" r="1.5" fill="url(#ftr-gold)"/><circle cx="23.7" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="32.3" cy="6.5" r="1.5" fill="url(#ftr-gold)"/><circle cx="32.3" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="32.3" cy="49.5" r="1.5" fill="url(#ftr-gold)"/><circle cx="32.3" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="40.9" cy="6.5" r="1.5" fill="url(#ftr-gold)"/><circle cx="40.9" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="40.9" cy="49.5" r="1.5" fill="url(#ftr-gold)"/><circle cx="40.9" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="6.5" r="1.5" fill="url(#ftr-gold)"/><circle cx="49.5" cy="6.5" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="49.5" r="1.5" fill="url(#ftr-gold)"/><circle cx="49.5" cy="49.5" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="15.1" r="1.5" fill="url(#ftr-gold)"/><circle cx="6.5" cy="15.1" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="15.1" r="1.5" fill="url(#ftr-gold)"/><circle cx="49.5" cy="15.1" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="23.7" r="1.5" fill="url(#ftr-gold)"/><circle cx="6.5" cy="23.7" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="23.7" r="1.5" fill="url(#ftr-gold)"/><circle cx="49.5" cy="23.7" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="32.3" r="1.5" fill="url(#ftr-gold)"/><circle cx="6.5" cy="32.3" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="32.3" r="1.5" fill="url(#ftr-gold)"/><circle cx="49.5" cy="32.3" r="0.6" fill="#FFF7DD"/><circle cx="6.5" cy="40.9" r="1.5" fill="url(#ftr-gold)"/><circle cx="6.5" cy="40.9" r="0.6" fill="#FFF7DD"/><circle cx="49.5" cy="40.9" r="1.5" fill="url(#ftr-gold)"/><circle cx="49.5" cy="40.9" r="0.6" fill="#FFF7DD"/>
+  <g transform="rotate(-14 24 32)"><rect x="14" y="20" width="19" height="23" rx="3" fill="url(#ftr-ivory)"/><circle cx="14" cy="31.5" r="2.4" fill="#141830"/><circle cx="33" cy="31.5" r="2.4" fill="#141830"/></g>
+  <g transform="rotate(9 32 26)"><rect x="22" y="14" width="19" height="23" rx="3" fill="url(#ftr-gold)"/><circle cx="22" cy="25.5" r="2.4" fill="#141830"/><circle cx="41" cy="25.5" r="2.4" fill="#141830"/><rect x="26.5" y="20" width="10" height="1.8" rx=".9" fill="#2A1E0A" opacity=".55"/><rect x="26.5" y="24.5" width="6.5" height="1.8" rx=".9" fill="#2A1E0A" opacity=".55"/></g>
 </svg><span>A Double Bill paper, prepared by Bruce Gillingham Pollard. Research snapshot assembled 21 October 2026 from AREF, Companies House, HM Land Registry charge records, L&amp;G releases, agents' schedules and trade press. Not investment advice; figures marked unverified in the paper remain so here.</span></footer>
 </div>
 <script>

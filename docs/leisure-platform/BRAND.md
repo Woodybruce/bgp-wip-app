@@ -1,4 +1,4 @@
-# Double Bill — brand system (v1, 21 Oct 2026)
+# Double Bill — brand system (v2, 21 Oct 2026)
 
 The platform brand for cinema-anchored leisure parks. Tokens and marks live
 in `server/leisure-platform-brand.ts` (public page) and
@@ -24,34 +24,47 @@ the landlord line: "A Double Bill park".
 
 ## Marks
 
-- **Monogram**: two ticket stubs fanned, back one in Ink, front one in
-  House-lights amber, perforation notches in the surface colour. Min height
-  24px. Never recolour the amber.
-- **Wordmark**: monogram + DOUBLE BILL in Bricolage Grotesque 800, with
-  LEISURE PARKS tracked out beneath in amber. Min height 32px.
-- Clear space: the height of one ticket stub on all sides.
+- **Badge**: a marquee. Midnight-velvet ground (radial, velvet at the top
+  left), a 1.5px champagne-gold border with an inner hairline, twenty
+  bulbs around the edge (gold with an ivory hot-spot), and the two ticket
+  stubs fanned inside: ivory behind, gold in front, perforation notches in
+  midnight. Minimum height 28px.
+- **Wordmark**: badge + DOUBLE BILL in Bodoni Moda 700, tracked +1.6,
+  filled with the gold sheen; a gold hairline with a centre diamond; LEISURE
+  PARKS tracked +3.6 beneath in muted ivory (or muted grey on ivory paper).
+  Minimum height 40px.
+- Clear space: one bulb-row (6px at 56px) on all sides.
+- Gold is always the three-stop sheen (#F6E6B2 → #D4B165 → #C19A45 →
+  #8F6E2A). On print it becomes a metallic spot colour or foil; never a
+  flat yellow.
 
 ## Colour
 
 | Token | Light | Dark | Use |
 | --- | --- | --- | --- |
-| Ink | #131A2B | #0E1320 | Headings, the mark, dark surfaces |
-| Screen | #F3F3EF | #161B29 | Page background |
-| Card | #FFFFFF | #1D2334 | Surfaces |
-| House lights | #E89A1C | #F0B142 | The one accent: marks, active pills, links |
-| Usher red | #C9423E | #F08A86 | Critical and voids only |
-| Good | #2C8C63 | #6FCB9B | Confirmed, sound covenants |
-| Warn | #9C6A00 | #E0B45A | Likely, watch list |
-| Muted | #6B7080 | #A3A9B8 | Secondary text |
-| Line | #DDDFE4 | #2B3245 | Hairlines |
+| Midnight | #0B0F1F | #070A16 | Header band, badge, active pills |
+| Velvet | #4A1024 | #3A0C1C | Wash behind the band, hover states |
+| Champagne gold | #C9A24E | #D9B86A | The one accent: marks, rules, links, underlines |
+| Gold highlight | #F3DFA0 | #F6E6B2 | Top of the sheen |
+| Gold shadow | #8F6E2A | #A6823A | Bottom of the sheen; link colour on ivory |
+| Ivory | #F6F1E6 | #121626 | Page background |
+| Card | #FFFDF8 | #1A1F32 | Surfaces |
+| Ink | #171A26 | #F1ECE1 | Text |
+| Muted | #6E6A62 | #A9A396 | Secondary text |
+| Line | #E4DCCB | #2C3147 | Hairlines |
+| Good | #2C7D5B | #6FCB9B | Confirmed, sound covenants |
+| Warn | #9A6B12 | #E0B45A | Likely, watch list |
+| Usher red | #B5383A | #F08A86 | Critical and voids only |
 
-Rule: amber is the only accent. Semantic colours (good / warn / usher red)
-carry meaning and never decoration. No gradients, no shadows.
+Rule: gold is the only accent and always carries the sheen. Semantic
+colours carry meaning, never decoration. Midnight and velvet are grounds,
+never type colours on ivory. The bulb strip (7px, gold dots on midnight)
+closes every dark band.
 
 ## Type
 
-- Display: **Bricolage Grotesque** 700-800, tight tracking. Titles, section
-  heads, big numbers in the mark.
+- Display: **Bodoni Moda** 700, capitals tracked slightly open. Titles,
+  section heads, big numbers; italic 600 for the tagline.
 - Body / UI: **Instrument Sans** 400-600, 14px running text.
 - Data: **JetBrains Mono** 400-500, tabular numerals for money, yields,
   title numbers and dates.
@@ -68,7 +81,7 @@ Google Fonts link in `BRAND.googleFontsHref`.
 
 ## Where it is applied
 
-- Public page `/public/leisure-platform/<token>` and the claude.ai copy.
+- Public page `/public/leisure-platform/<token>`, the static copy at `/share/double-bill-<token>/` and the claude.ai copy.
 - Dashboard `/leisure-platform` header and nav entry.
 - The deep-dive paper's Platform and brand section.
 - Investor material: the holding company, the tender letter and the
