@@ -68,6 +68,7 @@ const InvestmentComps = lazy(() => import("@/pages/investment-comps"));
 const InvestmentHub = lazy(() => import("@/pages/investment-hub"));
 const HuntersLetting = lazy(() => import("@/pages/hunters-letting"));
 const HuntersInvestment = lazy(() => import("@/pages/hunters-investment"));
+const LeisurePlatform = lazy(() => import("@/pages/leisure-platform"));
 const Leads = lazy(() => import("@/pages/leads"));
 const Subscriptions = lazy(() => import("@/pages/subscriptions"));
 const ChatBGP = lazy(() => import("@/pages/chatbgp"));
@@ -327,6 +328,7 @@ function Router() {
       <Route path="/document-studio" component={DocumentStudioV2} />
       <Route path="/hunters/letting" component={HuntersLetting} />
       <Route path="/hunters/investment" component={HuntersInvestment} />
+      <Route path="/leisure-platform" component={LeisurePlatform} />
       <Route path="/today" component={TodayPage} />
       <Route path="/news" component={News} />
       <Route path="/diary" component={DiaryRedirect} />
