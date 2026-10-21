@@ -11,6 +11,7 @@ import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { getTitlesForCompany } from "./land-registry-ccod";
 import { findProprietorsByAddress, isHmlrProprietorsAvailable } from "./hmlr-direct";
+import { renderLeisurePlatformPage, publicToken } from "./leisure-platform-public";
 import {
   LEISURE_FUND,
   LEISURE_SITES,
@@ -176,6 +177,28 @@ export function registerLeisurePlatformRoutes(app: Express) {
     if (!fs.existsSync(full)) return res.status(404).json({ error: "File missing from the deploy" });
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${name}"`);
+    fs.createReadStream(full).pipe(res);
+  });
+
+  // Public, read-only copy of the research for people outside the app
+  // (unguessable token in the path; no login). Same seed data as the
+  // dashboard, rendered server-side; data-room PDFs served under it too.
+  app.get("/public/leisure-platform/:token", (req: Request, res: Response) => {
+    if (req.params.token !== publicToken()) return res.status(404).send("Not found");
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Robots-Tag", "noindex, nofollow");
+    res.send(renderLeisurePlatformPage({ dataRoomBase: `/public/leisure-platform/${req.params.token}/data-room`, fullDocument: true }));
+  });
+  app.get("/public/leisure-platform/:token/data-room/:file", (req: Request, res: Response) => {
+    if (req.params.token !== publicToken()) return res.status(404).send("Not found");
+    const name = String(req.params.file || "");
+    const entry = DATA_ROOM.find((d) => d.file === name);
+    if (!entry || !/^[a-z0-9-]+\.pdf$/i.test(name)) return res.status(404).send("Not found");
+    const full = path.join(DATA_ROOM_DIR, name);
+    if (!fs.existsSync(full)) return res.status(404).send("Not found");
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("X-Robots-Tag", "noindex, nofollow");
     fs.createReadStream(full).pipe(res);
   });
 }

@@ -166,13 +166,15 @@ export const LEISURE_TARGETS: LeisureTarget[] = [
   { name: "The Cornerhouse, Nottingham", type: "direct", owner: "Orchard Street for SJP", sizeGbpM: "65 (2017)", cinema: "Vue (replaced Cineworld 2025)", priority: "B", approach: "Approach Orchard Street", note: "SJP funds under redemption pressure (unverified)" },
   { name: "Printworks, Manchester", type: "direct", owner: "DTZ Investors", sizeGbpM: "108 (2017)", cinema: "Vue 23 IMAX", priority: "B", approach: "Approach DTZI", note: "20-yr Vue regear; nine years held" },
   { name: "Stevenage Leisure Park", type: "direct", owner: "L&G Managed Fund", sizeGbpM: "40 (2012)", cinema: "Cineworld 16", priority: "B", approach: "Ask L&G alongside fund approach", note: "Bought at 6.5%; re-base to 8.5%" },
-  { name: "Festival Leisure Park, Basildon", type: "direct", owner: "Aviva Investors (unverified)", sizeGbpM: "n/a", cinema: "Cineworld", priority: "B", approach: "Portfolio approach to Aviva", note: "Dominant south Essex park" },
-  { name: "Crawley Leisure Park", type: "direct", owner: "Aviva Investors (unverified)", sizeGbpM: "n/a", cinema: "Cineworld", priority: "B", approach: "Portfolio approach to Aviva", note: "Gatwick catchment, 1,000 spaces" },
+  { name: "Festival Leisure Park, Basildon", type: "direct", owner: "Aviva Investors (Aviva portfolio brochure, Sept 2019)", sizeGbpM: "n/a", cinema: "Cineworld 54,968 sq ft", priority: "B", approach: "Portfolio approach to Aviva", note: "236,068 sq ft, 20 units: Hollywood Bowl 29,766, Travelodge 30,163, 360 Play 29,900, Mr Mulligans, Bella Italia, F&B, TGI, Pizza Hut, Harvester, Toby, Wagamama, Nando's" },
+  { name: "Crawley Leisure Park", type: "direct", owner: "Aviva Investors (Aviva portfolio brochure, Sept 2019)", sizeGbpM: "n/a", cinema: "Cineworld 62,350 sq ft", priority: "B", approach: "Portfolio approach to Aviva", note: "168,326 sq ft, 8 units: Hollywood Bowl 32,502, Nuffield 39,261, Chiquito, Harvester, Xenia Lounge; Gatwick catchment" },
   { name: "Southwater Square, Telford", type: "direct", owner: "M Core / LCP (2025)", sizeGbpM: "n/a", cinema: "Cineworld 11 IMAX", priority: "B", approach: "Approach M Core", note: "Town-centre regen" },
   { name: "Other closed-ended leisure/retail LPs in run-off", type: "fund", owner: "Various", sizeGbpM: "n/a", cinema: "n/a", priority: "B", approach: "Screen AREF for funds past wind-up with zero matched bargains", note: "Same discounted-unit play" },
   { name: "Freemans Leisure Park, Leicester", type: "direct", owner: "AEW UK REIT (Jun 2025, £11.15m, 10.6%)", sizeGbpM: "11", cinema: "Odeon", priority: "C", approach: "Watch for recycling", note: "" },
   { name: "Meridian Leisure Park, Leicester", type: "direct", owner: "Greenridge Opportunities (Dec 2023, £25m, 8.5%)", sizeGbpM: "25", cinema: "Vue", priority: "C", approach: "Approach 2027", note: "Ex-L&G Leisure Fund" },
-  { name: "Teesside Leisure Park", type: "direct", owner: "British Land", sizeGbpM: "n/a", cinema: "Showcase de Lux", priority: "C", approach: "Carve-out approach to BL", note: "Vacant ex-casino" },
+  { name: "Teesside Leisure Park", type: "direct", owner: "British Land (BL asset list Sept 2016: Teesside, Stockton, 569,000 sq ft, 100%)", sizeGbpM: "n/a", cinema: "Showcase de Lux", priority: "C", approach: "Carve-out approach to BL", note: "Vacant ex-casino; BL also 76.5% of Glasgow Fort" },
+  { name: "Broadway Leisure, Bexleyheath", type: "direct", owner: "Aviva Investors (Aviva parks list, Sept 2019; 5 units)", sizeGbpM: "n/a", cinema: "Cineworld", priority: "C", approach: "Same Aviva portfolio conversation", note: "From Woody's Aviva file; current ownership to confirm" },
+  { name: "Leigh Sports Village leisure", type: "direct", owner: "Aviva Investors (Aviva parks list, Sept 2019; 8 units)", sizeGbpM: "n/a", cinema: "to confirm", priority: "C", approach: "Same Aviva portfolio conversation", note: "From Woody's Aviva file; current ownership to confirm" },
   { name: "Westgate, Wakefield", type: "direct", owner: "Wakefield Council (2019, £13.3m)", sizeGbpM: "13", cinema: "Cineworld", priority: "C", approach: "Council disposal route", note: "" },
   { name: "Robin Park, Wigan", type: "direct", owner: "Private investor (2025, £8.3m, 8.5%)", sizeGbpM: "8", cinema: "Omniplex", priority: "C", approach: "Pricing benchmark", note: "" },
   { name: "Mansfield Leisure Park", type: "direct", owner: "Private Irish-backed (Jan 2026, £10.37m, 9.74%)", sizeGbpM: "10", cinema: "Odeon 8 IMAX", priority: "C", approach: "Private buyer may flip", note: "" },
@@ -184,7 +186,7 @@ export const LEISURE_TARGETS: LeisureTarget[] = [
 
 export type DataRoomSource = {
   title: string;
-  kind: "fund" | "companies-house" | "accounts" | "press" | "site" | "market" | "operators";
+  kind: "fund" | "companies-house" | "accounts" | "press" | "site" | "market" | "operators" | "owners";
   url: string | null;
   file: string | null;
   date: string;
@@ -237,4 +239,14 @@ export const DATA_ROOM: DataRoomSource[] = [
   { title: "Workman appointed to manage Landsec's 14 leisure parks", kind: "market", url: "https://www.twinfm.com/article/workman-wins-contract-to-manage-landsecs-leisure-park-portfolio", file: null, date: "2025-12-01", note: "Landsec exclusion list" },
   { title: "Property Week: Star City marketed at £65m", kind: "market", url: "https://www.propertyweek.com/news/birminghams-star-city-placed-up-for-sale-for-65m", file: null, date: "2023-04-01", note: "Target 1" },
   { title: "AEW UK REIT RNS: Freemans Leisure Park acquisition", kind: "market", url: "https://www.investegate.co.uk/announcement/rns/aew-uk-reit--aewu/acquisition-of-a-high-yielding-leisure-park/8920556", file: null, date: "2025-06-10", note: "£11.15m, 10.6%" },
+  // Files Woody uploaded on 2026-10-21; held outside the repo (drop them into docs/leisure-platform/data-room to serve them).
+  { title: "Aviva Investors parks list (Woody's file: Aviva_parks.pdf)", kind: "owners", url: null, file: null, date: "2019-09-26", note: "92 Aviva retail and leisure schemes with unit counts: Festival Basildon (20), Crawley Leisure Park (8), Broadway Leisure Bexleyheath (5), Leigh Sports Village (8), MK Leisure Plaza (2), Odeon Swiss Cottage" },
+  { title: "Aviva Investors portfolio brochure A-D (13315_Aviva_iPDF_A-D_26Sept19)", kind: "owners", url: null, file: null, date: "2019-09-26", note: "Festival Leisure Park Basildon 236,068 sq ft and Crawley Leisure Park 168,326 sq ft with full tenancy schedules and Aviva contacts" },
+  { title: "Aviva Investors portfolio brochures E-K, L-O, P-Z (26 Sept 2019)", kind: "owners", url: null, file: null, date: "2019-09-26", note: "Rest of the Aviva retail-park estate; no further cinema-anchored parks" },
+  { title: "British Land property list at 30 Sept 2016 (Woody's file)", kind: "owners", url: null, file: null, date: "2016-09-30", note: "Teesside Stockton 569,000 sq ft (100%), Glasgow Fort (76.5%), Giltbrook, Meadowhall (50%); leisure line is Virgin Active gyms and Debenhams" },
 ];
+
+// Gate for the public, read-only page at /public/leisure-platform/<token>.
+// Anyone with the link can read it; set LEISURE_PLATFORM_PUBLIC_TOKEN on
+// Railway to rotate it without a deploy.
+export const LEISURE_PLATFORM_PUBLIC_TOKEN = "766uc7el3s068nlf8062";
