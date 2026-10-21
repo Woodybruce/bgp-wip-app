@@ -46,7 +46,7 @@ The Leisure Fund Limited Partnership is a closed-ended English LP run by LGIM Re
 | Vehicle | English limited partnership, [LP005954](https://find-and-update.company-information.service.gov.uk/company/LP005954/filing-history), launched June 2002; investors enter via The Leisure Feeder Unit Trust, a Jersey property unit trust |
 | Manager / operator | Legal & General Property Partners (Operator) Ltd (AIFM); GP is Legal & General Property Partners (Leisure GP) LLP; fund manager Andrew Ferguson |
 | Trustee / auditor / valuer | JTC (feeder trustee); PwC; Knight Frank, quarterly |
-| Status | Closed-ended. Earliest wind-up date 31 Dec 2020 has passed; term extended by partner resolution (LP6 filings Apr 2011, Jan 2019) |
+| Status | Closed-ended. Term runs to 31 December 2030 (LP6 filed 27 Dec 2018, after earlier terms to 2006, 2011, 2014 and 2020); AREF's "earliest wind-up 31 Dec 2020" field is stale |
 | NAV | £219.2m (31 Mar 2026); £245.6m (30 Jun 2024); £451.4m (c. 2019) |
 | Units in issue | 525,461, unchanged since 2017. Implied NAV per unit c. £417 at Mar 2026 against £951 at Dec 2018 |
 | Assets | 16 directly held (Mar 2026); 17 valued at £375.8m (Jun 2024); 18 and £600m+ GAV at the 2018 peak |
@@ -61,13 +61,13 @@ Sales since 2023: [Meridian Leisure Park, Leicester](https://www.propertyweek.co
 
 ## Gating: what "gated" means here
 
-The fund was never formally suspended. It is closed-ended with no redemption right at all, its wind-up date passed in December 2020 and was extended, and AREF records zero units issued, redeemed or transferred in every year from 2019 to 2024. Investors are locked in unless they find a buyer themselves or vote to wind up.
+The fund was never formally suspended. It is closed-ended with no redemption right at all, the partners extended its term to 31 December 2030 in December 2018, and AREF records zero units issued, redeemed or transferred in every year from 2019 to 2024. Investors are locked in until 2030 unless they find a buyer themselves or vote to wind up early.
 
 | Point | Evidence |
 | --- | --- |
 | No redemption mechanism | AREF: "The fund is closed-ended. However, the manager can raise new investment in the fund and bring in new partners." Minimum disinvestment: N/A |
 | No secondary activity | Matched bargains 0 in 2019; none 2020 to 2024. Units in issue flat at 525,461 |
-| Term extended past wind-up | Earliest wind-up 31 Dec 2020; LP6 "Term changed" filed 13 Apr 2011 and 4 Jan 2019 |
+| Term extended to 2030 | LP6 filings: term to 3 Nov 2011 (Jan 2004), 31 Dec 2014 (Sep 2006), 31 Dec 2020 (Apr 2011), 31 Dec 2030 (Dec 2018). Four more years of lock-in than AREF's stale field suggests |
 | Investors now sign off deals | AREF note: "All transactions currently require investor approval". That reads as an advisory-committee or partner-consent regime, typical of a fund in managed run-off |
 | Value has halved | NAV per unit 951p (Dec 2018) to 463p (Jun 2024) to c. 417p (Mar 2026) |
 | Debt still in place | NatWest Markets remains security agent; new charges registered Dec 2020, Mar 2021, Dec 2021, Jul 2023 and Dec 2024, so the facility has been amended or extended rather than repaid |
@@ -91,7 +91,22 @@ Twenty-three external and two L&G internal holders own 525,461 units through the
 
 L&G itself holds 14.6% across two accounts, so the 23 externals hold 85.4%. A 50%+ position needs about 58% of the external units; a blocking 25% needs about six of the top ten.
 
-Who they are, from public sources: Greater Manchester Pension Fund is named by PitchBook as a current limited partner and Kent Pension Fund as a former one. The feeder was marketed to UK local-authority and corporate pension schemes, charities and insurers in 2002, 2004 to 2007, the £67m raise of 2013 and the 2017 to 2019 issues that took units from 413,363 to 525,461.
+## Who holds it: the Companies House trail
+
+The partnership's own filings name the founding investors and show exactly when the register went private. From December 1998 to July 2004 the investors were limited partners in their own names; on 15 July 2004 all four assigned their interests to Mourant & Co Trustees Ltd as managing trustee of The Leisure Fund Unit Trust, the Jersey feeder, and from then on the feeder has been the sole limited partner and its unit register sits with the trustee (Pavilion Trustees, then LF Trustee Ltd / JTC from February 2015).
+
+| Holder | Role and basis | Share of partner capital | Since | Status |
+| --- | --- | --- | --- | --- |
+| Legal & General Assurance Society Ltd | Founding limited partner, £2,500 of £4,750 (Dec 1998); £2,550 of £5,102 (Jun 2002) | 53%, then 50% | 7 Dec 1998 | Into the feeder Jul 2004; AREF shows two L&G internal accounts holding 14.6% today |
+| Lloyds Bank S.F. Nominees Ltd (nominee for the Lloyds Bank pension schemes) | Founding limited partner, £900 then £1,021 | 19%, then 20% | 7 Dec 1998 | Into the feeder Jul 2004; PitchBook lists it as current |
+| TSB Group Pension Trust Ltd, later Lloyds TSB Group Pension Trust (No. 2) Ltd, today Lloyds Bank Pension Scheme No. 2 | Founding limited partner, £600 then £681 | 13% | 7 Dec 1998 | Into the feeder Jul 2004; PitchBook lists it as current; the scheme bought £5.1bn of longevity cover in 2025 and is on a buy-out path |
+| Shell Pensions Trust Ltd | Founding limited partner, £750 then £850 | 16%, then 17% | 7 Dec 1998 | Into the feeder Jul 2004; later status not public |
+| Greater Manchester Pension Fund | Feeder unitholder | not public | Dec 2002 | Current (PitchBook); Northern LGPS |
+| Kent Pension Fund | Feeder unitholder | not public | Dec 2002 | Former: sold, buyer and price not public |
+| THI Leisure Founder Ltd | Sponsor's founder partner (THI, 22 Grosvenor Square) | £99 to £352 | Oct 1998 | Ceased 17 Jun 2002 when L&G Property Partner (Leisure) Ltd took over as general partner |
+| The Leisure Fund Unit Trust (Jersey) | Sole limited partner since 15 Jul 2004 through its managing trustee | 100% of the LP | Jul 2004 | Holds for the 25 unitholders; subscriptions through the feeder took partner capital from £5,104 (Jul 2004) to £13,789 (May 2007), then the 2013 and 2017-19 raises |
+
+Reading it: the founding three (L&G, the Lloyds schemes, Shell) owned the whole partnership until 2004 and were diluted by the 2004-07, 2013 and 2017-19 raises; their size and age make them the likeliest to be the four holders above 8% in AREF's table, with Greater Manchester among the six at 4% to 8%. The other eighteen or so feeder unitholders came in through LGIM's 2004-07 and 2013-19 raises and are not named in any public filing.
 
 Most likely sellers, in order:
 
