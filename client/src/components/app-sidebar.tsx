@@ -135,7 +135,7 @@ const unfinishedNav = [
   { title: "Tenant Rep", url: "/tenant-rep", icon: Target },
   { title: "Letting Hunter", url: "/hunters/letting", icon: Target },
   { title: "Investment Hunter", url: "/hunters/investment", icon: Target },
-  { title: "Leisure Platform", url: "/leisure-platform", icon: Film },
+  { title: "Double Bill", url: "/leisure-platform", icon: Film, badge: "NEW" },
   { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase },
   // Leasing Schedule retired (archived) — Tenancy Schedule + Letting
   // Tracker are the two boards now. Route stays live for old links.
@@ -596,7 +596,7 @@ export const mobileOverlayItems = [
   { title: "Tenant Rep", url: "/tenant-rep", icon: Target, adminOnly: true },
   { title: "Letting Hunter", url: "/hunters/letting", icon: Target, adminOnly: true },
   { title: "Investment Hunter", url: "/hunters/investment", icon: Target, adminOnly: true },
-  { title: "Leisure Platform", url: "/leisure-platform", icon: Film, adminOnly: true },
+  { title: "Double Bill", url: "/leisure-platform", icon: Film, adminOnly: true },
   { title: "Brand Intelligence", url: "/brands", icon: Store },
   { title: "Website", url: "/website", icon: Globe },
   { title: "CRM", url: "/contacts", icon: Handshake },

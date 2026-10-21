@@ -5,7 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Pill, pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
-import { ExternalLink, FileText, RefreshCw, Film } from "lucide-react";
+import { ExternalLink, FileText, RefreshCw } from "lucide-react";
+import { DoubleBillWordmark } from "@/components/double-bill-brand";
 import { MobileCardView } from "@/components/mobile-card-view";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { apiRequest } from "@/lib/queryClient";
@@ -59,9 +60,10 @@ export default function LeisurePlatform() {
     <div className="p-4 sm:p-6 space-y-4 max-w-[1400px] mx-auto">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight flex items-center gap-2"><Film className="w-5 h-5" /> Leisure Platform</h1>
+          <DoubleBillWordmark height={40} className="text-foreground" />
+          <h1 className="text-xl font-semibold tracking-tight mt-2">The L&amp;G Leisure Fund and the parks that come next</h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            L&amp;G Leisure Fund deep dive, cinema and occupier covenants, and the target list for a branded leisure-park platform. Research snapshot 21 Oct 2026; titles and accounts live from Land Registry and Companies House.
+            Twice the night out. Deep dive, cinema and occupier covenants, and the target list for the Double Bill platform. Research snapshot 21 Oct 2026; titles and accounts live from Land Registry and Companies House.
           </p>
         </div>
         <Button asChild size="sm" variant="outline" className="rounded-full">

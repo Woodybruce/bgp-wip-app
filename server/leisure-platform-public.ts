@@ -11,6 +11,7 @@ import {
   DATA_ROOM,
   LEISURE_PLATFORM_PUBLIC_TOKEN,
 } from "./leisure-platform-data";
+import { BRAND, wordmarkSvg, monogramSvg } from "./leisure-platform-brand";
 
 const DEEP_DIVE_DOC = "https://claude.ai/artifact/HXxYHsMLX1KW488NmfJhc4";
 
@@ -101,37 +102,42 @@ export function renderLeisurePlatformPage(opts: { dataRoomBase: string | null; f
     .map((n) => `<div class="kv"><span>${esc(n.name)}<div class="sub">${esc(n.role)}</div></span><a class="mono" href="https://find-and-update.company-information.service.gov.uk/company/${esc(n.number)}" target="_blank" rel="noreferrer">${esc(n.number)}</a></div>`)
     .join("");
 
-  const head = `<title>Leisure Platform</title>
+  const c = BRAND.colours;
+  const head = `<title>Double Bill</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="${BRAND.googleFontsHref}">
 <style>
-/* Layout: one column, a top band with the fund headline tiles, then pill-tabbed sections of dense tables. */
-:root{--bg:#faf7f3;--fg:#1f1a18;--muted:#6f6460;--line:#e6ddd6;--card:#ffffff;--accent:#6e0c25;--accent-soft:#fc9f8d;--good:#1f7a4d;--warn:#9a6a00;--bad:#a8323a;
---display:"Newsreader",Georgia,"Times New Roman",serif;--body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,Menlo,monospace}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#171312;--fg:#f1ebe6;--muted:#a79b95;--line:#332b28;--card:#211c1a;--accent:#fc9f8d;--accent-soft:#6e0c25;--good:#6cc998;--warn:#e0b45a;--bad:#f08a90;color-scheme:dark}}
-:root[data-theme="dark"]{--bg:#171312;--fg:#f1ebe6;--muted:#a79b95;--line:#332b28;--card:#211c1a;--accent:#fc9f8d;--accent-soft:#6e0c25;--good:#6cc998;--warn:#e0b45a;--bad:#f08a90;color-scheme:dark}
+/* Double Bill: ink letterboard header, house-lights amber as the one accent, dense data tables below pill tabs. */
+:root{--bg:${c.screen.light};--fg:${c.ink.light};--muted:${c.muted.light};--line:${c.line.light};--card:${c.card.light};--accent:${c.houselights.light};--ink:${c.ink.light};--on-ink:#F6F6F2;--good:${c.good.light};--warn:${c.warn.light};--bad:${c.usher.light};
+--display:"Bricolage Grotesque",${BRAND.type.display.fallback};--body:"Instrument Sans",${BRAND.type.body.fallback};--mono:"JetBrains Mono",${BRAND.type.mono.fallback}}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:${c.screen.dark};--fg:#F1F2F6;--muted:${c.muted.dark};--line:${c.line.dark};--card:${c.card.dark};--accent:${c.houselights.dark};--ink:${c.ink.dark};--on-ink:#F6F6F2;--good:${c.good.dark};--warn:${c.warn.dark};--bad:${c.usher.dark};color-scheme:dark}}
+:root[data-theme="dark"]{--bg:${c.screen.dark};--fg:#F1F2F6;--muted:${c.muted.dark};--line:${c.line.dark};--card:${c.card.dark};--accent:${c.houselights.dark};--ink:${c.ink.dark};--on-ink:#F6F6F2;--good:${c.good.dark};--warn:${c.warn.dark};--bad:${c.usher.dark};color-scheme:dark}
 body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:14px;line-height:1.45}
-.wrap{max-width:1360px;margin:0 auto;padding-block:20px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
-header{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:flex-end;justify-content:space-between;border-bottom:2px solid var(--accent);padding-bottom:14px;margin-bottom:18px}
-h1{font-family:var(--display);font-weight:600;font-size:clamp(26px,4vw,36px);line-height:1.05;margin:0;text-wrap:balance}
+.band{background:var(--ink);color:var(--on-ink)}
+.band .in{max-width:1360px;margin:0 auto;padding-block:18px 22px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-wrap:wrap;gap:14px 28px;align-items:flex-end;justify-content:space-between}
+.band h1{font-family:var(--display);font-weight:800;font-size:clamp(28px,4.5vw,44px);line-height:.98;letter-spacing:-.02em;margin:10px 0 6px;text-wrap:balance}
+.band .lede{color:#C9CCD6;max-width:66ch;margin:0;font-size:14.5px}
+.band .tag{font-family:var(--display);font-weight:700;color:var(--accent);font-size:15px;letter-spacing:-.01em}
+.band .links a{display:inline-block;margin-left:10px;color:var(--on-ink);font-weight:600;text-decoration:none;border:1px solid rgba(246,246,242,.35);border-radius:999px;padding:7px 14px}
+.band .links a:hover{border-color:var(--accent);color:var(--accent)}
+.wm{display:block}
+.wrap{max-width:1360px;margin:0 auto;padding-block:18px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-bottom:6px}
-.lede{color:var(--muted);max-width:68ch;margin:6px 0 0}
-.links a{display:inline-block;margin-left:10px;color:var(--accent);font-weight:500;text-decoration:none;border-bottom:1px solid currentColor}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:18px}
-.stat{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:10px 12px;min-width:0}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:10px 12px;min-width:0;border-top:3px solid var(--accent)}
 .sl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
-.sv{font-family:var(--mono);font-size:22px;font-weight:500;font-variant-numeric:tabular-nums;margin:2px 0}
+.sv{font-family:var(--display);font-weight:800;font-size:24px;letter-spacing:-.02em;font-variant-numeric:tabular-nums;margin:2px 0}
 .sc{font-size:11px;color:var(--muted)}
 .tabs{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 14px}
 .tab{font-family:var(--body);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:999px;padding:6px 12px;cursor:pointer}
-.tab[aria-selected="true"]{background:var(--fg);color:var(--bg);border-color:transparent}
+.tab[aria-selected="true"]{background:var(--ink);color:var(--on-ink);border-color:transparent;box-shadow:inset 0 -3px 0 var(--accent)}
 .tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 section{display:none}section.on{display:block}
-h2{font-family:var(--display);font-weight:600;font-size:22px;margin:0 0 4px;text-wrap:balance}
+h2{font-family:var(--display);font-weight:800;font-size:24px;letter-spacing:-.02em;margin:0 0 4px;text-wrap:balance}
 .note{color:var(--muted);font-size:13px;max-width:80ch;margin:0 0 12px}
 .tw{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:6px}
 table{border-collapse:collapse;width:100%;font-size:12.5px}
-th{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;background:color-mix(in srgb,var(--card) 92%,var(--fg))}
+th{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;background:color-mix(in srgb,var(--card) 94%,var(--fg))}
 td{padding:8px 10px;border-top:1px solid var(--line);vertical-align:top;min-width:0}
 .al{text-align:left}.ar{text-align:right}.ac{text-align:center}
 .num,.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
@@ -149,19 +155,28 @@ td{padding:8px 10px;border-top:1px solid var(--line);vertical-align:top;min-widt
 .fact{font-size:12.5px;padding:5px 0;border-top:1px solid var(--line)}.fact:first-of-type{border-top:0}.fact span{color:var(--muted)}
 a{color:var(--accent)}
 ul{padding-left:18px;margin:0}li{margin:4px 0}
-footer{margin-top:28px;color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:12px}
+.sw{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.swatch{border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--card)}
+.swatch i{display:block;height:54px}.swatch b{display:block;font-size:12px;padding:6px 8px 0}.swatch span{display:block;font-size:11px;color:var(--muted);padding:0 8px 8px}
+.type-d{font-family:var(--display);font-weight:800;font-size:30px;letter-spacing:-.02em;line-height:1}
+.type-b{font-family:var(--body);font-size:14px}.type-m{font-family:var(--mono);font-size:13px}
+.markbox{display:flex;flex-wrap:wrap;gap:16px;align-items:center}
+.markbox .dark{background:var(--ink);color:var(--on-ink);border-radius:6px;padding:16px 20px}
+.markbox .light{background:#fff;color:${c.ink.light};border:1px solid var(--line);border-radius:6px;padding:16px 20px}
+footer{margin-top:28px;color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:12px;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>`;
 
-  const body = `<div class="wrap">
-<header>
+  const body = `<div class="band"><div class="in">
   <div>
-    <div class="eyebrow">Bruce Gillingham Pollard · research snapshot 21 Oct 2026</div>
-    <h1>Leisure Platform</h1>
-    <p class="lede">The L&amp;G Leisure Fund deep dive, the cinema and occupier covenants on its parks, and the target list for a branded cinema-anchored leisure-park platform.</p>
+    <span class="wm">${wordmarkSvg(48, { ink: "#F6F6F2", accent: c.houselights.dark, paper: c.ink.light })}</span>
+    <h1>The L&amp;G Leisure Fund and the parks that come next</h1>
+    <p class="lede">${esc(BRAND.line)}</p>
   </div>
-  <div class="links"><a href="${DEEP_DIVE_DOC}" target="_blank" rel="noreferrer">Deep-dive paper</a></div>
-</header>
+  <div><div class="tag">${esc(BRAND.tagline)}</div><div class="links" style="margin-top:10px"><a href="${DEEP_DIVE_DOC}" target="_blank" rel="noreferrer">Deep-dive paper</a></div></div>
+</div></div>
+<div class="wrap">
+<div class="eyebrow">Research snapshot 21 Oct 2026 · prepared by ${esc(BRAND.preparedBy)}</div>
 
 <div class="stats">${stats}</div>
 
@@ -171,6 +186,7 @@ footer{margin-top:28px;color:var(--muted);font-size:12px;border-top:1px solid va
   <button class="tab" role="tab" id="tab-operators" aria-selected="false" data-t="operators">Cinemas &amp; operators <span class="num">${LEISURE_OPERATORS.length}</span></button>
   <button class="tab" role="tab" id="tab-targets" aria-selected="false" data-t="targets">Targets <span class="num">${LEISURE_TARGETS.length}</span></button>
   <button class="tab" role="tab" id="tab-dataroom" aria-selected="false" data-t="dataroom">Data room <span class="num">${DATA_ROOM.length}</span></button>
+  <button class="tab" role="tab" id="tab-brand" aria-selected="false" data-t="brand">Brand</button>
 </div>
 
 <section id="sites" class="on">
@@ -229,7 +245,33 @@ footer{margin-top:28px;color:var(--muted);font-size:12px;border-top:1px solid va
   </ul>
 </section>
 
-<footer>Research snapshot assembled 21 October 2026 from AREF, Companies House, HM Land Registry charge records, L&amp;G releases, agents' schedules and trade press. Not investment advice; figures marked unverified in the paper remain so here.</footer>
+<section id="brand">
+  <h2>Double Bill, the brand</h2>
+  <p class="note">A double bill is two films for one ticket. A Double Bill park is the film and the rest of the night on one site. Park names stay; Double Bill signs the landlord line. Cleared at Companies House on 21 Oct 2026 (Encore and Foyer are taken); trade-mark search still to run.</p>
+  <div class="grid2">
+    <div class="board"><h3>Marks</h3>
+      <div class="markbox">
+        <div class="light">${wordmarkSvg(56, { ink: c.ink.light, accent: c.houselights.light, paper: "#FFFFFF" })}</div>
+        <div class="dark">${wordmarkSvg(56, { ink: "#F6F6F2", accent: c.houselights.dark, paper: c.ink.light })}</div>
+        <div class="light">${monogramSvg(56, { ink: c.ink.light, accent: c.houselights.light, paper: "#FFFFFF" })}</div>
+      </div>
+      <p class="sub" style="margin:10px 0 0">Two ticket stubs, fanned: ink behind, house-lights amber in front. Minimum height 24px for the mark, 32px for the wordmark. Clear space of one stub all round. The amber is never recoloured.</p>
+    </div>
+    <div class="board"><h3>Voice</h3><ul>${BRAND.voice.map((v) => `<li>${esc(v)}</li>`).join("")}<li>${esc(BRAND.parkNaming)}</li></ul></div>
+    <div class="board"><h3>Colour</h3>
+      <div class="sw">${Object.entries(c).map(([k, v]) => `<div class="swatch"><i style="background:${v.light}"></i><b>${esc(k === "houselights" ? "House lights" : k === "usher" ? "Usher red" : k[0].toUpperCase() + k.slice(1))}</b><span class="mono">${v.light} · ${v.dark}</span></div>`).join("")}</div>
+      <p class="sub" style="margin:10px 0 0">Amber is the only accent. Good, warn and usher red carry meaning, never decoration. No gradients, no shadows.</p>
+    </div>
+    <div class="board"><h3>Type</h3>
+      <div class="type-d">Twice the night out.</div>
+      <p class="sub" style="margin:4px 0 10px">Bricolage Grotesque 800 for the wordmark, titles and big numbers.</p>
+      <div class="type-b">Instrument Sans for everything people read: 14px, generous line height, labels tracked out in capitals.</div>
+      <div class="type-m" style="margin-top:8px">JetBrains Mono · £219.2m · 7.7% · CH430688 · 2026-03-31</div>
+    </div>
+  </div>
+</section>
+
+<footer>${monogramSvg(22, { ink: c.muted.light, accent: c.houselights.light, paper: c.screen.light })}<span>A Double Bill paper, prepared by Bruce Gillingham Pollard. Research snapshot assembled 21 October 2026 from AREF, Companies House, HM Land Registry charge records, L&amp;G releases, agents' schedules and trade press. Not investment advice; figures marked unverified in the paper remain so here.</span></footer>
 </div>
 <script>
 (function(){
