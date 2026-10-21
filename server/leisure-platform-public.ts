@@ -12,6 +12,7 @@ import {
   LEISURE_PLATFORM_PUBLIC_TOKEN,
 } from "./leisure-platform-data";
 import { BRAND, wordmarkSvg, monogramSvg } from "./leisure-platform-brand";
+import { RESEARCH, mdToHtml } from "./leisure-platform-research";
 
 const DEEP_DIVE_DOC = "https://claude.ai/artifact/HXxYHsMLX1KW488NmfJhc4";
 
@@ -35,6 +36,7 @@ function table(headers: Array<[string, "l" | "r" | "c"]>, rows: string[][], cls 
 export function renderLeisurePlatformPage(opts: { dataRoomBase: string | null; fullDocument: boolean }): string {
   const f = LEISURE_FUND;
   const navPerUnit = (f.navGbpM * 1e6) / f.unitsInIssue;
+  const R = (key: string) => mdToHtml(RESEARCH.find((r) => r.key === key)?.markdown || "");
 
   const stats = [
     ["NAV, Mar 2026", fmtM(f.navGbpM), `${fmtM(f.navJun2024GbpM)} at Jun 2024`],
@@ -166,6 +168,7 @@ ul{padding-left:18px;margin:0}li{margin:4px 0}
 .markbox{display:grid;gap:12px}.markbox>div{min-width:0;display:flex;align-items:center}.markbox svg{max-width:100%;height:auto}
 .markbox .dark{background:radial-gradient(120% 140% at 0% 0%,${c.velvet.light} 0%,#141830 48%,${c.midnight.light} 100%);border-radius:8px;padding:18px 22px}
 .markbox .light{background:${c.card.light};border:1px solid var(--line);border-radius:8px;padding:18px 22px}
+.prose h2{margin-top:22px}.prose h2:first-child{margin-top:0}.prose h3{font-family:var(--display);font-size:19px;margin:18px 0 4px}.prose p{max-width:78ch;margin:0 0 10px}.prose ul,.prose ol{max-width:78ch;margin:0 0 12px}.prose .tw{margin:0 0 14px}.prose table td{font-size:12.5px}.prose b{font-weight:600}.task{color:var(--gold-lo)}
 footer{margin-top:28px;color:var(--muted);font-size:12px;border-top:1px solid var(--gold);padding-top:12px;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>`;
@@ -184,23 +187,31 @@ footer{margin-top:28px;color:var(--muted);font-size:12px;border-top:1px solid va
 <div class="stats">${stats}</div>
 
 <div class="tabs" role="tablist">
-  <button class="tab" role="tab" id="tab-sites" aria-selected="true" data-t="sites">Fund sites <span class="num">${LEISURE_SITES.length}</span></button>
-  <button class="tab" role="tab" id="tab-fund" aria-selected="false" data-t="fund">Fund &amp; holders</button>
+  <button class="tab" role="tab" id="tab-summary" aria-selected="true" data-t="summary">Summary</button>
+  <button class="tab" role="tab" id="tab-fund" aria-selected="false" data-t="fund">The fund</button>
+  <button class="tab" role="tab" id="tab-sites" aria-selected="false" data-t="sites">The parks <span class="num">${LEISURE_SITES.length}</span></button>
   <button class="tab" role="tab" id="tab-operators" aria-selected="false" data-t="operators">Cinemas &amp; operators <span class="num">${LEISURE_OPERATORS.length}</span></button>
+  <button class="tab" role="tab" id="tab-buying" aria-selected="false" data-t="buying">Buying the fund</button>
+  <button class="tab" role="tab" id="tab-growth" aria-selected="false" data-t="growth">Growth &amp; capex</button>
   <button class="tab" role="tab" id="tab-targets" aria-selected="false" data-t="targets">Targets <span class="num">${LEISURE_TARGETS.length}</span></button>
+  <button class="tab" role="tab" id="tab-brand" aria-selected="false" data-t="brand">Platform &amp; brand</button>
   <button class="tab" role="tab" id="tab-dataroom" aria-selected="false" data-t="dataroom">Data room <span class="num">${DATA_ROOM.length}</span></button>
-  <button class="tab" role="tab" id="tab-brand" aria-selected="false" data-t="brand">Brand</button>
 </div>
 
-<section id="sites" class="on">
+<section id="summary" class="on prose">${R("summary")}</section>
+<section id="buying" class="prose">${R("buying")}</section>
+<section id="growth" class="prose">${R("growth")}</section>
+
+<section id="sites">
   <h2>The parks</h2>
   <p class="note">Sixteen cinema-anchored parks worth roughly £340m at a 7.7% net initial yield. Value bands and % of fund are from the June 2024 AREF profile; occupiers and voids from operator directories and press to October 2026. Title is held by the two L&amp;G nominee companies listed under Fund &amp; holders.</p>
   ${table([["Park", "l"], ["Region", "c"], ["Cinema", "l"], ["Value £m", "r"], ["% fund", "r"], ["Tenure / titles", "l"], ["Occupiers", "l"], ["Voids & flags", "l"], ["Status", "c"]], sitesRows)}
+  <div class="prose">${R("sites")}</div>
 </section>
 
 <section id="fund">
-  <h2>Fund and holders</h2>
-  <p class="note">Closed-ended English LP with no redemption right, no unit transfers since 2019 and NAV per unit down from 951p (Dec 2018) to about ${navPerUnit.toFixed(0)}p. Control sits with the holders' votes and the lender's consent, not with the manager.</p>
+  <div class="prose">${R("fund")}</div>
+  <h2>The numbers</h2>
   <div class="grid2">
     <div class="board"><h3>Fund facts</h3>
       <div class="fact"><span>Vehicle: </span>${esc(f.name)} (${esc(f.lpNumber)}); feeder ${esc(f.feeder)}</div>
@@ -224,6 +235,7 @@ footer{margin-top:28px;color:var(--muted);font-size:12px;border-top:1px solid va
   <h2>Cinemas and operators</h2>
   <p class="note">UK admissions are running 15% ahead of 2025 and box office 22% ahead (UK Cinema Association, Sept 2026). Vue is the strongest covenant on the parks, Odeon is parent-dependent, Cineworld cut rents across its estate in 2024. Figures are from the latest Companies House filings.</p>
   ${table([["Operator", "l"], ["Owner", "l"], ["On the parks", "l"], ["Latest accounts", "l"], ["Property owned", "l"], ["Verdict", "l"]], operatorRows)}
+  <div class="prose">${R("operators")}</div>
 </section>
 
 <section id="targets">
@@ -249,6 +261,7 @@ footer{margin-top:28px;color:var(--muted);font-size:12px;border-top:1px solid va
 </section>
 
 <section id="brand">
+  <div class="prose">${R("platform")}</div>
   <h2>Double Bill, the brand</h2>
   <p class="note">A double bill is two films for one ticket. A Double Bill park is the film and the rest of the night on one site. Park names stay; Double Bill signs the landlord line. Cleared at Companies House on 21 Oct 2026 (Encore and Foyer are taken); trade-mark search still to run.</p>
   <div class="grid2">

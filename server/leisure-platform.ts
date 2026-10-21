@@ -12,6 +12,7 @@ import { pool } from "./db";
 import { getTitlesForCompany } from "./land-registry-ccod";
 import { findProprietorsByAddress, isHmlrProprietorsAvailable } from "./hmlr-direct";
 import { renderLeisurePlatformPage, publicToken } from "./leisure-platform-public";
+import { researchHtml } from "./leisure-platform-research";
 import {
   LEISURE_FUND,
   LEISURE_SITES,
@@ -81,6 +82,12 @@ export function registerLeisurePlatformRoutes(app: Express) {
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "overview failed" });
     }
+  });
+
+  // The written paper, one HTML fragment per tab (rendered from the same
+  // markdown the public page uses).
+  app.get("/api/leisure-platform/research", requireAuth, (_req: Request, res: Response) => {
+    res.json(researchHtml());
   });
 
   // Land Registry: every title the two nominee companies hold (CCOD, keyed

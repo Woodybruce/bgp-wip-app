@@ -40,6 +40,8 @@ export default function LeisurePlatform() {
   const qc = useQueryClient();
   const { data, isLoading } = useQuery<Overview>({ queryKey: ["/api/leisure-platform/overview"] });
   const { data: titles } = useQuery<Titles>({ queryKey: ["/api/leisure-platform/titles"] });
+  const { data: research = [] } = useQuery<Array<{ key: string; title: string; html: string }>>({ queryKey: ["/api/leisure-platform/research"] });
+  const paper = (key: string) => research.find((r) => r.key === key)?.html || "";
   const [priority, setPriority] = useState<"all" | "A" | "B" | "C">("all");
   const [targetType, setTargetType] = useState<"all" | "fund" | "direct" | "operator">("all");
 
@@ -84,15 +86,24 @@ export default function LeisurePlatform() {
             <Stat label="Unitholders" value={String(fund.unitholders)} ctx={`${fund.unitsInIssue.toLocaleString()} units`} />
           </div>
 
-          <Tabs defaultValue="sites" className="w-full">
+          <Tabs defaultValue="summary" className="w-full">
             <TabsList className={pillTabsList}>
-              <TabsTrigger value="sites" className={pillTabsTrigger}>Fund sites <span className="font-mono normal-case opacity-70">{data.sites.length}</span></TabsTrigger>
-              <TabsTrigger value="fund" className={pillTabsTrigger}>Fund &amp; holders</TabsTrigger>
+              <TabsTrigger value="summary" className={pillTabsTrigger}>Summary</TabsTrigger>
+              <TabsTrigger value="fund" className={pillTabsTrigger}>The fund</TabsTrigger>
+              <TabsTrigger value="sites" className={pillTabsTrigger}>The parks <span className="font-mono normal-case opacity-70">{data.sites.length}</span></TabsTrigger>
               <TabsTrigger value="operators" className={pillTabsTrigger}>Cinemas &amp; operators <span className="font-mono normal-case opacity-70">{data.operators.length}</span></TabsTrigger>
+              <TabsTrigger value="buying" className={pillTabsTrigger}>Buying the fund</TabsTrigger>
+              <TabsTrigger value="growth" className={pillTabsTrigger}>Growth &amp; capex</TabsTrigger>
               <TabsTrigger value="targets" className={pillTabsTrigger}>Targets <span className="font-mono normal-case opacity-70">{data.targets.length}</span></TabsTrigger>
+              <TabsTrigger value="platform" className={pillTabsTrigger}>Platform &amp; brand</TabsTrigger>
               <TabsTrigger value="titles" className={pillTabsTrigger}>Land Registry <span className="font-mono normal-case opacity-70">{titleCount}</span></TabsTrigger>
               <TabsTrigger value="dataroom" className={pillTabsTrigger}>Data room <span className="font-mono normal-case opacity-70">{data.dataRoom.length}</span></TabsTrigger>
             </TabsList>
+
+            <TabsContent value="summary" className="mt-3"><Paper html={paper("summary")} /></TabsContent>
+            <TabsContent value="buying" className="mt-3"><Paper html={paper("buying")} /></TabsContent>
+            <TabsContent value="growth" className="mt-3"><Paper html={paper("growth")} /></TabsContent>
+            <TabsContent value="platform" className="mt-3 space-y-3"><Paper html={paper("platform")} /><Card><CardContent className="p-4 flex flex-wrap items-center gap-6"><DoubleBillWordmark height={64} className="text-foreground" /><div className="text-xs text-muted-foreground max-w-[60ch]">Double Bill: a double bill is two films for one ticket; a Double Bill park is the film and the rest of the night on one site. Tagline "Twice the night out." Cleared at Companies House 21 Oct 2026; trade-mark search to run. Brand system in docs/leisure-platform/BRAND.md.</div></CardContent></Card></TabsContent>
 
             <TabsContent value="sites" className="mt-3">
               <Card><CardContent className="p-0">
@@ -136,9 +147,11 @@ export default function LeisurePlatform() {
                   </div>
                 )}
               </CardContent></Card>
+              <Paper html={paper("sites")} className="mt-3" />
             </TabsContent>
 
             <TabsContent value="fund" className="mt-3 space-y-3">
+              <Paper html={paper("fund")} />
               <div className="grid md:grid-cols-2 gap-3">
                 <Board label="Fund facts">
                   <KV k="Vehicle" v={`${fund.name} (${fund.lpNumber}); feeder ${fund.feeder}`} />
@@ -217,6 +230,7 @@ export default function LeisurePlatform() {
                   </div>
                 )}
               </CardContent></Card>
+              <Paper html={paper("operators")} className="mt-3" />
               <p className="text-[10px] text-muted-foreground mt-2">"Fetch accounts" downloads the latest filing from Companies House into the CRM and reads turnover, profit, cash and headcount with the accounts extractor (works on scanned filings). Research figures stay shown until a fetch has run.</p>
             </TabsContent>
 
@@ -303,6 +317,17 @@ export default function LeisurePlatform() {
         </>
       )}
     </div>
+  );
+}
+
+// The written paper, rendered from the server's markdown (same text as the
+// public Double Bill page). Headings, tables and lists get the app's type.
+function Paper({ html, className }: { html: string; className?: string }) {
+  if (!html) return <div className="p-6 text-center text-sm text-muted-foreground">Loading…</div>;
+  return (
+    <Card className={className}><CardContent className="p-4 sm:p-5 text-sm leading-relaxed [&_h2]:text-base [&_h2]:font-semibold [&_h2]:mt-5 [&_h2:first-child]:mt-0 [&_h2]:mb-1.5 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mt-4 [&_p]:max-w-[78ch] [&_p]:mb-2.5 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-3 [&_li]:mb-1 [&_a]:underline [&_.tw]:overflow-x-auto [&_.tw]:mb-3 [&_table]:w-full [&_table]:text-xs [&_th]:text-left [&_th]:text-[10px] [&_th]:uppercase [&_th]:tracking-wide [&_th]:text-muted-foreground [&_th]:font-medium [&_th]:px-2 [&_th]:py-1.5 [&_th]:bg-muted/40 [&_td]:px-2 [&_td]:py-1.5 [&_td]:align-top [&_td]:border-t [&_td]:border-border/40">
+      <div dangerouslySetInnerHTML={{ __html: html }} />
+    </CardContent></Card>
   );
 }
 
