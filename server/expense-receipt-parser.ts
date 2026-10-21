@@ -10,9 +10,10 @@
  * normalised here rather than 400'ing the upstream call.
  */
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { rasterisePdfPage } from "./pdf-image-extract";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 
 export interface ParsedReceipt {
   merchant: string;

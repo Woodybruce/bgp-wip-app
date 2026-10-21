@@ -2,6 +2,7 @@
 // verified store listings. Candidates must pass decoded size and photographic
 // quality checks before ranking; manual uploads and pinned photos are kept.
 import { Router, type Request, type Response } from "express";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import crypto from "crypto";
 import sharp from "sharp";
 import { requireAuth } from "./auth";
@@ -277,7 +278,7 @@ async function aiJudgeBrandImage(
   try {
     const small = await sharp(buffer).resize(900, 900, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY, timeout: 25000, maxRetries: 0 });
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY, timeout: 25000, maxRetries: 0, ...anthropicWorkspaceOptions() });
     const msg = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001", max_tokens: 180,
       messages: [{ role: "user", content: [

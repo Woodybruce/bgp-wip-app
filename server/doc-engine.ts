@@ -19,6 +19,7 @@
 // renderHtmlWithClaude(). Doc-type structure lives in the registry/briefs.
 
 import fs from "node:fs";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 
 // The model used for all HTML design. One constant so a bump is one line.
 // Fable 5 — the most design-sensitive output in the product (Why Buy decks,
@@ -102,7 +103,7 @@ export async function renderHtmlWithClaude(prompt: string, opts: RenderHtmlOptio
   const baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY
     ? process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
     : undefined;
-  const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
+  const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}), ...anthropicWorkspaceOptions() });
   const model = opts.model || DESIGN_MODEL;
   const params: any = {
     model,

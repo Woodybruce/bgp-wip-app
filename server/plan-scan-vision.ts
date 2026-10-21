@@ -1,6 +1,7 @@
 // Shared by evidence and property plans. Read identities from originals; trace geometry separately.
 import Anthropic from "@anthropic-ai/sdk";
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+import { getAnthropicClient } from "./utils/anthropic-client";
+const anthropic = getAnthropicClient(true);
 
 export interface PlanScanContext {
   kind: "property";

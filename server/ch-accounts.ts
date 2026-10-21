@@ -24,6 +24,7 @@
 //   - Matching filing has no document_metadata (rare — usually means paper-only)
 //   - PDF endpoint 404s for a known doc — log + continue rather than abort.
 import Anthropic from "@anthropic-ai/sdk";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { pool } from "./db";
 import { chFetch } from "./companies-house";
 import { saveFile, getFile } from "./file-storage";
@@ -215,7 +216,7 @@ export interface AccountsExtracted {
 function getAnthropic(): Anthropic {
   const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("No Anthropic API key configured");
-  const opts: any = { apiKey };
+  const opts: any = { apiKey, ...anthropicWorkspaceOptions() };
   if (process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
     opts.baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
   }

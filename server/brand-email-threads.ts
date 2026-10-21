@@ -4,11 +4,12 @@
 // be able to see summary of those ... understand the context, who to etc").
 // Staff-only: built from BGP's correspondence log (crm_interactions).
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 const MODELS = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"];
 const BGP_DOMAIN = "@brucegillinghampollard.com";
 

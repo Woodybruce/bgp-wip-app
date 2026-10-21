@@ -10,6 +10,7 @@
 // is data. Renderer is pure + dependency-light so it can be unit-checked.
 // ─────────────────────────────────────────────────────────────────────────
 import type { Request } from "express";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -310,7 +311,7 @@ async function authorNarrative(prop: any, addressLine: string, accommodation: Wh
   if (!apiKey) return null;
   const Anthropic = (await import("@anthropic-ai/sdk")).default;
   const baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY ? process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL : undefined;
-  const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
+  const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}), ...anthropicWorkspaceOptions() });
   const facts = {
     name: prop?.name, address: addressLine, assetClass: prop?.asset_class, tenure: prop?.tenure,
     sqft: prop?.sqft, notes: prop?.notes, accommodation,

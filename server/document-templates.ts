@@ -8,7 +8,7 @@ import fs from "fs";
 import os from "os";
 import mammoth from "mammoth";
 import Anthropic from "@anthropic-ai/sdk";
-import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
+import { callClaude, CHATBGP_HELPER_MODEL, anthropicWorkspaceOptions } from "./utils/anthropic-client";
 
 // Document Studio uses the best available Opus model for all generations.
 // Try 4.7 (Claude Design model) first; fall back to 4.6 if not yet API-accessible.
@@ -386,6 +386,7 @@ async function autoDesignWithClaude(templateContent: string, templateName: strin
         ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
           ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
           : {}),
+        ...anthropicWorkspaceOptions(),
       });
       const response = await anthropic.messages.create({
         model: "claude-sonnet-4-6",
@@ -1440,6 +1441,7 @@ export function setupDocumentTemplateRoutes(app: Express) {
         ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
           ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
           : {}),
+        ...anthropicWorkspaceOptions(),
       });
 
       const contentPreview = templateContent.slice(0, 2000);
@@ -1635,6 +1637,7 @@ Return ONLY valid JSON:
         ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
           ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
           : {}),
+        ...anthropicWorkspaceOptions(),
       });
 
       const systemPrompt = `You are a document design assistant for BGP (Bruce Gillingham Pollard), a premium London property firm. You help users refine the visual layout of A4 documents (595x842pt) in their document designer.

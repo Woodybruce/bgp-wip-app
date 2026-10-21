@@ -1,3 +1,4 @@
+import { getAnthropicClient } from "./utils/anthropic-client";
 // Trading names for tenancy rows that only carry the lease's legal entity
 // (Woody, 2026-09-27: "can the app find the trading names?"). "Nero Holdings
 // Limited" is Caffè Nero; without the trading name the Brand Gap and target
@@ -50,7 +51,7 @@ async function askAi(rows: Row[], propertyName: string): Promise<Map<string, { b
   const out = new Map<string, { brand: string | null; brands: string[]; confidence: string; note: string }>();
   if (!rows.length || !process.env.ANTHROPIC_API_KEY) return out;
   const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = getAnthropicClient(true);
   const list = rows.map((r, i) => `${i + 1}. ${r.tenant_name}${r.unit_number ? ` · unit ${String(r.unit_number).split(/\s+/)[0]}` : ""}${r.permitted_use ? ` · ${r.permitted_use}` : ""}`).join("\n");
   const msg = await client.messages.create({
     model: "claude-sonnet-4-6", max_tokens: 3000,

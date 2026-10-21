@@ -39,8 +39,9 @@ import { expenses, expenseReceipts, stripeCardholders, users } from "@shared/sch
 import { eq, desc } from "drizzle-orm";
 import { graphRequest } from "./shared-mailbox";
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 
 interface CalendarAttendee {
   email: string;
