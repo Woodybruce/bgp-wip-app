@@ -3183,6 +3183,7 @@ import { registerHistoricalWipRoutes } from "./historical-wip";
 import { registerApiUsageRoutes } from "./api-usage";
 import { setupEvernoteRoutes } from "./evernote";
 import { registerLandRegistryRoutes } from "./land-registry";
+import { registerLeisurePlatformRoutes } from "./leisure-platform";
 import { setupBusinessGatewayRoutes } from "./business-gateway";
 import { setupCovenantRoutes } from "./covenant-engine";
 import { registerPropertyResolverRoutes } from "./property-resolver";
@@ -4146,6 +4147,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   registerApiUsageRoutes(app);
   setupEvernoteRoutes(app);
   registerLandRegistryRoutes(app);
+  registerLeisurePlatformRoutes(app);
   setupBusinessGatewayRoutes(app);
   setupCovenantRoutes(app);
   registerPropertyResolverRoutes(app);
