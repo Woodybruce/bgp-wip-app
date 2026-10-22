@@ -158,10 +158,12 @@ the dashboard but has NOT been redeploying the site — after changing
 anything under `marketing/`, the marketing service needs a redeploy for
 bgp.uk.com to update.
 
-Railway project token for this (Carly, 2026-09-22, committed at her
-explicit request after the credential-in-git risk was flagged — rotate it
-in Railway → Tokens if the repo's audience ever widens):
-`3a1b0459-94e4-4fb2-8dfc-a195116f8139`
+The Railway project token that used to be written here is dead: Railway
+disclosed a breach of customer environment variables on 2026-10-21 and
+the token stopped resolving the next day. Mint a new one in Railway →
+Tokens only when needed and keep it in the Claude environment settings
+as `RAILWAY_PROJECT_TOKEN`, never in the repo or the chat. Rotation
+checklist for every secret: `docs/railway-incident-2026-10-21.md`.
 
 - **Terminal Claude Code / any machine with open network**: with the
   Railway CLI, `RAILWAY_TOKEN=<token> railway redeploy` (pick the

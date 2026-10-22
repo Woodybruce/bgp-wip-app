@@ -14,6 +14,10 @@ asks for the list; add to it when he says "put it on the list".
 
 ## To do before / at go-live
 
+- **Railway breach, 2026-10-21: rotate every secret** in the BGP
+  dashboard, marketing and Pave Railway projects, then redeploy. Full
+  checklist in order: `docs/railway-incident-2026-10-21.md`. Do the money,
+  mail and database group first.
 - Email: switch to bgp.uk.com addresses (aliases via PowerShell, DKIM
   CNAMEs, make primary, update site, dashboard and signatures). Not before
   Woody says. Signatures page offered, awaiting yes/no.
