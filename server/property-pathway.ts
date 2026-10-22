@@ -442,9 +442,45 @@ async function uprnForRun(run: PropertyPathwayRun | { propertyId?: string | null
   }
 }
 
+// Saved runs may contain a rotated Maps key. Rebind only these known Google
+// image URLs on reads; no database update or server-only key is required.
+function rebindPropertyImageKeys<T extends PropertyPathwayRun>(run: T): T {
+  const stages = run.stageResults as StageResults | null;
+  const images = stages?.stage1?.propertyImage;
+  if (!images) return run;
+  const key = process.env.VITE_GOOGLE_MAPS_API_KEY || "";
+  const rebind = (value: string | undefined, pathname: string): string | undefined => {
+    if (typeof value !== "string") return value;
+    try {
+      const url = new URL(value);
+      if (url.protocol !== "https:" || url.hostname !== "maps.googleapis.com" ||
+          url.port || url.username || url.password || url.pathname !== pathname) return value;
+      if (key) url.searchParams.set("key", key);
+      else url.searchParams.delete("key");
+      return url.toString();
+    } catch {
+      return value;
+    }
+  };
+  return {
+    ...run,
+    stageResults: {
+      ...stages,
+      stage1: {
+        ...stages!.stage1,
+        propertyImage: {
+          ...images,
+          streetViewUrl: rebind(images.streetViewUrl, "/maps/api/streetview"),
+          aerialUrl: rebind(images.aerialUrl, "/maps/api/staticmap"),
+        },
+      },
+    },
+  };
+}
+
 async function getRun(runId: string): Promise<PropertyPathwayRun | null> {
   const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).limit(1);
-  return run || null;
+  return run ? rebindPropertyImageKeys(run) : null;
 }
 
 async function updateRun(runId: string, updates: Partial<PropertyPathwayRun>): Promise<PropertyPathwayRun> {
@@ -453,7 +489,7 @@ async function updateRun(runId: string, updates: Partial<PropertyPathwayRun>): P
     .set({ ...updates, updatedAt: new Date() })
     .where(eq(propertyPathwayRuns.id, runId))
     .returning();
-  return updated;
+  return rebindPropertyImageKeys(updated);
 }
 
 /**
@@ -1719,7 +1755,7 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
 
   // Google Street View + Maps link
   const mapsQuery = encodeURIComponent([run.address, run.postcode].filter(Boolean).join(", "));
-  const gmapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || "";
+  const gmapsKey = process.env.VITE_GOOGLE_MAPS_API_KEY || "";
   const propertyImage = {
     streetViewUrl: gmapsKey
       ? `https://maps.googleapis.com/maps/api/streetview?size=640x400&location=${mapsQuery}&fov=85&pitch=10&source=outdoor&scale=2&key=${gmapsKey}`
@@ -3458,7 +3494,7 @@ Return STRICT JSON only, no prose, no code fences:
 
   // Build Google Street View thumbnail + Maps link from address + postcode
   const mapsQuery = encodeURIComponent([address, postcode].filter(Boolean).join(", "));
-  const gmapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || "";
+  const gmapsKey = process.env.VITE_GOOGLE_MAPS_API_KEY || "";
   const propertyImage = {
     streetViewUrl: gmapsKey
       ? `https://maps.googleapis.com/maps/api/streetview?size=640x400&location=${mapsQuery}&fov=85&pitch=10&source=outdoor&scale=2&key=${gmapsKey}`
@@ -5693,7 +5729,7 @@ export function registerPropertyPathwayRoutes(app: Express) {
           .limit(200);
         const { exact, similar } = findDuplicatePathwayRuns(address, resolvedPostcode, existing);
         if (exact) {
-          return res.json({ success: true, run: exact, existing: true });
+          return res.json({ success: true, run: rebindPropertyImageKeys(exact), existing: true });
         }
         if (similar.length > 0) {
           return res.status(409).json({
@@ -6062,7 +6098,7 @@ export function registerPropertyPathwayRoutes(app: Express) {
         return false;
       });
       if (!match) return res.json(null);
-      res.json(match);
+      res.json(rebindPropertyImageKeys(match));
     } catch (err: any) {
       res.status(500).json({ error: err?.message });
     }
@@ -6367,7 +6403,7 @@ export function registerPropertyPathwayRoutes(app: Express) {
       }
 
       const enriched = runs.map(r => ({
-        ...r,
+        ...rebindPropertyImageKeys(r),
         propertyName: r.propertyId ? (nameById.get(r.propertyId) || null) : null,
         heroImageStudioId: r.propertyId ? (heroById.get(r.propertyId) || null) : null,
         startedByName: (r as any).startedBy ? (starterById.get((r as any).startedBy) || null) : null,

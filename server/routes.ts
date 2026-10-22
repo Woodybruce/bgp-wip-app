@@ -702,7 +702,8 @@ export async function registerRoutes(
   });
 
   app.get("/api/config/maps-key", requireAuth, (_req, res) => {
-    res.json({ key: process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY || "" });
+    // Only the intentionally browser-visible Maps key may leave the server.
+    res.json({ key: process.env.VITE_GOOGLE_MAPS_API_KEY || "" });
   });
 
   const GOAD_DIR = path.join(process.cwd(), "data", "goad");
