@@ -1,3 +1,4 @@
+import { getAnthropicClient } from "./utils/anthropic-client";
 // Tracker provenance — open the thing an activity row came FROM.
 //
 // Viewings, offers and interest rows are mostly auto-detected: viewings from
@@ -230,7 +231,7 @@ export function setupTrackerProvenanceRoutes(app: Express): void {
       if (!process.env.ANTHROPIC_API_KEY) return res.json({ error: "AI key not configured on this environment." });
 
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const client = getAnthropicClient(true);
       const { safeParseJSON } = await import("./utils/anthropic-client");
       const msg = await client.messages.create({
         model: MODEL,
@@ -308,7 +309,7 @@ ${plainText((src as any).messages)}`,
       if (sibQ.rows.length > 1 && digest.length > 200 && process.env.ANTHROPIC_API_KEY) {
         try {
           const Anthropic = (await import("@anthropic-ai/sdk")).default;
-          const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+          const client = getAnthropicClient(true);
           const msg = await client.messages.create({
             model: MODEL,
             max_tokens: 300,

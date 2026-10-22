@@ -19,10 +19,11 @@ import {
 import { requireAuth } from "./auth";
 import { startJob, getJobStatus } from "./brand-jobs";
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 
 function getAnthropic(): Anthropic | null {
   if (process.env.ANTHROPIC_API_KEY) {
-    return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    return getAnthropicClient(true);
   }
   if (process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
     return new Anthropic({

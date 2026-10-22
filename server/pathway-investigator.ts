@@ -13,6 +13,7 @@
 // uses the X-AnchorMailbox header for reliable $search routing.
 
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import type { Request } from "express";
 import { pool } from "./db";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
@@ -699,7 +700,7 @@ export async function runInvestigativeStage1(opts: {
   externalPrefetch?: Array<{ tool: string; result: any }>; // caller can supply pre-fetched data to skip the internal pre-fetch
 }): Promise<InvestigativeStage1Result> {
   const started = Date.now();
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const anthropic = getAnthropicClient(true);
 
   const systemPrompt = `You are BGP's senior property investigator. Given a UK commercial property address you gather comprehensive intelligence by orchestrating calls to the available tools.
 

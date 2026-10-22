@@ -1,3 +1,4 @@
+import { getAnthropicClient } from "./utils/anthropic-client";
 import type { Express, Request, Response } from "express";
 import { eq, desc, and, or, ilike, sql } from "drizzle-orm";
 import { requireAuth } from "./auth";
@@ -3117,7 +3118,7 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
   try {
     if (process.env.ANTHROPIC_API_KEY) {
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const anthropic = getAnthropicClient(true);
       const briefContext = {
         address,
         postcode,
@@ -3328,7 +3329,7 @@ ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
   if (process.env.ANTHROPIC_API_KEY && (emailHits.length > 10 || brochureFiles.length > 2 || sharepointHits.length > 10)) {
     try {
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const anthropic = getAnthropicClient(true);
 
       // Build property identity from everything we know
       const identity = [

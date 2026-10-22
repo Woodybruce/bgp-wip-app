@@ -461,7 +461,7 @@ function MessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, 
       className={`flex ${isOwn ? "justify-end" : "justify-start"}`}
       data-testid={`panel-message-${message.role}`}
     >
-      <div className={`max-w-[85%] ${isOwn ? "items-end" : "items-start"}`}>
+      <div className={`max-w-[85%] md:max-w-[min(85%,42rem)] ${isOwn ? "items-end" : "items-start"}`}>
         {showName && message.userName && (
           <div className={`text-[11px] font-semibold mb-0.5 ${getNameColor(message.userName)}`}>{message.userName}</div>
         )}
@@ -1354,9 +1354,13 @@ interface ChatPanelProps {
   // Reports whether a draft (text or attached files) is in the composer, so
   // the hover-peek shell can refuse to tuck the panel away mid-draft.
   onDraftChange?: (hasDraft: boolean) => void;
+  // Fills the main area of the desktop /chatbgp page, opened straight onto a
+  // team chat (the page's chat list stays alongside).
+  fullPage?: boolean;
+  initialThreadId?: string;
 }
 
-export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftChange }: ChatPanelProps) {
+export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftChange, fullPage, initialThreadId }: ChatPanelProps) {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
@@ -2816,6 +2820,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
       const threadId = (e as CustomEvent).detail?.threadId;
       if (threadId) handleSelectThread(threadId);
     };
+    if (initialThreadId) handleSelectThread(initialThreadId);
     window.addEventListener("bgp:open-team-thread", onOpenTeamThread);
     return () => window.removeEventListener("bgp:open-team-thread", onOpenTeamThread);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2860,7 +2865,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   // focus / drag events.
   return (
     <div
-      className={`h-full w-full fixed inset-0 z-50 md:static md:w-[340px] md:ml-6 md:z-auto shrink-0 border-l bg-background flex flex-col ${open ? "" : "hidden"}`}
+      className={fullPage
+        ? "h-full w-full min-w-0 bg-background flex flex-col relative"
+        : `h-full w-full fixed inset-0 z-50 md:static md:w-[340px] md:ml-6 md:z-auto shrink-0 border-l bg-background flex flex-col ${open ? "" : "hidden"}`}
       data-testid="chat-panel"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
@@ -2994,7 +3001,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
               />
             </>
           )}
-          {view === "chat" && (
+          {view === "chat" && !fullPage && (
             <Button
               variant="ghost"
               size="icon"
@@ -3011,6 +3018,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
               <Maximize2 className="w-3.5 h-3.5" />
             </Button>
           )}
+          {!fullPage && (
           <Button
             variant="ghost"
             size="icon"
@@ -3020,6 +3028,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
           >
             <X className="w-4 h-4" />
           </Button>
+          )}
         </div>
       </div>
 

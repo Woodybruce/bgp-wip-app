@@ -7,6 +7,7 @@
 // items become that brand's signals; everything shows on the brand page's
 // Brand feed card and on News → Brand watch, each with a short AI read.
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import type { Express } from "express";
 import { requireAuth, requireAdmin } from "./auth";
 import { startJob, getJobStatus } from "./brand-jobs";
@@ -16,7 +17,7 @@ import { getBrandIdentity, normalizeBrandDomain } from "./brand-identity";
 import { UK_CENTRES } from "../shared/uk-centres";
 import { BRAND_FEED_TABS, BRAND_WATCH_FILTERS, BRAND_WEB_FEED_TYPES, MARKET_FEED_TYPES, type BrandWebFeedKind } from "../shared/brand-feed-types";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 const MODELS = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"];
 // Slots kept free on the plan for brand Instagram feeds created on demand.
 const RESERVE_SLOTS = 8;

@@ -1,3 +1,4 @@
+import { getAnthropicClient } from "./utils/anthropic-client";
 // ─────────────────────────────────────────────────────────────────────────
 // Insights feed — one event-driven brain, many surfaces.
 //
@@ -133,7 +134,7 @@ async function activeThemes(limit = 20): Promise<any[]> {
 async function distil(materialLabel: string, material: string, sourceKind: "news" | "market-report", evidence: any[]): Promise<number> {
   const themes = await activeThemes();
   const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = getAnthropicClient(true);
   const prompt = `You are the market-intelligence brain of a UK retail/hospitality property brokerage. Distil the fresh material below into AT MOST 3 insights a landlord or leasing broker would act on. Fewer is better; return an empty list if nothing is genuinely new or decision-relevant.
 
 ACTIVE THEMES (strengthen one of these rather than restating it):

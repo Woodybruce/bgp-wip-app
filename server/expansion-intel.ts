@@ -22,12 +22,13 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { safeParseJSON } from "./utils/anthropic-client";
 import { computeExpansionScoreV2, type BgpEvidence, type ExpansionFact } from "./hunter-score";
 import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
 
 const router = Router();
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 const MODEL_EXTRACT = "claude-sonnet-4-6";
 const MODEL_FALLBACK = "claude-haiku-4-5-20251001";
 

@@ -1,3 +1,4 @@
+import { getAnthropicClient } from "./utils/anthropic-client";
 // ─────────────────────────────────────────────────────────────────────────
 // Property gap analysis — for a leasing pitch, identifies peer brands that
 // operate in similar locations but are missing from the immediate area.
@@ -135,7 +136,7 @@ async function sweepSectorClassification() {
     const candidates = rows.filter((r: any) => isClientCrmCategory(r.company_type));
     if (!candidates.length) return;
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const client = getAnthropicClient(true);
     const keys = FNB_SECTORS.map(s => s.key).join(", ");
     const list = candidates.map((r: any) => `${r.id} | ${r.name} | ${r.industry || ""} | ${(r.description || "").slice(0, 120)}`).join("\n");
     const msg = await client.messages.create({
@@ -802,7 +803,7 @@ ${(() => {
 Write FOUR SHORT paragraphs separated by blank lines, each opening with a bold lead-in exactly like: ${researchContext.mode === "centre" ? "**Competitive gaps.** / **Missing sectors.** / **Actionable now.** / **Mix strategy.**" : "**Local market.** / **Who fits.** / **Actionable now.** / **Next move.**"} — where centre data is supplied, cover (1) the sharpest competitive gaps, naming brands and which competing centre they trade at; (2) whole sectors missing versus the peer set with the obvious target brands; (3) what's actionable NOW because a live requirement fits an available unit; (4) one forward-looking line on mix strategy. For a local building, cover the local demand evidence, the brands that fit the space, any matched unit requirements, and the next leasing move instead. Write it as leasing advice for the landlord: never comment on missing records, data gaps, audits or what "could not be established" — if a point has nothing behind it, keep that paragraph to one practical line. Keep each paragraph to 1-3 sentences; bold key brand names with **double asterisks**. No headings beyond the lead-ins, no lists, no preamble.`;
 
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const client = getAnthropicClient(true);
     let msg;
     try {
       msg = await client.messages.create({
@@ -870,7 +871,7 @@ Reply as strict JSON array only: [{"name": "...", "sector": "...", "origin": "..
 Reply as strict JSON array only: [{"name": "...", "sector": "...", "origin": "...", "trades_in": "...", "uk_status": "none|entering|1-2 sites", "why": "one sentence on the fit"}]`;
 
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const client = getAnthropicClient(true);
     let msg;
     try {
       msg = await client.messages.create({

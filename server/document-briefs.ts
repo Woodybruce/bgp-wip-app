@@ -25,6 +25,7 @@
  */
 
 import type { Express, Request, Response } from "express";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { requireAuth } from "./auth";
 import { db } from "./db";
 import {
@@ -912,7 +913,7 @@ export function registerDocumentBriefRoutes(app: Express): void {
       const baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY
         ? process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
         : undefined;
-      const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
+      const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}), ...anthropicWorkspaceOptions() });
       const msg = await client.messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 16000,

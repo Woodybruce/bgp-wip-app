@@ -1,3 +1,4 @@
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 // UK trading entity from BGP's own deal records.
 //
 // Woody, 2026-09-23: "For Canary Wharf example a deal has happened so there
@@ -81,7 +82,7 @@ async function askForTenant(brand: string, docs: DealRecordDoc[]): Promise<any> 
   const blocks = docs.map((d, i) => `[${i + 1}] ${d.fileName}\n${entityPassages(d.content).join("\n…\n")}`).filter(b => b.includes("\n")).join("\n\n");
   if (!blocks) return null;
   const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const msg = await new Anthropic({ apiKey }).messages.create({
+  const msg = await new Anthropic({ apiKey, ...anthropicWorkspaceOptions() }).messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 300,
     messages: [{ role: "user", content: `These are extracts from Bruce Gillingham Pollard's own deal records (heads of terms, leases, fee emails) that mention the brand "${brand}". Which UK registered company is the TENANT / operator of ${brand} — the party taking the space? Not the landlord, not an agent, not a guarantor unless it is the tenant.

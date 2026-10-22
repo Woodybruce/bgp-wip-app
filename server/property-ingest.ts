@@ -7,12 +7,13 @@
 // the address, dedup on normalised address+postcode, file the brochure under
 // landlord pack (named after the address), and upsert. Kept OUT of the CRM.
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { randomBytes } from "crypto";
 import { geocodeOne } from "./geocode";
 import { saveFile } from "./file-storage";
 import { upsertExternalProperty, externalPropertyExists, addressDedupeId } from "./external-properties";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 
 const PROMPT = `You are reading UK commercial property "to let / for sale" particulars — an agent or landlord marketing a unit that is AVAILABLE. Extract the following as STRICT JSON (no markdown, no commentary). Use null when a field isn't stated — never guess.
 

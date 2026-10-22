@@ -11,12 +11,13 @@
 //   Array<{ name: string; reason?: string; segment?: string }>
 import { Router, type Request, type Response } from "express";
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 
 const router = Router();
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 const MODELS = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-7"];
 
 async function callClaude(prompt: string): Promise<string> {

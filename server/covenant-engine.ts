@@ -14,6 +14,7 @@
  * ChatBGP (check_covenant), decks, and the nightly watcher with alerts.
  */
 import type { Express, Request, Response } from "express";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { chFetch } from "./companies-house";
@@ -453,7 +454,7 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
     const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
     if (apiKey) {
-      const opts: any = { apiKey };
+      const opts: any = { apiKey, ...anthropicWorkspaceOptions() };
       if (process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) opts.baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
       const client = new Anthropic(opts);
       const msg = await client.messages.create({

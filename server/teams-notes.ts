@@ -1,3 +1,4 @@
+import { getAnthropicClient } from "./utils/anthropic-client";
 // ─────────────────────────────────────────────────────────────────────────
 // Teams meeting transcripts → notes (Woody, 2026-08-05: "we will be
 // recording meetings via teams so that needs to be built in").
@@ -101,7 +102,7 @@ export async function sweepTeamsTranscripts(): Promise<typeof lastRun> {
         let summary = "";
         try {
           const Anthropic = (await import("@anthropic-ai/sdk")).default;
-          const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+          const client = getAnthropicClient(true);
           const resp = await client.messages.create({
             model: "claude-haiku-4-5-20251001",
             max_tokens: 500,
