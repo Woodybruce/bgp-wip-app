@@ -1,9 +1,9 @@
 import { Router, type Express, type RequestHandler } from "express";
 import { z } from "zod";
-import { extractChatEmailDraft } from "../shared/chat-email-draft";
+import { EMAIL_DRAFT_EDIT_NOTE, extractChatEmailDraft, hasEmailDraftEditNote } from "../shared/chat-email-draft";
 import { chatWordSchema, type ChatDraftDatabase } from "./chat-drafts";
 
-export const EMAIL_DRAFT_EDIT_NOTE = "[Email draft edited by user.]";
+export { EMAIL_DRAFT_EDIT_NOTE } from "../shared/chat-email-draft";
 const CHAT_MESSAGE_LIMIT = 500_000; // Same upper bound as chatbgp's message schema.
 export const chatDraftEditSchema = chatWordSchema.extend({
   threadId: z.string().uuid(),
@@ -52,7 +52,7 @@ export function createChatDraftEditRouter(deps: ChatDraftEditDependencies) {
       if (original.content !== expectedContent) return void res.status(409).json({ error: "This draft has changed. Reopen it before saving your edits.", code: "DRAFT_CHANGED" });
       const draft = original.role === "assistant" ? extractChatEmailDraft(original.content) : null;
       if (!draft) return void res.status(409).json({ error: "This message is not an editable email draft", code: "DRAFT_NOT_EDITABLE" });
-      const before = draft.before.split("\n").some(line => line === EMAIL_DRAFT_EDIT_NOTE)
+      const before = hasEmailDraftEditNote(draft.before)
         ? draft.before : [draft.before, EMAIL_DRAFT_EDIT_NOTE].filter(Boolean).join("\n\n");
       const content = `${before}\n\nSubject: ${subject}\n\n${bodyMarkdown.trim()}`;
       if (content.length > CHAT_MESSAGE_LIMIT) return void res.status(400).json({ error: "This edited message is too large to save", code: "INVALID_DRAFT" });

@@ -1,25 +1,32 @@
-import { AlignmentType, Document, HeadingLevel, LevelFormat, Packer, Paragraph, ShadingType,
+import { AlignmentType, Document, ExternalHyperlink, HeadingLevel, LevelFormat, Packer, Paragraph, ShadingType,
   Table, TableCell, TableRow, TextRun, WidthType, type IRunOptions } from "docx";
-import { exportRichTextText, parseRichText } from "../shared/chat-rich-text";
+import { exportRichTextText, parseRichText, safeExportUrl } from "../shared/chat-rich-text";
 
 // The shared parser returns Marked's GFM tokens, including two app-specific
 // inline tokens. These are the fields used by the native Word renderer.
 type WordToken = {
-  type: string; text?: string; raw?: string; tokens?: WordToken[]; depth?: number;
+  type: string; text?: string; raw?: string; href?: string; tokens?: WordToken[]; depth?: number;
   name?: string; ordered?: boolean; start?: number; items?: WordToken[];
   checked?: boolean; task?: boolean; header?: { text: string; tokens: WordToken[] }[];
   rows?: { text: string; tokens: WordToken[] }[][]; align?: ("left" | "center" | "right" | null)[];
 };
 const cleanText = (value: string) => value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/gu, "");
+type WordInline = TextRun | ExternalHyperlink;
 
-function inlineRuns(tokens: WordToken[], style: IRunOptions = {}): TextRun[] {
-  return tokens.flatMap(token => {
+function inlineRuns(tokens: WordToken[], style: IRunOptions = {}): WordInline[] {
+  return tokens.flatMap<WordInline>(token => {
     if (token.type === "br") return [new TextRun({ ...style, break: 1 })];
     const next = { ...style };
     if (token.type === "strong") next.bold = true;
     if (token.type === "em") next.italics = true;
     if (token.type === "del") next.strike = true;
     if (token.type === "codespan") next.font = "Consolas";
+    if (token.type === "link") {
+      const url = safeExportUrl(token.href ?? "");
+      const children = inlineRuns(token.tokens?.length ? token.tokens : [{ type: "text", text: token.text }],
+        url ? { ...next, style: "Hyperlink" } : next);
+      return url ? [new ExternalHyperlink({ link: url, children })] : children;
+    }
     if (token.tokens?.length) return inlineRuns(token.tokens, next);
     // Internal references, downloads and images are labels, not private storage
     // URLs or remote media. Raw HTML becomes ordinary literal Word text.
@@ -33,7 +40,7 @@ export async function createChatDraftWord(subject: string, markdown: string): Pr
   const tokens = parseRichText(markdown) as unknown as WordToken[];
   const numbering: any[] = [];
   let listCounter = 0;
-  const paragraph = (runs: TextRun[], extra: any = {}) => new Paragraph({
+  const paragraph = (runs: WordInline[], extra: any = {}) => new Paragraph({
     children: runs.length ? runs : [new TextRun("")], spacing: { after: 140, line: 276 }, ...extra,
   });
   const render = (blocks: WordToken[], indent = 0): (Paragraph | Table)[] => {

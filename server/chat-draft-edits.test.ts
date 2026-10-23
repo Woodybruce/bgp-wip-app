@@ -3,6 +3,7 @@ import test from "node:test";
 import type { AddressInfo } from "node:net";
 import express from "express";
 import { createChatDraftEditRouter, EMAIL_DRAFT_EDIT_NOTE } from "./chat-draft-edits";
+import { extractChatEmailDraft } from "../shared/chat-email-draft";
 
 const userId = "314d4acb-1170-4ffa-9621-7a72025b2ed1";
 const threadId = "9575e07d-b46a-4d3f-8777-dea0aa461105";
@@ -95,6 +96,30 @@ test("repeat edits use the latest content and retain one provenance note", async
   assert.equal(second.body.content.split(EMAIL_DRAFT_EDIT_NOTE).length - 1, 1);
   assert.match(second.body.content, /Subject: Final proposal/);
   assert.equal(state.events.length, 2);
+}));
+
+test("formatted, replaced and removed greetings remain editable after saving and reloading", async () => {
+  for (const bodyMarkdown of ["**Hi Pete,**\n\nPlease review the corrected terms.", "*Hi Pete,*\n\nPlease review the corrected terms.",
+    "Pete,\n\nPlease review the corrected terms.", "Please review the corrected terms.", "Thanks!"]) {
+    await withFixture(async (state, post) => {
+      const first = await post({ ...requestBody(), bodyMarkdown });
+      assert.equal(first.status, 200);
+      // The client recognises the same persisted content when the chat reloads.
+      assert.equal(extractChatEmailDraft(state.message.content)?.bodyMarkdown, bodyMarkdown);
+      const second = await post({ ...requestBody(), expectedContent: first.body.content, bodyMarkdown, subject: "Second revision" });
+      assert.equal(second.status, 200);
+      assert.equal(extractChatEmailDraft(second.body.content)?.subject, "Second revision");
+      assert.equal(second.body.content.split(EMAIL_DRAFT_EDIT_NOTE).length - 1, 1);
+    });
+  }
+});
+
+test("a quoted edit note in the original commentary cannot substitute for save provenance", async () => withFixture(async (state, post) => {
+  state.message.content = `\`\`\`text\n${EMAIL_DRAFT_EDIT_NOTE}\n\`\`\`\n\n${originalContent}`;
+  const saved = await post({ ...requestBody(), expectedContent: state.message.content, bodyMarkdown: "Please review the corrected terms." });
+  assert.equal(saved.status, 200);
+  assert.equal(extractChatEmailDraft(saved.body.content)?.bodyMarkdown, "Please review the corrected terms.");
+  assert.ok(saved.body.content.includes(`${EMAIL_DRAFT_EDIT_NOTE}\n\nSubject:`));
 }));
 
 test("authentication and active staff identity are required before message reads or updates", async () => {
