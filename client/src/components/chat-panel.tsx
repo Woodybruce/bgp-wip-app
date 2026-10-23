@@ -9,6 +9,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useTypingIndicator } from "@/hooks/use-socket";
 import { emitMarkSeen } from "@/lib/socket";
 import { ChatBGPMarkdown, AuthDownloadLink } from "@/components/chatbgp-markdown";
+import { ChatResponse } from "@/components/chat-response";
+import { copyChatContent } from "@/lib/chat-clipboard";
 import {
   Sparkles,
   Send,
@@ -248,9 +250,11 @@ function ActionCard({ action }: { action: ChatAction }) {
             variant="ghost"
             size="sm"
             className="h-6 text-[10px] px-2"
-            onClick={() => {
-              navigator.clipboard.writeText(action.content);
-              toast({ title: "Copied to clipboard" });
+            onClick={async () => {
+              try {
+                const format = await copyChatContent(action.content);
+                toast({ title: format === "formatted" ? "Copied with formatting" : "Copied as plain text" });
+              } catch { toast({ title: "Copy unavailable", description: "Select the text to copy it.", variant: "destructive" }); }
             }}
             data-testid="button-copy-chat-document"
           >
@@ -433,8 +437,9 @@ function RenderMessageContent({ content, onCheckboxClick }: { content: string; o
   );
 }
 
-function MessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, onDelete, onCheckboxClick }: {
+function MessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, onDelete, onCheckboxClick, onDraftSaved }: {
   message: LocalChatMessage;
+  onDraftSaved?: (content: string) => void;
   currentUserId?: string;
   threadId?: string | null;
   isGroupChat?: boolean;
@@ -522,7 +527,10 @@ function MessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, 
                 isOwn ? "bg-gray-900 text-white rounded-br-sm" : "bg-gray-100 dark:bg-gray-800 text-foreground rounded-bl-sm"
               }`}
             >
-              <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} />
+              <ChatResponse content={message.content} threadId={threadId} messageId={message.id} onDraftSaved={onDraftSaved} actions={!isUser}
+                renderBefore={content => <RenderMessageContent content={content} onCheckboxClick={onCheckboxClick} />}>
+                <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} />
+              </ChatResponse>
             </div>
             {isOwn && message.id && threadId && (
               <div className="absolute -top-1 right-0 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1899,6 +1907,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
       if (files.length > 0) {
         const formData = new FormData();
         formData.append("messages", JSON.stringify(plainMessages));
+        formData.append("threadId", currentThreadId!);
         files.forEach((f) => formData.append("files", f));
 
         const token = localStorage.getItem("bgp_auth_token");
@@ -3165,6 +3174,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                     key={msg.id || i}
                     message={msg}
                     currentUserId={currentUser?.id}
+                    onDraftSaved={content => setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content } : m))}
                     threadId={activeThreadId}
                     isGroupChat={!isActiveThreadAi && (activeThread?.members?.length || 0) > 1}
                     onEdit={handleEditMessage}

@@ -6,6 +6,8 @@ import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { contentDispositionFor } from "./utils/http-headers";
 import { listAllChildren, resolveUploadDestination } from "./microsoft-graph-pagination";
+import { delegatedAccountBelongsToUser } from "./microsoft-delegated-account";
+import { createMicrosoftDraftConsentHandlers, isMicrosoftDraftCallback } from "./microsoft-draft-consent";
 import {
   SHAREPOINT_HOST, SHAREPOINT_SITE_PATH, SHAREPOINT_ROOT_FOLDER,
   getSharePointDriveId, createFolderByPath, runChunked, createTreeBatched,
@@ -48,24 +50,26 @@ async function withMsalCacheLock<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-function getMsalClient(): ConfidentialClientApplication {
-  if (!msalClient) {
-    const clientId = process.env.AZURE_CLIENT_ID;
-    const clientSecret = (process.env.AZURE_SECRET_V2 || process.env.AZURE_CLIENT_SECRET)?.trim();
-    const tenantId = process.env.AZURE_TENANT_ID;
+function createMsalClient(): ConfidentialClientApplication {
+  const clientId = process.env.AZURE_CLIENT_ID;
+  const clientSecret = (process.env.AZURE_SECRET_V2 || process.env.AZURE_CLIENT_SECRET)?.trim();
+  const tenantId = process.env.AZURE_TENANT_ID;
 
-    if (!clientId || !clientSecret || !tenantId) {
-      throw new Error("Azure credentials not configured");
-    }
-
-    msalClient = new ConfidentialClientApplication({
-      auth: {
-        clientId,
-        clientSecret,
-        authority: `https://login.microsoftonline.com/${tenantId}`,
-      },
-    });
+  if (!clientId || !clientSecret || !tenantId) {
+    throw new Error("Azure credentials not configured");
   }
+
+  return new ConfidentialClientApplication({
+    auth: {
+      clientId,
+      clientSecret,
+      authority: `https://login.microsoftonline.com/${tenantId}`,
+    },
+  });
+}
+
+function getMsalClient(): ConfidentialClientApplication {
+  if (!msalClient) msalClient = createMsalClient();
   return msalClient;
 }
 
@@ -95,10 +99,12 @@ export async function getAppGraphToken(): Promise<string | null> {
 // silent refresh fails. Lets background jobs read a user's calendar using
 // the delegated Calendars.Read consent that's already in place, without
 // needing the app-only Application permission.
-export async function getDelegatedGraphTokenForUser(userId: string): Promise<string | null> {
+export async function getDelegatedGraphTokenForUser(userId: string, scopes: string[] = SCOPES): Promise<string | null> {
   if (!userId) return null;
   return withMsalCacheLock(async () => {
     try {
+      const user = (await pool.query("SELECT email, role, is_active FROM users WHERE id=$1", [userId])).rows[0];
+      if (!user) return null;
       const client = getMsalClient();
       const cacheData = await loadMsalCache(String(userId));
       const homeAccountId = await getHomeAccountId(String(userId));
@@ -107,16 +113,18 @@ export async function getDelegatedGraphTokenForUser(userId: string): Promise<str
       client.getTokenCache().deserialize(cacheData);
       const accounts = await client.getTokenCache().getAllAccounts();
       const account = accounts.find((a) => a.homeAccountId === homeAccountId);
-      if (!account) return null;
+      if (!account || !delegatedAccountBelongsToUser(user, account)) return null;
 
-      const result = await client.acquireTokenSilent({ scopes: SCOPES, account });
+      // Callers may request a narrower already-consented delegated scope. This
+      // silent flow never grants permission or falls back to another mailbox.
+      const result = await client.acquireTokenSilent({ scopes, account });
       if (result?.accessToken) {
         await saveMsalCache(String(userId), homeAccountId);
         return result.accessToken;
       }
       return null;
     } catch (e: any) {
-      console.warn(`[microsoft] delegated token for user ${userId} failed:`, e?.message);
+      console.warn(`[microsoft] delegated token for user ${userId} failed:`, e?.errorCode || "token_unavailable");
       return null;
     }
   });
@@ -313,7 +321,22 @@ declare module "express-session" {
 }
 
 export function setupMicrosoftRoutes(app: Express) {
-  app.get("/api/microsoft/auth", async (req: Request, res: Response) => {
+  const draftConsent = createMicrosoftDraftConsentHandlers({
+    getUser: async userId => (await pool.query("SELECT email, role, is_active FROM users WHERE id=$1", [userId])).rows[0] ?? null,
+    createClient: createMsalClient,
+    getRedirectUri,
+    saveCache: (userId, homeAccountId, cacheData) => withMsalCacheLock(async () => {
+      const existing = await pool.query("SELECT id FROM msal_token_cache WHERE user_id=$1", [userId]);
+      if (existing.rows.length) {
+        await pool.query("UPDATE msal_token_cache SET cache_data=$1, home_account_id=$2, updated_at=NOW() WHERE user_id=$3", [cacheData, homeAccountId, userId]);
+      } else {
+        await pool.query("INSERT INTO msal_token_cache (user_id, home_account_id, cache_data) VALUES ($1,$2,$3)", [userId, homeAccountId, cacheData]);
+      }
+    }),
+  });
+  app.get("/api/microsoft/auth", requireAuth, async (req: Request, res: Response) => {
+    if (req.query.purpose === "chat-drafts") return draftConsent.start(req, res);
+    if (req.query.purpose !== undefined) return res.status(400).json({ message: "Unknown Microsoft connection purpose" });
     if (!req.session.userId) {
       return res.status(401).json({ message: "Not authenticated" });
     }
@@ -341,6 +364,7 @@ export function setupMicrosoftRoutes(app: Express) {
   });
 
   app.get("/api/microsoft/callback", async (req: Request, res: Response) => {
+    if (isMicrosoftDraftCallback(req)) return draftConsent.callback(req, res);
     console.log("Microsoft OAuth callback received:", {
       hasCode: !!req.query.code,
       hasError: !!req.query.error,

@@ -15,6 +15,7 @@ import { emitMarkSeen } from "@/lib/socket";
 import * as voiceRecovery from "@/lib/voice-recovery";
 import { messageContentWithAttachments } from "@/lib/chat-attachments";
 import { AuthDownloadLink, ChatBGPMarkdown } from "@/components/chatbgp-markdown";
+import { ChatResponse } from "@/components/chat-response";
 import { useLocation } from "wouter";
 import { useTeam } from "@/lib/team-context";
 import { TagChip, TAG_TOKEN_SOURCE, TAG_META, buildTagToken, type TagType } from "@/components/chat-tags";
@@ -459,8 +460,9 @@ function formatMsgTime(dateStr?: string) {
   return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} ${time}`;
 }
 
-function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, onDelete, onCheckboxClick, selectedCheckboxes, isAiThread, othersAllSeen }: {
+function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, onDelete, onCheckboxClick, selectedCheckboxes, isAiThread, othersAllSeen, onDraftSaved }: {
   message: LocalChatMessage;
+  onDraftSaved?: (content: string) => void;
   currentUserId?: string;
   threadId?: string | null;
   isGroupChat?: boolean;
@@ -624,7 +626,10 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
               onTouchCancel={handleTouchEnd}
             >
               <div className="text-[15px] leading-[1.7] text-foreground whitespace-pre-wrap break-words select-text">
-                <RenderMessageContent content={message.content} onCheckboxClick={onCheckboxClick} isUserBubble={false} selectedCheckboxes={selectedCheckboxes} markdown />
+                <ChatResponse content={message.content} threadId={threadId} messageId={message.id} onDraftSaved={onDraftSaved}
+                  renderBefore={content => <RenderMessageContent content={content} onCheckboxClick={onCheckboxClick} isUserBubble={false} selectedCheckboxes={selectedCheckboxes} markdown />}>
+                  <RenderMessageContent content={message.content} onCheckboxClick={onCheckboxClick} isUserBubble={false} selectedCheckboxes={selectedCheckboxes} markdown />
+                </ChatResponse>
               </div>
             </div>
           )}
@@ -668,7 +673,10 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
                 ? "bg-[#F6E3DA] text-[#292524] rounded-br-md"
                 : "bg-white text-[#292524] rounded-bl-md"
             }`}>
-              <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} isUserBubble={false} selectedCheckboxes={!isUser ? selectedCheckboxes : undefined} markdown={!isUser} />
+              <ChatResponse content={message.content} threadId={threadId} messageId={message.id} onDraftSaved={onDraftSaved} actions={!isUser}
+                renderBefore={content => <RenderMessageContent content={content} onCheckboxClick={onCheckboxClick} isUserBubble={false} selectedCheckboxes={selectedCheckboxes} markdown />}>
+                <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} isUserBubble={false} selectedCheckboxes={!isUser ? selectedCheckboxes : undefined} markdown={!isUser} />
+              </ChatResponse>
               {message.createdAt && (
                 <span className="float-right flex items-center gap-0.5 ml-2 mt-2 -mb-0.5 translate-y-1">
                   <span className="text-[10.5px] text-[#8A8177] leading-none">{formatMsgTime(message.createdAt)}</span>
@@ -2914,6 +2922,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                 currentUserId={currentUser?.id}
                 threadId={threadId}
                 isGroupChat={!isActiveThreadAi && threadMembers.length > 2}
+                onDraftSaved={content => setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content } : m))}
                 onEdit={(id, content) => editMessageMutation.mutate({ messageId: id, content })}
                 onDelete={(id) => { setPendingDeleteMsgId(id); }}
                 onCheckboxClick={handleCheckboxClick}

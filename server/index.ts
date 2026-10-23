@@ -3773,6 +3773,8 @@ import { setupArchivistRoutes, runArchivistCrawl } from "./archivist";
 import { registerAIIntelligenceRoutes } from "./ai-intelligence";
 import { setupLeadsRoutes } from "./leads";
 import { registerMcpRoutes } from "./mcp-server";
+import { registerChatDraftRoutes } from "./chat-drafts";
+import { registerChatDraftEditRoutes } from "./chat-draft-edits";
 import { setupWebSocket } from "./websocket";
 import { createServer } from "http";
 
@@ -4752,6 +4754,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   registerAIIntelligenceRoutes(app);
   setupLeadsRoutes(app);
   registerMcpRoutes(app);
+  await registerChatDraftEditRoutes(app);
+  await registerChatDraftRoutes(app);
   setupCrmRoutes(app);
   app.use(companiesHouseRouter);
   registerPropertyPathwayRoutes(app);

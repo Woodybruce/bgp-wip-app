@@ -1,5 +1,7 @@
-import { useState } from "react";
-import { TagChip, TAG_TOKEN_SOURCE, type TagType } from "@/components/chat-tags";
+import { createElement, useMemo, useState } from "react";
+import { TagChip, type TagType } from "@/components/chat-tags";
+import { parseRichText, decodeRichTextText, safeRichTextUrl, isAuthenticatedDownloadUrl, type RichTextToken } from "@shared/chat-rich-text";
+import type { Tokens } from "marked";
 import { Copy, Check, Download, Loader2 } from "lucide-react";
 
 // Single source of truth for chat-media downloads across desktop chat,
@@ -129,262 +131,65 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
   );
 }
 
-function isSafeUrl(url: string) {
-  return url.startsWith("/") || url.startsWith("https://") || url.startsWith("http://");
-}
-
-function parseInline(text: string, keyPrefix: string): (string | JSX.Element)[] {
-  // URL sub-pattern that tolerates balanced parens INSIDE the url — e.g.
-  // SharePoint download links like ".../Documents/file(1).xlsx" or
-  // ".../Folder(2)/report.pdf". The old `[^)]+` truncated the href at the
-  // first ")" so those links arrived with brackets clipped off and the
-  // download 404'd. `(?:[^()\s]|\([^()\s]*\))+` consumes non-paren chars
-  // plus any "(...)" group, so one level of nested parens survives.
-  const URL_CORE = String.raw`(?:[^()\s]|\([^()\s]*\))+`;
-  // GAP = optional whitespace/newlines between "]" and "(" — Claude sometimes
-  // word-wraps long [text](url) links across a line break which previously
-  // killed the match and left the raw markdown visible in chat.
-  const GAP = String.raw`\s*`;
-  const tokenRegex = new RegExp(
-    String.raw`!\[([^\]]*)\]` + GAP + String.raw`\((` + URL_CORE + String.raw`)\)` +                  // ![alt](url)
-    String.raw`|\[([^\]]+)\]` + GAP + String.raw`\((\/api\/(?:chat-media\/` + URL_CORE + String.raw`|lr-bg\/register\/[A-Za-z]{0,3}\d{1,8}|companies-house\/document\/[A-Za-z0-9_-]+(?:[?#]` + URL_CORE + String.raw`)?))\)` + // authenticated document links
-    String.raw`|\[([^\]]+)\]` + GAP + String.raw`\((https?:\/\/` + URL_CORE + String.raw`)\)` +        // [t](https://…)
-    String.raw`|\[([^\]]+)\]` + GAP + String.raw`\((\/` + URL_CORE + String.raw`)\)` +                 // [t](/path)
-    String.raw`|\*\*(.+?)\*\*` +                                                  // **bold**
-    "|`([^`]+)`" +                                                                // `code`
-    String.raw`|(https?:\/\/[^\s<>)\]]+)` +                                       // bare url
-    `|${TAG_TOKEN_SOURCE}` +                                                      // @[Name](tag:type/id) smart tag
-    String.raw`|(\/api\/lr-bg\/register\/[A-Za-z]{0,3}\d{1,8})(?=$|[\s.,;!?])`,  // saved replies with a bare register path
-    "g",
-  );
-  const result: (string | JSX.Element)[] = [];
-  let lastIndex = 0;
-  let match;
-  let key = 0;
-
-  while ((match = tokenRegex.exec(text)) !== null) {
-    if (match.index > lastIndex) result.push(text.slice(lastIndex, match.index));
-
-    if (match[1] !== undefined && match[2]) {
-      // ![alt](url) — image
-      if (isSafeUrl(match[2])) {
-        result.push(
-          <a key={`${keyPrefix}-${key++}`} href={match[2]} target="_blank" rel="noopener noreferrer" className="block my-1">
-            <img src={match[2]} alt={match[1]} className="rounded-xl max-w-[260px] max-h-[300px] object-cover" />
-          </a>
-        );
-      } else {
-        result.push(match[0]);
+function renderTokens(tokens: RichTextToken[], prefix: string, inLink = false): React.ReactNode[] {
+  return tokens.map((token, index) => {
+    const key = `${prefix}-${index}`;
+    const child = () => renderTokens("tokens" in token && Array.isArray(token.tokens) ? token.tokens : [], key, inLink);
+    const text = () => decodeRichTextText("text" in token ? String(token.text) : token.raw);
+    switch (token.type) {
+      case "space": case "def": return null;
+      case "text": case "escape": return "tokens" in token && token.tokens?.length ? child() : text();
+      case "html": return token.raw; // React escapes it; raw HTML is never mounted.
+      case "paragraph": return <p key={key}>{child()}</p>;
+      case "heading": return createElement(`h${Math.max(1, Math.min(6, token.depth))}`, { key }, child());
+      case "strong": return <strong key={key} className="font-semibold">{child()}</strong>;
+      case "em": return <em key={key}>{child()}</em>;
+      case "del": return <del key={key}>{child()}</del>;
+      case "br": return <br key={key} />;
+      case "hr": return <hr key={key} />;
+      case "codespan": return <code key={key}>{token.text}</code>;
+      case "code": return <CodeBlock key={key} code={token.text} language={token.lang?.split(/\s+/)[0]} />;
+      case "blockquote": return <blockquote key={key}>{child()}</blockquote>;
+      case "bgp_tag": return inLink ? decodeRichTextText(token.name) : <TagChip key={key} type={token.tagType as TagType} id={token.id} name={decodeRichTextText(token.name)} />;
+      case "bgp_download": return inLink ? token.text : <AuthDownloadLink key={key} href={token.href}>{token.text}</AuthDownloadLink>;
+      case "image": {
+        const url = safeRichTextUrl(token.href, { allowRelative: true, image: true });
+        if (!url) return text();
+        if (inLink) return <img key={key} src={url} alt={text()} className="rounded-xl max-w-[260px] max-h-[300px] object-cover" />;
+        return <a key={key} href={url} target="_blank" rel="noopener noreferrer" className="block my-1">
+          <img src={url} alt={text()} className="rounded-xl max-w-[260px] max-h-[300px] object-cover" />
+        </a>;
       }
-    } else if (match[3] && match[4]) {
-      // Authenticated chat attachments, official registers and filed deeds.
-      result.push(
-        <AuthDownloadLink key={`${keyPrefix}-${key++}`} href={match[4]}>{match[3]}</AuthDownloadLink>
-      );
-    } else if (match[5] && match[6]) {
-      // [text](https://...) — external link
-      result.push(<a key={`${keyPrefix}-${key++}`} href={match[6]} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2">{match[5]}</a>);
-    } else if (match[7] && match[8]) {
-      // [text](/path) — internal app link
-      result.push(<a key={`${keyPrefix}-${key++}`} href={match[8]} className="text-primary underline underline-offset-2">{match[7]}</a>);
-    } else if (match[9]) {
-      // **bold** — parse the content recursively so links survive inside
-      // bold. ChatBGP loves "👉 **[Download…](url)**" and the bold branch
-      // was swallowing the link and rendering it as literal [text](url).
-      result.push(<strong key={`${keyPrefix}-${key++}`} className="font-semibold">{parseInline(match[9], `${keyPrefix}-b${key}`)}</strong>);
-    } else if (match[10]) {
-      // `code`
-      result.push(<code key={`${keyPrefix}-${key++}`}>{match[10]}</code>);
-    } else if (match[12] && match[13] && match[14]) {
-      // @[Name](tag:type/id) — smart tag chip
-      result.push(<TagChip key={`${keyPrefix}-${key++}`} type={match[13] as TagType} id={match[14]} name={match[12]} />);
-    } else if (match[15]) {
-      result.push(<AuthDownloadLink key={`${keyPrefix}-${key++}`} href={match[15]}>Download official register</AuthDownloadLink>);
-    } else if (match[11]) {
-      // bare https://url
-      const url = match[11].replace(/[.,;:!?]+$/, "");
-      const trailing = match[11].slice(url.length);
-      result.push(<a key={`${keyPrefix}-${key++}`} href={url} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 break-all">{url}</a>);
-      if (trailing) result.push(trailing);
+      case "link": {
+        const url = safeRichTextUrl(token.href, { allowRelative: true });
+        if (!url) return child();
+        const label = renderTokens(token.tokens || [], key, true);
+        if (isAuthenticatedDownloadUrl(url)) return <AuthDownloadLink key={key} href={url}>{label}</AuthDownloadLink>;
+        return <a key={key} href={url} target={url.startsWith("/") ? undefined : "_blank"} rel={url.startsWith("/") ? undefined : "noopener noreferrer"} className="text-primary underline underline-offset-2 break-words">{label}</a>;
+      }
+      case "list": {
+        const list = token as Tokens.List;
+        const items = list.items.map((item, itemIndex) => <li key={`${key}-li-${itemIndex}`}>
+          {item.task ? <span aria-label={item.checked ? "Completed" : "Not completed"}>{item.checked ? "☑ " : "☐ "}</span> : null}
+          {renderTokens(item.tokens, `${key}-li-${itemIndex}`)}
+        </li>);
+        return list.ordered ? <ol key={key} start={typeof list.start === "number" ? list.start : undefined}>{items}</ol> : <ul key={key}>{items}</ul>;
+      }
+      case "table": {
+        const table = token as Tokens.Table;
+        return <div key={key} className="overflow-x-auto my-2">
+          <table className="w-max min-w-full" style={{ width: "max-content", minWidth: "100%" }}>
+            <thead><tr>{table.header.map((cell, i) => <th key={`${key}-th-${i}`} scope="col" className="whitespace-nowrap text-left align-bottom" style={{ textAlign: table.align[i] || "left" }}>{renderTokens(cell.tokens, `${key}-th-${i}`)}</th>)}</tr></thead>
+            <tbody>{table.rows.map((row, ri) => <tr key={`${key}-tr-${ri}`}>{row.map((cell, ci) => <td key={`${key}-td-${ri}-${ci}`} className="break-normal align-top max-w-[280px]" style={{ textAlign: table.align[ci] || "left" }}>{renderTokens(cell.tokens, `${key}-td-${ri}-${ci}`)}</td>)}</tr>)}</tbody>
+          </table>
+        </div>;
+      }
+      default: return text();
     }
-    lastIndex = match.index + match[0].length;
-  }
-  if (lastIndex < text.length) result.push(text.slice(lastIndex));
-  return result;
-}
-
-function parseTable(lines: string[]): JSX.Element | null {
-  if (lines.length < 2) return null;
-  const headerLine = lines[0];
-  const separatorLine = lines[1];
-
-  if (!separatorLine.match(/^\|[\s-:|]+\|$/)) return null;
-
-  const parseCells = (line: string) =>
-    line.replace(/^\||\|$/g, "").split("|").map(c => c.trim());
-
-  const headers = parseCells(headerLine);
-  const rows = lines.slice(2).map(parseCells);
-
-  return (
-    <div className="overflow-x-auto my-2">
-      {/* w-max lets the table take its natural width and scroll inside the
-          wrapper — without it the 340px chat panel starves the columns and
-          the bubble's break-words wraps cells letter-by-letter. */}
-      <table className="w-max min-w-full">
-        <thead>
-          <tr>
-            {headers.map((h, i) => (
-              <th key={i} className="whitespace-nowrap text-left align-bottom">{parseInline(h, `th-${i}`)}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, ri) => (
-            <tr key={ri}>
-              {row.map((cell, ci) => (
-                <td key={ci} className="break-normal align-top max-w-[280px]">{parseInline(cell, `td-${ri}-${ci}`)}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+  });
 }
 
 export function ChatBGPMarkdown({ content }: { content: string }) {
-  const elements: JSX.Element[] = [];
-  let key = 0;
-
-  const codeBlockRegex = /```(\w*)\n?([\s\S]*?)```/g;
-  const segments: { type: "text" | "code"; content: string; language?: string }[] = [];
-  let lastIndex = 0;
-  let match;
-
-  while ((match = codeBlockRegex.exec(content)) !== null) {
-    if (match.index > lastIndex) {
-      segments.push({ type: "text", content: content.slice(lastIndex, match.index) });
-    }
-    segments.push({ type: "code", content: match[2].replace(/\n$/, ""), language: match[1] || undefined });
-    lastIndex = match.index + match[0].length;
-  }
-  if (lastIndex < content.length) {
-    segments.push({ type: "text", content: content.slice(lastIndex) });
-  }
-
-  for (const segment of segments) {
-    if (segment.type === "code") {
-      elements.push(<CodeBlock key={key++} code={segment.content} language={segment.language} />);
-      continue;
-    }
-
-    const lines = segment.content.split("\n");
-    let i = 0;
-
-    while (i < lines.length) {
-      const line = lines[i];
-
-      if (line.trim() === "") {
-        i++;
-        continue;
-      }
-
-      if (line.startsWith("|") && i + 1 < lines.length && lines[i + 1].match(/^\|[\s-:|]+\|$/)) {
-        const tableLines: string[] = [];
-        while (i < lines.length && lines[i].startsWith("|")) {
-          tableLines.push(lines[i]);
-          i++;
-        }
-        const table = parseTable(tableLines);
-        if (table) {
-          elements.push(<div key={key++}>{table}</div>);
-        }
-        continue;
-      }
-
-      if (line.match(/^---+$/) || line.match(/^\*\*\*+$/) || line.match(/^___+$/)) {
-        elements.push(<hr key={key++} />);
-        i++;
-        continue;
-      }
-
-      const h1Match = line.match(/^#\s+(.+)/);
-      if (h1Match) {
-        elements.push(<h1 key={key++}>{parseInline(h1Match[1], `h1-${key}`)}</h1>);
-        i++;
-        continue;
-      }
-      const h2Match = line.match(/^##\s+(.+)/);
-      if (h2Match) {
-        elements.push(<h2 key={key++}>{parseInline(h2Match[1], `h2-${key}`)}</h2>);
-        i++;
-        continue;
-      }
-      const h3Match = line.match(/^###\s+(.+)/);
-      if (h3Match) {
-        elements.push(<h3 key={key++}>{parseInline(h3Match[1], `h3-${key}`)}</h3>);
-        i++;
-        continue;
-      }
-      const h4Match = line.match(/^####\s+(.+)/);
-      if (h4Match) {
-        elements.push(<h4 key={key++}>{parseInline(h4Match[1], `h4-${key}`)}</h4>);
-        i++;
-        continue;
-      }
-
-      const bqMatch = line.match(/^>\s?(.*)/);
-      if (bqMatch) {
-        const bqLines: string[] = [bqMatch[1]];
-        i++;
-        while (i < lines.length && lines[i].match(/^>\s?(.*)/)) {
-          bqLines.push(lines[i].replace(/^>\s?/, ""));
-          i++;
-        }
-        elements.push(<blockquote key={key++}>{parseInline(bqLines.join("\n"), `bq-${key}`)}</blockquote>);
-        continue;
-      }
-
-      const ulMatch = line.match(/^(\s*)[-*•]\s+(.*)/);
-      if (ulMatch) {
-        const listItems: string[] = [];
-        while (i < lines.length && lines[i].match(/^\s*[-*•]\s+/)) {
-          listItems.push(lines[i].replace(/^\s*[-*•]\s+/, ""));
-          i++;
-        }
-        elements.push(
-          <ul key={key++}>
-            {listItems.map((item, j) => <li key={j}>{parseInline(item, `ul-${key}-${j}`)}</li>)}
-          </ul>
-        );
-        continue;
-      }
-
-      const olMatch = line.match(/^(\s*)\d+[.)]\s+(.*)/);
-      if (olMatch) {
-        const listItems: string[] = [];
-        while (i < lines.length && lines[i].match(/^\s*\d+[.)]\s+/)) {
-          listItems.push(lines[i].replace(/^\s*\d+[.)]\s+/, ""));
-          i++;
-        }
-        elements.push(
-          <ol key={key++}>
-            {listItems.map((item, j) => <li key={j}>{parseInline(item, `ol-${key}-${j}`)}</li>)}
-          </ol>
-        );
-        continue;
-      }
-
-      const paraLines: string[] = [line];
-      i++;
-      while (i < lines.length && lines[i].trim() !== "" && !lines[i].startsWith("#") && !lines[i].startsWith("|") && !lines[i].match(/^[-*•]\s+/) && !lines[i].match(/^\d+[.)]\s+/) && !lines[i].match(/^---/) && !lines[i].startsWith(">")) {
-        paraLines.push(lines[i]);
-        i++;
-      }
-      elements.push(<p key={key++}>{parseInline(paraLines.join("\n"), `p-${key}`)}</p>);
-    }
-  }
-
-  return <div className="chatbgp-markdown min-w-0 max-w-full whitespace-normal">{elements}</div>;
+  const tokens = useMemo(() => parseRichText(content), [content]);
+  return <div className="chatbgp-markdown min-w-0 max-w-full whitespace-normal">{renderTokens(tokens, "md")}</div>;
 }

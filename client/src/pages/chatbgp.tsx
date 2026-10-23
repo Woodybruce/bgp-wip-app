@@ -37,6 +37,7 @@ import {
 import { useLocation } from "wouter";
 import type { UnitMarketingFile } from "@shared/schema";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
+import { ChatResponse } from "@/components/chat-response";
 import { useChatBGPState, type LocalMessage } from "@/contexts/chatbgp-context";
 
 function formatFileSize(bytes: number | null) {
@@ -395,7 +396,9 @@ function isFailedChatResponse(message: Pick<LocalMessage, "role" | "content">): 
     || content.endsWith("\n\nThis response is incomplete. Some actions may already have run; check their results before retrying, especially a paid order.");
 }
 
-function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, completedActions, onRetry }: {
+function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, completedActions, onRetry, threadId, onDraftSaved }: {
+  threadId?: string | null;
+  onDraftSaved?: (content: string) => void;
   message: LocalMessage;
   isOwn?: boolean;
   onEdit?: (msgId: string, content: string) => void;
@@ -490,7 +493,7 @@ function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, comple
       <div className="flex-1 min-w-0">
         {textParts.length > 0 && (
           <div className={`text-sm leading-relaxed ${isErrorMessage ? "text-destructive/80" : "text-foreground"}`}>
-            <ChatBGPMarkdown content={textParts.join("\n")} />
+            <ChatResponse content={textParts.join("\n")} threadId={threadId} messageId={message.id} originalContent={message.content} onDraftSaved={onDraftSaved} actions={!isErrorMessage} />
           </div>
         )}
         {isErrorMessage && onRetry && (
@@ -4085,6 +4088,8 @@ export default function ChatBGP() {
                     <MessageBubble
                       key={msg.id || i}
                       message={msg}
+                      threadId={activeThreadId}
+                      onDraftSaved={content => setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content } : m))}
                       isOwn={msg.role === "user" && (!msg.userId || msg.userId === currentUser?.id)}
                       onEdit={handleEditMessage}
                       onDelete={handleDeleteMessage}

@@ -49,7 +49,8 @@ import { escapeLike } from "./utils/escape-like";
 import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { chatProvider, getKimiClient, mapModelForKimi, mapModelForOpenAI, sanitizeParamsForKimi } from "./utils/ai-provider";
 import { callOpenAI, callOpenAIStreaming } from "./utils/openai-client";
-import { trimChatHistory } from "./utils/chat-history";
+import { selectChatHistory, trimChatHistory, documentExcerpt, documentTruncationNotice } from "./utils/chat-history";
+import { resolveAccessibleChatThread } from "./utils/chat-thread-access";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schema";
 import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
@@ -1501,6 +1502,7 @@ Identifying the owner/parcel for a title or address is ALWAYS this free register
 - **Tone**: Confident, warm, professional, with a dry British wit when the moment suits it. British English. Like a senior property partner who actually enjoys their day.
 - **CRM actions**: Brief confirmation. No preamble.
 - **Research**: Match the question's depth. Headings/bullets/tables when genuinely useful; flowing prose when it reads better. Don't over-structure.
+- **Email drafts**: Put any explanation, caveats or commentary BEFORE the draft. Start the reusable draft with a plain \`Subject: ...\` line, followed by a blank line and the complete email body in Markdown. Everything after the Subject line belongs to the email: do not append assistant suggestions, commentary or a closing delimiter. Preserve requested tables as Markdown tables, with a blank line before and after each table; preserve headings, paragraphs and lists. Do not wrap the draft in a code fence or convert it to plain text to work around formatting. Deliver the complete draft rather than instructions for the user to reconstruct or reformat it. Drafting is not sending: only send when the user explicitly asks you to send.
 - **Checkbox suggestions**: Only when the user faces a genuine multi-option decision (e.g. picking between records, choosing an action). Never append them as ritual follow-up questions. If the answer is complete, just stop.
 - **Silent execution**: Don't narrate tool calls. Execute all, then give one clean answer.
 - **Proactive cross-referencing**: Connect dots from CRM context. Surface opportunities.
@@ -2241,7 +2243,8 @@ Strict rules:
 - **You can drive the app on their behalf, not just answer questions.** You have the same app tooling an agent has for their portfolio: update properties and units, maintain the tenancy/leasing schedule, log viewings and offers, create and update deals, requirements, comps, companies and contacts, run the Property Pathway, generate documents/decks/PDFs/Word/Excel, create and edit images and file them to a building, manage tasks and diary entries, run KYC/covenant checks and look up market data. If a request maps to a tool, DO IT rather than telling them to ask their BGP team.
 - Two things you genuinely cannot do: (a) anything in BGP's own systems — SharePoint/OneDrive filing, BGP mailboxes, BGP diaries; and (b) raw database, bulk/merge/delete or app-administration operations. For those, say plainly that it's a BGP-team action and offer to do the in-app equivalent (e.g. attach the document to the property/unit record instead of a SharePoint folder).
 - Never reveal or infer anything about another client, another landlord's portfolio, BGP's internal fees/WIP or the firm's pipeline. Every tool call you make must concern THIS client's own properties, units, deals and tenants. If a request would require reaching outside their portfolio, decline that part.
-- Be professional and concise. Use UK English and UK date/number formats.`;
+- Be professional and concise. Use UK English and UK date/number formats.
+- For an email draft, put any explanation or commentary BEFORE a plain Subject: line, followed by a blank line and the complete Markdown body. Everything after the Subject line belongs to the email: no trailing assistant suggestions, commentary or closing delimiter. Preserve requested tables, headings and lists; never suggest pasting plain text as a formatting repair. Drafting does not authorize sending.`;
 
 export async function getClientCrmContext(scopeCompanyId: string): Promise<string> {
   const cacheKey = `crmContext:client:${scopeCompanyId}`;
@@ -14132,6 +14135,19 @@ export async function handleCrmToolCall(
   return { handled: false };
 }
 
+async function getChatThreadAccess(req: Request, threadId: unknown) {
+  return resolveAccessibleChatThread(threadId, req.session?.userId || (req as any).tokenUserId, {
+    getThread: id => storage.getChatThread(id),
+    isMember: async (id, userId) => {
+      const result = await pool.query(
+        `SELECT 1 FROM chat_thread_members WHERE thread_id = $1 AND user_id = $2 LIMIT 1`,
+        [id, userId],
+      );
+      return !!result.rows[0];
+    },
+  });
+}
+
 export function setupChatBGPRoutes(app: Express) {
   if (!fs.existsSync(CHAT_UPLOADS_DIR)) {
     fs.mkdirSync(CHAT_UPLOADS_DIR, { recursive: true });
@@ -14184,13 +14200,16 @@ export function setupChatBGPRoutes(app: Express) {
         return res.status(400).json({ message: "Invalid messages format" });
       }
 
-      if (!messages.length) {
+      if (!Array.isArray(messages) || !messages.length) {
         return res.status(400).json({ message: "No messages provided" });
       }
 
-      // /opus or /sonnet at the start of the last user message — applies
-      // for this single request (no thread persistence here).
-      const fileThreadId = typeof req.body.threadId === "string" ? req.body.threadId : null;
+      // Verify the binding before a slash command can change a saved preference
+      // or the model router reads it. Shared members have the same chat access.
+      const fileAccess = await getChatThreadAccess(req, req.body.threadId);
+      if (!fileAccess.allowed) return res.status(403).json({ message: "Chat thread is not available to this account." });
+      const fileThreadId = fileAccess.threadId;
+      req.body.threadId = fileThreadId || undefined;
       let fileSlashOverride: ModelCommand | null = null;
       {
         const lastIdx = messages.length - 1;
@@ -14318,7 +14337,7 @@ export function setupChatBGPRoutes(app: Express) {
                 `=== FILE: ${file.originalname} ===\n` +
                 `chat-media filename: ${chatMediaName}\n` +
                 `(If the user asks to save this file to SharePoint, call upload_to_sharepoint with chatMediaFilename="${chatMediaName}" and the destinationFolderPath they specify.)\n\n` +
-                `--- Extracted text ---\n${text.slice(0, 15000)}`
+                `--- Extracted text ---\n${documentExcerpt(text, chatMediaName)}`
               );
             } catch (err: any) {
               console.error(`Chat file extract error (${file.originalname}):`, err?.message);
@@ -14376,14 +14395,15 @@ export function setupChatBGPRoutes(app: Express) {
       }
       // Lean context (see main chat handler) — keep only who you're talking to;
       // fetch knowledge / CRM / email on demand via tools rather than force-feeding.
-      const systemContent = systemPrompt + personalisation;
+      const fileHistory = selectChatHistory(messages);
+      const systemContent = systemPrompt + personalisation + (fileHistory.notice ? `\n\n${fileHistory.notice}` : "");
 
       const fileResolved = await resolveChatModel({ threadId: fileThreadId, override: fileSlashOverride });
       const completionOptions: any = {
         model: fileResolved.model,
         messages: [
           { role: "system", content: systemContent },
-          ...messages,
+          ...fileHistory.messages,
         ],
         max_completion_tokens: 8192,
       };
@@ -15522,6 +15542,11 @@ export function setupChatBGPRoutes(app: Express) {
       return res.status(400).json({ message: "Invalid request" });
     }
 
+    const threadAccess = await getChatThreadAccess(req, result.data.threadId);
+    if (!threadAccess.allowed) return res.status(403).json({ message: "Chat thread is not available to this account." });
+    const verifiedThreadId = threadAccess.threadId;
+    req.body.threadId = verifiedThreadId || undefined;
+
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
@@ -15561,33 +15586,6 @@ export function setupChatBGPRoutes(app: Express) {
       }
       safeSseWrite(`data: ${JSON.stringify({ delta: token })}\n\n`);
     };
-
-    const sseThreadId = result.data.threadId;
-
-    let verifiedThreadId: string | null = null;
-    if (sseThreadId) {
-      try {
-        const thread = await storage.getChatThread(sseThreadId);
-        if (thread && thread.createdBy === req.session.userId) {
-          verifiedThreadId = sseThreadId;
-        } else if (thread) {
-          // Shared thread: members chat in the same thread (that's what
-          // "add <name> to this chat" means), so their assistant replies
-          // must save too — creator-only would silently drop them.
-          const m = await pool.query(
-            `SELECT 1 FROM chat_thread_members WHERE thread_id = $1 AND user_id = $2 LIMIT 1`,
-            [sseThreadId, req.session.userId],
-          );
-          if (m.rows[0]) {
-            verifiedThreadId = sseThreadId;
-          } else {
-            console.warn(`[ChatBGP] threadId ${sseThreadId} not owned by or shared with user ${req.session.userId}`);
-          }
-        } else {
-          console.warn(`[ChatBGP] threadId ${sseThreadId} not found`);
-        }
-      } catch {}
-    }
 
     if (verifiedThreadId) {
       runRef.id = verifiedThreadId;
@@ -15858,7 +15856,8 @@ export function setupChatBGPRoutes(app: Express) {
       // every turn, bloating the window and diluting focus. The model now fetches
       // any of those on demand via tools (search_crm, search_knowledge_base, the
       // email/calendar tools) only when a request actually needs them.
-      const dynamicContext = currentUserContext + threadContext;
+      const history = selectChatHistory(result.data.messages);
+      const dynamicContext = currentUserContext + threadContext + (history.notice ? `\n\n${history.notice}` : "");
       const systemContent2 = systemPrompt2 + dynamicContext;
 
       // Build structured system prompt array for Anthropic prompt caching
@@ -15867,13 +15866,9 @@ export function setupChatBGPRoutes(app: Express) {
         { type: "text" as const, text: dynamicContext },
       ];
 
-      const MAX_AI_MESSAGES = 40; // was 80 — history is re-sent on every tool-loop call (cost, 2026-09-29)
-      const trimmedMessages = result.data.messages.length > MAX_AI_MESSAGES
-        ? result.data.messages.slice(-MAX_AI_MESSAGES)
-        : result.data.messages;
       const { readDocumentForAI } = await import("./document-reader");
       const DOC_LINK_IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic"];
-      const processedMessages = await Promise.all(trimmedMessages.map(async (msg: any) => {
+      const processedMessages = await Promise.all(history.messages.map(async (msg: any) => {
         if (msg.role !== "user" || typeof msg.content !== "string") return msg;
 
         // Resolve attached DOCUMENT links — [name](/api/chat-media/foo.xlsx) —
@@ -15896,7 +15891,7 @@ export function setupChatBGPRoutes(app: Express) {
               // The chat-media filename is what every file tool takes —
               // without it the model only knew the original name and
               // read_document came back "File not found" (2026-10-13).
-              docTexts.push(`=== FILE: ${label} ===\nchat-media filename: ${filename}\n${doc.text}${doc.textTruncated ? "\n\n[...truncated]" : ""}`);
+              docTexts.push(`=== FILE: ${label} ===\nchat-media filename: ${filename}\n${doc.text}${doc.textTruncated ? `\n\n${documentTruncationNotice(filename, doc.text.length)}` : ""}`);
             } else {
               docTexts.push(`=== FILE: ${label} ===\n(Could not read this file: ${doc.ok ? "no extractable text found" : doc.error})`);
             }
@@ -15951,12 +15946,15 @@ export function setupChatBGPRoutes(app: Express) {
         return { ...msg, content: contentParts };
       }));
 
+      // Extracted documents/images also count toward the conversation budget.
+      const documentHistory = selectChatHistory(processedMessages);
+      if (documentHistory.notice) systemArray.push({ type: "text", text: documentHistory.notice });
       const resolved = await resolveChatModel({ threadId: verifiedThreadId, override: slashOverride });
       const completionOptions: any = {
         model: resolved.model,
         messages: [
           { role: "system", content: systemContent2 },
-          ...processedMessages,
+          ...documentHistory.messages,
         ],
         max_completion_tokens: 16384,
         systemArray, // structured system prompt for prompt caching
@@ -15973,6 +15971,7 @@ export function setupChatBGPRoutes(app: Express) {
       conversationMessages = [...completionOptions.messages];
       let lastAction: any = null;
       let loopCount = 0;
+      let historyRecoveryNotice = "";
       // Soft cap to prevent a genuinely-stuck Claude looping forever
       // (e.g. tool keeps erroring, Claude keeps retrying it). Set
       // high enough that no legitimate multi-step task hits it —
@@ -16002,7 +16001,7 @@ export function setupChatBGPRoutes(app: Express) {
           model: resolved.model,
           messages: conversationMessages,
           max_completion_tokens: 16384,
-          systemArray, // prompt caching on every call
+          systemArray: historyRecoveryNotice ? [...systemArray, { type: "text", text: historyRecoveryNotice }] : systemArray,
           thinking: true, // extended thinking for quality
           effort: "medium", // interactive chat: trims Fable's default deep-think per turn (Woody, 2026-08-28: speed)
         };
@@ -16040,8 +16039,11 @@ export function setupChatBGPRoutes(app: Express) {
             const isContextErr = streamErr?.status === 400 && (errStr.includes("too long") || errStr.includes("context_length") || errStr.includes("prompt is too long"));
             if (isContextErr && conversationMessages.length > 4) {
               console.warn("[ChatBGP] Context too long mid-stream — trimming history and retrying");
-              conversationMessages = trimChatHistory(conversationMessages);
+              const recovery = trimChatHistory(conversationMessages);
+              conversationMessages = recovery.messages;
+              historyRecoveryNotice = recovery.notice;
               loopOpts.messages = conversationMessages;
+              loopOpts.systemArray = historyRecoveryNotice ? [...systemArray, { type: "text", text: historyRecoveryNotice }] : systemArray;
               completion = await callClaudeStreaming(loopOpts, (token) => { sendDelta(token); }, isCancelled);
             } else {
               throw streamErr;
@@ -16056,8 +16058,11 @@ export function setupChatBGPRoutes(app: Express) {
             const isContextErr = callErr?.status === 400 && (errStr.includes("too long") || errStr.includes("context_length") || errStr.includes("prompt is too long"));
             if (isContextErr && conversationMessages.length > 4) {
               console.warn("[ChatBGP] Context too long in tool loop — trimming history and retrying");
-              conversationMessages = trimChatHistory(conversationMessages);
+              const recovery = trimChatHistory(conversationMessages);
+              conversationMessages = recovery.messages;
+              historyRecoveryNotice = recovery.notice;
               loopOpts.messages = conversationMessages;
+              loopOpts.systemArray = historyRecoveryNotice ? [...systemArray, { type: "text", text: historyRecoveryNotice }] : systemArray;
               completion = await callClaude(loopOpts);
             } else {
               throw callErr;
@@ -16232,11 +16237,6 @@ export function setupChatBGPRoutes(app: Express) {
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ message: "messages array required" });
     }
-    if (messages.length > 40) {
-      // Don't hard-reject long sessions (Excel add-in model builds blow past 40).
-      // Keep the opening brief + the most recent turns so the chat keeps flowing.
-      messages = [messages[0], ...messages.slice(-39)];
-    }
     for (const m of messages) {
       if (!m || !["user", "assistant"].includes(m.role)) {
         return res.status(400).json({ message: "Each message must have role (user/assistant)" });
@@ -16257,7 +16257,10 @@ export function setupChatBGPRoutes(app: Express) {
     }
 
     // /opus or /sonnet slash-command interception (excel-chat).
-    const excelThreadId = typeof req.body.threadId === "string" ? req.body.threadId : null;
+    const excelAccess = await getChatThreadAccess(req, req.body.threadId);
+    if (!excelAccess.allowed) return res.status(403).json({ message: "Chat thread is not available to this account." });
+    const excelThreadId = excelAccess.threadId;
+    req.body.threadId = excelThreadId || undefined;
     let excelSlashOverride: ModelCommand | null = null;
     {
       const lastIdx = messages.length - 1;
@@ -16330,7 +16333,7 @@ export function setupChatBGPRoutes(app: Express) {
           } else {
             try {
               const text = await extractTextFromFile(file.path, file.originalname);
-              documentTexts.push(`=== FILE: ${file.originalname} ===\n${text.slice(0, 15000)}`);
+              documentTexts.push(`=== FILE: ${file.originalname} ===\nchat-media filename: ${chatMediaName}\n${documentExcerpt(text, chatMediaName)}`);
             } catch (err: any) {
               console.error(`[ChatBGP Excel] File extract error (${file.originalname}):`, err?.message);
             }
@@ -16439,6 +16442,8 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
             + (workbookName ? `\n**Open workbook:** ${workbookName}\n` : "")
             + (safeExcelContext ? `\n**Snapshot of the open workbook (may be stale mid-task — read ranges before relying on them):**\n${safeExcelContext}\n` : "");
       }
+      const excelHistory = selectChatHistory(messages);
+      if (excelHistory.notice) dynamicContext += `\n\n${excelHistory.notice}`;
       const systemContent = baseSystemPrompt + dynamicContext;
 
       // Load all the tools the main ChatBGP has
@@ -16472,7 +16477,7 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
       });
       let convMessages: any[] = [
         { role: "system", content: systemContent },
-        ...messages.slice(-20),
+        ...excelHistory.messages,
       ];
       let lastAction: any = null;
       let loopCount = 0;
@@ -16646,9 +16651,6 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ message: "messages array required" });
     }
-    if (messages.length > 40) {
-      messages = [messages[0], ...messages.slice(-39)];
-    }
     for (const m of messages) {
       if (!m || !["user", "assistant"].includes(m.role)) {
         return res.status(400).json({ message: "Each message must have role (user/assistant)" });
@@ -16663,7 +16665,10 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
     }
 
     // /opus or /sonnet slash-command interception (powerpoint-chat).
-    const pptThreadId = typeof req.body.threadId === "string" ? req.body.threadId : null;
+    const pptAccess = await getChatThreadAccess(req, req.body.threadId);
+    if (!pptAccess.allowed) return res.status(403).json({ message: "Chat thread is not available to this account." });
+    const pptThreadId = pptAccess.threadId;
+    req.body.threadId = pptThreadId || undefined;
     let pptSlashOverride: ModelCommand | null = null;
     {
       const lastIdx = messages.length - 1;
@@ -16733,7 +16738,7 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
           } else {
             try {
               const text = await extractTextFromFile(file.path, file.originalname);
-              documentTexts.push(`=== FILE: ${file.originalname} ===\n${text.slice(0, 15000)}`);
+              documentTexts.push(`=== FILE: ${file.originalname} ===\nchat-media filename: ${chatMediaName}\n${documentExcerpt(text, chatMediaName)}`);
             } catch (err: any) {
               console.error(`[ChatBGP PowerPoint] File extract error (${file.originalname}):`, err?.message);
             }
@@ -16791,7 +16796,8 @@ Don't invent other verbs (\`addSlide\`, \`setLayout\`, \`insertImage\`, \`setFon
 ${safePptContext ? `**Current slide / selection (read live from the open PowerPoint):**\n${safePptContext}\n` : "**Note:** No slide text was provided (the user may not have selected anything). Draft content freely; they'll click into a placeholder before inserting."}
 `;
 
-      const dynamicContext = pptSupplement;
+      const pptHistory = selectChatHistory(messages);
+      const dynamicContext = pptSupplement + (pptHistory.notice ? `\n\n${pptHistory.notice}` : "");
       const systemContent = baseSystemPrompt + dynamicContext;
 
       let { tools } = await getAvailableTools();
@@ -16802,7 +16808,7 @@ ${safePptContext ? `**Current slide / selection (read live from the open PowerPo
       const pptResolved = await resolveChatModel({ threadId: pptThreadId, override: pptSlashOverride });
       let convMessages: any[] = [
         { role: "system", content: systemContent },
-        ...messages.slice(-20),
+        ...pptHistory.messages,
       ];
       let lastAction: any = null;
       let loopCount = 0;
