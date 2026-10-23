@@ -1971,10 +1971,10 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
         return attemptChat(1);
       }
     },
-    onSuccess: async (data: { reply: string; action?: ChatAction; threadId: string; savedToThread?: boolean }) => {
+    onSuccess: async (data: { reply: string; action?: ChatAction; threadId: string; savedToThread?: boolean; messageId?: string }) => {
       setPanelProgressLabel("");
       setStreamingText("");
-      const msg: LocalChatMessage = { role: "assistant", content: data.reply };
+      const msg: LocalChatMessage = { id: data.messageId, role: "assistant", content: data.reply };
       if (data.action) {
         msg.action = data.action;
         switch (data.action.type) {
@@ -2011,12 +2011,13 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
       setMessages((prev) => [...prev, msg]);
 
       if (!data.savedToThread) {
-        await saveMessageMutation.mutateAsync({
+        const saved = await saveMessageMutation.mutateAsync({
           threadId: data.threadId,
           role: "assistant",
           content: data.reply,
           actionData: data.action ? JSON.stringify(data.action) : undefined,
         });
+        setMessages(prev => prev.map(message => message === msg ? { ...message, id: saved.id } : message));
       }
 
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", data.threadId] });

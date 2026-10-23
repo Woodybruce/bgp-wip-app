@@ -15610,6 +15610,7 @@ export function setupChatBGPRoutes(app: Express) {
       clearInterval(heartbeat);
       if (verifiedThreadId) activeChatRuns.delete(verifiedThreadId);
       let saved = false;
+      let messageId: string | undefined;
       if (verifiedThreadId && data.reply && !data.error) {
         try {
           // Never save the same assistant reply twice in a row — a stale
@@ -15629,12 +15630,13 @@ export function setupChatBGPRoutes(app: Express) {
               return;
             }
           } catch {}
-          await storage.createChatMessage({
+          const savedMessage = await storage.createChatMessage({
             threadId: verifiedThreadId,
             role: "assistant",
             content: data.reply,
             actionData: data.action ? JSON.stringify(data.action) : undefined,
           });
+          messageId = savedMessage.id;
           saved = true;
           console.log(`[ChatBGP] Saved assistant reply to thread ${verifiedThreadId} (${data.reply.length} chars)`);
           if (clientDisconnected) {
@@ -15653,7 +15655,7 @@ export function setupChatBGPRoutes(app: Express) {
           console.error(`[ChatBGP] Failed to save reply to thread:`, saveErr?.message);
         }
       }
-      if (!safeSseWrite(`data: ${JSON.stringify({ ...data, savedToThread: saved })}\n\n`)) return data.reply;
+      if (!safeSseWrite(`data: ${JSON.stringify({ ...data, savedToThread: saved, messageId })}\n\n`)) return data.reply;
       try { res.end(); } catch {}
       return data.reply;
     };

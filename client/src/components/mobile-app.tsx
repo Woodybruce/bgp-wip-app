@@ -1840,7 +1840,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                   const msgs = thread.messages || [];
                   const lastMsg = msgs[msgs.length - 1];
                   if (lastMsg?.role === "assistant" && lastMsg.content) {
-                    return { reply: lastMsg.content, threadId: currentThreadId, savedToThread: true };
+                    return { reply: lastMsg.content, threadId: currentThreadId, savedToThread: true, messageId: lastMsg.id };
                   }
                 }
               }
@@ -1873,18 +1873,19 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
         return attemptChat(1);
       }
     },
-    onSuccess: async (data: { reply: string; action?: ChatAction; threadId: string; savedToThread?: boolean }) => {
+    onSuccess: async (data: { reply: string; action?: ChatAction; threadId: string; savedToThread?: boolean; messageId?: string }) => {
       // Stale send (user started a new chat while this was in flight):
       // still persist the reply to its own thread, but keep it out of the
       // fresh conversation's UI.
       const stale = inFlightEpochRef.current !== chatEpochRef.current;
+      const replyMessage: LocalChatMessage = { id: data.messageId, role: "assistant", content: data.reply };
+      if (data.action) replyMessage.action = data.action;
       if (!stale) {
-        const msg: LocalChatMessage = { role: "assistant", content: data.reply };
-        if (data.action) msg.action = data.action;
-        setMessages(prev => [...prev, msg]);
+        setMessages(prev => [...prev, replyMessage]);
       }
       if (!data.savedToThread) {
-        await saveMessageMutation.mutateAsync({ threadId: data.threadId, role: "assistant", content: data.reply, actionData: data.action ? JSON.stringify(data.action) : undefined });
+        const saved = await saveMessageMutation.mutateAsync({ threadId: data.threadId, role: "assistant", content: data.reply, actionData: data.action ? JSON.stringify(data.action) : undefined });
+        if (!stale) setMessages(prev => prev.map(message => message === replyMessage ? { ...message, id: saved.id } : message));
       }
       if (!stale && !threadIdProp && data.threadId) {
         setLocalThreadId(data.threadId);

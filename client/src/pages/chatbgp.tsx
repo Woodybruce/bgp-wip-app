@@ -2460,10 +2460,11 @@ export default function ChatBGP() {
       };
       return attemptSend(1);
     },
-    onSuccess: async (data: { reply: string; action?: any; savedToThread?: boolean }) => {
+    onSuccess: async (data: { reply: string; action?: any; savedToThread?: boolean; messageId?: string }) => {
       setProgressLabel("");
       setStreamingContent("");
-      setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
+      const replyMessage: LocalMessage = { id: data.messageId, role: "assistant", content: data.reply };
+      setMessages((prev) => [...prev, replyMessage]);
       const threadId = activeThreadIdRef.current;
       if (threadId) {
         // Server already wrote the assistant reply via sendResult ->
@@ -2472,7 +2473,8 @@ export default function ChatBGP() {
         // the thread twice and shows up duplicated whenever the thread
         // gets reloaded (or any consumer refetches /chat/threads/:id).
         if (!data.savedToThread) {
-          await saveMessageMutation.mutateAsync({ threadId, role: "assistant", content: data.reply });
+          const saved = await saveMessageMutation.mutateAsync({ threadId, role: "assistant", content: data.reply });
+          setMessages(prev => prev.map(message => message === replyMessage ? { ...message, id: saved.id } : message));
         }
         apiRequest("POST", `/api/chat/threads/${threadId}/auto-title`, {})
           .then(() => queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] }))
