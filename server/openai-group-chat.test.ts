@@ -15,10 +15,10 @@ const harness = ts.transpileModule(`
   return async function run(deps: any) {
     const completionOptions = { messages: [{role: "user", content: "Please help"}] };
     const groupTools = deps.allowed.map((name: string) => ({function:{name}}));
-    const chatbgp = {handleCrmToolCall: deps.handle};
-    const callClaude = deps.respond;
+    const chatbgp = {handleCrmToolCall: deps.handle, executeCrmToolRaw: deps.raw};
+    const callGroupModel = () => deps.respond(completionOptions);
+    const groupDeadline = deps.deadline ?? Date.now() + 60000;
     const req = deps.req || {};
-    const withTimeout = async (promise: any) => promise;
     const console = {error() {}};
     let currentMessage = deps.message;
     let claudeResponse: any;

@@ -10,8 +10,11 @@ import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import multer from "multer";
-import { parseSlashCommand, setThreadModel, resolveChatModel, ackMessage, type ModelCommand } from "./chatbgp-model-router";
-import { APP_MAP } from "./chatbgp-app-map";
+import { parseSlashCommand, setThreadModel, resolveChatModel, ackMessage, selectChatModel, type ModelCommand } from "./chatbgp-model-router";
+import { searchAppGuide } from "./chat-app-guide";
+import { chatQualitySettings } from "./chat-quality-settings";
+import { buildChatToolResultContent } from "./chat-tool-result";
+import { getRelevantStaffMemoryContext } from "./utils/chat-memory-context";
 import mammoth from "mammoth";
 import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
 import { listAllChildren } from "./microsoft-graph-pagination";
@@ -917,7 +920,7 @@ function convertMessagesForClaude(messages: any[]): { system: string; messages: 
       system += (system ? "\n\n" : "") + (typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content));
     } else if (msg.role === "tool") {
       const last = claudeMessages[claudeMessages.length - 1];
-      const toolResultContent = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
+      const toolResultContent = typeof msg.content === "string" || Array.isArray(msg.content) ? msg.content : JSON.stringify(msg.content);
       const toolResult = { type: "tool_result" as const, tool_use_id: msg.tool_call_id, content: toolResultContent || "No output" };
       if (last && last.role === "user" && Array.isArray(last.content) && last.content.some((c: any) => c.type === "tool_result")) {
         last.content.push(toolResult);
@@ -1035,6 +1038,7 @@ function convertMessagesForClaude(messages: any[]): { system: string; messages: 
 }
 
 export async function callClaude(params: any): Promise<any> {
+  if (params.signal?.aborted) throw Object.assign(new Error("AI request aborted"), { name: "AbortError" });
   if (chatProvider() === "openai") {
     return callOpenAI({ ...params, model: mapModelForOpenAI(params.model || CHATBGP_MODEL), feature: params.feature || callerFeature() });
   }
@@ -1092,8 +1096,8 @@ export async function callClaude(params: any): Promise<any> {
       const client = useKimi ? anthropic : (attempt === 0 ? anthropic : getAnthropicClient(false));
       if (attempt > 0 && !useKimi && !downgraded) claudeParams.model = model;
       response = (!useKimi && usesBetaEndpoint(claudeParams.model))
-        ? await client.beta.messages.create(claudeParams)
-        : await client.messages.create(claudeParams);
+        ? await client.beta.messages.create(claudeParams, { signal: params.signal })
+        : await client.messages.create(claudeParams, { signal: params.signal });
       // Spend metering — exact token usage from the response, priced
       // server-side. Fire-and-forget; never blocks the call.
       try {
@@ -1103,6 +1107,7 @@ export async function callClaude(params: any): Promise<any> {
       break;
     } catch (err: any) {
       lastErr = err;
+      if (params.signal?.aborted) throw err;
       const errStatus = err?.status;
       const errMsg = JSON.stringify(err?.error || err?.body || "").slice(0, 500);
 
@@ -1415,7 +1420,7 @@ You are an active operational agent with full CRM read/write access, internet se
 - **File uploads / reads:** never tell the user a file "didn't save", "isn't persisting", "the upload didn't go through", or blame infrastructure (a DDoS, the hosting provider, storage being down) for a file problem — you cannot observe upload or storage health. If \`read_document\` or any file tool returns an error or "file not found", report exactly that and ask the user to re-attach the file. If you successfully read a file's text, the file IS stored — never claim otherwise.
 - **CRM writes are only real when a tool confirms them.** Never present a "filed / created / linked / ✅ done" summary for a property, company, deal, contact, or tracker entry unless the matching create_*/update_* tool was invoked in THIS turn and returned success. Do NOT infer records exist because you have the source text in context, and do NOT repeat earlier "done" claims you can't verify. If you haven't run the tools yet, say what you're *about* to do — don't report it as already done.
 - When you're unsure whether an action landed, call the relevant search/read tool to verify before reporting — never paper over uncertainty with a confident summary.
-- **In-app directions**: when telling a user where to find something in the dashboard or phone app, use ONLY the paths and controls in "The App — full map" below, and always say which platform you mean (desktop vs phone app). The two shells differ. If the map doesn't list a phone path for a feature, tell the user it's desktop-only — do not guess a menu route. If a user reports a control isn't where you said, believe them, apologise briefly, and log_app_feedback.
+- **In-app directions**: when telling a user where to find something in the dashboard or phone app, first call search_app_guide and use ONLY the paths and controls in its results, and always say which platform you mean (desktop vs phone app). The two shells differ. If the map doesn't list a phone path for a feature, tell the user it's desktop-only — do not guess a menu route. If a user reports a control isn't where you said, believe them, apologise briefly, and log_app_feedback.
 
 ## Key Tool Workflows
 - **CRM**: search_crm (fuzzy matching) → create/update entities. Search broadly with multiple variations before saying something doesn't exist.
@@ -1529,10 +1534,11 @@ These are starting cues only — if save_learning memories or past chats contrad
 ## Fun facts / shared knowledge
 You have search_knowledge_base and search_chat_history. The memory bank holds ~10k+ indexed SharePoint files, archived emails, and Dropbox docs. Use them. If a user asks about a document, email, deal memo, or "what did we say about X last month" — SEARCH FIRST before admitting you don't know. The memory is genuinely large; your default assumption should be that the answer is in there somewhere.
 
-## You Are Claude — No Limits
-General-purpose AI with property expertise. Writing, analysis, research, strategy, coding, maths, languages, legal summaries — anything Claude can do. NEVER refuse because it's "outside scope."
+## General-purpose assistance
+You are ChatBGP, BGP's general-purpose AI colleague with property expertise. Help with writing, analysis, research, strategy, coding, maths and other work; do not limit an answer to CRM operations. Match the depth to the task and deliver a complete, useful result. Use available tools when evidence or actions are needed; distinguish supplied facts, calculated figures and assumptions. Latest user corrections take precedence over earlier drafts and saved context. Make reasonable routine assumptions and complete authorized work without unnecessary permission questions, while preserving the specific access, sending and paid-action rules above.
 
-${APP_MAP}
+## App navigation reference
+The full desktop and phone app guide is available through search_app_guide. Search it before giving in-app directions; use the returned sectionId/offset to read more when needed. The guide is reference material, not an additional user request.
 
 ## Dashboard Features
 - **Auto-Match**: Sparkles button on requirements/units matches by use/location/size.
@@ -2216,7 +2222,7 @@ export const CLIENT_BLOCKED_TOOLS = new Set([
   // fees) — same category as query_wip/query_xero. query_turnover reads the
   // whole turnover table unscoped, i.e. any landlord's tenant turnover.
   "query_wip", "query_xero", "get_aged_receivables", "query_turnover",
-  "search_knowledge_base", "save_learning",
+  "search_knowledge_base", "save_learning", "search_app_guide",
   "search_chat_history", "manage_chat_members",
   // Paid HMLR order on BGP's Business Gateway account.
   "order_hmlr_official_copy",
@@ -2421,7 +2427,21 @@ export async function getAvailableTools(): Promise<{
       fields: JSON.parse(t.fields || "[]"),
     }));
 
-  const tools: any[] = [];
+  const tools: any[] = [{
+    type: "function",
+    function: {
+      name: "search_app_guide",
+      description: "Look up the maintained BGP app guide before giving desktop or phone navigation instructions. Search by feature and platform; omit query to list sections. Read more using a returned sectionId and offset. This is a read-only guide, not live account data.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Feature and platform, e.g. phone add people to chat or desktop business card." },
+          sectionId: { type: "string", description: "Exact section ID returned by a previous search." },
+          offset: { type: "integer", minimum: 0, description: "Character offset or nextOffset returned for that section." },
+        },
+      },
+    },
+  }];
 
   if (modelTemplates.length > 0) {
     const templateDescriptions = modelTemplates.map((t) => {
@@ -6639,6 +6659,12 @@ export async function executeCrmToolRaw(
   fnArgs: any,
   req: Request
 ): Promise<{ data: any; action?: any }> {
+  if (fnName === "search_app_guide") {
+    // This maintained guide includes internal HR/finance/admin navigation.
+    // Raw callers must enforce the same boundary as the advertised tool list.
+    if ((await clientChatGuard(req)).isClient) return { data: { error: "The staff app guide is not available on client accounts." } };
+    return { data: searchAppGuide(fnArgs) };
+  }
   const { db } = await import("./db");
   const { pool } = await import("./db");
 
@@ -14160,7 +14186,9 @@ export function setupChatBGPRoutes(app: Express) {
 
   app.get("/api/chatbgp/status", requireAuth, (_req: Request, res: Response) => {
     const provider = chatProvider();
-    res.json({ connected: hasChatKeyConfigured(), provider });
+    const selected = selectChatModel();
+    res.json({ connected: hasChatKeyConfigured(), provider, defaultModel: selected.model,
+      reasoningEffort: chatQualitySettings(selected.model).effort });
   });
 
   app.post("/api/chatbgp/chat-with-files", requireAuth, chatUpload.array("files", 30), async (req: Request, res: Response) => {
@@ -14171,6 +14199,8 @@ export function setupChatBGPRoutes(app: Express) {
     let fcStarted = false;
     let fcClosed = false;
     let fcHeartbeat: ReturnType<typeof setInterval> | null = null;
+    const fcController = new AbortController();
+    let fcDeadlineTimer: ReturnType<typeof setTimeout> | null = null;
     let fcBufferHmlr = false;
     const fcHmlrReceipts: HmlrDeliveryReceipt[] = [];
     const fcProgress = (s: string) => { try { if (fcStarted && !fcClosed) res.write(`data: ${JSON.stringify({ progress: s })}\n\n`); } catch {} };
@@ -14236,7 +14266,9 @@ export function setupChatBGPRoutes(app: Express) {
       });
       fcStarted = true;
       fcHeartbeat = setInterval(() => { try { res.write(": heartbeat\n\n"); } catch {} }, 5000);
-      req.on("close", () => { fcClosed = true; if (fcHeartbeat) clearInterval(fcHeartbeat); });
+      // Stop/abort closes the response stream. Cancel the in-flight provider
+      // request and prevent any later tool round from running without a reader.
+      res.on("close", () => { fcClosed = true; fcController.abort(); if (fcHeartbeat) clearInterval(fcHeartbeat); });
       if (files && files.length > 0) fcProgress(`Reading ${files.length} file${files.length === 1 ? "" : "s"}...`);
 
       const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic"];
@@ -14378,10 +14410,9 @@ export function setupChatBGPRoutes(app: Express) {
       }
 
       const fileUserId = req.session.userId || (req as any).tokenUserId || "unknown";
-      // Lean mode: only the cheap personalisation line is still injected; the
-      // knowledge bank / memory / email+calendar / CRM dumps are fetched on
-      // demand via tools, so we skip building them here.
       const personalisation = await withTimeout(getUserPersonalisationContext(fileUserId), 2000, "");
+      const fileMemory = fileIsClient ? "" : await withTimeout(
+        getRelevantStaffMemoryContext(req, messages, { threadId: fileThreadId, scopeCompanyId: fileScopeCompanyId }), 2000, "");
       let systemPrompt: string;
       if (fileIsClient) {
         systemPrompt = CLIENT_SYSTEM_PROMPT
@@ -14396,7 +14427,7 @@ export function setupChatBGPRoutes(app: Express) {
       // Lean context (see main chat handler) — keep only who you're talking to;
       // fetch knowledge / CRM / email on demand via tools rather than force-feeding.
       const fileHistory = selectChatHistory(messages);
-      const systemContent = systemPrompt + personalisation + (fileHistory.notice ? `\n\n${fileHistory.notice}` : "");
+      const systemContent = systemPrompt + personalisation + fileMemory + (fileHistory.notice ? `\n\n${fileHistory.notice}` : "");
 
       const fileResolved = await resolveChatModel({ threadId: fileThreadId, override: fileSlashOverride });
       const completionOptions: any = {
@@ -14405,7 +14436,7 @@ export function setupChatBGPRoutes(app: Express) {
           { role: "system", content: systemContent },
           ...fileHistory.messages,
         ],
-        max_completion_tokens: 8192,
+        ...chatQualitySettings(fileResolved.model),
       };
 
       if (tools.length > 0) {
@@ -14421,11 +14452,12 @@ export function setupChatBGPRoutes(app: Express) {
       let convMessages: any[] = [...completionOptions.messages];
       let lastActionFile: any = null;
       let loopCountFile = 0;
-      const maxLoopsFile = 15;
-      const fileDeadline = Date.now() + 240000;
+      const maxLoopsFile = 100;
+      const fileDeadline = Date.now() + 10 * 60 * 1000;
+      fcDeadlineTimer = setTimeout(() => fcController.abort(), Math.max(1, fileDeadline - Date.now()));
 
       while (loopCountFile < maxLoopsFile) {
-        if (Date.now() > fileDeadline) {
+        if (fcClosed || fcController.signal.aborted || Date.now() > fileDeadline) {
           console.log(`[ChatBGP] File-chat deadline reached after ${loopCountFile} loops`);
           break;
         }
@@ -14435,9 +14467,9 @@ export function setupChatBGPRoutes(app: Express) {
         const loopOpts: any = {
           model: fileResolved.model,
           messages: convMessages,
-          max_completion_tokens: 8192,
+          ...chatQualitySettings(fileResolved.model),
           thinking: true,
-          effort: "medium", // interactive chat: trims Fable's default deep-think per turn (Woody, 2026-08-28: speed)
+          signal: fcController.signal,
         };
         if (!isLastLoop) {
           loopOpts.tools = tools;
@@ -14451,14 +14483,16 @@ export function setupChatBGPRoutes(app: Express) {
         try {
           if (useStreamingFile) {
             fcProgress("Composing response...");
-            completion = await callClaudeStreaming(loopOpts, (token) => fcDelta(token));
+            completion = await callClaudeStreaming(loopOpts, (token) => fcDelta(token),
+              () => fcClosed || fcController.signal.aborted);
           } else {
             completion = await callClaude(loopOpts);
           }
         } catch (thinkErr: any) {
+          if (fcClosed || fcController.signal.aborted) throw thinkErr;
           // If thinking mode is rejected (e.g. proxy doesn't support it), retry plain
           const isModelErr = thinkErr?.status === 400 || thinkErr?.status === 422;
-          if (isModelErr && loopCountFile === 1) {
+          if (chatProvider() !== "openai" && isModelErr && loopCountFile === 1) {
             console.warn("[ChatBGP file-chat] thinking mode failed, retrying plain:", thinkErr?.message);
             const plainOpts = { ...loopOpts, thinking: false };
             completion = await callClaude(plainOpts);
@@ -14466,6 +14500,7 @@ export function setupChatBGPRoutes(app: Express) {
             throw thinkErr;
           }
         }
+        if (fcClosed || fcController.signal.aborted) break;
         const message = completion.choices[0]?.message;
         if (!message) break;
 
@@ -14478,8 +14513,8 @@ export function setupChatBGPRoutes(app: Express) {
           fcProgress(fcToolNames.length === 1 ? getToolProgressLabel(fcToolNames[0]) : `Running ${fcToolNames.length} operations...`);
 
           for (const tc of message.tool_calls as unknown as ToolCall[]) {
-            if (Date.now() > fileDeadline) {
-              convMessages.push({ role: "tool" as const, tool_call_id: tc.id, content: JSON.stringify({ error: "Ran out of time" }) });
+            if (fcClosed || fcController.signal.aborted || Date.now() > fileDeadline) {
+              convMessages.push({ role: "tool" as const, tool_call_id: tc.id, content: JSON.stringify({ error: fcClosed ? "Stopped by user or connection closed" : "Ran out of time" }) });
               continue;
             }
             const tcName = tc.function.name;
@@ -14491,11 +14526,10 @@ export function setupChatBGPRoutes(app: Express) {
               const toolResult = await executeAnyTool(tcName, tcArgs, req, msTokenFile);
               if (tcName === "order_hmlr_official_copy" && toolResult.data && typeof toolResult.data === "object") fcHmlrReceipts.push(toolResult.data);
               if (toolResult.action) lastActionFile = toolResult.action;
-              const resultStr = typeof toolResult.data === "string" ? toolResult.data : JSON.stringify(toolResult.data);
               convMessages.push({
                 role: "tool" as const,
                 tool_call_id: tc.id,
-                content: resultStr.length > 80000 ? resultStr.slice(0, 80000) + "\n...[truncated — full result was " + resultStr.length + " chars]" : resultStr,
+                content: await buildChatToolResultContent(tcName, toolResult.data),
               });
             } catch (toolErr: any) {
               console.error(`[ChatBGP] Tool ${tcName} error:`, toolErr?.message);
@@ -14518,6 +14552,10 @@ export function setupChatBGPRoutes(app: Express) {
 
       fcSend({ reply: incompleteChatReply("The file-chat run ended before a final answer was completed."), partial: true, ...(lastActionFile ? { action: lastActionFile } : {}) });
     } catch (err: any) {
+      if (fcClosed) return;
+      if (fcController.signal.aborted) {
+        return fcSend({ reply: incompleteChatReply("The file-chat run reached its time limit before a final answer was completed."), partial: true });
+      }
       console.error("ChatBGP file chat error:", err?.status, err?.message || err, err?.error || "");
       const errMsg = String(err?.message || err || "");
       if (errMsg.includes("Could not process image")) {
@@ -14531,6 +14569,7 @@ export function setupChatBGPRoutes(app: Express) {
           });
           const retryOpts: any = {
             model: CHATBGP_HELPER_MODEL,
+            signal: fcController.signal,
             messages: [{ role: "system", content: "You are ChatBGP. The user tried to send an image but it could not be processed. Acknowledge this and help with their text message." }, ...textOnlyMessages],
             max_completion_tokens: 1024,
           };
@@ -14552,6 +14591,9 @@ export function setupChatBGPRoutes(app: Express) {
         files: fileSummary,
       });
     } finally {
+      if (fcDeadlineTimer) clearTimeout(fcDeadlineTimer);
+      if (fcHeartbeat) clearInterval(fcHeartbeat);
+      fcController.abort();
       if (files) {
         for (const file of files) {
           try { fs.unlinkSync(file.path); } catch {}
@@ -15744,12 +15786,9 @@ export function setupChatBGPRoutes(app: Express) {
         tools = sseScopeCompanyId ? filterToolsForClientScope(tools) : [];
       }
       const userId = req.session.userId!;
-      // Lean mode: the firm-wide context builders (memory, learnings, CRM
-      // summary, knowledge bank, and a live email/calendar Graph fetch) used to
-      // run on every turn and get force-fed into the prompt. They're no longer
-      // injected — the model pulls any of that on demand via tools — so we skip
-      // building them entirely. Just the current thread's property/deal context
-      // and the cheap "current user" line (below) remain.
+      // Build only this user's and thread's context. A bounded, scope-checked
+      // selection of relevant saved notes is added below; broader CRM,
+      // knowledge and email data remain available through their existing tools.
       let threadContext = "";
       let currentUserContext = "";
       if (isInternalStaffCall) {
@@ -15852,14 +15891,12 @@ export function setupChatBGPRoutes(app: Express) {
         }
       }
       // Split system prompt: static (cacheable) vs dynamic (per-request)
-      // Lean context: only the cheap, targeted bits — who you're talking to and
-      // the current thread's property/deal. The firm-wide dumps (knowledge,
-      // learnings, memory, email/calendar, CRM summary) used to be force-fed on
-      // every turn, bloating the window and diluting focus. The model now fetches
-      // any of those on demand via tools (search_crm, search_knowledge_base, the
-      // email/calendar tools) only when a request actually needs them.
+      // Targeted current-user/thread context plus relevant saved notes. Do not
+      // inject firm-wide CRM/email dumps or personal facts into shared audiences.
       const history = selectChatHistory(result.data.messages);
-      const dynamicContext = currentUserContext + threadContext + (history.notice ? `\n\n${history.notice}` : "");
+      const relevantMemory = chatGuard.isClient || isInternalStaffCall ? "" : await withTimeout(
+        getRelevantStaffMemoryContext(req, result.data.messages, { threadId: verifiedThreadId, scopeCompanyId: sseScopeCompanyId }), 2000, "");
+      const dynamicContext = currentUserContext + threadContext + relevantMemory + (history.notice ? `\n\n${history.notice}` : "");
       const systemContent2 = systemPrompt2 + dynamicContext;
 
       // Build structured system prompt array for Anthropic prompt caching
@@ -15958,7 +15995,7 @@ export function setupChatBGPRoutes(app: Express) {
           { role: "system", content: systemContent2 },
           ...documentHistory.messages,
         ],
-        max_completion_tokens: 16384,
+        ...chatQualitySettings(resolved.model),
         systemArray, // structured system prompt for prompt caching
       };
 
@@ -16002,10 +16039,9 @@ export function setupChatBGPRoutes(app: Express) {
         const loopOpts: any = {
           model: resolved.model,
           messages: conversationMessages,
-          max_completion_tokens: 16384,
+          ...chatQualitySettings(resolved.model),
           systemArray: historyRecoveryNotice ? [...systemArray, { type: "text", text: historyRecoveryNotice }] : systemArray,
-          thinking: true, // extended thinking for quality
-          effort: "medium", // interactive chat: trims Fable's default deep-think per turn (Woody, 2026-08-28: speed)
+          thinking: true, // preserve reasoning between tools through the provider adapter
         };
         if (!isLastLoop) {
           loopOpts.tools = tools;
@@ -16115,11 +16151,10 @@ export function setupChatBGPRoutes(app: Express) {
               );
               if (tcName === "order_hmlr_official_copy" && toolResult.data && typeof toolResult.data === "object") hmlrReceipts.push(toolResult.data);
               if (toolResult.action) lastAction = toolResult.action;
-              const resultStr = typeof toolResult.data === "string" ? toolResult.data : JSON.stringify(toolResult.data);
               conversationMessages.push({
                 role: "tool" as const,
                 tool_call_id: tc.id,
-                content: resultStr.length > 80000 ? resultStr.slice(0, 80000) + "\n...[truncated — full result was " + resultStr.length + " chars]" : resultStr,
+                content: await buildChatToolResultContent(tcName, toolResult.data),
               });
             } catch (toolErr: any) {
               console.error(`[ChatBGP] Tool ${tcName} error:`, toolErr?.message);
@@ -16469,13 +16504,11 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
       let msToken: string | null = null;
       try { msToken = await getValidMsToken(req); } catch {}
 
-      // Run the agentic loop — same pattern as /api/chatbgp/chat-with-files
-      // The Excel pane runs on Fable 5 — the same model as Claude's own Excel
-      // add-in (Woody, 2026-10-02). Elsewhere Opus 5.5 stays the default for
-      // cost; /opus or /sonnet in the pane still switches for that message.
+      // OpenAI honours the thread's saved model on every turn. Keep the older
+      // Excel Fable default only for the legacy providers that originally used it.
       const excelResolved = await resolveChatModel({
         threadId: excelThreadId,
-        override: excelSlashOverride || (host === "excel" ? "fable" : null),
+        override: excelSlashOverride || (chatProvider() !== "openai" && host === "excel" ? "fable" : null),
       });
       let convMessages: any[] = [
         { role: "system", content: systemContent },
@@ -16505,7 +16538,7 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
               { type: "text" as const, text: dynamicContext },
             ],
             thinking: true,
-            effort: "medium",
+            ...chatQualitySettings(excelResolved.model),
           } : {}),
         };
         if (!isLastLoop && tools.length > 0) {
@@ -16564,11 +16597,10 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
                 { data: { error: "Tool didn't return within 10 minutes — looks hung. The chat has a hard 10-min cap as a safety net." } }
               );
               if (toolResult.action) lastAction = toolResult.action;
-              const resultStr = typeof toolResult.data === "string" ? toolResult.data : JSON.stringify(toolResult.data);
               convMessages.push({
                 role: "tool" as const,
                 tool_call_id: tc.id,
-                content: resultStr.length > 80000 ? resultStr.slice(0, 80000) + "\n...[truncated — full result was " + resultStr.length + " chars]" : resultStr,
+                content: await buildChatToolResultContent(tcName, toolResult.data),
               });
             } catch (toolErr: any) {
               console.error(`[ChatBGP Excel] Tool ${tcName} error:`, toolErr?.message);
@@ -16827,7 +16859,8 @@ ${safePptContext ? `**Current slide / selection (read live from the open PowerPo
         const loopOpts: any = {
           model: pptResolved.model,
           messages: convMessages,
-          max_completion_tokens: 4096,
+          thinking: true,
+          ...chatQualitySettings(pptResolved.model),
         };
         if (!isLastLoop && tools.length > 0) {
           loopOpts.tools = tools;
@@ -16860,11 +16893,10 @@ ${safePptContext ? `**Current slide / selection (read live from the open PowerPo
                 { data: { error: "Tool didn't return within 10 minutes — looks hung. The chat has a hard 10-min cap as a safety net." } }
               );
               if (toolResult.action) lastAction = toolResult.action;
-              const resultStr = typeof toolResult.data === "string" ? toolResult.data : JSON.stringify(toolResult.data);
               convMessages.push({
                 role: "tool" as const,
                 tool_call_id: tc.id,
-                content: resultStr.length > 80000 ? resultStr.slice(0, 80000) + "\n...[truncated — full result was " + resultStr.length + " chars]" : resultStr,
+                content: await buildChatToolResultContent(tcName, toolResult.data),
               });
             } catch (toolErr: any) {
               console.error(`[ChatBGP PowerPoint] Tool ${tcName} error:`, toolErr?.message);

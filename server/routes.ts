@@ -125,6 +125,7 @@ const chatMediaUpload = multer({
 });
 
 const GROUP_CHAT_TOOLS = [
+  "search_app_guide",
   "search_crm", "search_news", "query_wip", "create_deal", "update_deal",
   "create_contact", "update_contact", "create_company", "update_company",
   "create_property", "create_available_unit", "update_available_unit",
@@ -281,7 +282,7 @@ async function buildTaggedEntityContext(messages: Array<{ content: string }>, sc
 
 async function triggerAiGroupResponse(threadId: string, senderUserId: string, req: Request) {
   const startTime = Date.now();
-  const TIMEOUT_MS = 60000;
+  const groupDeadline = startTime + 10 * 60 * 1000;
 
   const io = getIO();
   if (io) {
@@ -306,6 +307,7 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
 
   try {
     const chatbgp = await import("./chatbgp");
+    const { withAiRequestDeadline } = await import("./utils/ai-request-deadline");
     const { callClaude } = chatbgp;
 
     const [systemPrompt, learnings, allTools, calendarContext] = await Promise.all([
@@ -358,11 +360,10 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
         ? `9. The user mentioned you by name — you MUST respond. Do NOT skip.`
         : `9. Only respond with exactly __SKIP__ if the conversation is clearly a private side-conversation between team members that has nothing to do with work, property, or anything you could help with. When in doubt, respond — it's better to be helpful than silent.`);
 
-    // Group chat answers on Fable 5 by default (same as the main ChatBGP
-    // window), honouring any per-thread /opus or /sonnet preference. callClaude
-    // applies the Fable safety-classifier params + Opus fallback automatically.
-    const { resolveChatModel } = await import("./chatbgp-model-router");
-    const { model: groupModel } = await resolveChatModel({ threadId }).catch(() => ({ model: "claude-opus-5-5" }));
+    // Use the same interactive model and quality settings as main chat.
+    const { chatQualitySettings } = await import("./chat-quality-settings");
+    const { resolveChatModel, selectChatModel } = await import("./chatbgp-model-router");
+    const { model: groupModel } = await resolveChatModel({ threadId }).catch(() => selectChatModel());
 
     console.log(`[ai-group] Prepared in ${Date.now() - startTime}ms (${groupTools.length} tools, mention=${mentionsChatBGP}, model=${groupModel})`);
 
@@ -374,19 +375,20 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
         // the resolved records are already in TAGGED IN THIS CONVERSATION.
         ...recentMessages.map(m => ({ ...m, content: stripTagTokens(m.content) })),
       ],
-      max_completion_tokens: 2048,
+      thinking: true,
+      ...chatQualitySettings(groupModel),
       tools: groupTools.length > 0 ? groupTools : undefined,
       parallel_tool_calls: false,
     };
 
-    const withTimeout = <T>(p: Promise<T>): Promise<T> => {
-      let timer: NodeJS.Timeout | undefined;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("AI response timed out")), TIMEOUT_MS);
-      });
-      return Promise.race([p, timeoutPromise]).finally(() => { if (timer) clearTimeout(timer); }) as Promise<T>;
-    };
-    let claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
+    // Astra can spend longer reasoning than the previous one-minute wrapper.
+    // Bound individual calls and the full run, cancelling the provider request
+    // when that bound is reached instead of leaving it running in the background.
+    const callGroupModel = () => withAiRequestDeadline(
+      signal => callClaude({ ...completionOptions, signal }),
+      { deadline: groupDeadline, maxRequestMs: 3 * 60 * 1000 },
+    );
+    let claudeResponse = await callGroupModel() as any;
     let currentMessage = claudeResponse.choices?.[0]?.message;
     let loopCount = 0;
     const maxLoops = 6;
@@ -409,6 +411,7 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       // Ask for serial calls, but handle every call if a provider still returns
       // a batch. Every requested call must receive exactly one outcome.
       for (const toolCall of currentMessage.tool_calls) {
+        if (Date.now() >= groupDeadline) throw new Error("AI response timed out");
         const fnName = toolCall.function?.name;
         let outcome: any;
         if (!groupTools.some((tool: any) => tool.function?.name === fnName)) {
@@ -424,13 +427,19 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
           }
           if (!outcome) {
             try {
-              const result = await chatbgp.handleCrmToolCall(fnName, fnArgs, req, completionOptions, currentMessage, toolCall);
-              if (result?.handled && result.response) {
-                lastAction = result.response.action || lastAction;
-                lastHandledReply = result.response.reply || lastHandledReply;
-                outcome = { result: result.response.reply || "done", action: result.response.action || null };
+              if (fnName === "search_app_guide") {
+                // Evidence for the next model round, never a final chat reply.
+                const guide = await chatbgp.executeCrmToolRaw(fnName, fnArgs, req);
+                outcome = guide.data;
               } else {
-                outcome = { error: "Tool not handled" };
+                const result = await chatbgp.handleCrmToolCall(fnName, fnArgs, req, completionOptions, currentMessage, toolCall);
+                if (result?.handled && result.response) {
+                  lastAction = result.response.action || lastAction;
+                  lastHandledReply = result.response.reply || lastHandledReply;
+                  outcome = { result: result.response.reply || "done", action: result.response.action || null };
+                } else {
+                  outcome = { error: "Tool not handled" };
+                }
               }
             } catch (toolErr: any) {
               console.error("[ai-group] Tool call error:", toolErr?.message);
@@ -440,7 +449,7 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
         }
         completionOptions.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(outcome) });
       }
-      claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
+      claudeResponse = await callGroupModel() as any;
       currentMessage = claudeResponse.choices?.[0]?.message;
     }
 

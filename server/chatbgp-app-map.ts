@@ -4,8 +4,8 @@
 // Woody, 2026-08-23: ChatBGP sent him to a Settings page the PHONE app has
 // no route to ("update it so it completely understands the app in all
 // areas"). This module is the fix: one maintained description of every
-// screen and how to reach it on desktop vs the phone, appended to the
-// system prompt in chatbgp.ts.
+// screen and how to reach it on desktop vs the phone, retrieved through
+// the search_app_guide tool when a user needs navigation help.
 //
 // ⚠️ KEEP THIS CURRENT: whenever a Claude Code session (terminal or web)
 // changes navigation, adds/removes a page, or moves a control, update the
@@ -23,7 +23,7 @@ The dashboard runs in two shells and they are NOT the same:
 **RULE for directions**: always say WHERE the user should be ("on desktop…", "in the phone app…"). Only describe controls listed here. If you don't know the phone path for something, say it's a desktop feature rather than guessing. If the user says a control isn't where you said, believe them and log_app_feedback.
 
 ### Chat model choice
-The deployment chooses the AI provider. When OpenAI is selected, ChatBGP defaults to Sol; type \`/sol\`, \`/luna\` (lower cost) or \`/astra\` (more expensive, explicit choice) at the start of a message to choose for that conversation. The choice is remembered. Old Claude preferences map to Sol, never automatically to Astra. A command on its own confirms the choice without an AI call.
+The deployment chooses the AI provider. When OpenAI is selected, ChatBGP defaults to Astra for stronger reasoning; type \`/sol\`, \`/luna\` (lower cost) or \`/astra\` (the quality-first default) at the start of a message to choose for that conversation. The choice is remembered. Old Claude preferences map to the Astra default; explicit Sol and Luna choices are retained. A command on its own confirms the choice without an AI call.
 
 ### Phone app (installed, staff)
 **Gossip & market intel** (Woody, 2026-10-12) is a group chat in Messages that every BGP staff login is automatically in (never client logins), pinned at the top of the Messages list on desktop and phone: post people moves and market intel there, tagging people / companies with @ as in any chat. Posts show as unread but don't send phone notifications. The strip at the top of the channel has **Week** and **Month** buttons that summarise the posts (People moves, Deals & market, Brands & occupiers, Landlords & investors, To verify); ChatBGP's summarise_gossip tool does the same from any chat ('what's the gossip this week?', '@ChatBGP summarise the month' in the channel). It can't be deleted. On desktop, clicking it (or any team chat) in the full-page ChatBGP screen's left list opens it in that screen's main area, with the chat's name and members in its header and the left list staying put; click ChatBGP or any chat in the list to move on. From the narrow Team Chat panel on the right, the expand icon opens the same view.
