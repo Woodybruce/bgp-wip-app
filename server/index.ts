@@ -647,6 +647,9 @@ installGoogleBudgetGuard();
       WHERE a.microsoft_id IS NOT NULL AND a.microsoft_id = b.microsoft_id
         AND a.contact_id = b.contact_id AND a.ctid > b.ctid`,
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_interactions_contact_msid ON crm_interactions (contact_id, microsoft_id) WHERE microsoft_id IS NOT NULL`,
+    // The calendar sweep's reschedule UPDATE / cancellation DELETE filter on
+    // microsoft_id alone; the unique index leads on contact_id so it can't serve them.
+    `CREATE INDEX IF NOT EXISTS idx_crm_interactions_msid ON crm_interactions (microsoft_id) WHERE microsoft_id IS NOT NULL`,
     // Brucey Bonus Wheel — monthly + quarterly winners record what they
     // spun, the prize pool itself, and an audit of who spun what when.
     // Prizes stay in the pool after winning (reusable). Quarterly grand
@@ -3993,6 +3996,24 @@ app.use("/api/auth/login", loginLimiter);
 app.use("/api/auth/microsoft", loginLimiter);
 app.use("/api/auth/register", loginLimiter);
 
+// Paths exempt from rate limiting: chat/AI long-pollers plus the
+// browser-cached image/pdf bursts (brand logos ~200/page, image-studio
+// thumbs, HR photos, brochure files) that legitimately fire in parallel on
+// one page load. Shared by both limiters — if the per-user limiter must not
+// count them, the office-NAT IP ceiling must not either, or five people
+// browsing brands would trip it.
+const limiterExemptPath = (p: string): boolean => (
+  p.startsWith("/api/chat") ||
+  p.startsWith("/api/ai/") ||
+  p.startsWith("/api/chatbgp") ||
+  p.startsWith("/api/brand-logo") ||
+  p.startsWith("/api/image-studio") ||
+  p.startsWith("/api/entity-images") ||
+  p.startsWith("/api/hr/photo") ||
+  /^\/api\/properties\/[^/]+\/brochures\/[^/]+\/file/.test(p) ||
+  /^\/api\/properties\/[^/]+\/plans\/[^/]+\/file/.test(p)
+);
+
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
   // 200 predates the 30s live-refresh polling (queryClient defaults) — a
@@ -4010,32 +4031,7 @@ const apiLimiter = rateLimit({
     (req.originalUrl || req.path).toLowerCase().startsWith("/api/public/evidence-plans/")
       ? ipKeyGenerator(req.ip || "")
       : req.headers.authorization || ipKeyGenerator(req.ip || ""),
-  skip: (req) => {
-    // Dev/QA runs everything from one IP (two harness personas + HMR), so the
-    // per-IP bucket trips on ordinary page loads. The limiter is a prod
-    // protection; skip it entirely outside production.
-    if (process.env.NODE_ENV !== "production") return true;
-    const p = req.originalUrl || req.path;
-    return (
-      p.startsWith("/api/chat") ||
-      p.startsWith("/api/ai/") ||
-      p.startsWith("/api/chatbgp") ||
-      // Brand logo thumbnails fire ~200 per Brand Explorer page load.
-      // Already cached by the browser for 24h on 404, and the rendered
-      // page is unusable if we 429 them.
-      p.startsWith("/api/brand-logo") ||
-      // Image-studio thumb/full + entity images + HR photos + property
-      // brochure files: all browser-cached static-ish image / pdf reads
-      // that legitimately fire dozens-hundreds in parallel on a page
-      // load. Rate-limiting them just blanks the gallery on first paint
-      // and there's no abuse vector worth defending against.
-      p.startsWith("/api/image-studio") ||
-      p.startsWith("/api/entity-images") ||
-      p.startsWith("/api/hr/photo") ||
-      /^\/api\/properties\/[^/]+\/brochures\/[^/]+\/file/.test(p) ||
-      /^\/api\/properties\/[^/]+\/plans\/[^/]+\/file/.test(p)
-    );
-  },
+  skip: (req) => process.env.NODE_ENV !== "production" || limiterExemptPath(req.originalUrl || req.path),
   message: { message: "Too many requests. Please slow down and try again." },
 });
 // Coarse per-IP ceiling in front of the header-keyed limiter above: that
@@ -4049,7 +4045,7 @@ const ipCeilingLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => ipKeyGenerator(req.ip || ""),
-  skip: () => process.env.NODE_ENV !== "production",
+  skip: (req) => process.env.NODE_ENV !== "production" || limiterExemptPath(req.originalUrl || req.path),
   message: { message: "Too many requests. Please slow down and try again." },
 });
 app.use("/api/", ipCeilingLimiter);
@@ -4237,7 +4233,14 @@ app.use("/api/branding/assets", express.static(
   // means a maintenance endpoint registered without its own requireAdmin
   // (merge-properties, purge-apollo-contacts, …) can no longer be driven
   // by an ordinary staff login. requireAdmin does its own auth check.
-  app.use("/api/admin", requireAdmin);
+  // Two data-heal actions are deliberately staff-wide (the Re-sync boards
+  // button on every tenancy schedule, and Settings → Data Health backfill) —
+  // they are idempotent reconciliation sweeps, not admin surgery.
+  const ADMIN_PATH_STAFF_EXCEPTIONS = new Set(["/resync-mirror-all", "/backfill-tracker-deals"]);
+  app.use("/api/admin", (req, res, next) => {
+    if (ADMIN_PATH_STAFF_EXCEPTIONS.has(req.path)) return requireAuth(req, res, next);
+    return requireAdmin(req, res, next);
+  });
 
   // ── Client default-deny backstop ──────────────────────────────────────
   // Client logins (role='Client', e.g. Landsec) are external — they must
@@ -5879,16 +5882,6 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
       } else {
         console.log("[dev] Skipping background crawls (image-sync, archivist, auto-enrich) — production only");
       }
-      // KYC monthly re-screening cron (check daily, run on 1st of month)
-      setInterval(() => {
-        const now = new Date();
-        if (now.getDate() === 1 && now.getHours() === 3) {
-          runMonthlyReScreening().catch(err =>
-            console.error("[kyc-cron] Monthly re-screening failed:", err?.message)
-          );
-        }
-      }, 60 * 60 * 1000); // Check every hour
-
       // Expenses: weekly agent chase (Mon 09:00) + monthly approver
       // digest (28th 09:00). Both fire in production AND development —
       // dev firing is gated by whether WHATSAPP_TOKEN_V2 is set. Wrap
@@ -5933,41 +5926,6 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
         .then(n => { if (n > 0) console.log(`[revolut] auto-categorised ${n} recurring-subscription rows (no longer chasing receipts)`); })
         .catch(err => console.warn("[revolut] categoriseExistingSubscriptions failed:", err?.message));
 
-      // Daily AML orchestrator re-sweep — 02:00 every night we pick up any
-      // company whose KYC has gone stale (past the firm's recheck_interval_days,
-      // default 365) or has an overdue aml_recheck_reminders row, and re-run
-      // the full sweep (Companies House + UBO + sanctions + adverse media).
-      // Capped at 25 companies per night so a single run can't blow through
-      // quotas. Production only — dev shouldn't be making live API calls overnight.
-      if (process.env.NODE_ENV === "production") {
-        setInterval(() => {
-          const now = new Date();
-          if (now.getHours() === 2) {
-            runPeriodicAmlReScreening().catch(err =>
-              console.error("[kyc-orch-cron] Periodic re-screening failed:", err?.message)
-            );
-          }
-        }, 60 * 60 * 1000);
-      }
-
-      // Nightly KYC refresh — re-runs Companies House KYC for stale/dissolved companies.
-      // Runs at 1am every night (production only). 120/night (was 40) so the
-      // parked backlog clears in days now that parked brands rotate to the
-      // back of the queue instead of jamming its head — still well inside CH
-      // rate limits at ~3 requests per company, paced 700ms apart.
-      if (process.env.NODE_ENV === "production") {
-        setInterval(() => {
-          const now = new Date();
-          if (now.getHours() === 1 && now.getMinutes() < 60) {
-            runBatchReKyc({ limit: 120 }).catch(err =>
-              console.error("[kyc-refresh] nightly run failed:", err?.message)
-            );
-            import("./deal-hots-from-records").then(m => m.backfillDealsFromHots(150)).catch(err =>
-              console.error("[deal-hots] nightly run failed:", err?.message));
-          }
-        }, 60 * 60 * 1000);
-      }
-
       // Invoice-verdict alarm (Woody, 2026-08-19): 08:00 push; DEAL EMERGENCY
       // email blast — one red email PER DEAL, six times a day (8/10/12/14/16/18)
       // until the verdict lands; 09:00 clean summary of everything outstanding
@@ -6005,96 +5963,6 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
             console.error("[kyc-orch-boot] AML top-up failed:", err?.message)
           );
         }, 4 * 60 * 1000);
-      }
-
-      // Nightly brand-enrichment — tops up stale / never-enriched brand rows.
-      // Runs at 4am (once per day, production only to avoid accidental API spend in dev).
-      if (process.env.NODE_ENV === "production") {
-        setInterval(() => {
-          const now = new Date();
-          if (now.getHours() === 4 && now.getMinutes() < 60) {
-            runNightlyBrandEnrichment().catch(err =>
-              console.error("[brand-enrich] nightly run failed:", err?.message)
-            );
-          }
-        }, 60 * 60 * 1000);
-      }
-
-      // Nightly Brand Gap live-intel pre-warm — 05:00 (production only, live
-      // Perplexity spend). Keeps the expansion sweep fresh on every in-use
-      // gap board so the panel populates without anyone clicking refresh or
-      // waiting on the first-load research call.
-      if (process.env.NODE_ENV === "production") {
-        setInterval(() => {
-          const now = new Date();
-          if (now.getHours() === 5 && now.getMinutes() < 60) {
-            import("./property-gap-analysis")
-              .then(m => m.runNightlyGapLiveIntelSweep())
-              .then(r => console.log(`[gap-live-intel-cron] swept ${r.swept} propert${r.swept === 1 ? "y" : "ies"}, ${r.errors} error(s)`))
-              .catch(err => console.error("[gap-live-intel-cron] failed:", err?.message));
-          }
-        }, 60 * 60 * 1000);
-      }
-
-      // Nightly trading names — 04:30. Tenancy rows that only carry the
-      // lease's legal entity get the brand they trade as (certain matches
-      // filled, the rest to the property's Needs review).
-      if (process.env.NODE_ENV === "production") {
-        setInterval(() => {
-          const now = new Date();
-          if (now.getHours() === 4 && now.getMinutes() >= 30) {
-            import("./trading-names")
-              .then(m => m.runNightlyTradingNames())
-              .then(r => console.log(`[trading-names-cron] ${r.properties} properties, ${r.filled} filled, ${r.review} to review`))
-              .catch(err => console.error("[trading-names-cron] failed:", err?.message));
-          }
-        }, 30 * 60 * 1000);
-      }
-
-      // Nightly tenancy-spine re-link — 04:00. Deals created before their
-      // property's tenancy schedule was imported (or whose unit name was
-      // fixed later) sit "off spine" until someone clicks Resolve; this
-      // stamps the link automatically wherever the confident name match
-      // now succeeds. Cheap SQL, runs in prod only to match the other crons.
-      if (process.env.NODE_ENV === "production") {
-        setInterval(() => {
-          const now = new Date();
-          if (now.getHours() === 4 && now.getMinutes() < 60) {
-            import("./unit-mirror")
-              .then(m => m.relinkOffSpineDeals(pool))
-              .then(n => { if (n > 0) console.log(`[spine-relink-cron] re-linked ${n} deal(s) to tenancy spine`); })
-              .catch(err => console.error("[spine-relink-cron] failed:", err?.message));
-          }
-        }, 60 * 60 * 1000);
-      }
-
-      // Daily Brucey Bonuses scan — 06:00 every day. Idempotent via the
-      // (event_kind, event_ref) partial unique index, so the rolling 7-day
-      // window catches new events without re-awarding old ones. Production
-      // only — dev would clobber test data on every restart.
-      if (process.env.NODE_ENV === "production") {
-        setInterval(() => {
-          const now = new Date();
-          if (now.getHours() === 6 && now.getMinutes() < 60) {
-            import("./hr-routes")
-              .then(m => m.runBruceyPointsScan())
-              .then(r => console.log(`[brucey-cron] daily scan: ${r.newAwards} new awards from ${r.scannedEvents} events`))
-              .catch(err => console.error("[brucey-cron] daily run failed:", err?.message));
-          }
-        }, 60 * 60 * 1000);
-
-        // Daily benefit renewal sweep — 06:30. Creates a 'Renew {benefit}'
-        // task 60 days before each policy's renewal_date so HR has time to
-        // re-quote. Idempotent per (benefit, calendar year).
-        setInterval(() => {
-          const now = new Date();
-          if (now.getHours() === 6 && now.getMinutes() >= 30) {
-            import("./hr-routes")
-              .then(m => m.runBenefitRenewalSweep())
-              .then(r => console.log(`[benefit-renewal-cron] created ${r.length} renewal task(s)`))
-              .catch(err => console.error("[benefit-renewal-cron] failed:", err?.message));
-          }
-        }, 60 * 60 * 1000);
       }
 
       // Fixed-time jobs — one 5-minute tick with persisted once-per-slot

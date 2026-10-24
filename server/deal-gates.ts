@@ -78,8 +78,18 @@ export function amlGateOutcome(result: AmlGateResult): { block: string | null; w
 export async function recordAmlGateWarning(dealId: string, deal: AmlGateInput, result: AmlGateResult, ctx: { targetStatus: string; actorId?: string | null; actorName?: string | null }): Promise<void> {
   const warning = formatAmlWarning(result);
   if (!warning) return;
-  await pool.query(`INSERT INTO deal_events (deal_id, event_type, payload, actor_id, actor_name) VALUES ($1, 'aml_gate_warning', $2, $3, $4)`,
-    [dealId, JSON.stringify({ targetStatus: ctx.targetStatus, warning, notReady: result.notReady }), ctx.actorId || null, ctx.actorName || null]).catch(() => {});
+  // One warning per deal/target/hour: the endpoint gate and the mirror
+  // backstop both run this on the same edit, and that must not double the
+  // audit trail.
+  await pool.query(
+    `INSERT INTO deal_events (deal_id, event_type, payload, actor_id, actor_name)
+     SELECT $1, 'aml_gate_warning', $2, $3, $4
+      WHERE NOT EXISTS (
+        SELECT 1 FROM deal_events
+         WHERE deal_id = $1 AND event_type = 'aml_gate_warning'
+           AND payload::jsonb ->> 'targetStatus' = $5
+           AND created_at > NOW() - interval '1 hour')`,
+    [dealId, JSON.stringify({ targetStatus: ctx.targetStatus, warning, notReady: result.notReady }), ctx.actorId || null, ctx.actorName || null, ctx.targetStatus]).catch(() => {});
   const roleIds: Record<string, string | null | undefined> = { landlord: deal.landlordId, tenant: deal.tenantId, vendor: deal.vendorId, purchaser: deal.purchaserId };
   for (const c of result.notReady) {
     const companyId = roleIds[c.role];
@@ -168,6 +178,14 @@ export async function dealStatusTransitionDenial(
   const targetCode = legacyToCode(newStatusRaw);
   const currentCode = legacyToCode(deal.status);
   if (!targetCode || targetCode === currentCode) return null;
+  // Closed deals never move through a board edit — the mirror skips the
+  // write and starts a fresh cycle instead (INV stays INV, COM may only
+  // advance to INV). Nothing will be written, so there is nothing to deny:
+  // a 403 here would block routine unit edits on every invoiced letting.
+  if (currentCode && ["WIT", "COM", "INV"].includes(currentCode)
+      && !(currentCode === "COM" && targetCode === "INV")) {
+    return null;
+  }
 
   let actorName = "System";
   let isSenior = false;

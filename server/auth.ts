@@ -224,10 +224,12 @@ export function setupAuth(app: Express) {
         if (userId) {
           req.tokenUserId = userId;
           req.qaToken = token.startsWith("qa_");
-          // QA test tokens authenticate per-request only — never minted into
-          // a session, so "Revoke all test access" cuts them off instantly.
-          if (!req.session.userId && !req.qaToken) {
+          if (!req.session.userId) {
             req.session.userId = userId;
+            // Sessions minted from a QA token are stamped so "Revoke all
+            // test access" can sweep them in one go — handlers that read
+            // session.userId directly keep working under QA bearer runs.
+            if (req.qaToken) (req.session as any).qaMinted = true;
           }
         }
       } catch (err: any) { console.error("[auth] token validation error:", err?.message); }
@@ -258,6 +260,9 @@ export function setupAuth(app: Express) {
   const LOGIN_FAIL_WINDOW_MS = 15 * 60 * 1000;
   const LOGIN_MAX_FAILURES = 10;
   function recordFailedLogin(account: string, ip: string | undefined): void {
+    // A distributed stuffing run could otherwise grow this map without
+    // bound; losing counters under attack is the lesser evil.
+    if (failedLogins.size > 5000) failedLogins.clear();
     const now = Date.now();
     const cur = failedLogins.get(account);
     const entry = cur && now - cur.first < LOGIN_FAIL_WINDOW_MS ? cur : { count: 0, first: now } as { count: number; first: number; lockedUntil?: number };
@@ -387,15 +392,20 @@ export function setupAuth(app: Express) {
     // (except the session doing the revoke) so "Revoke all" means all.
     const adminId = req.session.userId || req.tokenUserId;
     let sessionsCleared = 0;
-    if (adminId) {
-      try {
+    try {
+      // Every session minted from a QA token is stamped qaMinted — sweep
+      // them all, plus (belt and braces for pre-stamp sessions) the minting
+      // admin's other sessions, keeping the one doing the revoke.
+      const qa = await pool.query(`DELETE FROM session WHERE sess::jsonb ->> 'qaMinted' = 'true' AND sid <> $1`, [req.session.id || ""]);
+      sessionsCleared += qa.rowCount || 0;
+      if (adminId) {
         const s = await pool.query(
           `DELETE FROM session WHERE sess::jsonb ->> 'userId' = $1 AND sid <> $2`,
           [adminId, req.session.id || ""],
         );
-        sessionsCleared = s.rowCount || 0;
-      } catch (e: any) { console.warn("[qa-access] session sweep failed:", e?.message); }
-    }
+        sessionsCleared += s.rowCount || 0;
+      }
+    } catch (e: any) { console.warn("[qa-access] session sweep failed:", e?.message); }
     res.json({ revoked: r.rowCount || 0, sessionsCleared });
   });
 
@@ -940,8 +950,9 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   if (!userId) {
     return res.status(401).json({ message: "Not authenticated" });
   }
-  if (!req.session.userId && req.tokenUserId && !req.qaToken) {
+  if (!req.session.userId && req.tokenUserId) {
     req.session.userId = req.tokenUserId;
+    if (req.qaToken) (req.session as any).qaMinted = true;
   }
   try {
     const result = await pool.query("SELECT is_active, email FROM users WHERE id = $1", [userId]);
@@ -968,7 +979,7 @@ const EQUITY_EMAILS = new Set([
 export async function requireEquityOrAdmin(req: Request, res: Response, next: NextFunction) {
   const userId = req.session.userId || req.tokenUserId;
   if (!userId) return res.status(401).json({ message: "Not authenticated" });
-  if (!req.session.userId && req.tokenUserId && !req.qaToken) req.session.userId = req.tokenUserId;
+  if (!req.session.userId && req.tokenUserId) { req.session.userId = req.tokenUserId; if (req.qaToken) (req.session as any).qaMinted = true; }
   try {
     const result = await pool.query("SELECT is_active, is_admin, email FROM users WHERE id = $1", [userId]);
     if (result.rows.length === 0) return res.status(401).json({ message: "Not authenticated" });
@@ -988,7 +999,7 @@ export async function requireEquityOrAdmin(req: Request, res: Response, next: Ne
 export async function requireAdmin(req: Request, res: Response, next: NextFunction) {
   const userId = req.session.userId || req.tokenUserId;
   if (!userId) return res.status(401).json({ message: "Not authenticated" });
-  if (!req.session.userId && req.tokenUserId && !req.qaToken) req.session.userId = req.tokenUserId;
+  if (!req.session.userId && req.tokenUserId) { req.session.userId = req.tokenUserId; if (req.qaToken) (req.session as any).qaMinted = true; }
   try {
     const result = await pool.query("SELECT is_active, is_admin, email FROM users WHERE id = $1", [userId]);
     if (result.rows.length === 0) return res.status(401).json({ message: "Not authenticated" });

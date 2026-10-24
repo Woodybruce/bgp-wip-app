@@ -198,7 +198,9 @@ export async function runNewsLeg(): Promise<number> {
   // A capped batch parks the cursor at the last article it actually
   // processed so the next tick picks up the overflow — advancing to now()
   // silently dropped everything past the 60-row cap on busy news days.
-  await setCursor("news", arts.rows.length === 60 ? new Date(arts.rows[arts.rows.length - 1].fetched_at) : new Date());
+  // +1ms: Postgres keeps microseconds, JS Dates don't — parking exactly at
+  // the row's (truncated) timestamp would re-select that row next tick.
+  await setCursor("news", arts.rows.length === 60 ? new Date(new Date(arts.rows[arts.rows.length - 1].fetched_at).getTime() + 1) : new Date());
   console.log(`[insights] news leg: ${arts.rows.length} articles → ${n} insights`);
   return n;
 }

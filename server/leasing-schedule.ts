@@ -243,7 +243,8 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
     // not transitions, so they pass straight through.
     if ("status" in (req.body || {}) && existingUnit.tenancy_unit_id) {
       try {
-        const { leasingStatusToCode, codeMatchesLeasingStatus } = await import("@shared/lease-status-mirror");
+        const { leasingStatusToCode, codeToLeasingStatus } = await import("@shared/lease-status-mirror");
+        const { legacyToCode } = await import("@shared/deal-status");
         const gateCode = leasingStatusToCode(String(req.body.status ?? ""));
         if (gateCode) {
           const auGate = await pool.query(
@@ -252,7 +253,12 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
             [existingUnit.tenancy_unit_id]
           );
           const gateRow = auGate.rows[0];
-          if (gateRow && !codeMatchesLeasingStatus(gateRow.status, String(req.body.status ?? ""))) {
+          // Bucket-to-bucket comparison: "Occupied" → "Trading" on an
+          // invoiced unit is the same bucket (no deal transition), not a
+          // gated INV→COM move — comparing buckets, not exact labels, keeps
+          // routine schedule edits on completed lettings un-gated.
+          const dealBucket = codeToLeasingStatus(legacyToCode(gateRow?.status) as any);
+          if (gateRow && dealBucket !== codeToLeasingStatus(gateCode)) {
             const { dealStatusTransitionDenial } = await import("./deal-gates");
             const denial = await dealStatusTransitionDenial(user?.id || null, gateRow.deal_id, gateCode);
             if (denial) return res.status(denial.status).json({ error: denial.error, code: denial.code });

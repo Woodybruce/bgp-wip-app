@@ -4111,8 +4111,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
                   WHERE id = $1 AND lower(coalesce(status, '')) = 'occupied'`,
                 [srow.tenancy_unit_id, srow.tenant_name || null, srow.tenant_company_id || null, srow.rent_pa != null ? Number(srow.rent_pa) : null, completionDate]
               );
-              const { fanOutTenancyStatus } = await import("./unit-mirror");
-              await fanOutTenancyStatus(pool, srow.tenancy_unit_id);
+              // No fanOutTenancyStatus here: mirrorFromDeal above already set
+              // the tracker + leasing rows from the deal's NEW status, and a
+              // fan-out from the un-stamped spine would overwrite them with a
+              // coarser mapping.
             }
           }
         } catch (e: any) {

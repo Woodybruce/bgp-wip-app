@@ -51,6 +51,9 @@ interface TriggerEvent {
   headline: string;
   detail: string;
   recipients: string[];
+  // Set on signal-driven alerts whose once-per-signal ledger claim should be
+  // released if the digest email fails to send.
+  signalId?: string;
 }
 
 // ─── Recipients lookup ───────────────────────────────────────────────────
@@ -301,7 +304,7 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean; recordOnly?: b
           brandId: brand.id, brandName: brand.name, type: "covenant_risk",
           headline: `${brand.name} — covenant red flag`,
           detail: `Recent signal: ${recentInsolv.headline}. Review covenant before any new pitch.`,
-          recipients,
+          recipients, signalId: recentInsolv.id,
         });
       }
     }
@@ -320,7 +323,7 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean; recordOnly?: b
         brandId: brand.id, brandName: brand.name, type: "fundraise",
         headline: isRaise ? `${brand.name} just raised` : `${brand.name} — money in motion`,
         detail: `${recentFunding.headline}. ${isRaise ? "Hot moment to reach out — they're spending." : "Funding/M&A signal — worth a look before someone else calls."}`,
-        recipients,
+        recipients, signalId: recentFunding.id,
       });
     }
 
@@ -340,7 +343,7 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean; recordOnly?: b
         brandId: brand.id, brandName: brand.name, type: "exec_change_major",
         headline: `${brand.name} — major leadership move`,
         detail: `${recentExec.headline}. New leadership often means new property strategy.`,
-        recipients,
+        recipients, signalId: recentExec.id,
       });
     }
   }
@@ -476,6 +479,7 @@ router.post("/api/brand-triggers/run", requireAuth, async (req: Request, res: Re
         sent++;
       } catch (e: any) {
         console.warn(`[brand-triggers] email to ${to} failed:`, e.message);
+        await releaseFailedAlertClaims(recipientEvents);
       }
     }
     res.json({ events: events.length, sent });
@@ -493,6 +497,17 @@ export function startExpansionRescore() {
     console.log(`[expansion] v2 scores recorded for all brands (${seconds}s)`);
     return { seconds };
   });
+}
+
+async function releaseFailedAlertClaims(events: TriggerEvent[]): Promise<void> {
+  // A claimed-but-unsent alert would otherwise be suppressed forever. An
+  // event sent to several recipients where only one send failed will go to
+  // all of them again tomorrow — the lesser evil.
+  for (const e of events) {
+    if (!e.signalId) continue;
+    await pool.query(`DELETE FROM brand_trigger_alerts WHERE brand_company_id = $1 AND type = $2 AND signal_id = $3`,
+      [e.brandId, e.type, e.signalId]).catch(() => {});
+  }
 }
 
 export async function runDailyBrandTriggers(): Promise<{ events: number; sent: number }> {
@@ -514,6 +529,7 @@ export async function runDailyBrandTriggers(): Promise<{ events: number; sent: n
         // Never swallow silently — a mail-transport failure (e.g. an expired
         // Azure client secret) is exactly how these alerts went dark before.
         console.error(`[brand-triggers] digest email to ${to} failed:`, e?.message);
+        await releaseFailedAlertClaims(recipientEvents);
       }
     }
     console.log(`[brand-triggers] ${events.length} alerts → ${sent}/${byRecipient.size} digest emails sent`);

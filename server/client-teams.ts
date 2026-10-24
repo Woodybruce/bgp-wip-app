@@ -433,7 +433,7 @@ router.get("/api/client-teams/:clientCompanyId/candidates", requireAuth, async (
       FROM users u
       LEFT JOIN staff_profiles sp ON sp.user_id = u.id
       WHERE COALESCE(sp.status, 'active') = 'active'
-        AND u.role <> 'Client'
+        AND COALESCE(u.role, '') <> 'Client'
       ORDER BY u.name, u.username
     `, [req.params.clientCompanyId]);
     // A client opening the picker on their own board sees names and titles,

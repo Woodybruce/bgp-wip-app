@@ -584,6 +584,7 @@ export async function registerRoutes(
                WHERE (t.created_by = $1 OR EXISTS (
                         SELECT 1 FROM chat_thread_members tm WHERE tm.thread_id = t.id AND tm.user_id = $1))
                  AND (m.content LIKE '%' || $2 || '%'
+                      OR m.action_data LIKE '%' || $2 || '%'
                       OR EXISTS (SELECT 1 FROM unnest(COALESCE(m.attachments, '{}')) a WHERE a LIKE '%' || $2 || '%'))
             )`,
           [userId, filename]

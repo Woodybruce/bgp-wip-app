@@ -2263,6 +2263,10 @@ export async function chatCrmWriteDenial(req: Request, fnName: string, fnArgs: a
   try { scope = await resolveCompanyScope(req); }
   catch { return "Your account scope could not be verified. Please try again."; }
   if (!scope) return null; // staff
+  const { NO_ACCESS_SCOPE } = await import("./company-scope");
+  // A client whose team maps to no company must not write at all — a
+  // create_deal would otherwise be stamped with the sentinel UUID.
+  if (scope === NO_ACCESS_SCOPE) return "Your account isn't linked to a client company yet — ask your BGP contact to finish the setup.";
   const { pool } = await import("./db");
   const inPortfolioDeal = async (dealId: string) => (await pool.query(
     `SELECT 1 FROM crm_deals d WHERE d.id = $1 AND (d.landlord_id = $2 OR d.property_id IN (
@@ -2296,9 +2300,12 @@ export async function chatCrmWriteDenial(req: Request, fnName: string, fnArgs: a
   }
   if (fnName === "update_company") {
     // A client may edit their own company row only, and never the visibility
-    // grant itself — that is governed by the dedicated add-brand flow.
+    // grant, the PO-required flag or the assigned BGP team — those are
+    // governed by their own flows (same strips as the REST company PUT).
     if (String(fnArgs.id) !== scope) return DENY;
     delete fnArgs.crmExtraBrandIds;
+    delete fnArgs.requiresPo;
+    delete fnArgs.bgpContactUserIds;
     return null;
   }
   return null;
@@ -2870,7 +2877,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "update_deal",
-      description: "Update an existing deal in the CRM. Use when the user asks to change a deal's status, price, stage, or any other field.",
+      description: "Update an existing deal in the CRM — name, price, parties, dates, areas and other fields. Deal STATUS changes are not made from chat (approval and AML gates run on the deal page); if asked to change a status, direct the user to the deal page instead of calling this.",
       parameters: {
         type: "object",
         properties: {
@@ -8212,9 +8219,16 @@ export async function executeCrmToolRaw(
       const ext = mimeType.includes("jpeg") || mimeType.includes("jpg") ? "jpg" : "png";
       const uniqueName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
       const imageBuffer = Buffer.from(imagePart.inlineData.data, "base64");
-      const { saveFile } = await import("./file-storage");
+      const { saveFile, recordUserUpload } = await import("./file-storage");
       await saveFile(`chat-media/${uniqueName}`, imageBuffer, mimeType, `ai-generated-${uniqueName}`);
       const imageUrl = `/api/chat-media/${uniqueName}`;
+      // Record against the acting user so the chat-media client gate can
+      // serve a client their own generated image immediately (the URL only
+      // lands in chat_messages.action_data once the reply finishes).
+      {
+        const actingUserId = (req.session as any)?.userId || (req as any).tokenUserId;
+        if (actingUserId) await recordUserUpload(actingUserId, `chat-media/${uniqueName}`, `ai-generated-${uniqueName}`, mimeType, imageBuffer.length, imageUrl).catch(() => {});
+      }
       console.log("[chatbgp] Image saved to", imageUrl, `(${(imageBuffer.length / 1024).toFixed(0)}KB)`);
       return {
         data: { success: true, imageGenerated: true },

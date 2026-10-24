@@ -35,24 +35,42 @@ const AT_OR_PAST_EXCHANGE = ["EXC", "COM", "INV", "WIT"];
 async function mirrorDealStatus(ctx: Ctx, dealId: string, currentStatus: string | null, code: DealStatusCode, unlinkAvailableUnitId?: string | null): Promise<void> {
   const currentCode = legacyToCode(currentStatus);
   if (currentCode === code) return;
-  if (currentCode && CLOSED.includes(currentCode) && !AT_OR_PAST_EXCHANGE.includes(code)) {
-    // Historic deal — a new letting cycle must not drag it back into WIP.
-    if (unlinkAvailableUnitId) {
+  // Closed deals never move through a board edit: INV is terminal (set by
+  // Xero — a board flip back to COM/EXC would silently un-invoice it), COM
+  // may only advance to INV, and WIT stays withdrawn. Anything else means a
+  // new letting cycle — the tracker row is unlinked so the historic deal
+  // keeps its numbers.
+  if (currentCode && CLOSED.includes(currentCode) && !(currentCode === "COM" && code === "INV")) {
+    if (unlinkAvailableUnitId && !AT_OR_PAST_EXCHANGE.includes(code)) {
       await ctx.pool.query(
         `UPDATE available_units SET deal_id = NULL, updated_at = NOW() WHERE id = $1 AND deal_id = $2`,
         [unlinkAvailableUnitId, dealId],
       );
     }
-    await auditMirror(ctx, dealId, currentStatus, code, `Skipped — deal is ${currentCode}; tracker row ${unlinkAvailableUnitId ? "unlinked for a fresh cycle" : "left as-is"} (${ctx.reason})`);
+    await auditMirror(ctx, dealId, currentStatus, code, `Skipped — deal is ${currentCode}; tracker row ${unlinkAvailableUnitId && !AT_OR_PAST_EXCHANGE.includes(code) ? "unlinked for a fresh cycle" : "left as-is"} (${ctx.reason})`);
     return;
   }
-  const { dealStatusTransitionDenial } = await import("./deal-gates");
-  const denial = await dealStatusTransitionDenial(ctx.actorUserId, dealId, code).catch(() => null);
+  // Gate check fails CLOSED: skipping a mirror write costs a note on the
+  // boards; writing an ungated status change costs the audit trail.
+  let denial: Awaited<ReturnType<typeof import("./deal-gates")["dealStatusTransitionDenial"]>>;
+  try {
+    const { dealStatusTransitionDenial } = await import("./deal-gates");
+    denial = await dealStatusTransitionDenial(ctx.actorUserId, dealId, code);
+  } catch (e: any) {
+    await auditMirror(ctx, dealId, currentStatus, code, `Blocked — gate check failed (${e?.message || "error"}) (${ctx.reason})`);
+    return;
+  }
   if (denial) {
     await auditMirror(ctx, dealId, currentStatus, code, `Blocked — ${denial.error} (${ctx.reason})`);
     return;
   }
   await ctx.pool.query(`UPDATE crm_deals SET status = $1, updated_at = NOW() WHERE id = $2`, [code, dealId]);
+  if (code === "COM") {
+    // The deal PUT and stage routes stamp completion; a board-driven COM
+    // must leave the same fiscal anchor or WIP month bucketing falls back
+    // to createdAt. (Comp seeding stays with the deal-page flows.)
+    await ctx.pool.query(`UPDATE crm_deals SET completed_at = COALESCE(completed_at, NOW()) WHERE id = $1`, [dealId]).catch(() => {});
+  }
   await auditMirror(ctx, dealId, currentStatus, code, `Board mirror (${ctx.reason})`);
 }
 

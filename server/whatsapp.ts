@@ -373,6 +373,26 @@ async function runChatBgpWhatsAppReply(
     );
     return;
   }
+  // A matched phone is not enough: client logins are ordinary users rows
+  // with phones. Only BGP staff get the staff-grade session (full toolset,
+  // firm learnings in the prompt) — clients are directed to the app.
+  try {
+    const { pool } = await import("./db");
+    const roleRow = (await pool.query(`SELECT role, email FROM users WHERE id = $1 LIMIT 1`, [resolved.userId])).rows[0];
+    const isStaff = roleRow && (roleRow.role || "") !== "Client"
+      && String(roleRow.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
+    if (!isStaff) {
+      console.warn(`[whatsapp-ai] Ignoring non-staff (client) sender ${fromNumber}`);
+      await sendAndStoreReply(
+        "This number is managed by BGP's assistant for BGP staff. Please use the BGP app, or contact your BGP team directly.",
+        fromNumber, conversationId, contactName, config,
+      );
+      return;
+    }
+  } catch (e: any) {
+    console.warn(`[whatsapp-ai] staff check failed for ${fromNumber}:`, e?.message);
+    return;
+  }
 
   try {
     const chatbgp = await import("./chatbgp");

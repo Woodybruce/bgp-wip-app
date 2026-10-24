@@ -379,12 +379,16 @@ async function isAppUser(email: string): Promise<boolean> {
 // The From header is trivially spoofable and client accounts are not BGP
 // staff: only an ACTIVE, non-Client user may drive the instruction path
 // (which can generate branded documents and send mail autonomously).
+const BGP_DOMAIN = "@brucegillinghampollard.com";
+
 async function isStaffUser(email: string): Promise<boolean> {
   const row = (await loadUserRows()).get(email.toLowerCase());
-  return !!row && row.isActive !== false && (row.role || "") !== "Client";
+  // Mirrors company-scope's client definition: role is a free-text job
+  // title, so an external-email user with no role must still be a client —
+  // only a BGP-domain, active, non-Client row drives the instruction path.
+  return !!row && row.isActive !== false && (row.role || "") !== "Client"
+    && email.toLowerCase().endsWith(BGP_DOMAIN);
 }
-
-const BGP_DOMAIN = "@brucegillinghampollard.com";
 
 const ADMIN_EMAILS = [
   "woody@brucegillinghampollard.com",
