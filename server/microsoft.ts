@@ -1059,6 +1059,7 @@ export function setupMicrosoftRoutes(app: Express) {
             JOIN available_units au ON au.id = uv.unit_id
             JOIN crm_properties p ON p.id = au.property_id
             WHERE uv.viewing_date ~ '^\\d{4}-\\d{2}-\\d{2}'
+              AND uv.deleted_at IS NULL AND COALESCE(uv.status,'') NOT IN ('cancelled','not_leasing')
               AND uv.viewing_date::date >= (NOW() - INTERVAL '30 days')::date
               AND (p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
           `, [insightsScope])
@@ -1068,6 +1069,7 @@ export function setupMicrosoftRoutes(app: Express) {
             JOIN available_units au ON au.id = uv.unit_id
             JOIN crm_properties p ON p.id = au.property_id
             WHERE uv.viewing_date ~ '^\\d{4}-\\d{2}-\\d{2}'
+              AND uv.deleted_at IS NULL AND COALESCE(uv.status,'') NOT IN ('cancelled','not_leasing')
               AND uv.viewing_date::date >= (NOW() - INTERVAL '30 days')::date
           `);
       const eventsForInsights = [

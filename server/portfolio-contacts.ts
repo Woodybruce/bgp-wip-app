@@ -73,7 +73,7 @@ export function buildPortfolioContactsQuery(companyId: string, scopeCompanyId: s
     evidence({ fallback_id: "'tracker:' || a.id", fallback_name: "a.unit_name", source: "'Tracker unit · no brand linked'", ...unitFields },
       "FROM active_units a WHERE NOT EXISTS (SELECT 1 FROM tracker_parties party WHERE party.tracker_id = a.id)"),
     evidence({ contact_id: "v.contact_id", source: "'Named viewing contact'", property_id: "a.property_id", unit_id: "a.unit_id", tracker_id: "a.id", unit_name: "a.unit_name" },
-      `FROM unit_viewings v JOIN portfolio_units a ON a.id = v.unit_id JOIN crm_contacts c ON c.id = v.contact_id WHERE ${visible("c.id", "a.property_id")}`),
+      `FROM unit_viewings v JOIN portfolio_units a ON a.id = v.unit_id JOIN crm_contacts c ON c.id = v.contact_id WHERE v.deleted_at IS NULL AND COALESCE(v.status,'') NOT IN ('cancelled','not_leasing') AND ${visible("c.id", "a.property_id")}`),
     evidence({ contact_id: "o.contact_id", source: "'Named offer contact'", property_id: "a.property_id", unit_id: "a.unit_id", tracker_id: "a.id", unit_name: "a.unit_name" },
       `FROM unit_offers o JOIN portfolio_units a ON a.id = o.unit_id JOIN crm_contacts c ON c.id = o.contact_id WHERE ${visible("c.id", "a.property_id")}`),
     evidence({ contact_id: "c.id", company_id: "CASE WHEN c.id IS NULL THEN t.resolved_company_id END", fallback_id: "CASE WHEN t.resolved_company_id IS NULL THEN 'tenancy:' || t.id END", fallback_name: "t.occupier_name", group_key: "'tenants'",

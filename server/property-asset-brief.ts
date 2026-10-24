@@ -1367,7 +1367,7 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
       `WITH touches AS (
          SELECT v.contact_id, v.viewing_date::timestamp AS at, 'viewed' AS kind, au.unit_name
            FROM unit_viewings v JOIN available_units au ON au.id = v.unit_id
-          WHERE au.property_id = $1 AND v.contact_id IS NOT NULL
+          WHERE au.property_id = $1 AND v.contact_id IS NOT NULL AND v.deleted_at IS NULL AND COALESCE(v.status,'') NOT IN ('cancelled','not_leasing')
          UNION ALL
          SELECT o.contact_id, o.offer_date::timestamp AS at, 'offered' AS kind, au.unit_name
            FROM unit_offers o JOIN available_units au ON au.id = o.unit_id

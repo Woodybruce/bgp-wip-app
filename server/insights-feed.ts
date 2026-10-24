@@ -331,6 +331,7 @@ export async function runPortfolioLeg(): Promise<number> {
       JOIN crm_companies co ON co.id = p.landlord_id
       LEFT JOIN crm_companies t ON t.id = v.company_id
      WHERE v.created_at > $1 AND p.landlord_id IS NOT NULL
+       AND v.deleted_at IS NULL AND COALESCE(v.status,'') NOT IN ('cancelled','not_leasing')
      GROUP BY p.landlord_id, co.name, t.company_type
     HAVING count(*) >= 3`, [cursor]);
   let inserted = 0;

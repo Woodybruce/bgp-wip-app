@@ -1355,7 +1355,10 @@ export class DatabaseStorage implements IStorage {
     const files = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, id));
     await db.transaction(async (tx) => {
       await tx.delete(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, id));
-      await tx.delete(unitViewings).where(eq(unitViewings.unitId, id));
+      // Soft-delete the viewings so the diary sync keeps its tombstones —
+      // a hard delete lets the next calendar sweep recreate them as
+      // needs-details rows for a unit that was deliberately removed.
+      await tx.update(unitViewings).set({ unitId: null, deletedAt: sql`COALESCE(${unitViewings.deletedAt}, NOW())`, updatedAt: new Date() }).where(eq(unitViewings.unitId, id));
       await tx.delete(unitOffers).where(eq(unitOffers.unitId, id));
       // Clear the rent roll's back-reference so it doesn't point at a
       // deleted tracker row.

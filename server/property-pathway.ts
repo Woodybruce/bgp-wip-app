@@ -1,6 +1,6 @@
 import { getAnthropicClient } from "./utils/anthropic-client";
 import type { Express, Request, Response } from "express";
-import { eq, desc, and, or, ilike, sql } from "drizzle-orm";
+import { eq, desc, and, or, ilike, sql, isNull } from "drizzle-orm";
 import { requireAuth } from "./auth";
 import { contentDispositionFor } from "./utils/http-headers";
 import { db, pool } from "./db";
@@ -3020,7 +3020,7 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
   try {
     const unitIds = tenancy?.units?.map((u) => u.id) || [];
     if (unitIds.length) {
-      const viewings = await db.select().from(unitViewings).where(inArray(unitViewings.unitId, unitIds)).limit(30);
+      const viewings = await db.select().from(unitViewings).where(and(inArray(unitViewings.unitId, unitIds), isNull(unitViewings.deletedAt))).limit(30);
       for (const v of viewings) {
         engagements.push({
           source: "unit_viewing",

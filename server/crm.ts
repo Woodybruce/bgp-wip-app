@@ -4969,7 +4969,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
           `SELECT v.id, v.viewing_date, au.unit_name, p.id AS property_id, p.name AS property_name
              FROM unit_viewings v JOIN available_units au ON au.id = v.unit_id
              JOIN crm_properties p ON p.id = au.property_id
-            WHERE v.company_id = $1 ${propScope(2)}`, p2([brandId])),
+            WHERE v.company_id = $1 AND v.deleted_at IS NULL AND COALESCE(v.status,'') NOT IN ('cancelled','not_leasing') ${propScope(2)}`, p2([brandId])),
       ]);
 
       const tenantAt = [

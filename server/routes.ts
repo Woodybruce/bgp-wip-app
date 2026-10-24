@@ -7904,7 +7904,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
   app.patch("/api/available-units/viewings/:viewingId", requireAuth, async (req, res) => {
     try {
       const patch: Record<string, any> = {};
-      for (const key of ["companyId", "contactId", "agentContactId", "ownerUserId", "requirementId", "viewingDate", "viewingTime", "outcome", "notes", "status", "nextAction", "followUpDate", "confirmDetails", "expectedUpdatedAt"]) {
+      for (const key of ["companyId", "contactId", "agentContactId", "ownerUserId", "requirementId", "viewingDate", "viewingTime", "outcome", "notes", "attendees", "status", "nextAction", "followUpDate", "confirmDetails", "expectedUpdatedAt"]) {
         if (key in req.body) patch[key] = req.body[key] === "" ? null : req.body[key];
       }
       if (patch.outcome === "No Show") { patch.status = "no_show"; patch.outcome = null; }
