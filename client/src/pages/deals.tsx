@@ -6353,7 +6353,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                 <div>
                   <p className="text-lg font-bold">{searchedDeals.length}</p>
                   <p className="text-xs text-muted-foreground">{isCompsMode ? "All Comps" : "All Deals"}</p>
-                  <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(searchedDeals.reduce((sum, d) => sum + (Number((d as any).fee) || 0), 0))}</p>
+                  {/* Fees are stripped from client responses, so for a client
+                      this line could only ever read £0 — looks broken and
+                      surfaces the idea of BGP's fee. Staff keep the total. */}
+                  {!isClientDeals && (
+                    <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(searchedDeals.reduce((sum, d) => sum + (Number((d as any).fee) || 0), 0))}</p>
+                  )}
                 </div>
               </div>
             </CardContent>

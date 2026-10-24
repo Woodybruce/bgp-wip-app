@@ -67,7 +67,7 @@ export function buildPortfolioContactsQuery(companyId: string, scopeCompanyId: s
            d.client_contact_id, d.tenant_contact_id, d.landlord_contact_id, d.vendor_contact_id,
            d.purchaser_contact_id, d.vendor_agent_contact_id, d.acquisition_agent_contact_id,
            d.purchaser_agent_contact_id, d.leasing_agent_contact_id)))`),
-    evidence({ contact_id: "c.id", company_id: "CASE WHEN c.id IS NULL THEN party.company_id END", source: "CASE WHEN c.id IS NULL THEN 'Tracker company · no visible contact' ELSE 'Contact at tracker company' END || ' · ' || party.source", ...unitFields },
+    evidence({ contact_id: "c.id", company_id: "CASE WHEN c.id IS NULL THEN party.company_id END", source: "CASE WHEN c.id IS NULL THEN 'Tracker company — no named contact yet' ELSE 'Contact at tracker company' END || ' · ' || party.source", ...unitFields },
       `FROM active_units a JOIN tracker_parties party ON party.tracker_id = a.id
       LEFT JOIN crm_contacts c ON c.company_id = party.company_id AND ${visible("c.id", "a.property_id")}`),
     evidence({ fallback_id: "'tracker:' || a.id", fallback_name: "a.unit_name", source: "'Tracker unit · no brand linked'", ...unitFields },
@@ -127,10 +127,9 @@ export function buildPortfolioContactsQuery(companyId: string, scopeCompanyId: s
     resolved_occupiers AS (
       SELECT t.*, COALESCE(canonical.id, matched.company_id) AS resolved_company_id,
         canonical.id IS NOT NULL AS confirmed,
-        CASE WHEN canonical.id IS NOT NULL THEN 'recorded tenancy link'
-             WHEN matched.company_id IS NOT NULL THEN 'name match; CRM link unconfirmed'
-             WHEN t.tenant_company_id IS NOT NULL THEN 'recorded company missing; CRM link needs checking'
-             ELSE 'unresolved name; CRM link needed' END AS match_source
+        CASE WHEN canonical.id IS NOT NULL THEN 'recorded tenancy'
+             WHEN matched.company_id IS NOT NULL THEN 'matched by name'
+             ELSE 'from the tenancy schedule' END AS match_source
       FROM tenancy t LEFT JOIN crm_companies canonical ON canonical.id = t.tenant_company_id
       LEFT JOIN LATERAL (
         SELECT CASE WHEN count(*) = 1 THEN min(candidate.id) END AS company_id
