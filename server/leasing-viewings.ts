@@ -173,9 +173,13 @@ export async function patchLeasingViewing(req: Request, id: string, body: unknow
     const confirmed = terminal ? old.details_confirmed_at : patch.confirmDetails ? new Date() : identityChanged ? null : old.details_confirmed_at;
     const recorded = "status" in patch || "outcome" in patch;
     // Free-text names (no CRM link) survive unrelated edits: a name is only
-    // cleared when its link is explicitly cleared in this patch.
-    const companyName = brand?.name || ("companyId" in patch ? null : old.company_name);
-    const contactName = contact?.name || ("contactId" in patch ? null : old.contact_name);
+    // cleared when this patch explicitly UNLINKS a previously linked record.
+    // (The workbench dialog sends every key on every save, so key presence
+    // alone cannot mean "clear".)
+    const companyUnlinked = "companyId" in patch && !patch.companyId && !!old.company_id;
+    const contactUnlinked = "contactId" in patch && !patch.contactId && !!old.contact_id;
+    const companyName = brand?.name || (companyUnlinked ? null : old.company_name);
+    const contactName = contact?.name || (contactUnlinked ? null : old.contact_name);
     const result = await db.query(`UPDATE unit_viewings SET unit_id=$2, company_id=$3, company_name=$4,
       contact_id=$5, contact_name=$6, agent_contact_id=$7, owner_user_id=$8, requirement_id=$9,
       viewing_date=$10, viewing_time=$11, status=$12, outcome=$13, notes=$14, next_action=$15, follow_up_date=$16,

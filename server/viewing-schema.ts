@@ -22,7 +22,11 @@ export const LEASING_VIEWING_DDL = [
   "CREATE INDEX IF NOT EXISTS unit_viewings_requirement_idx ON unit_viewings (requirement_id)",
   "CREATE INDEX IF NOT EXISTS unit_viewings_owner_date_idx ON unit_viewings (owner_user_id, viewing_date)",
   "CREATE INDEX IF NOT EXISTS unit_offers_viewing_idx ON unit_offers (viewing_id)",
-  "UPDATE unit_viewings SET\n  status = CASE WHEN status='scheduled' AND outcome='No Show' THEN 'no_show'\n    WHEN status='scheduled' AND outcome IN ('Interested','Not Interested','Follow Up','Offer Expected','Second Viewing','Offer Received') THEN 'completed'\n    ELSE status END,\n  outcome = CASE WHEN outcome='No Show' THEN NULL ELSE NULLIF(btrim(outcome),'') END,\n  source_details = COALESCE(source_details,'{}'::jsonb) || '{\"workflowVersion\":1}'::jsonb\nWHERE NOT (COALESCE(source_details,'{}'::jsonb) ? 'workflowVersion')"
+  "UPDATE unit_viewings SET\n  status = CASE WHEN status='scheduled' AND outcome='No Show' THEN 'no_show'\n    WHEN status='scheduled' AND outcome IN ('Interested','Not Interested','Follow Up','Offer Expected','Second Viewing','Offer Received') THEN 'completed'\n    ELSE status END,\n  outcome = CASE WHEN outcome='No Show' THEN NULL ELSE NULLIF(btrim(outcome),'') END,\n  source_details = COALESCE(source_details,'{}'::jsonb) || '{\"workflowVersion\":1}'::jsonb\nWHERE NOT (COALESCE(source_details,'{}'::jsonb) ? 'workflowVersion')",
+  // v2 catch-up: v1's exact-match list missed pre-workflow chat outcomes
+  // ('Offer Made', 'Follow-up') and case/whitespace variants, stamping those
+  // rows while leaving them stuck 'scheduled' with an outcome recorded.
+  "UPDATE unit_viewings SET\n  status = CASE WHEN lower(btrim(outcome))='no show' THEN 'no_show' ELSE 'completed' END,\n  outcome = CASE WHEN lower(btrim(outcome))='no show' THEN NULL ELSE btrim(outcome) END,\n  source_details = COALESCE(source_details,'{}'::jsonb) || '{\"workflowVersion\":2}'::jsonb\nWHERE (COALESCE(source_details,'{}'::jsonb) ->> 'workflowVersion') = '1'\n  AND status='scheduled'\n  AND lower(btrim(outcome)) IN ('no show','interested','not interested','follow up','follow-up','offer expected','offer made','second viewing','offer received')"
 ] as const;
 
 export async function ensureLeasingViewingSchema() {
