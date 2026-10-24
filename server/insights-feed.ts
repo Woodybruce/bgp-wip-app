@@ -186,7 +186,7 @@ export async function runNewsLeg(): Promise<number> {
   await ensureTables();
   const cursor = (await getCursor("news")) || new Date(Date.now() - 24 * 3600 * 1000);
   const arts = await pool.query(
-    `SELECT id, title, source_name, summary, ai_summary, url, published_at
+    `SELECT id, title, source_name, summary, ai_summary, url, published_at, fetched_at
        FROM news_articles
       WHERE fetched_at > $1
       ORDER BY fetched_at ASC LIMIT 60`, [cursor]);
@@ -195,7 +195,10 @@ export async function runNewsLeg(): Promise<number> {
     `- [${a.source_name || "?"}] ${a.title}: ${(a.ai_summary || a.summary || "").slice(0, 220)}`).join("\n");
   const evidence = arts.rows.slice(0, 6).map((a: any) => ({ type: "article", id: a.id, title: a.title, url: a.url }));
   const n = await distil(`${arts.rows.length} trade articles`, material, "news", evidence);
-  await setCursor("news", new Date());
+  // A capped batch parks the cursor at the last article it actually
+  // processed so the next tick picks up the overflow — advancing to now()
+  // silently dropped everything past the 60-row cap on busy news days.
+  await setCursor("news", arts.rows.length === 60 ? new Date(arts.rows[arts.rows.length - 1].fetched_at) : new Date());
   console.log(`[insights] news leg: ${arts.rows.length} articles → ${n} insights`);
   return n;
 }

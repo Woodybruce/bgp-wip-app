@@ -252,7 +252,10 @@ async function syncEmailsForUser(
 
   try {
     const url = `${GRAPH_BASE}/users/${userEmail}/messages?$filter=receivedDateTime ge ${since}&$select=id,conversationId,subject,bodyPreview,from,toRecipients,ccRecipients,receivedDateTime,isDraft,parentFolderId&$top=100&$orderby=receivedDateTime desc`;
-    const messages = await graphGetPaged(token, url, options.maxPages ?? 5, { delayMs: options.pageDelayMs });
+    // ImmutableId: default Graph ids are mailbox-folder-local, so filing an
+    // email into a project folder re-keyed it and the next sweep filed it
+    // again as a brand-new interaction. Immutable ids survive moves.
+    const messages = await graphGetPaged(token, url, options.maxPages ?? 5, { delayMs: options.pageDelayMs, headers: { Prefer: 'IdType="ImmutableId"' } });
 
     if (options.captureSignals !== false) {
       // Email → offers check: offer-looking emails anchored to a tracker unit
@@ -332,21 +335,26 @@ async function syncEmailsForUser(
 
       for (const match of allMatches) {
         try {
-          await db.insert(crmInteractions).values({
-            contactId: match.contact.id,
-            companyId: match.contact.companyId,
-            type: "email",
-            direction: isBgpSender ? "outbound" : "inbound",
-            subject: msg.subject || "(No subject)",
-            preview: (msg.bodyPreview || "").substring(0, 200),
-            participants: allAddresses.map((a: string) => a.toLowerCase()),
-            microsoftId: msId,
-            matchMethod: match.method,
-            interactionDate: new Date(msg.receivedDateTime),
-            bgpUser: userEmail,
-          });
+          // The second NOT EXISTS is the immutable-id transition guard —
+          // every id stored before the ImmutableId switch is in the old
+          // format, so without a content match the whole 120-day window
+          // would re-file once. It also permanently stops a re-keyed copy
+          // of the same email double-counting the engagement scores.
+          const r = await pool.query(
+            `INSERT INTO crm_interactions
+               (contact_id, company_id, type, direction, subject, preview, participants, microsoft_id, match_method, interaction_date, bgp_user)
+             SELECT $1, $2, 'email', $3, $4, $5, $6::jsonb, $7, $8, $9, $10
+              WHERE NOT EXISTS (SELECT 1 FROM crm_interactions WHERE contact_id = $1 AND microsoft_id = $7)
+                AND NOT EXISTS (SELECT 1 FROM crm_interactions
+                                 WHERE contact_id = $1 AND bgp_user = $10 AND type = 'email'
+                                   AND subject = $4 AND interaction_date = $9)`,
+            [match.contact.id, match.contact.companyId, isBgpSender ? "outbound" : "inbound",
+              msg.subject || "(No subject)", (msg.bodyPreview || "").substring(0, 200),
+              JSON.stringify(allAddresses.map((a: string) => a.toLowerCase())), msId, match.method,
+              new Date(msg.receivedDateTime), userEmail]
+          );
           existingMsIds.add(msId);
-          count++;
+          count += r.rowCount || 0;
         } catch (e: any) {
           if (!e.message?.includes("duplicate")) {
             console.error("Insert interaction error:", e.message);
@@ -422,8 +430,40 @@ async function syncCalendarForUser(
     }
 
     for (const event of events) {
-      const msId = `cal_${event.id}`;
-      if (existingMsIds.has(msId)) continue;
+      // iCalUId is stable across mailboxes and reschedules; event.id is
+      // mailbox-local and changes on moves. Per-mailbox prefix keeps the
+      // agent-leaderboard attribution. The bare cal_<id> form is what every
+      // pre-switch row stored, so it stays part of dedupe/cleanup.
+      const msId = `cal_${userEmail}_${event.iCalUId || event.id}`;
+      const legacyMsId = `cal_${event.id}`;
+
+      // Cancelled meetings never happened: remove what an earlier sweep
+      // filed (meetings carry the heaviest engagement weight) and file nothing.
+      if (event.isCancelled) {
+        try {
+          await pool.query(`DELETE FROM crm_interactions WHERE microsoft_id = ANY($1::text[])`, [[msId, legacyMsId]]);
+        } catch (e: any) { console.error("Cancel-cleanup error:", e?.message); }
+        existingMsIds.delete(msId);
+        existingMsIds.delete(legacyMsId);
+        continue;
+      }
+
+      if (existingMsIds.has(msId) || existingMsIds.has(legacyMsId)) {
+        // Already filed — but a rescheduled meeting must follow its new date
+        // (and flip upcoming→past once it happens) instead of freezing at
+        // the date it was first filed under.
+        try {
+          const storedDate = event.start ? parseGraphDateTime(event.start) : new Date();
+          await pool.query(
+            `UPDATE crm_interactions
+                SET interaction_date = $2, direction = $3, subject = $4
+              WHERE microsoft_id = ANY($1::text[])
+                AND (interaction_date <> $2 OR direction <> $3)`,
+            [[msId, legacyMsId], storedDate, storedDate > new Date() ? "upcoming" : "past", event.subject || "(No subject)"]
+          );
+        } catch (e: any) { console.error("Reschedule-update error:", e?.message); }
+        continue;
+      }
 
       const allAddresses: string[] = [];
       if (event.organizer?.emailAddress?.address) {

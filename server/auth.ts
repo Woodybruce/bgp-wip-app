@@ -72,6 +72,7 @@ async function trackActivity(userId: string) {
 declare module "express" {
   interface Request {
     tokenUserId?: string;
+    qaToken?: boolean;
   }
 }
 
@@ -181,7 +182,10 @@ export function setupAuth(app: Express) {
         maxAge: 8 * 60 * 60 * 1000, // 8 hours
         httpOnly: true,
         secure: isProduction,
-        sameSite: isProduction ? ("none" as const) : ("lax" as const),
+        // 'lax' blocks cross-site form POSTs riding the cookie (CSRF). The
+        // SPA is served same-origin from this server, so nothing legitimate
+        // needs 'none'.
+        sameSite: "lax" as const,
       },
     })
   );
@@ -219,7 +223,10 @@ export function setupAuth(app: Express) {
         const userId = await getUserIdFromToken(token);
         if (userId) {
           req.tokenUserId = userId;
-          if (!req.session.userId) {
+          req.qaToken = token.startsWith("qa_");
+          // QA test tokens authenticate per-request only — never minted into
+          // a session, so "Revoke all test access" cuts them off instantly.
+          if (!req.session.userId && !req.qaToken) {
             req.session.userId = userId;
           }
         }
@@ -245,6 +252,21 @@ export function setupAuth(app: Express) {
     res.status(403).json({ message: "Use Microsoft 365 sign-in to create your BGP account. Contact an administrator for a client account." });
   });
 
+  // Per-account failed-login tracking: distributed credential stuffing can
+  // rotate IPs past the per-IP limiter, but it can't rotate the account.
+  const failedLogins = new Map<string, { count: number; first: number; lockedUntil?: number }>();
+  const LOGIN_FAIL_WINDOW_MS = 15 * 60 * 1000;
+  const LOGIN_MAX_FAILURES = 10;
+  function recordFailedLogin(account: string, ip: string | undefined): void {
+    const now = Date.now();
+    const cur = failedLogins.get(account);
+    const entry = cur && now - cur.first < LOGIN_FAIL_WINDOW_MS ? cur : { count: 0, first: now } as { count: number; first: number; lockedUntil?: number };
+    entry.count += 1;
+    if (entry.count >= LOGIN_MAX_FAILURES) entry.lockedUntil = now + LOGIN_FAIL_WINDOW_MS;
+    failedLogins.set(account, entry);
+    console.warn(`[auth] failed login: account=${account} ip=${ip || "?"} failures=${entry.count}${entry.lockedUntil ? " LOCKED" : ""}`);
+  }
+
   app.post("/api/auth/login", async (req: Request, res: Response) => {
     const result = loginSchema.safeParse(req.body);
     if (!result.success) {
@@ -253,6 +275,11 @@ export function setupAuth(app: Express) {
 
     const { username, password } = result.data;
     const loginInput = username.toLowerCase().trim();
+    const lock = failedLogins.get(loginInput);
+    if (lock?.lockedUntil && Date.now() < lock.lockedUntil) {
+      console.warn(`[auth] login attempt on locked account: account=${loginInput} ip=${req.ip}`);
+      return res.status(429).json({ message: "Too many failed sign-in attempts. Please try again in 15 minutes." });
+    }
     let user = await storage.getUserByUsername(loginInput);
     if (!user && loginInput.includes("@")) {
       const allUsers = await storage.getAllUsers();
@@ -260,6 +287,7 @@ export function setupAuth(app: Express) {
     }
 
     if (!user) {
+      recordFailedLogin(loginInput, req.ip);
       return res.status(401).json({ message: "Invalid username or password" });
     }
 
@@ -269,8 +297,10 @@ export function setupAuth(app: Express) {
 
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) {
+      recordFailedLogin(loginInput, req.ip);
       return res.status(401).json({ message: "Invalid username or password" });
     }
+    failedLogins.delete(loginInput);
 
     await new Promise<void>((resolve, reject) => {
       req.session.regenerate((err) => {
@@ -350,9 +380,23 @@ export function setupAuth(app: Express) {
     await pool.query("INSERT INTO auth_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)", [token, userId, expiresAt]);
     res.json({ token, expiresAt });
   });
-  app.delete("/api/admin/qa-access", requireAdmin, async (_req: Request, res: Response) => {
+  app.delete("/api/admin/qa-access", requireAdmin, async (req: Request, res: Response) => {
     const r = await pool.query(`DELETE FROM auth_tokens WHERE token LIKE 'qa\\_%'`);
-    res.json({ revoked: r.rowCount || 0 });
+    // QA sessions minted before tokens stopped being promoted are
+    // indistinguishable from the minting admin's own — sweep them all
+    // (except the session doing the revoke) so "Revoke all" means all.
+    const adminId = req.session.userId || req.tokenUserId;
+    let sessionsCleared = 0;
+    if (adminId) {
+      try {
+        const s = await pool.query(
+          `DELETE FROM session WHERE sess::jsonb ->> 'userId' = $1 AND sid <> $2`,
+          [adminId, req.session.id || ""],
+        );
+        sessionsCleared = s.rowCount || 0;
+      } catch (e: any) { console.warn("[qa-access] session sweep failed:", e?.message); }
+    }
+    res.json({ revoked: r.rowCount || 0, sessionsCleared });
   });
 
   // Mint a fresh bearer token off a still-valid session, so a stale token
@@ -896,7 +940,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   if (!userId) {
     return res.status(401).json({ message: "Not authenticated" });
   }
-  if (!req.session.userId && req.tokenUserId) {
+  if (!req.session.userId && req.tokenUserId && !req.qaToken) {
     req.session.userId = req.tokenUserId;
   }
   try {
@@ -924,7 +968,7 @@ const EQUITY_EMAILS = new Set([
 export async function requireEquityOrAdmin(req: Request, res: Response, next: NextFunction) {
   const userId = req.session.userId || req.tokenUserId;
   if (!userId) return res.status(401).json({ message: "Not authenticated" });
-  if (!req.session.userId && req.tokenUserId) req.session.userId = req.tokenUserId;
+  if (!req.session.userId && req.tokenUserId && !req.qaToken) req.session.userId = req.tokenUserId;
   try {
     const result = await pool.query("SELECT is_active, is_admin, email FROM users WHERE id = $1", [userId]);
     if (result.rows.length === 0) return res.status(401).json({ message: "Not authenticated" });
@@ -944,7 +988,7 @@ export async function requireEquityOrAdmin(req: Request, res: Response, next: Ne
 export async function requireAdmin(req: Request, res: Response, next: NextFunction) {
   const userId = req.session.userId || req.tokenUserId;
   if (!userId) return res.status(401).json({ message: "Not authenticated" });
-  if (!req.session.userId && req.tokenUserId) req.session.userId = req.tokenUserId;
+  if (!req.session.userId && req.tokenUserId && !req.qaToken) req.session.userId = req.tokenUserId;
   try {
     const result = await pool.query("SELECT is_active, is_admin, email FROM users WHERE id = $1", [userId]);
     if (result.rows.length === 0) return res.status(401).json({ message: "Not authenticated" });

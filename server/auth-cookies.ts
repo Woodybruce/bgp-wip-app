@@ -49,8 +49,13 @@ export async function loadPaywallCookies(): Promise<void> {
 // priority over the env var.
 export function authCookieForUrl(url: string): string | null {
   if (!url) return null;
+  // Match on the HOSTNAME, never the whole URL: a query string like
+  // ?ref=propertyweek.com must not send the subscriber cookie to a
+  // different host.
+  let host: string;
+  try { host = new URL(url).hostname.toLowerCase(); } catch { return null; }
   for (const rule of COOKIE_RULES) {
-    if (rule.pattern.test(url)) {
+    if (host === rule.domain || host.endsWith("." + rule.domain)) {
       const fromDb = dbCookies[rule.envVar];
       if (fromDb && fromDb.trim()) return fromDb.trim();
       const fromEnv = process.env[rule.envVar];

@@ -237,6 +237,32 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
     const { allowed, user } = await checkPropertyAccess(pool, req, existingUnit.property_id);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
+    // Senior-approval / AML gates run BEFORE any write when the status edit
+    // would move the linked deal (via the shared tenancy_unit_id → AU → deal
+    // chain) — the same rules the deal PUT enforces. Same-bucket moves are
+    // not transitions, so they pass straight through.
+    if ("status" in (req.body || {}) && existingUnit.tenancy_unit_id) {
+      try {
+        const { leasingStatusToCode, codeMatchesLeasingStatus } = await import("@shared/lease-status-mirror");
+        const gateCode = leasingStatusToCode(String(req.body.status ?? ""));
+        if (gateCode) {
+          const auGate = await pool.query(
+            `SELECT au.deal_id, d.status FROM available_units au JOIN crm_deals d ON d.id = au.deal_id
+              WHERE au.tenancy_unit_id = $1 AND au.deal_id IS NOT NULL LIMIT 1`,
+            [existingUnit.tenancy_unit_id]
+          );
+          const gateRow = auGate.rows[0];
+          if (gateRow && !codeMatchesLeasingStatus(gateRow.status, String(req.body.status ?? ""))) {
+            const { dealStatusTransitionDenial } = await import("./deal-gates");
+            const denial = await dealStatusTransitionDenial(user?.id || null, gateRow.deal_id, gateCode);
+            if (denial) return res.status(denial.status).json({ error: denial.error, code: denial.code });
+          }
+        }
+      } catch (e: any) {
+        console.warn("[leasing] deal gate check failed:", (e as any)?.message);
+      }
+    }
+
     const allowedFields = [
       "zone", "unit_code", "positioning", "unit_name", "tenant_name", "agent_initials",
       "lease_expiry", "lease_break", "rent_review", "landlord_break",
@@ -319,7 +345,7 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
     if ("status" in body) {
       try {
         const { mirrorFromLeasingSchedule } = await import("./lease-status-mirror");
-        await mirrorFromLeasingSchedule(req.params.id as string, body.status, { pool, reason: "leasing_schedule.PUT" });
+        await mirrorFromLeasingSchedule(req.params.id as string, body.status, { pool, reason: "leasing_schedule.PUT", actorUserId: (req.session as any)?.userId || (req as any).tokenUserId || null });
       } catch (e: any) {
         console.warn(`[leasing] status mirror failed for ${req.params.id}:`, e?.message);
         mirrorWarning = `Status saved, but syncing it to the Letting Tracker / Deals board failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
@@ -462,7 +488,7 @@ router.patch("/api/leasing-schedule/units/:id/archive", requireAuth, async (req,
     // spine all reflect the move. Best-effort; never fails the primary.
     try {
       const { mirrorFromLeasingSchedule } = await import("./lease-status-mirror");
-      await mirrorFromLeasingSchedule(req.params.id as string, newStatus, { pool, reason: "leasing.archive" });
+      await mirrorFromLeasingSchedule(req.params.id as string, newStatus, { pool, reason: "leasing.archive", actorUserId: (req.session as any)?.userId || (req as any).tokenUserId || null });
     } catch (e: any) {
       console.warn(`[leasing] archive mirror failed for ${req.params.id}:`, e?.message);
     }

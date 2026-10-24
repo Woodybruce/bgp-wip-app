@@ -90,7 +90,27 @@ async function ensureScoreHistoryTable(): Promise<void> {
     ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS score_version INTEGER DEFAULT 1;
     ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS sub_scores JSONB;
     ALTER TABLE brand_signals ADD COLUMN IF NOT EXISTS ai_relevant BOOLEAN;
+    CREATE TABLE IF NOT EXISTS brand_trigger_alerts (
+      brand_company_id VARCHAR NOT NULL,
+      type TEXT NOT NULL,
+      signal_id VARCHAR NOT NULL,
+      sent_at TIMESTAMP DEFAULT now(),
+      UNIQUE (brand_company_id, type, signal_id)
+    );
   `);
+}
+
+// Once-per-signal claim for the signal-driven alert legs. Their lookback
+// windows (24h/7d) are wider than the daily cadence, so without a sent
+// ledger the same administration headline re-emailed every day for a week.
+async function claimAlertOnce(brandId: string, type: string, signalId: string): Promise<boolean> {
+  const r = await pool.query(
+    `INSERT INTO brand_trigger_alerts (brand_company_id, type, signal_id)
+     VALUES ($1, $2, $3) ON CONFLICT (brand_company_id, type, signal_id) DO NOTHING
+     RETURNING signal_id`,
+    [brandId, type, signalId],
+  );
+  return (r.rowCount || 0) > 0;
 }
 
 // Alert-grade relevance check. Signals already judged (ai_relevant set at
@@ -276,7 +296,7 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean; recordOnly?: b
         new Date(s.created_at) >= new Date(Date.now() - 7 * 86400000) &&
         /insolven|administrat|liquidat|wind.up|ccj|adverse/i.test(s.headline || "")
       ));
-      if (recentInsolv) {
+      if (recentInsolv && (dryRun || (await claimAlertOnce(brand.id, "covenant_risk", recentInsolv.id)))) {
         events.push({
           brandId: brand.id, brandName: brand.name, type: "covenant_risk",
           headline: `${brand.name} — covenant red flag`,
@@ -294,7 +314,7 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean; recordOnly?: b
       s.signal_type === "funding" &&
       new Date(s.created_at) >= new Date(Date.now() - 86400000)
     ));
-    if (recentFunding) {
+    if (recentFunding && (dryRun || (await claimAlertOnce(brand.id, "fundraise", recentFunding.id)))) {
       const isRaise = /\b(rais(e|es|ed|ing)|funding|investment|invests?|series [a-e]|secures|backs|backed)\b/i.test(recentFunding.headline || "");
       events.push({
         brandId: brand.id, brandName: brand.name, type: "fundraise",
@@ -315,7 +335,7 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean; recordOnly?: b
       new Date(s.created_at) >= new Date(Date.now() - 7 * 86400000) &&
       (s.headline || "").toLowerCase().includes(brandToken)
     ));
-    if (recentExec) {
+    if (recentExec && (dryRun || (await claimAlertOnce(brand.id, "exec_change_major", recentExec.id)))) {
       events.push({
         brandId: brand.id, brandName: brand.name, type: "exec_change_major",
         headline: `${brand.name} — major leadership move`,
@@ -477,6 +497,11 @@ export function startExpansionRescore() {
 
 export async function runDailyBrandTriggers(): Promise<{ events: number; sent: number }> {
   try {
+    // Retention: getLastSnapshot only reads the latest row per brand and the
+    // trend reader only needs recent history — unbounded, this grew ~700k
+    // rows a year.
+    await pool.query(`DELETE FROM brand_score_history WHERE checked_at < now() - interval '180 days'`)
+      .catch((e: any) => console.warn("[brand-triggers] history retention sweep failed:", e?.message));
     const events = await scanBrandTriggers({ dryRun: false });
     let sent = 0;
     const byRecipient = groupEventsByRecipient(events);

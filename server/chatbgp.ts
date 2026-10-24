@@ -155,7 +155,7 @@ function cleanOfficeText(v: any): string {
 // bytes are sniffed as well as the content-type. Falls through to the
 // original HTML-strip path for everything else.
 async function ingestNonPdfBody(response: globalThis.Response, targetUrl: string, contentType: string): Promise<{ title: string; extractedText: string }> {
-  const rawBuf = Buffer.from(await response.arrayBuffer());
+  const rawBuf = await (await import("./safe-fetch")).readBodyCapped(response);
   const isZip = contentType.includes("zip") || /\.zip($|\?)/i.test(targetUrl) ||
     (rawBuf.length > 4 && rawBuf[0] === 0x50 && rawBuf[1] === 0x4b && rawBuf[2] === 0x03 && rawBuf[3] === 0x04 && !contentType.includes("html"));
   if (isZip) {
@@ -164,8 +164,15 @@ async function ingestNonPdfBody(response: globalThis.Response, targetUrl: string
     const entries = zip.getEntries().filter((e: any) => !e.isDirectory && !e.entryName.startsWith("__MACOSX"));
     let title = decodeURIComponent((targetUrl.split("/").pop() || "").replace(/\?.*$/, "")) || "ZIP archive";
     const parts: string[] = [`ZIP archive — ${entries.length} file(s): ${entries.map((e: any) => e.entryName).join(", ")}`];
+    // Decompression caps: a 1MB zip can inflate to many GB and OOM the app.
+    const PER_ENTRY_CAP = 100 * 1024 * 1024, TOTAL_CAP = 200 * 1024 * 1024;
+    let inflated = 0;
+    const skipped: string[] = [];
     for (const e of entries.slice(0, 5)) {
       const name = e.entryName.toLowerCase();
+      const declaredSize = Number(e.header?.size || 0);
+      if (declaredSize > PER_ENTRY_CAP || inflated + declaredSize > TOTAL_CAP) { skipped.push(e.entryName); continue; }
+      inflated += declaredSize;
       const data = e.getData();
       try {
         if (/\.(xlsx|xls|csv)$/.test(name)) {
@@ -255,6 +262,7 @@ async function ingestNonPdfBody(response: globalThis.Response, targetUrl: string
         parts.push(`--- ${e.entryName} — could not extract: ${entryErr?.message} ---`);
       }
     }
+    if (skipped.length) parts.push(`Skipped ${skipped.length} oversized archive entr${skipped.length === 1 ? "y" : "ies"} (decompression cap): ${skipped.join(", ")}`);
     return { title, extractedText: parts.join("\n\n") };
   }
   const html = rawBuf.toString("utf8");
@@ -2213,6 +2221,9 @@ export const CLIENT_BLOCKED_TOOLS = new Set([
   // House templates are firm-shared state — create/update were open while
   // only delete was blocked, letting a client session rewrite BGP's templates.
   "delete_document_template", "create_document_template", "update_document_template",
+  // The public bgp.uk.com website is firm-shared state — never editable
+  // from a client session.
+  "manage_website_content",
   "run_shell_command", "restart_application", "git_diff", "git_status",
   "grep_codebase", "read_source_file", "edit_source_file", "list_project_files",
   "list_chatbgp_branches", "merge_chatbgp_branch", "revert_chatbgp_commit",
@@ -2238,6 +2249,59 @@ export const CLIENT_SAFE_TOOLS = { has: (name: string) => isToolAllowedForClient
 
 export function filterToolsForClientScope(tools: any[]): any[] {
   return tools.filter(t => isToolAllowedForClient(t?.function?.name));
+}
+
+// Per-record scope for the chat CRM write tools. The name blocklist says which
+// tools a client may CALL; this says which RECORDS those calls may touch.
+// Returns a denial message for a scoped client outside their portfolio/slice,
+// null to proceed. Mutates fnArgs only to strip BGP fee fields.
+export async function chatCrmWriteDenial(req: Request, fnName: string, fnArgs: any): Promise<string | null> {
+  const WRITE_TOOLS = new Set(["update_deal", "create_deal", "update_contact", "update_company"]);
+  if (!WRITE_TOOLS.has(fnName)) return null;
+  const DENY = "Not available on client accounts — that record is outside your portfolio.";
+  let scope: string | null;
+  try { scope = await resolveCompanyScope(req); }
+  catch { return "Your account scope could not be verified. Please try again."; }
+  if (!scope) return null; // staff
+  const { pool } = await import("./db");
+  const inPortfolioDeal = async (dealId: string) => (await pool.query(
+    `SELECT 1 FROM crm_deals d WHERE d.id = $1 AND (d.landlord_id = $2 OR d.property_id IN (
+       SELECT p.id FROM crm_properties p WHERE p.landlord_id = $2 OR p.id IN (
+         SELECT property_id FROM crm_company_properties WHERE company_id = $2)))`, [dealId, scope])).rows.length > 0;
+  const inPortfolioProperty = async (propertyId: string) => (await pool.query(
+    `SELECT 1 FROM crm_properties p WHERE p.id = $1 AND (p.landlord_id = $2 OR p.id IN (
+       SELECT property_id FROM crm_company_properties WHERE company_id = $2))`, [propertyId, scope])).rows.length > 0;
+  if (fnName === "update_deal") {
+    delete fnArgs.fee; delete fnArgs.feePercentage; // clients never see or set BGP fees
+    if (!fnArgs.id || !(await inPortfolioDeal(String(fnArgs.id)))) return DENY;
+    return null;
+  }
+  if (fnName === "create_deal") {
+    delete fnArgs.fee; delete fnArgs.feePercentage;
+    for (const key of ["landlordId", "vendorId", "purchaserId"] as const) {
+      if (fnArgs[key] && String(fnArgs[key]) !== scope) return DENY;
+    }
+    if (!fnArgs.landlordId && !fnArgs.vendorId && !fnArgs.purchaserId) fnArgs.landlordId = scope;
+    if (fnArgs.propertyId && !(await inPortfolioProperty(String(fnArgs.propertyId)))) return DENY;
+    return null;
+  }
+  if (fnName === "update_contact") {
+    if (!fnArgs.id) return DENY;
+    const row = (await pool.query(`SELECT company_id FROM crm_contacts WHERE id = $1`, [String(fnArgs.id)])).rows[0];
+    if (!row) return "Contact not found.";
+    if (row.company_id === scope) return null;
+    const { isClientVisibleBrand } = await import("./company-scope");
+    if (row.company_id && await isClientVisibleBrand(row.company_id, scope)) return null;
+    return DENY;
+  }
+  if (fnName === "update_company") {
+    // A client may edit their own company row only, and never the visibility
+    // grant itself — that is governed by the dedicated add-brand flow.
+    if (String(fnArgs.id) !== scope) return DENY;
+    delete fnArgs.crmExtraBrandIds;
+    return null;
+  }
+  return null;
 }
 
 export const CLIENT_SYSTEM_PROMPT = `You are ChatBGP, the AI assistant of Bruce Gillingham Pollard (BGP), currently speaking with a CLIENT of BGP — not a BGP staff member.
@@ -4833,6 +4897,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           address: { type: "string", description: "For address-match-uprn: the street address to match. e.g. '10 Lowndes Street'" },
           uprn: { type: "string", description: "For uprn and uprn-title endpoints: the UPRN number to look up." },
           title: { type: "string", description: "For analyse-buildings: a single Land Registry title number. For land-registry-documents: one or MORE title numbers, comma-separated (e.g. 'TGL379483,TGL624521') — each is purchased and its register text extracted in one call (max 4)." },
+          confirmed: { type: "boolean", description: "land-registry-documents only: set true ONLY after the user has confirmed the titles and the per-document fee in this conversation. A call without confirmed:true returns the fee quote and orders nothing." },
           documents: { type: "string", enum: ["register", "plan", "both"], description: "For land-registry-documents: which documents to purchase. 'register' = Title Register, 'plan' = Title Plan, 'both' = both. Default: both." },
           extract_proprietor_data: { type: "boolean", description: "For land-registry-documents: extract proprietor name, address, price paid, and mortgage charges from the register (extra £1+VAT). Default: true." },
           property_type: { type: "string", description: "For commercial endpoints: retail, offices, industrial, restaurants, or pubs. For residential: flat, terraced, semi-detached, detached. For rebuild-cost: detached_house, semi_detached_house, mid_terrace_house, end_terrace_house, flat." },
@@ -6665,6 +6730,24 @@ export async function executeCrmToolRaw(
     if ((await clientChatGuard(req)).isClient) return { data: { error: "The staff app guide is not available on client accounts." } };
     return { data: searchAppGuide(fnArgs) };
   }
+  // Single client chokepoint: direct callers (email instructions, WhatsApp
+  // fallback) bypass the chat loops' gates, so the name gate and per-record
+  // write scope are enforced here too — failing CLOSED on any error.
+  try {
+    const { isInternalStaffRequest } = await import("./chatbgp-internal");
+    if (!isInternalStaffRequest(req)) {
+      const { isClientRequestUser } = await import("./company-scope");
+      if (await isClientRequestUser(req)) {
+        if (!isToolAllowedForClient(fnName)) {
+          return { data: { success: false, error: "This capability is not available on client accounts. Your account covers your own portfolio only — contact your BGP team for anything further." } };
+        }
+        const denial = await chatCrmWriteDenial(req, fnName, fnArgs);
+        if (denial) return { data: { success: false, error: denial } };
+      }
+    }
+  } catch {
+    return { data: { success: false, error: "Your account scope could not be verified. Please try again." } };
+  }
   const { db } = await import("./db");
   const { pool } = await import("./db");
 
@@ -6889,6 +6972,12 @@ export async function executeCrmToolRaw(
     const cleanUpdates: any = {};
     for (const [k, v] of Object.entries(updates)) {
       if (v !== undefined && v !== null) cleanUpdates[k] = v;
+    }
+    if ("status" in cleanUpdates) {
+      // Deal status moves carry senior-approval, AML and audit obligations the
+      // deal page enforces; chat must not write them raw. (Everything else on
+      // the deal stays editable from chat.)
+      return { data: { success: false, error: "Deal status changes aren't made from chat — use the deal page, where approval and AML checks run. Other fields can still be updated here." } };
     }
     await db.update(crmDeals).set(cleanUpdates).where(eq(crmDeals.id, id));
     try { const { syncTrackerFromDeal } = await import("./investment-deal-sync"); await syncTrackerFromDeal(id, Object.keys(cleanUpdates)); } catch (e: any) { console.warn("[chatbgp] tracker sync failed:", e?.message); }
@@ -8969,12 +9058,10 @@ export async function executeCrmToolRaw(
       // along automatically — without them a paywalled URL returns the
       // teaser, not the article BGP's subscription entitles it to.
       const { authHeadersForUrl } = await import("./auth-cookies");
-      const response = await fetch(targetUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
-          ...authHeadersForUrl(targetUrl),
-        },
-        redirect: "follow",
+      const { safePublicFetch } = await import("./safe-fetch");
+      const response = await safePublicFetch(targetUrl, {
+        headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36" },
+        headersForUrl: url => authHeadersForUrl(url),
       });
       if (!response.ok) return { data: { error: `Failed to fetch URL: HTTP ${response.status}` } };
       const contentType = response.headers.get("content-type") || "";
@@ -8982,7 +9069,7 @@ export async function executeCrmToolRaw(
       let title = "";
 
       if (contentType.includes("pdf") || targetUrl.toLowerCase().endsWith(".pdf")) {
-        const buffer = await response.arrayBuffer();
+        const buffer = await (await import("./safe-fetch")).readBodyCapped(response);
         const { PDFParse } = await import("pdf-parse");
         const parser = new PDFParse(new Uint8Array(buffer));
         const textResult = await parser.getText();
@@ -9193,6 +9280,17 @@ export async function executeCrmToolRaw(
     // space-separated) + server-side ZIP download and PDF text extraction so
     // the register contents come back readable instead of as a bare link.
     if (endpoint === "land-registry-documents") {
+      const { isInternalStaffRequest } = await import("./chatbgp-internal");
+      const { isClientRequestUser } = await import("./company-scope");
+      if (!isInternalStaffRequest(req) && await isClientRequestUser(req)) {
+        return { data: { error: "Paid Land Registry document purchases are a BGP-team action — ask your BGP contact to order the title pack." } };
+      }
+      if (fnArgs.confirmed !== true) {
+        const pendingTitles = String(fnArgs.title).split(/[,\s]+/).filter(Boolean);
+        return { data: { needsConfirmation: true, orderSubmitted: false, titles: pendingTitles,
+          fee: "£7.50+VAT per document (two documents per title with 'both') plus £1+VAT proprietor extraction",
+          note: "Ask the user to confirm these titles and fees, then call again with confirmed:true. Nothing has been ordered or charged." } };
+      }
       const titles = String(fnArgs.title).split(/[,\s]+/).filter(Boolean);
       const docs = await fetchLandRegistryDocuments(apiKey, titles, (fnArgs.documents as string) || "both", fnArgs.extract_proprietor_data !== false);
       const undelivered = docs.filter((d) => !d.delivered);
@@ -10240,6 +10338,15 @@ export async function executeCrmToolRaw(
       const conditions: string[] = [];
       const params: any[] = [];
       let idx = 1;
+      // Client logins see their own portfolio only — mirror the REST layer's
+      // scoping (server/leasing-schedule.ts). The NO_ACCESS sentinel then
+      // fails closed for unresolvable client teams.
+      const lsScope = await resolveCompanyScope(req).catch(() => null);
+      if (lsScope) {
+        conditions.push(`(p.landlord_id = $${idx} OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $${idx}))`);
+        params.push(lsScope);
+        idx++;
+      }
       if (fnArgs.propertyName) {
         conditions.push(`p.name ILIKE $${idx}`);
         params.push(`%${fnArgs.propertyName}%`);
@@ -12758,10 +12865,18 @@ export async function handleCrmToolCall(
     // blocking every mailbox sweep in client-triggered curations.
     const { isClientRequestUser } = await import("./company-scope");
     const { isInternalStaffRequest } = await import("./chatbgp-internal");
-    if (!isInternalStaffRequest(req) && await isClientRequestUser(req) && !CLIENT_SAFE_TOOLS.has(fnName)) {
-      return { handled: true, response: { reply: "That capability isn't available on client accounts — your account covers your own portfolio only. Contact your BGP team for anything further." } };
+    if (!isInternalStaffRequest(req) && await isClientRequestUser(req)) {
+      if (!CLIENT_SAFE_TOOLS.has(fnName)) {
+        return { handled: true, response: { reply: "That capability isn't available on client accounts — your account covers your own portfolio only. Contact your BGP team for anything further." } };
+      }
+      const denial = await chatCrmWriteDenial(req, fnName, fnArgs);
+      if (denial) return { handled: true, response: { reply: denial } };
     }
-  } catch {}
+  } catch {
+    // Fail closed: an error while resolving the caller's scope must not
+    // hand a possibly-client session the staff toolset.
+    return { handled: true, response: { reply: "Your account scope could not be verified. Please try again." } };
+  }
 
   const summaryHelper = async (toolResult: any) => {
     // Summarise this completed result in isolation. Replaying the surrounding
@@ -12808,6 +12923,9 @@ export async function handleCrmToolCall(
     const cleanUpdates: any = {};
     for (const [k, v] of Object.entries(updates)) {
       if (v !== undefined && v !== null) cleanUpdates[k] = v;
+    }
+    if ("status" in cleanUpdates) {
+      return { handled: true, response: { reply: "Deal status changes aren't made from chat — use the deal page, where approval and AML checks run. Other fields can still be updated here." } };
     }
     await db.update(crmDeals).set(cleanUpdates).where(eq(crmDeals.id, id));
     try { const { syncTrackerFromDeal } = await import("./investment-deal-sync"); await syncTrackerFromDeal(id, Object.keys(cleanUpdates)); } catch (e: any) { console.warn("[chatbgp] tracker sync failed:", e?.message); }
@@ -13343,12 +13461,10 @@ export async function handleCrmToolCall(
       // along automatically — without them a paywalled URL returns the
       // teaser, not the article BGP's subscription entitles it to.
       const { authHeadersForUrl } = await import("./auth-cookies");
-      const response = await fetch(targetUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
-          ...authHeadersForUrl(targetUrl),
-        },
-        redirect: "follow",
+      const { safePublicFetch } = await import("./safe-fetch");
+      const response = await safePublicFetch(targetUrl, {
+        headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36" },
+        headersForUrl: url => authHeadersForUrl(url),
       });
       if (!response.ok) return { handled: true, response: { reply: `Sorry, I couldn't fetch that URL — got HTTP ${response.status}.` } };
       const contentType = response.headers.get("content-type") || "";
@@ -13356,7 +13472,7 @@ export async function handleCrmToolCall(
       let title = "";
 
       if (contentType.includes("pdf") || targetUrl.toLowerCase().endsWith(".pdf")) {
-        const buffer = await response.arrayBuffer();
+        const buffer = await (await import("./safe-fetch")).readBodyCapped(response);
         const { PDFParse } = await import("pdf-parse");
         const parser = new PDFParse(new Uint8Array(buffer));
         const textResult = await parser.getText();
@@ -13492,6 +13608,15 @@ export async function handleCrmToolCall(
     // Dedicated Land Registry path — multi-title + server-side ZIP/PDF
     // extraction (mirrors the property_data_lookup handler above).
     if (endpoint === "land-registry-documents") {
+      const { isInternalStaffRequest } = await import("./chatbgp-internal");
+      const { isClientRequestUser } = await import("./company-scope");
+      if (!isInternalStaffRequest(req) && await isClientRequestUser(req)) {
+        return { handled: true, response: { reply: "Paid Land Registry document purchases are a BGP-team action — ask your BGP contact to order the title pack." } };
+      }
+      if (fnArgs.confirmed !== true) {
+        const pendingTitles = String(fnArgs.title).split(/[,\s]+/).filter(Boolean);
+        return { handled: true, response: { reply: `Ordering the stamped Land Registry pack for ${pendingTitles.join(", ")} costs £7.50+VAT per document (two per title with 'both') plus £1+VAT proprietor extraction. Confirm and I will place the order — nothing has been charged yet.` } };
+      }
       const titles = String(fnArgs.title).split(/[,\s]+/).filter(Boolean);
       const docs = await fetchLandRegistryDocuments(apiKey, titles, (fnArgs.documents as string) || "both", fnArgs.extract_proprietor_data !== false);
       const replyParts = docs.map((d) => {
@@ -14621,10 +14746,16 @@ export function setupChatBGPRoutes(app: Express) {
     try {
       const { isClientRequestUser } = await import("./company-scope");
       const { isInternalStaffRequest } = await import("./chatbgp-internal");
-      if (!isInternalStaffRequest(req) && await isClientRequestUser(req) && !CLIENT_SAFE_TOOLS.has(tcName)) {
-        return { data: { success: false, error: "This capability is not available on client accounts. Your account covers your own portfolio only — contact your BGP team for anything further." } };
+      if (!isInternalStaffRequest(req) && await isClientRequestUser(req)) {
+        if (!CLIENT_SAFE_TOOLS.has(tcName)) {
+          return { data: { success: false, error: "This capability is not available on client accounts. Your account covers your own portfolio only — contact your BGP team for anything further." } };
+        }
+        const denial = await chatCrmWriteDenial(req, tcName, tcArgs);
+        if (denial) return { data: { success: false, error: denial } };
       }
-    } catch {}
+    } catch {
+      return { data: { success: false, error: "Your account scope could not be verified. Please try again." } };
+    }
     // SharePoint tools
     if (tcName === "browse_sharepoint_folder") {
       if (!msToken) return { data: { error: "Microsoft 365 not connected. Please connect via the SharePoint page." } };

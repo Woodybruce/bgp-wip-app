@@ -97,16 +97,11 @@ async function maybeCopyDealToComps(deal: any): Promise<void> {
     // unlinked comp with the fee as the price.
     const { completeInvestmentDeal } = await import("./investment-deal-sync");
     await completeInvestmentDeal(deal.id);
-  } else {
-    const existing = await pool.query(`SELECT 1 FROM crm_comps WHERE deal_id = $1 LIMIT 1`, [deal.id]);
-    if ((existing.rowCount ?? 0) > 0) return;
-    await pool.query(
-      `INSERT INTO crm_comps (id, name, deal_id, property_id, deal_type, completion_date)
-       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)`,
-      [deal.name || "Untitled deal", deal.id, deal.propertyId || null, deal.dealType || null, deal.completedAt ? new Date(deal.completedAt).toISOString().slice(0, 10) : null]
-    );
-    console.log(`[deal->comps] Copied leasing deal ${deal.id} (${deal.name}) into crm_comps`);
   }
+  // Leasing deals: no stub here. The detailed leasing-comp insert in the PUT
+  // handler (rent, areas, tenant, landlord, zone A) runs on the same EXC/COM
+  // transition and dedupes by deal_id — a stub created first would starve it
+  // forever, leaving an evidence-free comp that nothing backfills.
 }
 
 function parseAiJson(raw: string): any {
@@ -2026,7 +2021,11 @@ export function setupCrmRoutes(app: Express) {
         return res.status(403).json({ error: "Access denied" });
       }
       // Whether invoices need a PO is BGP's billing setting, not the client's.
-      if (updateScope && req.body) delete req.body.requiresPo;
+      // crmExtraBrandIds is the visibility grant itself — a client editing it
+      // here would self-grant access to any company; changes go through the
+      // tenant-gated /api/client/crm/add-brand flow. Coverer assignments are
+      // BGP team management, not the client's.
+      if (updateScope && req.body) { delete req.body.requiresPo; delete req.body.crmExtraBrandIds; delete req.body.bgpContactUserIds; }
       const coverersEdited = req.body && "bgpContactUserIds" in req.body;
       const before: string[] = coverersEdited
         ? ((await pool.query(`SELECT bgp_contact_user_ids FROM crm_companies WHERE id = $1`, [req.params.id])).rows[0]?.bgp_contact_user_ids || [])
@@ -2258,6 +2257,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         // Agent-company contacts are included too: the requirements board a
         // client sees names the acquiring agent per requirement, and agents
         // are market-facing (not another client's private data).
+        if (scopeCompanyId === NO_ACCESS_SCOPE) return res.json([]);
         const slice = await clientBrandSliceSql(scopeCompanyId);
         const allowedRows = await pool.query(
           `SELECT id FROM crm_companies WHERE id = $1 OR company_type ILIKE 'Agent%' OR ${slice}`,
@@ -2310,6 +2310,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   // sub-resource reads must accept them too or every agent row in the list
   // 403s when opened. Writes stay on clientCanTouchCompany.
   const clientCanReadContactCompany = async (scopeCompanyId: string, companyId: string | null | undefined): Promise<boolean> => {
+    if (scopeCompanyId === NO_ACCESS_SCOPE) return false;
     if (await clientCanTouchCompany(scopeCompanyId, companyId)) return true;
     if (!companyId) return false;
     const r = await pool.query(
@@ -2810,6 +2811,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // rows on the deals list bypassed both gates entirely.
       const failures: { id: string; reason: string }[] = [];
       const passing: string[] = [];
+      const oldStatusById = new Map<string, string | null>();
+      let bulkActorEmail: string | null = null;
 
       if (field === "status") {
         const userId = (req as any).session?.userId || (req as any).tokenUserId;
@@ -2823,13 +2826,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           }
         }
         const APPROVAL_STATUSES = new Set(["INV", "COM", "Invoiced", "Completed", "Billed"]);
-        const SENIOR_EMAILS = new Set([
-          "woody@brucegillinghampollard.com",
-          "charlotte@brucegillinghampollard.com",
-          "rupert@brucegillinghampollard.com",
-          "jack@brucegillinghampollard.com",
-        ]);
-        const isSenior = isUserAdmin || SENIOR_EMAILS.has(changedByEmail);
+        const { SENIOR_APPROVER_EMAILS } = await import("./deal-gates");
+        const isSenior = isUserAdmin || SENIOR_APPROVER_EMAILS.has(changedByEmail);
+        bulkActorEmail = changedByEmail || null;
         // AML gate (mirrors single-deal PUT). Any bulk move into SOL+ must
         // satisfy counterparty KYC unless aml_check_completed = 'YES' on
         // the deal (MLRO override).
@@ -2843,6 +2842,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           const oldDeal = await storage.getCrmDeal(id);
           if (!oldDeal) { failures.push({ id, reason: "deal not found" }); continue; }
           if (oldDeal.status === value) { passing.push(id); continue; }
+          oldStatusById.set(id, (oldDeal as any).status ?? null);
 
           if (APPROVAL_STATUSES.has(value) && !isSenior) {
             failures.push({ id, reason: `senior approval required for ${value}` });
@@ -2867,8 +2867,29 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         passing.push(...ids);
       }
 
+      const bulkActorId = (req as any).session?.userId || (req as any).tokenUserId || null;
       for (const id of passing) {
         await storage.updateCrmDeal(id, { [field]: value });
+        // Bulk status moves leave the same trace as the single PUT: an audit
+        // row, the board mirror and the AML sweep. Best-effort per row — one
+        // mirror failure must not abort the remaining deals.
+        if (field === "status" && oldStatusById.has(id)) {
+          const oldStatus = oldStatusById.get(id) ?? null;
+          try {
+            await pool.query(
+              `INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by) VALUES ($1, 'status', $2, $3, 'Bulk update', $4)`,
+              [id, oldStatus, String(value), bulkActorId]
+            );
+          } catch (e: any) { console.warn(`[deals] bulk audit failed for ${id}:`, e?.message); }
+          try {
+            const { mirrorFromDeal } = await import("./lease-status-mirror");
+            await mirrorFromDeal(id, String(value), { pool, reason: "crm_deals.bulk-update", actorUserId: bulkActorId });
+          } catch (e: any) { console.warn(`[deals] bulk status mirror failed for ${id}:`, e?.message); }
+          try {
+            const { startAmlOnStatus } = await import("./investment-deal-sync");
+            await startAmlOnStatus(id, oldStatus, String(value), { id: bulkActorId, name: bulkActorEmail });
+          } catch (e: any) { console.warn(`[deals] bulk AML start failed for ${id}:`, e?.message); }
+        }
       }
       res.json({
         ok: true,
@@ -3814,13 +3835,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // --- Approval gate for Invoiced / Completed ---
       // Senior approval required to set these statuses (canonical + legacy)
       const APPROVAL_STATUSES = ["INV", "COM", "Invoiced", "Completed", "Billed"];
-      const SENIOR_EMAILS = new Set([
-        "woody@brucegillinghampollard.com",
-        "charlotte@brucegillinghampollard.com",
-        "rupert@brucegillinghampollard.com",
-        "jack@brucegillinghampollard.com",
-      ]);
-      const isSenior = isUserAdmin || SENIOR_EMAILS.has(changedByEmail);
+      const { SENIOR_APPROVER_EMAILS } = await import("./deal-gates");
+      const isSenior = isUserAdmin || SENIOR_APPROVER_EMAILS.has(changedByEmail);
       if (req.body.status && oldDeal && oldDeal.status !== req.body.status && APPROVAL_STATUSES.includes(req.body.status)) {
         if (!isSenior) {
           // Log the rejected attempt
@@ -4063,6 +4079,44 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           await startAmlOnStatus(deal.id, oldDeal?.status, deal.status, { id: userId || null, name: changedByName });
         } catch (e: any) {
           console.warn(`[deals] AML start failed for ${deal.id}:`, e?.message);
+        }
+        // Reverting out of COM (an accidental completion) undoes what the
+        // completion wrote — otherwise the stale auto-comp and the stamped
+        // spine row make the real completion months later a silent no-op.
+        try {
+          const oldC = legacyToCode(oldDeal?.status);
+          const newC = legacyToCode(deal.status);
+          if (oldC === "COM" && newC && !["COM", "INV", "WIT"].includes(newC)) {
+            await pool.query(`UPDATE crm_deals SET completed_at = NULL WHERE id = $1`, [deal.id]);
+            await pool.query(`DELETE FROM crm_comps WHERE deal_id = $1 AND created_by IN ('auto-from-deal', 'Auto-Promotion')`, [deal.id]);
+            const spine = await pool.query(
+              `SELECT d.tenancy_unit_id, d.rent_pa, tc.id AS tenant_company_id, tc.name AS tenant_name
+                 FROM crm_deals d LEFT JOIN crm_companies tc ON tc.id = d.tenant_id
+                WHERE d.id = $1`,
+              [deal.id]
+            );
+            const srow = spine.rows[0];
+            if (srow?.tenancy_unit_id) {
+              const completionDate = oldDeal?.completedAt
+                ? new Date(oldDeal.completedAt as any).toISOString().slice(0, 10)
+                : new Date().toISOString().slice(0, 10);
+              await pool.query(
+                `UPDATE tenancy_schedule_units
+                    SET status = 'Under Offer',
+                        tenant_name = CASE WHEN tenant_name = $2 THEN NULL ELSE tenant_name END,
+                        tenant_company_id = CASE WHEN tenant_company_id = $3 THEN NULL ELSE tenant_company_id END,
+                        passing_rent_pa = CASE WHEN passing_rent_pa = $4 THEN NULL ELSE passing_rent_pa END,
+                        lease_start = CASE WHEN lease_start = $5::date THEN NULL ELSE lease_start END,
+                        updated_at = NOW()
+                  WHERE id = $1 AND lower(coalesce(status, '')) = 'occupied'`,
+                [srow.tenancy_unit_id, srow.tenant_name || null, srow.tenant_company_id || null, srow.rent_pa != null ? Number(srow.rent_pa) : null, completionDate]
+              );
+              const { fanOutTenancyStatus } = await import("./unit-mirror");
+              await fanOutTenancyStatus(pool, srow.tenancy_unit_id);
+            }
+          }
+        } catch (e: any) {
+          console.warn(`[deals] completion revert cleanup failed for ${deal.id}:`, e?.message);
         }
       }
 
@@ -6094,6 +6148,9 @@ Return a JSON object with these fields (use null for any field you cannot find):
 
   app.get("/api/crm/leads", async (req, res) => {
     try {
+      // BGP's BD pipeline is staff-only (the gateway also blocks /api/crm/leads
+      // for clients; this is the handler-level belt).
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
       const filters = {
         search: req.query.search as string | undefined,
         groupName: req.query.groupName as string | undefined,
@@ -6107,6 +6164,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
 
   app.get("/api/crm/leads/:id", async (req, res) => {
     try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
       const lead = await storage.getCrmLead(req.params.id);
       if (!lead) return res.status(404).json({ error: "Not found" });
       res.json(lead);
@@ -6211,7 +6269,16 @@ Return a JSON object with these fields (use null for any field you cannot find):
       if (await forbidsContactRead(req, req.params.id)) return res.status(403).json({ error: "Access denied" });
       const links = await db.select().from(crmContactProperties).where(eq(crmContactProperties.contactId, req.params.id));
       if (links.length === 0) return res.json([]);
-      const propertyIds = links.map(l => l.propertyId);
+      let propertyIds = links.map(l => l.propertyId);
+      // Scoped callers see only their own portfolio's properties here.
+      const propScopeId = await resolveCompanyScope(req);
+      if (propScopeId) {
+        const owned = await pool.query(
+          `SELECT id FROM crm_properties p WHERE p.id = ANY($1::varchar[]) AND (p.landlord_id = $2 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $2))`,
+          [propertyIds, propScopeId]);
+        propertyIds = owned.rows.map((r: any) => r.id);
+        if (propertyIds.length === 0) return res.json([]);
+      }
       const properties = await db.select().from(crmProperties).where(inArray(crmProperties.id, propertyIds));
       res.json(properties);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -6277,6 +6344,13 @@ Return a JSON object with these fields (use null for any field you cannot find):
           seenIds.add(d.id);
         }
       }
+      // A client may open an agent contact, but sees only deals in their own
+      // portfolio, with BGP fee fields stripped.
+      const dealScope = await resolveCompanyScope(req);
+      if (dealScope) {
+        const inScope = await Promise.all(results.map(d => isDealInScope(dealScope, d.id)));
+        return res.json(results.filter((_, i) => inScope[i]).map(stripDealFees));
+      }
       res.json(results);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -6297,6 +6371,8 @@ Return a JSON object with these fields (use null for any field you cannot find):
   app.get("/api/crm/contacts/:id/investment-tracker", async (req, res) => {
     try {
       if (await forbidsContactRead(req, req.params.id)) return res.status(403).json({ error: "Access denied" });
+      // The investment tracker is a staff surface.
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
       const contactId = req.params.id;
       const items = await db.select().from(investmentTracker).where(
         or(
@@ -6351,6 +6427,12 @@ Return a JSON object with these fields (use null for any field you cannot find):
           results.push({ ...r, requirementType: "investment", linkSource: "agent" });
           seenIds.add(r.id);
         }
+      }
+      // Scoped callers see only requirements for brands in their CRM slice.
+      const reqScope = await resolveCompanyScope(req);
+      if (reqScope) {
+        const visible = await Promise.all(results.map(r => r.companyId ? isClientVisibleBrand(r.companyId, reqScope) : Promise.resolve(false)));
+        return res.json(results.filter((_, i) => visible[i]));
       }
       res.json(results);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -7402,9 +7484,17 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const agents = allocsByDeal.get(deal.id);
 
         if (agents && agents.length > 0) {
+          // Reconcile shares to the deal fee exactly as /api/wip does — fixed
+          // amounts + percentages can over/under-shoot the fee, and summing
+          // them raw made this dashboard disagree with the WIP schedule.
+          const rawWeight = (a: any) => a.fixedAmount != null && a.fixedAmount !== 0
+            ? a.fixedAmount
+            : totalFee * ((a.percentage || 0) / 100);
+          const weightTotal = agents.reduce((s, a) => s + rawWeight(a), 0);
           for (const alloc of agents) {
             if (!senior && WIP_RESTRICTED_AGENTS.has(alloc.agentName.toLowerCase())) continue;
-            const agentFee = alloc.fixedAmount ?? Math.round(totalFee * ((alloc.percentage || 0) / 100) * 100) / 100;
+            const share = weightTotal > 0 ? rawWeight(alloc) / weightTotal : 1 / agents.length;
+            const agentFee = Math.round(totalFee * share * 100) / 100;
             const entry = agentTotals.get(alloc.agentName) || { invoiced: 0, wip: 0 };
             if (isInvoiced) entry.invoiced += agentFee;
             else entry.wip += agentFee;
@@ -7475,8 +7565,12 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           const agentAlloc = dealAllocs.find(a => a.agentName.toLowerCase() === agentName.toLowerCase());
           if (agentAlloc) {
             isRelevant = true;
-            const pct = (agentAlloc.percentage || 0) / 100;
-            allocatedAmount = agentAlloc.fixedAmount ?? (totalFee * pct);
+            const rawWeight = (a: any) => a.fixedAmount != null && a.fixedAmount !== 0
+              ? a.fixedAmount
+              : totalFee * ((a.percentage || 0) / 100);
+            const weightTotal = dealAllocs.reduce((s, a) => s + rawWeight(a), 0);
+            const share = weightTotal > 0 ? rawWeight(agentAlloc) / weightTotal : 1 / dealAllocs.length;
+            allocatedAmount = totalFee * share;
           }
         } else {
           const agentNames = Array.isArray(deal.internalAgent) ? deal.internalAgent : (deal.internalAgent ? [deal.internalAgent] : []);

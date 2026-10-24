@@ -554,16 +554,11 @@ export async function registerRoutes(
     }
   });
 
-  // Chat media downloads — support both Bearer token and ?token= query param
-  // This allows mobile browsers to download files via plain <a href> links
+  // Chat media downloads. Session or Bearer auth — mobile <a href>
+  // downloads ride the session cookie (same-site GET navigation); the old
+  // ?token= acceptance put a 30-day full-access token into history and
+  // proxy logs for every shared link, and nothing constructs such URLs.
   app.get("/api/chat-media/:filename", async (req: Request, res) => {
-    // Allow auth via query param for direct mobile downloads
-    if (!req.session?.userId && !req.tokenUserId && req.query.token) {
-      try {
-        const userId = await getUserIdFromToken(req.query.token as string);
-        if (userId) req.tokenUserId = userId;
-      } catch {}
-    }
     if (!req.session?.userId && !req.tokenUserId) {
       return res.status(401).json({ message: "Not authenticated" });
     }
@@ -573,6 +568,28 @@ export async function registerRoutes(
       if (!user || user.isActive === false) return res.status(401).json({ message: "Not authenticated" });
       const filename = String(req.params.filename || "");
       if (filename.includes("..") || filename.includes("/")) return res.status(400).end();
+      // Client logins only ever reach files from their own world: something
+      // they uploaded, or something posted in a chat thread they're in.
+      // Everything else in the store (other users' uploads, KYC passports,
+      // generated staff documents) is 404 for them — a forwarded URL is not
+      // an entitlement.
+      if (user.role === "Client") {
+        const reach = await pool.query(
+          `SELECT 1 WHERE EXISTS (
+              SELECT 1 FROM user_upload_history
+               WHERE user_id = $1 AND storage_key = 'chat-media/' || $2
+            ) OR EXISTS (
+              SELECT 1 FROM chat_messages m
+                JOIN chat_threads t ON t.id = m.thread_id
+               WHERE (t.created_by = $1 OR EXISTS (
+                        SELECT 1 FROM chat_thread_members tm WHERE tm.thread_id = t.id AND tm.user_id = $1))
+                 AND (m.content LIKE '%' || $2 || '%'
+                      OR EXISTS (SELECT 1 FROM unnest(COALESCE(m.attachments, '{}')) a WHERE a LIKE '%' || $2 || '%'))
+            )`,
+          [userId, filename]
+        );
+        if ((reach.rowCount || 0) === 0) return res.status(404).end();
+      }
       res.set("Cache-Control", "private, no-store");
       const file = await getFile(`chat-media/${filename}`);
       if (!file) {
@@ -642,6 +659,22 @@ export async function registerRoutes(
     }
   });
 
+  // MyScript handwriting HMAC key — staff sessions only, never in the
+  // client bundle (anyone could lift it from the served JS and burn the
+  // account's quota). The matching components fetch it on editor load.
+  app.get("/api/myscript/hmac-key", requireAuth, async (req: Request, res) => {
+    try {
+      const { isClientRequestUser } = await import("./company-scope");
+      if (await isClientRequestUser(req)) return res.status(403).json({ message: "Not available for client accounts" });
+    } catch {
+      return res.status(403).json({ message: "Not available" });
+    }
+    const key = process.env.MYSCRIPT_HMAC_KEY || process.env.VITE_MYSCRIPT_HMAC_KEY || "";
+    if (!key) return res.status(404).json({ message: "Handwriting recognition isn't configured" });
+    res.set("Cache-Control", "private, no-store");
+    res.type("text/plain").send(key);
+  });
+
   app.post("/api/proxy-image", requireAuth, async (req: Request, res) => {
     try {
       const { url } = req.body;
@@ -659,40 +692,30 @@ export async function registerRoutes(
       if (blockedPatterns.some(p => p.test(hostname))) {
         return res.status(400).json({ message: "URL not allowed" });
       }
-      let currentUrl = url;
-      let resp!: Awaited<ReturnType<typeof fetch>>;
-      let redirects = 0;
-      while (true) {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15000);
-        try {
-          resp = await fetch(currentUrl, {
-            signal: controller.signal,
-            headers: { "User-Agent": "Mozilla/5.0 (compatible; BGPDashboard/1.0)" },
-            redirect: "manual",
-          });
-        } finally {
-          clearTimeout(timeout);
-        }
-        if (resp.status < 300 || resp.status >= 400) break;
-        const location = resp.headers.get("location");
-        if (!location) break;
-        if (++redirects > 5) return res.status(502).json({ message: "Too many redirects" });
-        let next: URL;
-        try { next = new URL(location, currentUrl); } catch { return res.status(400).json({ message: "Invalid redirect" }); }
-        if (next.protocol !== "http:" && next.protocol !== "https:") {
-          return res.status(400).json({ message: "URL not allowed" });
-        }
-        if (blockedPatterns.some(p => p.test(next.hostname.toLowerCase()))) {
-          return res.status(400).json({ message: "URL not allowed" });
-        }
-        currentUrl = next.toString();
+      // The hostname regexes above are a fast pre-filter only — the real
+      // gate is safePublicFetch, which resolves every hop's hostname and
+      // refuses private/link-local/metadata addresses (a public hostname
+      // can simply point its DNS at 10.x and walk past a regex).
+      let resp: Awaited<ReturnType<typeof fetch>>;
+      try {
+        const { safePublicFetch } = await import("./safe-fetch");
+        resp = await safePublicFetch(url, {
+          headers: { "User-Agent": "Mozilla/5.0 (compatible; BGPDashboard/1.0)" },
+          signal: AbortSignal.timeout(15000),
+        });
+      } catch (e: any) {
+        return res.status(400).json({ message: e?.message || "URL not allowed" });
       }
       if (!resp.ok) return res.status(502).json({ message: `Failed to fetch image: ${resp.status}` });
       const contentType = resp.headers.get("content-type") || "image/png";
       if (!contentType.startsWith("image/")) return res.status(400).json({ message: "URL is not an image" });
-      const arrayBuf = await resp.arrayBuffer();
-      const buffer = Buffer.from(arrayBuf);
+      const { readBodyCapped } = await import("./safe-fetch");
+      let buffer: Buffer;
+      try {
+        buffer = await readBodyCapped(resp, 25 * 1024 * 1024);
+      } catch {
+        return res.status(400).json({ message: "Image too large" });
+      }
       if (buffer.length === 0) return res.status(400).json({ message: "Empty image" });
       if (buffer.length > 25 * 1024 * 1024) return res.status(400).json({ message: "Image too large" });
       const ext = contentType.split("/")[1]?.replace("jpeg", "jpg") || "png";
@@ -5073,6 +5096,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.get("/api/available-units/:id/interest", requireAuth, async (req, res) => {
     try {
       const { unitInterest } = await import("@shared/schema");
+      const unit = await storage.getAvailableUnit(req.params.id as string);
+      if (await assertUnitInClientScope(req, unit?.propertyId)) return res.status(403).json({ message: "Unit is outside your portfolio" });
       const rows = await db.select().from(unitInterest)
         .where(eq(unitInterest.unitId, req.params.id as string))
         .orderBy(desc(unitInterest.interestDate));
@@ -5088,6 +5113,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.post("/api/available-units/:id/interest", requireAuth, async (req, res) => {
     try {
       const { unitInterest, insertUnitInterestSchema } = await import("@shared/schema");
+      const unit = await storage.getAvailableUnit(req.params.id as string);
+      if (await assertUnitInClientScope(req, unit?.propertyId)) return res.status(403).json({ message: "Unit is outside your portfolio" });
       const parsed = insertUnitInterestSchema.parse({
         unitId: req.params.id,
         companyName: req.body.companyName || null,
@@ -5112,6 +5139,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/available-units/interest/:interestId", requireAuth, async (req, res) => {
     try {
       const { unitInterest } = await import("@shared/schema");
+      const [row] = await db.select().from(unitInterest).where(eq(unitInterest.id, req.params.interestId as string));
+      if (row?.unitId) {
+        const unit = await storage.getAvailableUnit(row.unitId);
+        if (await assertUnitInClientScope(req, unit?.propertyId)) return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       await db.delete(unitInterest).where(eq(unitInterest.id, req.params.interestId as string));
       res.json({ ok: true });
     } catch (err: any) {
@@ -5499,6 +5531,24 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         }
       }
 
+      // Senior-approval / AML gates run BEFORE any write when the status edit
+      // would move the linked deal — the same rules the deal PUT enforces.
+      // The mirror re-checks (and audits) as a backstop, but by then the unit
+      // row has already changed; denying here keeps the boards consistent.
+      if ("marketingStatus" in partial && existing.dealId) {
+        try {
+          const { dealStatusTransitionDenial } = await import("./deal-gates");
+          const denial = await dealStatusTransitionDenial(
+            (req.session as any)?.userId || (req as any).tokenUserId || null,
+            existing.dealId,
+            String((partial as any).marketingStatus ?? ""),
+          );
+          if (denial) return res.status(denial.status).json({ message: denial.error, code: denial.code });
+        } catch (e: any) {
+          console.warn("[available-units PATCH] deal gate check failed:", e?.message);
+        }
+      }
+
       // Master-managed fields: write to property_units (the source of truth).
       // We still write the same value to the listing cache so direct DB queries
       // outside our GET endpoints stay coherent until the columns are dropped.
@@ -5608,7 +5658,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if ("marketingStatus" in partial) {
         try {
           const { mirrorFromAvailableUnit } = await import("./lease-status-mirror");
-          await mirrorFromAvailableUnit(req.params.id as string, (partial as any).marketingStatus, { pool, reason: "available_units.PATCH" });
+          await mirrorFromAvailableUnit(req.params.id as string, (partial as any).marketingStatus, { pool, reason: "available_units.PATCH", actorUserId: (req.session as any)?.userId || (req as any).tokenUserId || null });
         } catch (e: any) {
           console.warn(`[available-units PATCH] status mirror failed for ${req.params.id}:`, e?.message);
           mirrorWarning = `Status saved, but syncing it to the Deals board / Leasing Schedule failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;

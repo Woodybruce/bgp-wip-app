@@ -220,8 +220,10 @@ router.post("/api/brand-digest/send", requireAuth, async (req: Request, res: Res
     }
     const days = Number(req.body.days) || DIGEST_DAYS;
     // Recipients: all users with email addresses
+    // Staff only: the digest is internal brand intelligence — client logins
+    // and departed staff must never receive it.
     const usersQ = await pool.query(
-      `SELECT email, name FROM users WHERE email IS NOT NULL AND email != '' ORDER BY name`
+      `SELECT email, name FROM users WHERE email IS NOT NULL AND email != '' AND COALESCE(role, '') <> 'Client' AND is_active IS DISTINCT FROM false ORDER BY name`
     );
     if (!usersQ.rows.length) {
       return res.status(400).json({ error: "No users with email addresses found" });
@@ -252,7 +254,7 @@ router.post("/api/brand-digest/send", requireAuth, async (req: Request, res: Res
 
 export async function runFortnightlyBrandDigest(): Promise<{ sent: number; brands: number }> {
   const usersQ = await pool.query(
-    `SELECT email FROM users WHERE email IS NOT NULL AND email != ''`
+    `SELECT email FROM users WHERE email IS NOT NULL AND email != '' AND COALESCE(role, '') <> 'Client' AND is_active IS DISTINCT FROM false`
   );
   if (!usersQ.rows.length) return { sent: 0, brands: 0 };
 

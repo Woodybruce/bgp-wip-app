@@ -79,6 +79,8 @@ const DOC_REQUEST_KEYWORDS = /\b(create|draft|write|prepare|generate|make|produc
 async function detectAndGenerateDocument(messageBody: string, fromNumber: string, config: ReturnType<typeof getWhatsAppConfig>): Promise<boolean> {
   if (!DOC_REQUEST_KEYWORDS.test(messageBody)) return false;
   if (!config.token || !config.phoneNumberId) return false;
+  // BGP-branded documents go to recognised staff numbers only.
+  if (!(await resolveUserIdFromPhone(fromNumber)).matched) return false;
 
   try {
     const classification = await callClaude({
@@ -173,7 +175,7 @@ async function sendAndStoreReply(
   await storage.upsertWaConversation(toNumber, contactName, replyText.slice(0, 100));
 }
 
-async function resolveUserIdFromPhone(fromNumber: string): Promise<{ userId: string; matched: boolean; userName: string | null }> {
+export async function resolveUserIdFromPhone(fromNumber: string): Promise<{ userId: string; matched: boolean; userName: string | null }> {
   const digits = fromNumber.replace(/[^0-9]/g, "");
   if (!digits) return { userId: `wa:${fromNumber}`, matched: false, userName: null };
   try {
@@ -360,6 +362,17 @@ async function runChatBgpWhatsAppReply(
   const resolved = await resolveUserIdFromPhone(fromNumber);
   const userId = resolved.userId;
   console.log(`[whatsapp-ai] Resolved userId=${userId} matched=${resolved.matched} userName=${resolved.userName ?? "—"}`);
+  // The tool-bearing assistant is for recognised BGP staff numbers only. An
+  // unknown sender must never reach a session that can read the CRM, run
+  // SQL or send mail — the Meta signature proves transport, not identity.
+  if (!resolved.matched) {
+    console.log(`[whatsapp-ai] Unmatched sender ${fromNumber} — static reply, no AI session`);
+    await sendAndStoreReply(
+      "This number is managed by BGP's assistant for BGP staff. For anything else, please contact the team directly.",
+      fromNumber, conversationId, contactName, config,
+    );
+    return;
+  }
 
   try {
     const chatbgp = await import("./chatbgp");

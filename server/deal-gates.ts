@@ -137,3 +137,61 @@ export async function recomputeDealKycApproved(companyId: string, approvedBy?: s
   }
   return changed;
 }
+
+// Senior approvers for COM/INV transitions — single source, shared with the
+// deal PUT in crm.ts and the board mirrors.
+export const SENIOR_APPROVER_EMAILS = new Set([
+  "woody@brucegillinghampollard.com",
+  "charlotte@brucegillinghampollard.com",
+  "rupert@brucegillinghampollard.com",
+  "jack@brucegillinghampollard.com",
+]);
+
+export type TransitionDenial = { status: number; error: string; code?: string };
+
+// The senior-approval and AML gates the deal PUT enforces, in a form the
+// board mirrors and other side doors can call before writing crm_deals.status.
+// Returns null when the transition may proceed (and records an AML warning
+// where the PUT would). actorUserId null/undefined = system/no user → treated
+// as NOT senior.
+export async function dealStatusTransitionDenial(
+  actorUserId: string | null | undefined,
+  dealId: string,
+  newStatusRaw: string,
+): Promise<TransitionDenial | null> {
+  const { legacyToCode } = await import("../shared/deal-status");
+  const deal = (await pool.query(
+    `SELECT status, landlord_id, tenant_id, vendor_id, purchaser_id, aml_check_completed FROM crm_deals WHERE id = $1`,
+    [dealId],
+  )).rows[0];
+  if (!deal) return null;
+  const targetCode = legacyToCode(newStatusRaw);
+  const currentCode = legacyToCode(deal.status);
+  if (!targetCode || targetCode === currentCode) return null;
+
+  let actorName = "System";
+  let isSenior = false;
+  if (actorUserId) {
+    const u = (await pool.query(`SELECT name, email, username, is_admin FROM users WHERE id = $1 LIMIT 1`, [actorUserId])).rows[0];
+    if (u) {
+      actorName = u.name || u.email || u.username || actorName;
+      isSenior = !!u.is_admin || SENIOR_APPROVER_EMAILS.has((u.email || "").toLowerCase());
+    }
+  }
+  if (["COM", "INV"].includes(targetCode) && !isSenior) {
+    return { status: 403, error: `Senior approval required to mark deals as ${newStatusRaw}` };
+  }
+  if (["SOL", "EXC", "COM", "INV"].includes(targetCode) && deal.aml_check_completed !== "YES") {
+    const parties: AmlGateInput = {
+      landlordId: deal.landlord_id, tenantId: deal.tenant_id,
+      vendorId: deal.vendor_id, purchaserId: deal.purchaser_id,
+    };
+    const amlResult = await checkCounterpartyAml(parties);
+    const outcome = amlGateOutcome(amlResult);
+    if (outcome.block) return { status: 409, error: outcome.block, code: "AML_GATE_FAILED" };
+    if (outcome.warning) {
+      await recordAmlGateWarning(dealId, parties, amlResult, { targetStatus: newStatusRaw, actorId: actorUserId || null, actorName }).catch(() => {});
+    }
+  }
+  return null;
+}

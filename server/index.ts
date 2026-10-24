@@ -640,6 +640,13 @@ installGoogleBudgetGuard();
     `CREATE INDEX IF NOT EXISTS brucey_points_user_idx ON brucey_points (user_id, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS brucey_points_recent_idx ON brucey_points (created_at DESC)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS brucey_points_dedup_idx ON brucey_points (event_kind, event_ref) WHERE event_ref IS NOT NULL`,
+    // Interaction dedupe backstop: the Graph sync keys rows on microsoft_id
+    // per contact, and its duplicate-key catch was dead code without a real
+    // unique index. One-off dedupe (keep the earliest copy), then the index.
+    `DELETE FROM crm_interactions a USING crm_interactions b
+      WHERE a.microsoft_id IS NOT NULL AND a.microsoft_id = b.microsoft_id
+        AND a.contact_id = b.contact_id AND a.ctid > b.ctid`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_interactions_contact_msid ON crm_interactions (contact_id, microsoft_id) WHERE microsoft_id IS NOT NULL`,
     // Brucey Bonus Wheel — monthly + quarterly winners record what they
     // spun, the prize pool itself, and an audit of who spun what when.
     // Prizes stay in the pool after winning (reusable). Quarterly grand
@@ -3654,7 +3661,7 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     console.warn(`[seed-staff] failed: ${e.message}`);
   }
 })();
-import { setupAuth, requireAuth } from "./auth";
+import { setupAuth, requireAuth, requireAdmin } from "./auth";
 import { setupMicrosoftRoutes } from "./microsoft";
 import { setupWhatsAppRoutes } from "./whatsapp";
 import { setupChatBGPRoutes } from "./chatbgp";
@@ -3749,6 +3756,7 @@ import { evidencePlanSharePublicRouter, evidencePlanShareStaffRouter } from "./e
 import { evidencePlanEditorRouter } from "./evidence-plan-editor";
 import dealDocsRouter from "./deal-docs";
 import weeklyReportRouter, { runWeeklyClientReports } from "./weekly-report";
+import { startFixedJobs, dailyAt, weeklyAt, monthlyAt } from "./cron-slots";
 import dealReportRouter from "./deal-report";
 import dealStagesRouter from "./deal-stages";
 import leasingPitchRouter from "./leasing-pitch";
@@ -4030,6 +4038,21 @@ const apiLimiter = rateLimit({
   },
   message: { message: "Too many requests. Please slow down and try again." },
 });
+// Coarse per-IP ceiling in front of the header-keyed limiter above: that
+// one keys authenticated traffic on the raw Authorization header, which an
+// attacker can rotate to mint fresh buckets. This cap (far above any
+// legitimate office-NAT burst) makes header rotation pointless without
+// touching the per-user buckets.
+const ipCeilingLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 1500,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => ipKeyGenerator(req.ip || ""),
+  skip: () => process.env.NODE_ENV !== "production",
+  message: { message: "Too many requests. Please slow down and try again." },
+});
+app.use("/api/", ipCeilingLimiter);
 app.use("/api/", apiLimiter);
 
 function trackAndProcessRequest(requestId: string, res: import("express").Response, next: import("express").NextFunction) {
@@ -4185,6 +4208,36 @@ app.use("/api/branding/assets", express.static(
   app.use(evidencePlanSharePublicRouter);
 
   setupAuth(app);
+
+  // ── CSRF backstop ─────────────────────────────────────────────────────
+  // A state-changing request authenticated only by the session cookie must
+  // come from our own origin. Bearer-token requests are exempt (a foreign
+  // page cannot set that header cross-site), as are requests that carry
+  // neither Origin nor Sec-Fetch-Site (same-origin fetches in older
+  // browsers, curl, server-to-server callbacks). Pairs with the session
+  // cookie's sameSite=lax; this catches whatever that misses.
+  app.use("/api", (req, res, next) => {
+    if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
+    if (!req.session?.userId || req.headers.authorization) return next();
+    const site = req.get("sec-fetch-site");
+    const origin = req.get("origin");
+    if (!origin && !site) return next();
+    if (site === "same-origin" || site === "none") return next();
+    if (origin) {
+      try {
+        if (new URL(origin).host === req.get("host")) return next();
+      } catch {}
+    }
+    console.warn(`[csrf] blocked cross-site ${req.method} ${req.path} origin=${origin || "?"} site=${site || "?"}`);
+    return res.status(403).json({ message: "Cross-site request blocked" });
+  });
+
+  // ── Admin surface gate ────────────────────────────────────────────────
+  // Every /api/admin/* route is admin-only by definition; gating them here
+  // means a maintenance endpoint registered without its own requireAdmin
+  // (merge-properties, purge-apollo-contacts, …) can no longer be driven
+  // by an ordinary staff login. requireAdmin does its own auth check.
+  app.use("/api/admin", requireAdmin);
 
   // ── Client default-deny backstop ──────────────────────────────────────
   // Client logins (role='Client', e.g. Landsec) are external — they must
@@ -4351,7 +4404,9 @@ app.use("/api/branding/assets", express.static(
     //    /leasing-schedule/property/:id, /company-property-links — are not
     //    matched here and keep working.
     /^\/api\/dashboard\/intelligence/,
-    /^\/api\/crm\/(landlords|stats)\b/,
+    // Firm revenue position and per-agent fee attribution — staff only.
+    /^\/api\/dashboard\/(firm-summary|individual-leaderboard)\b/,
+    /^\/api\/crm\/(landlords|stats|leads)\b/,
     // property-deal-links + property-tenants are no longer blocked: the
     // client Properties page needs both maps and the handlers now scope
     // them to the caller's own portfolio (same pattern as property-agents).
@@ -6042,113 +6097,100 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
         }, 60 * 60 * 1000);
       }
 
-      // Weekly client report cron — Monday 09:00 (production only, sends email)
-      if (process.env.NODE_ENV === "production") {
-        setInterval(() => {
-          const now = new Date();
-          // getDay(): 0=Sun, 1=Mon
-          if (now.getDay() === 1 && now.getHours() === 9 && now.getMinutes() < 60) {
-            runWeeklyClientReports().catch(err =>
-              console.error("[weekly-report] cron run failed:", err?.message)
-            );
-          }
-          // Fortnightly brand digest — alternating Mondays at 08:00
-          // Week-of-year even = send; avoids clashing with weekly client report
-          const weekOfYear = Math.ceil((now.getDate() + new Date(now.getFullYear(), now.getMonth(), 1).getDay()) / 7);
-          if (now.getDay() === 1 && now.getHours() === 8 && now.getMinutes() < 60 && weekOfYear % 2 === 0) {
-            runFortnightlyBrandDigest().catch(err =>
-              console.error("[brand-digest] cron run failed:", err?.message)
-            );
-          }
-          // Nightly expansion-fact normalisation — 05:00, between the
-          // scraper (04:00) and the trigger scan (07:00) so triggers score
-          // off normalised facts. Capped at 25 brands per night.
-          if (now.getHours() === 5 && now.getMinutes() < 60) {
-            import("./expansion-intel").then(m => m.nightlyNormalisePass()).catch(err =>
-              console.error("[expansion-intel] cron run failed:", err?.message)
-            );
-          }
-          // Daily brand-trigger scan — 07:00, after the scraper has run
-          if (now.getHours() === 7 && now.getMinutes() < 60) {
-            runDailyBrandTriggers().catch(err =>
-              console.error("[brand-triggers] cron run failed:", err?.message)
-            );
-          }
-          // Daily brand scraper — 04:00, careers/newsroom probe
-          if (now.getHours() === 4 && now.getMinutes() < 60) {
-            runDailyBrandScraper().catch(err =>
-              console.error("[brand-scraper] cron run failed:", err?.message)
-            );
-          }
-          // Daily PIPnet sync — 05:30. Pulls newly-posted PIPnet requirements
-          // AND available properties so the boards/map update themselves when
-          // PIPnet puts something new up. Both imports dedup (requirements by
-          // normalised brand, properties by folder id), so re-running is safe.
-          if (now.getHours() === 5 && now.getMinutes() >= 30) {
-            import("./pipnet")
-              .then(async (m) => {
+      // Fixed-time jobs — one 5-minute tick with persisted once-per-slot
+      // claims (server/cron-slots.ts) instead of per-job hourly setIntervals,
+      // so a deploy straddling a job's hour delays it by minutes instead of
+      // silently skipping the slot. Declared in schedule order so a same-day
+      // catch-up preserves the scraper → normalise → triggers sequencing.
+      {
+        const prod = process.env.NODE_ENV === "production";
+        const jobs: import("./cron-slots").FixedJob[] = [
+          // Check daily, run on the 1st of the month at 03:00.
+          { key: "kyc-monthly-rescreen", due: monthlyAt(1, 3), run: () => runMonthlyReScreening() },
+        ];
+        if (prod) {
+          jobs.push(
+            // Nightly KYC refresh — 01:00. 120/night so the parked backlog
+            // clears in days; well inside CH rate limits.
+            { key: "kyc-refresh", due: dailyAt(1), run: async () => {
+              runBatchReKyc({ limit: 120 }).catch(err => console.error("[kyc-refresh] nightly run failed:", err?.message));
+              import("./deal-hots-from-records").then(m => m.backfillDealsFromHots(150)).catch(err => console.error("[deal-hots] nightly run failed:", err?.message));
+            } },
+            // Daily AML orchestrator re-sweep — 02:00. Stale KYC + overdue
+            // reminders, capped at 25 companies per night.
+            { key: "aml-resweep", due: dailyAt(2), run: () => runPeriodicAmlReScreening() },
+            // Weekly UK trading entity re-scrape — Sunday 02:00.
+            { key: "uk-entity-rescrape", due: weeklyAt(0, 2), run: () =>
+              import("./brand-entity-rescrape").then(m => m.runWeeklyUkEntityRescrape())
+                .then(r => console.log(`[uk-entity-rescrape] weekly: ${r.found}/${r.total} new, ${r.errored} errors`)) },
+            // Weekly accounts auto-fetch — Sunday 03:00, after the entity rescrape.
+            { key: "ch-accounts", due: weeklyAt(0, 3), run: () =>
+              import("./ch-accounts").then(m => m.runBulkAccountsFetch())
+                .then(r => console.log(`[ch-accounts] weekly: ${r.downloaded} new / ${r.upToDate} up-to-date / ${r.errored} errors (${r.total} total)`)) },
+            // Monthly Perplexity refresh — 1st of month, 03:00.
+            { key: "perplexity-monthly", due: monthlyAt(1, 3), run: () => runMonthlyPerplexityRefresh() },
+            // Daily brand scraper — 04:00, careers/newsroom probe.
+            { key: "brand-scraper", due: dailyAt(4), run: () => runDailyBrandScraper() },
+            // Nightly tenancy-spine re-link — 04:00.
+            { key: "spine-relink", due: dailyAt(4), run: () =>
+              import("./unit-mirror").then(m => m.relinkOffSpineDeals(pool))
+                .then(n => { if (n > 0) console.log(`[spine-relink-cron] re-linked ${n} deal(s) to tenancy spine`); }) },
+            // Nightly brand-enrichment — 04:00, tops up stale/never-enriched rows.
+            { key: "brand-enrich", due: dailyAt(4), run: () => runNightlyBrandEnrichment() },
+            // Weekly Instagram-handle backfill — Sunday 04:00.
+            { key: "ig-backfill", due: weeklyAt(0, 4), run: () =>
+              import("./brand-scraper").then(m => m.backfillInstagramHandles(2000))
+                .then(r => console.log(`[ig-backfill] weekly: ${r.filled}/${r.attempted} filled (${r.filledFromHtml} html, ${r.filledFromAi} AI), ${r.skipped} skipped, ${r.errors} errors`)) },
+            // Nightly trading names — 04:30.
+            { key: "trading-names", due: dailyAt(4, 30), run: () =>
+              import("./trading-names").then(m => m.runNightlyTradingNames())
+                .then(r => console.log(`[trading-names-cron] ${r.properties} properties, ${r.filled} filled, ${r.review} to review`)) },
+            // Nightly expansion-fact normalisation — 05:00, between the
+            // scraper (04:00) and the trigger scan (07:00).
+            { key: "expansion-normalise", due: dailyAt(5), run: () =>
+              import("./expansion-intel").then(m => m.nightlyNormalisePass()) },
+            // Nightly Brand Gap live-intel pre-warm — 05:00 (live Perplexity spend).
+            { key: "gap-live-intel", due: dailyAt(5), run: () =>
+              import("./property-gap-analysis").then(m => m.runNightlyGapLiveIntelSweep())
+                .then(r => console.log(`[gap-live-intel-cron] swept ${r.swept} propert${r.swept === 1 ? "y" : "ies"}, ${r.errors} error(s)`)) },
+            // Weekly social scrape — Monday 05:00, Instagram + TikTok followers.
+            { key: "social-scrape", due: weeklyAt(1, 5), run: () => runWeeklySocialScrape() },
+            // Weekly landlord-website scrape — Sunday 05:00.
+            { key: "landlord-scrape", due: weeklyAt(0, 5), run: () =>
+              import("./landlord-scraper").then(m => m.runWeeklyLandlordScrape({ limit: 50 }))
+                .then(r => console.log(`[landlord-scrape] weekly: ${r.succeeded}/${r.attempted} ok, ${r.failed} failed`)) },
+            // Daily PIPnet sync — 05:30. Requirements + properties, both dedup.
+            { key: "pipnet", due: dailyAt(5, 30), run: () =>
+              import("./pipnet").then(async (m) => {
                 const reqs = await m.importPipnetRequirements({ allPages: true, monthsBack: 3, autoPromote: true }).catch((e: any) => { console.error("[pipnet-cron] requirements failed:", e?.message); return null; });
                 if (reqs) console.log(`[pipnet-cron] requirements: ${reqs.imported} imported, ${reqs.promoted} promoted`);
                 const props = await m.importPipnetProperties({ allPages: true }).catch((e: any) => { console.error("[pipnet-cron] properties failed:", e?.message); return null; });
                 if (props) console.log(`[pipnet-cron] properties: ${props.imported} imported, ${props.withBrochure} with brochure`);
-              })
-              .catch(err => console.error("[pipnet-cron] run failed:", err?.message));
-          }
-          // Weekly social scrape — Monday 05:00, Instagram + TikTok follower counts
-          if (now.getDay() === 1 && now.getHours() === 5 && now.getMinutes() < 60) {
-            runWeeklySocialScrape().catch(err =>
-              console.error("[brand-social-scraper] cron run failed:", err?.message)
-            );
-          }
-          // Weekly UK trading entity re-scrape — Sunday 02:00. Re-scrapes
-          // every brand with a domain that still has no uk_entity_name.
-          // Brands that already have one (auto-scraped or manually set)
-          // are left alone. Picks up shop closures / new Shopify rebrands
-          // and brands whose T&Cs page was previously bot-blocked.
-          if (now.getDay() === 0 && now.getHours() === 2 && now.getMinutes() < 60) {
-            import("./brand-entity-rescrape")
-              .then(m => m.runWeeklyUkEntityRescrape())
-              .then(r => console.log(`[uk-entity-rescrape] weekly: ${r.found}/${r.total} new, ${r.errored} errors`))
-              .catch(err => console.error("[uk-entity-rescrape] cron run failed:", err?.message));
-          }
-          // Weekly accounts auto-fetch — Sunday 03:00, an hour after the
-          // entity rescrape so brands that just got their CH number
-          // resolved get their accounts pulled in the same week. Idempotent
-          // per company: only re-downloads if the latest CH filing's
-          // doc_id differs from what we have stored.
-          if (now.getDay() === 0 && now.getHours() === 3 && now.getMinutes() < 60) {
-            import("./ch-accounts")
-              .then(m => m.runBulkAccountsFetch())
-              .then(r => console.log(`[ch-accounts] weekly: ${r.downloaded} new / ${r.upToDate} up-to-date / ${r.errored} errors (${r.total} total)`))
-              .catch(err => console.error("[ch-accounts] cron run failed:", err?.message));
-          }
-          // Weekly Instagram-handle backfill — Sunday 04:00. Renders each
-          // brand's homepage with JS to catch SPA-injected social links,
-          // then falls back to Haiku for brands the scraper can't pick up.
-          if (now.getDay() === 0 && now.getHours() === 4 && now.getMinutes() < 60) {
-            import("./brand-scraper")
-              .then(m => m.backfillInstagramHandles(2000))
-              .then(r => console.log(`[ig-backfill] weekly: ${r.filled}/${r.attempted} filled (${r.filledFromHtml} html, ${r.filledFromAi} AI), ${r.skipped} skipped, ${r.errors} errors`))
-              .catch(err => console.error("[ig-backfill] cron run failed:", err?.message));
-          }
-          // Weekly landlord-website scrape — Sunday 05:00. Drills the
-          // portfolio / investor / board pages of landlord-shaped companies
-          // (render:true), AI-extracts share ticker, IR contact, board,
-          // annual report URL, asset list. ~30s/brand throttle, max 50 per
-          // run, so worst case ~25 min — well under the budget.
-          if (now.getDay() === 0 && now.getHours() === 5 && now.getMinutes() < 60) {
-            import("./landlord-scraper")
-              .then(m => m.runWeeklyLandlordScrape({ limit: 50 }))
-              .then(r => console.log(`[landlord-scrape] weekly: ${r.succeeded}/${r.attempted} ok, ${r.failed} failed`))
-              .catch(err => console.error("[landlord-scrape] cron run failed:", err?.message));
-          }
-          // Monthly Perplexity refresh — 1st of month, 03:00
-          if (now.getDate() === 1 && now.getHours() === 3 && now.getMinutes() < 60) {
-            runMonthlyPerplexityRefresh().catch(err =>
-              console.error("[perplexity-refresh] cron run failed:", err?.message)
-            );
-          }
-        }, 60 * 60 * 1000);
+              }) },
+            // Daily Brucey Bonuses scan — 06:00. Idempotent via the
+            // (event_kind, event_ref) partial unique index.
+            { key: "brucey-scan", due: dailyAt(6), run: () =>
+              import("./hr-routes").then(m => m.runBruceyPointsScan())
+                .then(r => console.log(`[brucey-cron] daily scan: ${r.newAwards} new awards from ${r.scannedEvents} events`)) },
+            // Daily benefit renewal sweep — 06:30. Idempotent per (benefit, year).
+            { key: "benefit-renewal", due: dailyAt(6, 30), run: () =>
+              import("./hr-routes").then(m => m.runBenefitRenewalSweep())
+                .then(r => console.log(`[benefit-renewal-cron] created ${r.length} renewal task(s)`)) },
+            // Daily brand-trigger scan — 07:00, after the scraper has run.
+            { key: "brand-triggers", due: dailyAt(7), run: () => runDailyBrandTriggers() },
+            // Fortnightly brand digest — alternating Mondays at 08:00.
+            // Epoch-week parity flips exactly once between consecutive
+            // Mondays, so the cadence holds across month/year boundaries
+            // (week-of-month alternation double-sent on consecutive Mondays
+            // around some month turns, then went quiet for three weeks).
+            { key: "fortnightly-brand-digest", due: (now) =>
+              now.day === 1 && now.epochWeek % 2 === 1 ? dailyAt(8)(now) : null,
+              run: () => runFortnightlyBrandDigest() },
+            // Weekly client report — Monday 09:00 (sends email).
+            { key: "weekly-client-reports", due: weeklyAt(1, 9), run: () => runWeeklyClientReports() },
+          );
+        }
+        startFixedJobs(jobs);
       }
       setTimeout(async () => {
         try {

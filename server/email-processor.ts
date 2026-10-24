@@ -358,16 +358,30 @@ function extractLinkAnchors(html: string): string[] {
   return out;
 }
 
-let registeredUserEmails: Set<string> | null = null;
+let registeredUserRows: Map<string, { role: string | null; isActive: boolean | null }> | null = null;
 let registeredUsersCacheTime = 0;
 
-async function isAppUser(email: string): Promise<boolean> {
-  if (!registeredUserEmails || Date.now() - registeredUsersCacheTime > 5 * 60 * 1000) {
-    const allUsers = await db.select({ email: users.email }).from(users);
-    registeredUserEmails = new Set(allUsers.map(u => u.email?.toLowerCase()).filter(Boolean) as string[]);
+async function loadUserRows(): Promise<Map<string, { role: string | null; isActive: boolean | null }>> {
+  if (!registeredUserRows || Date.now() - registeredUsersCacheTime > 5 * 60 * 1000) {
+    const allUsers = await db.select({ email: users.email, role: users.role, isActive: users.isActive }).from(users);
+    registeredUserRows = new Map(
+      allUsers.filter(u => u.email).map(u => [u.email!.toLowerCase(), { role: u.role ?? null, isActive: u.isActive ?? null }]),
+    );
     registeredUsersCacheTime = Date.now();
   }
-  return registeredUserEmails.has(email.toLowerCase());
+  return registeredUserRows;
+}
+
+async function isAppUser(email: string): Promise<boolean> {
+  return (await loadUserRows()).has(email.toLowerCase());
+}
+
+// The From header is trivially spoofable and client accounts are not BGP
+// staff: only an ACTIVE, non-Client user may drive the instruction path
+// (which can generate branded documents and send mail autonomously).
+async function isStaffUser(email: string): Promise<boolean> {
+  const row = (await loadUserRows()).get(email.toLowerCase());
+  return !!row && row.isActive !== false && (row.role || "") !== "Client";
 }
 
 const BGP_DOMAIN = "@brucegillinghampollard.com";
@@ -818,7 +832,11 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
               }
             }
 
-            if (deliver === "email" && action.deliverTo) {
+            if (deliver === "email" && action.deliverTo
+                && (action.deliverTo.toLowerCase() === from.toLowerCase() || action.deliverTo.toLowerCase().endsWith("@brucegillinghampollard.com"))) {
+              // Generated documents go back to the requesting staff member or
+              // another BGP address — never straight to a third party on the
+              // say-so of an inbound email.
               try {
                 await sendFromSharedMailbox(
                   [action.deliverTo],
@@ -836,7 +854,12 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
 
             if (deliver === "whatsapp" && action.deliverTo) {
               try {
-                const { sendWhatsAppDocument } = await import("./whatsapp");
+                const { sendWhatsAppDocument, resolveUserIdFromPhone } = await import("./whatsapp");
+                // Same boundary as email delivery: only a recognised BGP
+                // staff number receives an auto-generated document.
+                if (!(await resolveUserIdFromPhone(action.deliverTo.replace(/[^0-9]/g, ""))).matched) {
+                  deliveryNote += ` (WhatsApp delivery to ${action.deliverTo} skipped — not a recognised BGP number)`;
+                } else {
                 const waConfig = {
                   token: (process.env.WHATSAPP_TOKEN_V2 || process.env.WHATSAPP_ACCESS_TOKEN)?.trim() || null,
                   phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || null,
@@ -854,6 +877,7 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
                     : ` (WhatsApp send to ${action.deliverTo} failed)`;
                 } else {
                   deliveryNote += " (WhatsApp not configured)";
+                }
                 }
               } catch (waErr: any) {
                 deliveryNote += ` (WhatsApp delivery error: ${waErr?.message})`;
@@ -1358,7 +1382,7 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
         let actionsTaken: ProcessedAction[] = [];
         let replySent = false;
 
-        const isRegisteredUser = await isAppUser(fromEmail);
+        const isRegisteredUser = await isStaffUser(fromEmail);
 
         if (isRegisteredUser && (classification.classification === "unknown" || classification.classification === "document")) {
           classification.classification = "instruction";
@@ -1696,7 +1720,7 @@ export function registerEmailProcessorRoutes(app: Express) {
 
       let actionsTaken: ProcessedAction[] = [];
       let replySent = false;
-      const isRegisteredUser = await isAppUser(fromEmail);
+      const isRegisteredUser = await isStaffUser(fromEmail);
       if (isRegisteredUser && (classification.classification === "unknown" || classification.classification === "document")) {
         classification.classification = "instruction";
         if (!classification.requestedAction) {

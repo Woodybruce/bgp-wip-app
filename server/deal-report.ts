@@ -161,12 +161,15 @@ function sniffImage(buf: Buffer): Buffer | null {
 
 async function fetchImageBuffer(url: string): Promise<Buffer | null> {
   try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 8000);
-    const r = await fetch(url, { signal: ctrl.signal });
-    clearTimeout(t);
+    // safePublicFetch resolves every redirect hop and refuses private /
+    // link-local / metadata addresses — photo URLs come from stored data a
+    // staff member (or a chat tool) can set, so they are not trusted.
+    const { safePublicFetch, readBodyCapped } = await import("./safe-fetch");
+    const r = await safePublicFetch(url, { signal: AbortSignal.timeout(8000) });
     if (!r.ok) return null;
-    return sniffImage(Buffer.from(await r.arrayBuffer()));
+    const contentType = r.headers.get("content-type") || "";
+    if (contentType && !contentType.startsWith("image/")) return null;
+    return sniffImage(await readBodyCapped(r, 25 * 1024 * 1024));
   } catch {
     return null;
   }
