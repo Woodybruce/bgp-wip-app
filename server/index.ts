@@ -3608,30 +3608,13 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     console.warn(`[backfill-units] failed: ${e.message}`);
   }
 
-  // Every Letting Tracker unit has a backing deal — its Ref #, where fees
-  // and the fee split are added (Woody, 2026-10-26). Rows born from tenancy
-  // imports / the spine mirror / tracker-focus never had one. Idempotent
-  // and cheap (one SELECT on deal_id IS NULL), so it runs every boot like
-  // backfillInvestmentTrackerDeals and also heals rows born later from raw
-  // inserts or a deleted deal; the first run's counts are kept in
-  // system_settings for audit. A minute after boot: after [backfill-units]
-  // above (unit_id) and the 40s junk sweep + orphan-projection heal, so it
-  // never stubs a row about to be removed.
-  setTimeout(async () => {
-    try {
-      const { backfillUnitBackingDeals } = await import("./unit-mirror");
-      const r = await backfillUnitBackingDeals(pool);
-      if (r.created || r.linked || r.failed) {
-        console.log(`[unit-backing-deals] scanned ${r.scanned}, created ${r.created}, linked ${r.linked}, skipped ${r.skipped}, failed ${r.failed}`);
-      }
-      await pool.query(
-        `INSERT INTO system_settings (key, value, updated_at) VALUES ('unit_backing_deals_2026_10_26', $1::jsonb, now()) ON CONFLICT (key) DO NOTHING`,
-        [JSON.stringify({ ...r, at: new Date().toISOString() })],
-      );
-    } catch (e: any) {
-      console.warn("[unit-backing-deals]", e?.message);
-    }
-  }, 60_000);
+  // The boot-time "every tracker unit gets a backing deal" sweep that ran
+  // here from 2026-10-26 is GONE: it minted a third Marketing deal on units
+  // that already carried two (Carly, 2026-10-26) because its adoption only
+  // matched by unit id or the exact "Property – Unit" name. Integrity is
+  // reported (GET /api/admin/letting-integrity) and repaired only by an
+  // explicit admin Preview → Apply (CLAUDE.md "Lettings"); the undo of that
+  // sweep's stubs is POST /api/admin/letting-sweep-undo (server/letting-sweep-undo.ts).
 
   // ── Seed staff start dates from employment contracts (May 2026) ────────
   // Idempotent — ON CONFLICT only updates start_date, never overwrites other fields.
@@ -4851,6 +4834,9 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   registerIngestRoutes(app);
   const { registerGenericCrmRoutes } = await import("./generic-crm-routes");
   registerGenericCrmRoutes(app);
+  // Undo of the 26 Oct backing-deal sweep (Preview → Apply, admin).
+  const { registerLettingSweepUndoRoutes } = await import("./letting-sweep-undo");
+  registerLettingSweepUndoRoutes(app);
   registerDemeterRoutes(app);
   registerRetailContextPlanRoutes(app);
   registerMapLayerRoutes(app);
