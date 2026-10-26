@@ -3075,6 +3075,40 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       if (!u.rows.length) console.warn("[hr-titles] no active login for willp@");
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_26_wp', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
+    // 58 Dalston Lane (feedback log, Carly 19 Oct; Woody "go ahead"
+    // 2026-10-26): the Ground Floor tracker row pointed at an empty
+    // duplicate #3943 instead of the populated Tenant Rep deal #3654 on the
+    // same property and unit. Once: re-point the row at #3654 and withdraw
+    // #3943 through the deal factory (audit row + status mirror), guarded
+    // on the ids still being as reported.
+    const doneDL = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'dalston_lane_dupe_2026_10_26'`);
+    if (!doneDL.rows.length) {
+      const ROW = "4ad19bd7-c518-4a92-be49-d536a0b0670b", STUB = "485d98b6-3e5a-46c7-bf22-ead78eaf69d1", REAL = "27fdad50-314c-46fd-899a-fe8b46cd1cf2";
+      try {
+        const real = await pool.query(`SELECT id, status, deal_ref FROM crm_deals WHERE id = $1`, [REAL]);
+        const { legacyToCode } = await import("@shared/deal-status");
+        const code = legacyToCode(real.rows[0]?.status);
+        const upd = real.rows[0] && code
+          ? await pool.query(`UPDATE available_units SET deal_id = $1, marketing_status = $2, updated_at = NOW() WHERE id = $3 AND deal_id = $4`, [REAL, code, ROW, STUB])
+          : { rowCount: 0 };
+        let withdrew = false;
+        if (upd.rowCount) {
+          const { updateDeal, logLettingService } = await import("./letting-service");
+          await logLettingService(pool, { dealId: REAL, trackerRowId: ROW, created: [], adopted: [`available_units:${ROW}`], previousDealId: STUB, feedbackLog: "58 Dalston Lane" }, { userId: null, source: "backfill" });
+          await pool.query(`INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by_name) VALUES ($1, 'status', (SELECT status FROM crm_deals WHERE id = $1), 'WIT', $2, 'System')`,
+            [STUB, `duplicate of #${real.rows[0].deal_ref ?? "3654"} (58 Dalston Lane, feedback log 2026-10-19); tracker row re-pointed at the real deal`]);
+          await updateDeal(STUB, { status: "WIT" }, { userId: null, source: "backfill" });
+          const { mirrorFromDeal } = await import("./lease-status-mirror");
+          await mirrorFromDeal(STUB, "WIT", { pool, reason: "dalston_lane_dupe_2026_10_26", actorUserId: null }).catch(() => {});
+          withdrew = true;
+        }
+        await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('dalston_lane_dupe_2026_10_26', $1::jsonb, now()) ON CONFLICT (key) DO NOTHING`,
+          [JSON.stringify({ at: new Date().toISOString(), rePointed: !!upd.rowCount, withdrew, row: ROW, stub: STUB, real: REAL })]);
+        console.log(`[dalston-lane] re-pointed=${!!upd.rowCount} withdrew=${withdrew}`);
+      } catch (e: any) {
+        console.warn("[dalston-lane]", e?.message);
+      }
+    }
     // The sidebar (bottom-left, under the name) and ChatBGP's "Current
     // user" line read users.role, which was seeded in 2025 and never
     // followed the HR title — the source of truth (CLAUDE.md "Website team
