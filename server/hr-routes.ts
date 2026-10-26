@@ -1,4 +1,5 @@
 import { getAnthropicClient } from "./utils/anthropic-client";
+import { PERKS_ENABLED } from "@shared/feature-flags";
 import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, TEAM_LEADS_2026, isHrPerson, rosterNameFor, rosterTeamsFor, samePerson, staffGroupFor } from "@shared/teams";
 import type { Express } from "express";
 import { pool } from "./db";
@@ -135,6 +136,8 @@ export async function runBenefitRenewalSweep(): Promise<Array<{ slug: string; us
 export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; newAwards: number; weekAgo: string }> {
   const now = new Date();
   const weekAgo = new Date(now.getTime() - 7 * 86400000);
+  // Prizes paused (Woody, 2026-10-26) — no points are allocated meanwhile.
+  if (!PERKS_ENABLED) return { scannedEvents: 0, newAwards: 0, weekAgo: weekAgo.toISOString() };
 
   const usersRes = await pool.query(
     `SELECT u.id, u.name, sp.xero_tracking_name FROM users u
@@ -2742,6 +2745,9 @@ export function setupHrRoutes(app: Express) {
     if (!actor.userId) return res.status(401).json({ error: "Not authenticated" });
     const { userId, kind, emoji, reason } = req.body || {};
     if (!userId || !kind) return res.status(400).json({ error: "userId and kind required" });
+    if (!PERKS_ENABLED && kind !== "kudos") {
+      return res.status(409).json({ error: "Perk awards are paused while the scheme is reworked — kudos still work" });
+    }
     // Non-admins can only issue peer 'kudos' (no real perks).
     if (!actor.isAdmin && kind !== "kudos") {
       return res.status(403).json({ error: "Only admins can issue perk awards. Use kind='kudos' for peer shout-outs." });
@@ -2778,6 +2784,7 @@ export function setupHrRoutes(app: Express) {
   // £100k YTD · £250k YTD · first instruction won this month.
   app.post("/api/hr/awards/auto-detect", requireAdmin, async (_req, res) => {
     const created: Array<{ user: string; kind: string; reason: string }> = [];
+    if (!PERKS_ENABLED) return res.json({ created, paused: true });
     try {
       const today = new Date();
       const todayStr = today.toISOString().slice(5, 10); // MM-DD
@@ -5191,6 +5198,7 @@ Use the language and tone of BGP's review docs.`,
   // recognition feed. Idempotent on (period_type, period_start) — re-spinning
   // requires deleting the existing winner row first.
   app.post("/api/hr/brucey-winners/spin", requireAuth, requireAdmin, async (req: any, res) => {
+    if (!PERKS_ENABLED) return res.status(409).json({ error: "Prizes are paused while the scheme is reworked" });
     const { period, userId } = req.body || {};
     if (!period || !userId) return res.status(400).json({ error: "period and userId required" });
     const now = new Date();

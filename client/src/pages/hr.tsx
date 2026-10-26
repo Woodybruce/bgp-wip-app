@@ -1,4 +1,5 @@
 import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, isHrPerson, staffGroupFor } from "@shared/teams";
+import { PERKS_ENABLED } from "@shared/feature-flags";
 import { useState, useMemo, useRef, useEffect, lazy, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -2401,7 +2402,7 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
                   </div>
                 )}
               </div>
-              <RecognitionPanel userId={person.id} />
+              {PERKS_ENABLED && <RecognitionPanel userId={person.id} />}
             </TabsContent>
           )}
 
@@ -2460,7 +2461,7 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
                 )}
 
                 {/* Recognition panel visible to everyone — same view colleagues see on About. */}
-                <RecognitionPanel userId={person.id} />
+                {PERKS_ENABLED && <RecognitionPanel userId={person.id} />}
 
                 {isAdmin && expenseSummary && (
                   <Card>
