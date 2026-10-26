@@ -38,6 +38,12 @@ import { resolveTenancyUnitIdSubquery } from "./tenant-brand-resolver";
 import { DEAL_PAGE_STATUSES, legacyToCode } from "@shared/deal-status";
 import { LETTING_DEAL_TYPES, LEGACY_LETTING_TYPES, DEFAULT_LETTING_TYPE, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES } from "@shared/letting-rules";
 import { LEASING_STATUSES } from "@shared/lease-status-mirror";
+import { createDeal, updateDeal } from "./letting-service";
+
+// Ingest records are snake_case columns; the deal factory takes the
+// camelCase insert shape.
+const camelKeys = (record: Record<string, any>): Record<string, any> =>
+  Object.fromEntries(Object.entries(record).map(([k, v]) => [k.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase()), v]));
 
 // ─────────────────────────────────────────────────────────────────────────
 // Targets — adding one is ~30 lines: define the prompt, the match key,
@@ -827,9 +833,11 @@ export interface CommitResult {
 }
 
 // Lettings cleanup (Phase 0b): a Deals file can be previewed so the user
-// sees what it holds, but the write goes through the Deals board until
-// Phase 2 routes this target through the deal factory. Returns the message
-// to refuse with, or null when the commit may go ahead.
+// sees what it holds, but the write goes through the Deals board while the
+// repair tools are frozen. Phase 2 routes this target through the deal
+// factory (commitDiff below), so flipping LETTING_REPAIR_TOOLS_ENABLED is
+// all that stands between a Deals import and the letting rules. Returns the
+// message to refuse with, or null when the commit may go ahead.
 export function ingestCommitRefusal(target: IngestTarget): string | null {
   if (target === "crm_deals" && !LETTING_REPAIR_TOOLS_ENABLED) return `${LETTING_REPAIR_PAUSED} — create the deal on the Deals board`;
   return null;
@@ -859,6 +867,16 @@ export async function commitDiff(args: {
 
     try {
       if (entry.type === "add") {
+        // Deals are born through the one deal factory (letting-service):
+        // status code, scheme defaults, the letting rules (a letting needs a
+        // property and a unit; one live landlord-side letting per unit),
+        // spine stamp and tracker row. A refusal lands in result.errors.
+        if (preview.target === "crm_deals") {
+          const made = await createDeal(camelKeys(entry.record), { userId: args.userId, source: "ingest" });
+          writtenIds.push(String(made.id));
+          result.written++;
+          continue;
+        }
         // A unit of a known estate lands on that estate, not as a property.
         if (preview.target === "crm_properties") {
           const estateUnit = await (await import("./estate-units")).resolveEstateUnit(pool, entry.record?.name);
@@ -903,6 +921,14 @@ export async function commitDiff(args: {
             });
             if (cols.length === 0) { result.skipped++; continue; }
           }
+        }
+        if (preview.target === "crm_deals") {
+          const patch: Record<string, any> = {};
+          for (const c of cols) patch[c] = entry.record[c];
+          await updateDeal(String(entry.existingId), camelKeys(patch), { userId: args.userId, source: "ingest" });
+          writtenIds.push(String(entry.existingId));
+          result.written++;
+          continue;
         }
         const setClause = cols.map((c, i) => `${c} = $${i + 1}`).join(", ");
         const values = cols.map((c) => entry.record[c]);

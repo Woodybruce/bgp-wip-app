@@ -336,11 +336,46 @@ const SUMMARY_HOUR = 9;
 const WIP_HEALTH_DAY = 1; // Monday
 const WIP_HEALTH_HOUR = 8;
 
+// Letting integrity headlines for the Monday email (Phase 2 of the lettings
+// cleanup, Woody 2026-10-26): the report is run once here and only its
+// headline counts go out, with a link to Settings → Letting integrity where
+// the ids and the Preview → Apply backfills live. Reports only — and the
+// email still goes if the report fails.
+const LETTING_HEADLINES: Array<{ key: string; label: string; pick: (c: any) => number }> = [
+  { key: "trackerRowsWithoutDeal", label: "Tracker rows without a deal", pick: (c) => c?.total ?? 0 },
+  { key: "liveLettingDealsWithoutTrackerRow", label: "Live letting deals off the tracker", pick: (c) => c?.total ?? 0 },
+  { key: "stubAndRealPairs", label: "Stub + real pairs", pick: (c) => c?.total ?? 0 },
+  { key: "statusDisagreements", label: "Status disagreements", pick: (c) => c?.total ?? 0 },
+  { key: "actingForDerivation", label: "Side would change (Lease Disposal / Sub-Letting)", pick: (c) => c?.would_change ?? 0 },
+  { key: "unitsWithMultipleLiveLandlordDeals", label: "Units with two live landlord deals", pick: (c) => c?.units ?? 0 },
+];
+
+async function lettingIntegrityEmailSection(): Promise<{ html: string; issues: number }> {
+  try {
+    const { lettingIntegrityReport } = await import("./letting-integrity");
+    const report = await lettingIntegrityReport(pool);
+    const rows = LETTING_HEADLINES.map((h) => {
+      const c = report.counts[h.key];
+      return { label: h.label, n: c?.error ? null : h.pick(c) };
+    });
+    const issues = rows.reduce((s, r) => s + (r.n || 0), 0);
+    const items = rows.map((r) => `<li>${r.label}: <b>${r.n === null ? "check failed" : r.n}</b></li>`).join("");
+    const html = `<h3 style="margin:18px 0 2px">Letting integrity (${issues})</h3>` +
+      `<p style="margin:0 0 6px;font-size:13px;color:#555">Where the Letting Tracker and the letting deals disagree. Nothing is repaired by itself — the ids and the Preview → Apply backfills are on <a href="${APP_URL}/settings">Settings → Letting integrity</a>.</p>` +
+      `<ul style="margin:0;padding-left:18px;font-size:14px;line-height:1.6">${items}</ul>`;
+    return { html, issues };
+  } catch (e: any) {
+    console.warn("[deal-verdicts] letting integrity section failed:", e?.message);
+    return { html: "", issues: 0 };
+  }
+}
+
 export async function runWipHealthEmail(): Promise<void> {
   const { computeWipHealth } = await import("./crm");
   const h = await computeWipHealth();
   const b = h.buckets;
-  const anythingWrong = h.affected.count > 0 || b.noFee.count > 0 || b.noProperty.count > 0;
+  const letting = await lettingIntegrityEmailSection();
+  const anythingWrong = h.affected.count > 0 || b.noFee.count > 0 || b.noProperty.count > 0 || letting.issues > 0;
   if (!anythingWrong) {
     console.log("[deal-verdicts] wip health email skipped — nothing wrong");
     return;
@@ -362,14 +397,15 @@ export async function runWipHealthEmail(): Promise<void> {
     ${section("Marked Invoiced but no Xero invoice linked", "Cash tracking can't see these — raise or link the invoice.", b.invNoXero)}
     ${section("Live deal with no fee", "In the pipeline but the fee is blank, so it's excluded from the WIP report entirely — invisible money.", b.noFee)}
     ${section("No property linked", "Fine for consultancy mandates; worth linking for everything else.", b.noProperty)}
+    ${letting.html}
     <p style="font-size:12px;color:#666;margin-top:18px">Also live in the app: WIP report → Needs Attention. This email only arrives when something needs fixing.</p>`;
   const { sendSharedMailboxEmail } = await import("./shared-mailbox");
   await sendSharedMailboxEmail({
     to: SUMMARY_EMAIL,
-    subject: `WIP data check: ${h.affected.count + b.noFee.count} deal(s) need fixing${h.affected.fee ? ` (${money(h.affected.fee)} affected)` : ""}`,
+    subject: `WIP data check: ${h.affected.count + b.noFee.count} deal(s) need fixing${h.affected.fee ? ` (${money(h.affected.fee)} affected)` : ""}${letting.issues ? ` · ${letting.issues} letting integrity issue(s)` : ""}`,
     body: `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1F2937;">${html}</div>`,
   });
-  console.log(`[deal-verdicts] wip health email sent — affected=${h.affected.count}, noFee=${b.noFee.count}`);
+  console.log(`[deal-verdicts] wip health email sent — affected=${h.affected.count}, noFee=${b.noFee.count}, lettingIntegrity=${letting.issues}`);
 }
 
 async function claimSlot(kind: string, hour: number): Promise<boolean> {

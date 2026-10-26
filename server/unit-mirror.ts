@@ -12,7 +12,7 @@
 // back into crm_deals this module does.
 import type { Pool } from "pg";
 import { legacyToCode } from "@shared/deal-status";
-import { DEFAULT_LETTING_TYPE, closedStatusSqlList, isHistoricStatus } from "@shared/letting-rules";
+import { DEFAULT_LETTING_TYPE, closedStatusSqlList, isHistoricStatus, lettingTypeSqlList } from "@shared/letting-rules";
 
 // Canonical tenancy status values that map onto projections. Anything
 // outside this set is left untouched (rows mid-data-entry, legacy values).
@@ -80,7 +80,11 @@ function mapTenancyToLeasingStatus(s: string | null | undefined): string | null 
 
 // Ensure both projection rows exist + reflect the current tenancy status.
 // Idempotent: calling twice with the same status is a no-op the second time.
-export async function fanOutTenancyStatus(pool: Pool, tenancyId: string): Promise<void> {
+// opts.suppressTrackerStub (the deal form's inline unit create): the spine
+// row is made but no £0 AVA stub deal or tracker row is minted for it —
+// the real deal being created is the unit's deal, and the deal factory
+// (server/letting-service.ts ensureTrackerRowForDeal) makes its row.
+export async function fanOutTenancyStatus(pool: Pool, tenancyId: string, opts: { suppressTrackerStub?: boolean } = {}): Promise<void> {
   try {
     const r = await pool.query(
       `SELECT id, property_id, unit_number, premises, status, gia_sqft, nia_sqft,
@@ -163,12 +167,12 @@ export async function fanOutTenancyStatus(pool: Pool, tenancyId: string): Promis
       // A row flipped back to a live status (vacated, re-marketed) needs
       // its deal too — no-op when one is linked. A let row's fee was that
       // letting's, so a fresh stub after a let starts without it.
-      if (marketingStatus !== "COM" && marketingStatus !== "WIT") {
+      if (marketingStatus !== "COM" && marketingStatus !== "WIT" && !opts.suppressTrackerStub) {
         const wasHistoric = isHistoricUnitStatus(existingAvail.rows[0].marketing_status);
         await ensureBackingDealForUnit(pool, existingAvail.rows[0].id, { status: marketingStatus, ...(wasHistoric ? { fee: null } : {}) })
           .catch((e: any) => console.warn("[unit-mirror] backing deal failed:", e?.message));
       }
-    } else if (marketingStatus !== "COM" && marketingStatus !== "WIT") {
+    } else if (marketingStatus !== "COM" && marketingStatus !== "WIT" && !opts.suppressTrackerStub) {
       // Only auto-create a Letting Tracker row for active statuses —
       // no point spawning a fresh row for a unit that's already let.
       // Non-lettable revenue lines (lockers, vending, ATMs) never mirror
@@ -358,14 +362,17 @@ export async function ensureBackingDealForUnit(
   // not. A live unlinked one is adopted (deleted-and-recreated, unlinked by
   // hand, or born on the deal form); letting types only — a live Rent
   // Review / Lease Renewal / Regear on the same unit is advisory work, not
-  // the letting, and must never drive the tracker row.
+  // the letting, and must never drive the tracker row. The same list and
+  // the same NULL-reads-as-New-Letting rule as the deal door's
+  // findLiveLandlordLetting (letting-service.ts), so Add Unit never mints
+  // a stub beside a deal the deal form would refuse with 409.
   const prior = await pool.query(
     `SELECT d.id, d.deal_ref, d.status,
             (SELECT au2.id FROM available_units au2 WHERE au2.deal_id = d.id LIMIT 1) AS linked_row_id
        FROM crm_deals d
       WHERE d.property_id = $1
         AND coalesce(d.bgp_acting_for, 'landlord') = 'landlord'
-        AND coalesce(d.deal_type, 'New Letting') IN ('New Letting', 'Letting', 'Leasing', 'Temp Lease', 'Licence')
+        AND coalesce(d.deal_type, '${DEFAULT_LETTING_TYPE}') IN (${lettingTypeSqlList()})
         AND (($2::varchar IS NOT NULL AND d.unit_id = $2)
           OR ($3::varchar IS NOT NULL AND d.tenancy_unit_id = $3)
           OR ($4 <> '' AND lower(trim(d.name)) IN (lower($4 || ' – ' || $5), lower($4 || ' - ' || $5))))
@@ -414,7 +421,7 @@ export async function ensureBackingDealForUnit(
   if (au.tenancy_unit_id) {
     const liveOnSpine = await pool.query(
       `SELECT 1 FROM crm_deals WHERE tenancy_unit_id = $1 AND coalesce(bgp_acting_for, 'landlord') = 'landlord'
-          AND coalesce(status, '') NOT IN ('Completed','Invoiced','Withdrawn','COM','INV','WIT') LIMIT 1`,
+          AND lower(trim(coalesce(status, ''))) NOT IN (${closedStatusSqlList()}) LIMIT 1`,
       [au.tenancy_unit_id]);
     if (!liveOnSpine.rows.length) tenancyUnitId = au.tenancy_unit_id;
   }

@@ -61,7 +61,7 @@ import { MonthYearSelect } from "@/components/month-year-select";
 import PDFViewer from "@/components/pdf-viewer";
 import { EntityCombobox } from "@/components/entity-combobox";
 import { XeroContactPicker } from "@/components/xero-contact-picker";
-import { FeeAllocationEditor, type FeeAllocationRow } from "@/components/fee-allocation-editor";
+import { FeeAllocationEditor, BGP_HOUSE_PCT, type FeeAllocationRow } from "@/components/fee-allocation-editor";
 
 import { LETTING_STATUSES, DEAL_STATUS_LABELS, WIP_STATUSES, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 import { DEFAULT_LETTING_TYPE, LEGACY_LETTING_TYPES, TRACKER_LIVE_STATUSES, HISTORIC_STATUSES, PRE_MARKETING_STATUSES } from "@shared/letting-rules";
@@ -1038,39 +1038,32 @@ export default function AvailableUnitsPage() {
 
   const createMutation = useMutation({
     mutationFn: async ({ data, feeRows, feeAllocType }: { data: any; feeRows: FeeAllocationRow[]; feeAllocType: "percentage" | "fixed" }) => {
-      const res = await apiRequest("POST", "/api/available-units", data);
-      const unit = await res.json();
-      // The server auto-creates a backing deal and stamps its id on the
-      // unit. Fold the user's fee split onto that deal so it lands with
-      // BGP House + agents pre-baked instead of empty (which used to
-      // require re-opening the deal to lock in).
-      const dealId = unit?.dealId;
-      // Only a deal this add CREATED takes the form's split: a re-add returns
-      // the existing listing, and an adopted deal (one already on the unit,
-      // born on the deal form) keeps the split it already has.
-      if (dealId && unit?.dealCreated && feeRows.length > 0) {
-        const allocations = feeRows
+      // The fee split travels in the create body (letting-cleanup Phase 2):
+      // the letting service writes deal_fee_allocations on the backing deal
+      // through the same path as the deal page's PUT, so the deal is born
+      // with its split instead of a second request racing the create. Rows
+      // are the editor's shape plus the BGP user id (or the external name
+      // for a Consultant row). A lone BGP House row is the editor's
+      // placeholder, not a split — only send when an agent is named. The
+      // server decides whether an adopted or re-added deal keeps its own.
+      const feeAllocations = feeRows.some(r => !r.isBgpHouse && r.agentName)
+        ? feeRows
           .filter(r => (r.isBgpHouse || r.agentName))
-          .map(r => ({
-            agentName: r.isBgpHouse ? (r.agentName || "BGP House") : r.agentName,
-            allocationType: feeAllocType,
-            percentage: feeAllocType === "percentage" ? r.percentage : null,
-            fixedAmount: feeAllocType === "fixed" ? r.fixedAmount : null,
-            isBgpHouse: !!r.isBgpHouse,
-          }));
-        if (allocations.length > 0) {
-          try {
-            await apiRequest("PUT", `/api/crm/deals/${dealId}/fee-allocations`, { allocations });
-          } catch (e: any) {
-            toast({
-              title: "Unit added, fee split failed to save",
-              description: e?.message || "Open the deal to set the split there.",
-              variant: "destructive",
-            });
-          }
-        }
-      }
-      return unit;
+          .map(r => {
+            const user = r.isBgpHouse ? null : bgpUsers.find(u => u.name === r.agentName);
+            return {
+              agentName: r.isBgpHouse ? (r.agentName || "BGP House") : r.agentName,
+              allocationType: feeAllocType,
+              percentage: r.percentage || 0,
+              fixedAmount: r.fixedAmount || 0,
+              isBgpHouse: !!r.isBgpHouse,
+              ...(user ? { userId: String(user.id) } : {}),
+              ...(!user && !r.isBgpHouse ? { externalName: r.agentName } : {}),
+            };
+          })
+        : undefined;
+      const res = await apiRequest("POST", "/api/available-units", feeAllocations ? { ...data, feeAllocations } : data);
+      return res.json();
     },
     onSuccess: (unit: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
@@ -1080,6 +1073,17 @@ export default function AvailableUnitsPage() {
       setUnitFeeRows([]);
       setUnitFeeAllocType("percentage");
       setShowAllUnitFields(false);
+      // The split travels in the create body; a rejected one comes back on
+      // the 200 as feeAllocationsError (the unit and deal exist) and the
+      // user is told to set it on the deal, as the old two-request flow did.
+      if (unit?.feeAllocationsError) {
+        toast({
+          title: "Unit added, fee split failed to save",
+          description: `${unit.feeAllocationsError} Open deal #${unit.dealRef ?? "…"} to set it.`,
+          variant: "destructive",
+        });
+        return;
+      }
       toast({ title: unit?.alreadyListed ? "Already on the tracker" : "Unit added" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -4798,6 +4802,39 @@ function UnitFormDialog({
 }) {
   const upd = (field: keyof UnitFormState, value: string) => setForm({ ...form, [field]: value });
   const { toast } = useToast();
+
+  // Fee split pre-fill (create only), the way the SOL/WIP flip dialog seeds
+  // its editor: the BGP contacts named on the unit share the agents' 85%
+  // (one agent 85%, two 42.5% each…); FeeAllocationEditor adds the BGP
+  // House 15% row itself. Re-seeds as the contacts change until someone
+  // touches the agent rows by hand (add, remove, rename or re-weight) —
+  // from then on their numbers win.
+  const autoSeedRef = useRef<FeeAllocationRow[]>([]);
+  useEffect(() => {
+    if (!open) { autoSeedRef.current = []; return; }
+    if (isEdit) return;
+    const agentRows = feeRows.filter(r => !r.isBgpHouse);
+    const untouched = agentRows.length === autoSeedRef.current.length
+      && agentRows.every(r => autoSeedRef.current.some(s => s.agentName === r.agentName && s.percentage === r.percentage));
+    if (!untouched) return;
+    const names = form.agentUserIds
+      .map(id => bgpUsers.find(u => u.id === id)?.name)
+      .filter((n): n is string => !!n);
+    const target = 100 - BGP_HOUSE_PCT;
+    const each = Math.round((target / Math.max(names.length, 1)) * 100) / 100;
+    const seed: FeeAllocationRow[] = names.map((agentName, i) => ({
+      agentName,
+      allocationType: feeAllocType,
+      percentage: i === names.length - 1 ? Math.round((target - each * (names.length - 1)) * 100) / 100 : each,
+      fixedAmount: 0,
+    }));
+    const same = seed.length === agentRows.length
+      && seed.every((s, i) => agentRows[i]?.agentName === s.agentName && agentRows[i]?.percentage === s.percentage);
+    autoSeedRef.current = seed;
+    if (same) return;
+    setFeeRows([...feeRows.filter(r => r.isBgpHouse), ...seed]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, isEdit, form.agentUserIds, bgpUsers, feeRows, feeAllocType]);
 
   // In-form file uploads (photos / floor plans). Same endpoint, categories
   // and cache key as the row's Files dialog, so both views stay in sync.

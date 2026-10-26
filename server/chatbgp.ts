@@ -58,7 +58,7 @@ import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schema";
 import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
 import { legacyToCode, statusSpellingsFor, DEAL_STATUS_LABELS, SYSTEM_SET_STATUSES, TERMINAL_STATUSES, isExcludedLegacyStatus, type DealStatusCode } from "@shared/deal-status";
-import { LETTING_DEAL_TYPES, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES, TRACKER_LIVE_STATUSES, HISTORIC_STATUSES } from "@shared/letting-rules";
+import { LETTING_DEAL_TYPES, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES, TRACKER_LIVE_STATUSES, HISTORIC_STATUSES, isLettingType } from "@shared/letting-rules";
 
 // ── Lettings vocabulary (shared/letting-rules.ts) ────────────────────────
 // Tool descriptions and SQL IN-lists come from the one vocabulary, never
@@ -81,7 +81,9 @@ const statusSqlList = (codes: readonly DealStatusCode[]) => statusSpellingsFor(c
 async function callOwnRoute(req: Request, method: "POST" | "PUT" | "PATCH", routePath: string, body: Record<string, unknown>): Promise<{ ok: boolean; status: number; json: any }> {
   const protocol = (req.headers?.["x-forwarded-proto"] as string) || req.protocol || "http";
   const host = (req.headers?.["x-forwarded-host"] as string) || (req.headers?.host as string) || `127.0.0.1:${process.env.PORT || "5000"}`;
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  // X-BGP-Source: the letting service's audit row says the write came
+  // through chat, not the deal form.
+  const headers: Record<string, string> = { "Content-Type": "application/json", "X-BGP-Source": "chat" };
   if (req.headers?.cookie) headers.Cookie = String(req.headers.cookie);
   if (req.headers?.authorization) headers.Authorization = String(req.headers.authorization);
   let mintedToken: string | null = null;
@@ -103,6 +105,39 @@ async function callOwnRoute(req: Request, method: "POST" | "PUT" | "PATCH", rout
 // The message a refused own-route call carries (crm.ts answers { error },
 // routes.ts { message }).
 const routeError = (r: { status: number; json: any }, fallback: string) => String(r.json?.error || r.json?.message || `${fallback} (${r.status})`);
+
+// create_deal's unit: a property_units id, a Letting Tracker unit id
+// (search_crm units → its unit / spine row), or a unit name on the
+// property, resolved to what POST /api/crm/deals takes (a property_units
+// id or the "__tenancy__<id>" token the deal form sends). Name identity is
+// the tracker's first-comma-segment rule (letting-service unitNameSegment).
+// A letting whose unit exists nowhere yet gets its property_units row —
+// the same "add the unit" the Add Unit form does; other types never add.
+async function resolveChatUnitId(propertyId: string, unitId: string | null, unitName: string | null, addIfMissing: boolean): Promise<string | null> {
+  const { unitNameSegment } = await import("./letting-service");
+  let name = unitName;
+  if (unitId) {
+    if (unitId.startsWith("__tenancy__")) return unitId;
+    const pu = await pool.query(`SELECT id FROM property_units WHERE id = $1 AND property_id = $2`, [unitId, propertyId]);
+    if (pu.rows[0]) return pu.rows[0].id;
+    const au = await pool.query(`SELECT unit_id, tenancy_unit_id, unit_name FROM available_units WHERE id = $1 AND property_id = $2`, [unitId, propertyId]);
+    if (au.rows[0]?.unit_id) return au.rows[0].unit_id;
+    if (au.rows[0]?.tenancy_unit_id) return `__tenancy__${au.rows[0].tenancy_unit_id}`;
+    if (au.rows[0]?.unit_name) name = name || au.rows[0].unit_name;
+  }
+  const seg = unitNameSegment(name);
+  if (!seg) return null;
+  const byName = await pool.query(
+    `SELECT id FROM property_units WHERE property_id = $1 AND lower(trim(split_part(coalesce(unit_name, ''), ',', 1))) = $2 LIMIT 1`, [propertyId, seg]);
+  if (byName.rows[0]) return byName.rows[0].id;
+  const spine = await pool.query(
+    `SELECT id FROM tenancy_schedule_units WHERE property_id = $1
+       AND lower(trim(split_part(coalesce(nullif(trim(unit_number), ''), premises, ''), ',', 1))) = $2 LIMIT 1`, [propertyId, seg]);
+  if (spine.rows[0]) return `__tenancy__${spine.rows[0].id}`;
+  if (!addIfMissing) return null;
+  const ins = await pool.query(`INSERT INTO property_units (property_id, unit_name) VALUES ($1, $2) RETURNING id`, [propertyId, String(name).trim()]);
+  return ins.rows[0]?.id ?? null;
+}
 import { EVIDENCE_PLAN_CHAT_TOOL } from "./evidence-plan-chat";
 
 const CHATBGP_MODEL = "claude-sonnet-4-6";      // Also the main chat default via chatbgp-model-router (Fable / Opus only on /fable, /opus).
@@ -1625,6 +1660,8 @@ When the user asks to log a deal, follow this checklist BEFORE calling create_de
 
 4. **Fee allocation is separate.** The "client" on the WIP report is now derived from the counterparty FKs above, NOT from fee allocations — so a deal with no allocation entered will STILL show the right client as long as you set landlordId / tenantId / vendorId / purchaserId correctly at create time.
 
+5. **A letting needs the unit.** For ${LETTING_DEAL_TYPES.join(" / ")} pass unitName (the unit as the user says it — "Unit 12", "Ground Floor") or unitId; the server refuses a letting with no unit (UNIT_REQUIRED) and refuses a second live letting on a unit that already has one (LIVE_LETTING_EXISTS, with the existing Ref #) — then open or update that deal, never create another. search_crm({entityType:'units'}) shows what is already on the Letting Tracker. A unit that exists nowhere yet is added on the property under that name.
+
 ## Frontend Sync Rules
 CRM_OPTIONS (crm-options.ts) and color maps (deals.tsx) MUST stay in sync. Missing color map entry = invisible badge. When adding values: update options list → update color map → then update database.
 
@@ -2908,12 +2945,14 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "create_deal",
-      description: "Create a new deal in the BGP CRM. Use when the user asks to add a deal, log a transaction, or start tracking a new piece of work.\n\nIMPORTANT — client side picks the right counterparty:\n  • Tenant Rep / Lease Acquisition / Lease Disposal → tenantId is the client.\n  • New Letting → landlordId is the client.\n  • Sale → vendorId is the client. Purchase → purchaserId is the client.\nAlways set whichever of landlordId / tenantId / vendorId / purchaserId is the client BEFORE creating, otherwise the WIP report will show 'Unknown' for client. If the user names a client company that doesn't exist yet in the CRM, call create_company first, then pass the new id here.\n\nIMPORTANT — property linking + disambiguation: if the user gives an address, ALWAYS call search_crm({entityType:'properties'}) first. If it returns more than one property at that address, STOP and ask the user which one — show the candidates with their id, name, status, and any postcode/area. Do not pick the first one yourself. Once the user has picked, pass propertyId here.",
+      description: `Create a new deal in the BGP CRM. Use when the user asks to add a deal, log a transaction, or start tracking a new piece of work.\n\nIMPORTANT — client side picks the right counterparty:\n  • Tenant Rep / Lease Acquisition / Lease Disposal → tenantId is the client.\n  • New Letting → landlordId is the client.\n  • Sale → vendorId is the client. Purchase → purchaserId is the client.\nAlways set whichever of landlordId / tenantId / vendorId / purchaserId is the client BEFORE creating, otherwise the WIP report will show 'Unknown' for client. If the user names a client company that doesn't exist yet in the CRM, call create_company first, then pass the new id here.\n\nIMPORTANT — property linking + disambiguation: if the user gives an address, ALWAYS call search_crm({entityType:'properties'}) first. If it returns more than one property at that address, STOP and ask the user which one — show the candidates with their id, name, status, and any postcode/area. Do not pick the first one yourself. Once the user has picked, pass propertyId here.\n\nIMPORTANT — lettings need a unit: for ${LETTING_DEAL_TYPES.join(" / ")} pass unitName (or unitId) with propertyId. The server refuses a letting with no unit, and refuses a second live letting on a unit that already has one — it answers with the existing Ref #; open or update that deal instead.`,
       parameters: {
         type: "object",
         properties: {
           name: { type: "string", description: "Deal name (usually the property address)" },
           propertyId: { type: "string", description: "CRM property UUID. Set after the user has confirmed which property when multiple share the address." },
+          unitName: { type: "string", description: "The unit on the property, e.g. 'Unit 12', 'Ground Floor'. Required for every letting type; matched to the property's existing unit (tenancy schedule / Letting Tracker) by name, added when none exists." },
+          unitId: { type: "string", description: "Instead of unitName: a property unit id, or a Letting Tracker unit id from search_crm({entityType:'units'})." },
           landlordId: { type: "string", description: "CRM company UUID of the landlord. The client on New Letting deals." },
           tenantId: { type: "string", description: "CRM company UUID of the tenant. The client on Tenant Rep / Lease Acquisition / Lease Disposal deals." },
           vendorId: { type: "string", description: "CRM company UUID of the vendor. The client on Sale deals." },
@@ -7144,9 +7183,16 @@ export async function executeCrmToolRaw(
     // POST /api/crm/deals (crm.ts): status normalised to a code, client
     // scope pinned, scheme defaults, rent analysis and the letting rules
     // run there, once — the same path as the deal form.
+    const chatUnitId = fnArgs.propertyId && (fnArgs.unitId || fnArgs.unitName)
+      ? await resolveChatUnitId(String(fnArgs.propertyId), fnArgs.unitId ? String(fnArgs.unitId) : null, fnArgs.unitName ? String(fnArgs.unitName) : null, isLettingType(fnArgs.dealType))
+      : null;
+    if (isLettingType(fnArgs.dealType) && !chatUnitId) {
+      return { data: { success: false, error: `A letting needs a property and a unit (an actual address) — pass propertyId and unitName${fnArgs.propertyId ? "" : " (search_crm properties first)"}.` } };
+    }
     const r = await callOwnRoute(req, "POST", "/api/crm/deals", {
       name: fnArgs.name,
       propertyId: fnArgs.propertyId || null,
+      unitId: chatUnitId,
       landlordId: fnArgs.landlordId || null,
       tenantId: fnArgs.tenantId || null,
       vendorId: fnArgs.vendorId || null,

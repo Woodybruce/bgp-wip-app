@@ -378,7 +378,11 @@ router.post("/api/tenancy-schedule/unit", requireAuth, async (req, res) => {
       // No-op when a matching available / leasing row already exists
       // (auto-knit above attached it); otherwise creates a fresh
       // projection so the unit shows on the right boards immediately.
-      await fanOutTenancyStatus(pool, newId);
+      // suppressTrackerStub: true (the deal form's inline unit create) —
+      // the spine row is made, but no £0 AVA stub deal / tracker row: the
+      // deal being created is this unit's deal and the deal factory
+      // (letting-service ensureTrackerRowForDeal) makes its tracker row.
+      await fanOutTenancyStatus(pool, newId, { suppressTrackerStub: d.suppressTrackerStub === true });
     }
 
     res.json(result.rows[0]);

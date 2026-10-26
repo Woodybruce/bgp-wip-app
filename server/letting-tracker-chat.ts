@@ -310,7 +310,7 @@ export async function addUnitToLettingTracker(req: Request, args: AddUnitArgs) {
   // Same route the Add Unit form posts to, with the caller's own login.
   const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol;
   const host = (req.headers["x-forwarded-host"] as string) || (req.headers.host as string);
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = { "Content-Type": "application/json", "X-BGP-Source": "chat" };
   if (req.headers.cookie) headers.Cookie = String(req.headers.cookie);
   if (req.headers.authorization) headers.Authorization = String(req.headers.authorization);
   const body: Record<string, unknown> = {

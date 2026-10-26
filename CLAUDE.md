@@ -135,6 +135,22 @@ appendix `docs/letting-cleanup-technical-appendix.md`):
   Renumber Units, Rename Legacy Teams, firm-wide Re-sync) are frozen while
   the cleanup runs. Integrity is REPORTED (`GET /api/admin/letting-integrity`),
   not silently repaired at boot.
+- **One write door (Phase 2, 2026-10-26):** `server/letting-service.ts` —
+  `createDeal` / `updateDeal` behind POST/PUT `/api/crm/deals` (and the WIP
+  import, import-anything, ChatBGP via the routes), `createListing` behind
+  POST `/api/available-units`, `ensureTrackerRowForDeal` (deal ⇒ tracker,
+  never two rows for one deal), `writeDealFeeAllocations`. A letting
+  create without property + unit is refused (409 `UNIT_REQUIRED`); a
+  second live landlord-side letting on a unit is refused with the existing
+  Ref # (409 `LIVE_LETTING_EXISTS`); existing deals are never refused for
+  lacking a unit. Every row it makes or links gets one `deal_audit_log`
+  row (field `letting_service`). Repairs are admin Preview → Apply only:
+  `server/letting-backfill.ts` (tracker rows for the off-tracker deals,
+  stub + real pairs) and `server/letting-sweep-undo.ts` (the 26 Oct sweep).
+  Do not add a boot-time sweep again — the 26 Oct one minted 178 stubs.
+- **Still parked for Woody:** the one-live-letting index (schema change)
+  and wiring `actingForFromType` (Lease Disposal / Sub-Letting → tenant
+  side) — both wait on his review of the integrity report's lists.
 
 ## Document design preferences (the "house style" pattern)
 

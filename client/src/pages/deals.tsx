@@ -130,7 +130,8 @@ import { NumericStackedCell, type NumericRow } from "@/components/numeric-stacke
 import { FeeAllocationEditor, withExternalAgents, EXTERNAL_FEE_AGENTS, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
 import { DealDetail } from "@/components/deal-detail";
 import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as SHARED_STATUS_CHIP_COLORS, DEAL_STATUS_DOT_COLORS, legacyToCode, WIP_STATUSES, type DealStatusCode } from "@shared/deal-status";
-import { ADVISORY_UNIT_TYPES, LETTING_DEAL_TYPES, PRE_MARKETING_STATUSES } from "@shared/letting-rules";
+import { ADVISORY_UNIT_TYPES, LETTING_DEAL_TYPES, PRE_MARKETING_STATUSES, isTrackerLiveStatus } from "@shared/letting-rules";
+import { pillMetrics, pillInactive } from "@/components/ui/pill";
 
 // Canonical status colours live in @shared/deal-status — chip map for soft
 // badges, dot map for solid swatches — so every board shares one hue per
@@ -721,6 +722,186 @@ function dealStatusToTenancyStatus(dealStatus: string | undefined | null): strin
   return "Marketing";
 }
 
+// One row of GET /api/letting/unit-search — the physical list (tenancy
+// spine + property_units) overlaid with the tracker row and its backing
+// deal, so the New Deal form can see a unit is already being let before
+// anyone adds a second deal for it (Woody, 2026-10-26: "the deals page
+// needs the same sort of search function as the letting tracker").
+type LettingUnitSearchRow = {
+  propertyId: string;
+  propertyName: string;
+  propertyAddress: string | null;
+  unitName: string;
+  propertyUnitId: string | null;
+  tenancyUnitId: string | number | null;
+  trackerRowId: string | null;
+  dealId: string | null;
+  dealRef: number | string | null;
+  statusCode: string | null;
+  occupancy: string | null;
+  /** The server's own rule (isTrackerDeal: letting type at a live status)
+   *  and the deal's side; absent from an older response. */
+  liveLetting?: boolean;
+  dealSide?: "landlord" | "tenant" | null;
+};
+
+// Deal types whose unit lives on the property's tenancy spine: unit-level
+// advisory work and every letting type. A "Find the unit" pick fills the
+// unit only for these; a Sale / Purchase / Consultancy pick fills the
+// property alone (a hidden unit on a Sale would be posted and never seen).
+const UNIT_LEVEL_DEAL_TYPES = new Set<string>([...ADVISORY_UNIT_TYPES, ...LETTING_DEAL_TYPES]);
+
+// The unit id the deal form stores for a search row: the property_units id
+// when the spine has one, else the tenancy token the server resolves to a
+// shadow row on save (the same token DealUnitPicker emits).
+function unitIdForSearchRow(row: LettingUnitSearchRow): string {
+  if (row.propertyUnitId) return row.propertyUnitId;
+  if (row.tenancyUnitId != null && row.tenancyUnitId !== "") return `__tenancy__${row.tenancyUnitId}`;
+  return "";
+}
+
+// A live LANDLORD-side letting on the unit — the server's liveLetting
+// (isTrackerDeal: letting TYPE at a live status; a Rent Review on the row
+// is advisory work and never blocks) and side (a tenant-side Lease
+// Disposal beside a landlord letting is allowed). The status-only test is
+// the fallback for a response without the field. The pill still shows
+// any linked deal's Ref # and status.
+const hasLiveLetting = (row: LettingUnitSearchRow) =>
+  row.liveLetting != null
+    ? row.liveLetting && row.dealSide !== "tenant"
+    : !!row.dealId && isTrackerLiveStatus(row.statusCode);
+
+// "Find the unit" — one debounced text box over /api/letting/unit-search,
+// narrowed to the chosen property once there is one. Rows read the way the
+// Letting Tracker's own picker shows them (name over address · occupancy),
+// with the Ref # and status of any live letting as a standard pill.
+function FindUnitSearch({ propertyId, onPick }: { propertyId: string; onPick: (row: LettingUnitSearchRow) => void }) {
+  const [q, setQ] = useState("");
+  const [debounced, setDebounced] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(q.trim()), 250);
+    return () => clearTimeout(t);
+  }, [q]);
+  const active = debounced.length >= 2;
+  const { data: rows = [], isFetching, isError, error } = useQuery<LettingUnitSearchRow[]>({
+    queryKey: ["/api/letting/unit-search", debounced, propertyId || ""],
+    queryFn: async () => {
+      const params = new URLSearchParams({ q: debounced });
+      if (propertyId) params.set("propertyId", propertyId);
+      const r = await fetch(`/api/letting/unit-search?${params.toString()}`, { credentials: "include", headers: getAuthHeaders() });
+      // A failed search must not read as "no units" — that invites the
+      // duplicate the search exists to prevent.
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body?.message || body?.error || `Unit search failed (${r.status})`);
+      }
+      const data = await r.json();
+      return Array.isArray(data) ? data : [];
+    },
+    enabled: active,
+    staleTime: 30_000,
+  });
+  return (
+    <div>
+      <Label>Find the unit</Label>
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          placeholder={propertyId ? "Search units on this property…" : "Search by property, address or unit…"}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          className="pl-9"
+          data-testid="input-find-unit"
+        />
+        {isFetching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />}
+      </div>
+      {active && (
+        <div className="mt-1 rounded-md border bg-popover text-popover-foreground shadow-md max-h-56 overflow-y-auto" data-testid="find-unit-results">
+          {isError ? (
+            <p className="px-3 py-2 text-xs text-destructive" data-testid="find-unit-error">
+              Unit search failed: {(error as Error)?.message || "try again"} — the unit may still exist.
+            </p>
+          ) : rows.length === 0 ? (
+            <p className="px-3 py-2 text-xs text-muted-foreground">
+              {isFetching ? "Searching…" : "No units match — pick the property below and add the unit."}
+            </p>
+          ) : rows.map((row) => {
+            const code = legacyToCode(row.statusCode);
+            return (
+              <button
+                type="button"
+                key={`${row.propertyId}:${row.unitName}:${row.trackerRowId || ""}:${row.dealId || ""}`}
+                onClick={() => { onPick(row); setQ(""); }}
+                className="w-full text-left px-3 py-1.5 hover:bg-accent flex items-center gap-2 text-sm"
+                data-testid="find-unit-row"
+              >
+                <div className="flex flex-col min-w-0 flex-1">
+                  <span className="truncate">{row.propertyName} — {cleanUnit(row.unitName, row.propertyName)}</span>
+                  <span className="text-xs text-muted-foreground truncate">
+                    {[row.propertyAddress, row.occupancy].filter(Boolean).join(" · ") || " "}
+                  </span>
+                </div>
+                {row.dealId && (
+                  <span className={`${pillMetrics} ${pillInactive} shrink-0`}>
+                    #{row.dealRef ?? "…"}{code ? ` · ${DEAL_STATUS_LABELS[code] ?? code}` : ""}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <p className="text-[11px] text-muted-foreground mt-1">Units already on the Letting Tracker show their Ref # — open that deal rather than adding another.</p>
+    </div>
+  );
+}
+
+// Shown under the unit picker when the picked unit already has a live
+// letting. Open deal keeps the form (new tab); Use that deal closes the
+// form and goes to the existing deal.
+function LiveLettingNotice({ row, onUseDeal }: { row: LettingUnitSearchRow; onUseDeal: () => void }) {
+  const code = legacyToCode(row.statusCode);
+  return (
+    <div className="mt-1.5 rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-xs flex flex-wrap items-center gap-2" data-testid="live-letting-notice">
+      <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+      <span className="flex-1 min-w-0">
+        Already on the Letting Tracker as <span className="font-mono font-medium">#{row.dealRef ?? "…"}</span>
+        {code ? ` (${DEAL_STATUS_LABELS[code] ?? code})` : ""}
+      </span>
+      <Button type="button" variant="outline" size="sm" className="h-7 text-xs" asChild>
+        <a href={`/deals/${row.dealId}`} target="_blank" rel="noreferrer" data-testid="live-letting-open-deal">
+          <ExternalLink className="w-3 h-3 mr-1" /> Open deal
+        </a>
+      </Button>
+      <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={onUseDeal} data-testid="live-letting-use-deal">
+        Use that deal
+      </Button>
+    </div>
+  );
+}
+
+// POST /api/crm/deals with the refusal body kept: apiRequest flattens a
+// non-2xx body to "<status>: <message>", which loses the code and the
+// existing deal id the letting-service 409s carry (LIVE_LETTING_EXISTS /
+// UNIT_REQUIRED). Other failures throw the same string apiRequest would.
+type LettingRefusal = { message: string; code: "LIVE_LETTING_EXISTS" | "UNIT_REQUIRED"; existingDealId?: string; existingDealRef?: number | string; trackerRowId?: string };
+async function postDeal(payload: Record<string, unknown>): Promise<any> {
+  const res = await fetch("/api/crm/deals", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    body: JSON.stringify(payload),
+  });
+  if (res.ok) return res.json();
+  const text = (await res.text()) || res.statusText;
+  let body: any = null;
+  try { body = JSON.parse(text); } catch { /* plain text */ }
+  if (res.status === 409 && (body?.code === "LIVE_LETTING_EXISTS" || body?.code === "UNIT_REQUIRED")) {
+    throw Object.assign(new Error(body.message || text), { lettingRefusal: body as LettingRefusal });
+  }
+  throw new Error(`${res.status}: ${body?.error || body?.message || text}`);
+}
+
 function DealUnitPicker({
   propertyId, unitOptions, value, onChange, dealStatus, onUnitCreated,
 }: {
@@ -811,7 +992,11 @@ function DealUnitPicker({
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-      body: JSON.stringify({ property_id: propertyId, unit_number: name, status: tenancyStatus }),
+      // suppressTrackerStub: the spine row is created (occupancy Vacant) but
+      // fanOut must not mint a £0 AVA stub deal / tracker row for it — the
+      // deal this form is saving IS the unit's deal, and the deal factory
+      // ensures its tracker row (letting-cleanup Phase 2, contract 4).
+      body: JSON.stringify({ property_id: propertyId, unit_number: name, status: tenancyStatus, suppressTrackerStub: true }),
     });
     if (!res.ok) {
       const msg = await res.text().catch(() => "");
@@ -1653,6 +1838,7 @@ function SimplifiedCreateBody({
   form, set, properties, propertyUnits, companies, users, toggleAgent, setForm,
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
   nameAutoFilled, setNameAutoFilled, hideFees = false,
+  onUnitPicked, liveLettingRow, onUseLiveDeal,
 }: {
   form: any;
   set: (k: any, v: any) => void;
@@ -1669,6 +1855,11 @@ function SimplifiedCreateBody({
   toggleAgent: (name: string) => void;
   setForm: any;
   hideFees?: boolean;
+  // "Find the unit" search (see FindUnitSearch): the dialog remembers the
+  // picked row so it can block a second letting on a unit already live.
+  onUnitPicked: (row: LettingUnitSearchRow) => void;
+  liveLettingRow: LettingUnitSearchRow | null;
+  onUseLiveDeal: (row: LettingUnitSearchRow) => void;
 }) {
   // Counterparty picker contextual label + filter — driven by deal type.
   // Tenant Acquisition + New Letting + Sub-Letting + Consultancy fall
@@ -1782,6 +1973,29 @@ function SimplifiedCreateBody({
   const createVendor = makeCompanyCreator("Vendor");
   const createPurchaser = makeCompanyCreator("Purchaser");
 
+  // Picking a property (from the combobox or a "Find the unit" row).
+  // Auto-fills landlord (leasing) or vendor (Sale/Purchase) from the
+  // property's landlord_id when the user hasn't already chosen one — the
+  // property's landlord is canonically the deal-side counterparty for most
+  // flows — and takes the property's team (2026-10 team structure) unless
+  // the deal is already Investment / Tenant Rep / Lease Advisory.
+  const pickProperty = (val: string) => {
+    const prop = properties.find(p => p.id === val);
+    const propLandlordId = (prop as any)?.landlordId || "";
+    const investType = form.dealType === "Sale" || form.dealType === "Purchase";
+    const patch: any = { propertyId: val };
+    const propTeam = ((prop as any)?.bgpEngagement || []).find((t: string) => isBgpTeam(t));
+    if (propTeam && !form.team.some((t: string) => ["Investment", "Tenant Rep", "Lease Advisory"].includes(t))) {
+      patch.team = [propTeam, ...form.team.filter((t: string) => t === "Landsec")];
+    }
+    if (propLandlordId) {
+      if (investType && !form.vendorId) patch.vendorId = propLandlordId;
+      if (!investType && !form.landlordId) patch.landlordId = propLandlordId;
+    }
+    setForm((p: any) => ({ ...p, ...patch }));
+    applyAutoName({ ...form, ...patch });
+  };
+
   const toComboItems = (list: CrmCompany[]) => {
     // SubLabel = legal/contracting entity ("Land Securities Group Plc"
     // under "Landsec") rather than the companyType chip, which now
@@ -1823,6 +2037,24 @@ function SimplifiedCreateBody({
       {/* Secondment has no property — the deal is a person placed with a
           landlord, so the picker is hidden and the deal is named manually. */}
       {!isSecondment && (
+      <FindUnitSearch
+        propertyId={form.propertyId}
+        onPick={(row) => {
+          // Fills property (with the same landlord / team side-effects as
+          // picking it below) and, for a unit-level type, the unit; the
+          // dialog keeps the row so a live letting on it blocks Create for
+          // letting types. A property-level type takes the property only.
+          pickProperty(row.propertyId);
+          if (UNIT_LEVEL_DEAL_TYPES.has(form.dealType)) {
+            set("unitId", unitIdForSearchRow(row));
+            onUnitPicked(row);
+          } else {
+            set("unitId", "");
+          }
+        }}
+      />
+      )}
+      {!isSecondment && (
       <div>
         <Label>Property *</Label>
         <PropertyCombobox
@@ -1835,30 +2067,7 @@ function SimplifiedCreateBody({
             subLabel: p.postcode || undefined,
             keywords: [p.postcode || "", p.address ? JSON.stringify(p.address) : ""],
           }))}
-          onChange={(val) => {
-            // Auto-fill landlord (leasing) or vendor (Sale/Purchase)
-            // from the picked property's landlord_id when the user
-            // hasn't already chosen one. The property's landlord is
-            // canonically the same as the deal-side counterparty for
-            // most flows — saves a click.
-            const prop = properties.find(p => p.id === val);
-            const propLandlordId = (prop as any)?.landlordId || "";
-            const investType = form.dealType === "Sale" || form.dealType === "Purchase";
-            const patch: any = { propertyId: val };
-            // Each property sits in one team and its fees count there (2026-10
-            // team structure): a new deal takes the property's team unless it
-            // is already an Investment / Tenant Rep / Lease Advisory deal.
-            const propTeam = ((prop as any)?.bgpEngagement || []).find((t: string) => isBgpTeam(t));
-            if (propTeam && !form.team.some((t: string) => ["Investment", "Tenant Rep", "Lease Advisory"].includes(t))) {
-              patch.team = [propTeam, ...form.team.filter((t: string) => t === "Landsec")];
-            }
-            if (propLandlordId) {
-              if (investType && !form.vendorId) patch.vendorId = propLandlordId;
-              if (!investType && !form.landlordId) patch.landlordId = propLandlordId;
-            }
-            setForm((p: any) => ({ ...p, ...patch }));
-            applyAutoName({ ...form, ...patch });
-          }}
+          onChange={pickProperty}
           onCreated={(prop) => {
             // The parent's properties array updates after the next
             // refetch; meanwhile the picker holds the row so the
@@ -1967,15 +2176,18 @@ function SimplifiedCreateBody({
           mirrors out to the right boards immediately. */}
       {(() => {
         const UNIT_LEVEL_TYPES = new Set<string>([
-          // Landlord-side deal types where the unit lives on the property's
-          // tenancy spine. Lease Acquisition + Sub-Letting are excluded —
-          // those are tenant-rep deals where BGP is acting for the tenant
-          // and the property is a candidate, not something we manage.
+          // Deal types where the unit lives on the property's tenancy spine:
+          // unit-level advisory work, and every letting type — a letting
+          // deal must have a property and a unit (an actual address), Sub-
+          // Letting included (Woody, 2026-10-26: no unplaced letting deals).
+          // Lease Acquisition is excluded — tenant-rep, where the property
+          // is a candidate, not something we manage.
           ...ADVISORY_UNIT_TYPES,
-          ...LETTING_DEAL_TYPES.filter((t) => t !== "Sub-Letting"),
+          ...LETTING_DEAL_TYPES,
         ]);
         if (!UNIT_LEVEL_TYPES.has(form.dealType)) return null;
         const unitOptions = propertyUnits.filter(pu => !form.propertyId || pu.propertyId === form.propertyId);
+        const isLetting = (LETTING_DEAL_TYPES as readonly string[]).includes(form.dealType);
         return (
           <div>
             <Label>Unit *</Label>
@@ -2001,6 +2213,12 @@ function SimplifiedCreateBody({
             />
             {!form.propertyId && (
               <p className="text-[11px] text-muted-foreground mt-1">Pick a property first.</p>
+            )}
+            {isLetting && form.propertyId && !form.unitId && (
+              <p className="text-[11px] text-rose-600 mt-1" data-testid="letting-unit-required">A letting needs a property and a unit (an actual address) — pick or add the unit</p>
+            )}
+            {liveLettingRow && (
+              <LiveLettingNotice row={liveLettingRow} onUseDeal={() => onUseLiveDeal(liveLettingRow)} />
             )}
           </div>
         );
@@ -2406,6 +2624,10 @@ export function DealFormDialog({
   // into the deal name input — from that point we stop overwriting.
   // Edit mode starts in "manual" so we never trample a saved name.
   const [nameAutoFilled, setNameAutoFilled] = useState<boolean>(!deal);
+  // The row picked through "Find the unit" (create only). It only counts
+  // while the form still points at that property + unit, so changing either
+  // picker clears the block without an extra effect.
+  const [pickedUnit, setPickedUnit] = useState<LettingUnitSearchRow | null>(null);
 
   // A live query can replace the deal while this dialog is open. Keep the
   // current draft until the user closes it or switches to another deal.
@@ -2425,10 +2647,34 @@ export function DealFormDialog({
     setFeeRows([]);
     setFeeAllocType("percentage");
     setNameAutoFilled(!deal); // new = auto-managed; edit = treat name as user-owned
+    setPickedUnit(null);
   }, [open, deal]);
 
   const hasLiveChanges = isEdit && open && draftSessionRef.current?.dealId === deal?.id
     && draftSessionRef.current.source !== JSON.stringify(dealToForm(deal));
+
+  // Letting-type gating on CREATE (Woody, 2026-10-26): a letting needs a
+  // property and a unit, and a second live landlord-side letting on the
+  // same unit is refused (the server answers 409 LIVE_LETTING_EXISTS; this
+  // blocks it before the round trip). The server keys the side on
+  // bgp_acting_for, which this form never sends and which defaults to
+  // landlord — deriving it from the type (Lease Disposal / Sub-Letting →
+  // tenant) waits for Woody's review of the side-flip list — so every
+  // letting created here is landlord-side and the block covers all five
+  // letting types. Advisory and tenant-rep types are untouched; edits are
+  // never refused for lacking a unit (the integrity report lists the
+  // off-tracker deals that do).
+  const isLettingType = (LETTING_DEAL_TYPES as readonly string[]).includes(form.dealType);
+  const isLandlordLetting = isLettingType;
+  const liveLettingRow = pickedUnit && hasLiveLetting(pickedUnit)
+    && form.propertyId === pickedUnit.propertyId && form.unitId === unitIdForSearchRow(pickedUnit)
+    ? pickedUnit : null;
+  const lettingNeedsUnit = !isEdit && isLettingType && (!form.propertyId || !form.unitId);
+  const blockedByLiveLetting = !isEdit && isLandlordLetting && !!liveLettingRow;
+  const useLiveDeal = (row: LettingUnitSearchRow) => {
+    onOpenChange(false);
+    if (row.dealId) navigateTo(`/deals/${row.dealId}`);
+  };
 
   const statusChanged = isEdit && deal && form.status !== (deal.status || "");
   // Compare against canonical codes — form.status holds the code after the
@@ -2479,8 +2725,7 @@ export function DealFormDialog({
         await apiRequest("PUT", `/api/crm/deals/${deal.id}`, payload);
         return { id: deal.id };
       } else {
-        const res = await apiRequest("POST", "/api/crm/deals", payload);
-        const created = await res.json();
+        const created = await postDeal(payload);
         // Persist fee allocations alongside the new deal. The fee-split editor
         // auto-seeds a BGP House 15% row, so feeRows is rarely empty — but a
         // lone BGP House row (no agents) is just the placeholder, not a real
@@ -2538,6 +2783,25 @@ export function DealFormDialog({
       onOpenChange(false);
     },
     onError: (err: Error) => {
+      // Letting-service refusals (409 LIVE_LETTING_EXISTS / UNIT_REQUIRED):
+      // the server's message is the toast; an existing deal gets Open deal.
+      const refusal = (err as any).lettingRefusal as LettingRefusal | undefined;
+      if (refusal) {
+        toast({
+          title: refusal.message,
+          variant: "destructive",
+          action: refusal.code === "LIVE_LETTING_EXISTS" && refusal.existingDealId ? (
+            <ToastAction
+              altText="Open deal"
+              onClick={() => { onOpenChange(false); navigateTo(`/deals/${refusal.existingDealId}`); }}
+              data-testid="toast-open-existing-deal"
+            >
+              Open deal
+            </ToastAction>
+          ) : undefined,
+        });
+        return;
+      }
       // Handle approval gate (senior 403) and AML gate (409) — both surface
       // through the same dialog so the user can see why the save was blocked.
       const parsed = parseGateError(err.message);
@@ -2570,12 +2834,24 @@ export function DealFormDialog({
       });
       return;
     }
-    // Same exclusion as the picker — Lease Acquisition + Sub-Letting are
-    // tenant-rep, property-level, unit not required.
-    const UNIT_LEVEL_TYPES = new Set<string>([
-      ...ADVISORY_UNIT_TYPES.filter((t) => t !== "Dilapidations" && t !== "Service Charge"),
-      ...LETTING_DEAL_TYPES.filter((t) => t !== "Sub-Letting"),
-    ]);
+    // A new letting deal needs a property and a unit (UNIT_REQUIRED wording,
+    // same as the server's 409) and can't double up a unit that already has
+    // a live landlord letting. Create is disabled in both cases; this guards
+    // the keyboard submit.
+    if (lettingNeedsUnit) {
+      toast({ title: "A letting needs a property and a unit (an actual address) — pick or add the unit", variant: "destructive" });
+      return;
+    }
+    if (blockedByLiveLetting && liveLettingRow) {
+      toast({ title: `Already on the Letting Tracker as #${liveLettingRow.dealRef ?? "…"} — open that deal or link to it`, variant: "destructive" });
+      return;
+    }
+    // Unit-level advisory work (Lease Renewal / Rent Review / Regear) keeps
+    // its existing unit check; Dilapidations / Service Charge and the
+    // tenant-rep types stay property-level.
+    const UNIT_LEVEL_TYPES = new Set<string>(
+      ADVISORY_UNIT_TYPES.filter((t) => t !== "Dilapidations" && t !== "Service Charge"),
+    );
     if (UNIT_LEVEL_TYPES.has(form.dealType) && !form.unitId) {
       toast({ title: `${form.dealType} needs a unit`, description: "Pick or add a unit on this property — leasing deals can't be unit-less.", variant: "destructive" });
       return;
@@ -2696,10 +2972,30 @@ export function DealFormDialog({
               setFeeAllocType={setFeeAllocType}
               nameAutoFilled={nameAutoFilled}
               setNameAutoFilled={setNameAutoFilled}
+              onUnitPicked={setPickedUnit}
+              liveLettingRow={liveLettingRow}
+              onUseLiveDeal={useLiveDeal}
             />
             )
           ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {!isEdit && (
+              <div className="sm:col-span-2">
+                <FindUnitSearch
+                  propertyId={form.propertyId}
+                  onPick={(row) => {
+                    set("propertyId", row.propertyId);
+                    if (UNIT_LEVEL_DEAL_TYPES.has(form.dealType)) {
+                      set("unitId", unitIdForSearchRow(row));
+                      setPickedUnit(row);
+                    } else {
+                      set("unitId", "");
+                    }
+                    if (!form.name.trim()) set("name", row.propertyName);
+                  }}
+                />
+              </div>
+            )}
             <div className="sm:col-span-2">
               <Label>Property *</Label>
               <PropertyCombobox
@@ -2752,7 +3048,14 @@ export function DealFormDialog({
                     }}
                   />
                   {needsUnit && !form.unitId && form.propertyId && (
-                    <p className="text-[11px] text-rose-600 mt-1">A {form.dealType} requires a specific unit on the property.</p>
+                    <p className="text-[11px] text-rose-600 mt-1">
+                      {isLettingType
+                        ? "A letting needs a property and a unit (an actual address) — pick or add the unit"
+                        : `A ${form.dealType} requires a specific unit on the property.`}
+                    </p>
+                  )}
+                  {!isEdit && liveLettingRow && (
+                    <LiveLettingNotice row={liveLettingRow} onUseDeal={() => useLiveDeal(liveLettingRow)} />
                   )}
                 </div>
               );
@@ -3256,7 +3559,16 @@ export function DealFormDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} data-testid="button-cancel-deal">
               Cancel
             </Button>
-            <Button type="submit" disabled={mutation.isPending} data-testid="button-save-deal">
+            <Button
+              type="submit"
+              disabled={mutation.isPending || lettingNeedsUnit || blockedByLiveLetting}
+              title={blockedByLiveLetting && liveLettingRow
+                ? `Already on the Letting Tracker as #${liveLettingRow.dealRef ?? "…"} — open that deal or link to it`
+                : lettingNeedsUnit
+                  ? "A letting needs a property and a unit (an actual address) — pick or add the unit"
+                  : undefined}
+              data-testid="button-save-deal"
+            >
               {mutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
               {isEdit ? "Save Changes" : "Create Deal"}
             </Button>
@@ -4911,6 +5223,27 @@ export function DealAuditLog({ dealId }: { dealId: string }) {
   };
 
   const ID_FIELDS = new Set(["landlordId", "tenantId", "vendorId", "purchaserId", "propertyId"]);
+  // The letting service's row (server/letting-service.ts) is a JSON blob of
+  // the ids it made or linked — shown as one line, not raw JSON.
+  const summariseLettingService = (val: string | null): string => {
+    try {
+      const d = JSON.parse(val || "{}");
+      const created: string[] = Array.isArray(d.created) ? d.created : [];
+      const adopted: string[] = Array.isArray(d.adopted) ? d.adopted : [];
+      const parts: string[] = [];
+      if (adopted.some((x) => x.startsWith("available_units:"))) parts.push("linked to its Letting Tracker row");
+      if (created.some((x) => x.startsWith("available_units:"))) parts.push("Letting Tracker row created");
+      if (d.trackerRowMoved) parts.push("Letting Tracker row moved to the new unit");
+      if (d.trackerRowStale) parts.push("Letting Tracker row left on the previous unit");
+      if (d.trackerConflict) parts.push(`the unit's row carries #${d.trackerConflict.dealRef ?? "?"}`);
+      if (d.dealTypeStamped) parts.push(`typed ${d.dealTypeStamped}`);
+      if (created.some((x) => x.startsWith("tenancy_schedule_units:"))) parts.push("tenancy row created");
+      if (!parts.length) parts.push(created.some((x) => x.startsWith("crm_deals:")) ? "deal created" : "no tracker change");
+      return parts.join(", ") + (d.source ? ` (via ${String(d.source).replace("-", " ")})` : "");
+    } catch {
+      return "Letting Tracker sync";
+    }
+  };
   const formatValue = (field: string, val: string | null) => {
     if (val == null || val === "null") return "empty";
     if (ID_FIELDS.has(field)) {
@@ -4948,6 +5281,12 @@ export function DealAuditLog({ dealId }: { dealId: string }) {
                     <span className="text-[8px] font-bold text-muted-foreground">{initials}</span>
                   </div>
                   <div className="flex-1 min-w-0 pb-1">
+                    {log.field === "letting_service" ? (
+                      <p className="text-xs" title={log.newValue || undefined}>
+                        <span className="font-medium">{log.changedByName || "Letting Tracker"}</span>
+                        {" — "}{summariseLettingService(log.newValue)}
+                      </p>
+                    ) : (
                     <p className="text-xs">
                       <span className="font-medium">{log.changedByName || "Unknown"}</span>
                       {" changed "}
@@ -4958,7 +5297,8 @@ export function DealAuditLog({ dealId }: { dealId: string }) {
                       {" to "}
                       <span className="font-semibold" title={log.newValue || undefined}>{formatValue(log.field, log.newValue)}</span>
                     </p>
-                    {log.reason && (
+                    )}
+                    {log.reason && log.field !== "letting_service" && (
                       <p className="text-[10px] text-muted-foreground mt-0.5 italic">
                         Reason: {log.reason}
                       </p>

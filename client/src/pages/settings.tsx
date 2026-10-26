@@ -1158,6 +1158,188 @@ function IntegrityList({ list, cap, linkDeals }: { list: any; cap: number; linkD
   );
 }
 
+// Phase 2 backfills (Woody, 2026-10-26): each is Preview (a dry run — the
+// server records it) then Apply, which is enabled only after a preview in
+// this session, asks for the word APPLY, and shows the recorded ids after.
+// The server refuses an Apply without a preview in the last hour. Admin
+// only; the report above stays read-only.
+type BackfillJob = "tracker-rows" | "stub-pairs";
+const BACKFILL_JOBS: Array<{ job: BackfillJob; label: string; what: string; groups: Array<{ key: string; label: string; applies: boolean }> }> = [
+  {
+    job: "tracker-rows",
+    label: "Tracker rows for live letting deals",
+    what: "Every live letting deal (Opportunity–Solicitors) with no tracker row. Would link = a row for that property + unit already exists with no live deal; would create = property + unit present, a row is made keyed to the deal; needs a unit = no property or unit — listed, never placed (each letting needs an actual address); blocked = the unit already carries another live deal on the same side.",
+    groups: [
+      { key: "wouldLink", label: "Would link", applies: true },
+      { key: "wouldCreate", label: "Would create", applies: true },
+      { key: "needsUnit", label: "Needs a unit", applies: false },
+      { key: "blocked", label: "Blocked", applies: false },
+    ],
+  },
+  {
+    job: "stub-pairs",
+    label: "Stub + real pairs",
+    what: "A £0 Marketing stub deal beside a real live letting deal on one unit. Would resolve = the tracker row is re-pointed at the real deal (and takes its status code) and the stub is withdrawn through the deal's normal status write (gate, audit, mirrors); needs a decision = several live deals beside the stub, or the real deal already has its own row — merged by hand.",
+    groups: [
+      { key: "resolve", label: "Would resolve", applies: true },
+      { key: "skip", label: "Needs a decision", applies: false },
+    ],
+  },
+];
+
+type BackfillPreview = { dryRun: true; job: BackfillJob; previewedAt: string; counts: Record<string, number>; lists: Record<string, any[]> };
+type BackfillRun = { dryRun: false; job: BackfillJob; appliedAt: string; by: string | null; byName: string | null; dealIds: string[]; trackerRowIds: string[]; created: string[]; adopted: string[]; failed: any[]; [k: string]: any };
+
+function BackfillPreviewRow({ r, job }: { r: any; job: BackfillJob }) {
+  if (job === "stub-pairs") {
+    const real = r.real?.[0];
+    return (
+      <div className="flex flex-wrap items-baseline gap-x-2 text-xs py-0.5 border-b border-border/50 last:border-0">
+        <span className="font-medium">{r.unitName}</span>
+        {r.propertyName && <span className="text-muted-foreground">{r.propertyName}</span>}
+        <span className="text-muted-foreground">
+          stub {r.stubs.map((s: any) => <Link key={s.id} href={`/deals/${s.id}`} className="font-mono underline-offset-2 hover:underline mr-1">#{s.dealRef ?? "?"}</Link>)}
+          → {r.real.map((d: any) => <span key={d.id}><Link href={`/deals/${d.id}`} className="font-mono underline-offset-2 hover:underline">#{d.dealRef ?? "?"}</Link> <span className="font-mono">{d.statusCode}</span> </span>)}
+        </span>
+        {r.reason ? <span className="text-muted-foreground">{r.reason}</span> : <span className="text-muted-foreground">{r.trackerRowId ? "row re-pointed" : "row made for the real deal"}</span>}
+        {real?.id && r.trackerRowId && <span className="font-mono text-[10px] text-muted-foreground/70">{r.trackerRowId}</span>}
+      </div>
+    );
+  }
+  const note =
+    r.missing ? `no ${r.missing}` :
+    r.blockedBy ? `unit carries #${r.blockedBy.dealRef ?? "?"} on row ${r.blockedBy.trackerRowId}` :
+    r.how ? `${r.how}${r.previousDealRef != null ? ` (was #${r.previousDealRef})` : ""}` : null;
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-2 text-xs py-0.5 border-b border-border/50 last:border-0">
+      <Link href={`/deals/${r.id}`} className="font-mono underline-offset-2 hover:underline">#{r.dealRef ?? "?"}</Link>
+      <span className="font-medium">{r.name}</span>
+      {r.propertyName && <span className="text-muted-foreground">{r.propertyName}</span>}
+      {r.unitName && <span className="text-muted-foreground">{r.unitName}</span>}
+      {r.statusCode && <span className="font-mono text-muted-foreground">{r.statusCode}</span>}
+      {note && <span className="text-muted-foreground">{note}</span>}
+      {r.trackerRowId && <span className="font-mono text-[10px] text-muted-foreground/70">{r.trackerRowId}</span>}
+    </div>
+  );
+}
+
+function LettingBackfillPanel({ job, label, what, groups }: (typeof BACKFILL_JOBS)[number]) {
+  const { toast } = useToast();
+  const [preview, setPreview] = useState<BackfillPreview | null>(null);
+  const [run, setRun] = useState<BackfillRun | null>(null);
+  const [busy, setBusy] = useState<"preview" | "apply" | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [word, setWord] = useState("");
+  const [showIds, setShowIds] = useState(false);
+
+  const call = async (dryRun: boolean) => {
+    setBusy(dryRun ? "preview" : "apply");
+    try {
+      const res = await apiRequest("POST", `/api/admin/letting-backfill/${job}`, { dryRun });
+      const data = await res.json();
+      if (dryRun) {
+        setPreview(data);
+        setRun(null);
+        setOpen(null);
+      } else {
+        setRun(data);
+        setPreview(null);
+        setConfirming(false);
+        setWord("");
+        toast({ title: "Applied", description: `${data.dealIds?.length ?? 0} deals, ${data.trackerRowIds?.length ?? 0} tracker rows (${data.created?.length ?? 0} created, ${data.adopted?.length ?? 0} adopted)${data.failed?.length ? `, ${data.failed.length} failed` : ""}` });
+      }
+    } catch (err: any) {
+      toast({ title: dryRun ? "Preview failed" : "Apply failed", description: err.message, variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const applicable = preview ? groups.filter((g) => g.applies).reduce((s, g) => s + (preview.counts[g.key] || 0), 0) : 0;
+  const ids = run ? [
+    ...run.dealIds.map((id) => `crm_deals:${id}`),
+    ...run.trackerRowIds.map((id) => `available_units:${id}${run.created.includes(id) ? " (created)" : run.adopted.includes(id) ? " (adopted)" : ""}`),
+  ] : [];
+
+  return (
+    <div className="rounded-md border border-border p-2 space-y-2" data-testid={`panel-letting-backfill-${job}`}>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-sm font-medium">{label}</span>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => call(true)} disabled={busy !== null} data-testid={`button-letting-backfill-preview-${job}`}>
+            {busy === "preview" ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Eye className="w-4 h-4 mr-2" />}
+            {busy === "preview" ? "Previewing…" : "Preview"}
+          </Button>
+          <Button size="sm" onClick={() => { setWord(""); setConfirming(true); }} disabled={!preview || applicable === 0 || busy !== null} data-testid={`button-letting-backfill-apply-${job}`}>
+            {busy === "apply" ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
+            {busy === "apply" ? "Applying…" : "Apply"}
+          </Button>
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">{what}</p>
+      {preview && (
+        <>
+          <p className="text-xs text-muted-foreground">Previewed {new Date(preview.previewedAt).toLocaleString("en-GB")} — {applicable} would change on Apply. Tap a group for its rows.</p>
+          <div className="flex flex-wrap gap-1.5">
+            {groups.map((g) => (
+              <Pill key={g.key} active={open === g.key} onClick={() => setOpen(open === g.key ? null : g.key)} data-testid={`pill-letting-backfill-${job}-${g.key}`}>
+                {g.label}
+                <PillCount n={preview.counts[g.key] || 0} active={open === g.key} />
+              </Pill>
+            ))}
+          </div>
+          {open && (
+            <div className="rounded-md border border-border bg-muted/40 p-2" data-testid={`section-letting-backfill-${job}-${open}`}>
+              {(preview.lists[open] || []).length === 0
+                ? <p className="text-xs text-muted-foreground">None.</p>
+                : (preview.lists[open] || []).map((r: any, i: number) => <BackfillPreviewRow key={r.id || `${r.propertyId}:${r.unitName}` || i} r={r} job={job} />)}
+            </div>
+          )}
+        </>
+      )}
+      {run && (
+        <div className="text-xs space-y-1" data-testid={`text-letting-backfill-run-${job}`}>
+          <p>
+            Applied {new Date(run.appliedAt).toLocaleString("en-GB")}{run.byName ? ` by ${run.byName}` : ""}:{" "}
+            <span className="font-mono">{run.dealIds.length}</span> deals, <span className="font-mono">{run.trackerRowIds.length}</span> tracker rows
+            {" "}(<span className="font-mono">{run.created.length}</span> created, <span className="font-mono">{run.adopted.length}</span> adopted)
+            {run.failed?.length ? <span className="text-destructive"> · {run.failed.length} failed</span> : null}
+            {" "}— recorded under <span className="font-mono">{job === "tracker-rows" ? "tracker_rows_for_letting_deals_v1" : "stub_pairs_resolved_v1"}</span>.
+          </p>
+          {run.failed?.length > 0 && run.failed.map((f: any, i: number) => (
+            <p key={i} className="text-destructive">{f.unitName ? `${f.unitName}${f.propertyName ? ` (${f.propertyName})` : ""}` : f.dealRef != null ? `#${f.dealRef}` : f.dealId}: {f.error}</p>
+          ))}
+          {ids.length > 0 && (
+            <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => setShowIds(!showIds)}>
+              {showIds ? "Hide ids" : `Show ${ids.length} ids`}
+            </button>
+          )}
+          {showIds && <div className="font-mono text-[10px] text-muted-foreground break-all">{ids.join(" · ")}</div>}
+        </div>
+      )}
+      <Dialog open={confirming} onOpenChange={(o) => { if (!o) { setConfirming(false); setWord(""); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Apply: {label}</DialogTitle>
+            <DialogDescription>
+              {applicable} record(s) change exactly as previewed; every id is recorded in system settings and each row made or linked carries its own audit entry. Type APPLY to confirm.
+            </DialogDescription>
+          </DialogHeader>
+          <Input value={word} onChange={(e) => setWord(e.target.value)} placeholder="APPLY" autoFocus data-testid={`input-letting-backfill-confirm-${job}`} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setConfirming(false); setWord(""); }}>Cancel</Button>
+            <Button onClick={() => call(false)} disabled={word !== "APPLY" || busy !== null} data-testid={`button-letting-backfill-confirm-${job}`}>
+              {busy === "apply" ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+              Apply {applicable}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 function LettingIntegritySection() {
   const { toast } = useToast();
   const [report, setReport] = useState<LettingIntegrityReport | null>(null);
@@ -1273,6 +1455,11 @@ function LettingIntegritySection() {
             </div>
           </>
         )}
+        <div className="space-y-2 pt-1" data-testid="section-letting-backfills">
+          <p className="text-xs font-medium">Backfills (Phase 2) — Preview, then Apply</p>
+          <p className="text-xs text-muted-foreground">Each repair is an explicit action: Preview is a dry run the server records; Apply runs only within an hour of one, needs the word APPLY, and writes every id it touched to system settings. Nothing here runs at boot.</p>
+          {BACKFILL_JOBS.map((j) => <LettingBackfillPanel key={j.job} {...j} />)}
+        </div>
       </CardContent>
     </Card>
   );

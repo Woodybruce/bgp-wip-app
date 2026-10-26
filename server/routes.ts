@@ -14,6 +14,7 @@ import { saveFile, getFile, recordUserUpload } from "./file-storage";
 import { contentDispositionFor } from "./utils/http-headers";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { escapeLike } from "./utils/escape-like";
+import { lenderAddressText } from "./lender-routes";
 import { emitNewMessage, emitMessageUpdated, emitMessageDeleted, emitThreadUpdated, emitMemberAdded, emitMemberRemoved, emitNotification, getIO } from "./websocket";
 import { saveSubscription, removeSubscription, removeSubscriptionForUser, sendPushNotification, getVapidPublicKey } from "./push-notifications";
 import { registerBusinessCardRoutes } from "./business-cards";
@@ -44,7 +45,8 @@ import { eq, ilike, or, sql, and, desc, inArray, isNull } from "drizzle-orm";
 import { newsArticles } from "@shared/schema";
 import { legacyToCode, statusSpellingsFor, CLOSED_STATUSES, TERMINAL_STATUSES, DEAL_STATUS_CODES } from "@shared/deal-status";
 import { codeToLeasingStatus } from "@shared/lease-status-mirror";
-import { DEFAULT_LETTING_TYPE } from "@shared/letting-rules";
+import { DEFAULT_LETTING_TYPE, LETTING_DEAL_TYPES, effectiveStatus, isHistoricStatus, isLettingType, isTrackerDeal } from "@shared/letting-rules";
+import { unitNameSegment, lettingSource } from "./letting-service";
 import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 import { createTrackerAsset, updateTrackerAsset, resolveAgentNames } from "./investment-tracker-service";
 import { registerIngestRoutes } from "./ingest-routes";
@@ -2940,6 +2942,27 @@ export async function registerRoutes(
       res.status(500).json({ message: e?.message || "letting snapshot failed" });
     }
   });
+  // Phase 2 backfills (server/letting-backfill.ts): { dryRun: true } previews
+  // and records the dry run; { dryRun: false } applies only within an hour
+  // of one and appends the ids it touched to the job's system_settings key.
+  app.post("/api/admin/letting-backfill/tracker-rows", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { runTrackerRowsBackfill } = await import("./letting-backfill");
+      const by = (req as any).session?.userId || (req as any).tokenUserId || null;
+      res.json(await runTrackerRowsBackfill(pool, { dryRun: req.body?.dryRun !== false, by }));
+    } catch (e: any) {
+      res.status(e?.status || 500).json({ message: e?.message || "tracker-rows backfill failed" });
+    }
+  });
+  app.post("/api/admin/letting-backfill/stub-pairs", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { runStubPairsBackfill } = await import("./letting-backfill");
+      const by = (req as any).session?.userId || (req as any).tokenUserId || null;
+      res.json(await runStubPairsBackfill(pool, { dryRun: req.body?.dryRun !== false, by }));
+    } catch (e: any) {
+      res.status(e?.status || 500).json({ message: e?.message || "stub-pairs backfill failed" });
+    }
+  });
   // Which Microsoft Graph application permissions the app's token carries
   // (roles claim only — nothing secret), to confirm an Azure change landed.
   app.get("/api/admin/graph-permissions", requireAuth, requireAdmin, async (_req, res) => {
@@ -4947,6 +4970,139 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Unit search for the deal form and Add Unit (lettings cleanup, Phase 2):
+  // every physical unit the caller may see — property_units and the
+  // tenancy spine — with its tracker row and backing deal, so a letting
+  // lands on the unit that exists instead of minting a second one. Same
+  // client scope as the tracker GET; the trim/lower-case name identity the
+  // tracker's own pickers use. Up to 30 rows.
+  app.get("/api/letting/unit-search", requireAuth, async (req, res) => {
+    try {
+      const qText = String(req.query.q ?? "").trim();
+      const propertyId = req.query.propertyId ? String(req.query.propertyId) : null;
+      if (!qText && !propertyId) return res.json([]);
+      const scope = await resolveCompanyScope(req);
+      const params: any[] = [];
+      const where: string[] = [];
+      if (scope) {
+        params.push(scope);
+        where.push(`(p.landlord_id = $${params.length} OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $${params.length}))`);
+      }
+      if (propertyId) { params.push(propertyId); where.push(`p.id = $${params.length}`); }
+      let like = "", exact = "", prefix = "";
+      if (qText) {
+        params.push(`%${escapeLike(qText)}%`); like = `$${params.length}`;
+        params.push(qText.toLowerCase()); exact = `$${params.length}`;
+        params.push(`${escapeLike(qText.toLowerCase())}%`); prefix = `$${params.length}`;
+      }
+      const textMatch = (unitExpr: string) => like ? `(${unitExpr} ILIKE ${like} OR p.name ILIKE ${like} OR p.address::text ILIKE ${like})` : "TRUE";
+      // Each source is capped, so the exact and prefix unit-name matches
+      // come first: a short query ("un", "12") matches far more than 150
+      // rows and the one the agent wants must not be the row the cap drops.
+      const ordered = (unitExpr: string) => like
+        ? `ORDER BY (lower(trim(${unitExpr})) = ${exact}) DESC, (lower(trim(${unitExpr})) LIKE ${prefix}) DESC, p.name, ${unitExpr} LIMIT 150`
+        : `ORDER BY p.name, ${unitExpr} LIMIT 150`;
+      const base = `JOIN crm_properties p ON p.id = x.property_id WHERE ${where.length ? where.join(" AND ") : "TRUE"}`;
+      const tsName = "coalesce(nullif(trim(x.unit_number), ''), x.premises, '')";
+      const auName = "coalesce(pu.unit_name, x.unit_name)";
+      const [pus, tss, aus] = await Promise.all([
+        pool.query(
+          `SELECT x.id AS property_unit_id, x.property_id, x.unit_name, p.name AS property_name, p.address AS property_address, p.postcode AS property_postcode
+             FROM property_units x ${base} AND ${textMatch("x.unit_name")} ${ordered("x.unit_name")}`, params),
+        pool.query(
+          `SELECT x.id AS tenancy_unit_id, x.property_id, x.property_unit_id,
+                  coalesce(nullif(trim(x.unit_number), ''), x.premises) AS unit_name,
+                  coalesce(nullif(trim(x.occupancy_status), ''), x.status) AS occupancy,
+                  coalesce(nullif(trim(x.trading_name), ''), nullif(trim(x.tenant_name), '')) AS tenant_name,
+                  p.name AS property_name, p.address AS property_address, p.postcode AS property_postcode
+             FROM tenancy_schedule_units x ${base} AND ${textMatch(tsName)} ${ordered(tsName)}`, params),
+        pool.query(
+          `SELECT x.id AS tracker_row_id, x.property_id, x.unit_id AS property_unit_id, x.tenancy_unit_id,
+                  coalesce(pu.unit_name, x.unit_name) AS unit_name, x.marketing_status, x.created_at,
+                  d.id AS deal_id, d.deal_ref, d.status AS deal_status, d.deal_type, d.bgp_acting_for,
+                  p.name AS property_name, p.address AS property_address, p.postcode AS property_postcode
+             FROM available_units x
+             LEFT JOIN property_units pu ON pu.id = x.unit_id
+             LEFT JOIN crm_deals d ON d.id = x.deal_id
+             ${base} AND ${textMatch(auName)} ${ordered(auName)}`, params),
+      ]);
+      type UnitHit = {
+        propertyId: string; propertyName: string | null; propertyAddress: string | null; unitName: string;
+        propertyUnitId: string | null; tenancyUnitId: string | null; trackerRowId: string | null;
+        dealId: string | null; dealRef: number | null; statusCode: string | null; occupancy: string | null;
+        tenantName: string | null; liveLetting: boolean; dealSide: "landlord" | "tenant" | null;
+      };
+      const norm = (s: any) => String(s || "").trim().toLowerCase();
+      // One row per physical unit: the tracker stores "MSU9, Bluewater,
+      // Bluewater" where the spine has "MSU9", so the merge keys on the
+      // first comma segment (the tracker's own duplicate-guard identity;
+      // unitNameSegment in letting-service) — else the deal-less spine copy
+      // sidesteps the live-letting notice and the 409.
+      const keyOf = (r: any) => `${r.property_id}::${unitNameSegment(r.unit_name) || norm(r.unit_name)}`;
+      const byKey = new Map<string, UnitHit>();
+      const hit = (r: any): UnitHit => {
+        const k = keyOf(r);
+        let row = byKey.get(k);
+        if (!row) {
+          row = {
+            propertyId: r.property_id, propertyName: r.property_name ?? null, // crm_properties.address is jsonb — the row carries it as text (the
+            // object crashed a board row as a React child once; lender-routes).
+            propertyAddress: lenderAddressText(r.property_address, r.property_postcode) || null,
+            unitName: String(r.unit_name || "").trim(), propertyUnitId: null, tenancyUnitId: null, trackerRowId: null,
+            dealId: null, dealRef: null, statusCode: null, occupancy: null, tenantName: null, liveLetting: false, dealSide: null,
+          };
+          byKey.set(k, row);
+        }
+        return row;
+      };
+      for (const r of pus.rows) { if (norm(r.unit_name)) hit(r).propertyUnitId = r.property_unit_id; }
+      for (const r of tss.rows) {
+        if (!norm(r.unit_name)) continue;
+        const row = hit(r);
+        row.tenancyUnitId = row.tenancyUnitId || r.tenancy_unit_id;
+        row.propertyUnitId = row.propertyUnitId || r.property_unit_id || null;
+        row.occupancy = row.occupancy || r.occupancy || null;
+        row.tenantName = row.tenantName || r.tenant_name || null;
+      }
+      // One tracker row per unit: the live one wins, else the most recent.
+      const trackerByKey = new Map<string, any>();
+      for (const r of aus.rows) {
+        if (!norm(r.unit_name)) continue;
+        const code = effectiveStatus({ marketing_status: r.marketing_status }, r.deal_id ? { deal_type: r.deal_type, status: r.deal_status } : null);
+        const cand = { ...r, code, live: !isHistoricStatus(code) };
+        const cur = trackerByKey.get(keyOf(r));
+        if (!cur || (cand.live && !cur.live) || (cand.live === cur.live && new Date(cand.created_at) > new Date(cur.created_at))) trackerByKey.set(keyOf(r), cand);
+      }
+      for (const t of trackerByKey.values()) {
+        const row = hit(t);
+        row.trackerRowId = t.tracker_row_id;
+        row.propertyUnitId = row.propertyUnitId || t.property_unit_id || null;
+        row.tenancyUnitId = row.tenancyUnitId || t.tenancy_unit_id || null;
+        row.statusCode = t.code;
+        if (t.deal_id) {
+          row.dealId = t.deal_id;
+          row.dealRef = t.deal_ref ?? null;
+          row.liveLetting = isTrackerDeal({ deal_type: t.deal_type, status: t.deal_status });
+          row.dealSide = (t.bgp_acting_for || "landlord") === "tenant" ? "tenant" : "landlord";
+        }
+      }
+      const ql = qText.toLowerCase();
+      const rank = (r: UnitHit) => {
+        if (!ql) return 0;
+        const u = r.unitName.toLowerCase();
+        return u === ql ? 0 : u.startsWith(ql) ? 1 : u.includes(ql) ? 2 : 3;
+      };
+      const rows = Array.from(byKey.values())
+        .sort((a, b) => rank(a) - rank(b)
+          || String(a.propertyName || "").localeCompare(String(b.propertyName || ""))
+          || a.unitName.localeCompare(b.unitName, undefined, { numeric: true }))
+        .slice(0, 30);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Unit search failed" });
+    }
+  });
+
   app.get("/api/available-units/all-files", requireAuth, async (req, res) => {
     try {
       // unitName comes from property_units master with listing fallback
@@ -5339,162 +5495,26 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/available-units", requireAuth, async (req, res) => {
     try {
-      const { insertAvailableUnitSchema } = await import("@shared/schema");
-      const parsed = insertAvailableUnitSchema.parse(req.body);
-      // Clients: own-portfolio only, and never set BGP's fee.
-      {
-        const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
-        const auScope = await resolveCompanyScope(req);
-        if (auScope) {
-          if (!parsed.propertyId || !(await isPropertyInScope(auScope, parsed.propertyId))) {
-            return res.status(403).json({ message: "Unit is outside your portfolio" });
-          }
-          delete (parsed as any).fee;
-        }
+      // Clients: own-portfolio only; the listing factory strips BGP's fee
+      // and pins their company as the backing deal's landlord.
+      const auScope = await resolveCompanyScope(req);
+      if (auScope && req.body?.propertyId && !(await isPropertyInScope(auScope, req.body.propertyId))) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
-
-      // One live listing per unit (Woody, 2026-08-04 — "sort the double
-      // counting"). Every add-to-tracker path funnels through this POST, and
-      // the client-side "already listed" guards miss when names differ in
-      // format ("MSU9" vs "MSU9, Bluewater, Bluewater"), so the server is
-      // the guard: an existing non-closed listing on the same property whose
-      // first name segment matches returns that listing instead of creating
-      // a duplicate.
-      if (parsed.propertyId && parsed.unitName?.trim()) {
-        const seg = parsed.unitName.split(",")[0].trim().toLowerCase();
-        if (seg.length >= 2) {
-          const dupe = await pool.query(
-            `SELECT * FROM available_units
-             WHERE property_id = $1
-               AND lower(trim(split_part(coalesce(unit_name, ''), ',', 1))) = $2
-               AND lower(trim(coalesce(marketing_status, ''))) <> ALL($3::text[])
-             LIMIT 1`,
-            [parsed.propertyId, seg, statusSpellingsFor(TERMINAL_STATUSES)]
-          );
-          if (dupe.rows.length > 0) {
-            // Heal an existing listing that never got its deal (imported /
-            // mirror-born) before handing it back. Response stays the raw
-            // row shape (snake_case, plus the deal's id and ref for ChatBGP);
-            // no dealCreated, so the Add Unit form never PUTs its fee split
-            // over the one already on this deal.
-            const { ensureBackingDealForUnit } = await import("./unit-mirror");
-            const backing = await ensureBackingDealForUnit(pool, dupe.rows[0].id).catch(() => null);
-            return res.status(200).json({
-              ...dupe.rows[0],
-              ...(backing ? { deal_id: backing.dealId, deal_ref: backing.dealRef } : {}),
-              alreadyListed: true,
-            });
-          }
-        }
-      }
-
-      // Ensure a property_units master row exists for this (property, unit name).
-      // Create one if missing, then set unit_id on the listing.
-      let unitMasterId: string | null = (parsed as any).unitId || null;
-      if (!unitMasterId && parsed.propertyId && parsed.unitName?.trim()) {
-        const existing = await pool.query(
-          `SELECT id FROM property_units
-           WHERE property_id = $1 AND lower(trim(unit_name)) = lower(trim($2))`,
-          [parsed.propertyId, parsed.unitName]
-        );
-        if (existing.rows.length > 0) {
-          unitMasterId = existing.rows[0].id;
-        } else {
-          const created = await pool.query(
-            `INSERT INTO property_units (property_id, unit_name, floor, sqft, use_class, condition, epc_rating)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             RETURNING id`,
-            [parsed.propertyId, parsed.unitName.trim(), parsed.floor || null, parsed.sqft ?? null,
-             parsed.useClass || null, parsed.condition || null, parsed.epcRating || null]
-          );
-          unitMasterId = created.rows[0].id;
-        }
-      }
-
-      const unit = await storage.createAvailableUnit({ ...parsed, unitId: unitMasterId || undefined } as any);
-
-      // Also create a leasing_schedule_units row on the same property so the
-      // unit shows up on the property's Leasing Schedule view automatically
-      // — the backing deal is created just below.
-      try {
-        const existingLs = await pool.query(
-          `SELECT id FROM leasing_schedule_units
-           WHERE property_id = $1 AND lower(trim(coalesce(unit_name, ''))) = lower(trim($2))
-           LIMIT 1`,
-          [parsed.propertyId, parsed.unitName || ""]
-        );
-        if (existingLs.rows.length === 0) {
-          await pool.query(
-            `INSERT INTO leasing_schedule_units
-               (property_id, unit_name, sqft, rent_pa, status)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [parsed.propertyId, parsed.unitName || null, parsed.sqft ?? null,
-             parsed.askingRent ?? null, codeToLeasingStatus(parsed.marketingStatus) || "Vacant"]
-          );
-        }
-      } catch (e: any) {
-        console.warn("[available-units POST] leasing-schedule sync failed:", e.message);
-      }
-
-      // Mirror onto the tenancy spine (the source of truth): create-or-link a
-      // standard, editable tenancy row, deduped by normalised unit name. Means
-      // a unit/deal created here shows as a normal row, not a read-only orphan.
-      try {
-        const { ensureTenancyRowForAvailableUnit } = await import("./unit-mirror");
-        await ensureTenancyRowForAvailableUnit(pool, (unit as any).id);
-      } catch (e: any) {
-        console.warn("[available-units POST] tenancy-spine sync failed:", e.message);
-      }
-
-      // Every tracker row has a backing deal from birth (Woody, 2026-10-26):
-      // the Ref # and the fee allocations live on it. The Deals board hides
-      // pre-SOL deals so the kanban stays clean (excludeTrackerDeals), and
-      // the WIP report lists a Marketing deal only once it carries a fee.
-      // The fee typed on this form goes on the deal explicitly; dealCreated
-      // tells the form whether its fee split may go on too (an adopted deal
-      // keeps the split it already has).
-      try {
-        const { ensureBackingDealForUnit } = await import("./unit-mirror");
-        const feePctRaw = (req.body as any).feePercentage;
-        const feePct = feePctRaw != null && feePctRaw !== "" ? parseFloat(String(feePctRaw)) : null;
-        const backing = await ensureBackingDealForUnit(pool, unit.id, {
-          dealType: (req.body as any).dealType,
-          landlordId: (req.body as any).landlordId,
-          feePercentage: feePct != null && !Number.isNaN(feePct) ? feePct : null,
-          fee: unit.fee ?? null,
-        });
-        if (backing) { (unit as any).dealId = backing.dealId; (unit as any).dealRef = backing.dealRef; (unit as any).dealCreated = backing.created; }
-      } catch (e: any) {
-        console.warn("[available-units POST] backing deal failed:", e.message);
-      }
-      // Landlord picked on the form: stamp the property when it has none so
-      // the next deal on it doesn't ask again (same as the PATCH route).
-      if ((req.body as any).landlordId && unit.propertyId) {
-        try {
-          await pool.query(`UPDATE crm_properties SET landlord_id = $1 WHERE id = $2 AND landlord_id IS NULL`, [(req.body as any).landlordId, unit.propertyId]);
-        } catch (e: any) {
-          console.warn("[available-units POST] property landlord backfill failed:", e.message);
-        }
-      }
-
-      // Canonical unit FK: stamp tenancy_unit_id when the new vacant
-      // unit's name matches a tenancy_schedule row on the property.
-      try {
-        await pool.query(
-          `UPDATE available_units au
-              SET tenancy_unit_id = (
-                SELECT ts.id FROM tenancy_schedule_units ts
-                 WHERE ts.property_id = au.property_id
-                   AND lower(trim(ts.unit_number)) = lower(trim(coalesce(au.unit_name, '')))
-                   AND coalesce(trim(ts.unit_number), '') <> ''
-                 LIMIT 1
-              )
-            WHERE au.id = $1 AND au.tenancy_unit_id IS NULL`,
-          [unit.id]
-        );
-      } catch (e: any) { console.warn("[available-units] tenancy_unit_id stamp failed:", e?.message); }
-
-      res.json(unit);
+      // The one write door for a tracker row (server/letting-service.ts):
+      // duplicate guard, property_units master row, the row, the leasing
+      // row, the spine link, the backing deal (Ref #), the landlord stamp
+      // and the fee split typed on the form. Response shapes unchanged: the
+      // raw row + alreadyListed for a duplicate, else the created unit with
+      // dealId / dealRef / dealCreated.
+      const { createListing } = await import("./letting-service");
+      const result = await createListing(req.body, {
+        userId: (req.session as any)?.userId || (req as any).tokenUserId || null,
+        source: auScope ? "client-add" : lettingSource(req, "add-unit"),
+        scope: auScope,
+      });
+      if (result.kind === "already_listed") return res.status(200).json(result.row);
+      res.json(result.unit);
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to create unit" });
@@ -7226,7 +7246,50 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
       const deal = await storage.getCrmDeal(dealId);
       if (!deal) return res.status(404).json({ message: "Deal not found" });
+      if (deal.id === existing.dealId) return res.json(existing);
+      // Only a letting deal sits on the Letting Tracker, and on one row. An
+      // untyped deal (the WIP import's Sage rows carry no type) is typed
+      // New Letting by the link — the same reading ensureBackingDealForUnit
+      // gives it — and the stamp is on the audit row.
+      const typeStamped = !deal.dealType ? DEFAULT_LETTING_TYPE : null;
+      if (!typeStamped && !isLettingType(deal.dealType)) {
+        return res.status(409).json({ message: `Only a letting deal (${LETTING_DEAL_TYPES.join(", ")}) can sit on the Letting Tracker — #${deal.dealRef ?? "?"} is ${deal.dealType}` });
+      }
+      // The deal must be this row's unit: same property, and the same unit
+      // when both sides name one.
+      if (deal.propertyId && existing.propertyId && deal.propertyId !== existing.propertyId) {
+        return res.status(409).json({ message: `Deal #${deal.dealRef ?? "?"} is on another property — it can't sit on this row` });
+      }
+      if (deal.unitId && existing.unitId && deal.unitId !== existing.unitId) {
+        return res.status(409).json({ message: `Deal #${deal.dealRef ?? "?"} is on another unit — it can't sit on this row` });
+      }
+      const elsewhere = await pool.query(`SELECT id FROM available_units WHERE deal_id = $1 AND id <> $2 ORDER BY created_at LIMIT 1`, [dealId, existing.id]);
+      if (elsewhere.rows[0]) {
+        return res.status(409).json({
+          message: `Deal #${deal.dealRef ?? "?"} is already on the Letting Tracker on another row — merge the rows instead`,
+          code: "LIVE_LETTING_EXISTS", existingDealId: deal.id, existingDealRef: deal.dealRef ?? null, trackerRowId: elsewhere.rows[0].id,
+        });
+      }
+      // A row that already carries a LIVE deal keeps it: linking over it
+      // would leave that deal off the tracker and put two live lettings on
+      // the unit. A historic one (the row's last letting) is the fresh cycle.
+      const { liveLettingMessage, logLettingService } = await import("./letting-service");
+      if (existing.dealId) {
+        const prev = await storage.getCrmDeal(existing.dealId);
+        if (prev && !isHistoricStatus(prev.status)) {
+          return res.status(409).json({
+            message: liveLettingMessage(prev.dealRef), code: "LIVE_LETTING_EXISTS",
+            existingDealId: prev.id, existingDealRef: prev.dealRef ?? null, trackerRowId: existing.id,
+          });
+        }
+      }
+      if (typeStamped) await storage.updateCrmDeal(deal.id, { dealType: typeStamped } as any);
       const unit = await storage.updateAvailableUnit(req.params.id as string, { dealId });
+      await logLettingService(pool, {
+        dealId, trackerRowId: existing.id, propertyUnitId: existing.unitId ?? null, tenancyUnitId: existing.tenancyUnitId ?? null,
+        created: [], adopted: [`available_units:${existing.id}`], linkDeal: true, previousDealId: existing.dealId ?? null,
+        ...(typeStamped ? { dealTypeStamped: typeStamped } : {}),
+      }, { userId: (req.session as any)?.userId || (req as any).tokenUserId || null, source: lettingSource(req) });
       res.json(unit);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to link deal" });
