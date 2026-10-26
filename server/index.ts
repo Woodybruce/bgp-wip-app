@@ -4258,10 +4258,11 @@ app.use("/api/branding/assets", express.static(
   // means a maintenance endpoint registered without its own requireAdmin
   // (merge-properties, purge-apollo-contacts, …) can no longer be driven
   // by an ordinary staff login. requireAdmin does its own auth check.
-  // Two data-heal actions are deliberately staff-wide (the Re-sync boards
-  // button on every tenancy schedule, and Settings → Data Health backfill) —
-  // they are idempotent reconciliation sweeps, not admin surgery.
-  const ADMIN_PATH_STAFF_EXCEPTIONS = new Set(["/resync-mirror-all", "/backfill-tracker-deals"]);
+  // One data-heal action is deliberately staff-wide (Settings → Data Health
+  // backfill) — an idempotent reconciliation sweep, not admin surgery. The
+  // firm-wide Re-sync (/resync-mirror-all) became admin-only on 2026-10-26;
+  // the tenancy schedule's Re-sync button now calls the per-property route.
+  const ADMIN_PATH_STAFF_EXCEPTIONS = new Set(["/backfill-tracker-deals"]);
   app.use("/api/admin", (req, res, next) => {
     if (ADMIN_PATH_STAFF_EXCEPTIONS.has(req.path)) return requireAuth(req, res, next);
     return requireAdmin(req, res, next);

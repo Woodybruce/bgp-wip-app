@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
+import { LETTING_REPAIR_TOOLS_ENABLED } from "@shared/feature-flags";
 import {
   Target, Handshake, Activity, AlertTriangle, BarChart3, Building2,
   Pencil, Plus, Trash2, ChevronRight, Mail, Phone, Users,
@@ -571,7 +572,7 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
             {resolving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
             Resolve unmatched tenants
           </Button>
-          {((data.integrity?.leasing_units_no_unit_fk || 0) > 0 || (data.integrity?.available_units_no_unit_fk || 0) > 0) && (
+          {LETTING_REPAIR_TOOLS_ENABLED && ((data.integrity?.leasing_units_no_unit_fk || 0) > 0 || (data.integrity?.available_units_no_unit_fk || 0) > 0) && (
             <Button
               size="sm" variant="outline" className="h-6 text-[11px] gap-1"
               onClick={runPromote} disabled={promoting}

@@ -28,32 +28,31 @@
  */
 import { pool } from "./db";
 
+// crm_deals and leasing_schedule_units were removed from the allow-list on
+// 2026-10-26 (lettings cleanup Phase 0b): nothing in the codebase called
+// these routes for them, and a PATCH here rewrote deal status with no gate,
+// mirror, normalisation or client scope. Deal edits go through the deal
+// routes; leasing edits through the leasing-schedule router.
 export type AllowedTable =
-  | "crm_deals"
   | "crm_companies"
   | "crm_contacts"
   | "crm_properties"
-  | "leasing_schedule_units"
   | "crm_lease_events"
   | "crm_comps"
   | "crm_requirements_leasing"
   | "lease_events";
 
 export const ALLOWED_TABLES: AllowedTable[] = [
-  "crm_deals",
   "crm_companies",
   "crm_contacts",
   "crm_properties",
-  "leasing_schedule_units",
   "crm_lease_events",
   "crm_comps",
   "crm_requirements_leasing",
   "lease_events",
 ];
 
-const AUDIT_TABLES: Partial<Record<AllowedTable, string>> = {
-  leasing_schedule_units: "leasing_schedule_audit",
-};
+const AUDIT_TABLES: Partial<Record<AllowedTable, string>> = {};
 
 const BULK_LIMIT = 500;
 

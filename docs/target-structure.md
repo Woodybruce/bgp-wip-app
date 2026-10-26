@@ -53,7 +53,7 @@ Nothing dropped at Stage 1. Existing columns keep working via dual-write.
 |-------|------|
 | `property_units` | address, postcode, UPRN, floor, **nia/gia/itza sqft**, use_class, condition, EPC, frontage |
 | `tenancy_schedule_units` | passing rent, ERV, quoting/marketing rent, turnover, lease dates, breaks, review, term, tenant company/trading/mix/credit, rateable value, rates, service charge, insurance, **occupancy, marketing_active, marketing_reason** |
-| `available_units` | marketing start, viewings count, agents (pre-deal owner), marketing collateral, restrictions, condition-for-ad |
+| `available_units` | marketing start, viewings count, marketing collateral, restrictions, condition-for-ad — **not agents** (2026-10-26: the deal exists from birth and owns agents, fee and fee split; the tracker row is marketing collateral only) |
 | `leasing_schedule_units` | zone, positioning, priority, **target brands / optimum target**, client updates |
 | `crm_deals` | deal status, agreed rent, fee, AML, dates, **date of entry (created_at)**, solicitor sub-journey, pricing/yield, parties + Xero entities |
 | `unit_offers` / `unit_viewings` | competing offers / viewing records (1:many) |
@@ -70,10 +70,10 @@ tenancy_schedule_units   - status                       (Stage 6, after deal-sta
 
 available_units          - unit_id (-> property_units)   (read physical via the spine)
                          - leasing_schedule_unit_id       (cross-link not needed)
-                         - deal_id                        (use crm_deals.tenancy_unit_id)
+                         - deal_id                        KEPT (2026-10-26: the tracker row IS the deal's view; deal_id is its link)
                          - epc_rating, sqft, use_class, condition  (duplicated physical)
 
-crm_deals                - unit_id (-> property_units)    (read physical via tenancy spine)
+crm_deals                - unit_id (-> property_units)    KEPT (2026-10-26: the one-live-letting-per-unit rule keys on it; the two plan layers — evidence_plan_units, property_plan_units — stay as per-plan layers linked by unit_id)
 ```
 
 ## Structural decisions to confirm

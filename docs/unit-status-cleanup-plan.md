@@ -16,9 +16,11 @@ Owner: Woody. Status: awaiting integrity-gate numbers before any code changes.
   rates). `available_units`, `leasing_schedule_units` and `crm_deals` read through.
 - **Marketing model** — separate layer. Status answers "where is the deal?"; a
   marketing flag + reason answers "is this unit being marketed and why?".
-- **Deal is born at Solicitors** — the WIP/SOL promotion creates the `crm_deals`
-  row (capturing parties, fees, AML). Add-Unit and marketing-on do **not** create
-  deals. Pre-deal agent ownership lives on `available_units.agent_user_ids`.
+- ~~**Deal is born at Solicitors**~~ **Superseded 2026-10-26 (Woody, CLAUDE.md
+  "Lettings"):** the deal is born **with the tracker row** — every Letting Tracker
+  unit has a backing deal (Ref #) from the moment it exists, Marketing deals sit on
+  the Deals board and WIP from birth, and the fee / fee split / agents live on the
+  deal, not on `available_units`.
 - **Concurrent deals** — a remarketed Trading unit keeps its tenancy intact and a
   new letting deal rides its own journey alongside.
 - **One live deal per unit** — competing tenants live as rows in `unit_offers`
@@ -55,8 +57,11 @@ Detailed, editable spec is in `unit-column-ownership.xlsx` (101 facts). Summary:
 3. **Triple deal link.** `available_units.deal_id`, `tenancy_schedule_units.deal_id`,
    `crm_deals.tenancy_unit_id` all store the relationship. Keep `crm_deals.tenancy_unit_id`
    as canonical; retire the two cached `deal_id` columns after read-through lands.
-4. **Auto-deal-on-Tracker** (available-units.tsx ~577–621) contradicts deal-at-SOL.
-   Removed in Stage 3; existing AVA-status deals reconciled in the same stage.
+4. ~~**Auto-deal-on-Tracker** (available-units.tsx ~577–621) contradicts deal-at-SOL.
+   Removed in Stage 3; existing AVA-status deals reconciled in the same stage.~~
+   (Superseded 2026-10-26: the backing deal is created with the tracker row by
+   design — `ensureBackingDealForUnit` in `server/unit-mirror.ts` — and AVA deals
+   are the leasing fee forecast, never deleted.)
 
 ## Target schema (delta only)
 
@@ -105,14 +110,19 @@ available_units, leasing_schedule_units
 - `leasing_schedule_units.status` / `available_units.marketing_status` display canonical
   names; values translated at the edges. No DB changes.
 
-**Stage 3 — Unified Add-Unit + deal-at-SOL**
+**Stage 3 — Unified Add-Unit** (~~+ deal-at-SOL~~ — superseded 2026-10-26: deals exist from birth)
 - One `UnitFormDialog` on Letting Tracker AND Tenancy Schedule. Writes `property_units`
   + `tenancy_schedule_units` (linked). `marketing_active=true` also creates an
   `available_units` row.
-- Remove auto-deal-on-Tracker. Deal creation moves entirely to the WIP/SOL promotion.
-- Reconcile existing AVA-status deals: keep with a `pre_sol` flag (history) or delete
-  per the integrity-gate count — decide once the numbers are in.
-- Point pre-deal agent ownership at `available_units.agent_user_ids`.
+- ~~Remove auto-deal-on-Tracker. Deal creation moves entirely to the WIP/SOL promotion.~~
+  (Superseded 2026-10-26: every tracker unit has a backing deal from birth — keep
+  `ensureBackingDealForUnit`.)
+- ~~Reconcile existing AVA-status deals: keep with a `pre_sol` flag (history) or delete
+  per the integrity-gate count — decide once the numbers are in.~~ (Superseded
+  2026-10-26: AVA deals are the leasing fee forecast on the Deals board and WIP —
+  never deleted; no fee = "fee needed" on Needs Attention.)
+- ~~Point pre-deal agent ownership at `available_units.agent_user_ids`.~~ (Superseded
+  2026-10-26: agents live on the deal, which exists from birth.)
 - Retire the "Promote orphans to tenancy" button (unification makes it redundant).
 
 **Stage 4 — Engine collapse**
@@ -174,16 +184,18 @@ DB change to deal status values.
   joins return blanks if `tenancy_unit_id` / `property_unit_id` are null.
 - **Missing physical masters** — tenancy rows with no `property_units` match get one
   created from tenancy data at Stage 1; logged for review.
-- **Orphaned AVA deals** when auto-deal is removed (Stage 3) — reconciliation decided
-  by integrity-gate count.
+- ~~**Orphaned AVA deals** when auto-deal is removed (Stage 3) — reconciliation decided
+  by integrity-gate count.~~ (Superseded 2026-10-26: auto-deal stays; AVA deals are
+  kept.)
 - **Legacy/unknown status values** — Stage 1 logs, never auto-changes.
 - **Boards reading old `status` mid-transition** — dual-write through Stages 1–4;
   Stage 5/6 fire only when the gate is clean.
 
 ## Cleanup candidates retired by this work
 
-1. Tenancy "Add" never opens a deal → unified Add-Unit writes the spine; deal is born
-   at Solicitors by design (not a bug to fix, a flow to formalise).
+1. Tenancy "Add" never opens a deal → unified Add-Unit writes the spine; ~~deal is born
+   at Solicitors by design~~ (superseded 2026-10-26: the deal is born with the tracker
+   row — `ensureBackingDealForUnit` in `server/unit-mirror.ts`).
 2. Deal "Add" doesn't show on boards → boards filter on marketing flag + spine link,
    not deal existence.
 3. Reverse-mirror coarsens occupancy → mirror gone; occupancy on its own axis.

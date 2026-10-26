@@ -43,9 +43,9 @@ import { db } from "./db";
 import { eq, ilike, or, sql, and, desc, inArray, isNull } from "drizzle-orm";
 import { newsArticles } from "@shared/schema";
 import { legacyToCode } from "@shared/deal-status";
+import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 import { createTrackerAsset, updateTrackerAsset, resolveAgentNames } from "./investment-tracker-service";
 import { registerIngestRoutes } from "./ingest-routes";
-import { registerGenericCrmRoutes } from "./generic-crm-routes";
 import { setupStripeIssuingRoutes } from "./stripe-issuing";
 import { registerExpenseAutoClassifyRoutes } from "./expense-auto-classify";
 import { registerMapAnnotationsRoutes } from "./map-annotations";
@@ -2916,6 +2916,25 @@ export async function registerRoutes(
       res.json(await listSchemaDrift(pool));
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "schema drift check failed" });
+    }
+  });
+  // Lettings cleanup Phase 0 (Woody, 2026-10-26): read-only integrity report
+  // (tracker rows vs letting deals) and a gzipped data snapshot into file
+  // storage — server/letting-integrity.ts. Reports, never repairs.
+  app.get("/api/admin/letting-integrity", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { lettingIntegrityReport } = await import("./letting-integrity");
+      res.json(await lettingIntegrityReport(pool));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "letting integrity check failed" });
+    }
+  });
+  app.post("/api/admin/letting-snapshot", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { takeLettingSnapshot } = await import("./letting-integrity");
+      res.json(await takeLettingSnapshot(pool));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "letting snapshot failed" });
     }
   });
   // Which Microsoft Graph application permissions the app's token carries
@@ -6139,6 +6158,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   // Rename legacy long team names in crm_deals.team array
   app.post("/api/admin/rename-teams", requireAuth, async (req, res) => {
+    if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ message: LETTING_REPAIR_PAUSED });
     try {
       const renames: Record<string, string> = {
         "London Leasing Hospitality": "London Estate",
@@ -6790,76 +6810,6 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
-  app.post("/api/available-units/migrate-letting-deals", requireAuth, async (req, res) => {
-    try {
-      // Firm-wide bulk migration — staff only, even though the parent
-      // prefix is client-writable for tracker parity.
-      {
-        const { resolveCompanyScope } = await import("./company-scope");
-        if (await resolveCompanyScope(req)) return res.status(403).json({ message: "Not available for client accounts" });
-      }
-      const { crmDeals, availableUnits } = await import("@shared/schema");
-      // Match both canonical and legacy strings — migration may not yet have run
-      const NEGOTIATION_STATUSES = ["NEG", "Under Negotiation", "HOTs"];
-      const negDeals = await db.select().from(crmDeals)
-        .where(inArray(crmDeals.status, NEGOTIATION_STATUSES));
-
-      if (negDeals.length === 0) {
-        return res.json({ migrated: 0, message: "No negotiation deals to migrate" });
-      }
-
-      const existingUnits = await db.select().from(availableUnits);
-      const existingDealIds = new Set(existingUnits.filter(u => u.dealId).map(u => u.dealId));
-
-      let migrated = 0;
-      const skipped: string[] = [];
-      for (const deal of negDeals) {
-        if (existingDealIds.has(deal.id)) {
-          skipped.push(deal.name);
-          continue;
-        }
-
-        let propertyName = deal.name;
-        let assetClass: string | null = deal.assetClass || null;
-        if (deal.propertyId) {
-          const prop = await storage.getCrmProperty(deal.propertyId);
-          if (prop) {
-            propertyName = prop.name;
-            assetClass = assetClass || prop.assetClass || null;
-          }
-        }
-
-        await storage.createAvailableUnit({
-          propertyId: deal.propertyId || "",
-          unitName: deal.name || propertyName,
-          floor: null,
-          sqft: deal.totalAreaSqft || null,
-          askingRent: deal.rentPa || null,
-          ratesPa: null,
-          serviceChargePa: null,
-          useClass: assetClass,
-          condition: null,
-          availableDate: null,
-          marketingStatus: "Available",
-          epcRating: null,
-          notes: deal.comments || null,
-          restrictions: null,
-          fee: deal.fee || null,
-          dealId: deal.id,
-          agentUserIds: deal.internalAgent || null,
-          viewingsCount: 0,
-          lastViewingDate: null,
-          marketingStartDate: null,
-        });
-        migrated++;
-      }
-
-      res.json({ migrated, skipped: skipped.length, message: `Migrated ${migrated} deals to available units` });
-    } catch (err: any) {
-      res.status(500).json({ message: err?.message || "Migration failed" });
-    }
-  });
-
   // One-off backfill: create a leasing_schedule_units row for every existing
   // available_units that doesn't already have one on the same property. Safe
   // to re-run — only creates rows where none exists (matched by
@@ -7209,6 +7159,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   });
 
   app.post("/api/admin/number-test-units", requireAuth, requireAdmin, async (_req, res) => {
+    if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ message: LETTING_REPAIR_PAUSED });
     try {
       const props = await pool.query(`SELECT DISTINCT property_id FROM property_units WHERE property_id IS NOT NULL`);
       let renamed = 0;
@@ -7239,6 +7190,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   });
 
   app.post("/api/available-units/backfill-leasing-schedule", requireAuth, requireAdmin, async (_req, res) => {
+    if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ message: LETTING_REPAIR_PAUSED });
     try {
       const { rows } = await pool.query(
         `WITH inserted AS (
@@ -8451,62 +8403,6 @@ These terms are indicative only and do not constitute a binding agreement.`;
       console.error("[seed] Investment tracker auto-seed error:", e.message);
     }
   })();
-
-  (async () => {
-    try {
-      const { crmDeals, availableUnits } = await import("@shared/schema");
-      // Match both canonical and legacy strings — migration may not yet have run
-      const NEGOTIATION_STATUSES = ["NEG", "Under Negotiation", "HOTs"];
-      const negDeals = await db.select().from(crmDeals)
-        .where(inArray(crmDeals.status, NEGOTIATION_STATUSES));
-
-      if (negDeals.length === 0) return;
-
-      const existingUnits = await db.select().from(availableUnits);
-      const existingDealIds = new Set(existingUnits.filter(u => u.dealId).map(u => u.dealId));
-
-      let migrated = 0;
-      for (const deal of negDeals) {
-        if (existingDealIds.has(deal.id)) continue;
-
-        let useClass: string | null = deal.assetClass || null;
-        if (deal.propertyId) {
-          const prop = await storage.getCrmProperty(deal.propertyId);
-          if (prop) useClass = useClass || prop.assetClass || null;
-        }
-
-        await storage.createAvailableUnit({
-          propertyId: deal.propertyId || "",
-          unitName: deal.name || "Unnamed Unit",
-          floor: null,
-          sqft: deal.totalAreaSqft || null,
-          askingRent: deal.rentPa || null,
-          ratesPa: null,
-          serviceChargePa: null,
-          useClass,
-          condition: null,
-          availableDate: null,
-          marketingStatus: "Available",
-          epcRating: null,
-          notes: deal.comments || null,
-          restrictions: null,
-          fee: deal.fee || null,
-          dealId: deal.id,
-          agentUserIds: deal.internalAgent || null,
-          viewingsCount: 0,
-          lastViewingDate: null,
-          marketingStartDate: null,
-        });
-        migrated++;
-      }
-      if (migrated > 0) {
-        console.log(`[migration] Migrated ${migrated} letting tracker deals to available units`);
-      }
-    } catch (e: any) {
-      console.error("[migration] Letting deals migration error:", e.message);
-    }
-  })();
-
 
   // Lazy-init the table on first hit. Same pattern as
   // brand_score_history in brand-triggers.ts — keeps deploys self-healing
@@ -10501,7 +10397,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   });
 
   registerIngestRoutes(app);
-  registerGenericCrmRoutes(app);
+  // registerGenericCrmRoutes runs once from server/index.ts (was registered twice).
   setupStripeIssuingRoutes(app);
   registerExpenseAutoClassifyRoutes(app);
   registerMapAnnotationsRoutes(app);

@@ -27,6 +27,7 @@ import { SharePointFilePicker, candidateKey, type SharePointCandidate } from "@/
 import { SchemePillRow, schemeFilterMatches, usePropertySchemeList } from "@/components/property-schemes-panel";
 import { LeasingMinutesImportDialog, type MinutesSource } from "@/components/leasing-minutes-import-dialog";
 import { unitScheme } from "@shared/property-schemes";
+import { LETTING_REPAIR_TOOLS_ENABLED } from "@shared/feature-flags";
 
 // Compact retail-tuned set of use labels we want the team to land on across
 // the tenancy schedules — chosen over the full UK planning class list
@@ -975,13 +976,15 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
     onError: (err: any) => { toast({ title: "Couldn't add to tracker", description: err.message, variant: "destructive" }); },
   });
 
-  // Re-sync the status mirror across all four boards for this property.
+  // Re-sync the status mirror across all four boards for THIS property.
   // Links any unmatched Letting Tracker / leasing rows by name and pushes
   // the current canonical status onto each projection. Heals drift in one
-  // tap (the Bluewater "no linkage" fix).
+  // tap (the Bluewater "no linkage" fix). Until 2026-10-26 this called the
+  // firm-wide /api/admin/resync-mirror-all (every property, now admin-only);
+  // lettings cleanup Phase 0b narrowed it to the property on screen.
   const resyncMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest("POST", `/api/admin/resync-mirror-all`, {});
+      const response = await apiRequest("POST", `/api/properties/${propertyId}/resync-mirror`, {});
       return response.json();
     },
     onSuccess: (res: any) => {
@@ -991,15 +994,9 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
       queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plan-pickable-units"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule"] });
-      const byProp = res?.byProperty || {};
-      const topProps = Object.entries(byProp)
-        .sort((a: any, b: any) => b[1] - a[1])
-        .slice(0, 3)
-        .map(([name, n]) => `${name} (${n})`)
-        .join(", ");
       toast({
-        title: "Boards re-synced (whole app)",
-        description: `${res?.synced ?? 0} units mirrored across ${Object.keys(byProp).length} properties.${topProps ? ` Top: ${topProps}` : ""}`,
+        title: "Boards re-synced",
+        description: `${res?.synced ?? 0} of ${res?.total ?? 0} units on this property mirrored to the Letting Tracker and leasing schedule.`,
       });
     },
     onError: (err: any) => { toast({ title: "Re-sync failed", description: err.message, variant: "destructive" }); },
@@ -1364,8 +1361,8 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
             className="h-7 w-7 p-0 hidden sm:inline-flex"
             onClick={() => resyncMutation.mutate()}
             disabled={resyncMutation.isPending}
-            title="Re-sync all boards — re-links every property's Letting Tracker and leasing rows by unit name and pushes the current status onto both (all properties, not just this one)."
-            aria-label="Re-sync all boards"
+            title="Re-sync this property's boards — re-links its Letting Tracker and leasing rows by unit name and pushes the current status onto both."
+            aria-label="Re-sync boards"
             data-testid="btn-resync-mirror"
           >
             {resyncMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
@@ -1601,7 +1598,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                   <p className="text-[11px] text-muted-foreground mt-0.5">{fmtNum(unit.nia_sqft)} sq ft</p>
                 ) : null}
                 <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                  {canEdit && !isClientViewer && (
+                  {LETTING_REPAIR_TOOLS_ENABLED && canEdit && !isClientViewer && (
                     <button
                       onClick={() => promoteMutation.mutate()}
                       disabled={promoteMutation.isPending}
@@ -1894,7 +1891,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                     if (next.has(unit.id)) next.delete(unit.id); else next.add(unit.id);
                     return next;
                   })}
-                  onPromote={!canEdit || isClientViewer ? undefined : () => promoteMutation.mutate()}
+                  onPromote={!LETTING_REPAIR_TOOLS_ENABLED || !canEdit || isClientViewer ? undefined : () => promoteMutation.mutate()}
                   promoting={promoteMutation.isPending}
                   onSendToTracker={!canEdit ? undefined : () => sendToTrackerMutation.mutate(unit)}
                   sendingToTracker={sendToTrackerMutation.isPending}

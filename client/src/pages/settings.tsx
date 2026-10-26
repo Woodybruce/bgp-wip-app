@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { Pill, PillCount } from "@/components/ui/pill";
 import {
   Select,
   SelectContent,
@@ -22,6 +23,7 @@ import { ProfilePhotoCard } from "@/components/profile-photo-card";
 import { TeamStructureDialog } from "@/components/team-structure-dialog";
 import { XeroFillDialog } from "@/components/xero-fill-dialog";
 import { HrScheduleImportDialog } from "@/components/hr-schedule-import-dialog";
+import { LETTING_REPAIR_TOOLS_ENABLED } from "@shared/feature-flags";
 
 interface TeamMember {
   id: string;
@@ -416,6 +418,7 @@ export default function SettingsPage() {
         {isAdmin && <UserActivitySection />}
         {isAdmin && <EmailIntelligenceSection />}
         <DataHealthSection />
+        {isAdmin && <LettingIntegritySection />}
         <ChatBGPLearningsSection />
         <AppFeedbackSection />
         <ChangeRequestsSection />
@@ -1036,6 +1039,213 @@ function EmailIntelligenceSection() {
   );
 }
 
+// Lettings cleanup Phase 0 (Woody, 2026-10-26): the read-only letting
+// integrity report — how the Letting Tracker and the letting deals disagree
+// today — and a data snapshot before any phase changes anything. Reports,
+// never repairs; the repair buttons above are frozen.
+type LettingIntegrityReport = {
+  checkedAt: string;
+  listCap: number;
+  counts: Record<string, any>;
+  lists: Record<string, any>;
+};
+
+const INTEGRITY_BUCKETS: Array<{ key: string; label: string; what: string; headline: (c: any) => number; linkDeals: boolean }> = [
+  { key: "trackerRowsWithoutDeal", label: "Tracker rows without a deal", what: "available_units whose deal_id is empty or points at a deleted deal — live rows need a Ref #; historic rows are expected.", headline: (c) => c?.total ?? 0, linkDeals: false },
+  { key: "liveLettingDealsWithoutTrackerRow", label: "Live letting deals off the tracker", what: "Letting-type deals at Opportunity–Solicitors with no tracker row, with a best guess at which door made them.", headline: (c) => c?.total ?? 0, linkDeals: true },
+  { key: "trackerRowsOnNonLettingDeal", label: "Tracker rows on a non-letting deal", what: "Tracker rows whose backing deal is a Rent Review, Sale, Lease Acquisition etc.", headline: (c) => c?.total ?? 0, linkDeals: true },
+  { key: "dealsOnMultipleTrackerRows", label: "Deals on two tracker rows", what: "One deal carried by more than one tracker row — a dedupe job.", headline: (c) => c?.total ?? 0, linkDeals: true },
+  { key: "stubAndRealPairs", label: "Stub + real pairs", what: "Units with a £0 Marketing stub deal beside another live letting deal on the same property and unit name.", headline: (c) => c?.total ?? 0, linkDeals: true },
+  { key: "statusDisagreements", label: "Status disagreements", what: "Tracker rows whose marketing status maps to a different code from their deal's status.", headline: (c) => c?.total ?? 0, linkDeals: true },
+  { key: "actingForDerivation", label: "Side would change", what: "Lease Disposal / Sub-Letting / Lease Acquisition / Tenant Acquisition deals whose stored side differs from what the type derives (tenant). Nothing moves until Woody has seen this list.", headline: (c) => c?.would_change ?? 0, linkDeals: true },
+  { key: "marketingStatusOutsideCodes", label: "Statuses outside the 12 codes", what: "available_units.marketing_status values that are not one of the canonical codes, with what they map to.", headline: (c) => c?.rows_outside ?? 0, linkDeals: false },
+];
+
+function IntegrityCounts({ counts }: { counts: any }) {
+  if (!counts || typeof counts !== "object") return null;
+  if (counts.error) return <p className="text-xs text-destructive">Query failed: {String(counts.error)}</p>;
+  const items: Array<[string, string]> = [];
+  for (const [k, v] of Object.entries(counts)) {
+    if (v === null || v === undefined) items.push([k, "—"]);
+    else if (typeof v === "object") for (const [sk, sv] of Object.entries(v as Record<string, any>)) items.push([`${k} · ${sk}`, typeof sv === "object" ? JSON.stringify(sv) : String(sv)]);
+    else items.push([k, String(v)]);
+  }
+  return (
+    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+      {items.map(([k, v]) => (
+        <span key={k} className="whitespace-nowrap"><span className="text-muted-foreground">{k}</span> <span className="font-mono">{v}</span></span>
+      ))}
+    </div>
+  );
+}
+
+function IntegrityRow({ r, linkDeals }: { r: any; linkDeals: boolean }) {
+  const ref = r.deal_ref ? `#${r.deal_ref}` : null;
+  const name = r.unit_name || r.name || (r.value !== undefined ? String(r.value ?? "(null)") : r.id);
+  const status = r.status_code || r.marketing_status || r.status || r.deal_status || null;
+  const extra =
+    r.door ||
+    (r.would_change ? `${r.stored_effective} → ${r.derived}` : r.derived ? `stays ${r.derived}` : null) ||
+    (r.tracker_rows ? `${r.tracker_rows} tracker rows` : null) ||
+    (r.count !== undefined ? `${r.count} rows → ${r.maps_to || "no code"}` : null) ||
+    (r.stubs ? `${r.stubs.length} stub (${r.stubs.map((s: any) => `#${s.deal_ref ?? "?"}`).join(", ")}) + ${r.real.length} live (${r.real.map((s: any) => `#${s.deal_ref ?? "?"} ${s.status_code}`).join(", ")})` : null) ||
+    (r.tracker_code !== undefined ? `tracker ${r.tracker_code ?? "?"} vs deal ${r.deal_code ?? "?"}` : null) ||
+    (r.dangling ? "dangling deal_id" : null);
+  const dealId = linkDeals ? (r.deal_id || (r.deal_ref ? r.id : null)) : null;
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-2 text-xs py-0.5 border-b border-border/50 last:border-0">
+      {ref && (dealId ? <Link href={`/deals/${dealId}`} className="font-mono underline-offset-2 hover:underline">{ref}</Link> : <span className="font-mono">{ref}</span>)}
+      <span className="font-medium">{name}</span>
+      {r.property_name && <span className="text-muted-foreground">{r.property_name}</span>}
+      {status && <span className="font-mono text-muted-foreground">{status}</span>}
+      {extra && <span className="text-muted-foreground">{extra}</span>}
+      {r.id && <span className="font-mono text-[10px] text-muted-foreground/70">{r.id}</span>}
+    </div>
+  );
+}
+
+function IntegrityList({ list, cap, linkDeals }: { list: any; cap: number; linkDeals: boolean }) {
+  const [showAll, setShowAll] = useState(false);
+  if (!list) return null;
+  const groups: Array<[string | null, any[]]> = Array.isArray(list) ? [[null, list]] : Object.entries(list as Record<string, any[]>);
+  const limit = showAll ? cap : 8;
+  return (
+    <div className="space-y-2">
+      {groups.map(([g, rows]) => (
+        <div key={g ?? "all"}>
+          {g && <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">{g.replace(/_/g, " ")} <span className="font-mono">{rows.length}</span></div>}
+          {rows.length === 0 ? <p className="text-xs text-muted-foreground">None.</p> : rows.slice(0, limit).map((r: any, i: number) => <IntegrityRow key={r.id || i} r={r} linkDeals={linkDeals} />)}
+          {rows.length > limit && (
+            <button type="button" className="text-xs text-muted-foreground hover:text-foreground mt-1" onClick={() => setShowAll(true)}>
+              …and {rows.length - limit} more{rows.length >= cap ? ` (first ${cap} returned)` : ""}
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LettingIntegritySection() {
+  const { toast } = useToast();
+  const [report, setReport] = useState<LettingIntegrityReport | null>(null);
+  const [running, setRunning] = useState(false);
+  const [snapshotting, setSnapshotting] = useState(false);
+  const [snapshot, setSnapshot] = useState<{ key: string; bytes: number; counts: Record<string, { count: number; capped: boolean; error?: string }> } | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+
+  const runReport = async () => {
+    setRunning(true);
+    try {
+      const res = await apiRequest("GET", "/api/admin/letting-integrity");
+      setReport(await res.json());
+    } catch (err: any) {
+      toast({ title: "Report failed", description: err.message, variant: "destructive" });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const takeSnapshot = async () => {
+    setSnapshotting(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/letting-snapshot");
+      const data = await res.json();
+      setSnapshot(data);
+      toast({ title: "Snapshot saved", description: `${data.key} (${Math.round((data.bytes || 0) / 1024)} KB)` });
+    } catch (err: any) {
+      toast({ title: "Snapshot failed", description: err.message, variant: "destructive" });
+    } finally {
+      setSnapshotting(false);
+    }
+  };
+
+  const idx = report?.counts?.liveLandlordIndex;
+  const tables = report?.counts?.tableCounts as Record<string, any> | undefined;
+  const openBucket = INTEGRITY_BUCKETS.find((b) => b.key === open);
+
+  return (
+    <Card data-testid="card-letting-integrity">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4" />
+            Letting integrity
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={takeSnapshot} disabled={snapshotting} data-testid="button-letting-snapshot">
+              {snapshotting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
+              {snapshotting ? "Saving…" : "Take snapshot"}
+            </Button>
+            <Button size="sm" onClick={runReport} disabled={running} data-testid="button-letting-integrity">
+              {running ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Activity className="w-4 h-4 mr-2" />}
+              {running ? "Checking…" : "Run report"}
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {snapshot && (
+          <p className="text-xs text-muted-foreground" data-testid="text-letting-snapshot">
+            Snapshot <span className="font-mono">{snapshot.key}</span> ({Math.round(snapshot.bytes / 1024)} KB):{" "}
+            {Object.entries(snapshot.counts).map(([t, c]) => `${t} ${c.error ? "failed" : c.count}${c.capped ? " (capped at 50,000)" : ""}`).join(" · ")}
+          </p>
+        )}
+        {!report ? (
+          <p className="text-sm text-muted-foreground" data-testid="text-letting-integrity-prompt">
+            Read-only. "Run report" counts every way the Letting Tracker and the letting deals disagree (rows without a deal, live deals off the tracker, stub-and-real pairs, status drift, the side-derivation list). "Take snapshot" saves the unit and deal tables to file storage before anything changes.
+          </p>
+        ) : (
+          <>
+            <p className="text-xs text-muted-foreground">Checked {new Date(report.checkedAt).toLocaleString("en-GB")}. Tap a bucket for its counts and the first ids (up to {report.listCap}).</p>
+            <div className="flex flex-wrap gap-1.5">
+              {INTEGRITY_BUCKETS.map((b) => {
+                const c = report.counts[b.key];
+                const n = c?.error ? null : b.headline(c);
+                return (
+                  <Pill key={b.key} active={open === b.key} onClick={() => setOpen(open === b.key ? null : b.key)} data-testid={`pill-integrity-${b.key}`}>
+                    {b.label}
+                    {n === null ? <span className="ml-1 text-destructive">!</span> : <PillCount n={n} active={open === b.key} />}
+                  </Pill>
+                );
+              })}
+            </div>
+            {openBucket && (
+              <div className="rounded-md border border-border bg-muted/40 p-2 space-y-2" data-testid={`section-integrity-${openBucket.key}`}>
+                <p className="text-xs text-muted-foreground">{openBucket.what}</p>
+                <IntegrityCounts counts={report.counts[openBucket.key]} />
+                <IntegrityList list={report.lists[openBucket.key]} cap={report.listCap} linkDeals={openBucket.linkDeals} />
+              </div>
+            )}
+            <div className="text-xs space-y-1">
+              {idx && (
+                <p>
+                  <span className="text-muted-foreground">One-live-landlord-deal-per-unit index (migrations/0034):</span>{" "}
+                  {idx.error ? <span className="text-destructive">{String(idx.error)}</span> : <>
+                    <span className="font-mono">{idx.index_exists ? "present" : "absent"}</span>
+                    <span className="text-muted-foreground"> (not applied by any boot path) · bgp_acting_for NULL on </span>
+                    <span className="font-mono">{idx.acting_for_null}</span><span className="text-muted-foreground"> deals</span>
+                  </>}
+                </p>
+              )}
+              {tables && (
+                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                  {Object.entries(tables).map(([t, c]) => (
+                    <span key={t} className="whitespace-nowrap">
+                      <span className="font-medium">{t}</span>{" "}
+                      {c?.error ? <span className="text-destructive">failed</span> : Object.entries(c).map(([k, v]) => <span key={k} className="text-muted-foreground"> {k} <span className="font-mono text-foreground">{String(v)}</span></span>)}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function DataHealthSection() {
   const { toast } = useToast();
   const [scanResult, setScanResult] = useState<DupeScanResult | null>(null);
@@ -1162,6 +1372,10 @@ function DataHealthSection() {
               {backfilling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
               {backfilling ? "Backfilling..." : "Backfill Tracker Deals"}
             </Button>
+            {/* Frozen during the lettings cleanup (shared/feature-flags.ts
+                LETTING_REPAIR_TOOLS_ENABLED, 2026-10-26) — the routes answer
+                409 while the flag is off. */}
+            {LETTING_REPAIR_TOOLS_ENABLED && (<>
             <Button size="sm" variant="outline" onClick={runRenameTeams} disabled={renamingTeams}>
               {renamingTeams ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
               {renamingTeams ? "Renaming..." : "Rename Legacy Teams"}
@@ -1174,6 +1388,7 @@ function DataHealthSection() {
               {numberingUnits ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
               {numberingUnits ? "Renaming..." : "Renumber Units (test)"}
             </Button>
+            </>)}
             <Button size="sm" variant="outline" onClick={() => setXeroFillOpen(true)} data-testid="button-xero-fill">
               <RefreshCw className="w-4 h-4 mr-2" />Fill from Xero
             </Button>

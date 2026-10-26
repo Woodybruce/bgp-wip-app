@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
-import { requireAuth } from "./auth";
+import { requireAuth, requireAdmin } from "./auth";
+import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 import multer from "multer";
 import { backfillPropertyTenants, backfillPropertyUnitFks, normUnitSql, resolveBrandIdSubquery } from "./tenant-brand-resolver";
 import { fanOutTenancyStatus } from "./unit-mirror";
@@ -1557,6 +1558,7 @@ router.post("/api/properties/:propertyId/assign-tenant-brand", requireAuth, asyn
 // rows come across as Occupied. Either way the row is on the spine
 // and the dashboard sees the unit consistently from then on.
 router.post("/api/properties/:propertyId/promote-orphans-to-tenancy", requireAuth, async (req, res) => {
+  if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ message: LETTING_REPAIR_PAUSED });
   try {
     const pool = await getPool();
     const propertyId = req.params.propertyId as string;
@@ -1670,7 +1672,12 @@ router.post("/api/properties/:propertyId/resync-mirror", requireAuth, async (req
   }
 });
 
-router.post("/api/admin/resync-mirror-all", requireAuth, async (_req, res) => {
+// Firm-wide: every tenancy row on every property. Admin-only and FROZEN
+// since 2026-10-26 (lettings cleanup Phase 0b, one of the four paused repair
+// tools) — the per-property button above is what the tenancy schedule's
+// Re-sync now calls.
+router.post("/api/admin/resync-mirror-all", requireAuth, requireAdmin, async (_req, res) => {
+  if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ message: LETTING_REPAIR_PAUSED });
   try {
     const pool = await getPool();
     const rows = await pool.query(
