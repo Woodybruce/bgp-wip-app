@@ -4,7 +4,7 @@ import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/fea
 import multer from "multer";
 import { backfillPropertyTenants, backfillPropertyUnitFks, normUnitSql, resolveBrandIdSubquery } from "./tenant-brand-resolver";
 import { fanOutTenancyStatus } from "./unit-mirror";
-import { importTenancyRows, TenancyImportError, type ParsedTenancyImportRow } from "./tenancy-import";
+import { importTenancyRows, TenancyImportError, TENANCY_REPLACE_PAUSED, type ParsedTenancyImportRow } from "./tenancy-import";
 import { tenancyCalendarDatesSql } from "./tenancy-calendar-dates";
 import { mergeTenancyUnits, TenancyMergeError } from "./tenancy-merge";
 import { landsecFloorLabel } from "@shared/landsec-floor";
@@ -973,7 +973,9 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
     const propertyId = req.body.propertyId;
     if (!propertyId) return res.status(400).json({ error: "propertyId required" });
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-    res.json(await importTenancyWorkbook(pool, String(propertyId), req.file.buffer, { clearExisting: req.body.clearExisting === "true" }));
+    const clearExisting = req.body.clearExisting === "true";
+    if (clearExisting && !LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ error: TENANCY_REPLACE_PAUSED });
+    res.json(await importTenancyWorkbook(pool, String(propertyId), req.file.buffer, { clearExisting }));
   } catch (e: any) {
     console.error("[tenancy-import] failed:", e);
     res.status(e instanceof TenancyImportError ? e.status : 500).json({ error: e.message });
@@ -1005,6 +1007,8 @@ router.post("/api/tenancy-schedule/import-excel-from-sharepoint", requireAuth, a
     if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
     const propertyId = req.body?.propertyId;
     if (!propertyId) return res.status(400).json({ error: "propertyId required" });
+    const clearExisting = req.body?.clearExisting === true;
+    if (clearExisting && !LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ error: TENANCY_REPLACE_PAUSED });
     const sp = await import("./sharepoint-property-files");
     let buffer: Buffer, name: string;
     try {
@@ -1016,7 +1020,7 @@ router.post("/api/tenancy-schedule/import-excel-from-sharepoint", requireAuth, a
     } catch (e: any) {
       return res.status(e?.status || 502).json({ error: e?.status ? e.message : sp.plainGraphError(e) });
     }
-    const result = await importTenancyWorkbook(await getPool(), String(propertyId), buffer, { clearExisting: req.body?.clearExisting === true });
+    const result = await importTenancyWorkbook(await getPool(), String(propertyId), buffer, { clearExisting });
     res.json({ ...result, fileName: name, message: `${name}: ${result.message}` });
   } catch (e: any) {
     console.error("[tenancy-import sharepoint] failed:", e);
@@ -1367,6 +1371,10 @@ router.post("/api/tenancy-schedule/bulk-delete", requireAuth, async (req, res) =
       await pool.query(`DELETE FROM tenancy_schedule_units WHERE property_id = $1 AND id::text = ANY($2::text[])`, [propertyId, ids]);
       return res.json({ ok: true, deleted: ids.length });
     }
+    // Lettings cleanup (Phase 0b): clearing the whole property is the same
+    // cascade as the tenancy import's refused clearExisting — it NULLs
+    // crm_deals.tenancy_unit_id property-wide — so it is paused with it.
+    if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ error: TENANCY_REPLACE_PAUSED });
     await pool.query(`UPDATE leasing_schedule_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id IS NOT NULL`, [propertyId]);
     await pool.query(`UPDATE available_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id IS NOT NULL`, [propertyId]);
     await pool.query(`UPDATE crm_deals SET tenancy_unit_id = NULL WHERE tenancy_unit_id IN (SELECT id FROM tenancy_schedule_units WHERE property_id = $1)`, [propertyId]);

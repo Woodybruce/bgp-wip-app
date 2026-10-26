@@ -12,7 +12,15 @@ export const PERKS_ENABLED = false;
 // "Rename Legacy Teams", the firm-wide Re-sync (POST
 // /api/admin/resync-mirror-all) and the property page's "Promote orphans to
 // tenancy" — are hidden and their routes answer 409 while the cleanup runs,
-// so the data stops moving under it. Not deleted: flip this back on to
-// restore them.
+// so the data stops moving under it. The same flag makes the Import data
+// dialog's Deals target preview-only (commit answers 409 — create the deal
+// on the Deals board; the same refusal, before any parsing, applies to
+// email, WhatsApp and SharePoint-folder ingests of a file classified as
+// Deals), keeps POST /api/admin/backfill-fee-allocations in dry-run
+// whatever the body says, and refuses the tenancy import's "replace
+// existing" (clearExisting) option and the no-ids form of POST
+// /api/tenancy-schedule/bulk-delete (clear the whole property), both of
+// which NULL crm_deals.tenancy_unit_id for the whole property. Not
+// deleted: flip this back on to restore them.
 export const LETTING_REPAIR_TOOLS_ENABLED = false;
 export const LETTING_REPAIR_PAUSED = "Paused during the lettings cleanup";

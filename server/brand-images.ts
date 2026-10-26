@@ -6,6 +6,7 @@ import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import crypto from "crypto";
 import sharp from "sharp";
 import { requireAuth } from "./auth";
+import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 import { pool } from "./db";
 import { getBrandIdentity } from "./brand-identity";
 import { brandImageIdentityTag, isOfficialBrandWebsite, publishableBrandStore } from "./brand-publishing";
@@ -937,9 +938,12 @@ router.post("/api/admin/heal-property-names", requireAuth, async (req: Request, 
 // Allocations are created as equal-percentage splits matching the
 // fallback. Safe to re-run — only operates on deals with no existing
 // allocations, so a second run is a no-op for already-backfilled deals.
+// Lettings cleanup (Phase 0b): while LETTING_REPAIR_TOOLS_ENABLED is off,
+// dryRun is forced on whatever the body says and the response carries
+// `paused` so the caller sees why nothing was written.
 router.post("/api/admin/backfill-fee-allocations", requireAuth, async (req: Request, res: Response) => {
   try {
-    const dryRun = req.body?.dryRun === true;
+    const dryRun = !LETTING_REPAIR_TOOLS_ENABLED || req.body?.dryRun === true;
     const limit = Math.min(Number(req.body?.limit) || 500, 2000);
 
     // Find deals with agents listed but no explicit allocations.
@@ -982,6 +986,7 @@ router.post("/api/admin/backfill-fee-allocations", requireAuth, async (req: Requ
       scanned: candidates.length,
       backfilled,
       dryRun,
+      ...(LETTING_REPAIR_TOOLS_ENABLED ? {} : { paused: LETTING_REPAIR_PAUSED }),
       samples: samples.slice(0, 30),
       remaining: candidates.length > limit ? `${candidates.length - limit}+ more — re-run with limit raised` : 0,
     });

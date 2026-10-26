@@ -1057,8 +1057,15 @@ const INTEGRITY_BUCKETS: Array<{ key: string; label: string; what: string; headl
   { key: "dealsOnMultipleTrackerRows", label: "Deals on two tracker rows", what: "One deal carried by more than one tracker row — a dedupe job.", headline: (c) => c?.total ?? 0, linkDeals: true },
   { key: "stubAndRealPairs", label: "Stub + real pairs", what: "Units with a £0 Marketing stub deal beside another live letting deal on the same property and unit name.", headline: (c) => c?.total ?? 0, linkDeals: true },
   { key: "statusDisagreements", label: "Status disagreements", what: "Tracker rows whose marketing status maps to a different code from their deal's status.", headline: (c) => c?.total ?? 0, linkDeals: true },
-  { key: "actingForDerivation", label: "Side would change", what: "Lease Disposal / Sub-Letting / Lease Acquisition / Tenant Acquisition deals whose stored side differs from what the type derives (tenant). Nothing moves until Woody has seen this list.", headline: (c) => c?.would_change ?? 0, linkDeals: true },
+  { key: "actingForDerivation", label: "Side would change", what: "Lease Disposal / Sub-Letting / Lease Acquisition / Tenant Acquisition deals whose stored side differs from what the type derives (tenant). Nothing moves until Woody has seen this list. Impact counts use stand-in accounts (a landlord-side account owning the deal's parties and property; the tenant's own), the PO party per deal-po.ts without the scheme billing entity, and the WIP report's client chain.", headline: (c) => c?.would_change ?? 0, linkDeals: true },
   { key: "marketingStatusOutsideCodes", label: "Statuses outside the 12 codes", what: "available_units.marketing_status values that are not one of the canonical codes, with what they map to.", headline: (c) => c?.rows_outside ?? 0, linkDeals: false },
+  { key: "unitsWithMultipleLiveLandlordDeals", label: "Units with two live landlord deals", what: "Units (crm_deals.unit_id) carrying more than one landlord-side deal not at a closed code (EXC / COM / WIT / INV / ARCH — the index's own test, so NULL and unmapped statuses count as live), by type pair. letting+letting must be zero before the one-live-letting-per-unit index is created; letting+advisory and advisory+advisory are expected.", headline: (c) => c?.units ?? 0, linkDeals: true },
+  { key: "archDeals", label: "ARCH deals", what: "crm_deals at ARCH / Archived — not one of the 12 codes, maps to nothing, yet the 0034 index predicate, the stub check and the nightly spine re-link treat it as live because their closed lists omit it.", headline: (c) => c?.total ?? 0, linkDeals: true },
+  { key: "leasingRowsAtMarketingCode", label: "Leasing rows at a deal code", what: "leasing_schedule_units rows whose status is AVA / Available / Marketing — a deal code stored where the leasing enum (Vacant, In Negotiation, Under Offer, Occupied…) belongs.", headline: (c) => c?.total ?? 0, linkDeals: false },
+  { key: "tenancyRowsVacantWithClosedDeal", label: "Vacant on the schedule, deal at Solicitors+", what: "Tenancy rows still Vacant / Marketing while their linked deal is at Solicitors, Exchanged, Completed or Invoiced — and whether the tracker row is on bgp.uk.com (the website leak).", headline: (c) => c?.total ?? 0, linkDeals: true },
+  { key: "bootLoopBornTrackerRows", label: "Boot-loop-born tracker rows", what: "Tracker rows with the deleted deploy-time loop's signature: unit name equals the deal name, status 'Available', blank property, agent names in agent_user_ids. Headline = strong matches (name plus another signal); the list carries every row with any signal.", headline: (c) => c?.strong ?? 0, linkDeals: true },
+  { key: "hotsContent", label: "HOTs documents", what: "Tracker rows carrying a Heads of Terms document (hots_content) and how many sit on a closed deal — the collateral that moves with the row in Phase 5.", headline: (c) => c?.total ?? 0, linkDeals: true },
+  { key: "dealsUnlinkedFromSpine", label: "Live deals off the spine with a match", what: "Live letting deals with no tenancy_unit_id whose property has a tenancy row of the same unit name (the tenancy import's clearExisting casualties), with the candidate spine row. The nightly re-link skips deals without a unit_id.", headline: (c) => c?.total ?? 0, linkDeals: true },
 ];
 
 function IntegrityCounts({ counts }: { counts: any }) {
@@ -1083,9 +1090,28 @@ function IntegrityRow({ r, linkDeals }: { r: any; linkDeals: boolean }) {
   const ref = r.deal_ref ? `#${r.deal_ref}` : null;
   const name = r.unit_name || r.name || (r.value !== undefined ? String(r.value ?? "(null)") : r.id);
   const status = r.status_code || r.marketing_status || r.status || r.deal_status || null;
+  // Side-derivation rows carry the Phase 0 impact fields: what the account
+  // classification, the PO party and the WIP client do when the side flips.
+  const impact = r.would_change
+    ? [
+        `${r.stored_effective} → ${r.derived}`,
+        r.account_landlord_before !== undefined ? `landlord account ${r.account_landlord_before} → ${r.account_landlord_after}` : null,
+        r.account_tenant_before !== undefined ? `tenant account ${r.account_tenant_before} → ${r.account_tenant_after}` : null,
+        r.po_tenant_joins_billing ? `PO: tenant${r.tenant_name ? ` (${r.tenant_name})` : ""} joins the billed parties${r.po_both_set ? " beside the landlord" : ""}` : r.po_tenant_id === null ? "PO: no tenant on the deal" : null,
+        r.wip_client_before !== undefined ? (r.wip_client_changes ? `WIP client ${r.wip_client_before || "—"} → ${r.wip_client_after || "—"}` : `WIP client stays ${r.wip_client_before || "—"}`) : null,
+      ].filter(Boolean).join(" · ")
+    : null;
   const extra =
     r.door ||
-    (r.would_change ? `${r.stored_effective} → ${r.derived}` : r.derived ? `stays ${r.derived}` : null) ||
+    impact ||
+    (r.derived ? `stays ${r.derived}` : null) ||
+    (r.pair ? `${r.pair} (${r.letting_deals} letting, ${r.advisory_deals} advisory)` : null) ||
+    (r.treated_as_live ? `unit_id ${r.unit_id ? "set" : "—"} · spine ${r.tenancy_unit_id ? "set" : "—"} · tracker row ${r.tracker_row_id ? "yes" : "no"}` : null) ||
+    (r.maps_to_code !== undefined ? `leasing status "${r.status}" → ${r.maps_to_code || "no code"} · spine ${r.spine_linked ? "linked" : "unlinked"}` : null) ||
+    (r.effective_status !== undefined ? `schedule ${r.effective_status} vs deal ${r.deal_code} via ${r.via} · website ${r.show_on_website ? "ON" : "off"}${r.tenant_name ? ` · ${r.tenant_name}` : ""}` : null) ||
+    (r.signals ? `${r.strong ? "strong: " : ""}${r.signals.join(", ")}${r.deal_name && !r.name_is_deal_name ? ` · deal "${r.deal_name}"` : ""}` : null) ||
+    (r.hots_chars !== undefined ? `HOTs ${r.hots_chars} chars · deal ${r.no_deal ? "none" : r.deal_code || r.deal_status || "?"}${r.on_closed_deal ? " (closed)" : ""}` : null) ||
+    (r.spine_candidate_id ? `spine candidate ${r.spine_candidate_id}${r.ambiguous ? ` (${r.spine_matches} same-name rows)` : ""} · ${r.spine_status || r.spine_occupancy_status || "no status"}${r.spine_tenant_name ? ` · ${r.spine_tenant_name}` : ""} · name from ${r.unit_name_source}${r.unit_id ? "" : " · no unit_id"}` : null) ||
     (r.tracker_rows ? `${r.tracker_rows} tracker rows` : null) ||
     (r.count !== undefined ? `${r.count} rows → ${r.maps_to || "no code"}` : null) ||
     (r.stubs ? `${r.stubs.length} stub (${r.stubs.map((s: any) => `#${s.deal_ref ?? "?"}`).join(", ")}) + ${r.real.length} live (${r.real.map((s: any) => `#${s.deal_ref ?? "?"} ${s.status_code}`).join(", ")})` : null) ||
@@ -1099,6 +1125,12 @@ function IntegrityRow({ r, linkDeals }: { r: any; linkDeals: boolean }) {
       {r.property_name && <span className="text-muted-foreground">{r.property_name}</span>}
       {status && <span className="font-mono text-muted-foreground">{status}</span>}
       {extra && <span className="text-muted-foreground">{extra}</span>}
+      {Array.isArray(r.deals) && r.deals.map((d: any) => (
+        <span key={d.id} className="text-muted-foreground">
+          {linkDeals ? <Link href={`/deals/${d.id}`} className="font-mono underline-offset-2 hover:underline">#{d.deal_ref ?? "?"}</Link> : <span className="font-mono">#{d.deal_ref ?? "?"}</span>}
+          {" "}{d.deal_type || "(no type)"} <span className="font-mono">{d.status_code || d.status || "(no status)"}</span>
+        </span>
+      ))}
       {r.id && <span className="font-mono text-[10px] text-muted-foreground/70">{r.id}</span>}
     </div>
   );
@@ -1114,7 +1146,7 @@ function IntegrityList({ list, cap, linkDeals }: { list: any; cap: number; linkD
       {groups.map(([g, rows]) => (
         <div key={g ?? "all"}>
           {g && <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">{g.replace(/_/g, " ")} <span className="font-mono">{rows.length}</span></div>}
-          {rows.length === 0 ? <p className="text-xs text-muted-foreground">None.</p> : rows.slice(0, limit).map((r: any, i: number) => <IntegrityRow key={r.id || i} r={r} linkDeals={linkDeals} />)}
+          {rows.length === 0 ? <p className="text-xs text-muted-foreground">None.</p> : rows.slice(0, limit).map((r: any, i: number) => <IntegrityRow key={r.deal_id ? `${r.id || i}:${r.deal_id}` : (r.id || i)} r={r} linkDeals={linkDeals} />)}
           {rows.length > limit && (
             <button type="button" className="text-xs text-muted-foreground hover:text-foreground mt-1" onClick={() => setShowAll(true)}>
               …and {rows.length - limit} more{rows.length >= cap ? ` (first ${cap} returned)` : ""}
