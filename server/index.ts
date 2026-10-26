@@ -3616,22 +3616,25 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
   // explicit admin Preview → Apply (CLAUDE.md "Lettings"); the undo of that
   // sweep's stubs is POST /api/admin/letting-sweep-undo (server/letting-sweep-undo.ts).
   //
-  // One-off (Woody, 2026-10-26, "can't you do it?"): on the units that
-  // already carried a live letting deal, remove the stub the sweep minted
-  // and point the tracker row back at the one other live deal (or at no
-  // deal when there are several to choose from). Runs once — flagged in
-  // system_settings — and records every id under
-  // unit_backing_deals_undo_2026_10_26 so it can be put back.
+  // One-off (Woody, 2026-10-26, "can't you do it?" / "push everything"):
+  // undo that sweep in full, once, without re-linking — every untouched
+  // deal it minted inside its own time span is deleted and each tracker
+  // row goes back to no deal, exactly as at 16:00 (relink stays off: the
+  // review showed a name-based relink could point a row at the wrong unit's
+  // deal; Phase 2's Preview → Apply puts deals back on units properly).
+  // Every deal is snapshotted into the run record before it goes, the
+  // record is written as the run proceeds, and the flag below stops it
+  // running twice. The first pass (17:57, scope "duplicates") removed 2.
   setTimeout(async () => {
     try {
-      const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'letting_sweep_undo_auto_2026_10_26'`);
+      const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'letting_sweep_undo_all_2026_10_26'`);
       if (done.rows.length) return;
       const { applySweepUndo } = await import("./letting-sweep-undo");
-      const run = await applySweepUndo("duplicates", null, { skipPreviewCheck: true });
+      const run = await applySweepUndo("all", null, { skipPreviewCheck: true, relink: false });
       await pool.query(
-        `INSERT INTO system_settings (key, value, updated_at) VALUES ('letting_sweep_undo_auto_2026_10_26', $1::jsonb, now()) ON CONFLICT (key) DO NOTHING`,
-        [JSON.stringify({ at: run.at, deleted: run.deleted.length, failed: run.failed.length, summary: run.summary })]);
-      console.log(`[letting-sweep-undo] removed ${run.deleted.length} sweep stubs on units that already had a deal (${run.failed.length} failed)`);
+        `INSERT INTO system_settings (key, value, updated_at) VALUES ('letting_sweep_undo_all_2026_10_26', $1::jsonb, now()) ON CONFLICT (key) DO NOTHING`,
+        [JSON.stringify({ at: run.at, finishedAt: run.finishedAt, deleted: run.deleted.length, failed: run.failed.length, window: run.window, summary: run.summary })]);
+      console.log(`[letting-sweep-undo] full undo: removed ${run.deleted.length} sweep stubs (${run.failed.length} failed)`);
     } catch (e: any) {
       console.warn("[letting-sweep-undo]", e?.message);
     }
@@ -4316,6 +4319,9 @@ app.use("/api/branding/assets", express.static(
     "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",
     "/api/favorite-instructions", "/api/chatbgp/", "/api/hr/photo/",
     "/api/available-units", "/api/leasing-viewings", "/api/tasks",
+    // Unit search for the deal form / Add Unit — scoped to the client's own
+    // properties in the handler, like /api/available-units.
+    "/api/letting/unit-search",
     // Canonical activity feed — handler scopes clients to their own
     // portfolio and returns sanitised summaries only.
     "/api/activity-summary",
