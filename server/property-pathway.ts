@@ -799,15 +799,44 @@ function significantAddrTokens(s: string): Set<string> {
   );
 }
 
+// The street number / range an address starts with ("5", "3-4", "12a") —
+// the one token that tells neighbours at a shared postcode apart.
+function leadingBuildingNumber(address: string): string {
+  const m = normalisePathwayAddress(address).match(/^(\d+[a-z]?(?:[-\/&]\d+[a-z]?)?)(?:\s|$)/);
+  return m ? m[1] : "";
+}
+
+// The Land Registry title a run is pinned to (user-confirmed gate first).
+function pinnedTitleNumber(run: PropertyPathwayRun): string {
+  const sr: any = run.stageResults || {};
+  return String(sr.confirmedLandReg?.titleNumber || sr.stage1?.initialOwnership?.titleNumber || "").trim().toUpperCase();
+}
+
 export function findDuplicatePathwayRuns(
   address: string,
   postcode: string | null | undefined,
   runs: PropertyPathwayRun[],
+  // Identity beats text: a run on the same CRM property or pinned to the
+  // same title IS this property; one on a different CRM property never is
+  // (Jonny, 2026-06-09: "5 The Pavement" reopened the "3-4 The Pavement"
+  // run because they share a postcode).
+  identity: { propertyId?: string | null; titleNumber?: string | null } = {},
 ): { exact: PropertyPathwayRun | null; similar: PropertyPathwayRun[] } {
   const normalisedAddr = normalisePathwayAddress(address);
   const normPc = (postcode || "").trim().replace(/\s+/g, "").toUpperCase();
+  const myPropertyId = identity.propertyId || null;
+  const myTitle = String(identity.titleNumber || "").trim().toUpperCase();
+  const myNumber = leadingBuildingNumber(address);
+  const differentProperty = (r: PropertyPathwayRun) => !!(myPropertyId && r.propertyId && r.propertyId !== myPropertyId);
+  const differentNumber = (r: PropertyPathwayRun) => {
+    const rNumber = leadingBuildingNumber(r.address || "");
+    return !!(myNumber && rNumber && rNumber !== myNumber);
+  };
 
   const exact = runs.find((r) => {
+    if (differentProperty(r)) return false;
+    if (myPropertyId && r.propertyId === myPropertyId) return true;
+    if (myTitle && pinnedTitleNumber(r) === myTitle) return true;
     const rAddr = normalisePathwayAddress(r.address || "");
     const rPc = (r.postcode || "").trim().replace(/\s+/g, "").toUpperCase();
     if (rAddr !== normalisedAddr) return false;
@@ -819,6 +848,7 @@ export function findDuplicatePathwayRuns(
   const outward = (pc: string) => pc.slice(0, -3); // UK inward is always 3 chars
   const similar = runs.filter((r) => {
     if (exact && r.id === exact.id) return false;
+    if (differentProperty(r) || differentNumber(r)) return false;
     const rTokens = significantAddrTokens(r.address || "");
     if (myTokens.size === 0 || rTokens.size === 0) return false;
     let shared = 0;
@@ -4413,7 +4443,19 @@ async function runStage4(runId: string, req: Request): Promise<void> {
     // to "medium" so the user can confirm via Stage 3 gate.
     try {
       if (run.propertyId && candidateTitles.length > 0) {
-        const primaries = candidateTitles.filter((t) => t.isLikelyAtAddress);
+        let primaries = candidateTitles.filter((t) => t.isLikelyAtAddress);
+        // A user-confirmed title (the Land Registry gate / Ownership card)
+        // is the interest this run is about: stamp ITS proprietor, never
+        // the address-matched freeholder (Woody 2026-06-10: confirming
+        // Nuveen's leasehold TGL379483 still left Pavement Holdings as owner).
+        const lockedSr: any = run.stageResults || {};
+        const lockedTitle = String(lockedSr.confirmedLandReg?.titleNumber
+          || (lockedSr.stage1?.initialOwnership?.manualLock ? lockedSr.stage1?.initialOwnership?.titleNumber : "") || "").trim().toUpperCase();
+        if (lockedTitle) {
+          const pinned = candidateTitles.find((t) => String(t.titleNumber || "").trim().toUpperCase() === lockedTitle);
+          primaries = pinned ? [pinned] : [];
+          if (!pinned) console.log(`[pathway stage4] confirmed title ${lockedTitle} not in CCOD/OCOD sweep — leaving landlord_id on property ${run.propertyId} alone`);
+        }
         if (primaries.length > 0) {
           // Prefer a single-proprietor primary title for landlord_id
           // assignment. If multiple primary titles each with their own
@@ -5728,7 +5770,7 @@ export function registerPropertyPathwayRoutes(app: Express) {
           .from(propertyPathwayRuns)
           .orderBy(desc(propertyPathwayRuns.updatedAt))
           .limit(200);
-        const { exact, similar } = findDuplicatePathwayRuns(address, resolvedPostcode, existing);
+        const { exact, similar } = findDuplicatePathwayRuns(address, resolvedPostcode, existing, { propertyId: propertyId || null });
         if (exact) {
           return res.json({ success: true, run: rebindPropertyImageKeys(exact), existing: true });
         }
@@ -5951,6 +5993,26 @@ export function registerPropertyPathwayRoutes(app: Express) {
           if (nextOwnership.titleNumber) updates.titleNumber = nextOwnership.titleNumber;
           if (nextOwnership.proprietorName) updates.proprietorName = nextOwnership.proprietorName;
           if (nextOwnership.proprietorCompanyNumber) updates.proprietorCompanyNumber = nextOwnership.proprietorCompanyNumber;
+          // The confirmed title's proprietor becomes the owner link too when
+          // we already hold that company — otherwise the landlord stays the
+          // freeholder Stage 4 found (Woody, 2026-06-10). No company is minted here.
+          if (nextOwnership.proprietorCompanyNumber) {
+            const { rows: owners } = await pool.query<{ id: string }>(
+              `SELECT id FROM crm_companies WHERE LOWER(companies_house_number) = LOWER($1) LIMIT 1`,
+              [String(nextOwnership.proprietorCompanyNumber).trim()],
+            );
+            if (owners[0]?.id) {
+              updates.landlordId = owners[0].id;
+              // Provenance columns live in boot SQL only (not the Drizzle
+              // schema), so they go by raw SQL below.
+              await pool.query(
+                `UPDATE crm_properties
+                    SET landlord_source = 'user_confirmed_title', landlord_confidence = 'high', landlord_verified_at = NOW()
+                  WHERE id = $1`,
+                [run.propertyId],
+              );
+            }
+          }
         }
         if (Object.keys(updates).length > 0) {
           updates.updatedAt = new Date();

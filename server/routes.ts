@@ -2253,15 +2253,32 @@ export async function registerRoutes(
     }
   });
 
+  // A thread is the caller's when they created it or are a member (the
+  // same rule GET /api/chat/threads lists by). Feedback log, 2026-10-26:
+  // the linked-object lookup, the rename route and member removal had no
+  // such check, so one person could be handed another's thread or drop a
+  // member from a thread they were not in.
+  const threadIsUsers = async (threadId: string, userId: string): Promise<boolean> => {
+    const r = await pool.query(
+      `SELECT 1 FROM chat_threads t WHERE t.id = $1
+          AND (t.created_by = $2 OR EXISTS (SELECT 1 FROM chat_thread_members m WHERE m.thread_id = t.id AND m.user_id = $2))
+        LIMIT 1`, [threadId, userId]);
+    return r.rows.length > 0;
+  };
+
   app.post("/api/chat/threads", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
       const { title, propertyId, propertyName, linkedType, linkedId, linkedName, isAiChat, memberIds } = req.body;
 
       if (linkedType && linkedId && isAiChat) {
+        // Only a thread the caller created or is a member of — never
+        // another user's conversation about the same object.
         const existingResult = await pool.query(
-          "SELECT * FROM chat_threads WHERE is_ai_chat = true AND linked_type = $1 AND linked_id = $2 LIMIT 1",
-          [linkedType, linkedId]
+          `SELECT t.* FROM chat_threads t WHERE t.is_ai_chat = true AND t.linked_type = $1 AND t.linked_id = $2
+              AND (t.created_by = $3 OR EXISTS (SELECT 1 FROM chat_thread_members m WHERE m.thread_id = t.id AND m.user_id = $3))
+            ORDER BY t.updated_at DESC NULLS LAST LIMIT 1`,
+          [linkedType, linkedId, userId]
         );
         if (existingResult.rows.length > 0) {
           return res.json(existingResult.rows[0]);
@@ -2318,6 +2335,7 @@ export async function registerRoutes(
       const id = req.params.id as string;
       const thread = await storage.getChatThread(id);
       if (!thread) return res.status(404).json({ message: "Thread not found" });
+      if (!(await threadIsUsers(id, req.session.userId!))) return res.status(403).json({ message: "Not a member of this thread" });
       const { title, propertyId, propertyName, linkedType, linkedId, linkedName, hasAiMember } = req.body;
       const updates: any = {};
       if (title !== undefined) updates.title = title;
@@ -2671,6 +2689,7 @@ export async function registerRoutes(
     try {
       const id = req.params.id as string;
       const memberId = req.params.userId as string;
+      if (!(await threadIsUsers(id, req.session.userId!))) return res.status(403).json({ message: "Not a member of this thread" });
       if (memberId === "__chatbgp__") {
         await storage.updateChatThread(id, { hasAiMember: false });
         emitMemberRemoved(id, "__chatbgp__");

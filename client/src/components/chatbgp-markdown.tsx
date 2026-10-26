@@ -3,6 +3,7 @@ import { TagChip, type TagType } from "@/components/chat-tags";
 import { parseRichText, decodeRichTextText, safeRichTextUrl, isAuthenticatedDownloadUrl, type RichTextToken } from "@shared/chat-rich-text";
 import type { Tokens } from "marked";
 import { Copy, Check, Download, Loader2 } from "lucide-react";
+import { Link } from "wouter";
 
 // Single source of truth for chat-media downloads across desktop chat,
 // the standalone /chatbgp page and the mobile PWA. iOS PWA standalone
@@ -165,7 +166,10 @@ function renderTokens(tokens: RichTextToken[], prefix: string, inLink = false): 
         if (!url) return child();
         const label = renderTokens(token.tokens || [], key, true);
         if (isAuthenticatedDownloadUrl(url)) return <AuthDownloadLink key={key} href={url}>{label}</AuthDownloadLink>;
-        return <a key={key} href={url} target={url.startsWith("/") ? undefined : "_blank"} rel={url.startsWith("/") ? undefined : "noopener noreferrer"} className="text-primary underline underline-offset-2 break-words">{label}</a>;
+        // In-app routes (e.g. /property-pathway?runId=…) go through wouter so
+        // the phone shell / PWA navigates without a full reload (Woody, 21 Sep).
+        if (url.startsWith("/")) return <Link key={key} href={url} className="text-primary underline underline-offset-2 break-words">{label}</Link>;
+        return <a key={key} href={url} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 break-words">{label}</a>;
       }
       case "list": {
         const list = token as Tokens.List;

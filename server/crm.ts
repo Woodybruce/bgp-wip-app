@@ -2626,11 +2626,18 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           updates[f] = new Date(updates[f]);
         }
       }
+      const before = await storage.getCrmProperty(String(req.params.id));
       const property = await storage.updateCrmProperty(String(req.params.id), updates);
       res.json(property);
       // Staff owner changes can refresh shared company/KYC metadata, as on
       // staff reads above. Scoped clients retain their ordinary property edits.
-      if (!scopeCompanyId && ["freeholderId", "longLeaseholderId", "landlordId", "proprietorName", "proprietorCompanyNumber"].some(k => k in updates)) {
+      // A property that only now gains a postcode (bulk tracker updates,
+      // Woody 2026-09-15) gets the same pass the create route fires — VOA /
+      // owner / asset class could not run without one.
+      const gainedPostcode = "postcode" in updates
+        && !!String(updates.postcode || "").trim()
+        && !String(before?.postcode || "").trim();
+      if (!scopeCompanyId && (gainedPostcode || ["freeholderId", "longLeaseholderId", "landlordId", "proprietorName", "proprietorCompanyNumber"].some(k => k in updates))) {
         enrichPropertyInBackground(String(req.params.id), { force: true });
       }
       // An address typed without the picker carries no pin — place it.

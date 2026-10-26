@@ -97,6 +97,22 @@ function pickBillingAddress(addresses: any[] | undefined | null): any | null {
   );
 }
 
+// The NET (ex-VAT) figure cached on xero_invoices.line_amount — what the WIP
+// Fee Check and fill-blank-fees read as "Xero net". Xero's SubTotal is the
+// sum of every line ex-VAT, so it is right for multi-line invoices too; the
+// first line's LineAmount is the fallback for a payload without SubTotal,
+// then whatever the caller already holds. Deal 3671 sat on the Fee Check at
+// £4,875 while Xero said £5,000 because the bulk sync refreshed Total but
+// never line_amount (Layla, 2026-10-21) — every write path goes through here.
+function xeroNetAmount(xeroInvoice: any, fallback: number | null | undefined): number | null {
+  const sub = Number(xeroInvoice?.SubTotal);
+  if (xeroInvoice?.SubTotal != null && Number.isFinite(sub)) return sub;
+  const first = xeroInvoice?.LineItems?.[0]?.LineAmount;
+  const line = Number(first);
+  if (first != null && Number.isFinite(line)) return line;
+  return fallback ?? null;
+}
+
 async function autoPromoteDealToInvoiced(dealId: string, xeroStatus: string): Promise<boolean> {
   if (!XERO_INVOICED_STATUSES.includes(xeroStatus)) return false;
   try {
@@ -1072,7 +1088,7 @@ export function setupXeroRoutes(app: Express) {
         // Cache so the edit form can pre-fill without an extra round-trip.
         contactName: xeroInvoice?.Contact?.Name ?? resolvedContactName ?? null,
         lineDescription: firstLine?.Description ?? lineItems?.[0]?.Description ?? null,
-        lineAmount: firstLine?.LineAmount ?? lineItems?.[0]?.UnitAmount ?? null,
+        lineAmount: xeroNetAmount(xeroInvoice, lineItems?.[0]?.UnitAmount ?? null),
         poNumber: poNumber || null,
         syncedAt: new Date(),
       } as any).returning();
@@ -1140,7 +1156,7 @@ export function setupXeroRoutes(app: Express) {
           dueDate: xeroInvoice.DueDate ? String(xeroInvoice.DueDate).slice(0, 10) : invoice.dueDate,
           contactName: xeroInvoice.Contact?.Name ?? invoice.contactName,
           lineDescription: firstLine?.Description ?? invoice.lineDescription,
-          lineAmount: firstLine?.LineAmount ?? invoice.lineAmount,
+          lineAmount: xeroNetAmount(xeroInvoice, invoice.lineAmount),
           syncedAt: new Date(),
           updatedAt: new Date(),
         } as any).where(eq(xeroInvoices.id, req.params.id as string));
@@ -1208,7 +1224,7 @@ export function setupXeroRoutes(app: Express) {
         dueDate: updated.DueDate ? String(updated.DueDate).slice(0, 10) : (dueDate || invoice.dueDate),
         contactName: updated.Contact?.Name ?? contactName ?? invoice.contactName,
         lineDescription: firstLine?.Description ?? lineDescription,
-        lineAmount: firstLine?.LineAmount ?? lineAmount,
+        lineAmount: xeroNetAmount(updated, lineAmount),
         poNumber: poNumber ?? invoice.poNumber,
         syncedAt: new Date(),
         updatedAt: new Date(),
@@ -1256,6 +1272,9 @@ export function setupXeroRoutes(app: Express) {
         await db.update(xeroInvoices).set({
           status: xeroInvoice.Status,
           totalAmount: xeroInvoice.Total,
+          // Net moves with the gross — an amount edited in Xero was landing
+          // here as a new Total over a stale line_amount.
+          lineAmount: xeroNetAmount(xeroInvoice, inv.lineAmount),
           invoiceNumber: xeroInvoice.InvoiceNumber,
           syncedAt: new Date(),
           updatedAt: new Date(),

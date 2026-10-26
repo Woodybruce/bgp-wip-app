@@ -110,6 +110,9 @@ type ChatAction = {
   imageDataUrl?: string;
   imageUrl?: string;
   prompt: string;
+} | {
+  type: "navigate";
+  path: string;
 };
 
 type LocalChatMessage = {
@@ -183,6 +186,7 @@ type MoreSubTab = "tracker" | "reqs" | "news" | "docs";
 function ActionCard({ action }: { action: ChatAction }) {
   const { toast } = useToast();
   const [expanded, setExpanded] = useState(false);
+  const [, navigate] = useLocation();
 
   const cardBg = "bg-white";
   const textPrimary = "text-black";
@@ -255,6 +259,23 @@ function ActionCard({ action }: { action: ChatAction }) {
         />
         <div className={`text-xs mt-1 italic truncate ${textMuted}`}>{action.prompt}</div>
       </div>
+    );
+  }
+
+  // Desktop auto-navigates on a "navigate" action (chat-panel / chatbgp);
+  // the phone shell used to drop it, so a pathway run started from mobile
+  // had no way in (Woody, 21 Sep). Offer the route as a tappable card.
+  if (action.type === "navigate" && action.path?.startsWith("/") && !action.path.startsWith("//")) {
+    return (
+      <button
+        type="button"
+        onClick={() => navigate(action.path)}
+        className={`mt-2 flex items-center justify-between gap-2 w-full rounded-lg border px-3 py-2.5 text-left text-sm font-medium ${cardBg} ${textPrimary}`}
+        data-testid="action-navigate-mobile"
+      >
+        <span className="truncate">Open {action.path.replace(/^\//, "").split(/[/?]/)[0].replace(/-/g, " ")}</span>
+        <ChevronRight className="w-4 h-4 shrink-0" />
+      </button>
     );
   }
 

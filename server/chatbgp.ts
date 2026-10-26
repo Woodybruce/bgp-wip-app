@@ -483,11 +483,16 @@ function setCache<T>(key: string, data: T, ttlMs: number): void {
 // KQL operators pass through as-is. Unbalanced quotes also 400, so strip
 // them when the count is odd.
 function toGraphSearchQuery(raw: string): string {
-  const q = String(raw || "").trim();
+  // Graph's $search takes ONE outer pair of double quotes with KQL inside;
+  // phrases inside it use escaped quotes (\"...\"). A model-written
+  //   "Stow Capital" OR "65 Brook Street"
+  // used to be passed through as-is, so Graph read only the first quoted
+  // token (or nothing at all) and returned recent unrelated mail.
+  let q = String(raw || "").trim();
+  if (/^"[^"]*"$/.test(q)) q = q.slice(1, -1).trim();
   const quoteCount = (q.match(/"/g) || []).length;
-  const balanced = quoteCount % 2 === 0 ? q : q.replace(/"/g, "");
-  if (balanced.includes('"') || /\b(OR|AND|NOT)\b/.test(balanced)) return balanced;
-  return `"${balanced}"`;
+  if (quoteCount % 2 !== 0) q = q.replace(/"/g, "");
+  return `"${q.replace(/\\?"/g, '\\"')}"`;
 }
 
 // Shared implementation of the search_emails tool, used by two handler sites.
@@ -504,6 +509,21 @@ function toGraphSearchQuery(raw: string): string {
 // only. Enforced here and on the two attachment tools — the app-only Graph
 // token would otherwise let any login read any colleague's mail.
 const SHARED_INBOX = "chatbgp@brucegillinghampollard.com";
+// A users row that has no real BGP mailbox: client logins (role Client, e.g.
+// Landsec) and guest/service addresses. Fanning out to them 404s on Graph.
+function isFanOutMailbox(u: { role?: string | null; email?: string | null; username?: string | null }): string | null {
+  const mb = u.email || u.username;
+  if (!mb || !/@brucegillinghampollard\.com$/i.test(mb)) return null;
+  if (mb.toLowerCase() === SHARED_INBOX) return null;
+  if (u.role === "Client") return null;
+  if (/guest|noreply|no-reply|donotreply/i.test(mb.split("@")[0])) return null;
+  return mb;
+}
+// Graph says the mailbox doesn't exist (guest account, deleted user, no
+// Exchange licence). Not an error of the search — just nothing to read there.
+function isMissingMailboxError(err: any): boolean {
+  return /ErrorInvalidUser|ResourceNotFound|MailboxNotEnabledForRESTAPI|Graph API 404/i.test(String(err?.message || err));
+}
 async function mailboxCaller(req: any): Promise<{ isAdmin: boolean; email: string }> {
   const userId = req?.session?.userId || req?.tokenUserId;
   if (!userId) return { isAdmin: false, email: "" };
@@ -564,14 +584,12 @@ export async function runSearchEmailsTool(opts: { query: string; top: number; ma
         mailboxes.push({ email: SHARED_INBOX, owner: "Shared inbox" });
         try {
           const activeUsers = await db
-            .select({ username: users.username, email: users.email, name: users.name })
+            .select({ username: users.username, email: users.email, name: users.name, role: users.role })
             .from(users)
             .where(eq(users.isActive, true));
           for (const u of activeUsers) {
-            const mb = u.email || u.username;
-            if (mb && /@brucegillinghampollard\.com$/i.test(mb) && mb.toLowerCase() !== "chatbgp@brucegillinghampollard.com") {
-              mailboxes.push({ email: mb, owner: u.name || mb });
-            }
+            const mb = isFanOutMailbox(u);
+            if (mb) mailboxes.push({ email: mb, owner: u.name || mb });
           }
         } catch {}
       } else {
@@ -593,12 +611,13 @@ export async function runSearchEmailsTool(opts: { query: string; top: number; ma
             collected.push(mapMsg(msg, mailbox === "all" ? mb.owner : undefined, mb.email));
           }
         } catch (err: any) {
+          if (mailbox === "all" && isMissingMailboxError(err)) continue;
           errors.push(`${mb.email}: ${String(err?.message || err).slice(0, 120)}`);
         }
       }
       collected.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
       const scope = mailbox === "all" ? `${mailboxes.length} mailboxes` : mailbox;
-      if (collected.length === 0 && errors.length > 0) {
+      if (collected.length === 0 && errors.length > 0 && errors.length >= mailboxes.length) {
         return { error: `No results, and all mailboxes errored. First: ${errors[0]}` };
       }
       return { messages: collected.slice(0, top), scope };
@@ -697,14 +716,12 @@ export async function runSearchCalendarTool(opts: {
         mailboxes.push({ email: "chatbgp@brucegillinghampollard.com", owner: "Shared inbox" });
         try {
           const activeUsers = await db
-            .select({ username: users.username, email: users.email, name: users.name })
+            .select({ username: users.username, email: users.email, name: users.name, role: users.role })
             .from(users)
             .where(eq(users.isActive, true));
           for (const u of activeUsers) {
-            const mb = u.email || u.username;
-            if (mb && /@brucegillinghampollard\.com$/i.test(mb) && mb.toLowerCase() !== "chatbgp@brucegillinghampollard.com") {
-              mailboxes.push({ email: mb, owner: u.name || mb });
-            }
+            const mb = isFanOutMailbox(u);
+            if (mb) mailboxes.push({ email: mb, owner: u.name || mb });
           }
         } catch {}
       } else {
@@ -743,12 +760,15 @@ export async function runSearchCalendarTool(opts: {
             collected.push(mapEvent(ev, mailbox === "all" ? mb.owner : undefined, mb.email));
           }
         } catch (err: any) {
+          // One guest/invalid mailbox (Graph 404 ErrorInvalidUser) must not
+          // sink the whole fan-out — skip it and keep the other calendars.
+          if (mailbox === "all" && isMissingMailboxError(err)) continue;
           errors.push(`${mb.email}: ${String(err?.message || err).slice(0, 120)}`);
         }
       }
       collected.sort((a, b) => new Date(b.start || 0).getTime() - new Date(a.start || 0).getTime());
       const scope = mailbox === "all" ? `${mailboxes.length} calendars` : mailbox;
-      if (collected.length === 0 && errors.length > 0) {
+      if (collected.length === 0 && errors.length > 0 && errors.length >= mailboxes.length) {
         return { error: `No results, and all calendars errored. First: ${errors[0]}` };
       }
       return { events: collected.slice(0, top), scope };
@@ -6884,7 +6904,14 @@ export async function executeCrmToolRaw(
       return or(...conditions);
     };
     if (entityType === "all" || entityType === "deals") {
-      results.deals = await db.select({ id: crmDeals.id, name: crmDeals.name, groupName: crmDeals.groupName, status: crmDeals.status }).from(crmDeals).where(buildOr([crmDeals.name, crmDeals.comments])).limit(100);
+      // "3892" / "#3892" is a deal Ref # — match deal_ref as well as the text columns.
+      const refMatch = rawQuery.match(/^#?\s*(\d{1,9})$/);
+      const dealConds: any[] = [buildOr([crmDeals.name, crmDeals.comments])];
+      if (refMatch) {
+        const { eq: eqRef } = await import("drizzle-orm");
+        dealConds.push(eqRef(crmDeals.dealRef, Number(refMatch[1])));
+      }
+      results.deals = await db.select({ id: crmDeals.id, dealRef: crmDeals.dealRef, name: crmDeals.name, groupName: crmDeals.groupName, status: crmDeals.status }).from(crmDeals).where(or(...dealConds)).limit(100);
     }
     if (entityType === "all" || entityType === "contacts") {
       results.contacts = await db.select({ id: crmContacts.id, name: crmContacts.name, email: crmContacts.email, role: crmContacts.role }).from(crmContacts).where(buildOr([crmContacts.name, crmContacts.email])).limit(100);
@@ -7677,7 +7704,10 @@ export async function executeCrmToolRaw(
       };
       const mapping = tableMap[linkType];
       if (!mapping) return { data: { success: false, error: `Unknown link type "${linkType}"` } };
-      await pool.query(`INSERT INTO ${mapping.table} (id, ${mapping.col1}, ${mapping.col2}) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM ${mapping.table} WHERE ${mapping.col1} = $2 AND ${mapping.col2} = $3)`, [linkId, sourceId, targetId]);
+      // Each param appears once: the old INSERT ... SELECT $2 ... WHERE col = $2
+      // form made Postgres deduce two types for $2 ("inconsistent types deduced
+      // for parameter $2"). The pair unique indexes come from the boot MIGRATIONS.
+      await pool.query(`INSERT INTO ${mapping.table} (id, ${mapping.col1}, ${mapping.col2}) VALUES ($1, $2, $3) ON CONFLICT (${mapping.col1}, ${mapping.col2}) DO NOTHING`, [linkId, sourceId, targetId]);
       return { data: { success: true, action: "linked", linkType, sourceId, targetId } };
     } catch (err: any) {
       return { data: { success: false, error: err.message } };
@@ -9083,6 +9113,11 @@ export async function executeCrmToolRaw(
     try {
       const t = await pool.query(`SELECT id, created_by FROM chat_threads WHERE id = $1`, [threadId]);
       if (!t.rows[0]) return { data: { error: "Thread not found." } };
+      // Only the thread's owner or a member may list, add or remove people.
+      if (sessionUserId && t.rows[0].created_by !== sessionUserId) {
+        const mine = await pool.query(`SELECT 1 FROM chat_thread_members WHERE thread_id = $1 AND user_id = $2 LIMIT 1`, [threadId, sessionUserId]);
+        if (!mine.rows.length) return { data: { error: "You're not a member of this thread." } };
+      }
       if (action === "list") {
         const m = await pool.query(
           `SELECT u.id, u.name, 'owner' AS kind FROM users u WHERE u.id = $2
@@ -9584,12 +9619,14 @@ export async function executeCrmToolRaw(
       templates: "/templates", settings: "/settings", "land-registry": "/land-registry",
       "voa-rates": "/business-rates", "business-rates": "/business-rates",
       "intelligence-map": "/edozo", "leasing-units": "/available", "leasing-schedule": "/leasing-schedule",
-      "investment-tracker": "/investment-tracker", "wip-report": "/deals/report",
-      "property-map": "/property-map", map: "/property-map",
+      "investment-tracker": "/investment-tracker", "wip-report": "/wip-report",
+      // The map lives as a tab inside Property Intelligence (App.tsx redirects
+      // /map and /map-bgp there; /property-map was never a route).
+      "property-map": "/property-intelligence?tab=map", map: "/property-intelligence?tab=map",
     };
     let path = pageRoutes[fnArgs.page] || "/";
     if ((fnArgs.page === "property-map" || fnArgs.page === "map") && fnArgs.lat && fnArgs.lng) {
-      path += `?lat=${fnArgs.lat}&lng=${fnArgs.lng}` + (fnArgs.zoom ? `&zoom=${fnArgs.zoom}` : "&zoom=17");
+      path += `${path.includes("?") ? "&" : "?"}lat=${fnArgs.lat}&lng=${fnArgs.lng}` + (fnArgs.zoom ? `&zoom=${fnArgs.zoom}` : "&zoom=17");
     }
     return { data: { success: true, navigatedTo: fnArgs.page }, action: { type: "navigate", path } };
   }
@@ -11769,8 +11806,12 @@ Be thorough — include every unit row you can classify, across all properties i
 
       const params: any[] = [rawQuery];
       const whereClauses: string[] = [];
-      // Rank against the same tsvector expression as the GIN index
-      const tsExpr = "to_tsvector('english', coalesce(file_name,'') || ' ' || coalesce(summary,'') || ' ' || coalesce(content,'') || ' ' || coalesce(array_to_string(ai_tags, ' '),'') || ' ' || coalesce(category,''))";
+      // MUST be character-for-character the expression of knowledge_base_search_idx
+      // (server/index.ts, built off the boot path). The old version also folded
+      // ai_tags in, which is not the indexed expression, so Postgres seq-scanned
+      // and re-tokenised every row's content on each call — the 30s pool
+      // query_timeout ("Query read timeout") Woody/Ben/Carly kept hitting.
+      const tsExpr = "to_tsvector('english', coalesce(file_name,'') || ' ' || coalesce(summary,'') || ' ' || coalesce(content,'') || ' ' || coalesce(category,''))";
       whereClauses.push(`${tsExpr} @@ websearch_to_tsquery('english', $1)`);
       if (source) { params.push(source); whereClauses.push(`source = $${params.length}`); }
       if (category) { params.push(category); whereClauses.push(`category = $${params.length}`); }
@@ -13214,15 +13255,15 @@ export async function handleCrmToolCall(
       if (linkType === "contact-deal") {
         const check = await pool.query(`SELECT id FROM crm_contacts WHERE id = $1`, [sourceId]);
         if (!check.rows.length) return { handled: true, response: { reply: `Contact with ID "${sourceId}" not found.` } };
-        await pool.query(`INSERT INTO crm_contact_deals (id, contact_id, deal_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_contact_deals WHERE contact_id = $2 AND deal_id = $3)`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_contact_deals (id, contact_id, deal_id) VALUES ($1, $2, $3) ON CONFLICT (contact_id, deal_id) DO NOTHING`, [linkId, sourceId, targetId]);
       } else if (linkType === "contact-property") {
-        await pool.query(`INSERT INTO crm_contact_properties (id, contact_id, property_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_contact_properties WHERE contact_id = $2 AND property_id = $3)`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_contact_properties (id, contact_id, property_id) VALUES ($1, $2, $3) ON CONFLICT (contact_id, property_id) DO NOTHING`, [linkId, sourceId, targetId]);
       } else if (linkType === "contact-requirement") {
-        await pool.query(`INSERT INTO crm_contact_requirements (id, contact_id, requirement_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_contact_requirements WHERE contact_id = $2 AND requirement_id = $3)`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_contact_requirements (id, contact_id, requirement_id) VALUES ($1, $2, $3) ON CONFLICT (contact_id, requirement_id) DO NOTHING`, [linkId, sourceId, targetId]);
       } else if (linkType === "company-property") {
-        await pool.query(`INSERT INTO crm_company_properties (id, company_id, property_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_company_properties WHERE company_id = $2 AND property_id = $3)`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_company_properties (id, company_id, property_id) VALUES ($1, $2, $3) ON CONFLICT (company_id, property_id) DO NOTHING`, [linkId, sourceId, targetId]);
       } else if (linkType === "company-deal") {
-        await pool.query(`INSERT INTO crm_company_deals (id, company_id, deal_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_company_deals WHERE company_id = $2 AND deal_id = $3)`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_company_deals (id, company_id, deal_id) VALUES ($1, $2, $3) ON CONFLICT (company_id, deal_id) DO NOTHING`, [linkId, sourceId, targetId]);
       } else {
         return { handled: true, response: { reply: `Unknown link type "${linkType}".` } };
       }
@@ -13693,12 +13734,14 @@ export async function handleCrmToolCall(
       templates: "/templates", settings: "/settings", "land-registry": "/land-registry",
       "voa-rates": "/business-rates", "business-rates": "/business-rates",
       "intelligence-map": "/edozo", "leasing-units": "/available", "leasing-schedule": "/leasing-schedule",
-      "investment-tracker": "/investment-tracker", "wip-report": "/deals/report",
-      "property-map": "/property-map", map: "/property-map",
+      "investment-tracker": "/investment-tracker", "wip-report": "/wip-report",
+      // The map lives as a tab inside Property Intelligence (App.tsx redirects
+      // /map and /map-bgp there; /property-map was never a route).
+      "property-map": "/property-intelligence?tab=map", map: "/property-intelligence?tab=map",
     };
     let path = pageRoutes[fnArgs.page] || "/";
     if ((fnArgs.page === "property-map" || fnArgs.page === "map") && fnArgs.lat && fnArgs.lng) {
-      path += `?lat=${fnArgs.lat}&lng=${fnArgs.lng}` + (fnArgs.zoom ? `&zoom=${fnArgs.zoom}` : "&zoom=17");
+      path += `${path.includes("?") ? "&" : "?"}lat=${fnArgs.lat}&lng=${fnArgs.lng}` + (fnArgs.zoom ? `&zoom=${fnArgs.zoom}` : "&zoom=17");
     }
     const reply = fnArgs.message || `Navigating you to ${fnArgs.page}.`;
     return { handled: true, response: { reply, action: { type: "navigate", path } } };
@@ -14813,7 +14856,7 @@ export function setupChatBGPRoutes(app: Express) {
         if (!forceNew) {
           const existing = await db.select().from(propertyPathwayRuns).orderBy(desc(propertyPathwayRuns.updatedAt)).limit(200);
           const { findDuplicatePathwayRuns } = await import("./property-pathway");
-          const { exact: match, similar } = findDuplicatePathwayRuns(address, postcode, existing);
+          const { exact: match, similar } = findDuplicatePathwayRuns(address, postcode, existing, { propertyId: tcArgs.propertyId ? String(tcArgs.propertyId) : undefined, titleNumber: confirmedTitleNumber || undefined });
           if (!match && similar.length > 0) {
             return {
               data: {

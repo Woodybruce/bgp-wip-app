@@ -3063,6 +3063,38 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       }
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_13c', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
+    // Will Penfold (feedback log, 2026-10-26): the sidebar read "Graduate
+    // Surveyor" — his title is Associate Director. Once, flagged.
+    const doneWP = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_titles_2026_10_26_wp'`);
+    if (!doneWP.rows.length) {
+      const u = await pool.query(`SELECT id FROM users WHERE lower(email) = 'willp@brucegillinghampollard.com' AND is_active = true`);
+      for (const r of u.rows) {
+        await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [r.id]);
+        await pool.query(`UPDATE staff_profiles SET title = 'Associate Director', updated_at = now() WHERE user_id = $1`, [r.id]);
+      }
+      if (!u.rows.length) console.warn("[hr-titles] no active login for willp@");
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_26_wp', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // The sidebar (bottom-left, under the name) and ChatBGP's "Current
+    // user" line read users.role, which was seeded in 2025 and never
+    // followed the HR title — the source of truth (CLAUDE.md "Website team
+    // list = HR"). Mirror it every boot: users.role = staff_profiles.title
+    // for active BGP staff. users.role is only ever tested for the value
+    // "Client" (client logins have no staff profile), so this changes no
+    // permission.
+    try {
+      const synced = await pool.query(
+        `UPDATE users u SET role = sp.title
+           FROM staff_profiles sp
+          WHERE sp.user_id = u.id AND u.is_active = true
+            AND coalesce(trim(sp.title), '') <> ''
+            AND coalesce(u.role, '') <> 'Client'
+            AND u.email ILIKE '%@brucegillinghampollard.com'
+            AND u.role IS DISTINCT FROM sp.title`);
+      if (synced.rowCount) console.log(`[hr-titles] users.role mirrored from HR titles for ${synced.rowCount} login(s)`);
+    } catch (e: any) {
+      console.warn("[hr-titles] role mirror failed:", e?.message);
+    }
     // Mobile numbers (Woody, 2026-10-13: "get everyone's mobiles sorted and
     // added"). HR (users.phone) is the source for cards and the website, so
     // fill it from email signatures and the numbers already published on the
