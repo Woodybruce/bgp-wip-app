@@ -5,10 +5,12 @@ import { legacyToCode } from "@shared/deal-status";
 import { computeDealAmlStatus, DealAmlBadge, type AmlCheckCompany } from "@/components/deal-aml-badge";
 import { teamLabel } from "@/lib/crm-options";
 
-// WIP-only kanban: NEG → INV. Pipeline (REP/SPEC/LIVE/AVA) belongs on the
-// Letting / Investment trackers; WIT is hidden from the WIP board entirely.
+// WIP kanban: AVA → INV. Marketing deals sit here from birth so the fee
+// gets added (Woody, 2026-10-26); the pre-marketing investment pipeline
+// (REP/SPEC/LIVE) belongs on the Investment tracker; WIT is hidden.
 const KANBAN_COLUMNS = [
-  { key: "NEG", label: "Negotiating", statuses: ["NEG"] },
+  { key: "AVA", label: "Marketing", statuses: ["AVA"] },
+  { key: "NEG", label: "Negotiating", statuses: ["NEG", "HOT"] },
   { key: "SOL", label: "Solicitors", statuses: ["SOL"] },
   { key: "EXC", label: "Exchanged", statuses: ["EXC"] },
   { key: "COM", label: "Completed", statuses: ["COM"] },

@@ -3608,6 +3608,31 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     console.warn(`[backfill-units] failed: ${e.message}`);
   }
 
+  // Every Letting Tracker unit has a backing deal — its Ref #, where fees
+  // and the fee split are added (Woody, 2026-10-26). Rows born from tenancy
+  // imports / the spine mirror / tracker-focus never had one. Idempotent
+  // and cheap (one SELECT on deal_id IS NULL), so it runs every boot like
+  // backfillInvestmentTrackerDeals and also heals rows born later from raw
+  // inserts or a deleted deal; the first run's counts are kept in
+  // system_settings for audit. A minute after boot: after [backfill-units]
+  // above (unit_id) and the 40s junk sweep + orphan-projection heal, so it
+  // never stubs a row about to be removed.
+  setTimeout(async () => {
+    try {
+      const { backfillUnitBackingDeals } = await import("./unit-mirror");
+      const r = await backfillUnitBackingDeals(pool);
+      if (r.created || r.linked || r.failed) {
+        console.log(`[unit-backing-deals] scanned ${r.scanned}, created ${r.created}, linked ${r.linked}, skipped ${r.skipped}, failed ${r.failed}`);
+      }
+      await pool.query(
+        `INSERT INTO system_settings (key, value, updated_at) VALUES ('unit_backing_deals_2026_10_26', $1::jsonb, now()) ON CONFLICT (key) DO NOTHING`,
+        [JSON.stringify({ ...r, at: new Date().toISOString() })],
+      );
+    } catch (e: any) {
+      console.warn("[unit-backing-deals]", e?.message);
+    }
+  }, 60_000);
+
   // ── Seed staff start dates from employment contracts (May 2026) ────────
   // Idempotent — ON CONFLICT only updates start_date, never overwrites other fields.
   // Nick Goodman is a consultant (not employee) so pension_opt_in = false.
@@ -5161,7 +5186,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
             DELETE FROM available_units au
              WHERE au.tenancy_unit_id IS NOT NULL
                AND NOT EXISTS (SELECT 1 FROM tenancy_schedule_units t WHERE t.id = au.tenancy_unit_id)
-               AND au.deal_id IS NULL
+               AND (au.deal_id IS NULL OR EXISTS (SELECT 1 FROM crm_deals d WHERE d.id = au.deal_id
+                      AND d.status = 'AVA' AND d.tenant_id IS NULL AND COALESCE(d.fee, 0) <= 0))
                AND NOT EXISTS (SELECT 1 FROM unit_viewings v WHERE v.unit_id = au.id)
                AND NOT EXISTS (SELECT 1 FROM unit_offers f WHERE f.unit_id = au.id)
                AND NOT EXISTS (SELECT 1 FROM unit_interest i WHERE i.unit_id = au.id)
@@ -5170,7 +5196,16 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
                AND EXISTS (SELECT 1 FROM available_units au2
                             JOIN tenancy_schedule_units t2 ON t2.id = au2.tenancy_unit_id
                            WHERE au2.property_id = au.property_id AND au2.id <> au.id
-                             AND lower(trim(coalesce(au2.unit_name, ''))) = lower(trim(coalesce(au.unit_name, ''))))`);
+                             AND lower(trim(coalesce(au2.unit_name, ''))) = lower(trim(coalesce(au.unit_name, ''))))
+             RETURNING au.deal_id`);
+          // A bare duplicate's only deal is the £0 Marketing stub every row
+          // now carries — it goes with the row, same as DELETE unit / tracker-focus.
+          if (delAvail.rows.some((x: any) => x.deal_id)) {
+            const { storage } = await import("./storage");
+            for (const x of delAvail.rows) {
+              if (x.deal_id) await storage.deleteCrmDeal(x.deal_id).catch((e: any) => console.warn("[orphan-projection heal] stub deal:", e?.message));
+            }
+          }
           const unlinkAvail = await pool.query(`
             UPDATE available_units au SET tenancy_unit_id = NULL
              WHERE au.tenancy_unit_id IS NOT NULL

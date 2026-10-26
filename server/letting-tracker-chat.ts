@@ -383,7 +383,7 @@ export async function addUnitToLettingTracker(req: Request, args: AddUnitArgs) {
   }
   return {
     success: true,
-    unitId, alreadyListed, dealId: unit.dealId || null, dealRef: unit.dealRef || null,
+    unitId, alreadyListed, dealId: unit.dealId ?? unit.deal_id ?? null, dealRef: unit.dealRef ?? unit.deal_ref ?? null,
     unitName: unit.unitName || args.unitName,
     agents: agents.matched.map(m => m.user), agentsNotMatched: agents.unmatched,
     brochureFiled, photoAdded,

@@ -73,9 +73,9 @@ export const DEAL_STATUS_DOT_COLORS: Record<DealStatusCode, string> = {
 export const LETTING_STATUSES: DealStatusCode[]    = ["OPP", "AVA", "NEG", "HOT", "SOL", "EXC", "COM", "WIT", "INV"];
 export const INVESTMENT_STATUSES: DealStatusCode[] = ["REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "WIT", "INV"];
 // WIP report covers every fee-bearing stage including pre-deal pipeline.
-// AVA + NEG live on the Letting Tracker side; SOL+ live on the Deals
-// Board. Both feed the WIP report (visual reflection of both boards per
-// the post-Sage model). REP dropped from WIP (Woody, 2026-08-31: "delete
+// AVA + NEG live on the Letting Tracker AND the Deals board (Woody,
+// 2026-10-26: a Marketing deal sits on the WIP and the Deals board from
+// birth so its fee gets added); SOL+ carry on through the Deals board. REP dropped from WIP (Woody, 2026-08-31: "delete
 // reporting" — matching Alex's 2026-08-12 letting-tracker call); REP
 // deals stay on the Investment tracker and deal pages, they just don't
 // count as WIP.

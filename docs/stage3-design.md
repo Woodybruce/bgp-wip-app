@@ -102,6 +102,7 @@ Rollback = flip the env var off. No DB migration needed for the code change itse
 
 Stage 3 splits cleanly into two independently-shippable pieces:
 
+- Superseded 2026-10-26 (Woody): every tracker unit has a backing deal from creation; the UNIFIED_ADD_UNIT server gate was removed.
 - **Stage 3a — server flag-gate of auto-deal creation.** Single-point change in
   `server/routes.ts` (POST /api/available-units). When `UNIFIED_ADD_UNIT=1`, skip the
   silent pre-SOL deal insert. SOL promotion already handles the no-prior-deal case

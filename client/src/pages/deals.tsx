@@ -2811,11 +2811,10 @@ export function DealFormDialog({
                 <SelectContent>
                   <SelectItem value="__clear__">None</SelectItem>
                   {CRM_OPTIONS.dealStatus.map((s) => {
-                    // Pre-Solicitors statuses don't belong on the Deals
-                    // CRM — those marketing-stage deals live on the
-                    // Letting Tracker. Disable them when creating a new
-                    // deal, but keep them selectable in edit mode so
-                    // existing deals don't get stuck.
+                    // A new letting starts life on the Letting Tracker
+                    // (which creates its deal); a new deal typed here
+                    // starts at HOTs or later. Existing deals keep every
+                    // status selectable so nothing gets stuck.
                     const PRE_SOL = ["REP", "SPEC", "LIVE", "AVA", "NEG"];
                     const isPreSol = PRE_SOL.includes(s);
                     return (
@@ -5645,12 +5644,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     return out;
   }, [isClientDeals, visibleColumns]);
 
-  // Always hide pre-SOL tracker-backed deals from the Deals CRM. They
-  // live on the Letting Tracker until they get promoted to SOL+, at
-  // which point the server-side filter lets them through naturally
-  // (storage checks the available_units.marketing_status before
-  // suppressing). Cleans up the AVA clutter that used to appear at the
-  // top of the table.
+  // Deals from Marketing onwards (Woody, 2026-10-26: marketing deals sit
+  // on the Deals board and the WIP so people can see them and add fees);
+  // the server only drops the pre-marketing investment pipeline.
   const dealsUrl = "/api/crm/deals?excludeTrackerDeals=true";
   const { data: deals = [], isLoading, error } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals", { excludeTracker: true }],

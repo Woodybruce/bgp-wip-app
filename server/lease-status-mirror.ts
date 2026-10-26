@@ -42,12 +42,10 @@ async function mirrorDealStatus(ctx: Ctx, dealId: string, currentStatus: string 
   // keeps its numbers.
   if (currentCode && CLOSED.includes(currentCode) && !(currentCode === "COM" && code === "INV")) {
     if (unlinkAvailableUnitId && !AT_OR_PAST_EXCHANGE.includes(code)) {
-      await ctx.pool.query(
-        `UPDATE available_units SET deal_id = NULL, updated_at = NOW() WHERE id = $1 AND deal_id = $2`,
-        [unlinkAvailableUnitId, dealId],
-      );
+      await startFreshCycle(ctx, dealId, currentStatus, unlinkAvailableUnitId, code);
+      return;
     }
-    await auditMirror(ctx, dealId, currentStatus, code, `Skipped — deal is ${currentCode}; tracker row ${unlinkAvailableUnitId && !AT_OR_PAST_EXCHANGE.includes(code) ? "unlinked for a fresh cycle" : "left as-is"} (${ctx.reason})`);
+    await auditMirror(ctx, dealId, currentStatus, code, `Skipped — deal is ${currentCode}; tracker row left as-is (${ctx.reason})`);
     return;
   }
   // Gate check fails CLOSED: skipping a mirror write costs a note on the
@@ -72,6 +70,30 @@ async function mirrorDealStatus(ctx: Ctx, dealId: string, currentStatus: string 
     await ctx.pool.query(`UPDATE crm_deals SET completed_at = COALESCE(completed_at, NOW()) WHERE id = $1`, [dealId]).catch(() => {});
   }
   await auditMirror(ctx, dealId, currentStatus, code, `Board mirror (${ctx.reason})`);
+}
+
+// Moving a unit whose deal is CLOSED back to a pre-exchange status is a
+// fresh letting cycle (INV is terminal, COM may only advance to INV, WIT
+// stays withdrawn). The PATCH route checks this before its row write.
+export function isFreshCycle(dealStatus: string | null | undefined, code: DealStatusCode): boolean {
+  const currentCode = legacyToCode(dealStatus);
+  return !!currentCode && CLOSED.includes(currentCode) && !(currentCode === "COM" && code === "INV") && !AT_OR_PAST_EXCHANGE.includes(code);
+}
+
+// Fresh cycle = fresh deal: unlink the row from its closed deal (which
+// keeps its numbers) and give it a new stub at `code`. The fee on the row
+// was the closed deal's — it goes, unless the caller passes the new
+// letting's (a fee typed on the same edit that re-markets the unit).
+export async function startFreshCycle(ctx: Ctx, dealId: string, currentStatus: string | null, unitId: string, code: DealStatusCode, fee?: number | null) {
+  await ctx.pool.query(
+    `UPDATE available_units SET deal_id = NULL, fee = $3, updated_at = NOW() WHERE id = $1 AND deal_id = $2`,
+    [unitId, dealId, fee ?? null],
+  );
+  const { ensureBackingDealForUnit } = await import("./unit-mirror");
+  const stub = await ensureBackingDealForUnit(ctx.pool, unitId, { status: code, fee: fee ?? null })
+    .catch((e: any) => { console.warn("[lease-status-mirror] fresh-cycle deal failed:", e?.message); return null; });
+  await auditMirror(ctx, dealId, currentStatus, code, `Skipped — deal is ${legacyToCode(currentStatus)}; tracker row unlinked for a fresh cycle (${ctx.reason})`);
+  return stub;
 }
 
 async function auditMirror(ctx: Ctx, dealId: string, oldValue: string | null, newValue: string, reason: string): Promise<void> {

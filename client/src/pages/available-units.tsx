@@ -1042,7 +1042,10 @@ export default function AvailableUnitsPage() {
       // BGP House + agents pre-baked instead of empty (which used to
       // require re-opening the deal to lock in).
       const dealId = unit?.dealId;
-      if (dealId && feeRows.length > 0) {
+      // Only a deal this add CREATED takes the form's split: a re-add returns
+      // the existing listing, and an adopted deal (one already on the unit,
+      // born on the deal form) keeps the split it already has.
+      if (dealId && unit?.dealCreated && feeRows.length > 0) {
         const allocations = feeRows
           .filter(r => (r.isBgpHouse || r.agentName))
           .map(r => ({
@@ -1066,7 +1069,7 @@ export default function AvailableUnitsPage() {
       }
       return unit;
     },
-    onSuccess: () => {
+    onSuccess: (unit: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       invalidateDealCaches();
       setCreateOpen(false);
@@ -1074,7 +1077,7 @@ export default function AvailableUnitsPage() {
       setUnitFeeRows([]);
       setUnitFeeAllocType("percentage");
       setShowAllUnitFields(false);
-      toast({ title: "Unit added" });
+      toast({ title: unit?.alreadyListed ? "Already on the tracker" : "Unit added" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -1249,11 +1252,11 @@ export default function AvailableUnitsPage() {
   });
 
   const createDealMutation = useMutation({
-    mutationFn: (id: string) => apiRequest("POST", `/api/available-units/${id}/create-deal`),
+    mutationFn: (id: string) => apiRequest("POST", `/api/available-units/${id}/ensure-deal`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       invalidateDealCaches();
-      toast({ title: "Deal created and linked" });
+      toast({ title: "Deal reference created" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -2197,6 +2200,12 @@ export default function AvailableUnitsPage() {
                         <p className="text-xs text-muted-foreground truncate mt-0.5">{[u.unitName ? prop?.name : null, u.floor].filter(Boolean).join(" · ")}</p>
                       )}
                     </div>
+                    {(() => {
+                      const ref = deal?.dealRef ?? (isClientTracker ? null : (u as any).dealRef) ?? null;
+                      return u.dealId && ref ? (
+                        <a href={`/deals/${u.dealId}`} className="shrink-0 text-[11px] font-mono text-primary" data-testid={`mobile-deal-ref-${u.id}`}>#{ref}</a>
+                      ) : null;
+                    })()}
                     {/* Grouped by status, the group header already says it —
                         a "Marketing" chip on all 103 cards was noise. */}
                     {!viewAll && (
@@ -2388,34 +2397,54 @@ export default function AvailableUnitsPage() {
                       </TableCell>
                       {showCol("ref") && (
                       <TableCell rowSpan={unitRowSpan} className="px-1 py-1 text-xs font-mono text-muted-foreground whitespace-nowrap">
-                        {deal?.dealRef ? (
-                          <div className="flex items-center gap-1.5">
-                            <a
-                              href={`/deals/${deal.id}`}
-                              className="text-primary hover:underline"
-                              title={`Open deal ${deal.dealRef}`}
-                              data-testid={`link-deal-ref-${u.id}`}
+                        {(() => {
+                          // The row carries the ref straight from GET /api/available-units;
+                          // dealMap (GET /api/crm/deals, 10s refetch) is the fallback and feeds
+                          // the compliance dot. Clients keep today's behaviour — a link only when
+                          // the deal is in their scoped list.
+                          const ref = deal?.dealRef ?? (isClientTracker ? null : (u as any).dealRef) ?? null;
+                          if (u.dealId && ref) return (
+                            <div className="flex items-center gap-1.5">
+                              <a
+                                href={`/deals/${u.dealId}`}
+                                className="text-primary hover:underline"
+                                title={`Open deal ${ref} — fees and the BGP fee split are set on the deal page`}
+                                data-testid={`link-deal-ref-${u.id}`}
+                              >
+                                #{ref}
+                              </a>
+                              {deal && (() => {
+                                const amlOk = deal.amlCheckCompleted === "YES" || deal.amlCheckCompleted === "N-A";
+                                const feeOk = deal.feeAgreement === "YES";
+                                const code = legacyToCode(deal.status);
+                                // Only flag for deals on/past SOL — pre-SOL the fields don't matter yet.
+                                const promoted = code === "SOL" || code === "EXC" || code === "COM" || code === "INV";
+                                if (!promoted) return null;
+                                if (amlOk && feeOk) return null;
+                                return (
+                                  <span
+                                    className="inline-block w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0"
+                                    title={`Compliance gap: ${[!amlOk && "AML", !feeOk && "Fee agreement"].filter(Boolean).join(" + ")}`}
+                                    data-testid={`compliance-flag-${u.id}`}
+                                  />
+                                );
+                              })()}
+                            </div>
+                          );
+                          if (isClientTracker || HISTORIC_PILL_STATUSES.includes(rowCode)) return "—";
+                          return (
+                            <button
+                              type="button"
+                              className="text-[11px] text-muted-foreground hover:text-primary underline-offset-2 hover:underline"
+                              title="Give this unit its deal reference"
+                              onClick={() => createDealMutation.mutate(u.id)}
+                              disabled={createDealMutation.isPending}
+                              data-testid={`create-deal-ref-${u.id}`}
                             >
-                              #{deal.dealRef}
-                            </a>
-                            {(() => {
-                              const amlOk = deal.amlCheckCompleted === "YES" || deal.amlCheckCompleted === "N-A";
-                              const feeOk = deal.feeAgreement === "YES";
-                              const code = legacyToCode(deal.status);
-                              // Only flag for deals on/past SOL — pre-SOL the fields don't matter yet.
-                              const promoted = code === "SOL" || code === "EXC" || code === "COM" || code === "INV";
-                              if (!promoted) return null;
-                              if (amlOk && feeOk) return null;
-                              return (
-                                <span
-                                  className="inline-block w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0"
-                                  title={`Compliance gap: ${[!amlOk && "AML", !feeOk && "Fee agreement"].filter(Boolean).join(" + ")}`}
-                                  data-testid={`compliance-flag-${u.id}`}
-                                />
-                              );
-                            })()}
-                          </div>
-                        ) : "—"}
+                              Create ref
+                            </button>
+                          );
+                        })()}
                       </TableCell>
                       )}
                       <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 max-w-[180px]">
@@ -3063,6 +3092,8 @@ export default function AvailableUnitsPage() {
         isEdit={true}
         photoCount={(editItem as any)?.photoCount ?? 0}
         unitId={editItem?.id ?? null}
+        dealId={editItem?.dealId ?? null}
+        dealRef={editItem ? (dealMap[editItem.dealId || ""]?.dealRef ?? (editItem as any).dealRef ?? null) : null}
         // Opens the row's Files dialog ON TOP of the edit form (for
         // move/delete/focal point) — form edits survive underneath.
         onOpenFiles={() => editItem && setFilesUnit(editItem)}
@@ -4730,7 +4761,7 @@ function UnitFormDialog({
   open, onOpenChange, title, form, setForm, properties, propertyUnits = [], bgpUsers, crmCompanies = [],
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
   showAllFields, setShowAllFields, isEdit,
-  onSubmit, isPending, photoCount, onOpenFiles, unitId,
+  onSubmit, isPending, photoCount, onOpenFiles, unitId, dealId, dealRef,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -4758,6 +4789,9 @@ function UnitFormDialog({
   // The unit being edited — enables the in-form Files section (uploads need
   // an existing row to attach to).
   unitId?: string | null;
+  // Its backing deal (Ref #) — fees and the fee split are set on the deal page.
+  dealId?: string | null;
+  dealRef?: number | string | null;
 }) {
   const upd = (field: keyof UnitFormState, value: string) => setForm({ ...form, [field]: value });
   const { toast } = useToast();
@@ -4888,7 +4922,9 @@ function UnitFormDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
-            Saving will auto-create a linked Leasing deal on the <a href="/deals" className="underline">deals board</a>.
+            {isEdit && dealId ? (
+              <>Deal <a href={`/deals/${dealId}`} className="underline font-mono">#{dealRef ?? "…"}</a> — fees, % and the BGP fee split are set on the deal page.</>
+            ) : "Saving gives the unit its deal reference (#) — fees and the fee split live on that deal."}
           </DialogDescription>
         </DialogHeader>
         {(() => {
@@ -5239,16 +5275,20 @@ function UnitFormDialog({
             </div>
             <div>
               <Label className="text-xs">BGP fee split</Label>
-              <div className="border rounded-md p-2.5 bg-muted/30">
-                <FeeAllocationEditor
-                  rows={feeRows}
-                  onChange={setFeeRows}
-                  allocType={feeAllocType}
-                  onAllocTypeChange={setFeeAllocType}
-                  dealFee={parseFloat(form.fee) || null}
-                  bgpAgents={bgpUsers.map(u => ({ id: String(u.id), name: u.name }))}
-                />
-              </div>
+              {isEdit ? (
+                <p className="text-xs text-muted-foreground">Fee split is managed on the deal — {dealId ? <a href={`/deals/${dealId}`} className="underline">open deal #{dealRef}</a> : "save once to create the deal, then open it from the Ref column"}.</p>
+              ) : (
+                <div className="border rounded-md p-2.5 bg-muted/30">
+                  <FeeAllocationEditor
+                    rows={feeRows}
+                    onChange={setFeeRows}
+                    allocType={feeAllocType}
+                    onAllocTypeChange={setFeeAllocType}
+                    dealFee={parseFloat(form.fee) || null}
+                    bgpAgents={bgpUsers.map(u => ({ id: String(u.id), name: u.name }))}
+                  />
+                </div>
+              )}
             </div>
           </div>
 

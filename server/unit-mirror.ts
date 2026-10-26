@@ -7,8 +7,11 @@
 // projection so the boards reflect reality without manual juggling.
 //
 // Reverse propagation is deliberately NOT done here — that's the kind of
-// behaviour change that surprises agents mid-edit.
+// behaviour change that surprises agents mid-edit. A tracker row spawned
+// here gets its backing deal (ensureBackingDealForUnit) — the only write
+// back into crm_deals this module does.
 import type { Pool } from "pg";
+import { legacyToCode } from "@shared/deal-status";
 
 // Canonical tenancy status values that map onto projections. Anything
 // outside this set is left untouched (rows mid-data-entry, legacy values).
@@ -146,7 +149,7 @@ export async function fanOutTenancyStatus(pool: Pool, tenancyId: string): Promis
     // marketing status field — never touches viewings, agent assignment,
     // or other projection-owned data.
     const existingAvail = await pool.query(
-      `SELECT id FROM available_units WHERE tenancy_unit_id = $1 LIMIT 1`,
+      `SELECT id, marketing_status FROM available_units WHERE tenancy_unit_id = $1 LIMIT 1`,
       [tenancyId]
     );
     if (existingAvail.rows.length > 0) {
@@ -156,6 +159,14 @@ export async function fanOutTenancyStatus(pool: Pool, tenancyId: string): Promis
           WHERE tenancy_unit_id = $2`,
         [marketingStatus, tenancyId]
       );
+      // A row flipped back to a live status (vacated, re-marketed) needs
+      // its deal too — no-op when one is linked. A let row's fee was that
+      // letting's, so a fresh stub after a let starts without it.
+      if (marketingStatus !== "COM" && marketingStatus !== "WIT") {
+        const wasHistoric = isHistoricUnitStatus(existingAvail.rows[0].marketing_status);
+        await ensureBackingDealForUnit(pool, existingAvail.rows[0].id, { status: marketingStatus, ...(wasHistoric ? { fee: null } : {}) })
+          .catch((e: any) => console.warn("[unit-mirror] backing deal failed:", e?.message));
+      }
     } else if (marketingStatus !== "COM" && marketingStatus !== "WIT") {
       // Only auto-create a Letting Tracker row for active statuses —
       // no point spawning a fresh row for a unit that's already let.
@@ -163,11 +174,13 @@ export async function fanOutTenancyStatus(pool: Pool, tenancyId: string): Promis
       // onto the tracker — they're schedule furniture, not shops.
       const { isJunkUnitName } = await import("./unit-junk");
       if (!isJunkUnitName(t.unit_number)) {
-        await pool.query(
+        const ins = await pool.query(
           `INSERT INTO available_units (property_id, unit_name, sqft, asking_rent, marketing_status, tenancy_unit_id)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
           [t.property_id, t.unit_number, sqft, askingRent, marketingStatus, tenancyId]
         );
+        await ensureBackingDealForUnit(pool, ins.rows[0].id)
+          .catch((e: any) => console.warn("[unit-mirror] backing deal failed:", e?.message));
       }
     }
 
@@ -231,6 +244,11 @@ export async function relinkOffSpineDeals(pool: Pool): Promise<number> {
                       AND lower(trim(coalesce(ts.unit_number, ts.premises, ''))) =
                           lower(trim(coalesce((SELECT unit_name FROM property_units pu WHERE pu.id = d2.unit_id), '')))
                       AND trim(coalesce(ts.unit_number, ts.premises, '')) <> ''
+                      AND NOT (coalesce(d2.bgp_acting_for, 'landlord') = 'landlord'
+                           AND coalesce(d2.status, '') NOT IN ('Completed','Invoiced','Withdrawn','COM','INV','WIT')
+                           AND EXISTS (SELECT 1 FROM crm_deals l WHERE l.tenancy_unit_id = ts.id
+                                         AND coalesce(l.bgp_acting_for, 'landlord') = 'landlord'
+                                         AND coalesce(l.status, '') NOT IN ('Completed','Invoiced','Withdrawn','COM','INV','WIT')))
                     LIMIT 1) AS ts_id
              FROM crm_deals d2
             WHERE d2.tenancy_unit_id IS NULL
@@ -292,4 +310,168 @@ export async function ensureTenancyRowForAvailableUnit(pool: Pool, availableUnit
     // Best-effort — never break unit creation because the spine sync failed.
     console.warn(`[unit-mirror] ensureTenancyRowForAvailableUnit(${availableUnitId}) failed:`, e?.message);
   }
+}
+
+// Statuses past which a tracker row gets NO new deal: a new letting is a
+// new deal and the historic one keeps its numbers. Same tail as the
+// tracker's Historic pill (EXC/COM/WIT/INV) plus the archived label, which
+// legacyToCode does not map.
+export function isHistoricUnitStatus(raw: string | null | undefined): boolean {
+  const s = String(raw || "").trim().toLowerCase();
+  if (s === "arch" || s === "archived") return true;
+  const code = legacyToCode(raw);
+  return !!code && ["EXC", "COM", "INV", "WIT"].includes(code);
+}
+
+// Every Letting Tracker row has a backing crm_deal from the moment it exists
+// (Woody, 2026-10-26: "can each unit, when created, have a deal reference so
+// we can add fees") — the Ref # and the fee allocations live on the deal.
+// Idempotent: keeps an existing link, else adopts an unlinked live letting
+// deal on the same unit (the caller's opts fill only its blanks), else
+// creates the AVA stub Add Unit has always created. Historic rows get
+// nothing (null), and so does a row whose unit's live deal already sits on
+// another tracker row.
+// opts.fee on create: a number/null from the caller wins (Add Unit's form);
+// undefined means "the row's fee, but only if no letting deal ever sat on
+// this unit" — after a let the fee on the row is the closed deal's, and
+// copying it onto a fresh stub would count the same money twice on the WIP.
+export async function ensureBackingDealForUnit(
+  pool: Pool,
+  availableUnitId: string,
+  opts: { dealType?: string | null; landlordId?: string | null; feePercentage?: number | null; status?: string | null; fee?: number | null } = {},
+): Promise<{ dealId: string; dealRef: number | null; created: boolean } | null> {
+  const r = await pool.query(
+    `SELECT au.id, au.property_id, au.unit_id, au.unit_name, au.sqft, au.asking_rent, au.fee,
+            au.marketing_status, au.agent_user_ids, au.tenancy_unit_id,
+            COALESCE(pu.unit_name, au.unit_name) AS master_name,
+            p.name AS property_name, p.landlord_id,
+            d.id AS linked_deal_id, d.deal_ref AS linked_deal_ref
+       FROM available_units au
+       LEFT JOIN property_units pu ON pu.id = au.unit_id
+       LEFT JOIN crm_properties p ON p.id = au.property_id
+       LEFT JOIN crm_deals d ON d.id = au.deal_id
+      WHERE au.id = $1`,
+    [availableUnitId]);
+  const au = r.rows[0];
+  if (!au) return null;
+  if (au.linked_deal_id) return { dealId: au.linked_deal_id, dealRef: au.linked_deal_ref, created: false };
+  const statusRaw = opts.status || au.marketing_status;
+  if (isHistoricUnitStatus(statusRaw)) return null;
+  const code = legacyToCode(statusRaw) || "AVA";
+
+  // Landlord-side LETTING deals already on this unit, any status, linked or
+  // not. A live unlinked one is adopted (deleted-and-recreated, unlinked by
+  // hand, or born on the deal form); letting types only — a live Rent
+  // Review / Lease Renewal / Regear on the same unit is advisory work, not
+  // the letting, and must never drive the tracker row.
+  const prior = await pool.query(
+    `SELECT d.id, d.deal_ref, d.status,
+            (SELECT au2.id FROM available_units au2 WHERE au2.deal_id = d.id LIMIT 1) AS linked_row_id
+       FROM crm_deals d
+      WHERE d.property_id = $1
+        AND coalesce(d.bgp_acting_for, 'landlord') = 'landlord'
+        AND coalesce(d.deal_type, 'New Letting') IN ('New Letting', 'Letting', 'Leasing', 'Temp Lease', 'Licence')
+        AND (($2::varchar IS NOT NULL AND d.unit_id = $2)
+          OR ($3::varchar IS NOT NULL AND d.tenancy_unit_id = $3)
+          OR ($4 <> '' AND lower(trim(d.name)) IN (lower($4 || ' – ' || $5), lower($4 || ' - ' || $5))))
+      ORDER BY d.created_at DESC NULLS LAST`,
+    [au.property_id, au.unit_id, au.tenancy_unit_id, au.property_name || "", au.master_name || ""]);
+  const link = (dealId: string) => pool.query(
+    `UPDATE available_units SET deal_id = $1, updated_at = NOW()
+      WHERE id = $2 AND (deal_id IS NULL OR NOT EXISTS (SELECT 1 FROM crm_deals x WHERE x.id = available_units.deal_id))`,
+    [dealId, au.id]);
+  const live = prior.rows.find((d: any) => !d.linked_row_id && !isHistoricUnitStatus(d.status));
+  if (live) {
+    await link(live.id);
+    // The deal keeps what it has; the caller's form fills only its blanks
+    // (a deal born on the deal form may carry no fee / type / landlord yet).
+    if (opts.fee != null || opts.feePercentage != null || opts.dealType || opts.landlordId) {
+      await pool.query(
+        `UPDATE crm_deals SET fee = COALESCE(fee, $2), fee_percentage = COALESCE(fee_percentage, $3),
+                deal_type = COALESCE(deal_type, $4), landlord_id = COALESCE(landlord_id, $5), updated_at = NOW()
+          WHERE id = $1`,
+        [live.id, opts.fee ?? null, opts.feePercentage ?? null, opts.dealType || null, opts.landlordId || null]);
+    }
+    // Once linked the deal's status is what the board shows (effByUnit), so
+    // bring the row's own label with it. Leasing/tenancy follow on the next
+    // board edit — this module never writes back to the spine.
+    const liveCode = legacyToCode(live.status);
+    if (liveCode && liveCode !== code) {
+      await pool.query(`UPDATE available_units SET marketing_status = $1, updated_at = NOW() WHERE id = $2 AND deal_id = $3`, [liveCode, au.id, live.id]);
+    }
+    return { dealId: live.id, dealRef: live.deal_ref, created: false };
+  }
+  // A live letting deal for this shop that ANOTHER tracker row carries:
+  // that row is the letting, and a second Ref # here would count its fee
+  // twice on the WIP. Duplicate rows are a dedupe job, not a deal.
+  const sibling = prior.rows.find((d: any) => d.linked_row_id && !isHistoricUnitStatus(d.status));
+  if (sibling) {
+    console.warn(`[unit-mirror] no deal for tracker row ${au.id}: live deal ${sibling.id} already sits on row ${sibling.linked_row_id} for the same unit`);
+    return null;
+  }
+
+  // Create — same shape as the Add Unit auto-create. tenancy_unit_id only
+  // when no live landlord-side deal of ANY type already sits on that spine
+  // row: 0034's one-live-landlord-deal-per-unit index is deal-type-agnostic.
+  const { storage } = await import("./storage");
+  const { resolveAgentNames } = await import("./investment-tracker-service");
+  let tenancyUnitId: string | undefined;
+  if (au.tenancy_unit_id) {
+    const liveOnSpine = await pool.query(
+      `SELECT 1 FROM crm_deals WHERE tenancy_unit_id = $1 AND coalesce(bgp_acting_for, 'landlord') = 'landlord'
+          AND coalesce(status, '') NOT IN ('Completed','Invoiced','Withdrawn','COM','INV','WIT') LIMIT 1`,
+      [au.tenancy_unit_id]);
+    if (!liveOnSpine.rows.length) tenancyUnitId = au.tenancy_unit_id;
+  }
+  const fee = opts.fee !== undefined ? opts.fee : (prior.rows.length ? null : au.fee);
+  const unitLabel = au.master_name || au.unit_name || "Unit";
+  const deal = await storage.createCrmDeal({
+    name: au.property_name ? `${au.property_name} – ${unitLabel}` : unitLabel,
+    propertyId: au.property_id || undefined,
+    unitId: au.unit_id || undefined,
+    tenancyUnitId,
+    status: code,
+    dealType: opts.dealType || "New Letting",
+    internalAgent: await resolveAgentNames(au.agent_user_ids),
+    fee: fee ?? undefined,
+    feePercentage: opts.feePercentage ?? undefined,
+    rentPa: au.asking_rent ?? undefined,
+    totalAreaSqft: au.sqft ?? undefined,
+    landlordId: opts.landlordId || au.landlord_id || undefined,
+  } as any);
+  const upd = await link(deal.id);
+  if (!upd.rowCount) {
+    // Lost a race with another creator — unless they adopted this very
+    // stub (live and unlinked for a moment), in which case it stays.
+    const again = await pool.query(`SELECT d.id, d.deal_ref FROM available_units au JOIN crm_deals d ON d.id = au.deal_id WHERE au.id = $1`, [au.id]);
+    if (again.rows[0]?.id === deal.id) return { dealId: deal.id, dealRef: deal.dealRef ?? null, created: true };
+    await storage.deleteCrmDeal(deal.id);
+    return again.rows[0] ? { dealId: again.rows[0].id, dealRef: again.rows[0].deal_ref, created: false } : null;
+  }
+  return { dealId: deal.id, dealRef: deal.dealRef ?? null, created: true };
+}
+
+// Sweep: every live tracker row with no (or a dangling) deal. Historic rows
+// and junk names are filtered in SQL so the every-boot run is one SELECT
+// when nothing is orphaned; the helper's own guard is the authority.
+export async function backfillUnitBackingDeals(pool: Pool): Promise<{ scanned: number; created: number; linked: number; skipped: number; failed: number }> {
+  const { isJunkUnitName } = await import("./unit-junk");
+  const { rows } = await pool.query(
+    `SELECT id, unit_name FROM available_units
+      WHERE (deal_id IS NULL OR deal_id NOT IN (SELECT id FROM crm_deals))
+        AND lower(coalesce(marketing_status, '')) NOT IN
+            ('exc','exchanged','com','completed','complete','let','occupied','inv','invoiced','billed','wit','withdrawn','lost','dead','arch','archived')
+      ORDER BY created_at`);
+  const out = { scanned: rows.length, created: 0, linked: 0, skipped: 0, failed: 0 };
+  for (const r of rows) {
+    if (isJunkUnitName(r.unit_name)) { out.skipped++; continue; }
+    try {
+      const res = await ensureBackingDealForUnit(pool, r.id);
+      if (!res) out.skipped++; else if (res.created) out.created++; else out.linked++;
+    } catch (e: any) {
+      out.failed++;
+      console.warn(`[unit-backing-deals] ${r.id} failed:`, e?.message);
+    }
+  }
+  return out;
 }

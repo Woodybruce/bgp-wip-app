@@ -1026,15 +1026,15 @@ export class DatabaseStorage implements IStorage {
     if (filters?.dealType) conditions.push(eq(crmDeals.dealType, filters.dealType));
     if (filters?.propertyId) conditions.push(eq(crmDeals.propertyId, filters.propertyId));
     if (filters?.excludeTrackerDeals) {
-      // Deals CRM is SOL+ ONLY (Woody's team, 2026-08-25): the pre-Solicitors
-      // pipeline — Reporting / Available / Negotiating / HOTs, tracker-linked
-      // or not — lives on the Letting Tracker and the WIP report. The Deals
-      // board shows instructed deals from Solicitors onwards. NULL/unknown
-      // statuses stay visible rather than silently vanishing.
+      // The Deals board shows every deal from Marketing onwards (Woody,
+      // 2026-10-26: "marketing deals need a fee so need to sit in the WIP
+      // and deals so people can see them and add fees") — it used to start
+      // at Solicitors (2026-08-25). Only the pre-marketing investment
+      // pipeline (Opportunity / Reporting / Speculative / Live) stays on the
+      // trackers. NULL/unknown statuses stay visible rather than silently
+      // vanishing.
       conditions.push(sql`(${crmDeals.status} IS NULL OR lower(${crmDeals.status}) NOT IN (
-        'opp', 'opportunity', 'rep', 'reporting', 'spec', 'speculative', 'live',
-        'ava', 'available', 'neg', 'negotiating', 'negotiation',
-        'under negotiation', 'in negotiation', 'hot', 'hots', 'heads of terms'))`);
+        'opp', 'opportunity', 'rep', 'reporting', 'spec', 'speculative', 'live'))`);
     }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     if (filters?.page && filters?.limit) {

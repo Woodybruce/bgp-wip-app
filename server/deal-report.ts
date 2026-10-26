@@ -84,12 +84,10 @@ async function loadRecentDeals() {
        LEFT JOIN crm_companies pc ON pc.id = d.purchaser_id
       WHERE d.created_at >= now() - interval '${REPORT_DAYS} days'
         -- Same rule as the Deals list (storage.getCrmDeals excludeTrackerDeals):
-        -- the Deals board is SOL+ only; pre-Solicitors pipeline lives on the
-        -- Letting Tracker and the WIP report.
+        -- the Deals board runs from Marketing onwards (Woody, 2026-10-26);
+        -- only the pre-marketing investment pipeline stays off it.
         AND (d.status IS NULL OR lower(d.status) NOT IN (
-          'opp', 'opportunity', 'rep', 'reporting', 'spec', 'speculative', 'live',
-          'ava', 'available', 'neg', 'negotiating', 'negotiation',
-          'under negotiation', 'in negotiation', 'hot', 'hots', 'heads of terms'))
+          'opp', 'opportunity', 'rep', 'reporting', 'spec', 'speculative', 'live'))
       ORDER BY d.created_at DESC`
   );
   return rows;

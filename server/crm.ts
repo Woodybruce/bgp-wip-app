@@ -7688,8 +7688,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
       // WIP report shows every crm_deal in a fee-bearing status. Sage WIP
       // imports are no longer the source of truth — the Deals Board +
-      // Letting Tracker are. Anything in NEG/SOL/EXC/COM/INV with a fee
-      // shows up.
+      // Letting Tracker are. Anything in AVA/NEG/SOL/EXC/COM/INV shows up —
+      // a Marketing deal with no fee yet is on the report precisely so the
+      // fee gets added (Woody, 2026-10-26).
       let entries: any[] = [];
       // Defensive on-the-fly normalisation for legacy deal_type strings so
       // the WIP report displays canonical labels even on rows where
@@ -10556,7 +10557,7 @@ export async function computeWipHealth(): Promise<any> {
   } catch { /* tables not created yet */ }
   const noKyc4u = wipDeals.filter((r: any) => {
     if (!r.createdAt || new Date(r.createdAt) < KYC4U_FROM) return false;
-    if (["WIT"].includes(legacyToCode(r.status) as string)) return false;
+    if (["WIT", "OPP", "AVA"].includes(legacyToCode(r.status) as string)) return false; // KYC4U is raised at SOL — marketing stubs have no counterparty yet
     const parties = [r.landlordId, r.tenantId, r.vendorId, r.purchaserId].filter(Boolean);
     return parties.length > 0 && parties.some((id: string) => !kyc4uCovered.has(id));
   });

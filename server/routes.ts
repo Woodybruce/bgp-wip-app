@@ -5350,7 +5350,18 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             [parsed.propertyId, seg]
           );
           if (dupe.rows.length > 0) {
-            return res.status(200).json({ ...dupe.rows[0], alreadyListed: true });
+            // Heal an existing listing that never got its deal (imported /
+            // mirror-born) before handing it back. Response stays the raw
+            // row shape (snake_case, plus the deal's id and ref for ChatBGP);
+            // no dealCreated, so the Add Unit form never PUTs its fee split
+            // over the one already on this deal.
+            const { ensureBackingDealForUnit } = await import("./unit-mirror");
+            const backing = await ensureBackingDealForUnit(pool, dupe.rows[0].id).catch(() => null);
+            return res.status(200).json({
+              ...dupe.rows[0],
+              ...(backing ? { deal_id: backing.dealId, deal_ref: backing.dealRef } : {}),
+              alreadyListed: true,
+            });
           }
         }
       }
@@ -5381,9 +5392,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const unit = await storage.createAvailableUnit({ ...parsed, unitId: unitMasterId || undefined } as any);
 
       // Also create a leasing_schedule_units row on the same property so the
-      // unit shows up on the property's Leasing Schedule view automatically.
-      // Pre-SOL units belong on the leasing schedule but NOT on the deal CRM
-      // — the deal row gets created later by the SOL promotion flow.
+      // unit shows up on the property's Leasing Schedule view automatically
+      // — the backing deal is created just below.
       try {
         const existingLs = await pool.query(
           `SELECT id FROM leasing_schedule_units
@@ -5414,75 +5424,34 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         console.warn("[available-units POST] tenancy-spine sync failed:", e.message);
       }
 
-      // Auto-create a backing CRM deal so every tracker row has a source of
-      // truth. Deal CRM kanban filters this back out for pre-SOL statuses so
-      // the kanban stays clean — see filteredDeals in client/src/pages/deals.tsx.
-      //
-      // STAGE 3a (unit spine cleanup): when UNIFIED_ADD_UNIT=1, skip this
-      // entirely. Deals are then born only at Solicitors promotion (the
-      // existing WIP flow at /api/available-units/:id/create-deal, which
-      // already handles a missing prior deal via its else-branch).
-      // Leaves all the other side-effects above (property_units master,
-      // available_units row, leasing_schedule_units row, tenancy spine
-      // mirror) untouched — only the silent pre-SOL deal goes away.
-      const UNIFIED_ADD_UNIT = process.env.UNIFIED_ADD_UNIT === "1";
-      if (!UNIFIED_ADD_UNIT && !unit.dealId) {
+      // Every tracker row has a backing deal from birth (Woody, 2026-10-26):
+      // the Ref # and the fee allocations live on it. The Deals board hides
+      // pre-SOL deals so the kanban stays clean (excludeTrackerDeals), and
+      // the WIP report lists a Marketing deal only once it carries a fee.
+      // The fee typed on this form goes on the deal explicitly; dealCreated
+      // tells the form whether its fee split may go on too (an adopted deal
+      // keeps the split it already has).
+      try {
+        const { ensureBackingDealForUnit } = await import("./unit-mirror");
+        const feePctRaw = (req.body as any).feePercentage;
+        const feePct = feePctRaw != null && feePctRaw !== "" ? parseFloat(String(feePctRaw)) : null;
+        const backing = await ensureBackingDealForUnit(pool, unit.id, {
+          dealType: (req.body as any).dealType,
+          landlordId: (req.body as any).landlordId,
+          feePercentage: feePct != null && !Number.isNaN(feePct) ? feePct : null,
+          fee: unit.fee ?? null,
+        });
+        if (backing) { (unit as any).dealId = backing.dealId; (unit as any).dealRef = backing.dealRef; (unit as any).dealCreated = backing.created; }
+      } catch (e: any) {
+        console.warn("[available-units POST] backing deal failed:", e.message);
+      }
+      // Landlord picked on the form: stamp the property when it has none so
+      // the next deal on it doesn't ask again (same as the PATCH route).
+      if ((req.body as any).landlordId && unit.propertyId) {
         try {
-          const property = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
-          // Landlord linkage: prefer the value the user picked on the
-          // form (it may differ from property.landlord_id if they
-          // overrode), then fall back to property.landlord_id. Stamps
-          // the deal at AVA so AML on the landlord side fires the
-          // moment the deal flips to SOL.
-          const landlordId = (req.body as any).landlordId
-            || (property as any)?.landlordId
-            || null;
-          // Also backfill property.landlord_id if the user picked one
-          // and the property was missing one — so the next deal on
-          // this property doesn't repeat the same prompt.
-          if ((req.body as any).landlordId && property && !(property as any).landlordId) {
-            try {
-              await pool.query(
-                `UPDATE crm_properties SET landlord_id = $1 WHERE id = $2 AND landlord_id IS NULL`,
-                [(req.body as any).landlordId, property.id]
-              );
-            } catch (e: any) {
-              console.warn("[available-units POST] property landlord backfill failed:", e.message);
-            }
-          }
-          // feePercentage: comes only from the Add-Unit form body (the
-          // available_units table doesn't carry it). Without this the
-          // auto-created deal loses the % the user typed and reopens blank.
-          const feePctRaw = (req.body as any).feePercentage;
-          const feePct = feePctRaw != null && feePctRaw !== ""
-            ? parseFloat(String(feePctRaw))
-            : null;
-          // available_units stores agent user IDs (text[] of user.id),
-          // but crm_deals.internal_agent stores display names (the
-          // deal-detail chip render + add-agent dropdown both look up
-          // by name). Resolve IDs → names here so the auto-created deal
-          // matches the shape the rest of the UI expects.
-          const agentNames = await resolveAgentNames(unit.agentUserIds);
-          const deal = await storage.createCrmDeal({
-            name: property
-              ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
-              : unit.unitName,
-            propertyId: unit.propertyId || undefined,
-            unitId: unitMasterId || undefined,
-            status: unit.marketingStatus || "AVA",
-            dealType: (req.body as any).dealType || "New Letting",
-            internalAgent: agentNames,
-            fee: unit.fee ?? undefined,
-            feePercentage: feePct != null && !Number.isNaN(feePct) ? feePct : undefined,
-            rentPa: unit.askingRent ?? undefined,
-            totalAreaSqft: unit.sqft ?? undefined,
-            landlordId: landlordId || undefined,
-          } as any);
-          await storage.updateAvailableUnit(unit.id, { dealId: deal.id });
-          (unit as any).dealId = deal.id;
-          (unit as any).dealRef = deal.dealRef;
+          await pool.query(`UPDATE crm_properties SET landlord_id = $1 WHERE id = $2 AND landlord_id IS NULL`, [(req.body as any).landlordId, unit.propertyId]);
         } catch (e: any) {
-          console.warn("[available-units POST] auto-create deal failed:", e.message);
+          console.warn("[available-units POST] property landlord backfill failed:", e.message);
         }
       }
 
@@ -5530,6 +5499,48 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           }
           delete (partial as any).fee;
         }
+      }
+
+      // Every tracker row has a backing deal (Woody, 2026-10-26). Heal an
+      // orphan (imported / mirror-born, or its deal was deleted) BEFORE the
+      // gates, at the row's CURRENT status, so a status edit then runs the
+      // same approval / AML checks and mirror as a POST-born unit. No stub
+      // for an edit whose only job is to close the row. Re-marketing a let /
+      // withdrawn row (an orphan at a historic status, or one linked to a
+      // closed deal) is a fresh cycle: a new stub at the NEW status, made
+      // before the row write so a fee typed on this same edit lands on the
+      // new deal and not the historic one — with none typed, the row's
+      // (the old letting's) goes.
+      const newStatusRaw = "marketingStatus" in partial ? String((partial as any).marketingStatus ?? "") : null;
+      const typedFee: number | null | undefined = "fee" in partial ? (partial as any).fee : undefined;
+      try {
+        const { ensureBackingDealForUnit, isHistoricUnitStatus } = await import("./unit-mirror");
+        const closing = newStatusRaw != null && isHistoricUnitStatus(newStatusRaw);
+        if (!existing.dealId) {
+          if (!closing) {
+            const reopening = newStatusRaw != null && isHistoricUnitStatus(existing.marketingStatus);
+            const backing = await ensureBackingDealForUnit(pool, existing.id, {
+              dealType: (req.body as any).dealType,
+              landlordId: (req.body as any).landlordId,
+              ...(reopening ? { status: newStatusRaw, fee: typedFee ?? null } : {}),
+            });
+            if (backing) (existing as any).dealId = backing.dealId;
+            if (reopening && typedFee === undefined) (partial as any).fee = null;
+          }
+        } else if (newStatusRaw != null && !closing) {
+          const { isFreshCycle, startFreshCycle } = await import("./lease-status-mirror");
+          const code = legacyToCode(newStatusRaw);
+          const dealStatus = (await pool.query(`SELECT status FROM crm_deals WHERE id = $1`, [existing.dealId])).rows[0]?.status ?? null;
+          if (code && isFreshCycle(dealStatus, code)) {
+            const stub = await startFreshCycle(
+              { pool, reason: "available_units.PATCH", actorUserId: (req.session as any)?.userId || (req as any).tokenUserId || null },
+              existing.dealId, dealStatus, existing.id, code, typedFee,
+            );
+            (existing as any).dealId = stub?.dealId ?? null;
+          }
+        }
+      } catch (e: any) {
+        console.warn("[available-units PATCH] backing deal failed:", e?.message);
       }
 
       // Senior-approval / AML gates run BEFORE any write when the status edit
@@ -5597,44 +5608,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         if ("askingRent" in partial) dealPatch.rentPa = (partial as any).askingRent;
         if ((req.body as any).landlordId) dealPatch.landlordId = (req.body as any).landlordId;
         if ((req.body as any).dealType) dealPatch.dealType = (req.body as any).dealType;
+        if ((req.body as any).feePercentage != null && (req.body as any).feePercentage !== "") dealPatch.feePercentage = parseFloat(String((req.body as any).feePercentage));
         if (Object.keys(dealPatch).length > 0) {
           try {
             await storage.updateCrmDeal(existing.dealId, dealPatch as any);
           } catch (e: any) {
             console.warn(`[available-units PATCH] deal sync failed for ${existing.dealId}:`, e?.message);
           }
-        }
-      } else if ((req.body as any).dealType) {
-        // The unit has no backing deal (imported row, or born under
-        // UNIFIED_ADD_UNIT where deals wait for SOL) but the user
-        // explicitly set a Deal Type on the edit dialog. Zod strips
-        // dealType from the unit patch (available_units has no such
-        // column), so without this the edit silently went nowhere and
-        // the tracker's Deal Type column stayed "—". Create the backing
-        // deal now and link it — same shape as the POST auto-create.
-        try {
-          const property = existing.propertyId ? await storage.getCrmProperty(existing.propertyId) : null;
-          const dealLandlordId = (req.body as any).landlordId || (property as any)?.landlordId || null;
-          const agentNames = await resolveAgentNames((unit as any).agentUserIds);
-          const deal = await storage.createCrmDeal({
-            name: property
-              ? `${property.name}${(unit as any).unitName ? ` – ${(unit as any).unitName}` : ""}`
-              : (unit as any).unitName,
-            propertyId: existing.propertyId || undefined,
-            unitId: (existing as any).unitId || undefined,
-            status: (unit as any).marketingStatus || "AVA",
-            dealType: (req.body as any).dealType,
-            internalAgent: agentNames,
-            fee: (unit as any).fee ?? undefined,
-            rentPa: (unit as any).askingRent ?? undefined,
-            totalAreaSqft: (unit as any).sqft ?? undefined,
-            landlordId: dealLandlordId || undefined,
-          } as any);
-          await storage.updateAvailableUnit(req.params.id as string, { dealId: deal.id });
-          (unit as any).dealId = deal.id;
-          (unit as any).dealRef = (deal as any).dealRef;
-        } catch (e: any) {
-          console.warn("[available-units PATCH] deal auto-create failed:", e?.message);
         }
       }
 
@@ -6141,34 +6121,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/admin/backfill-tracker-deals", requireAuth, async (req, res) => {
     try {
-      const { availableUnits, investmentTracker: invTracker } = await import("@shared/schema");
-      let created = 0;
       const skipped = 0;
 
       // --- Letting Tracker ---
-      const unlinkedUnits = await db.select().from(availableUnits).where(sql`deal_id IS NULL`);
-      for (const unit of unlinkedUnits) {
-        try {
-          const property = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
-          const deal = await storage.createCrmDeal({
-            name: property
-              ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
-              : unit.unitName,
-            propertyId: unit.propertyId || undefined,
-            unitId: unit.unitId || undefined,
-            status: unit.marketingStatus || "AVA",
-            dealType: "Leasing",
-            internalAgent: await resolveAgentNames(unit.agentUserIds),
-            fee: unit.fee ?? undefined,
-            rentPa: unit.askingRent ?? undefined,
-            totalAreaSqft: unit.sqft ?? undefined,
-          } as any);
-          await db.update(availableUnits).set({ dealId: deal.id }).where(eq(availableUnits.id, unit.id));
-          created++;
-        } catch (e: any) {
-          console.warn(`[backfill] unit ${unit.id} failed:`, e.message);
-        }
-      }
+      const { backfillUnitBackingDeals } = await import("./unit-mirror");
+      const letting = await backfillUnitBackingDeals(pool);
+      let created = letting.created + letting.linked;
 
       // --- Investment Tracker ---
       created += await backfillInvestmentTrackerDeals();
@@ -6766,6 +6724,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       // 2. Create listings for in-play strategy rows missing from the tracker.
       const { isJunkUnitName } = await import("./unit-junk");
+      const { ensureBackingDealForUnit } = await import("./unit-mirror");
       let added = 0;
       for (const m of missing) {
         if (isJunkUnitName(m.unit_name || m.unit_number || m.premises)) continue;
@@ -6780,6 +6739,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             `UPDATE tenancy_schedule_units SET letting_tracker_unit_id = $1 WHERE id = $2`,
             [ins.rows[0].id, m.tenancy_unit_id]
           );
+          await ensureBackingDealForUnit(pool, ins.rows[0].id);
           added++;
         } catch (e: any) {
           console.warn(`[tracker-focus] pull-in failed for ls ${m.ls_id}:`, e?.message);
@@ -7315,6 +7275,27 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.json(unit);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to link deal" });
+    }
+  });
+
+  // Give an orphaned tracker row its backing deal (Ref #) without promoting
+  // it — /create-deal is the Solicitors promotion and forces SOL. Staff
+  // only: clients see '—' for a ref-less row and never mint BGP deals.
+  app.post("/api/available-units/:id/ensure-deal", requireAuth, async (req, res) => {
+    try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ message: "Staff only" });
+      const existing = await storage.getAvailableUnit(req.params.id as string);
+      if (!existing) return res.status(404).json({ message: "Unit not found" });
+      const { ensureBackingDealForUnit, isHistoricUnitStatus } = await import("./unit-mirror");
+      const backing = await ensureBackingDealForUnit(pool, existing.id);
+      if (!backing) {
+        return res.status(409).json({ message: isHistoricUnitStatus(existing.marketingStatus)
+          ? "Historic unit — a new letting is a new deal. Set it back to Marketing first."
+          : "A live deal for this unit already sits on another tracker row — merge the duplicate rows instead." });
+      }
+      res.json(backing);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to create deal" });
     }
   });
 
