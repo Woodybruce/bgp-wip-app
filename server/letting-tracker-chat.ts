@@ -15,6 +15,7 @@ import { db, pool } from "./db";
 import { storage } from "./storage";
 import { getFile, saveFile, findChatMediaByOriginalName } from "./file-storage";
 import { samePerson } from "@shared/teams";
+import { legacyToCode } from "@shared/deal-status";
 
 export type AddUnitArgs = {
   propertyId: string;
@@ -316,7 +317,7 @@ export async function addUnitToLettingTracker(req: Request, args: AddUnitArgs) {
     propertyId: args.propertyId, unitName: args.unitName, floor: args.floor, sqft: args.sqft,
     askingRent: args.askingRent, rentPoa: !!args.rentPoa, leaseTerms: args.leaseTerms,
     ratesPa: args.ratesPa, serviceChargePa: args.serviceChargePa, useClass: args.useClass, condition: args.condition,
-    location: args.location, availableDate: args.availableDate, marketingStatus: args.marketingStatus || "Available",
+    location: args.location, availableDate: args.availableDate, marketingStatus: legacyToCode(args.marketingStatus) || "AVA",
     epcRating: args.epcRating, notes: args.notes, fee: args.fee,
     agentUserIds: agents.ids.length ? agents.ids : undefined,
   };

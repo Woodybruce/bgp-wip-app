@@ -2,6 +2,7 @@ import { aboutText } from "@/lib/about-text";
 import { Kyc4uStatusStrip } from "@/components/kyc4u-panel";
 import { formatSizeList } from "@/lib/format-size";
 import { snippetAddsNothing } from "@shared/news-snippet";
+import { CLOSED_STATUSES, legacyToCode } from "@shared/deal-status";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
 import { CompanyProfileImage, CompanyImageCoverChoice, dedupeGalleryImages, companyStripImages } from "@/components/company-profile-image";
@@ -958,7 +959,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   const staffForSale = !!meForSale && meForSale.role !== "Client" && !meForSale.companyScopeId;
   const { data: trackerForSale = [] } = useQuery<any[]>({ queryKey: ["/api/investment-tracker"], enabled: staffForSale, staleTime: 10 * 60_000 });
   const forSaleIds = useMemo(() => new Set((Array.isArray(trackerForSale) ? trackerForSale : [])
-    .filter((t: any) => t.boardType === "Sales" && !["COM", "INV", "WIT"].includes(String(t.status || "").toUpperCase()))
+    .filter((t: any) => { const c = legacyToCode(t.status); return t.boardType === "Sales" && !(c && CLOSED_STATUSES.includes(c)); })
     .map((t: any) => t.propertyId)), [trackerForSale]);
   const [backersOpen, setBackersOpen] = useState(false);
   useEffect(() => { setEditing(false); setEmailsOpen(false); setAboutOpen(false); setBackersOpen(false); }, [companyId]);

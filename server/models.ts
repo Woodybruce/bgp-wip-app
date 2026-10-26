@@ -14,6 +14,8 @@ import { listAllChildren } from "./microsoft-graph-pagination";
 import { performPropertyLookup, formatPropertyReport } from "./property-lookup";
 import { crmDeals, crmContacts, crmCompanies, crmProperties, chatbgpLearnings, appFeedbackLog, appChangeRequests, excelTemplates, excelModelRuns, excelModelRunVersions } from "@shared/schema";
 import { ilike, or, eq, sql, desc, and } from "drizzle-orm";
+import { legacyToCode } from "@shared/deal-status";
+import { LETTING_DEAL_TYPES, LEGACY_LETTING_TYPES, DEFAULT_LETTING_TYPE, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES } from "@shared/letting-rules";
 import { saveFileFromDisk, ensureFileOnDisk, syncFileToDisk } from "./file-storage";
 import { createEngineFromWorkbook, acquireTemplateEngine, engineCacheKeyForFile, applyMappedInputs, type EngineCellError } from "./model-engine";
 import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
@@ -3028,7 +3030,7 @@ CRITICAL RULES:
               name: { type: "string", description: "Deal name (usually the property address)" },
               team: { type: "array", items: { type: "string" }, description: "Team(s): Shopping Centre, London Estate, High Street, City, Investment, Tenant Rep, Lease Advisory" },
               groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc." },
-              dealType: { type: "string", description: "Type: Letting, Acquisition, Sale, Lease Renewal, Rent Review" },
+              dealType: { type: "string", description: `Type: ${[...LETTING_DEAL_TYPES, ...TENANT_REP_TYPES, ...ADVISORY_UNIT_TYPES, "Sale", "Purchase"].join(", ")}` },
               status: { type: "string", description: "Status of the deal" },
               pricing: { type: "number", description: "Deal value/price in GBP" },
               fee: { type: "number", description: "BGP fee in GBP" },
@@ -3754,8 +3756,9 @@ CRITICAL RULES:
               name: input.name,
               team: input.team || [],
               groupName: input.groupName || "New Instructions",
-              dealType: input.dealType,
-              status: input.status,
+              // Legacy labels → the one vocabulary (shared/letting-rules, shared/deal-status).
+              dealType: (LEGACY_LETTING_TYPES as readonly string[]).includes(String(input.dealType || "").trim()) ? DEFAULT_LETTING_TYPE : input.dealType,
+              status: legacyToCode(input.status) ?? input.status,
               pricing: input.pricing,
               fee: input.fee,
               rentPa: input.rentPa,

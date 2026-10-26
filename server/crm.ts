@@ -32,7 +32,8 @@ import {
   dealAuditLog,
   type CrmCompany, type CrmContact,
 } from "@shared/schema";
-import { isInvoicedStatus, legacyToCode, WIP_STATUSES, deriveStageFromStatus } from "@shared/deal-status";
+import { isInvoicedStatus, legacyToCode, WIP_STATUSES, deriveStageFromStatus, DEAL_STATUS_CODES, CLOSED_STATUSES } from "@shared/deal-status";
+import { LETTING_DEAL_TYPES, LEGACY_LETTING_TYPES, DEFAULT_LETTING_TYPE, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES } from "@shared/letting-rules";
 import { isClientCrmCategory } from "@shared/tenant-categories";
 import { bgpTeamsOnly } from "@shared/property-labels";
 import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
@@ -1398,7 +1399,7 @@ export function setupCrmRoutes(app: Express) {
       const { rows } = await pool.query(
         `SELECT id, status FROM crm_deals
           WHERE status IS NOT NULL
-            AND status NOT IN ('REP','SPEC','LIVE','AVA','NEG','SOL','EXC','COM','WIT','INV','ARCH')`
+            AND status NOT IN (${DEAL_STATUS_CODES.map((c) => `'${c}'`).join(",")})`
       );
       if (rows.length === 0) return;
       const { legacyToCode } = await import("../shared/deal-status");
@@ -1668,10 +1669,10 @@ export function setupCrmRoutes(app: Express) {
         FROM crm_companies c
         LEFT JOIN (
           SELECT landlord_id,
-                 COUNT(*) FILTER (WHERE status NOT IN ('ARCH','COM','INV','WIT')) AS active_deals,
+                 COUNT(*) FILTER (WHERE status NOT IN (${CLOSED_STATUSES.map((s) => `'${s}'`).join(",")})) AS active_deals,
                  -- WIP stages only (WIP_STATUSES), so pre-instruction rows
                  -- don't inflate the fee past the WIP report (Woody, 2026-09-27).
-                 SUM(COALESCE(fee, 0)) FILTER (WHERE status IN ('AVA','NEG','HOT','SOL','EXC','COM','INV')) AS total_fee,
+                 SUM(COALESCE(fee, 0)) FILTER (WHERE status IN (${WIP_STATUSES.map((s) => `'${s}'`).join(",")})) AS total_fee,
                  MAX(updated_at) AS last_deal_update
             FROM crm_deals
            WHERE landlord_id IS NOT NULL
@@ -4086,7 +4087,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         try {
           const oldC = legacyToCode(oldDeal?.status);
           const newC = legacyToCode(deal.status);
-          if (oldC === "COM" && newC && !["COM", "INV", "WIT"].includes(newC)) {
+          if (oldC === "COM" && newC && !CLOSED_STATUSES.includes(newC)) {
             await pool.query(`UPDATE crm_deals SET completed_at = NULL WHERE id = $1`, [deal.id]);
             await pool.query(`DELETE FROM crm_comps WHERE deal_id = $1 AND created_by IN ('auto-from-deal', 'Auto-Promotion')`, [deal.id]);
             const spine = await pool.query(
@@ -4925,7 +4926,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
   "fee": number - total fee amount in GBP if mentioned,
   "feeAgreement": "string - fee basis e.g. 'Standard %', 'Fixed Fee'",
   "targetDate": "ISO date string - expected exchange or completion date",
-  "dealType": "string - one of: New Letting, Lease Renewal, Rent Review, Sub-Letting, Assignment, Lease Disposal, Purchase, Sale, Lease Acquisition, Regear, Temp Lease, Licence",
+  "dealType": "string - one of: ${[...LETTING_DEAL_TYPES, ...TENANT_REP_TYPES, ...ADVISORY_UNIT_TYPES, "Purchase", "Sale"].join(", ")}",
   "assetClass": "string - one of: Retail, Office, Industrial, Residential, Mixed-Use, F&B, Leisure, Healthcare, Other",
   "serviceCharge": "string - service charge details",
   "useClass": "string - planning use class",
@@ -7699,7 +7700,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       const normaliseDealType = (raw: string | null | undefined): string | null => {
         if (!raw) return null;
         const t = String(raw).trim();
-        if (t === "Letting") return "New Letting";
+        if ((LEGACY_LETTING_TYPES as readonly string[]).includes(t)) return DEFAULT_LETTING_TYPE;
         return t || null;
       };
       const eligibleDeals = deals.filter(d => {

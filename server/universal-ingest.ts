@@ -35,6 +35,9 @@ import crypto from "crypto";
 import { pool } from "./db";
 import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 import { resolveTenancyUnitIdSubquery } from "./tenant-brand-resolver";
+import { DEAL_PAGE_STATUSES, legacyToCode } from "@shared/deal-status";
+import { LETTING_DEAL_TYPES, LEGACY_LETTING_TYPES, DEFAULT_LETTING_TYPE, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES } from "@shared/letting-rules";
+import { LEASING_STATUSES } from "@shared/lease-status-mirror";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Targets — adding one is ~30 lines: define the prompt, the match key,
@@ -52,6 +55,11 @@ interface TargetSpec {
   resolveRefs?: (record: any) => Promise<any>;
 }
 
+// deal_type vocabulary the extractor may emit (shared/letting-rules) plus the
+// two investment types; legacy labels it still produces are mapped on resolve.
+const INGEST_DEAL_TYPES = [...LETTING_DEAL_TYPES, ...TENANT_REP_TYPES, ...ADVISORY_UNIT_TYPES, "Sale", "Purchase"];
+const LEGACY_INGEST_DEAL_TYPES: Record<string, string> = { "Tenant Rep": "Lease Acquisition", "Assignment": "Sub-Letting", "Investment Sale": "Sale", "Investment Acquisition": "Purchase" };
+
 const TARGETS: Record<IngestTarget, TargetSpec> = {
   leasing_schedule_units: {
     table: "leasing_schedule_units",
@@ -65,7 +73,7 @@ const TARGETS: Record<IngestTarget, TargetSpec> = {
       lease_break (ISO date or null),
       rent_review (ISO date or null),
       landlord_break (ISO date or null),
-      status (one of: Occupied | Vacant | Under Offer | In Negotiation | Archived),
+      status (one of: ${LEASING_STATUSES.join(" | ")}),
       target_brands (string — comma-separated brand names showing interest, may be empty),
       priority (string or null — High | Medium | Low),
       updates (string — narrative commentary, status notes, any free text)
@@ -86,8 +94,8 @@ const TARGETS: Record<IngestTarget, TargetSpec> = {
     fields: `
       name (string, deal name),
       property_address (string or null — the property this deal is on),
-      deal_type (one of: Sale | Purchase | Lease Renewal | Rent Review | Tenant Rep | Lease Acquisition | Lease Disposal | Regear | New Letting | Sub-Letting | Assignment | Investment Sale | Investment Acquisition),
-      status (string — REP | SPEC | LIVE | NEG | SOL | EXC | COM | INV),
+      deal_type (one of: ${INGEST_DEAL_TYPES.join(" | ")}),
+      status (string — ${DEAL_PAGE_STATUSES.join(" | ")}),
       tenant_name (string or null),
       landlord_name (string or null),
       vendor_name (string or null),
@@ -111,6 +119,11 @@ const TARGETS: Record<IngestTarget, TargetSpec> = {
           record[idField] = await resolveCompanyId(record[field]);
         }
       }
+      if (record.deal_type) {
+        const t = String(record.deal_type).trim();
+        record.deal_type = (LEGACY_LETTING_TYPES as readonly string[]).includes(t) ? DEFAULT_LETTING_TYPE : (LEGACY_INGEST_DEAL_TYPES[t] ?? t);
+      }
+      if (record.status) record.status = legacyToCode(record.status) ?? record.status;
       return record;
     },
   },

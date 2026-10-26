@@ -25,9 +25,12 @@ import { Badge } from "@/components/ui/badge";
 import { Building2, Store, Handshake, ChevronRight } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { legacyToCode, type DealStatusCode } from "@shared/deal-status";
+import { TRACKER_LIVE_STATUSES } from "@shared/letting-rules";
 
-const LIVE_LETTING = new Set<DealStatusCode>(["OPP", "REP", "AVA", "NEG", "SOL", "EXC"]);
-const LIVE_DEAL = new Set<DealStatusCode>(["REP", "AVA", "NEG", "SOL", "EXC"]);
+// Tracker-live codes (HOT joins them, Phase 1) plus REP and EXC, which these
+// counts have always carried; the deal count leaves out OPP as before.
+const LIVE_LETTING = new Set<DealStatusCode>([...TRACKER_LIVE_STATUSES, "REP", "EXC"]);
+const LIVE_DEAL = new Set<DealStatusCode>([...LIVE_LETTING].filter((s) => s !== "OPP"));
 
 type SummaryRow = { id: string; name: string; asset_class: string | null; units_occupied: number | null };
 

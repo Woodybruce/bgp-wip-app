@@ -15,6 +15,8 @@ import {
   excelModelRuns,
 } from "@shared/schema";
 import { ilike, or, eq, desc, sql, inArray } from "drizzle-orm";
+import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
+import { TRACKER_LIVE_STATUSES } from "@shared/letting-rules";
 import type { Express, Request, Response } from "express";
 import { getAppToken } from "./shared-mailbox";
 import {
@@ -518,7 +520,7 @@ function createBgpMcpServer(): McpServer {
       marketingStatus: z
         .string()
         .optional()
-        .describe("Filter by status (e.g. Available, Under Offer, Let)"),
+        .describe(`Filter by status code or label — ${TRACKER_LIVE_STATUSES.map((c) => `${c} (${DEAL_STATUS_LABELS[c]})`).join(", ")}; legacy labels such as "Under Offer" or "Let" are mapped to their code`),
     },
     async ({ marketingStatus }) => {
       let query = db
@@ -539,7 +541,7 @@ function createBgpMcpServer(): McpServer {
 
       if (marketingStatus) {
         query = query.where(
-          eq(availableUnits.marketingStatus, marketingStatus)
+          eq(availableUnits.marketingStatus, legacyToCode(marketingStatus) ?? marketingStatus)
         );
       }
       const units = await query.limit(100);

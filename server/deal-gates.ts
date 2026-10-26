@@ -169,7 +169,7 @@ export async function dealStatusTransitionDenial(
   dealId: string,
   newStatusRaw: string,
 ): Promise<TransitionDenial | null> {
-  const { legacyToCode } = await import("../shared/deal-status");
+  const { legacyToCode, CLOSED_STATUSES } = await import("../shared/deal-status");
   const deal = (await pool.query(
     `SELECT status, landlord_id, tenant_id, vendor_id, purchaser_id, aml_check_completed FROM crm_deals WHERE id = $1`,
     [dealId],
@@ -182,7 +182,7 @@ export async function dealStatusTransitionDenial(
   // write and starts a fresh cycle instead (INV stays INV, COM may only
   // advance to INV). Nothing will be written, so there is nothing to deny:
   // a 403 here would block routine unit edits on every invoiced letting.
-  if (currentCode && ["WIT", "COM", "INV"].includes(currentCode)
+  if (currentCode && CLOSED_STATUSES.includes(currentCode)
       && !(currentCode === "COM" && targetCode === "INV")) {
     return null;
   }

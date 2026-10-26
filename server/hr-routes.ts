@@ -1,6 +1,7 @@
 import { getAnthropicClient } from "./utils/anthropic-client";
 import { PERKS_ENABLED } from "@shared/feature-flags";
 import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, TEAM_LEADS_2026, isHrPerson, rosterNameFor, rosterTeamsFor, samePerson, staffGroupFor } from "@shared/teams";
+import { TERMINAL_STATUSES } from "@shared/deal-status";
 import type { Express } from "express";
 import { pool } from "./db";
 import { requireAuth, requireAdmin } from "./auth";
@@ -12,6 +13,8 @@ import multer from "multer";
 import mammoth from "mammoth";
 import { renderCvPdf, renderCvDocx, type CvData } from "./cv-renderer";
 import { contentDispositionFor } from "./utils/http-headers";
+
+const TERMINAL_SQL = TERMINAL_STATUSES.map((s) => `'${s}'`).join(",");
 
 // requireAuth doesn't populate req.user, so look up admin status from the DB
 // using the session/token user id. Used by hybrid (admin-or-self) endpoints
@@ -170,7 +173,7 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
             COALESCE(completed_at, exchanged_at, target_date, instructed_at) AS dt
      FROM crm_deals
      WHERE COALESCE(completed_at, exchanged_at, target_date, instructed_at) BETWEEN $1 AND $2
-       AND COALESCE(status, '') NOT IN ('ARCH','WIT')
+       AND COALESCE(status, '') NOT IN (${TERMINAL_SQL})
        AND fee IS NOT NULL AND fee > 0`,
     [weekAgo, now]
   );
@@ -1480,7 +1483,7 @@ export function setupHrRoutes(app: Express) {
         SELECT d.id, d.name, d.status, d.fee, d.internal_agent,
                COALESCE(d.completed_at, d.exchanged_at, d.target_date, d.instructed_at) AS dt
         FROM crm_deals d
-        WHERE COALESCE(d.status, '') NOT IN ('INV','ARCH','WIT')
+        WHERE COALESCE(d.status, '') NOT IN ('INV',${TERMINAL_SQL})
           AND d.fee IS NOT NULL AND d.fee > 0
       `);
 
@@ -2097,7 +2100,7 @@ export function setupHrRoutes(app: Express) {
                          WHERE a2.deal_id = d.id
                            AND (a2.agent_user_id = $2 OR LOWER(a2.agent_name) = LOWER($1)))
              )
-           AND COALESCE(d.status, '') NOT IN ('INV','ARCH','WIT')
+           AND COALESCE(d.status, '') NOT IN ('INV',${TERMINAL_SQL})
          ORDER BY
            CASE d.status WHEN 'COM' THEN 0 WHEN 'EXC' THEN 1 WHEN 'NEG' THEN 2 WHEN 'SOL' THEN 2 ELSE 3 END,
            d.fee DESC NULLS LAST
@@ -4390,7 +4393,7 @@ Return ONLY JSON.`,
       const dealsRes = await pool.query(
         `SELECT name, status, fee FROM crm_deals
          WHERE EXISTS (SELECT 1 FROM unnest(COALESCE(internal_agent, ARRAY[]::text[])) a WHERE LOWER(a) = LOWER($1))
-           AND COALESCE(status, '') NOT IN ('ARCH','WIT')
+           AND COALESCE(status, '') NOT IN (${TERMINAL_SQL})
          ORDER BY fee DESC NULLS LAST LIMIT 25`,
         [userName]
       );
@@ -4831,7 +4834,7 @@ Return ONLY JSON.`,
         pool.query(
           `SELECT name, status, fee FROM crm_deals
            WHERE EXISTS (SELECT 1 FROM unnest(COALESCE(internal_agent, ARRAY[]::text[])) a WHERE LOWER(a) = LOWER($1))
-             AND COALESCE(status, '') NOT IN ('ARCH','WIT')
+             AND COALESCE(status, '') NOT IN (${TERMINAL_SQL})
            ORDER BY fee DESC NULLS LAST LIMIT 30`,
           [userName]
         ),
@@ -5001,7 +5004,7 @@ Use the language and tone of BGP's review docs.`,
            JOIN users u ON LOWER(u.name) = ANY (SELECT LOWER(unnest(COALESCE(d.internal_agent, ARRAY[]::text[]))))
            LEFT JOIN staff_profiles sp ON sp.user_id = u.id
            WHERE u.team = $1
-             AND COALESCE(d.status, '') NOT IN ('ARCH','WIT')
+             AND COALESCE(d.status, '') NOT IN (${TERMINAL_SQL})
              AND COALESCE(d.completed_at, d.exchanged_at, d.target_date, d.instructed_at) >= $2
            ORDER BY d.fee DESC NULLS LAST LIMIT 15`,
           [team, weekAgo]

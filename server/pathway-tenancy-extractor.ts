@@ -168,7 +168,7 @@ export function extractTenancyUnitsFromXlsxBuffer(buffer: Buffer): ExtractedTena
         tenantName,
         passingRentPa: rent,
         useClass,
-        marketingStatus: isVacant ? "Vacant" : "Let",
+        marketingStatus: isVacant ? "AVA" : "COM",
         leaseStart,
         leaseExpiry,
       });

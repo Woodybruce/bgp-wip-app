@@ -949,9 +949,22 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
                 });
                 break;
               }
-              // executeCrmToolRaw's CRM write paths use db/fnArgs only, not the
-              // request — a minimal stub is safe here (no session/cookies).
-              const raw = await executeCrmToolRaw(action.type, fnArgs, { headers: {} } as any);
+              // create_deal / update_deal post to the app's own REST route as
+              // the sender (callOwnRoute in chatbgp.ts mints a one-minute token
+              // for the stub's user, as WhatsApp's fakeReq does); only staff
+              // logins reach this path (isStaffUser), so the sender resolves to
+              // a users row. The contact / company writes use db/fnArgs only.
+              const [sender] = await db.select({ id: users.id }).from(users)
+                .where(sql`lower(${users.email}) = ${from.toLowerCase()}`).limit(1);
+              if ((action.type === "create_deal" || action.type === "update_deal") && !sender) {
+                executedActions.push({
+                  type: action.type,
+                  result: `${action.type} runs as the sender and ${from} is not a BGP login — skipped`,
+                  success: false,
+                });
+                break;
+              }
+              const raw = await executeCrmToolRaw(action.type, fnArgs, { session: sender ? { userId: sender.id } : undefined, headers: {} } as any);
               const data = raw?.data || {};
               executedActions.push({
                 type: action.type,

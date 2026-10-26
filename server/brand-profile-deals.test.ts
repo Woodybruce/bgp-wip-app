@@ -110,9 +110,9 @@ describe("completedStatusSql / closedStatusSql", () => {
     assert.doesNotMatch(completedStatusSql("d.status"), /'WIT'/);
   });
 
-  it("closed SQL includes WIT, COM and INV", () => {
+  it("closed SQL includes WIT, COM, INV and ARCH", () => {
     const sql = closedStatusSql("d.status");
-    for (const code of ["WIT", "COM", "INV"]) {
+    for (const code of ["WIT", "COM", "INV", "ARCH"]) {
       assert.ok(sql.includes(`'${code}'`), code);
     }
   });
@@ -137,8 +137,8 @@ describe("dealTotalsSql", () => {
     assert.match(sql, /COUNT\(\*\) FILTER \(WHERE UPPER\(BTRIM\(COALESCE\(status, ''\)\)\) IN \('COM', 'INV'\) OR completed_at IS NOT NULL\)/);
   });
 
-  it("counts active as NOT closed (WIT/COM/INV)", () => {
-    assert.match(sql, /COUNT\(\*\) FILTER \(WHERE NOT UPPER\(BTRIM\(COALESCE\(status, ''\)\)\) IN \('WIT', 'COM', 'INV'\)\)/);
+  it("counts active as NOT closed (WIT/COM/INV/ARCH)", () => {
+    assert.match(sql, /COUNT\(\*\) FILTER \(WHERE NOT UPPER\(BTRIM\(COALESCE\(status, ''\)\)\) IN \('WIT', 'COM', 'INV', 'ARCH'\)\)/);
   });
 
   it("sums fees and unions distinct team + internal_agent members", () => {

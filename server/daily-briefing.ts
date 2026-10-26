@@ -12,6 +12,7 @@
 //     already sitting there when the user opens the app.
 
 import { pool } from "./db";
+import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
 
 export interface BriefingResult {
   briefing: string;
@@ -94,13 +95,15 @@ export async function generateBriefing(userId: string, msToken: string | null): 
          LEFT JOIN crm_properties p ON d.property_id = p.id
          LEFT JOIN crm_companies tc ON d.tenant_id = tc.id
          LEFT JOIN crm_companies lc ON p.landlord_id = lc.id
-         WHERE d.status NOT IN ('WIT', 'COM', 'INV')
+         WHERE d.status IS NOT NULL AND lower(trim(d.status)) <> ALL($2::text[])
            AND (d.group_name ILIKE '%' || $1 || '%'
                 OR d.team @> ARRAY[$1]::text[]
                 OR lc.name ILIKE $1
                 OR (d.landlord_id IS NOT NULL AND d.landlord_id IN (SELECT id FROM crm_companies WHERE name ILIKE $1)))
          ORDER BY d.updated_at DESC LIMIT 15`,
-        [userTeam]
+        // CLOSED_STATUSES, not the tracker's Historic set: an exchanged deal
+        // is still live in the briefing, and a NULL status stays out.
+        [userTeam, statusSpellingsFor(CLOSED_STATUSES)]
       )
     : await pool.query(
         `SELECT d.id, d.name, d.status, p.name as property_name, tc.name as tenant_name, d.updated_at
@@ -153,11 +156,11 @@ export async function generateBriefing(userId: string, msToken: string | null): 
 
   const stuckRes = await pool.query(
     `SELECT id, name, status, updated_at FROM crm_deals
-     WHERE status NOT IN ('COM', 'INV', 'WIT')
+     WHERE status IS NOT NULL AND lower(trim(status)) <> ALL($2::text[])
      AND updated_at < NOW() - INTERVAL '14 days'
      AND team @> ARRAY[$1]::text[]
      ORDER BY updated_at ASC LIMIT 5`,
-    [userTeam]
+    [userTeam, statusSpellingsFor(CLOSED_STATUSES)]
   );
   const stuckDeals = stuckRes.rows;
 

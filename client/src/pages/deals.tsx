@@ -130,6 +130,7 @@ import { NumericStackedCell, type NumericRow } from "@/components/numeric-stacke
 import { FeeAllocationEditor, withExternalAgents, EXTERNAL_FEE_AGENTS, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
 import { DealDetail } from "@/components/deal-detail";
 import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as SHARED_STATUS_CHIP_COLORS, DEAL_STATUS_DOT_COLORS, legacyToCode, WIP_STATUSES, type DealStatusCode } from "@shared/deal-status";
+import { ADVISORY_UNIT_TYPES, LETTING_DEAL_TYPES, PRE_MARKETING_STATUSES } from "@shared/letting-rules";
 
 // Canonical status colours live in @shared/deal-status — chip map for soft
 // badges, dot map for solid swatches — so every board shares one hue per
@@ -1965,13 +1966,13 @@ function SimplifiedCreateBody({
           New row gets a status derived from the deal status so it
           mirrors out to the right boards immediately. */}
       {(() => {
-        const UNIT_LEVEL_TYPES = new Set([
+        const UNIT_LEVEL_TYPES = new Set<string>([
           // Landlord-side deal types where the unit lives on the property's
           // tenancy spine. Lease Acquisition + Sub-Letting are excluded —
           // those are tenant-rep deals where BGP is acting for the tenant
           // and the property is a candidate, not something we manage.
-          "Lease Renewal", "Rent Review", "Regear", "Lease Disposal",
-          "New Letting", "Temp Lease", "Licence", "Dilapidations", "Service Charge",
+          ...ADVISORY_UNIT_TYPES,
+          ...LETTING_DEAL_TYPES.filter((t) => t !== "Sub-Letting"),
         ]);
         if (!UNIT_LEVEL_TYPES.has(form.dealType)) return null;
         const unitOptions = propertyUnits.filter(pu => !form.propertyId || pu.propertyId === form.propertyId);
@@ -2571,9 +2572,9 @@ export function DealFormDialog({
     }
     // Same exclusion as the picker — Lease Acquisition + Sub-Letting are
     // tenant-rep, property-level, unit not required.
-    const UNIT_LEVEL_TYPES = new Set([
-      "Lease Renewal", "Rent Review", "Regear", "Lease Disposal",
-      "New Letting", "Temp Lease", "Licence",
+    const UNIT_LEVEL_TYPES = new Set<string>([
+      ...ADVISORY_UNIT_TYPES.filter((t) => t !== "Dilapidations" && t !== "Service Charge"),
+      ...LETTING_DEAL_TYPES.filter((t) => t !== "Sub-Letting"),
     ]);
     if (UNIT_LEVEL_TYPES.has(form.dealType) && !form.unitId) {
       toast({ title: `${form.dealType} needs a unit`, description: "Pick or add a unit on this property — leasing deals can't be unit-less.", variant: "destructive" });
@@ -2728,11 +2729,7 @@ export function DealFormDialog({
             <DealSchemeField form={form} setForm={setForm} />
 
             {(() => {
-              const UNIT_LEVEL_TYPES = new Set([
-                "Lease Renewal", "Rent Review", "Regear", "Lease Disposal",
-                "Sub-Letting", "New Letting", "Temp Lease", "Licence", "Lease Acquisition",
-                "Dilapidations", "Service Charge",
-              ]);
+              const UNIT_LEVEL_TYPES = new Set<string>([...ADVISORY_UNIT_TYPES, ...LETTING_DEAL_TYPES, "Lease Acquisition"]);
               const needsUnit = UNIT_LEVEL_TYPES.has(form.dealType);
               const unitOptions = propertyUnits.filter(pu => !form.propertyId || pu.propertyId === form.propertyId);
               return (
@@ -2815,7 +2812,7 @@ export function DealFormDialog({
                     // (which creates its deal); a new deal typed here
                     // starts at HOTs or later. Existing deals keep every
                     // status selectable so nothing gets stuck.
-                    const PRE_SOL = ["REP", "SPEC", "LIVE", "AVA", "NEG"];
+                    const PRE_SOL: string[] = [...PRE_MARKETING_STATUSES, "AVA", "NEG"];
                     const isPreSol = PRE_SOL.includes(s);
                     return (
                       <SelectItem key={s} value={s} disabled={s === "INV" || (!isEdit && isPreSol)}>
@@ -3820,7 +3817,7 @@ function HotsChecklistDialog({
     mutationFn: async () => {
       if (!deal) throw new Error("No deal");
       const payload: Record<string, unknown> = {
-        status: "HOTs",
+        status: "HOT",
         xeroContactId: form.xeroContactId || null,
         xeroContactName: form.xeroContactName || null,
         xeroAccountNumber: form.xeroAccountNumber || null,

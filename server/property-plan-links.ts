@@ -1,4 +1,5 @@
 import { isValidPolygon } from "../shared/plan-geometry";
+import { closedStatusSqlList } from "../shared/letting-rules";
 
 type PlanDatabase = { query: (sql: string, values?: any[]) => Promise<{ rows: any[] }> };
 export class PropertyPlanInputError extends Error {
@@ -104,7 +105,8 @@ export async function queryPropertyPlanUnits(db: PlanDatabase, planId: string): 
                      'tenant_id', d.tenant_id, 'deal_type', d.deal_type))
               FROM crm_deals d
              WHERE d.property_id = p.property_id AND (d.unit_id = pu.id OR (ts.id IS NOT NULL AND d.tenancy_unit_id = ts.id))
-               AND COALESCE(d.status, '') NOT IN ('WIT', 'COM', 'INV')) AS active_deals
+               -- Historic deals (EXC / COM / WIT / INV / ARCH, legacy labels too) are not in progress.
+               AND lower(btrim(COALESCE(d.status, ''))) NOT IN (${closedStatusSqlList()})) AS active_deals
       FROM property_plan_units ppu
       JOIN property_plans p ON p.id = ppu.plan_id
       LEFT JOIN LATERAL (

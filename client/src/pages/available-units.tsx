@@ -63,14 +63,16 @@ import { EntityCombobox } from "@/components/entity-combobox";
 import { XeroContactPicker } from "@/components/xero-contact-picker";
 import { FeeAllocationEditor, type FeeAllocationRow } from "@/components/fee-allocation-editor";
 
-import { LETTING_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
+import { LETTING_STATUSES, DEAL_STATUS_LABELS, WIP_STATUSES, legacyToCode, type DealStatusCode } from "@shared/deal-status";
+import { DEFAULT_LETTING_TYPE, LEGACY_LETTING_TYPES, TRACKER_LIVE_STATUSES, HISTORIC_STATUSES, PRE_MARKETING_STATUSES } from "@shared/letting-rules";
+import { tenancyStatusMatches } from "@shared/tenancy-schedule-display";
 const MARKETING_STATUSES = LETTING_STATUSES;
 // The per-row Deal Status dropdown offers the deal pipeline only (Woody,
 // 2026-09-01): Opportunity/Available belong to Unit Status, Withdrawn moved
 // to the bulk Change Status menu (historic WIT rows keep their chip). AVA
 // reads as "Marketing" on this board — same stored code (legacyToCode
 // already maps "marketing" → AVA), so WIP / deals boards are untouched.
-const DEAL_PIPELINE_STATUSES: DealStatusCode[] = ["AVA", "NEG", "HOT", "SOL", "EXC", "COM", "INV"];
+const DEAL_PIPELINE_STATUSES: DealStatusCode[] = WIP_STATUSES;
 const DEAL_PIPELINE_LABELS: Record<string, string> = { ...DEAL_STATUS_LABELS, AVA: "Marketing" };
 // Feedback (2026-08-14): a unit itself is only ever an Opportunity or
 // Available — everything past that (NEG/HOT/SOL/…) is the DEAL's status,
@@ -91,7 +93,7 @@ function displayUnitName(name: string): string {
 
 // Website column — opt-in publish with the same completeness gate the public
 // feed enforces (address, rent or POA, size, photo, lease terms).
-const PUBLIC_CODES = new Set<DealStatusCode>(["AVA", "NEG", "HOT", "SOL"]);
+const PUBLIC_CODES = new Set<DealStatusCode>(TRACKER_LIVE_STATUSES.filter(s => s !== "OPP"));
 function websiteMissing(u: any, property: any): string[] {
   const m: string[] = [];
   const addr = property?.address;
@@ -282,11 +284,12 @@ function FocalPicker({ file, loadUrl, onSave, onClose }: { file: UnitMarketingFi
 
 const UNIT_STATUSES: DealStatusCode[] = ["OPP", "AVA"];
 // Status pill row: the live pipeline up front, the historic tail (Exchanged /
-// Completed / Withdrawn / Invoiced) folded behind one "Historic" pill that
-// expands on click (Woody, 2026-09-04 — "search pills include historic").
-const LIVE_PILL_STATUSES: DealStatusCode[] = ["OPP", "AVA", "NEG", "HOT", "SOL"];
-const HISTORIC_PILL_STATUSES: DealStatusCode[] = ["EXC", "COM", "WIT", "INV"];
-const UNIT_STAGE_EDITABLE = new Set<DealStatusCode>(["OPP", "AVA", "REP", "SPEC", "LIVE"]);
+// Completed / Withdrawn / Invoiced / Archived) folded behind one "Historic"
+// pill that expands on click (Woody, 2026-09-04 — "search pills include
+// historic"). An Archived sub-pill only shows when a row's backing deal is ARCH.
+const LIVE_PILL_STATUSES: DealStatusCode[] = TRACKER_LIVE_STATUSES;
+const HISTORIC_PILL_STATUSES: DealStatusCode[] = HISTORIC_STATUSES;
+const UNIT_STAGE_EDITABLE = new Set<DealStatusCode>([...PRE_MARKETING_STATUSES, "AVA"]);
 const USE_CLASSES = ["E", "E(a)", "E(b)", "E(c)", "E(d)", "E(e)", "A1", "A2", "A3", "A4", "A5", "B1", "B2", "B8", "C1", "C3", "D1", "D2", "F1", "F2", "Sui Generis"];
 const FLOORS = ["Basement", "Lower Ground", "Ground", "Mezzanine", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "Upper"];
 const CONDITIONS = ["Shell & Core", "Cat A", "Cat A+", "Cat B", "Fitted", "Turn Key", "As Is"];
@@ -390,7 +393,7 @@ interface UnitFormState {
 const emptyForm: UnitFormState = {
   unitName: "",
   propertyId: "",
-  dealType: "New Letting",
+  dealType: DEFAULT_LETTING_TYPE,
   floor: "",
   sqft: "",
   askingRent: "",
@@ -418,7 +421,7 @@ function formToPayload(f: UnitFormState) {
   return {
     unitName: f.unitName,
     propertyId: f.propertyId,
-    dealType: f.dealType || "New Letting",
+    dealType: f.dealType || DEFAULT_LETTING_TYPE,
     floor: f.floor || null,
     sqft: f.sqft ? parseFloat(f.sqft) : null,
     askingRent: f.askingRent ? parseFloat(f.askingRent) : null,
@@ -446,7 +449,7 @@ function unitToForm(u: AvailableUnit, dealType?: string | null, landlord?: { id:
   return {
     unitName: u.unitName || "",
     propertyId: u.propertyId || "",
-    dealType: dealType || "New Letting",
+    dealType: dealType || DEFAULT_LETTING_TYPE,
     floor: u.floor || "",
     sqft: u.sqft?.toString() || "",
     askingRent: u.askingRent?.toString() || "",
@@ -658,7 +661,7 @@ export default function AvailableUnitsPage() {
   const [contactSearchOpen, setContactSearchOpen] = useState<"viewing" | "offer" | null>(null);
   const [wipUnit, setWipUnit] = useState<AvailableUnit | null>(null);
   const [wipForm, setWipForm] = useState({
-    dealType: "New Letting",
+    dealType: DEFAULT_LETTING_TYPE,
     team: [] as string[],
     agent: "",
     // Tenant brand (crm_companies.id) + cached display name. Replaces the
@@ -1320,9 +1323,9 @@ export default function AvailableUnitsPage() {
     // fields that matter at the SOL handover.
     const existingDeal = unit.dealId ? dealMap[unit.dealId] : null;
     setWipForm({
-      // Map legacy "Letting" (pre-fix) → canonical "New Letting" so the
-      // dropdown shows a real value for older flipped deals.
-      dealType: (existingDeal?.dealType === "Letting" ? "New Letting" : existingDeal?.dealType) || "New Letting",
+      // Map legacy letting labels (pre-fix "Letting" / "Leasing") → canonical
+      // "New Letting" so the dropdown shows a real value for older flipped deals.
+      dealType: ((LEGACY_LETTING_TYPES as readonly string[]).includes(existingDeal?.dealType || "") ? DEFAULT_LETTING_TYPE : existingDeal?.dealType) || DEFAULT_LETTING_TYPE,
       team: Array.isArray(existingDeal?.team) ? existingDeal.team : (existingDeal?.team ? [existingDeal.team] : []),
       agent: (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || "",
       tenantId: existingDeal?.tenantId || "",
@@ -1529,7 +1532,7 @@ export default function AvailableUnitsPage() {
     // unit moves to Solicitors it lives on the Deals board; we hide SOL+ from
     // the default view here so the tracker stays focused. Users can still
     // click an SOL/EXC/COM lozenge to drill back in.
-    const PRE_SOL_CODES = new Set(["OPP", "REP", "SPEC", "LIVE", "AVA", "NEG", "HOT"]);
+    const PRE_SOL_CODES = new Set<string>([...PRE_MARKETING_STATUSES, ...TRACKER_LIVE_STATUSES.filter(s => s !== "SOL")]);
     let result = viewAll
       ? [...toolbarFiltered]
       : statusFilter !== "all"
@@ -4874,7 +4877,7 @@ function UnitFormDialog({
       const key = (t.unit_number || "").trim().toLowerCase();
       if (!key || seen.has(key)) continue;
       seen.add(key);
-      const isVacant = (t.status || "").toLowerCase() === "vacant" || (t.tenant_name || "").toLowerCase() === "vacant";
+      const isVacant = tenancyStatusMatches(t.status, "vacant") || tenancyStatusMatches(t.tenant_name, "vacant");
       out.push({
         id: String(t.id),
         name: t.unit_number,

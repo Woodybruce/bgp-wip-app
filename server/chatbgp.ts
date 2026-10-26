@@ -57,6 +57,52 @@ import { resolveAccessibleChatThread } from "./utils/chat-thread-access";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schema";
 import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
+import { legacyToCode, statusSpellingsFor, DEAL_STATUS_LABELS, SYSTEM_SET_STATUSES, TERMINAL_STATUSES, isExcludedLegacyStatus, type DealStatusCode } from "@shared/deal-status";
+import { LETTING_DEAL_TYPES, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES, TRACKER_LIVE_STATUSES, HISTORIC_STATUSES } from "@shared/letting-rules";
+
+// ── Lettings vocabulary (shared/letting-rules.ts) ────────────────────────
+// Tool descriptions and SQL IN-lists come from the one vocabulary, never
+// hand-typed here.
+const DEAL_TYPE_HINT = [...LETTING_DEAL_TYPES, ...TENANT_REP_TYPES, ...ADVISORY_UNIT_TYPES, "Sale", "Purchase"].join(", ");
+const TRACKER_STATUS_HINT = [...TRACKER_LIVE_STATUSES, ...HISTORIC_STATUSES]
+  .filter((c) => !SYSTEM_SET_STATUSES.includes(c))
+  .map((c) => `${c} (${DEAL_STATUS_LABELS[c]})`).join(", ");
+// Quoted IN-list of every stored spelling (code + legacy label) of `codes`,
+// for lower(trim(coalesce(col, ''))) comparisons — the same shape as
+// closedStatusSqlList() in shared/letting-rules.ts.
+const statusSqlList = (codes: readonly DealStatusCode[]) => statusSpellingsFor(codes).map((v) => `'${v.replace(/'/g, "''")}'`).join(", ");
+
+// The chat CRM write tools post to the app's own route with the caller's
+// login, so gates, client scope, mirrors and audit run once in one place
+// (the precedent is addUnitToLettingTracker in letting-tracker-chat.ts).
+// A server-originated call that has a user but no cookie / bearer to
+// forward (WhatsApp's stub request) gets a one-minute token for that user;
+// one with no user at all (the email-instruction stub) is refused.
+async function callOwnRoute(req: Request, method: "POST" | "PUT" | "PATCH", routePath: string, body: Record<string, unknown>): Promise<{ ok: boolean; status: number; json: any }> {
+  const protocol = (req.headers?.["x-forwarded-proto"] as string) || req.protocol || "http";
+  const host = (req.headers?.["x-forwarded-host"] as string) || (req.headers?.host as string) || `127.0.0.1:${process.env.PORT || "5000"}`;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (req.headers?.cookie) headers.Cookie = String(req.headers.cookie);
+  if (req.headers?.authorization) headers.Authorization = String(req.headers.authorization);
+  let mintedToken: string | null = null;
+  if (!headers.Cookie && !headers.Authorization) {
+    const userId = (req as any).session?.userId || (req as any).tokenUserId;
+    if (!userId) return { ok: false, status: 401, json: { error: "No signed-in user to act as — this write runs through the app's own route and needs a login." } };
+    mintedToken = crypto.randomBytes(32).toString("hex");
+    await pool.query("INSERT INTO auth_tokens (token, user_id, expires_at) VALUES ($1, $2, NOW() + interval '1 minute')", [mintedToken, userId]);
+    headers.Authorization = `Bearer ${mintedToken}`;
+  }
+  try {
+    const res = await fetch(`${protocol}://${host}${routePath}`, { method, headers, body: JSON.stringify(body) });
+    const json = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, json };
+  } finally {
+    if (mintedToken) await pool.query("DELETE FROM auth_tokens WHERE token = $1", [mintedToken]).catch(() => {});
+  }
+}
+// The message a refused own-route call carries (crm.ts answers { error },
+// routes.ts { message }).
+const routeError = (r: { status: number; json: any }, fallback: string) => String(r.json?.error || r.json?.message || `${fallback} (${r.status})`);
 import { EVIDENCE_PLAN_CHAT_TOOL } from "./evidence-plan-chat";
 
 const CHATBGP_MODEL = "claude-sonnet-4-6";      // Also the main chat default via chatbgp-model-router (Fable / Opus only on /fable, /opus).
@@ -2055,9 +2101,9 @@ export async function getCrmContext(): Promise<string> {
           WHERE r.deal_id IS NULL ORDER BY r.created_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
         withTimeout<{ rows: any[] }>(pool.query(`SELECT au.unit_name, au.use_class, au.sqft, au.asking_rent, au.marketing_status, au.location, p.name as property_name 
           FROM available_units au LEFT JOIN crm_properties p ON au.property_id = p.id 
-          WHERE au.marketing_status IN ('Available', 'Under Offer') ORDER BY au.created_at DESC LIMIT 20`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
+          WHERE lower(trim(coalesce(au.marketing_status, ''))) IN (${statusSqlList(TRACKER_LIVE_STATUSES)}) ORDER BY au.created_at DESC LIMIT 20`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
         withTimeout<{ rows: any[] }>(pool.query(`SELECT asset_name as name, status, guide_price, address, asset_type, board_type FROM investment_tracker 
-          WHERE status NOT IN ('Dead', 'Withdrawn') ORDER BY updated_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
+          WHERE lower(trim(coalesce(status, ''))) NOT IN (${statusSqlList(TERMINAL_STATUSES)}) ORDER BY updated_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
         withTimeout<{ rows: any[] }>(pool.query(`SELECT tenant, name, area_location, headline_rent, rent_psf_nia, nia_sqft, use_class, transaction_type, lease_start 
           FROM crm_comps WHERE verified = true ORDER BY created_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
       ]);
@@ -2081,7 +2127,7 @@ export async function getCrmContext(): Promise<string> {
         }
       }
       if (unitRows.rows.length > 0) {
-        unitsCtx = "\n### Available/Under Offer Units\n";
+        unitsCtx = "\n### Letting Tracker — live units (Marketing to Solicitors)\n";
         for (const u of unitRows.rows) {
           unitsCtx += `- ${u.unit_name} at ${u.property_name || "Unknown"} — ${u.use_class || ""}, ${u.sqft ? u.sqft.toLocaleString() + " sqft" : ""}, ${u.asking_rent ? "£" + u.asking_rent + " psf" : ""} [${u.marketing_status}]\n`;
         }
@@ -2107,7 +2153,10 @@ export async function getCrmContext(): Promise<string> {
     ctx += `Total: ${properties.length} properties, ${deals.length} deals, ${companies.length} companies, ${contacts.length} contacts\n`;
 
     if (deals.length > 0) {
-      const activeDeals = deals.filter((d: any) => !["Dead", "Withdrawn", "Leasing Comps", "Investment Comps"].includes(d.status));
+      const activeDeals = deals.filter((d: any) => {
+        const code = legacyToCode(d.status);
+        return !(code && TERMINAL_STATUSES.includes(code)) && !isExcludedLegacyStatus(d.status);
+      });
       const byStage: Record<string, number> = {};
       let totalFees = 0;
       for (const d of activeDeals) {
@@ -2256,7 +2305,7 @@ export function filterToolsForClientScope(tools: any[]): any[] {
 // Returns a denial message for a scoped client outside their portfolio/slice,
 // null to proceed. Mutates fnArgs only to strip BGP fee fields.
 export async function chatCrmWriteDenial(req: Request, fnName: string, fnArgs: any): Promise<string | null> {
-  const WRITE_TOOLS = new Set(["update_deal", "create_deal", "update_contact", "update_company"]);
+  const WRITE_TOOLS = new Set(["update_deal", "create_deal", "update_contact", "update_company", "update_available_unit", "import_leasing_schedule"]);
   if (!WRITE_TOOLS.has(fnName)) return null;
   const DENY = "Not available on client accounts — that record is outside your portfolio.";
   let scope: string | null;
@@ -2289,6 +2338,17 @@ export async function chatCrmWriteDenial(req: Request, fnName: string, fnArgs: a
     if (fnArgs.propertyId && !(await inPortfolioProperty(String(fnArgs.propertyId)))) return DENY;
     return null;
   }
+  if (fnName === "update_available_unit") {
+    delete fnArgs.fee; // clients never see or set BGP fees
+    if (!fnArgs.id) return DENY;
+    const row = (await pool.query(`SELECT property_id FROM available_units WHERE id = $1`, [String(fnArgs.id)])).rows[0];
+    if (!row) return "Unit not found.";
+    if (!row.property_id || !(await inPortfolioProperty(String(row.property_id)))) return DENY;
+    return null;
+  }
+  // The workbook names its own properties, so the portfolio check runs per
+  // property inside the import handler; the scope itself is verified above.
+  if (fnName === "import_leasing_schedule") return null;
   if (fnName === "update_contact") {
     if (!fnArgs.id) return DENY;
     const row = (await pool.query(`SELECT company_id FROM crm_contacts WHERE id = $1`, [String(fnArgs.id)])).rows[0];
@@ -2352,7 +2412,7 @@ export async function getClientCrmContext(scopeCompanyId: string): Promise<strin
                   (SELECT name FROM crm_companies WHERE id = d.tenant_id) AS tenant_name
            FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
            WHERE (d.property_id = ANY($1) OR d.landlord_id = $2)
-             AND d.status NOT IN ('Dead','Withdrawn')
+             AND lower(trim(coalesce(d.status, ''))) NOT IN (${statusSqlList(TERMINAL_STATUSES)})
            ORDER BY d.updated_at DESC LIMIT 40`,
           [propIds, scopeCompanyId]
         ).catch(() => ({ rows: [] })),
@@ -2428,7 +2488,7 @@ export async function clientScopedCrmSearch(scopeCompanyId: string, rawQuery: st
             (SELECT name FROM crm_companies WHERE id = d.tenant_id) AS "tenantName"
      FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
      WHERE (d.property_id IN (${scopedPropsSql}) OR d.landlord_id = $1)
-       AND d.status NOT IN ('Dead','Withdrawn')
+       AND lower(trim(coalesce(d.status, ''))) NOT IN (${statusSqlList(TERMINAL_STATUSES)})
        AND (${like("d.name", 2)} OR ${like("p.name", 2 + patterns.length)})
      LIMIT 15`,
     [scopeCompanyId, ...patterns, ...patterns]
@@ -2860,7 +2920,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           purchaserId: { type: "string", description: "CRM company UUID of the purchaser. The client on Purchase deals." },
           team: { type: "array", items: { type: "string" }, description: "Team(s): Shopping Centre, London Estate, High Street, City, Investment, Tenant Rep, Lease Advisory" },
           groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc." },
-          dealType: { type: "string", description: "Type: New Letting, Lease Acquisition, Lease Disposal, Lease Renewal, Rent Review, Sale, Purchase" },
+          dealType: { type: "string", description: `Type: ${DEAL_TYPE_HINT}` },
           status: { type: "string", description: "Status of the deal" },
           pricing: { type: "number", description: "Deal value/price in GBP" },
           fee: { type: "number", description: "BGP fee in GBP" },
@@ -3646,7 +3706,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           condition: { type: "string", description: "e.g. Shell & Core, Cat A, Fitted" },
           location: { type: "string", description: "Region/location: Clapham, East Anglia, Ireland, London, Midlands, N. Ireland, National, North East, North West, Scotland, South East, South West, Wales" },
           availableDate: { type: "string", description: "Month the unit becomes available — month granularity, always the 1st: YYYY-MM-01" },
-          marketingStatus: { type: "string", description: "e.g. Available, Under Offer, Let, Withdrawn" },
+          marketingStatus: { type: "string", description: `Tracker status code: ${TRACKER_STATUS_HINT}. Default AVA. A legacy label such as 'Under Offer' or 'Let' is normalised to its code.` },
           epcRating: { type: "string" },
           notes: { type: "string", description: "Anything else from the brochure worth keeping (joint agent, floor split, planning)." },
           fee: { type: "number", description: "Fee percentage" },
@@ -3795,7 +3855,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           useClass: { type: "string" },
           condition: { type: "string" },
           availableDate: { type: "string" },
-          marketingStatus: { type: "string" },
+          marketingStatus: { type: "string", description: `Tracker status code: ${TRACKER_STATUS_HINT}. A legacy label such as 'Under Offer' or 'Let' is normalised to its code; anything else is refused.` },
           epcRating: { type: "string" },
           notes: { type: "string" },
           fee: { type: "number" },
@@ -4970,7 +5030,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
         properties: {
           team: { type: "string", description: "Filter by team: Shopping Centre, London Estate, High Street, City, Investment, Tenant Rep, Lease Advisory" },
           status: { type: "string", description: "Filter by status/stage e.g. Under Offer, Exchanged, Completed, New Instructions" },
-          dealType: { type: "string", description: "Filter by deal type: Letting, Acquisition, Sale, Lease Renewal, Rent Review" },
+          dealType: { type: "string", description: `Filter by deal type: ${DEAL_TYPE_HINT}` },
           summaryOnly: { type: "boolean", description: "If true, return just totals and counts. If false, return deal details." },
         },
         required: [],
@@ -6973,8 +7033,6 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "update_deal") {
-    const { crmDeals } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
     const { id, ...updates } = fnArgs;
     const cleanUpdates: any = {};
     for (const [k, v] of Object.entries(updates)) {
@@ -6986,8 +7044,12 @@ export async function executeCrmToolRaw(
       // the deal stays editable from chat.)
       return { data: { success: false, error: "Deal status changes aren't made from chat — use the deal page, where approval and AML checks run. Other fields can still be updated here." } };
     }
-    await db.update(crmDeals).set(cleanUpdates).where(eq(crmDeals.id, id));
-    try { const { syncTrackerFromDeal } = await import("./investment-deal-sync"); await syncTrackerFromDeal(id, Object.keys(cleanUpdates)); } catch (e: any) { console.warn("[chatbgp] tracker sync failed:", e?.message); }
+    if (!id) return { data: { success: false, error: "id is required" } };
+    // PUT /api/crm/deals/:id (crm.ts): client scope, fee stripping, audit and
+    // the investment-tracker sync run there, once — the same path as the
+    // deal page.
+    const r = await callOwnRoute(req, "PUT", `/api/crm/deals/${encodeURIComponent(String(id))}`, cleanUpdates);
+    if (!r.ok) return { data: { success: false, error: routeError(r, "Couldn't update the deal") } };
     return { data: { success: true, action: "updated", entity: "deal", id, fields: Object.keys(cleanUpdates) }, action: { type: "crm_updated", entityType: "deal", id } };
   }
 
@@ -7079,8 +7141,10 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "create_deal") {
-    const { crmDeals } = await import("@shared/schema");
-    const [created] = await db.insert(crmDeals).values({
+    // POST /api/crm/deals (crm.ts): status normalised to a code, client
+    // scope pinned, scheme defaults, rent analysis and the letting rules
+    // run there, once — the same path as the deal form.
+    const r = await callOwnRoute(req, "POST", "/api/crm/deals", {
       name: fnArgs.name,
       propertyId: fnArgs.propertyId || null,
       landlordId: fnArgs.landlordId || null,
@@ -7096,7 +7160,9 @@ export async function executeCrmToolRaw(
       rentPa: fnArgs.rentPa,
       totalAreaSqft: fnArgs.totalAreaSqft,
       comments: fnArgs.comments,
-    }).returning();
+    });
+    if (!r.ok) return { data: { success: false, error: routeError(r, "Couldn't create the deal") } };
+    const created = r.json;
     return { data: { success: true, action: "created", entity: "deal", id: created.id, name: created.name }, action: { type: "crm_created", entityType: "deal", id: created.id } };
   }
 
@@ -7321,16 +7387,24 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "update_available_unit") {
-    const { availableUnits } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
     const { id, ...updates } = fnArgs;
-    const existing = await db.select({ id: availableUnits.id, unitName: availableUnits.unitName }).from(availableUnits).where(eq(availableUnits.id, id)).limit(1);
-    if (!existing.length) return { data: { success: false, error: `No available unit found with ID "${id}"` } };
     const cleanUpdates: any = {};
     for (const [k, v] of Object.entries(updates)) { if (v !== undefined && v !== null) cleanUpdates[k] = v; }
-    cleanUpdates.updatedAt = new Date();
-    await db.update(availableUnits).set(cleanUpdates).where(eq(availableUnits.id, id));
-    return { data: { success: true, action: "updated", entity: "available unit", id, name: existing[0].unitName, fields: Object.keys(cleanUpdates) }, action: { type: "crm_updated", entityType: "unit", id } };
+    if ("marketingStatus" in cleanUpdates) {
+      // Codes only — chat must not write another legacy label.
+      const code = legacyToCode(cleanUpdates.marketingStatus);
+      if (!code) return { data: { success: false, error: `Unknown marketing status "${cleanUpdates.marketingStatus}" — use one of ${TRACKER_STATUS_HINT}.` } };
+      if (SYSTEM_SET_STATUSES.includes(code)) return { data: { success: false, error: `${DEAL_STATUS_LABELS[code]} (${code}) is set by the system, not from chat — use one of ${TRACKER_STATUS_HINT}.` } };
+      cleanUpdates.marketingStatus = code;
+    }
+    if (!id) return { data: { success: false, error: "id is required" } };
+    // PATCH /api/available-units/:id (routes.ts): client scope, the backing
+    // deal, approval / AML gates, master-unit fields and the status mirror
+    // run there, once — the same path as the tracker's inline edit.
+    const r = await callOwnRoute(req, "PATCH", `/api/available-units/${encodeURIComponent(String(id))}`, cleanUpdates);
+    if (r.status === 404) return { data: { success: false, error: `No available unit found with ID "${id}"` } };
+    if (!r.ok) return { data: { success: false, error: routeError(r, "Couldn't update the unit") } };
+    return { data: { success: true, action: "updated", entity: "available unit", id, name: r.json?.unitName, fields: Object.keys(cleanUpdates), ...(r.json?.mirrorWarning ? { warning: r.json.mirrorWarning } : {}) }, action: { type: "crm_updated", entityType: "unit", id } };
   }
 
   if (fnName === "log_viewing") {
@@ -10589,6 +10663,13 @@ Be thorough — include every unit row you can classify, across all properties i
         : { rows: [] as Array<{ id: string; username: string }> };
       const user = userRes.rows[0];
 
+      // A client login imports only onto its own portfolio — checked per
+      // property, since the workbook names them (chatCrmWriteDenial has
+      // already verified the scope itself).
+      let importScope: string | null;
+      try { importScope = await resolveCompanyScope(req); }
+      catch { return { data: { error: "Your account scope could not be verified. Please try again." } }; }
+
       const results: any[] = [];
       for (const prop of properties) {
         const propName = String(prop.property_name || "").trim();
@@ -10602,6 +10683,10 @@ Be thorough — include every unit row you can classify, across all properties i
 
         if (!matched) {
           results.push({ property: propName, status: "property_not_found_in_crm", units_parsed: units.length, inserted: 0 });
+          continue;
+        }
+        if (importScope && !(await isPropertyInScope(importScope, matched.id))) {
+          results.push({ property: propName, matched_crm_property: matched.name, status: "outside_your_portfolio", units_parsed: units.length, inserted: 0 });
           continue;
         }
 
@@ -10673,6 +10758,7 @@ Be thorough — include every unit row you can classify, across all properties i
       const totalParsed = results.reduce((s, r) => s + (r.units_parsed || 0), 0);
       const totalInserted = results.reduce((s, r) => s + (r.inserted || 0), 0);
       const notMatched = results.filter(r => r.status === "property_not_found_in_crm").map(r => r.property);
+      const outsidePortfolio = results.filter(r => r.status === "outside_your_portfolio").map(r => r.property);
 
       return {
         data: {
@@ -10683,6 +10769,7 @@ Be thorough — include every unit row you can classify, across all properties i
           total_units_parsed: totalParsed,
           total_units_inserted: mode === "import" ? totalInserted : 0,
           properties_not_found_in_crm: notMatched,
+          properties_outside_portfolio: outsidePortfolio,
           results,
           ai_notes: parsed?.notes || null,
           next_step: mode === "preview"
@@ -12907,281 +12994,19 @@ export async function handleCrmToolCall(
     return summaryCompletion.choices[0]?.message?.content;
   };
 
-  if (fnName === "create_deal") {
-    const { crmDeals } = await import("@shared/schema");
-    const [created] = await db.insert(crmDeals).values({
-      name: fnArgs.name,
-      propertyId: fnArgs.propertyId || null,
-      landlordId: fnArgs.landlordId || null,
-      tenantId: fnArgs.tenantId || null,
-      vendorId: fnArgs.vendorId || null,
-      purchaserId: fnArgs.purchaserId || null,
-      team: fnArgs.team || [],
-      groupName: fnArgs.groupName || "New Instructions",
-      dealType: fnArgs.dealType,
-      status: fnArgs.status,
-      pricing: fnArgs.pricing,
-      fee: fnArgs.fee,
-      rentPa: fnArgs.rentPa,
-      totalAreaSqft: fnArgs.totalAreaSqft,
-      comments: fnArgs.comments,
-    }).returning();
-    const reply = await summaryHelper({ success: true, action: "created", entity: "deal", record: { id: created.id, name: created.name } });
-    return { handled: true, response: { reply: reply || `Deal "${created.name}" created.`, action: { type: "crm_created", entityType: "deal", id: created.id, name: created.name } } };
-  }
-
-  if (fnName === "update_deal") {
-    const { crmDeals } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
-    const { id, ...updates } = fnArgs;
-    const cleanUpdates: any = {};
-    for (const [k, v] of Object.entries(updates)) {
-      if (v !== undefined && v !== null) cleanUpdates[k] = v;
-    }
-    if ("status" in cleanUpdates) {
-      return { handled: true, response: { reply: "Deal status changes aren't made from chat — use the deal page, where approval and AML checks run. Other fields can still be updated here." } };
-    }
-    await db.update(crmDeals).set(cleanUpdates).where(eq(crmDeals.id, id));
-    try { const { syncTrackerFromDeal } = await import("./investment-deal-sync"); await syncTrackerFromDeal(id, Object.keys(cleanUpdates)); } catch (e: any) { console.warn("[chatbgp] tracker sync failed:", e?.message); }
-    const reply = await summaryHelper({ success: true, action: "updated", entity: "deal", id, fields: Object.keys(cleanUpdates) });
-    return { handled: true, response: { reply: reply || `Deal updated.`, action: { type: "crm_updated", entityType: "deal", id } } };
-  }
-
-  if (fnName === "create_contact") {
-    const { crmContacts } = await import("@shared/schema");
-    const [created] = await db.insert(crmContacts).values({
-      name: fnArgs.name,
-      email: fnArgs.email,
-      phone: fnArgs.phone,
-      role: fnArgs.role,
-      companyName: fnArgs.companyName,
-      contactType: fnArgs.contactType,
-      notes: fnArgs.notes,
-    }).returning();
-    const reply = await summaryHelper({ success: true, action: "created", entity: "contact", record: { id: created.id, name: created.name } });
-    return { handled: true, response: { reply: reply || `Contact "${created.name}" created.`, action: { type: "crm_created", entityType: "contact", id: created.id, name: created.name } } };
-  }
-
-  if (fnName === "update_contact") {
-    const { crmContacts } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
-    const { id, ...updates } = fnArgs;
-    const cleanUpdates: any = {};
-    for (const [k, v] of Object.entries(updates)) {
-      if (v !== undefined && v !== null) cleanUpdates[k] = v;
-    }
-    await db.update(crmContacts).set(cleanUpdates).where(eq(crmContacts.id, id));
-    const reply = await summaryHelper({ success: true, action: "updated", entity: "contact", id, fields: Object.keys(cleanUpdates) });
-    return { handled: true, response: { reply: reply || `Contact updated.`, action: { type: "crm_updated", entityType: "contact", id } } };
-  }
-
-  if (fnName === "create_company") {
-    const { crmCompanies } = await import("@shared/schema");
-    const [created] = await db.insert(crmCompanies).values({
-      name: fnArgs.name,
-      companyType: fnArgs.companyType,
-      description: fnArgs.description,
-      domain: fnArgs.domain,
-      groupName: fnArgs.groupName,
-    }).returning();
-    const reply = await summaryHelper({ success: true, action: "created", entity: "company", record: { id: created.id, name: created.name } });
-    return { handled: true, response: { reply: reply || `Company "${created.name}" created.`, action: { type: "crm_created", entityType: "company", id: created.id, name: created.name } } };
-  }
-
-  if (fnName === "update_company") {
-    const { crmCompanies } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
-    const { id, ...updates } = fnArgs;
-    const cleanUpdates: any = {};
-    for (const [k, v] of Object.entries(updates)) {
-      if (v !== undefined && v !== null) cleanUpdates[k] = v;
-    }
-    await db.update(crmCompanies).set(cleanUpdates).where(eq(crmCompanies.id, id));
-    const reply = await summaryHelper({ success: true, action: "updated", entity: "company", id, fields: Object.keys(cleanUpdates) });
-    return { handled: true, response: { reply: reply || `Company updated.`, action: { type: "crm_updated", entityType: "company", id } } };
-  }
-
-  if (fnName === "update_investment_tracker") {
-    const { updateTrackerAsset, linkTrackerNames } = await import("./investment-tracker-service");
-    const { id, ...updates } = fnArgs;
-    const cleanUpdates: any = {};
-    for (const [k, v] of Object.entries(updates)) {
-      if (v !== undefined && v !== null) cleanUpdates[k] = v;
-    }
-    const out = await updateTrackerAsset(id, await linkTrackerNames(cleanUpdates), { id: (req as any)?.session?.userId || (req as any)?.tokenUserId || null });
-    if (out.status === 404) return { handled: true, response: { reply: `No investment tracker item found with ID "${id}". Please search first to find the correct record.` } };
-    if (out.status !== 200) return { handled: true, response: { reply: out.body?.message || "That update was refused." } };
-    const reply = await summaryHelper({ success: true, action: "updated", entity: "investment tracker item", id, name: out.body.assetName, fields: Object.keys(cleanUpdates), amlStarted: !!out.body.amlStarted, amlWarning: out.body.amlWarning || null });
-    return { handled: true, response: { reply: reply || `Investment tracker item "${out.body.assetName}" updated.`, action: { type: "crm_updated", entityType: "investment", id } } };
-  }
-
-  if (fnName === "search_crm") {
-    const { crmDeals, crmContacts, crmCompanies, crmProperties, investmentTracker, availableUnits } = await import("@shared/schema");
-    const { ilike, or } = await import("drizzle-orm");
-    const rawQuery = (fnArgs.query as string || "").trim();
-    if (rawQuery.length < 2) {
-      return { handled: true, response: { reply: "Please provide a longer search term (at least 2 characters)." } };
-    }
-    const legacySearchScope = req ? await resolveCompanyScope(req).catch(() => null) : null;
-    if (legacySearchScope) {
-      const scoped = await clientScopedCrmSearch(legacySearchScope, rawQuery);
-      const reply = await summaryHelper(scoped);
-      return { handled: true, response: { reply: reply || JSON.stringify(scoped) } };
-    }
-    const entityType = fnArgs.entityType || "all";
-    const results: any = {};
-
-    const words = rawQuery.split(/\s+/).filter(w => w.length >= 2);
-    const exactQ = `%${rawQuery}%`;
-    const wordPatterns = words.map(w => `%${w}%`);
-
-    const buildOr = (cols: any[]) => {
-      const conditions: any[] = [];
-      for (const col of cols) {
-        conditions.push(ilike(col, exactQ));
-        for (const wp of wordPatterns) {
-          conditions.push(ilike(col, wp));
-        }
-      }
-      return or(...conditions);
-    };
-
-    if (entityType === "all" || entityType === "deals") {
-      const deals = await db.select({ id: crmDeals.id, name: crmDeals.name, groupName: crmDeals.groupName, status: crmDeals.status }).from(crmDeals).where(buildOr([crmDeals.name, crmDeals.comments])).limit(100);
-      results.deals = deals;
-    }
-    if (entityType === "all" || entityType === "contacts") {
-      const contacts = await db.select({ id: crmContacts.id, name: crmContacts.name, email: crmContacts.email, role: crmContacts.role }).from(crmContacts).where(buildOr([crmContacts.name, crmContacts.email])).limit(100);
-      results.contacts = contacts;
-    }
-    if (entityType === "all" || entityType === "companies") {
-      const companies = await db.select({ id: crmCompanies.id, name: crmCompanies.name, companyType: crmCompanies.companyType }).from(crmCompanies).where(buildOr([crmCompanies.name])).limit(100);
-      results.companies = companies;
-    }
-    if (entityType === "all" || entityType === "properties") {
-      const { sql: sqlTag } = await import("drizzle-orm");
-      const addressText = sqlTag`${crmProperties.address}::text`;
-      const propConditions: any[] = [];
-      propConditions.push(ilike(crmProperties.name, exactQ));
-      for (const wp of wordPatterns) propConditions.push(ilike(crmProperties.name, wp));
-      propConditions.push(sqlTag`${addressText} ILIKE ${exactQ}`);
-      for (const wp of wordPatterns) propConditions.push(sqlTag`${addressText} ILIKE ${wp}`);
-      const properties = await db.select({ id: crmProperties.id, name: crmProperties.name, status: crmProperties.status, address: crmProperties.address }).from(crmProperties).where(or(...propConditions)).limit(100);
-      results.properties = properties;
-    }
-    if (entityType === "all" || entityType === "investment") {
-      const investments = await db.select({ id: investmentTracker.id, assetName: investmentTracker.assetName, address: investmentTracker.address, status: investmentTracker.status, boardType: investmentTracker.boardType, client: investmentTracker.client }).from(investmentTracker).where(buildOr([investmentTracker.assetName, investmentTracker.address, investmentTracker.client, investmentTracker.vendor])).limit(100);
-      results.investmentTracker = investments;
-    }
-    if (entityType === "all" || entityType === "units") {
-      const units = await db.select({ id: availableUnits.id, unitName: availableUnits.unitName, marketingStatus: availableUnits.marketingStatus, propertyId: availableUnits.propertyId }).from(availableUnits).where(buildOr([availableUnits.unitName])).limit(100);
-      results.availableUnits = units;
-    }
-    if (entityType === "all" || entityType === "requirements") {
-      const { pool } = await import("./db");
-      const reqConds = [exactQ, ...wordPatterns].map((p: string, i: number) => `(company_name ILIKE $${i+1} OR contact_name ILIKE $${i+1} OR location ILIKE $${i+1} OR notes ILIKE $${i+1})`);
-      const reqParams = [exactQ, ...wordPatterns];
-      const reqResult = await pool.query(`SELECT id, category, company_name AS "companyName", contact_name AS "contactName", location, status, priority FROM requirements WHERE ${reqConds.join(" OR ")} LIMIT 100`, reqParams);
-      results.requirements = reqResult.rows;
-    }
-    if (entityType === "all" || entityType === "comps") {
-      const { crmComps } = await import("@shared/schema");
-      results.comps = await db.select({ id: crmComps.id, name: crmComps.name, tenant: crmComps.tenant, landlord: crmComps.landlord, dealType: crmComps.dealType, headlineRent: crmComps.headlineRent, completionDate: crmComps.completionDate }).from(crmComps).where(buildOr([crmComps.name, crmComps.tenant, crmComps.landlord])).limit(100);
-    }
-
-    const totalFound = Object.values(results).reduce((sum: number, arr: any) => sum + (arr?.length || 0), 0);
-    const reply = await summaryHelper({ success: true, query: fnArgs.query, totalFound, results });
-    return { handled: true, response: { reply: reply || `Found ${totalFound} results for "${fnArgs.query}".` } };
-  }
-
-  if (fnName === "create_investment_tracker") {
-    const { createTrackerAsset, linkTrackerNames } = await import("./investment-tracker-service");
-    const fields: any = {};
-    for (const [k, v] of Object.entries(fnArgs || {})) if (v !== undefined && v !== null) fields[k] = v;
-    fields.status = fields.status || "REP";
-    fields.boardType = fields.boardType || "Purchases";
-    const created = await createTrackerAsset(await linkTrackerNames(fields));
-    const reply = await summaryHelper({ success: true, action: "created", entity: "investment tracker item", id: created.id, name: created.assetName, dealId: (created as any).dealId || null });
-    return { handled: true, response: { reply: reply || `Investment tracker item "${created.assetName}" created.`, action: { type: "crm_created", entityType: "investment", id: created.id, name: created.assetName } } };
-  }
-
-
-  if (fnName === "create_available_unit") {
-    try {
-      const { addUnitToLettingTracker } = await import("./letting-tracker-chat");
-      const r = await addUnitToLettingTracker(req, fnArgs as any);
-      const reply = await summaryHelper({ success: true, action: r.alreadyListed ? "updated" : "created", entity: "available unit", record: r });
-      return { handled: true, response: { reply: reply || `Unit "${r.unitName}" ${r.alreadyListed ? "updated on" : "added to"} the Letting Tracker.`, action: { type: r.alreadyListed ? "crm_updated" : "crm_created", entityType: "unit", id: r.unitId, name: r.unitName } } };
-    } catch (e: any) {
-      return { handled: true, response: { reply: `Couldn't add the unit: ${e?.message || e}` } };
-    }
-  }
-
-  if (fnName === "update_available_unit") {
-    const { availableUnits } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
-    const { id, ...updates } = fnArgs;
-    const existing = await db.select({ id: availableUnits.id, unitName: availableUnits.unitName }).from(availableUnits).where(eq(availableUnits.id, id)).limit(1);
-    if (!existing.length) {
-      return { handled: true, response: { reply: `No available unit found with that ID. Please search first.` } };
-    }
-    const cleanUpdates: any = {};
-    for (const [k, v] of Object.entries(updates)) {
-      if (v !== undefined && v !== null) cleanUpdates[k] = v;
-    }
-    cleanUpdates.updatedAt = new Date();
-    await db.update(availableUnits).set(cleanUpdates).where(eq(availableUnits.id, id));
-    const reply = await summaryHelper({ success: true, action: "updated", entity: "available unit", id, name: existing[0].unitName, fields: Object.keys(cleanUpdates) });
-    return { handled: true, response: { reply: reply || `Unit "${existing[0].unitName}" updated.`, action: { type: "crm_updated", entityType: "unit", id } } };
-  }
-
-  if (fnName === "log_viewing") {
-    if (fnArgs.entityType === "investment") {
-      const { investmentViewings } = await import("@shared/schema");
-      const [created] = await db.insert(investmentViewings).values({
-        trackerId: fnArgs.entityId,
-        company: fnArgs.company,
-        contact: fnArgs.contact,
-        viewingDate: fnArgs.viewingDate ? new Date(fnArgs.viewingDate) : new Date(),
-        attendees: fnArgs.attendees,
-        notes: fnArgs.notes,
-        outcome: fnArgs.outcome,
-      }).returning();
-      if (created) { const { linkInvestmentViewings } = await import("./investment-comp-sync"); await linkInvestmentViewings({ viewingIds: [created.id] }).catch(() => null); }
-      const reply = await summaryHelper({ success: true, action: "logged", entity: "investment viewing", company: fnArgs.company, date: fnArgs.viewingDate });
-      return { handled: true, response: { reply: reply || `Viewing logged for ${fnArgs.company || "unknown"} on ${fnArgs.viewingDate}.` } };
-    } else {
-      const result = await executeLeasingActivity("log_viewing", fnArgs, req);
-      const reply = !result.success ? result.error : result.needsDetails
-        ? `Viewing saved in the Letting Tracker. Still needed: ${result.missingDetails.join("; ") || "confirm the viewing details"}.`
-        : `Viewing saved in the Letting Tracker and viewing calendar for ${result.company || "the confirmed brand"} on ${result.date}.`;
-      return { handled: true, response: { reply, ...(result.success ? { action: { type: "crm_updated", entityType: "unit", id: fnArgs.entityId } } : {}) } };
-    }
-  }
-
-  if (fnName === "log_offer") {
-    if (fnArgs.entityType === "investment") {
-      const { investmentOffers } = await import("@shared/schema");
-      const [created] = await db.insert(investmentOffers).values({
-        trackerId: fnArgs.entityId,
-        company: fnArgs.company,
-        contact: fnArgs.contact,
-        offerDate: fnArgs.offerDate ? new Date(fnArgs.offerDate) : new Date(),
-        offerPrice: fnArgs.offerPrice,
-        niy: fnArgs.niy,
-        conditions: fnArgs.conditions,
-        status: fnArgs.status || "Pending",
-        notes: fnArgs.notes,
-      }).returning();
-      const reply = await summaryHelper({ success: true, action: "logged", entity: "investment offer", company: fnArgs.company, price: fnArgs.offerPrice });
-      return { handled: true, response: { reply: reply || `Offer logged from ${fnArgs.company || "unknown"} for £${fnArgs.offerPrice?.toLocaleString() || "TBC"}.` } };
-    } else {
-      const result = await executeLeasingActivity("log_offer", fnArgs, req);
-      const reply = !result.success ? result.error : result.needsDetails
-        ? "Offer saved in the Letting Tracker. Link the offering brand before it can be included in conversion reporting."
-        : `Offer saved in the Letting Tracker for ${result.company || "the confirmed brand"}${result.viewingId ? " and linked to its viewing" : ""}.`;
-      return { handled: true, response: { reply, ...(result.success ? { action: { type: "crm_updated", entityType: "unit", id: fnArgs.entityId } } : {}) } };
-    }
+  // One implementation per CRM write: these run through executeCrmToolRaw
+  // (whose deal / unit writes post to the app's own routes, so the gates,
+  // client scope, mirrors and audit run once). The second copy that lived
+  // here was deleted in the letting cleanup, Phase 1 (2026-10-26).
+  const RAW_EXECUTOR_TOOLS = new Set([
+    "create_deal", "update_deal", "create_contact", "update_contact", "create_company", "update_company",
+    "update_investment_tracker", "search_crm", "create_investment_tracker", "create_available_unit",
+    "update_available_unit", "log_viewing", "log_offer",
+  ]);
+  if (RAW_EXECUTOR_TOOLS.has(fnName)) {
+    const rawResult = await executeCrmToolRaw(fnName, fnArgs, req);
+    const reply = await summaryHelper(rawResult.data);
+    return { handled: true, response: { reply: reply || JSON.stringify(rawResult.data).substring(0, 500), action: rawResult.action } };
   }
 
   if (fnName === "create_property") {
@@ -15962,9 +15787,9 @@ export function setupChatBGPRoutes(app: Express) {
             const [propRows, dealRows, unitRows, reqRows] = await Promise.all([
               pool.query(`SELECT p.*, 
                 (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id) as unit_count,
-                (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND au.marketing_status = 'Available') as available_count
+                (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND lower(trim(coalesce(au.marketing_status, ''))) IN (${statusSqlList(["AVA"])})) as available_count
                 FROM crm_properties p WHERE p.id = $1`, [thread.propertyId]),
-              pool.query(`SELECT name, status, deal_type, fee, team FROM crm_deals WHERE property_id = $1 AND status NOT IN ('Dead','Withdrawn') ORDER BY created_at DESC LIMIT 10`, [thread.propertyId]).catch(() => ({ rows: [] })),
+              pool.query(`SELECT name, status, deal_type, fee, team FROM crm_deals WHERE property_id = $1 AND lower(trim(coalesce(status, ''))) NOT IN (${statusSqlList(TERMINAL_STATUSES)}) ORDER BY created_at DESC LIMIT 10`, [thread.propertyId]).catch(() => ({ rows: [] })),
               pool.query(`SELECT unit_name, use_class, sqft, asking_rent, marketing_status FROM available_units WHERE property_id = $1 ORDER BY unit_name LIMIT 15`, [thread.propertyId]).catch(() => ({ rows: [] })),
               pool.query(`SELECT r.name, r.use, r.size, c.name as company_name FROM crm_requirements_leasing r LEFT JOIN crm_companies c ON r.company_id = c.id WHERE r.requirement_locations IS NOT NULL AND EXISTS (SELECT 1 FROM crm_properties p WHERE p.id = $1 AND (r.requirement_locations && ARRAY[p.name])) LIMIT 5`, [thread.propertyId]).catch(() => ({ rows: [] })),
             ]);

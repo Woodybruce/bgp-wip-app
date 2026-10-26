@@ -18,7 +18,7 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
-import { legacyToCode } from "../shared/deal-status";
+import { CLOSED_STATUSES, TERMINAL_STATUSES, legacyToCode } from "../shared/deal-status";
 
 const router = Router();
 
@@ -79,7 +79,7 @@ export async function pendingVerdictDeals(userId: string, userName: string): Pro
     const code = legacyToCode(r.status);
     // COM: a Completed deal is done — invoicing it is finance's motion, not
     // the agent's verdict (Woody, 2026-09-02, re Tom's Riverside Nando's).
-    if (code === "WIT" || code === "INV" || code === "COM") continue;
+    if (code && CLOSED_STATUSES.includes(code)) continue;
     const target = new Date(r.target_date);
     const daysOverdue = Math.max(0, Math.floor((Date.now() - target.getTime()) / 86400000));
     out.push({
@@ -277,7 +277,7 @@ async function ancientBacklogDeals(): Promise<Array<{ name: string; propertyName
       LIMIT 60`
   );
   return rows
-    .filter((r: any) => { const c = legacyToCode(r.status); return c !== "WIT" && c !== "INV"; })
+    .filter((r: any) => { const c = legacyToCode(r.status); return c !== "INV" && !(c && TERMINAL_STATUSES.includes(c)); })
     .map((r: any) => ({
       name: r.name,
       propertyName: r.property_name || null,

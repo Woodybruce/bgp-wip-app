@@ -12,6 +12,7 @@
 // back into crm_deals this module does.
 import type { Pool } from "pg";
 import { legacyToCode } from "@shared/deal-status";
+import { DEFAULT_LETTING_TYPE, closedStatusSqlList, isHistoricStatus } from "@shared/letting-rules";
 
 // Canonical tenancy status values that map onto projections. Anything
 // outside this set is left untouched (rows mid-data-entry, legacy values).
@@ -314,14 +315,8 @@ export async function ensureTenancyRowForAvailableUnit(pool: Pool, availableUnit
 
 // Statuses past which a tracker row gets NO new deal: a new letting is a
 // new deal and the historic one keeps its numbers. Same tail as the
-// tracker's Historic pill (EXC/COM/WIT/INV) plus the archived label, which
-// legacyToCode does not map.
-export function isHistoricUnitStatus(raw: string | null | undefined): boolean {
-  const s = String(raw || "").trim().toLowerCase();
-  if (s === "arch" || s === "archived") return true;
-  const code = legacyToCode(raw);
-  return !!code && ["EXC", "COM", "INV", "WIT"].includes(code);
-}
+// tracker's Historic pill (EXC/COM/WIT/INV/ARCH, legacy labels included).
+export const isHistoricUnitStatus = isHistoricStatus;
 
 // Every Letting Tracker row has a backing crm_deal from the moment it exists
 // (Woody, 2026-10-26: "can each unit, when created, have a deal reference so
@@ -431,7 +426,7 @@ export async function ensureBackingDealForUnit(
     unitId: au.unit_id || undefined,
     tenancyUnitId,
     status: code,
-    dealType: opts.dealType || "New Letting",
+    dealType: opts.dealType || DEFAULT_LETTING_TYPE,
     internalAgent: await resolveAgentNames(au.agent_user_ids),
     fee: fee ?? undefined,
     feePercentage: opts.feePercentage ?? undefined,
@@ -459,8 +454,7 @@ export async function backfillUnitBackingDeals(pool: Pool): Promise<{ scanned: n
   const { rows } = await pool.query(
     `SELECT id, unit_name FROM available_units
       WHERE (deal_id IS NULL OR deal_id NOT IN (SELECT id FROM crm_deals))
-        AND lower(coalesce(marketing_status, '')) NOT IN
-            ('exc','exchanged','com','completed','complete','let','occupied','inv','invoiced','billed','wit','withdrawn','lost','dead','arch','archived')
+        AND lower(coalesce(marketing_status, '')) NOT IN (${closedStatusSqlList()})
       ORDER BY created_at`);
   const out = { scanned: rows.length, created: 0, linked: 0, skipped: 0, failed: 0 };
   for (const r of rows) {

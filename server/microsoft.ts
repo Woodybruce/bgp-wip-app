@@ -8,6 +8,7 @@ import { contentDispositionFor } from "./utils/http-headers";
 import { listAllChildren, resolveUploadDestination } from "./microsoft-graph-pagination";
 import { delegatedAccountBelongsToUser } from "./microsoft-delegated-account";
 import { createMicrosoftDraftConsentHandlers, isMicrosoftDraftCallback } from "./microsoft-draft-consent";
+import { CLOSED_STATUSES, TERMINAL_STATUSES } from "@shared/deal-status";
 import {
   SHAREPOINT_HOST, SHAREPOINT_SITE_PATH, SHAREPOINT_ROOT_FOLDER,
   getSharePointDriveId, createFolderByPath, runChunked, createTreeBatched,
@@ -1015,7 +1016,7 @@ export function setupMicrosoftRoutes(app: Express) {
                    d.pricing, d.deal_type, p.name as property_name
             FROM crm_deals d
             LEFT JOIN crm_properties p ON d.property_id = p.id
-            WHERE d.status NOT IN ('WIT', 'COM', 'INV')
+            WHERE d.status NOT IN (${CLOSED_STATUSES.map((s) => `'${s}'`).join(", ")})
               AND (d.tenant_id = $1 OR d.landlord_id = $1 OR d.purchaser_id = $1 OR d.vendor_id = $1
                    OR d.property_id IN (SELECT id FROM crm_properties WHERE landlord_id = $1))
             ORDER BY d.created_at DESC
@@ -1025,7 +1026,7 @@ export function setupMicrosoftRoutes(app: Express) {
                    d.pricing, d.deal_type, p.name as property_name
             FROM crm_deals d
             LEFT JOIN crm_properties p ON d.property_id = p.id
-            WHERE d.status NOT IN ('WIT', 'COM', 'INV')
+            WHERE d.status NOT IN (${CLOSED_STATUSES.map((s) => `'${s}'`).join(", ")})
             ORDER BY d.created_at DESC
           `);
       const activeDealRows = dealsResult.rows;
@@ -1339,7 +1340,7 @@ export function setupMicrosoftRoutes(app: Express) {
                      p.name as property_name, p.address as property_address
               FROM crm_deals d
               LEFT JOIN crm_properties p ON d.property_id = p.id
-              WHERE ${dealPartySql} AND d.status NOT IN ('WIT')
+              WHERE ${dealPartySql} AND d.status NOT IN (${TERMINAL_STATUSES.map((s) => `'${s}'`).join(", ")})
               ORDER BY d.created_at DESC
               LIMIT 10
             `, [dealCompanyIds])
@@ -1349,7 +1350,7 @@ export function setupMicrosoftRoutes(app: Express) {
                      p.name as property_name, p.address as property_address
               FROM crm_deals d
               LEFT JOIN crm_properties p ON d.property_id = p.id
-              WHERE ${dealPartySql} AND d.status NOT IN ('WIT')
+              WHERE ${dealPartySql} AND d.status NOT IN (${TERMINAL_STATUSES.map((s) => `'${s}'`).join(", ")})
               ORDER BY d.created_at DESC
               LIMIT 10
             `, [dealCompanyIds]);

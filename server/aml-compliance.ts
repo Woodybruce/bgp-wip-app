@@ -9,8 +9,12 @@ import { pool } from "./db";
 import { saveFile } from "./file-storage";
 import { recomputeDealKycApproved } from "./deal-gates";
 import { requireMlro } from "./aml-authority";
+import { CLOSED_STATUSES, TERMINAL_STATUSES, statusSpellingsFor } from "@shared/deal-status";
 
 const router = Router();
+
+const CLOSED_SQL = statusSpellingsFor(CLOSED_STATUSES).map((s) => `'${s}'`).join(", ");
+const TERMINAL_SQL = statusSpellingsFor(TERMINAL_STATUSES).map((s) => `'${s}'`).join(", ");
 
 const KYC_UPLOAD_DIR = path.join(process.cwd(), "ChatBGP", "kyc-uploads");
 if (!fs.existsSync(KYC_UPLOAD_DIR)) fs.mkdirSync(KYC_UPLOAD_DIR, { recursive: true });
@@ -1187,7 +1191,7 @@ router.get("/api/kyc/my-deals", requireAuth, async (req: Request, res: Response)
               (SELECT c.kyc_status FROM crm_companies c WHERE c.id = d.purchaser_id) AS purchaser_kyc
        FROM crm_deals d
        LEFT JOIN crm_properties p ON d.property_id = p.id
-       WHERE d.status NOT IN ('WIT', 'COM', 'INV')
+       WHERE lower(btrim(d.status)) NOT IN (${CLOSED_SQL})
          AND (
            -- (The *_agent_id columns are third-party agent firms, never BGP
            -- staff, so they aren't part of "my deals".)
@@ -1220,16 +1224,16 @@ router.get("/api/kyc/board", requireAuth, async (_req: Request, res: Response) =
     const result = await pool.query(
       `WITH deal_roles AS (
          SELECT d.id AS deal_id, d.name AS deal_name, d.landlord_id AS company_id, 'landlord' AS role
-           FROM crm_deals d WHERE d.landlord_id IS NOT NULL AND d.landlord_id <> '' AND d.status NOT IN ('WIT')
+           FROM crm_deals d WHERE d.landlord_id IS NOT NULL AND d.landlord_id <> '' AND lower(btrim(d.status)) NOT IN (${TERMINAL_SQL})
          UNION ALL
          SELECT d.id, d.name, d.tenant_id, 'tenant'
-           FROM crm_deals d WHERE d.tenant_id IS NOT NULL AND d.tenant_id <> '' AND d.status NOT IN ('WIT')
+           FROM crm_deals d WHERE d.tenant_id IS NOT NULL AND d.tenant_id <> '' AND lower(btrim(d.status)) NOT IN (${TERMINAL_SQL})
          UNION ALL
          SELECT d.id, d.name, d.vendor_id, 'vendor'
-           FROM crm_deals d WHERE d.vendor_id IS NOT NULL AND d.vendor_id <> '' AND d.status NOT IN ('WIT')
+           FROM crm_deals d WHERE d.vendor_id IS NOT NULL AND d.vendor_id <> '' AND lower(btrim(d.status)) NOT IN (${TERMINAL_SQL})
          UNION ALL
          SELECT d.id, d.name, d.purchaser_id, 'purchaser'
-           FROM crm_deals d WHERE d.purchaser_id IS NOT NULL AND d.purchaser_id <> '' AND d.status NOT IN ('WIT')
+           FROM crm_deals d WHERE d.purchaser_id IS NOT NULL AND d.purchaser_id <> '' AND lower(btrim(d.status)) NOT IN (${TERMINAL_SQL})
        ),
        company_deals AS (
          SELECT company_id,
@@ -1349,7 +1353,7 @@ router.get("/api/kyc/board/deals", requireAuth, async (_req: Request, res: Respo
        LEFT JOIN crm_companies tc ON d.tenant_id    = tc.id
        LEFT JOIN crm_companies vc ON d.vendor_id    = vc.id
        LEFT JOIN crm_companies pc ON d.purchaser_id = pc.id
-       WHERE d.status NOT IN ('WIT', 'COM', 'INV')
+       WHERE lower(btrim(d.status)) NOT IN (${CLOSED_SQL})
        ORDER BY d.updated_at DESC NULLS LAST`
     );
 

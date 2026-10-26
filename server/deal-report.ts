@@ -17,6 +17,8 @@ import { pool } from "./db";
 import * as path from "path";
 import * as fs from "fs";
 import { callClaude, safeParseJSON } from "./utils/anthropic-client";
+import { statusSpellingsFor } from "@shared/deal-status";
+import { PRE_MARKETING_STATUSES } from "@shared/letting-rules";
 
 const router = Router();
 const BGP_GREEN = "#6E0C25";      // v19 Bordeaux (constant names are legacy)
@@ -87,7 +89,7 @@ async function loadRecentDeals() {
         -- the Deals board runs from Marketing onwards (Woody, 2026-10-26);
         -- only the pre-marketing investment pipeline stays off it.
         AND (d.status IS NULL OR lower(d.status) NOT IN (
-          'opp', 'opportunity', 'rep', 'reporting', 'spec', 'speculative', 'live'))
+          ${statusSpellingsFor(PRE_MARKETING_STATUSES).map((s) => `'${s}'`).join(", ")}))
       ORDER BY d.created_at DESC`
   );
   return rows;

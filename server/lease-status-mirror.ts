@@ -21,12 +21,14 @@ import {
   codeToTenancyStatus,
   leasingStatusToTenancyStatus,
 } from "@shared/lease-status-mirror";
-import { legacyToCode, type DealStatusCode } from "@shared/deal-status";
+import { CLOSED_STATUSES, legacyToCode, type DealStatusCode } from "@shared/deal-status";
+import { HISTORIC_STATUSES } from "@shared/letting-rules";
 
 type Ctx = { pool: Pool; reason: string; actorUserId?: string | null };
 
-const CLOSED = ["WIT", "COM", "INV"];
-const AT_OR_PAST_EXCHANGE = ["EXC", "COM", "INV", "WIT"];
+// ARCH (the WIP import's soft-archive) is closed like WIT.
+const CLOSED = CLOSED_STATUSES;
+const AT_OR_PAST_EXCHANGE = HISTORIC_STATUSES;
 
 // Shared deal write for the mirrors: never regress a closed deal to a
 // pre-exchange state (re-marketing a unit starts a fresh cycle — the tracker

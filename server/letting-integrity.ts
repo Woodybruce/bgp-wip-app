@@ -12,17 +12,12 @@
 import type { Pool } from "pg";
 import { gzipSync } from "zlib";
 import { DEAL_STATUS_CODES, legacyToCode } from "@shared/deal-status";
+import { ALL_LETTING_TYPES, TENANT_SIDE_TYPES, actingForFromType, isHistoricStatus, isLettingType, isTrackerLiveStatus } from "@shared/letting-rules";
 import { classifyDealForAccount, type AccountDealRow, type DealClassification } from "./account-resolver";
 import { saveFile } from "./file-storage";
 
-// Letting deal types per CLAUDE.md (New Letting, Lease Disposal, Temp Lease,
-// Licence, Sub-Letting) plus the two legacy labels still stored on old rows.
-export const LETTING_DEAL_TYPES = ["New Letting", "Lease Disposal", "Temp Lease", "Licence", "Sub-Letting", "Letting", "Leasing"];
-// Live on the tracker: Marketing (AVA), Negotiating (NEG), HOTs (HOT),
-// Solicitors (SOL); OPP is the tracker's pre-marketing row.
-const LIVE_TRACKER_CODES = ["OPP", "AVA", "NEG", "HOT", "SOL"];
-const HISTORIC_CODES = ["EXC", "COM", "WIT", "INV"];
-const TENANT_SIDE_TYPES = ["Lease Disposal", "Sub-Letting", "Lease Acquisition", "Tenant Acquisition"];
+// Letting types (current + legacy labels), tracker-live and historic codes
+// and the tenant-side list all come from shared/letting-rules.ts.
 // Deal codes past HOTs: the unit is spoken for, so a tenancy row still
 // reading Vacant / Marketing is stale (section n).
 const SOL_PLUS_CODES = ["SOL", "EXC", "COM", "INV"];
@@ -37,31 +32,10 @@ const LEASING_MARKETING_LABELS = ["ava", "available", "marketing"];
 const LIST_CAP = 200;
 const SNAPSHOT_ROW_CAP = 50_000;
 
-// What deriving the side from the type would give (CLAUDE.md: Lease Disposal
-// and Sub-Letting are tenant-side; New Letting / Temp Lease / Licence are
-// landlord-side). Not wired into any create path yet — Woody sees the list
-// (section g) before anything moves.
-export function actingForFromType(dealType: string | null | undefined): "landlord" | "tenant" {
-  return TENANT_SIDE_TYPES.includes(String(dealType || "").trim()) ? "tenant" : "landlord";
-}
-
-function isHistoricRaw(raw: string | null | undefined): boolean {
-  const s = String(raw || "").trim().toLowerCase();
-  if (s === "arch" || s === "archived") return true;
-  const code = legacyToCode(raw);
-  return !!code && HISTORIC_CODES.includes(code);
-}
-
-function isLiveCode(raw: string | null | undefined): boolean {
-  const code = legacyToCode(raw);
-  return !!code && LIVE_TRACKER_CODES.includes(code);
-}
-
 function unitKey(propertyId: string | null, unitName: string | null): string {
   return `${propertyId || ""}::${String(unitName || "").trim().toLowerCase()}`;
 }
 
-const isLettingType = (dealType: string | null | undefined) => LETTING_DEAL_TYPES.includes(String(dealType || "").trim());
 
 // What else moves when a deal's side flips (section g, Phase 0 impact list):
 //  - the account classification (server/account-resolver.ts
@@ -144,7 +118,7 @@ export async function lettingIntegrityReport(pool: Pool) {
          LEFT JOIN crm_properties p ON p.id = au.property_id
         WHERE au.deal_id IS NULL OR d.id IS NULL
         ORDER BY au.created_at DESC NULLS LAST`);
-    const bucket = (historic: boolean, dangling: boolean) => rows.filter((r: any) => isHistoricRaw(r.marketing_status) === historic && !!r.dangling === dangling);
+    const bucket = (historic: boolean, dangling: boolean) => rows.filter((r: any) => isHistoricStatus(r.marketing_status) === historic && !!r.dangling === dangling);
     const live_null = bucket(false, false), live_dangling = bucket(false, true);
     const historic_null = bucket(true, false), historic_dangling = bucket(true, true);
     return {
@@ -162,8 +136,8 @@ export async function lettingIntegrityReport(pool: Pool) {
          LEFT JOIN crm_properties p ON p.id = d.property_id
         WHERE d.deal_type = ANY($1::text[])
           AND NOT EXISTS (SELECT 1 FROM available_units au WHERE au.deal_id = d.id)
-        ORDER BY d.created_at DESC NULLS LAST`, [LETTING_DEAL_TYPES]);
-    const live = rows.filter((r: any) => isLiveCode(r.status)).map((r: any) => {
+        ORDER BY d.created_at DESC NULLS LAST`, [ALL_LETTING_TYPES]);
+    const live = rows.filter((r: any) => isTrackerLiveStatus(r.status)).map((r: any) => {
       const name = String(r.name || "");
       // unit-mirror names a backing deal "<Property> – <Unit>" (with or without a
       // unit_id); the deal form names its deals "<Counterparty> – <Property>", so
@@ -195,7 +169,7 @@ export async function lettingIntegrityReport(pool: Pool) {
          JOIN crm_deals d ON d.id = au.deal_id
          LEFT JOIN crm_properties p ON p.id = au.property_id
         WHERE d.deal_type IS NOT NULL AND NOT (d.deal_type = ANY($1::text[]))
-        ORDER BY d.deal_type, au.unit_name`, [LETTING_DEAL_TYPES]);
+        ORDER BY d.deal_type, au.unit_name`, [ALL_LETTING_TYPES]);
     const untyped = await pool.query(`SELECT count(*)::int AS n FROM available_units au JOIN crm_deals d ON d.id = au.deal_id WHERE d.deal_type IS NULL`);
     const byType: Record<string, number> = {};
     for (const r of rows) byType[r.deal_type] = (byType[r.deal_type] || 0) + 1;
@@ -213,7 +187,7 @@ export async function lettingIntegrityReport(pool: Pool) {
         GROUP BY d.id, d.deal_ref, d.name, d.deal_type, d.status
        HAVING count(*) > 1
         ORDER BY count(*) DESC, d.deal_ref`);
-    return { counts: { total: rows.length, live: rows.filter((r: any) => isLiveCode(r.status)).length }, list: cap(rows) };
+    return { counts: { total: rows.length, live: rows.filter((r: any) => isTrackerLiveStatus(r.status)).length }, list: cap(rows) };
   });
 
   // (e) units with both a £0 AVA stub and another live letting deal
@@ -226,10 +200,10 @@ export async function lettingIntegrityReport(pool: Pool) {
          LEFT JOIN property_units pu ON pu.id = d.unit_id
          LEFT JOIN LATERAL (SELECT a.id, a.unit_name FROM available_units a WHERE a.deal_id = d.id ORDER BY a.created_at LIMIT 1) au ON true
          LEFT JOIN crm_properties p ON p.id = d.property_id
-        WHERE d.deal_type = ANY($1::text[]) AND d.property_id IS NOT NULL`, [LETTING_DEAL_TYPES]);
+        WHERE d.deal_type = ANY($1::text[]) AND d.property_id IS NOT NULL`, [ALL_LETTING_TYPES]);
     const groups = new Map<string, any[]>();
     for (const r of rows) {
-      if (!isLiveCode(r.status) || !String(r.unit_name || "").trim()) continue;
+      if (!isTrackerLiveStatus(r.status) || !String(r.unit_name || "").trim()) continue;
       const k = unitKey(r.property_id, r.unit_name);
       const g = groups.get(k) || [];
       g.push({ ...r, status_code: legacyToCode(r.status) });
@@ -287,7 +261,7 @@ export async function lettingIntegrityReport(pool: Pool) {
     const list = rows.map((r: any) => {
       const derived = actingForFromType(r.deal_type);
       const stored = (r.bgp_acting_for || "landlord").toLowerCase();
-      const base = { ...r, status_code: legacyToCode(r.status), live: isLiveCode(r.status), stored_effective: stored, derived, would_change: stored !== derived };
+      const base = { ...r, status_code: legacyToCode(r.status), live: isTrackerLiveStatus(r.status), stored_effective: stored, derived, would_change: stored !== derived };
       return base.would_change ? { ...base, ...actingForImpact(base) } : base;
     });
     const byType: Record<string, { total: number; would_change: number; live_would_change: number }> = {};
@@ -353,7 +327,7 @@ export async function lettingIntegrityReport(pool: Pool) {
         ORDER BY d.unit_id, d.created_at`);
     const byUnit = new Map<string, any[]>();
     for (const r of rows) {
-      if (isHistoricRaw(r.status)) continue;
+      if (isHistoricStatus(r.status)) continue;
       const g = byUnit.get(r.unit_id) || [];
       g.push({ id: r.id, deal_ref: r.deal_ref, name: r.name, deal_type: r.deal_type, status: r.status, status_code: legacyToCode(r.status), fee: r.fee, letting: isLettingType(r.deal_type), type_null: r.deal_type == null });
       byUnit.set(r.unit_id, g);
@@ -381,11 +355,11 @@ export async function lettingIntegrityReport(pool: Pool) {
     };
   });
 
-  // (l) ARCH / Archived deals: a status outside the 12 codes that
-  // legacyToCode maps to nothing, yet the 0034 index predicate, the stub
-  // check's live-on-spine query (unit-mirror ensureBackingDealForUnit) and
-  // relinkOffSpineDeals all use a closed list that omits it — so to them an
-  // ARCH deal is still live.
+  // (l) ARCH / Archived deals: declared a closed code in shared/deal-status.ts
+  // (Phase 1), yet the 0034 index predicate, the stub check's live-on-spine
+  // query (unit-mirror ensureBackingDealForUnit) and relinkOffSpineDeals
+  // still use a hand-typed closed list that omits it — so to them an ARCH
+  // deal is still live.
   const l = await section(async () => {
     const { rows } = await pool.query(
       `SELECT d.id, d.deal_ref, d.name, d.deal_type, d.status, d.bgp_acting_for, d.unit_id, d.tenancy_unit_id, d.property_id, p.name AS property_name, d.updated_at,
@@ -512,7 +486,7 @@ export async function lettingIntegrityReport(pool: Pool) {
         property_blank: list.filter((r) => r.property_blank).length,
         agent_ids_not_users: list.filter((r) => r.agent_ids_not_users).length,
         status_raw_available: list.filter((r) => r.status_raw_available).length,
-        live: list.filter((r) => isLiveCode(r.marketing_status)).length,
+        live: list.filter((r) => isTrackerLiveStatus(r.marketing_status)).length,
       },
       list: cap(list.filter((r) => r.strong).concat(list.filter((r) => !r.strong))),
     };
@@ -531,7 +505,7 @@ export async function lettingIntegrityReport(pool: Pool) {
          LEFT JOIN crm_properties p ON p.id = au.property_id
         WHERE au.hots_content IS NOT NULL AND au.hots_content <> ''
         ORDER BY au.hots_updated_at DESC NULLS LAST`);
-    const list = rows.map((r: any) => ({ ...r, deal_code: legacyToCode(r.deal_status), on_closed_deal: !!r.deal_id && isHistoricRaw(r.deal_status), no_deal: !r.deal_id }));
+    const list = rows.map((r: any) => ({ ...r, deal_code: legacyToCode(r.deal_status), on_closed_deal: !!r.deal_id && isHistoricStatus(r.deal_status), no_deal: !r.deal_id }));
     const byDealCode: Record<string, number> = {};
     for (const r of list) byDealCode[r.deal_id ? (r.deal_code || r.deal_status || "?") : "no deal"] = (byDealCode[r.deal_id ? (r.deal_code || r.deal_status || "?") : "no deal"] || 0) + 1;
     return {
@@ -569,9 +543,9 @@ export async function lettingIntegrityReport(pool: Pool) {
             ORDER BY t.created_at LIMIT 1
          ) t ON true
         WHERE d.deal_type = ANY($1::text[]) AND d.tenancy_unit_id IS NULL AND d.property_id IS NOT NULL
-        ORDER BY p.name, coalesce(pu.unit_name, au.unit_name)`, [LETTING_DEAL_TYPES]);
+        ORDER BY p.name, coalesce(pu.unit_name, au.unit_name)`, [ALL_LETTING_TYPES]);
     const list = rows
-      .filter((r: any) => isLiveCode(r.status))
+      .filter((r: any) => isTrackerLiveStatus(r.status))
       .map((r: any) => ({ ...r, status_code: legacyToCode(r.status), ambiguous: Number(r.spine_matches) > 1, tracker_row_linked_to_candidate: !!r.tracker_tenancy_unit_id && r.tracker_tenancy_unit_id === r.spine_candidate_id, spine_points_back: r.spine_deal_id === r.id }));
     const byStatus: Record<string, number> = {};
     const bySource: Record<string, number> = {};
@@ -616,10 +590,10 @@ export async function lettingIntegrityReport(pool: Pool) {
     tenancy_unit_id_null: await count(`SELECT count(*)::int AS n FROM leasing_schedule_units WHERE tenancy_unit_id IS NULL`),
   }));
   await tableSection("crm_deals_letting", async () => ({
-    total: await count(`SELECT count(*)::int AS n FROM crm_deals WHERE deal_type = ANY($1::text[])`, [LETTING_DEAL_TYPES]),
-    tenancy_unit_id_null: await count(`SELECT count(*)::int AS n FROM crm_deals WHERE deal_type = ANY($1::text[]) AND tenancy_unit_id IS NULL`, [LETTING_DEAL_TYPES]),
-    unit_id_null: await count(`SELECT count(*)::int AS n FROM crm_deals WHERE deal_type = ANY($1::text[]) AND unit_id IS NULL`, [LETTING_DEAL_TYPES]),
-    property_id_null: await count(`SELECT count(*)::int AS n FROM crm_deals WHERE deal_type = ANY($1::text[]) AND property_id IS NULL`, [LETTING_DEAL_TYPES]),
+    total: await count(`SELECT count(*)::int AS n FROM crm_deals WHERE deal_type = ANY($1::text[])`, [ALL_LETTING_TYPES]),
+    tenancy_unit_id_null: await count(`SELECT count(*)::int AS n FROM crm_deals WHERE deal_type = ANY($1::text[]) AND tenancy_unit_id IS NULL`, [ALL_LETTING_TYPES]),
+    unit_id_null: await count(`SELECT count(*)::int AS n FROM crm_deals WHERE deal_type = ANY($1::text[]) AND unit_id IS NULL`, [ALL_LETTING_TYPES]),
+    property_id_null: await count(`SELECT count(*)::int AS n FROM crm_deals WHERE deal_type = ANY($1::text[]) AND property_id IS NULL`, [ALL_LETTING_TYPES]),
   }));
   await tableSection("evidence_plan_units", async () => ({
     total: await count(`SELECT count(*)::int AS n FROM evidence_plan_units`),

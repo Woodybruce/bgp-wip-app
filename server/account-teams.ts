@@ -13,9 +13,15 @@ import { requireAuth } from "./auth";
 import { resolveAccountView, type Querier } from "./account-resolver";
 import { requirementFitsUnit } from "@shared/requirement-fit";
 import { DEAL_AGENT_ROLES, roleFromAgentType } from "@shared/agent-roles";
+import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
+import { TRACKER_LIVE_STATUSES } from "@shared/letting-rules";
 
 const LEASE_WINDOW_MONTHS = 18;
-const OPEN_DEAL = `COALESCE(d.status, '') NOT IN ('COM','INV','WIT','Completed','Invoiced','Withdrawn','Lost','Dead')`;
+const CLOSED_SQL = statusSpellingsFor(CLOSED_STATUSES).map((s) => `'${s}'`).join(", ");
+const OPEN_DEAL = `lower(btrim(COALESCE(d.status, ''))) NOT IN (${CLOSED_SQL})`;
+// Tracker units offered as space: live on the tracker (HOT included) but
+// not yet at solicitors.
+const PITCHABLE_STATUSES = TRACKER_LIVE_STATUSES.filter((s) => s !== "SOL");
 
 async function rows(q: Querier, sql: string, params: any[]): Promise<any[]> {
   try { return (await q.query(sql, params)).rows; }
@@ -29,8 +35,8 @@ export async function spaceFitsFor(q: Querier, propertyIds: string[]) {
   const units = await rows(q, `SELECT au.id, au.property_id, au.unit_name, au.sqft, au.asking_rent, au.marketing_status, au.use_class,
       p.name AS property_name, COALESCE(p.address::text, '') || ' ' || COALESCE(p.postcode, '') || ' ' || p.name AS property_text
     FROM available_units au JOIN crm_properties p ON p.id = au.property_id
-    WHERE au.property_id = ANY($1::text[]) AND au.marketing_status IN ('OPP','AVA','NEG')
-    ORDER BY p.name, au.unit_name LIMIT 80`, [propertyIds]);
+    WHERE au.property_id = ANY($1::text[]) AND au.marketing_status = ANY($2::text[])
+    ORDER BY p.name, au.unit_name LIMIT 80`, [propertyIds, PITCHABLE_STATUSES]);
   const scheduleVacancies = await rows(q, `SELECT lu.id, lu.property_id, lu.unit_name, lu.sqft, lu.status,
       p.name AS property_name, COALESCE(p.address::text, '') || ' ' || COALESCE(p.postcode, '') || ' ' || p.name AS property_text
     FROM leasing_schedule_units lu JOIN crm_properties p ON p.id = lu.property_id
@@ -107,7 +113,7 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
   // Buildings of theirs on BGP's Sales board (live) — a sale is a moment to
   // approach the tenants (lease advisory, tenant rep).
   const forSale = await rows(q, `SELECT property_id FROM investment_tracker
-    WHERE board_type = 'Sales' AND property_id = ANY($1::text[]) AND COALESCE(status, '') NOT IN ('COM','INV','WIT')`, [propertyIds]);
+    WHERE board_type = 'Sales' AND property_id = ANY($1::text[]) AND lower(btrim(COALESCE(status, ''))) NOT IN (${CLOSED_SQL})`, [propertyIds]);
   const forSalePropertyIds = [...new Set(forSale.map((r: any) => r.property_id))];
   const requirements = await rows(q, `SELECT id, name, status, use_types, requirement_types, size_range, requirement_locations, locations, comments, requirement_date, updated_at
     FROM crm_requirements_investment WHERE company_id = ANY($1::text[])
@@ -220,7 +226,7 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
   }
   for (const r of DEAL_AGENT_ROLES) {
     const found = await rows(q, `SELECT d.${r.column} AS firm_id, a.name AS agent_name, COUNT(*)::int AS n,
-        COUNT(*) FILTER (WHERE COALESCE(d.status, '') NOT IN ('COM','INV','WIT','Completed','Invoiced','Withdrawn','Lost','Dead'))::int AS open
+        COUNT(*) FILTER (WHERE ${OPEN_DEAL})::int AS open
       FROM crm_deals d JOIN crm_companies a ON a.id = d.${r.column}
       WHERE d.property_id = ANY($1::text[]) AND d.${r.column} IS NOT NULL
       GROUP BY d.${r.column}, a.name`, [propertyIds]);

@@ -16,6 +16,7 @@ import { PENDING_CONTACT_SUGGESTIONS_SQL, RELATIONSHIP_STATS_SQL } from "./brand
 import { dealTotalsSql, isActiveDealStatus, isCompletedDealStatus } from "./brand-profile-deals";
 import { inferCountryFromAddress } from "../shared/geo-country";
 import { nameKey } from "../shared/contact-tiers";
+import { TERMINAL_STATUSES } from "../shared/deal-status";
 import { registerBrandEmailThreadRoutes } from "./brand-email-threads";
 import { registerBrandContactsCheckRoutes } from "./brand-contacts-check";
 
@@ -1218,7 +1219,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
                     NULLIF(p.longitude, '')::float8 AS lng,
                     (SELECT COUNT(*)::text FROM crm_deals d
                        WHERE d.property_id = p.id
-                         AND d.status NOT IN ('ARCH', 'WIT', 'INV')) AS active_deals
+                         AND d.status NOT IN ('INV', ${TERMINAL_STATUSES.map((s) => `'${s}'`).join(", ")})) AS active_deals
                FROM crm_properties p
               WHERE NULLIF(p.latitude, '') IS NOT NULL
                 AND NULLIF(p.longitude, '') IS NOT NULL`

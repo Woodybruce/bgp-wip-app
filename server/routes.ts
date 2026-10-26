@@ -42,7 +42,9 @@ import { fromError } from "zod-validation-error";
 import { db } from "./db";
 import { eq, ilike, or, sql, and, desc, inArray, isNull } from "drizzle-orm";
 import { newsArticles } from "@shared/schema";
-import { legacyToCode } from "@shared/deal-status";
+import { legacyToCode, statusSpellingsFor, CLOSED_STATUSES, TERMINAL_STATUSES, DEAL_STATUS_CODES } from "@shared/deal-status";
+import { codeToLeasingStatus } from "@shared/lease-status-mirror";
+import { DEFAULT_LETTING_TYPE } from "@shared/letting-rules";
 import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 import { createTrackerAsset, updateTrackerAsset, resolveAgentNames } from "./investment-tracker-service";
 import { registerIngestRoutes } from "./ingest-routes";
@@ -67,6 +69,7 @@ import { executeSeedSql } from "./seed";
 import { gunzipSync } from "zlib";
 import { invalidateContextCache } from "./chatbgp";
 import { registerLeasingViewingRoutes, createTrackerViewing, patchLeasingViewing, deleteTrackerViewing, createTrackerOffer, patchTrackerOffer, serializeViewingForScope, ViewingError } from "./leasing-viewings";
+
 
 async function taskLinksInScope(scopeCompanyId: string | null, links: { linkedPropertyId?: unknown; linkedDealId?: unknown }): Promise<boolean> {
   if (!scopeCompanyId) return true;
@@ -223,8 +226,8 @@ async function buildTaggedEntityContext(messages: Array<{ content: string }>, sc
         const r = await pool.query(
           `SELECT p.name, p.status, p.asset_class,
             (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id) as unit_count,
-            (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND au.marketing_status = 'Available') as available_count
-           FROM crm_properties p WHERE p.id = $1`, [id]);
+            (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND lower(trim(coalesce(au.marketing_status, ''))) = ANY($2::text[])) as available_count
+           FROM crm_properties p WHERE p.id = $1`, [id, statusSpellingsFor(["AVA"])]);
         const p = r.rows[0];
         if (p) {
           lines.push(`- Property **${p.name}** (id ${id}) — ${p.asset_class || "unknown class"}, status ${p.status || "unknown"}, ${p.unit_count} units (${p.available_count} available)`);
@@ -5364,9 +5367,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             `SELECT * FROM available_units
              WHERE property_id = $1
                AND lower(trim(split_part(coalesce(unit_name, ''), ',', 1))) = $2
-               AND coalesce(marketing_status, '') NOT IN ('Withdrawn', 'WIT')
+               AND lower(trim(coalesce(marketing_status, ''))) <> ALL($3::text[])
              LIMIT 1`,
-            [parsed.propertyId, seg]
+            [parsed.propertyId, seg, statusSpellingsFor(TERMINAL_STATUSES)]
           );
           if (dupe.rows.length > 0) {
             // Heal an existing listing that never got its deal (imported /
@@ -5426,7 +5429,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
                (property_id, unit_name, sqft, rent_pa, status)
              VALUES ($1, $2, $3, $4, $5)`,
             [parsed.propertyId, parsed.unitName || null, parsed.sqft ?? null,
-             parsed.askingRent ?? null, parsed.marketingStatus || "AVA"]
+             parsed.askingRent ?? null, codeToLeasingStatus(parsed.marketingStatus) || "Vacant"]
           );
         }
       } catch (e: any) {
@@ -6751,7 +6754,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         try {
           const ins = await pool.query(
             `INSERT INTO available_units (property_id, unit_name, sqft, asking_rent, marketing_status, tenancy_unit_id)
-             VALUES ($1, $2, $3, $4, 'Available', $5) RETURNING id`,
+             VALUES ($1, $2, $3, $4, 'AVA', $5) RETURNING id`,
             [m.property_id, m.unit_name || m.unit_number || m.premises || "Unit",
              m.nia_sqft ?? m.gia_sqft ?? null, m.marketing_rent_pa ?? null, m.tenancy_unit_id]
           );
@@ -7314,7 +7317,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         propertyId: unit.propertyId,
         unitId: unit.unitId || undefined,
         status: "SOL",
-        dealType: body.dealType || "New Letting",
+        dealType: body.dealType || DEFAULT_LETTING_TYPE,
         team: mergedTeams,
         internalAgent: mergedAgents,
         fee: body.fee ? parseFloat(body.fee) : (unit.fee || undefined),
@@ -8263,7 +8266,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
       const deal = await storage.createCrmDeal({
         name: item.assetName || property?.name || "Investment Deal",
         propertyId: item.propertyId || undefined,
-        status: item.status && ["REP","SPEC","LIVE","AVA","NEG","SOL","EXC","COM","WIT","INV"].includes(item.status) ? item.status : "REP",
+        status: legacyToCode(item.status) || "REP",
         dealType: (item.boardType === "Sales") ? "Sale" : "Purchase",
         groupName: "Investment - Active",
         team: ["Investment"],
@@ -8732,13 +8735,13 @@ These terms are indicative only and do not constitute a binding agreement.`;
       // portfolio showed "0 active deals" while the Deals board was full.
       const dealsResult = await pool.query(
         `SELECT COUNT(DISTINCT d.id) as total,
-                COUNT(DISTINCT d.id) FILTER (WHERE d.status NOT IN ('WIT', 'COM', 'INV')) as active
+                COUNT(DISTINCT d.id) FILTER (WHERE d.status IS NOT NULL AND lower(trim(d.status)) <> ALL($2::text[])) as active
          FROM crm_deals d
          LEFT JOIN crm_properties p ON d.property_id = p.id
          WHERE d.landlord_id = $1
             OR p.landlord_id = $1
             OR d.group_name ILIKE '%' || (SELECT name FROM crm_companies WHERE id = $1) || '%'`,
-        [companyId]
+        [companyId, statusSpellingsFor(CLOSED_STATUSES)]
       );
 
       // Distinct people, not raw rows — imports create duplicate contact
@@ -8772,9 +8775,9 @@ These terms are indicative only and do not constitute a binding agreement.`;
         `SELECT d.id, d.name, d.status, d.property_id, d.deal_type as "dealType", p.name as property_name
          FROM crm_deals d
          LEFT JOIN crm_properties p ON d.property_id = p.id
-         WHERE d.landlord_id = $1 AND d.status NOT IN ('WIT', 'COM', 'INV')
+         WHERE d.landlord_id = $1 AND d.status IS NOT NULL AND lower(trim(d.status)) <> ALL($2::text[])
          ORDER BY p.name, d.created_at DESC`,
-        [companyId]
+        [companyId, statusSpellingsFor(CLOSED_STATUSES)]
       );
 
       // The dashboard portfolio boards (Leasing Schedule overview, Lease Expiry
@@ -9605,9 +9608,10 @@ These terms are indicative only and do not constitute a binding agreement.`;
 
       const stuckDeals = await pool.query(
         `SELECT id, name, status, updated_at FROM crm_deals 
-         WHERE status NOT IN ('COM', 'INV', 'WIT')
+         WHERE status IS NOT NULL AND lower(trim(status)) <> ALL($1::text[])
          AND updated_at < NOW() - INTERVAL '30 days'
-         ORDER BY updated_at ASC LIMIT 10`
+         ORDER BY updated_at ASC LIMIT 10`,
+        [statusSpellingsFor(CLOSED_STATUSES)]
       );
       for (const d of stuckDeals.rows) {
         const ms = Date.now() - new Date(d.updated_at).getTime();
@@ -10038,7 +10042,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
 
       // Stage detection now uses canonical 10-code helper (legacy strings still mapped)
       const { legacyToCode } = await import("@shared/deal-status");
-      const PIPELINE_STAGE_ORDER = ["REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "INV"];
+      const PIPELINE_STAGE_ORDER: readonly string[] = DEAL_STATUS_CODES;
 
       let totalWIP = 0;
       let totalInvoiced = 0;
@@ -10061,7 +10065,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
         }
 
         // Pipeline value: anything still in lifecycle (not COM/INV/WIT)
-        const isPreCompletion = code !== null && !["COM", "INV", "WIT"].includes(code);
+        const isPreCompletion = code !== null && !CLOSED_STATUSES.includes(code);
         if (isPreCompletion) {
           pipelineValue += fee;
         }
@@ -10072,7 +10076,8 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
         byDealType[dealType].fees += fee;
 
         // By status
-        byStatus[status || "Unknown"] = (byStatus[status || "Unknown"] || 0) + 1;
+        const statusKey = code || status || "Unknown";
+        byStatus[statusKey] = (byStatus[statusKey] || 0) + 1;
 
         // By agent (internal_agent is an array in the DB)
         const agents: string[] = Array.isArray(deal.internal_agent) ? deal.internal_agent : deal.internal_agent ? [deal.internal_agent] : [];

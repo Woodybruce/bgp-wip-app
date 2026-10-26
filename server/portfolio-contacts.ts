@@ -1,4 +1,10 @@
 import type { PortfolioContactEntry, PortfolioContactRelationship, PortfolioContactsResponse, PortfolioRecordRef } from "@shared/portfolio-contacts";
+import { CLOSED_STATUSES, statusSpellingsFor, type DealStatusCode } from "@shared/deal-status";
+import { TRACKER_LIVE_STATUSES } from "@shared/letting-rules";
+
+const sqlList = (values: readonly string[]) => values.map((v) => `'${v}'`).join(", ");
+// Tracker units with a party worth listing: NEG through EXC.
+const ACTIVE_UNIT_CODES: DealStatusCode[] = [...TRACKER_LIVE_STATUSES.filter((s) => s !== "OPP" && s !== "AVA"), "EXC"];
 
 type QueryClient = { query: (text: string, values?: any[]) => Promise<{ rows: any[] }> };
 
@@ -37,7 +43,7 @@ export function buildPortfolioContactsQuery(companyId: string, scopeCompanyId: s
   const visible = (contact: string, property: string) => `NOT EXISTS (
     SELECT 1 FROM overrides o WHERE o.contact_id = ${contact} AND o.property_id = ${property} AND o.kind = 'hide'
   )`;
-  const liveDeal = "COALESCE(d.status, '') NOT IN ('WIT','COM','INV')";
+  const liveDeal = `lower(btrim(COALESCE(d.status, ''))) NOT IN (${sqlList(statusSpellingsFor(CLOSED_STATUSES))})`;
   const unitFields = { property_id: "a.property_id", unit_id: "a.unit_id", tracker_id: "a.id", unit_name: "a.unit_name", status: "a.marketing_status" };
   const dealFields = { property_id: "d.property_id", deal_id: "d.id", unit_id: "d.unit_id", unit_name: "d.unit_name", status: "d.status" };
   const links = [
@@ -105,7 +111,7 @@ export function buildPortfolioContactsQuery(companyId: string, scopeCompanyId: s
       LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id AND ts.property_id = d.property_id
     ),
     portfolio_units AS (SELECT a.* FROM available_units a JOIN props p ON p.id = a.property_id),
-    active_units AS (SELECT * FROM portfolio_units WHERE lower(COALESCE(marketing_status,'')) ~ '(neg|offer|sol|exc|hots|terms)'),
+    active_units AS (SELECT * FROM portfolio_units WHERE lower(btrim(COALESCE(marketing_status,''))) IN (${sqlList(statusSpellingsFor(ACTIVE_UNIT_CODES))})),
     tracker_parties AS (
       SELECT a.id AS tracker_id, co.id AS company_id, 'recorded brand'::text AS source
       FROM active_units a JOIN crm_companies co ON co.id = a.tenant_company_id

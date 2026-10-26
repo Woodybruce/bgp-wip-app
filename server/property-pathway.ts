@@ -22,6 +22,7 @@ import { performPropertyLookup } from "./property-lookup";
 import { executeCreateSharePointFolder, executeUploadFileToSharePoint } from "./utils/sharepoint-operations";
 import { askPerplexity } from "./perplexity";
 import { callClaude } from "./utils/anthropic-client";
+import { legacyToCode } from "@shared/deal-status";
 
 /**
  * Property Pathway Orchestrator
@@ -2019,7 +2020,7 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
           source: "sharepoint",
         });
       }
-      const vacantCount = merged.filter((u: any) => /vacant/i.test(u.marketingStatus || "")).length;
+      const vacantCount = merged.filter((u: any) => legacyToCode(u.marketingStatus) === "AVA").length;
       const status: "vacant" | "let" | "mixed" | "unknown" =
         merged.length === 0 ? "unknown" : vacantCount === merged.length ? "vacant" : vacantCount === 0 ? "let" : "mixed";
       stage1Payload.tenancy = { ...(stage1Payload.tenancy || {}), status, units: merged };
@@ -2705,7 +2706,7 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     try {
       const units = await db.select().from(availableUnits).where(eq(availableUnits.propertyId, crmMatch.id)).limit(50);
       if (units.length) {
-        const vacant = units.filter((u) => (u.marketingStatus || "Available").toLowerCase() === "available").length;
+        const vacant = units.filter((u) => legacyToCode(u.marketingStatus || "AVA") === "AVA").length;
         const let_ = units.length - vacant;
         const status: "vacant" | "let" | "mixed" | "unknown" = vacant === units.length ? "vacant" : let_ === units.length ? "let" : "mixed";
         tenancy = {
@@ -3117,7 +3118,7 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
           source: "sharepoint" as const,
         });
       }
-      const vacantCount = merged.filter((u: any) => /vacant/i.test(u.marketingStatus || "")).length;
+      const vacantCount = merged.filter((u: any) => legacyToCode(u.marketingStatus) === "AVA").length;
       const status: "vacant" | "let" | "mixed" | "unknown" =
         merged.length === 0 ? "unknown" : vacantCount === merged.length ? "vacant" : vacantCount === 0 ? "let" : "mixed";
       tenancy = { ...(tenancy || {}), status, units: merged };

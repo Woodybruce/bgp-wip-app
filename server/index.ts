@@ -6782,8 +6782,10 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
         // of the WIP cleanup that used to live alongside it.
         try {
           const { pool: dbPool } = await import("./db");
-          const statusFix1 = await dbPool.query(`UPDATE crm_deals SET status = 'SOLs' WHERE status = 'Solicitors'`);
-          const statusFix2 = await dbPool.query(`UPDATE crm_deals SET status = 'Live' WHERE status = 'Active'`);
+          // Writes canonical codes — it used to write 'SOLs' / 'Live', legacy
+          // labels the boot normaliser then re-mapped on the next start.
+          const statusFix1 = await dbPool.query(`UPDATE crm_deals SET status = 'SOL' WHERE status = 'Solicitors'`);
+          const statusFix2 = await dbPool.query(`UPDATE crm_deals SET status = 'LIVE' WHERE status = 'Active'`);
           if ((statusFix1.rowCount || 0) + (statusFix2.rowCount || 0) > 0) {
             console.log(`[status-fix] Updated ${(statusFix1.rowCount || 0) + (statusFix2.rowCount || 0)} deal statuses`);
           }

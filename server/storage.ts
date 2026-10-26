@@ -48,6 +48,7 @@ import {
 import { escapeLike } from "./utils/escape-like";
 import { db, pool } from "./db";
 import { eq, ne, desc, and, or, inArray, ilike, sql, notInArray, isNull, arrayContains } from "drizzle-orm";
+import { CLOSED_STATUSES } from "@shared/deal-status";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -1292,7 +1293,7 @@ export class DatabaseStorage implements IStorage {
       // "active" matches the landlord board: anything not archived,
       // completed, invoiced or withdrawn is still being worked.
       db.select({ count: sql<number>`count(*)` }).from(crmDeals)
-        .where(sql`${crmDeals.status} IS NULL OR ${crmDeals.status} NOT IN ('ARCH','COM','INV','WIT')`),
+        .where(or(isNull(crmDeals.status), notInArray(crmDeals.status, CLOSED_STATUSES))),
       db.select({ count: sql<number>`count(*)` }).from(crmCompanies),
       db.select({ count: sql<number>`count(*)` }).from(crmContacts),
       db.select({ count: sql<number>`count(*)` }).from(crmLeads),

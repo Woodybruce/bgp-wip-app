@@ -169,7 +169,11 @@ render only when the brochure has no usable photos), uploading a brochure PDF
 in a unit's Files does the same when the unit has no photos yet, and ChatBGP
 can re-pull them for any unit (refresh_unit_photos_from_brochure), sets the BGP agents named
 on the brochure, and switches the website on when address, rent or POA, size,
-photo and lease terms are all in — otherwise it says which are missing. Swap the
+photo and lease terms are all in — otherwise it says which are missing. ChatBGP's
+deal and unit edits (create_deal, update_deal, update_available_unit) run through
+the same routes as the deal page and the tracker's inline edit, so the same
+approval, AML and client-scope checks apply and a unit status is stored as its
+code (a label like "Under Offer" is normalised; an unknown one is refused). Swap the
 photo later via Files on the unit's row. The unit's **Create document** (Files dialog)
 makes the Unit particulars PDF in BGP house style — bordeaux header with the
 real BGP wordmark, the first photo full-width, area / rent / use as big
