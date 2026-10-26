@@ -159,9 +159,9 @@ export async function previewSweepUndo(scope: Scope): Promise<{ sweep: any; clus
   return { sweep, clusters, candidates, summary };
 }
 
-export async function applySweepUndo(scope: Scope, by: string | null) {
+export async function applySweepUndo(scope: Scope, by: string | null, opts: { skipPreviewCheck?: boolean } = {}) {
   const dry = await readSetting<{ at?: string; scope?: Scope }>(DRY_RUN_KEY);
-  if (!dry?.at || dry.scope !== scope || Date.now() - new Date(dry.at).getTime() > DRY_RUN_TTL_MS) {
+  if (!opts.skipPreviewCheck && (!dry?.at || dry.scope !== scope || Date.now() - new Date(dry.at).getTime() > DRY_RUN_TTL_MS)) {
     const err: any = new Error("Preview first — Apply only runs within an hour of a preview with the same scope.");
     err.status = 409;
     throw err;

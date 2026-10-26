@@ -3615,6 +3615,27 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
   // reported (GET /api/admin/letting-integrity) and repaired only by an
   // explicit admin Preview → Apply (CLAUDE.md "Lettings"); the undo of that
   // sweep's stubs is POST /api/admin/letting-sweep-undo (server/letting-sweep-undo.ts).
+  //
+  // One-off (Woody, 2026-10-26, "can't you do it?"): on the units that
+  // already carried a live letting deal, remove the stub the sweep minted
+  // and point the tracker row back at the one other live deal (or at no
+  // deal when there are several to choose from). Runs once — flagged in
+  // system_settings — and records every id under
+  // unit_backing_deals_undo_2026_10_26 so it can be put back.
+  setTimeout(async () => {
+    try {
+      const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'letting_sweep_undo_auto_2026_10_26'`);
+      if (done.rows.length) return;
+      const { applySweepUndo } = await import("./letting-sweep-undo");
+      const run = await applySweepUndo("duplicates", null, { skipPreviewCheck: true });
+      await pool.query(
+        `INSERT INTO system_settings (key, value, updated_at) VALUES ('letting_sweep_undo_auto_2026_10_26', $1::jsonb, now()) ON CONFLICT (key) DO NOTHING`,
+        [JSON.stringify({ at: run.at, deleted: run.deleted.length, failed: run.failed.length, summary: run.summary })]);
+      console.log(`[letting-sweep-undo] removed ${run.deleted.length} sweep stubs on units that already had a deal (${run.failed.length} failed)`);
+    } catch (e: any) {
+      console.warn("[letting-sweep-undo]", e?.message);
+    }
+  }, 90_000);
 
   // ── Seed staff start dates from employment contracts (May 2026) ────────
   // Idempotent — ON CONFLICT only updates start_date, never overwrites other fields.
@@ -3673,6 +3694,7 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
   }
 })();
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
+import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 import { setupMicrosoftRoutes } from "./microsoft";
 import { setupWhatsAppRoutes } from "./whatsapp";
 import { setupChatBGPRoutes } from "./chatbgp";
@@ -4247,6 +4269,12 @@ app.use("/api/branding/assets", express.static(
   // the tenancy schedule's Re-sync button now calls the per-property route.
   const ADMIN_PATH_STAFF_EXCEPTIONS = new Set(["/backfill-tracker-deals"]);
   app.use("/api/admin", (req, res, next) => {
+    // Settings → Data Health "Backfill Tracker Deals" runs the same sweep by
+    // hand (backfillUnitBackingDeals) — paused with the other repair tools
+    // while the lettings cleanup runs (shared/feature-flags.ts).
+    if (req.path === "/backfill-tracker-deals" && !LETTING_REPAIR_TOOLS_ENABLED) {
+      return res.status(409).json({ message: LETTING_REPAIR_PAUSED });
+    }
     if (ADMIN_PATH_STAFF_EXCEPTIONS.has(req.path)) return requireAuth(req, res, next);
     return requireAdmin(req, res, next);
   });
