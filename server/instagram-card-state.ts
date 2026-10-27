@@ -6,9 +6,10 @@
 // provider", "not connected", and "connected but no posts yet" — today all
 // four collapse into an empty card that reads as a quiet account.
 //
-// Feed eligibility stays tenant-only: Woody (2026-09-21) took Instagram off
+// Scheduled feed eligibility stays tenant-only: Woody (2026-09-21) took Instagram off
 // landlord boards entirely ("not of interest") — landlords get no feed
-// provisioning, no handle backfill, no card. Tenants keep today's behaviour
+// automatic provisioning or handle backfill. Explicit staff opt-in for a saved
+// landlord handle is handled separately below. Tenants keep today's behaviour
 // exactly; the identityVerified argument is accepted for caller compatibility
 // but no longer widens eligibility.
 // ─────────────────────────────────────────────────────────────────────────
@@ -54,4 +55,11 @@ export function instagramCardState(input: InstagramCardStateInput): InstagramCar
 export function isFeedEligibleCompany(companyType: string | null | undefined, _identityVerified: boolean): boolean {
   const t = (companyType || "").trim().toLowerCase();
   return t.startsWith("tenant");
+}
+
+// Scheduled sweeps retain tenant-only eligibility. A staff-opened landlord
+// profile may explicitly request a feed for a saved handle.
+export function isOnDemandInstagramEligible(company: {company_type?: string|null; on_deal?: boolean; is_landlord?: boolean}, allowLandlord = false): boolean {
+  if (/^tenant/i.test(company.company_type || "")) return company.on_deal === true;
+  return allowLandlord && company.is_landlord === true;
 }

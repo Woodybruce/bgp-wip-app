@@ -22,6 +22,7 @@ import {
   parseWithClaude,
   buildDiff,
   commitDiff,
+  ingestCommitRefusal,
   getPendingPreview,
   listIngestTargets,
   classifyTarget,
@@ -136,11 +137,14 @@ export function registerIngestRoutes(app: Express) {
   app.post("/api/ingest/:token/commit", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as any).user?.id || "system";
+      const pending = getPendingPreview(String(req.params.token));
+      const refusal = pending ? ingestCommitRefusal(pending.target) : null;
+      if (refusal) return res.status(409).json({ error: refusal });
       const result = await commitDiff({ commitToken: String(req.params.token), userId });
       res.json(result);
     } catch (err: any) {
       console.error("[ingest commit]", err?.message);
-      res.status(500).json({ error: err?.message || "commit failed" });
+      res.status(err?.status === 409 ? 409 : 500).json({ error: err?.message || "commit failed" });
     }
   });
 }

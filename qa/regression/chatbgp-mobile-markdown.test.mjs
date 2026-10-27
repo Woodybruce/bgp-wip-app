@@ -4,6 +4,8 @@ import vm from 'node:vm';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createRequire } from 'node:module';
+import { Marked } from 'marked';
+import { decodeHTML } from 'entities';
 const require = createRequire(import.meta.url);
 const { source, find, ts } = require('./source-harness.cjs');
 
@@ -11,11 +13,12 @@ const markdownFile = 'client/src/components/chatbgp-markdown.tsx';
 const mobileFile = 'client/src/components/mobile-app.tsx';
 const tagFile = 'client/src/components/chat-tags.tsx';
 const icon = () => null;
+let sharedBindings = {};
 function compile(code, bindings = {}) {
-  const context = { exports: {}, React, URLSearchParams, Copy: icon, Check: icon, Download: icon, Loader2: icon,
+  const context = { exports: {}, React, URL, URLSearchParams, Marked, decodeHTML, createElement: React.createElement, useMemo: fn => fn(), Copy: icon, Check: icon, Download: icon, Loader2: icon,
     useState: initial => [initial, () => {}],
     TagChip: ({ name }) => React.createElement('button', { 'data-testid': 'tag-chip' }, name),
-    ...bindings };
+    ...sharedBindings, ...bindings };
   vm.runInNewContext(ts.transpileModule(code, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React },
   }).outputText, context);
@@ -24,7 +27,11 @@ function compile(code, bindings = {}) {
 const tagCode = find(tagFile, n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => d.name.getText() === 'TAG_TOKEN_SOURCE'));
 const ast = ts.createSourceFile(markdownFile, source(markdownFile), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const markdownCode = tagCode + '\n' + ast.statements.filter(n => !ts.isImportDeclaration(n)).map(n => n.getText(ast)).join('\n');
-const renderer = compile(markdownCode);
+const richAst = ts.createSourceFile('chat-rich-text.ts', source('shared/chat-rich-text.ts'), ts.ScriptTarget.Latest, true);
+const richCode = richAst.statements.filter(n => !ts.isImportDeclaration(n)).map(n => n.getText(richAst)).join('\n');
+const richText = compile(richCode).exports;
+sharedBindings = richText;
+const renderer = compile(markdownCode, richText);
 const mobileCode = ['isSafeUrl', 'renderFormattedText', 'RenderMessageContent'].map(name => find(mobileFile, n => ts.isFunctionDeclaration(n) && n.name?.text === name)).join('\n');
 const mobile = compile(tagCode + '\n' + mobileCode, renderer.exports);
 function render(content, props = {}) {
@@ -51,6 +58,35 @@ test('phone assistant renders the reported Land Registry result as a scrollable 
   assert.match(html, /max-w-full whitespace-normal/);
   assert.doesNotMatch(html, /\|---\|/);
   assert.match(html, /Login details are invalid\./);
+});
+
+test('phone chat renders optional-pipe tables, escaped pipes and explicit line breaks', () => {
+  const html = render('Use | Area | Tenant\n--- | --- | ---\nPadel | 25,000 sq ft | A \\| B\n\nArea: 25,000\nRent: £14  \nTenants: A, B');
+  assert.equal((html.match(/<th /g) || []).length, 3);
+  assert.equal((html.match(/<td /g) || []).length, 3);
+  assert.match(html, /A \| B/);
+  assert.equal((html.match(/<br\/>/g) || []).length, 2);
+});
+
+test('chat retains wrapped downloads, nested emphasis, smart tags and code copy', () => {
+  const html = render('**[Workbook]\n(/api/chat-media/terms(1).xlsx)**\n\n@[Fixture](tag:property/fixture-id)\n\n```text\na < b\n```');
+  assert.match(html, /data-testid="link-download-file"/);
+  assert.match(html, /data-testid="tag-chip"/);
+  assert.match(html, /data-testid="button-copy-code"/);
+  assert.match(html, /a &lt; b/);
+});
+
+test('chat raw HTML and executable links never become active DOM', () => {
+  const html = render('[Unsafe](java&#x73;cript:alert(1))\n\n<img src=x onerror="alert(2)">');
+  assert.doesNotMatch(html, /href=|<img\b|<script\b/);
+  assert.match(html, /&lt;img/);
+});
+
+test('linked images use one anchor rather than nested interactive controls', () => {
+  const html = render('[![Shopfront](https://example.invalid/photo.jpg)](https://example.invalid/property)');
+  assert.equal((html.match(/<a /g) || []).length, 1);
+  assert.match(html, /href="https:\/\/example.invalid\/property"/);
+  assert.match(html, /<img src="https:\/\/example.invalid\/photo.jpg"/);
 });
 
 test('human message keeps its original literal table and inline formatting', () => {

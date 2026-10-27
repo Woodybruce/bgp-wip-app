@@ -1,7 +1,11 @@
 import { getAnthropicClient } from "./utils/anthropic-client";
+import { PERKS_ENABLED } from "@shared/feature-flags";
 import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, TEAM_LEADS_2026, isHrPerson, rosterNameFor, rosterTeamsFor, samePerson, staffGroupFor } from "@shared/teams";
+import { TERMINAL_STATUSES } from "@shared/deal-status";
 import type { Express } from "express";
 import { pool } from "./db";
+import { isShareableClientCalendarEvent, teamEventPrivacySql } from "./team-event-privacy";
+import { isPrivateMailboxAddress } from "./private-mail";
 import { requireAuth, requireAdmin } from "./auth";
 import { xeroApi, xeroPayrollApi } from "./xero";
 import { getValidMsToken } from "./microsoft";
@@ -11,6 +15,8 @@ import multer from "multer";
 import mammoth from "mammoth";
 import { renderCvPdf, renderCvDocx, type CvData } from "./cv-renderer";
 import { contentDispositionFor } from "./utils/http-headers";
+
+const TERMINAL_SQL = TERMINAL_STATUSES.map((s) => `'${s}'`).join(",");
 
 // requireAuth doesn't populate req.user, so look up admin status from the DB
 // using the session/token user id. Used by hybrid (admin-or-self) endpoints
@@ -135,6 +141,8 @@ export async function runBenefitRenewalSweep(): Promise<Array<{ slug: string; us
 export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; newAwards: number; weekAgo: string }> {
   const now = new Date();
   const weekAgo = new Date(now.getTime() - 7 * 86400000);
+  // Prizes paused (Woody, 2026-10-26) — no points are allocated meanwhile.
+  if (!PERKS_ENABLED) return { scannedEvents: 0, newAwards: 0, weekAgo: weekAgo.toISOString() };
 
   const usersRes = await pool.query(
     `SELECT u.id, u.name, sp.xero_tracking_name FROM users u
@@ -167,7 +175,7 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
             COALESCE(completed_at, exchanged_at, target_date, instructed_at) AS dt
      FROM crm_deals
      WHERE COALESCE(completed_at, exchanged_at, target_date, instructed_at) BETWEEN $1 AND $2
-       AND COALESCE(status, '') NOT IN ('ARCH','WIT')
+       AND COALESCE(status, '') NOT IN (${TERMINAL_SQL})
        AND fee IS NOT NULL AND fee > 0`,
     [weekAgo, now]
   );
@@ -1477,7 +1485,7 @@ export function setupHrRoutes(app: Express) {
         SELECT d.id, d.name, d.status, d.fee, d.internal_agent,
                COALESCE(d.completed_at, d.exchanged_at, d.target_date, d.instructed_at) AS dt
         FROM crm_deals d
-        WHERE COALESCE(d.status, '') NOT IN ('INV','ARCH','WIT')
+        WHERE COALESCE(d.status, '') NOT IN ('INV',${TERMINAL_SQL})
           AND d.fee IS NOT NULL AND d.fee > 0
       `);
 
@@ -2094,7 +2102,7 @@ export function setupHrRoutes(app: Express) {
                          WHERE a2.deal_id = d.id
                            AND (a2.agent_user_id = $2 OR LOWER(a2.agent_name) = LOWER($1)))
              )
-           AND COALESCE(d.status, '') NOT IN ('INV','ARCH','WIT')
+           AND COALESCE(d.status, '') NOT IN ('INV',${TERMINAL_SQL})
          ORDER BY
            CASE d.status WHEN 'COM' THEN 0 WHEN 'EXC' THEN 1 WHEN 'NEG' THEN 2 WHEN 'SOL' THEN 2 ELSE 3 END,
            d.fee DESC NULLS LAST
@@ -2742,6 +2750,9 @@ export function setupHrRoutes(app: Express) {
     if (!actor.userId) return res.status(401).json({ error: "Not authenticated" });
     const { userId, kind, emoji, reason } = req.body || {};
     if (!userId || !kind) return res.status(400).json({ error: "userId and kind required" });
+    if (!PERKS_ENABLED && kind !== "kudos") {
+      return res.status(409).json({ error: "Perk awards are paused while the scheme is reworked — kudos still work" });
+    }
     // Non-admins can only issue peer 'kudos' (no real perks).
     if (!actor.isAdmin && kind !== "kudos") {
       return res.status(403).json({ error: "Only admins can issue perk awards. Use kind='kudos' for peer shout-outs." });
@@ -2778,6 +2789,7 @@ export function setupHrRoutes(app: Express) {
   // £100k YTD · £250k YTD · first instruction won this month.
   app.post("/api/hr/awards/auto-detect", requireAdmin, async (_req, res) => {
     const created: Array<{ user: string; kind: string; reason: string }> = [];
+    if (!PERKS_ENABLED) return res.json({ created, paused: true });
     try {
       const today = new Date();
       const todayStr = today.toISOString().slice(5, 10); // MM-DD
@@ -4383,7 +4395,7 @@ Return ONLY JSON.`,
       const dealsRes = await pool.query(
         `SELECT name, status, fee FROM crm_deals
          WHERE EXISTS (SELECT 1 FROM unnest(COALESCE(internal_agent, ARRAY[]::text[])) a WHERE LOWER(a) = LOWER($1))
-           AND COALESCE(status, '') NOT IN ('ARCH','WIT')
+           AND COALESCE(status, '') NOT IN (${TERMINAL_SQL})
          ORDER BY fee DESC NULLS LAST LIMIT 25`,
         [userName]
       );
@@ -4824,7 +4836,7 @@ Return ONLY JSON.`,
         pool.query(
           `SELECT name, status, fee FROM crm_deals
            WHERE EXISTS (SELECT 1 FROM unnest(COALESCE(internal_agent, ARRAY[]::text[])) a WHERE LOWER(a) = LOWER($1))
-             AND COALESCE(status, '') NOT IN ('ARCH','WIT')
+             AND COALESCE(status, '') NOT IN (${TERMINAL_SQL})
            ORDER BY fee DESC NULLS LAST LIMIT 30`,
           [userName]
         ),
@@ -4994,7 +5006,7 @@ Use the language and tone of BGP's review docs.`,
            JOIN users u ON LOWER(u.name) = ANY (SELECT LOWER(unnest(COALESCE(d.internal_agent, ARRAY[]::text[]))))
            LEFT JOIN staff_profiles sp ON sp.user_id = u.id
            WHERE u.team = $1
-             AND COALESCE(d.status, '') NOT IN ('ARCH','WIT')
+             AND COALESCE(d.status, '') NOT IN (${TERMINAL_SQL})
              AND COALESCE(d.completed_at, d.exchanged_at, d.target_date, d.instructed_at) >= $2
            ORDER BY d.fee DESC NULLS LAST LIMIT 15`,
           [team, weekAgo]
@@ -5191,6 +5203,7 @@ Use the language and tone of BGP's review docs.`,
   // recognition feed. Idempotent on (period_type, period_start) — re-spinning
   // requires deleting the existing winner row first.
   app.post("/api/hr/brucey-winners/spin", requireAuth, requireAdmin, async (req: any, res) => {
+    if (!PERKS_ENABLED) return res.status(409).json({ error: "Prizes are paused while the scheme is reworked" });
     const { period, userId } = req.body || {};
     if (!period || !userId) return res.status(400).json({ error: "period and userId required" });
     const now = new Date();
@@ -5458,6 +5471,7 @@ Use the language and tone of BGP's review docs.`,
       teamEventId?: string;
     };
     const byKey = new Map<string, TeamEvent>();
+    const excludedEventKeys = new Set<string>();
     // The whole-company invite list. Events have to include this address as
     // an attendee for us to surface them as team events.
     const COMPANY_INVITE = "team@brucegillinghampollard.com";
@@ -5469,26 +5483,30 @@ Use the language and tone of BGP's review docs.`,
            JOIN staff_profiles sp ON sp.user_id = u.id
            WHERE u.is_active = true AND u.email IS NOT NULL AND u.email <> ''`,
         );
-        const slice = staff.slice(0, 30);
-        // Normalise an event to a stable key — subject (lowercased, trimmed) +
-        // start hour. This collapses the same event across everyone's calendars.
-        const keyOf = (subject: string, start: string) =>
-          `${(subject || "").toLowerCase().replace(/\s+/g, " ").trim()}@${start.slice(0, 13)}`;
+        const slice = staff.filter(u => !isPrivateMailboxAddress(u.email)).slice(0, 30);
+        // Prefer the shared invitation UID so a private copy can suppress
+        // other staff copies, even if the invitation was renamed or moved.
+        const keyOf = (subject: string, start: string, uid?: string) => uid ? `outlook:${uid}`
+          : `${(subject || "").toLowerCase().replace(/\s+/g, " ").trim()}@${start.slice(0, 13)}`;
         for (const u of slice) {
           try {
-            const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(u.email)}/calendarView?startDateTime=${encodeURIComponent(startStr)}&endDateTime=${encodeURIComponent(endStr)}&$select=subject,start,end,isAllDay,showAs,location,bodyPreview,attendees&$top=40&$orderby=start/dateTime`;
+            const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(u.email)}/calendarView?startDateTime=${encodeURIComponent(startStr)}&endDateTime=${encodeURIComponent(endStr)}&$select=subject,start,end,isAllDay,showAs,location,bodyPreview,attendees,organizer,iCalUId,sensitivity,isCancelled&$top=40&$orderby=start/dateTime`;
             const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Prefer: 'outlook.timezone="Europe/London"' } });
             if (!r.ok) continue;
             const data = await r.json();
             for (const e of (data.value || [])) {
               const subject = e.subject || "";
+              const start = e.start?.dateTime || e.start || "";
+              const k = keyOf(subject, start, e.iCalUId);
+              if (!isShareableClientCalendarEvent(e,u.email)) {
+                excludedEventKeys.add(k); byKey.delete(k); continue;
+              }
+              if (excludedEventKeys.has(k)) continue;
               // Skip OOO / leave / WFH — Layla doesn't want those here.
               const showAs = String(e.showAs || "").toLowerCase();
               if (["oof", "workingelsewhere"].includes(showAs)) continue;
               if (/\b(holiday|annual leave|on leave|out of office|\booo\b|wfh|working from home|sick)\b/i.test(subject)) continue;
-              const start = e.start?.dateTime || e.start || "";
               if (!start) continue;
-              const k = keyOf(subject, start);
               const attendeeEmails: string[] = Array.isArray(e.attendees)
                 ? e.attendees
                     .map((a: any) => String(a?.emailAddress?.address || "").toLowerCase())
@@ -5529,7 +5547,7 @@ Use the language and tone of BGP's review docs.`,
     try {
       const { rows: tableEvents } = await pool.query(
         `SELECT id, title, event_type, start_time, end_time, location, notes, attendees, property_name, company_name
-         FROM team_events WHERE start_time >= $1 AND start_time <= $2 ORDER BY start_time ASC`,
+         FROM team_events WHERE start_time >= $1 AND start_time <= $2 AND ${teamEventPrivacySql()} ORDER BY start_time ASC`,
         [now.toISOString(), horizon.toISOString()],
       );
       for (const t of tableEvents) {

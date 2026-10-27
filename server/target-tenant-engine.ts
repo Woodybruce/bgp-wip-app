@@ -23,6 +23,7 @@ import type { Request } from "express";
 import { requirementFitsUnit, parseReqSize } from "@shared/requirement-fit";
 import { isClientCrmCategory } from "@shared/tenant-categories";
 import { brandTier, isHotelGroup, POSITIONING_PROFILES, type BrandTier, type SchemePositioning } from "@shared/scheme-positioning";
+import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
 
 export const brandKey = (value: string) => value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/['’]/g, "").replace(/[^a-z0-9&]+/g, " ").trim();
 
@@ -151,15 +152,18 @@ export async function centreEvidence(pool: any, req: Request, propertyId: string
   for (const k of contacts) note(brandFor(k.id, k.name), `${k.n} new contact${k.n === 1 ? "" : "s"} added in 60 days`, 4, true);
   const clients = await rows(pool, `SELECT DISTINCT c.id, c.name FROM crm_companies c WHERE c.merged_into_id IS NULL AND c.id IN (
       SELECT d.tenant_id FROM crm_deals d WHERE d.bgp_acting_for = 'tenant' AND d.tenant_id IS NOT NULL
-        AND COALESCE(d.status, '') NOT IN ('COM','INV','WIT','Completed','Invoiced','Withdrawn','Lost','Dead')
+        AND lower(trim(COALESCE(d.status, ''))) <> ALL($1::text[])
       UNION SELECT company_id FROM tenant_rep_searches WHERE company_id IS NOT NULL
-        AND COALESCE(status, '') NOT IN ('Complete','Completed','Archived','Lost','On Hold'))`);
+        AND COALESCE(status, '') NOT IN ('Complete','Completed','Archived','Lost','On Hold'))`,
+    // CLOSED_STATUSES, not the tracker's Historic set: an exchanged deal is
+    // still evidence that the brand is taking space.
+    [statusSpellingsFor(CLOSED_STATUSES)]);
   for (const c of clients) { const b = brandFor(c.id, c.name); if (b) { b.bgpClient = true; note(b, "BGP acts for the brand (tenant rep)", 25); } }
   const deals = await rows(pool, `SELECT d.tenant_id, c.name, p.name AS property, (p.landlord_id IS NOT DISTINCT FROM $2 AND $2 IS NOT NULL) AS same_landlord
       FROM crm_deals d
       JOIN crm_companies c ON c.id = d.tenant_id AND c.merged_into_id IS NULL LEFT JOIN crm_properties p ON p.id = d.property_id
      WHERE d.tenant_id IS NOT NULL AND d.property_id IS DISTINCT FROM $1 AND d.updated_at > NOW() - INTERVAL '12 months'
-       AND COALESCE(d.status, '') NOT IN ('COM','INV','WIT','Completed','Invoiced','Withdrawn','Lost','Dead')`, [propertyId, property.landlord_id || null]);
+       AND lower(trim(COALESCE(d.status, ''))) <> ALL($3::text[])`, [propertyId, property.landlord_id || null, statusSpellingsFor(CLOSED_STATUSES)]);
   for (const d of deals) {
     const b = brandFor(d.tenant_id, d.name);
     if (d.same_landlord && d.property) note(b, `in a live BGP deal at ${d.property}${property.landlord_name ? ` (${property.landlord_name})` : ""} — taking space now`, 14);

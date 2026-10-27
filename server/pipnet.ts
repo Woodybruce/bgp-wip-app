@@ -153,6 +153,28 @@ async function login(): Promise<string> {
   return sessionCookie;
 }
 
+// Search fetches (reqfetch.jsp / detailsfetch.jsp) had no answer to a 403:
+// login() falls back to ScraperAPI when the WAF blocks it, but the search
+// POST that followed just threw "PIPnet req search failed: 403" (Carly,
+// 2026-07-20). Mirror the login path once: drop the sticky proxy session and
+// cookie, log in again (fresh session_number ⇒ fresh egress IP) and re-POST.
+// Returns the response plus the cookie the caller should keep using.
+async function pipFetchRetrying403(
+  url: string,
+  initFor: (cookie: string) => RequestInit,
+  cookie: string,
+): Promise<{ res: Response; cookie: string }> {
+  const res = await pipFetch(url, initFor(cookie));
+  if (res.status !== 403) return { res, cookie };
+  const page = url.replace(/^.*\//, "");
+  console.warn(`[pipnet] ${page} returned HTTP 403 — resetting session and retrying once`);
+  resetSession();
+  const fresh = await login();
+  const retry = await pipFetch(url, initFor(fresh));
+  console.log(`[pipnet] ${page} retry after 403 → HTTP ${retry.status}`);
+  return { res: retry, cookie: fresh };
+}
+
 function extractJsessionId(res: Response): string | null {
   const raw = (res.headers as any).getSetCookie?.();
   if (Array.isArray(raw) && raw.length > 0) {
@@ -239,7 +261,7 @@ export async function searchPipnetRequirements(params: {
   maxPages?: number;
   stopBeforeDate?: Date;
 }): Promise<Record<string, string>[]> {
-  const cookie = await login();
+  let cookie = await login();
   const body = new URLSearchParams({
     requirementType: "ReqRetail",
     locationSearchEdit: "",
@@ -254,14 +276,16 @@ export async function searchPipnetRequirements(params: {
     Search: "Search",
   });
 
-  const res = await pipFetch(`${PIPNET_URL}/reqfetch.jsp`, {
+  const fetched = await pipFetchRetrying403(`${PIPNET_URL}/reqfetch.jsp`, (c) => ({
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
-      Cookie: cookie,
+      Cookie: c,
     },
     body: body.toString(),
-  });
+  }), cookie);
+  const res = fetched.res;
+  cookie = fetched.cookie;
 
   if (!res.ok) throw new Error(`PIPnet req search failed: ${res.status}`);
   let html = await res.text();
@@ -358,11 +382,11 @@ export async function searchPipnetProperties(params: {
   if (params.minSize) body.set("operandAreaMinimum", params.minSize);
   if (params.maxSize) body.set("operandAreaMaximum", params.maxSize);
 
-  const res = await pipFetch(`${PIPNET_URL}/detailsfetch.jsp`, {
+  const { res } = await pipFetchRetrying403(`${PIPNET_URL}/detailsfetch.jsp`, (c) => ({
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookie },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: c },
     body: body.toString(),
-  });
+  }), cookie);
   if (!res.ok) throw new Error(`PIPnet prop search failed: ${res.status}`);
   const html = await res.text();
   return parseHtmlTable(html);

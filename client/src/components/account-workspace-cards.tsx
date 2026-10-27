@@ -39,6 +39,12 @@ export interface WorkspaceContact {
   via: string[];
   interactionCount: number;
   lastInteractionAt: string | null;
+  emailCount?: number;
+  meetingCount?: number;
+  recentInteractions90d?: number;
+  recentInteractions30d?: number;
+  lastEmailAt?: string | null;
+  lastMeetingAt?: string | null;
   employerName: string | null;
   propertyNames: string[];
 }

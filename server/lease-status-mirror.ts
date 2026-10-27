@@ -21,22 +21,108 @@ import {
   codeToTenancyStatus,
   leasingStatusToTenancyStatus,
 } from "@shared/lease-status-mirror";
-import { legacyToCode, type DealStatusCode } from "@shared/deal-status";
+import { CLOSED_STATUSES, legacyToCode, type DealStatusCode } from "@shared/deal-status";
+import { HISTORIC_STATUSES } from "@shared/letting-rules";
 
-type Ctx = { pool: Pool; reason: string };
+type Ctx = { pool: Pool; reason: string; actorUserId?: string | null };
+
+// ARCH (the WIP import's soft-archive) is closed like WIT.
+const CLOSED = CLOSED_STATUSES;
+const AT_OR_PAST_EXCHANGE = HISTORIC_STATUSES;
+
+// Shared deal write for the mirrors: never regress a closed deal to a
+// pre-exchange state (re-marketing a unit starts a fresh cycle — the tracker
+// row is unlinked instead), run the same senior-approval / AML gates the deal
+// PUT enforces, and leave an audit row for every status the mirror writes.
+async function mirrorDealStatus(ctx: Ctx, dealId: string, currentStatus: string | null, code: DealStatusCode, unlinkAvailableUnitId?: string | null): Promise<void> {
+  const currentCode = legacyToCode(currentStatus);
+  if (currentCode === code) return;
+  // Closed deals never move through a board edit: INV is terminal (set by
+  // Xero — a board flip back to COM/EXC would silently un-invoice it), COM
+  // may only advance to INV, and WIT stays withdrawn. Anything else means a
+  // new letting cycle — the tracker row is unlinked so the historic deal
+  // keeps its numbers.
+  if (currentCode && CLOSED.includes(currentCode) && !(currentCode === "COM" && code === "INV")) {
+    if (unlinkAvailableUnitId && !AT_OR_PAST_EXCHANGE.includes(code)) {
+      await startFreshCycle(ctx, dealId, currentStatus, unlinkAvailableUnitId, code);
+      return;
+    }
+    await auditMirror(ctx, dealId, currentStatus, code, `Skipped — deal is ${currentCode}; tracker row left as-is (${ctx.reason})`);
+    return;
+  }
+  // Gate check fails CLOSED: skipping a mirror write costs a note on the
+  // boards; writing an ungated status change costs the audit trail.
+  let denial: Awaited<ReturnType<typeof import("./deal-gates")["dealStatusTransitionDenial"]>>;
+  try {
+    const { dealStatusTransitionDenial } = await import("./deal-gates");
+    denial = await dealStatusTransitionDenial(ctx.actorUserId, dealId, code);
+  } catch (e: any) {
+    await auditMirror(ctx, dealId, currentStatus, code, `Blocked — gate check failed (${e?.message || "error"}) (${ctx.reason})`);
+    return;
+  }
+  if (denial) {
+    await auditMirror(ctx, dealId, currentStatus, code, `Blocked — ${denial.error} (${ctx.reason})`);
+    return;
+  }
+  await ctx.pool.query(`UPDATE crm_deals SET status = $1, updated_at = NOW() WHERE id = $2`, [code, dealId]);
+  if (code === "COM") {
+    // The deal PUT and stage routes stamp completion; a board-driven COM
+    // must leave the same fiscal anchor or WIP month bucketing falls back
+    // to createdAt. (Comp seeding stays with the deal-page flows.)
+    await ctx.pool.query(`UPDATE crm_deals SET completed_at = COALESCE(completed_at, NOW()) WHERE id = $1`, [dealId]).catch(() => {});
+  }
+  await auditMirror(ctx, dealId, currentStatus, code, `Board mirror (${ctx.reason})`);
+}
+
+// Moving a unit whose deal is CLOSED back to a pre-exchange status is a
+// fresh letting cycle (INV is terminal, COM may only advance to INV, WIT
+// stays withdrawn). The PATCH route checks this before its row write.
+export function isFreshCycle(dealStatus: string | null | undefined, code: DealStatusCode): boolean {
+  const currentCode = legacyToCode(dealStatus);
+  return !!currentCode && CLOSED.includes(currentCode) && !(currentCode === "COM" && code === "INV") && !AT_OR_PAST_EXCHANGE.includes(code);
+}
+
+// Fresh cycle = fresh deal: unlink the row from its closed deal (which
+// keeps its numbers) and give it a new stub at `code`. The fee on the row
+// was the closed deal's — it goes, unless the caller passes the new
+// letting's (a fee typed on the same edit that re-markets the unit).
+export async function startFreshCycle(ctx: Ctx, dealId: string, currentStatus: string | null, unitId: string, code: DealStatusCode, fee?: number | null) {
+  await ctx.pool.query(
+    `UPDATE available_units SET deal_id = NULL, fee = $3, updated_at = NOW() WHERE id = $1 AND deal_id = $2`,
+    [unitId, dealId, fee ?? null],
+  );
+  const { ensureBackingDealForUnit } = await import("./unit-mirror");
+  const stub = await ensureBackingDealForUnit(ctx.pool, unitId, { status: code, fee: fee ?? null })
+    .catch((e: any) => { console.warn("[lease-status-mirror] fresh-cycle deal failed:", e?.message); return null; });
+  await auditMirror(ctx, dealId, currentStatus, code, `Skipped — deal is ${legacyToCode(currentStatus)}; tracker row unlinked for a fresh cycle (${ctx.reason})`);
+  return stub;
+}
+
+async function auditMirror(ctx: Ctx, dealId: string, oldValue: string | null, newValue: string, reason: string): Promise<void> {
+  await ctx.pool.query(
+    `INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by) VALUES ($1, 'status', $2, $3, $4, $5)`,
+    [dealId, oldValue, newValue, reason, ctx.actorUserId || null],
+  ).catch(() => {});
+}
 
 // Best-effort write to tenancy_schedule_units.status. Tenancy is the rent
 // roll — coarsest of the four boards (Occupied / Vacant). Only ever called
 // from inside the other three mirrors so a Tenancy edit stays a one-way
 // write (no reverse mirror — Tenancy's binary state can't unambiguously map
 // back to e.g. SOL vs NEG).
-async function writeTenancyStatus(tenancyUnitId: string | null | undefined, status: string | null, pool: Pool): Promise<void> {
+async function writeTenancyStatus(tenancyUnitId: string | null | undefined, status: string | null, pool: Pool, allowDowngrade = false): Promise<void> {
   if (!tenancyUnitId || !status) return;
+  // Pre-marketing a unit whose tenant is still trading must not flatten the
+  // rent roll to Vacant; only the leasing schedule's own vacate/archive flow
+  // (allowDowngrade) may do that.
+  const occupiedGuard = !allowDowngrade && status === "Vacant"
+    ? ` AND lower(coalesce(status, '')) NOT IN ('occupied','trading','holding over','taw','lease event','let')`
+    : "";
   await pool.query(
     `UPDATE tenancy_schedule_units
         SET status = $1, updated_at = NOW()
       WHERE id = $2
-        AND COALESCE(status, '') <> $1`,
+        AND COALESCE(status, '') <> $1${occupiedGuard}`,
     [status, tenancyUnitId],
   );
 }
@@ -64,13 +150,7 @@ export async function mirrorFromAvailableUnit(unitId: string, newStatus: string,
   );
   const row = dealRow.rows[0];
   if (row?.deal_id) {
-    const currentCode = legacyToCode(row.status);
-    if (currentCode !== code) {
-      await ctx.pool.query(
-        `UPDATE crm_deals SET status = $1, updated_at = NOW() WHERE id = $2`,
-        [code, row.deal_id],
-      );
-    }
+    await mirrorDealStatus(ctx, row.deal_id, row.status, code, unitId);
   }
 
   // 2) Mirror to leasing_schedule_units via the shared tenancy_unit_id.
@@ -147,7 +227,8 @@ export async function mirrorFromLeasingSchedule(leasingUnitId: string, newStatus
   // Mirror to tenancy_schedule_units first — the leasing→tenancy link is
   // direct via tenancy_unit_id, no available_units row needed. Lets schedule
   // edits update the rent roll even on schedule-only units (no marketing).
-  await writeTenancyStatus(tenancyUnitId, leasingStatusToTenancyStatus(newStatus), ctx.pool);
+  // The schedule owns the vacate flow, so its edits may downgrade to Vacant.
+  await writeTenancyStatus(tenancyUnitId, leasingStatusToTenancyStatus(newStatus), ctx.pool, true);
 
   const fallbackCode = leasingStatusToCode(newStatus);
   if (!fallbackCode) return;
@@ -172,13 +253,8 @@ export async function mirrorFromLeasingSchedule(leasingUnitId: string, newStatus
       [fallbackCode, au.id],
     );
     if (au.deal_id) {
-      await ctx.pool.query(
-        `UPDATE crm_deals
-            SET status = $1, updated_at = NOW()
-          WHERE id = $2
-            AND COALESCE(status, '') <> $1`,
-        [fallbackCode, au.deal_id],
-      );
+      const dealStatus = (await ctx.pool.query(`SELECT status FROM crm_deals WHERE id = $1`, [au.deal_id])).rows[0]?.status ?? null;
+      await mirrorDealStatus(ctx, au.deal_id, dealStatus, fallbackCode, au.id);
     }
   }
 }

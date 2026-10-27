@@ -21,6 +21,10 @@
  */
 
 import { pool } from "./db";
+import { WIP_STATUSES } from "@shared/deal-status";
+
+// The WIP book before billing — INV is reported separately as invoiced_gbp.
+const WIP_PRE_INVOICE_SQL = WIP_STATUSES.filter((s) => s !== "INV").map((s) => `'${s}'`).join(",");
 
 /**
  * staff_profiles.salary_current is a mixed bag: the salary-change flow writes
@@ -134,7 +138,7 @@ async function getAgentMonthlyTotals(userName: string, year: number, month: numb
      )
      SELECT
        COALESCE(SUM(gbp) FILTER (WHERE status = 'INV' AND invoiced_on >= $2::timestamptz AND invoiced_on < $3::timestamptz), 0)::text AS invoiced_gbp,
-       COALESCE(SUM(gbp) FILTER (WHERE status IN ('AVA','NEG','HOT','SOL','EXC','COM')), 0)::text AS wip_gbp,
+       COALESCE(SUM(gbp) FILTER (WHERE status IN (${WIP_PRE_INVOICE_SQL})), 0)::text AS wip_gbp,
        COUNT(DISTINCT deal_id) FILTER (WHERE exchanged_at >= $2::timestamptz AND exchanged_at < $3::timestamptz)::text AS exchanged_deals,
        COUNT(*)::text AS match_count,
        COALESCE(SUM(gbp) FILTER (WHERE status = 'NEG'), 0)::text AS neg_gbp,

@@ -345,6 +345,7 @@ router.get("/api/client-teams/:clientCompanyId/member/:userId/properties", requi
   try {
     const pool = await getPool();
     const { clientCompanyId, userId } = req.params;
+    if (await forbidsClientScope(req, String(clientCompanyId))) return res.status(403).json({ error: "Access denied" });
     const rows = await pool.query(`
       SELECT p.id, p.name,
              -- crm_properties.address is JSONB. Pick a readable line so
@@ -419,6 +420,7 @@ router.post("/api/client-teams/:clientCompanyId/member/:userId/properties", requ
 router.get("/api/client-teams/:clientCompanyId/candidates", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
+    if (await forbidsClientScope(req, String(req.params.clientCompanyId))) return res.status(403).json({ error: "Access denied" });
     // No longer filter out staff who are already on the team — duplicates
     // are now allowed so the same person can sit in multiple columns
     // (Investment + Lease Advisory, etc). Mark the existing-on-team count
@@ -431,8 +433,15 @@ router.get("/api/client-teams/:clientCompanyId/candidates", requireAuth, async (
       FROM users u
       LEFT JOIN staff_profiles sp ON sp.user_id = u.id
       WHERE COALESCE(sp.status, 'active') = 'active'
+        AND COALESCE(u.role, '') <> 'Client'
       ORDER BY u.name, u.username
     `, [req.params.clientCompanyId]);
+    // A client opening the picker on their own board sees names and titles,
+    // never usernames or staff email addresses.
+    const { resolveCompanyScope } = await import("./company-scope");
+    if (await resolveCompanyScope(req)) {
+      return res.json(rows.rows.map((r: any) => ({ id: r.id, full_name: r.full_name, bgp_title: r.bgp_title, existing_count: r.existing_count })));
+    }
     res.json(rows.rows);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -449,6 +458,7 @@ const DEFAULT_COLUMNS: string[] = [...BGP_TEAM_NAMES];
 router.get("/api/client-teams/:clientCompanyId/columns", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
+    if (await forbidsClientScope(req, String(req.params.clientCompanyId))) return res.status(403).json({ error: "Access denied" });
     const r = await pool.query(
       "SELECT name, sort_order, color_key FROM crm_client_team_columns WHERE client_company_id = $1 ORDER BY sort_order, name",
       [req.params.clientCompanyId]

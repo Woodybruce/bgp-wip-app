@@ -41,6 +41,7 @@ const CODE_TO_LEASING: Record<DealStatusCode, LeasingStatus> = {
   COM:  "Occupied",
   INV:  "Occupied",
   WIT:  "Archived",
+  ARCH: "Archived",
 };
 
 // The "default" code each leasing-schedule status maps back to. Picked as
@@ -103,6 +104,7 @@ const CODE_TO_TENANCY: Record<DealStatusCode, TenancyStatus> = {
   COM:  "Occupied",
   INV:  "Occupied",
   WIT:  "Vacant",
+  ARCH: "Vacant",
 };
 
 const LEASING_TO_TENANCY: Record<LeasingStatus, TenancyStatus> = {

@@ -9,15 +9,17 @@ import {
   LEISURE_OPERATORS,
   LEISURE_TARGETS,
   DATA_ROOM,
-  LEISURE_PLATFORM_PUBLIC_TOKEN,
 } from "./leisure-platform-data";
 import { BRAND, wordmarkSvg, monogramSvg } from "./leisure-platform-brand";
 import { RESEARCH, mdToHtml } from "./leisure-platform-research";
 
 const DEEP_DIVE_DOC = "https://claude.ai/artifact/HXxYHsMLX1KW488NmfJhc4";
 
-export function publicToken(): string {
-  return process.env.LEISURE_PLATFORM_PUBLIC_TOKEN || LEISURE_PLATFORM_PUBLIC_TOKEN;
+// Env-only, fail closed: with no LEISURE_PLATFORM_PUBLIC_TOKEN set the
+// public page is simply off (404), rather than silently reopening a
+// committed token that git history has already burned.
+export function publicToken(): string | null {
+  return process.env.LEISURE_PLATFORM_PUBLIC_TOKEN || null;
 }
 
 const esc = (s: unknown) =>

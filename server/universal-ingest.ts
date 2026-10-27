@@ -33,6 +33,17 @@ import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import XLSX from "xlsx-js-style";
 import crypto from "crypto";
 import { pool } from "./db";
+import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
+import { resolveTenancyUnitIdSubquery } from "./tenant-brand-resolver";
+import { DEAL_PAGE_STATUSES, legacyToCode } from "@shared/deal-status";
+import { LETTING_DEAL_TYPES, LEGACY_LETTING_TYPES, DEFAULT_LETTING_TYPE, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES } from "@shared/letting-rules";
+import { LEASING_STATUSES } from "@shared/lease-status-mirror";
+import { createDeal, updateDeal } from "./letting-service";
+
+// Ingest records are snake_case columns; the deal factory takes the
+// camelCase insert shape.
+const camelKeys = (record: Record<string, any>): Record<string, any> =>
+  Object.fromEntries(Object.entries(record).map(([k, v]) => [k.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase()), v]));
 
 // ─────────────────────────────────────────────────────────────────────────
 // Targets — adding one is ~30 lines: define the prompt, the match key,
@@ -50,6 +61,11 @@ interface TargetSpec {
   resolveRefs?: (record: any) => Promise<any>;
 }
 
+// deal_type vocabulary the extractor may emit (shared/letting-rules) plus the
+// two investment types; legacy labels it still produces are mapped on resolve.
+const INGEST_DEAL_TYPES = [...LETTING_DEAL_TYPES, ...TENANT_REP_TYPES, ...ADVISORY_UNIT_TYPES, "Sale", "Purchase"];
+const LEGACY_INGEST_DEAL_TYPES: Record<string, string> = { "Tenant Rep": "Lease Acquisition", "Assignment": "Sub-Letting", "Investment Sale": "Sale", "Investment Acquisition": "Purchase" };
+
 const TARGETS: Record<IngestTarget, TargetSpec> = {
   leasing_schedule_units: {
     table: "leasing_schedule_units",
@@ -63,7 +79,7 @@ const TARGETS: Record<IngestTarget, TargetSpec> = {
       lease_break (ISO date or null),
       rent_review (ISO date or null),
       landlord_break (ISO date or null),
-      status (one of: Occupied | Vacant | Under Offer | In Negotiation | Archived),
+      status (one of: ${LEASING_STATUSES.join(" | ")}),
       target_brands (string — comma-separated brand names showing interest, may be empty),
       priority (string or null — High | Medium | Low),
       updates (string — narrative commentary, status notes, any free text)
@@ -84,8 +100,8 @@ const TARGETS: Record<IngestTarget, TargetSpec> = {
     fields: `
       name (string, deal name),
       property_address (string or null — the property this deal is on),
-      deal_type (one of: Sale | Purchase | Lease Renewal | Rent Review | Tenant Rep | Lease Acquisition | Lease Disposal | Regear | New Letting | Sub-Letting | Assignment | Investment Sale | Investment Acquisition),
-      status (string — REP | SPEC | LIVE | NEG | SOL | EXC | COM | INV),
+      deal_type (one of: ${INGEST_DEAL_TYPES.join(" | ")}),
+      status (string — ${DEAL_PAGE_STATUSES.join(" | ")}),
       tenant_name (string or null),
       landlord_name (string or null),
       vendor_name (string or null),
@@ -109,6 +125,11 @@ const TARGETS: Record<IngestTarget, TargetSpec> = {
           record[idField] = await resolveCompanyId(record[field]);
         }
       }
+      if (record.deal_type) {
+        const t = String(record.deal_type).trim();
+        record.deal_type = (LEGACY_LETTING_TYPES as readonly string[]).includes(t) ? DEFAULT_LETTING_TYPE : (LEGACY_INGEST_DEAL_TYPES[t] ?? t);
+      }
+      if (record.status) record.status = legacyToCode(record.status) ?? record.status;
       return record;
     },
   },
@@ -811,6 +832,17 @@ export interface CommitResult {
   errors: { record: any; error: string }[];
 }
 
+// Lettings cleanup (Phase 0b): a Deals file can be previewed so the user
+// sees what it holds, but the write goes through the Deals board while the
+// repair tools are frozen. Phase 2 routes this target through the deal
+// factory (commitDiff below), so flipping LETTING_REPAIR_TOOLS_ENABLED is
+// all that stands between a Deals import and the letting rules. Returns the
+// message to refuse with, or null when the commit may go ahead.
+export function ingestCommitRefusal(target: IngestTarget): string | null {
+  if (target === "crm_deals" && !LETTING_REPAIR_TOOLS_ENABLED) return `${LETTING_REPAIR_PAUSED} — create the deal on the Deals board`;
+  return null;
+}
+
 export async function commitDiff(args: {
   commitToken: string;
   userId: string;
@@ -822,9 +854,12 @@ export async function commitDiff(args: {
   const pending = PENDING_INGESTS.get(args.commitToken);
   if (!pending) throw new Error("Commit token expired or not found");
   const { preview } = pending;
+  const refusal = ingestCommitRefusal(preview.target);
+  if (refusal) throw Object.assign(new Error(refusal), { status: 409 });
   const spec = TARGETS[preview.target];
   const result: CommitResult = { written: 0, skipped: 0, errors: [] };
   const sourceLabel = `Import: ${preview.filename}`;
+  const writtenIds: string[] = [];
 
   for (const entry of preview.diff) {
     if (entry.type === "no_change") { result.skipped++; continue; }
@@ -832,6 +867,16 @@ export async function commitDiff(args: {
 
     try {
       if (entry.type === "add") {
+        // Deals are born through the one deal factory (letting-service):
+        // status code, scheme defaults, the letting rules (a letting needs a
+        // property and a unit; one live landlord-side letting per unit),
+        // spine stamp and tracker row. A refusal lands in result.errors.
+        if (preview.target === "crm_deals") {
+          const made = await createDeal(camelKeys(entry.record), { userId: args.userId, source: "ingest" });
+          writtenIds.push(String(made.id));
+          result.written++;
+          continue;
+        }
         // A unit of a known estate lands on that estate, not as a property.
         if (preview.target === "crm_properties") {
           const estateUnit = await (await import("./estate-units")).resolveEstateUnit(pool, entry.record?.name);
@@ -845,6 +890,7 @@ export async function commitDiff(args: {
           values
         );
         const newId = inserted.rows[0]?.id;
+        if (newId) writtenIds.push(String(newId));
         if (spec.auditTable && newId) {
           await writeAudit(spec.auditTable, {
             unitId: newId,
@@ -876,10 +922,19 @@ export async function commitDiff(args: {
             if (cols.length === 0) { result.skipped++; continue; }
           }
         }
+        if (preview.target === "crm_deals") {
+          const patch: Record<string, any> = {};
+          for (const c of cols) patch[c] = entry.record[c];
+          await updateDeal(String(entry.existingId), camelKeys(patch), { userId: args.userId, source: "ingest" });
+          writtenIds.push(String(entry.existingId));
+          result.written++;
+          continue;
+        }
         const setClause = cols.map((c, i) => `${c} = $${i + 1}`).join(", ");
         const values = cols.map((c) => entry.record[c]);
         values.push(entry.existingId);
         await pool.query(`UPDATE ${spec.table} SET ${setClause}, updated_at = NOW() WHERE id = $${values.length}`, values);
+        writtenIds.push(String(entry.existingId));
         if (spec.auditTable) {
           for (const field of cols) {
             await writeAudit(spec.auditTable, {
@@ -899,6 +954,24 @@ export async function commitDiff(args: {
     } catch (err: any) {
       result.errors.push({ record: entry.record, error: err?.message || "unknown" });
     }
+  }
+
+  // Lettings cleanup (Phase 0b): only the leasing rows this commit wrote get
+  // a tenancy spine link — a NULL tenancy_unit_id filled by normalised unit
+  // name on the row's own property (the resolver subquery; best-effort).
+  // crm_deals and available_units are left alone: the integrity report
+  // measures them and nothing re-links them as an import side-effect.
+  if (preview.target === "leasing_schedule_units" && writtenIds.length > 0) {
+    try {
+      await pool.query(
+        `UPDATE leasing_schedule_units u
+            SET tenancy_unit_id = ${resolveTenancyUnitIdSubquery("u.property_id", "u.unit_name")}
+          WHERE u.id = ANY($1::text[])
+            AND u.tenancy_unit_id IS NULL
+            AND coalesce(trim(u.unit_name), '') <> ''`,
+        [writtenIds]
+      );
+    } catch (err: any) { console.warn(`[universal-ingest] spine link failed for imported leasing rows: ${err?.message}`); }
   }
 
   PENDING_INGESTS.delete(args.commitToken);
@@ -999,6 +1072,10 @@ export async function ingestBytes(args: {
   // Single-target path (most common)
   if (targets.length <= 1) {
     const cls = targets[0] || await classifyTarget(file);
+    // Lettings cleanup: a file classified as Deals is refused here, before
+    // the parse, so the sender reads the refusal rather than a parse failure.
+    const refusal = ingestCommitRefusal(cls.target);
+    if (refusal) return { written: 0, skipped: 0, errors: [], target: cls.target, narrative: refusal };
     const { records } = await parseWithClaude({ file, target: cls.target });
     const preview = await buildDiff({ target: cls.target, records, filename: args.filename });
     try { preview.narrative = await summariseDiff({ preview }); } catch { /* skip */ }
@@ -1017,9 +1094,16 @@ export async function ingestBytes(args: {
   let totalWritten = 0, totalSkipped = 0;
   const allErrors: { record: any; error: string }[] = [];
   const summaries: string[] = [];
+  const problems: string[] = [];
   let primaryTarget = targets[0].target;
 
   for (const t of targets) {
+    const refusal = ingestCommitRefusal(t.target);
+    if (refusal) {
+      allErrors.push({ record: { target: t.target }, error: refusal });
+      problems.push(`${t.target} refused (${refusal})`);
+      continue;
+    }
     try {
       const { records } = await parseWithClaude({ file, target: t.target });
       if (records.length === 0) continue;
@@ -1031,12 +1115,14 @@ export async function ingestBytes(args: {
       if (result.written > 0) summaries.push(`${result.written} ${t.target} records`);
     } catch (err: any) {
       console.warn(`[ingest-multi] ${t.target} failed: ${err?.message}`);
+      allErrors.push({ record: { target: t.target }, error: err?.message || "unknown" });
+      problems.push(`${t.target} failed (${err?.message || "unknown error"})`);
     }
   }
 
   const narrative = summaries.length > 0
-    ? `Imported from ${args.filename}: ${summaries.join(", ")}.`
-    : `No records imported from ${args.filename}.`;
+    ? `Imported from ${args.filename}: ${[...summaries, ...problems].join(", ")}.`
+    : `No records imported from ${args.filename}${problems.length ? ` — ${problems.join(", ")}` : ""}.`;
   try {
     const { getIO } = await import("./websocket");
     getIO()?.emit("ingest_complete", { filename: args.filename, targets: targets.map(t => t.target), written: totalWritten, userId });

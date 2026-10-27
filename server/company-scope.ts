@@ -144,6 +144,9 @@ export async function getClientVisibleUserIds(scopeCompanyId: string | null | un
 // id column reference used by the surrounding query (e.g. "c.id") when the
 // table is aliased or joined.
 export async function clientBrandSliceSql(scopeCompanyId: string | null | undefined, idCol = "id"): Promise<string> {
+  // An unresolvable client team is the fail-closed sentinel: no slice at all
+  // until BGP confirms which company the account belongs to.
+  if (scopeCompanyId === NO_ACCESS_SCOPE) return "(FALSE)";
   const names = CLIENT_CRM_CATEGORIES.map(n => `'${n.replace(/'/g, "''")}'`).join(",");
   const extras = [...(await getClientExtraBrandIds(scopeCompanyId))].filter(id => /^[0-9a-f-]{36}$/i.test(id));
   const extraSql = extras.length ? ` OR ${idCol} IN (${extras.map(id => `'${id}'`).join(",")})` : "";
@@ -151,6 +154,7 @@ export async function clientBrandSliceSql(scopeCompanyId: string | null | undefi
 }
 
 export async function isClientVisibleBrand(companyId: string, scopeCompanyId?: string | null): Promise<boolean> {
+  if (scopeCompanyId === NO_ACCESS_SCOPE) return false;
   if (!companyId || !/^[0-9a-f-]{36}$/i.test(companyId)) return false;
   const r = await pool.query(`SELECT company_type FROM crm_companies WHERE id = $1`, [companyId]);
   // Slice categories (Woody, 2026-08-01: "landsec only want CRM on the

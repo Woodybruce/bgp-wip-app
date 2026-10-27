@@ -303,7 +303,7 @@ describe("resolveAccountView (mock pool)", () => {
     await resolveAccountView("HAM", {}, { pool });
     assert.ok(pool.queries.length > 0);
     for (const sql of pool.queries) {
-      assert.match(sql, /^\s*SELECT/i, sql);
+      assert.match(sql, /^\s*(SELECT|WITH)\b/i, sql);
       assert.doesNotMatch(sql, /\b(INSERT|UPDATE|DELETE|ALTER|CREATE|DROP)\b/i, sql);
     }
   });

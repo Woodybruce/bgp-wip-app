@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { pool } from "./db";
+import { teamEventPrivacySql } from "./team-event-privacy";
 import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
 import { setPipnetCreds, clearPipnetCreds, getPipnetCredsStatus } from "./integration-credentials";
 import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds, getClientVisibleUserIds, clientBrandSliceSql } from "./company-scope";
@@ -14,6 +15,7 @@ import { saveFile, getFile, recordUserUpload } from "./file-storage";
 import { contentDispositionFor } from "./utils/http-headers";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { escapeLike } from "./utils/escape-like";
+import { lenderAddressText } from "./lender-routes";
 import { emitNewMessage, emitMessageUpdated, emitMessageDeleted, emitThreadUpdated, emitMemberAdded, emitMemberRemoved, emitNotification, getIO } from "./websocket";
 import { saveSubscription, removeSubscription, removeSubscriptionForUser, sendPushNotification, getVapidPublicKey } from "./push-notifications";
 import { registerBusinessCardRoutes } from "./business-cards";
@@ -42,10 +44,13 @@ import { fromError } from "zod-validation-error";
 import { db } from "./db";
 import { eq, ilike, or, sql, and, desc, inArray, isNull } from "drizzle-orm";
 import { newsArticles } from "@shared/schema";
-import { legacyToCode } from "@shared/deal-status";
+import { legacyToCode, statusSpellingsFor, CLOSED_STATUSES, TERMINAL_STATUSES, DEAL_STATUS_CODES } from "@shared/deal-status";
+import { codeToLeasingStatus } from "@shared/lease-status-mirror";
+import { DEFAULT_LETTING_TYPE, LETTING_DEAL_TYPES, effectiveStatus, isHistoricStatus, isLettingType, isTrackerDeal } from "@shared/letting-rules";
+import { unitNameSegment, lettingSource } from "./letting-service";
+import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 import { createTrackerAsset, updateTrackerAsset, resolveAgentNames } from "./investment-tracker-service";
 import { registerIngestRoutes } from "./ingest-routes";
-import { registerGenericCrmRoutes } from "./generic-crm-routes";
 import { setupStripeIssuingRoutes } from "./stripe-issuing";
 import { registerExpenseAutoClassifyRoutes } from "./expense-auto-classify";
 import { registerMapAnnotationsRoutes } from "./map-annotations";
@@ -67,6 +72,7 @@ import { executeSeedSql } from "./seed";
 import { gunzipSync } from "zlib";
 import { invalidateContextCache } from "./chatbgp";
 import { registerLeasingViewingRoutes, createTrackerViewing, patchLeasingViewing, deleteTrackerViewing, createTrackerOffer, patchTrackerOffer, serializeViewingForScope, ViewingError } from "./leasing-viewings";
+
 
 async function taskLinksInScope(scopeCompanyId: string | null, links: { linkedPropertyId?: unknown; linkedDealId?: unknown }): Promise<boolean> {
   if (!scopeCompanyId) return true;
@@ -125,6 +131,7 @@ const chatMediaUpload = multer({
 });
 
 const GROUP_CHAT_TOOLS = [
+  "search_app_guide",
   "search_crm", "search_news", "query_wip", "create_deal", "update_deal",
   "create_contact", "update_contact", "create_company", "update_company",
   "create_property", "create_available_unit", "update_available_unit",
@@ -222,8 +229,8 @@ async function buildTaggedEntityContext(messages: Array<{ content: string }>, sc
         const r = await pool.query(
           `SELECT p.name, p.status, p.asset_class,
             (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id) as unit_count,
-            (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND au.marketing_status = 'Available') as available_count
-           FROM crm_properties p WHERE p.id = $1`, [id]);
+            (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND lower(trim(coalesce(au.marketing_status, ''))) = ANY($2::text[])) as available_count
+           FROM crm_properties p WHERE p.id = $1`, [id, statusSpellingsFor(["AVA"])]);
         const p = r.rows[0];
         if (p) {
           lines.push(`- Property **${p.name}** (id ${id}) — ${p.asset_class || "unknown class"}, status ${p.status || "unknown"}, ${p.unit_count} units (${p.available_count} available)`);
@@ -279,9 +286,9 @@ async function buildTaggedEntityContext(messages: Array<{ content: string }>, sc
   return `\n\n## TAGGED IN THIS CONVERSATION\nThese records were tagged with @ in the chat. Questions near a tag are almost certainly about that record — use these ids directly with your tools instead of searching by name:\n${lines.join("\n")}\n`;
 }
 
-async function triggerAiGroupResponse(threadId: string, senderUserId: string, req: Request) {
+async function triggerAiGroupResponse(threadId: string, senderUserId: string, req: Request, triggerMessageId?: string) {
   const startTime = Date.now();
-  const TIMEOUT_MS = 60000;
+  const groupDeadline = startTime + 10 * 60 * 1000;
 
   const io = getIO();
   if (io) {
@@ -292,7 +299,7 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
     "SELECT role, content, user_id FROM chat_messages WHERE thread_id = $1 ORDER BY created_at DESC LIMIT 20",
     [threadId]
   );
-  const recentMessages = recentResult.rows.reverse()
+  let recentMessages = recentResult.rows.reverse()
     .filter((m: any) => m.content && m.content.trim())
     .map((m: any) => ({
       role: m.role === "assistant" ? "assistant" as const : "user" as const,
@@ -303,9 +310,12 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
 
   const sender = await storage.getUser(senderUserId);
   const senderName = sender?.name || "A team member";
+  let confirmedLandlordAction: any = null;
+  let isLandlordConversation = false;
 
   try {
     const chatbgp = await import("./chatbgp");
+    const { withAiRequestDeadline } = await import("./utils/ai-request-deadline");
     const { callClaude } = chatbgp;
 
     const [systemPrompt, learnings, allTools, calendarContext] = await Promise.all([
@@ -325,19 +335,47 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
     const { isToolAllowedForClient } = await import("./chatbgp");
     const groupIsClient = await isClientRequestUser(req).catch(() => true);
     const groupClientScope = groupIsClient ? await resolveGroupScope(req).catch(() => null) : null;
-    const groupTools = (groupIsClient && !groupClientScope) ? [] : ((allTools as any).tools?.filter((t: any) => {
+    const groupViewScope = await resolveGroupScope(req).catch(() => "unverified");
+    const { canReadLandlordMeetings, searchLandlordMeetings } = await import("./landlord-meetings");
+    let landlordEvidence: any = null;
+    let landlordContext = "";
+    if (!groupIsClient && !groupViewScope && await canReadLandlordMeetings(req)) {
+      const linkedThread = await storage.getChatThread(threadId);
+      if (linkedThread?.linkedType === "company" && linkedThread.linkedId) {
+        const { getLandlordRelationshipEvidence, landlordChatEvidencePrompt, landlordChatHistory, isInternalLandlordThread } = await import("./landlord-relationship-brief");
+        if (await isInternalLandlordThread(threadId)) landlordEvidence = await getLandlordRelationshipEvidence(linkedThread.linkedId, {
+          viewerId: req.session?.userId || req.tokenUserId, conversationThreadId: threadId,
+        });
+        if (landlordEvidence) {
+          isLandlordConversation = true;
+          landlordContext = landlordChatEvidencePrompt(landlordEvidence, senderName);
+          const authored = await pool.query(`SELECT m.role, m.content, m.user_id, m.created_at, u.name AS sender_name
+            FROM chat_messages m LEFT JOIN users u ON u.id=m.user_id
+            WHERE m.thread_id=$1 AND ($2::text IS NULL OR m.created_at <= (SELECT created_at FROM chat_messages WHERE id=$2 AND thread_id=$1))
+            ORDER BY m.created_at DESC LIMIT 20`, [threadId, triggerMessageId || null]);
+          recentMessages = landlordChatHistory(authored.rows.reverse());
+        }
+      }
+    }
+    let groupTools = (groupIsClient && !groupClientScope) ? [] : ((allTools as any).tools?.filter((t: any) => {
       const name = t.function?.name;
-      if (!GROUP_CHAT_TOOLS.includes(name)) return false;
+      if (!GROUP_CHAT_TOOLS.includes(name) && !(landlordEvidence && ["search_calendar", "query_calendar"].includes(name))) return false;
       if (groupIsClient && !isToolAllowedForClient(name)) return false;
       return true;
-    }) || []);
+    }) || []).map((tool: any) => landlordEvidence && ["search_calendar", "query_calendar"].includes(tool.function?.name)
+      ? { ...tool, function: { ...tool.function, description: "Check normal-sensitivity calendar invitations linked to this landlord only, across active BGP staff diaries. Private/confidential, cancelled and unrelated meetings are excluded. Search by subject, attendees or location within a bounded date range (default next 30 days, maximum 120 days); use mailbox='all' for the team. Returns checked coverage and source invitations. An incomplete check is not proof that a meeting does not exist." } }
+      : tool);
+    const { landlordRequirementTools, executeLandlordRequirementTool } = await import("./landlord-chat-requirements");
+    if (landlordEvidence) {
+      groupTools = [...groupTools.filter((tool: any) => !["create_requirement", "update_requirement"].includes(tool.function?.name)), ...landlordRequirementTools];
+    }
 
     const lastUserMsg = recentMessages.filter(m => m.role === "user").pop()?.content || "";
     const mentionsChatBGP = AI_MENTION_REGEX.test(lastUserMsg);
     const taggedScope = await resolveCompanyScope(req).catch(() => null);
     const taggedContext = await buildTaggedEntityContext(recentMessages, taggedScope).catch(() => "");
 
-    const groupSystemPrompt = systemPrompt + learnings + calendarContext + taggedContext +
+    const groupSystemPrompt = systemPrompt + learnings + (landlordEvidence ? "" : calendarContext) + taggedContext + landlordContext +
       `\n\nIMPORTANT: You are participating in a GROUP CHAT with multiple team members. ` +
       `The most recent message was sent by ${senderName}. ` +
       `CRITICAL RULES FOR GROUP CHAT:\n` +
@@ -358,11 +396,10 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
         ? `9. The user mentioned you by name — you MUST respond. Do NOT skip.`
         : `9. Only respond with exactly __SKIP__ if the conversation is clearly a private side-conversation between team members that has nothing to do with work, property, or anything you could help with. When in doubt, respond — it's better to be helpful than silent.`);
 
-    // Group chat answers on Fable 5 by default (same as the main ChatBGP
-    // window), honouring any per-thread /opus or /sonnet preference. callClaude
-    // applies the Fable safety-classifier params + Opus fallback automatically.
-    const { resolveChatModel } = await import("./chatbgp-model-router");
-    const { model: groupModel } = await resolveChatModel({ threadId }).catch(() => ({ model: "claude-opus-5-5" }));
+    // Use the same interactive model and quality settings as main chat.
+    const { chatQualitySettings } = await import("./chat-quality-settings");
+    const { resolveChatModel, selectChatModel } = await import("./chatbgp-model-router");
+    const { model: groupModel } = await resolveChatModel({ threadId }).catch(() => selectChatModel());
 
     console.log(`[ai-group] Prepared in ${Date.now() - startTime}ms (${groupTools.length} tools, mention=${mentionsChatBGP}, model=${groupModel})`);
 
@@ -374,19 +411,23 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
         // the resolved records are already in TAGGED IN THIS CONVERSATION.
         ...recentMessages.map(m => ({ ...m, content: stripTagTokens(m.content) })),
       ],
-      max_completion_tokens: 2048,
+      thinking: true,
+      ...chatQualitySettings(groupModel),
       tools: groupTools.length > 0 ? groupTools : undefined,
       parallel_tool_calls: false,
     };
+    // Internal loop state, removed before transport by the existing call wrapper.
+    if (landlordEvidence) completionOptions.landlordEvidence = true;
+    const landlordToolOutcomes: any[] = [];
 
-    const withTimeout = <T>(p: Promise<T>): Promise<T> => {
-      let timer: NodeJS.Timeout | undefined;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("AI response timed out")), TIMEOUT_MS);
-      });
-      return Promise.race([p, timeoutPromise]).finally(() => { if (timer) clearTimeout(timer); }) as Promise<T>;
-    };
-    let claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
+    // Astra can spend longer reasoning than the previous one-minute wrapper.
+    // Bound individual calls and the full run, cancelling the provider request
+    // when that bound is reached instead of leaving it running in the background.
+    const callGroupModel = () => withAiRequestDeadline(
+      signal => { const { landlordEvidence: _landlord, ...options } = completionOptions; return callClaude({ ...options, signal }); },
+      { deadline: groupDeadline, maxRequestMs: 3 * 60 * 1000 },
+    );
+    let claudeResponse = await callGroupModel() as any;
     let currentMessage = claudeResponse.choices?.[0]?.message;
     let loopCount = 0;
     const maxLoops = 6;
@@ -409,6 +450,7 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       // Ask for serial calls, but handle every call if a provider still returns
       // a batch. Every requested call must receive exactly one outcome.
       for (const toolCall of currentMessage.tool_calls) {
+        if (Date.now() >= groupDeadline) throw new Error("AI response timed out");
         const fnName = toolCall.function?.name;
         let outcome: any;
         if (!groupTools.some((tool: any) => tool.function?.name === fnName)) {
@@ -424,13 +466,40 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
           }
           if (!outcome) {
             try {
-              const result = await chatbgp.handleCrmToolCall(fnName, fnArgs, req, completionOptions, currentMessage, toolCall);
-              if (result?.handled && result.response) {
-                lastAction = result.response.action || lastAction;
-                lastHandledReply = result.response.reply || lastHandledReply;
-                outcome = { result: result.response.reply || "done", action: result.response.action || null };
+              if (completionOptions.landlordEvidence && ["search_calendar", "query_calendar"].includes(fnName)) {
+                outcome = await searchLandlordMeetings({ ...fnArgs, req, companyId: landlordEvidence.company.id });
+                lastHandledReply = outcome?.error ? "The landlord diary check did not complete." : null;
+              } else if (completionOptions.landlordEvidence && ["search_landlord_requirements", "create_requirement", "update_requirement"].includes(fnName)) {
+                const raw = await executeLandlordRequirementTool(req, { companyId: landlordEvidence.company.id, threadId, messageId: triggerMessageId }, fnName, fnArgs);
+                outcome = raw.data;
+                landlordToolOutcomes.push({ ...raw.data, tool: fnName });
+                if (raw.data?.success === true && "action" in raw && raw.action) {
+                  lastAction = raw.action;
+                  confirmedLandlordAction = raw.action;
+                  lastHandledReply = "The investment requirement has been saved on this landlord’s Requirements board. You can open the saved record below.";
+                } else if (raw.data?.success === false) lastHandledReply = "The requirement was not saved. " + ("error" in raw.data ? raw.data.error : "Please check the requirement details.");
+              } else if (completionOptions.landlordEvidence && ["search_crm", "create_deal", "update_deal", "create_contact", "update_contact", "create_company", "update_company", "create_property", "create_available_unit", "update_available_unit", "create_requirement", "create_task", "create_diary_entry", "create_investment_tracker", "update_investment_tracker", "log_viewing", "log_offer", "delete_record"].includes(fnName)) {
+                const raw = await chatbgp.executeCrmToolRaw(fnName, fnArgs, req);
+                outcome = raw.data;
+                landlordToolOutcomes.push({ ...raw.data, tool: fnName });
+                if (raw.data?.success === true && raw.action) {
+                  lastAction = { ...raw.action, success: true, companyId: landlordEvidence.company.id };
+                  confirmedLandlordAction = lastAction;
+                }
+                lastHandledReply = raw.data?.error ? "The requested check or change did not complete. No successful save was confirmed." : null;
+              } else if (fnName === "search_app_guide") {
+                // Evidence for the next model round, never a final chat reply.
+                const guide = await chatbgp.executeCrmToolRaw(fnName, fnArgs, req);
+                outcome = guide.data;
               } else {
-                outcome = { error: "Tool not handled" };
+                const result = await chatbgp.handleCrmToolCall(fnName, fnArgs, req, completionOptions, currentMessage, toolCall);
+                if (result?.handled && result.response) {
+                  lastAction = result.response.action || lastAction;
+                  lastHandledReply = result.response.reply || lastHandledReply;
+                  outcome = { result: result.response.reply || "done", action: result.response.action || null };
+                } else {
+                  outcome = { error: "Tool not handled" };
+                }
               }
             } catch (toolErr: any) {
               console.error("[ai-group] Tool call error:", toolErr?.message);
@@ -440,7 +509,7 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
         }
         completionOptions.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(outcome) });
       }
-      claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
+      claudeResponse = await callGroupModel() as any;
       currentMessage = claudeResponse.choices?.[0]?.message;
     }
 
@@ -462,6 +531,11 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       }
     }
 
+    if (landlordEvidence) {
+      const { guardLandlordSaveClaim } = await import("./landlord-relationship-brief");
+      replyText = guardLandlordSaveClaim(String(replyText), landlordToolOutcomes);
+    }
+
     const saved = await storage.createChatMessage({
       threadId,
       role: "assistant",
@@ -475,13 +549,16 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
   } catch (err: any) {
     console.error("[ai-group] AI response failed:", err?.message);
     if (io) io.to(`thread:${threadId}`).emit("stop_typing", { threadId, userId: "__chatbgp__" });
-    const fallback = "Sorry, I had a bit of a hiccup there. Could you say that again?";
+    const fallback = confirmedLandlordAction
+      ? "The CRM change was saved, but I couldn’t finish the rest of my reply." + (confirmedLandlordAction.entityType === "requirement" ? " The saved record is linked below." : " Please check the updated record before repeating the request.")
+      : isLandlordConversation ? "Sorry, I couldn’t complete that request. No successful save was confirmed; please try again."
+      : "Sorry, I had a bit of a hiccup there. Could you say that again?";
     const saved = await storage.createChatMessage({
       threadId,
       role: "assistant",
       content: fallback,
       userId: null,
-      actionData: null,
+      actionData: confirmedLandlordAction ? JSON.stringify(confirmedLandlordAction) : null,
       attachments: null,
     });
     emitNewMessage(threadId, saved, "ChatBGP");
@@ -545,16 +622,11 @@ export async function registerRoutes(
     }
   });
 
-  // Chat media downloads — support both Bearer token and ?token= query param
-  // This allows mobile browsers to download files via plain <a href> links
+  // Chat media downloads. Session or Bearer auth — mobile <a href>
+  // downloads ride the session cookie (same-site GET navigation); the old
+  // ?token= acceptance put a 30-day full-access token into history and
+  // proxy logs for every shared link, and nothing constructs such URLs.
   app.get("/api/chat-media/:filename", async (req: Request, res) => {
-    // Allow auth via query param for direct mobile downloads
-    if (!req.session?.userId && !req.tokenUserId && req.query.token) {
-      try {
-        const userId = await getUserIdFromToken(req.query.token as string);
-        if (userId) req.tokenUserId = userId;
-      } catch {}
-    }
     if (!req.session?.userId && !req.tokenUserId) {
       return res.status(401).json({ message: "Not authenticated" });
     }
@@ -564,6 +636,29 @@ export async function registerRoutes(
       if (!user || user.isActive === false) return res.status(401).json({ message: "Not authenticated" });
       const filename = String(req.params.filename || "");
       if (filename.includes("..") || filename.includes("/")) return res.status(400).end();
+      // Client logins only ever reach files from their own world: something
+      // they uploaded, or something posted in a chat thread they're in.
+      // Everything else in the store (other users' uploads, KYC passports,
+      // generated staff documents) is 404 for them — a forwarded URL is not
+      // an entitlement.
+      if (user.role === "Client") {
+        const reach = await pool.query(
+          `SELECT 1 WHERE EXISTS (
+              SELECT 1 FROM user_upload_history
+               WHERE user_id = $1 AND storage_key = 'chat-media/' || $2
+            ) OR EXISTS (
+              SELECT 1 FROM chat_messages m
+                JOIN chat_threads t ON t.id = m.thread_id
+               WHERE (t.created_by = $1 OR EXISTS (
+                        SELECT 1 FROM chat_thread_members tm WHERE tm.thread_id = t.id AND tm.user_id = $1))
+                 AND (m.content LIKE '%' || $2 || '%'
+                      OR m.action_data LIKE '%' || $2 || '%'
+                      OR EXISTS (SELECT 1 FROM unnest(COALESCE(m.attachments, '{}')) a WHERE a LIKE '%' || $2 || '%'))
+            )`,
+          [userId, filename]
+        );
+        if ((reach.rowCount || 0) === 0) return res.status(404).end();
+      }
       res.set("Cache-Control", "private, no-store");
       const file = await getFile(`chat-media/${filename}`);
       if (!file) {
@@ -633,6 +728,22 @@ export async function registerRoutes(
     }
   });
 
+  // MyScript handwriting HMAC key — staff sessions only, never in the
+  // client bundle (anyone could lift it from the served JS and burn the
+  // account's quota). The matching components fetch it on editor load.
+  app.get("/api/myscript/hmac-key", requireAuth, async (req: Request, res) => {
+    try {
+      const { isClientRequestUser } = await import("./company-scope");
+      if (await isClientRequestUser(req)) return res.status(403).json({ message: "Not available for client accounts" });
+    } catch {
+      return res.status(403).json({ message: "Not available" });
+    }
+    const key = process.env.MYSCRIPT_HMAC_KEY || process.env.VITE_MYSCRIPT_HMAC_KEY || "";
+    if (!key) return res.status(404).json({ message: "Handwriting recognition isn't configured" });
+    res.set("Cache-Control", "private, no-store");
+    res.type("text/plain").send(key);
+  });
+
   app.post("/api/proxy-image", requireAuth, async (req: Request, res) => {
     try {
       const { url } = req.body;
@@ -650,40 +761,30 @@ export async function registerRoutes(
       if (blockedPatterns.some(p => p.test(hostname))) {
         return res.status(400).json({ message: "URL not allowed" });
       }
-      let currentUrl = url;
-      let resp!: Awaited<ReturnType<typeof fetch>>;
-      let redirects = 0;
-      while (true) {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15000);
-        try {
-          resp = await fetch(currentUrl, {
-            signal: controller.signal,
-            headers: { "User-Agent": "Mozilla/5.0 (compatible; BGPDashboard/1.0)" },
-            redirect: "manual",
-          });
-        } finally {
-          clearTimeout(timeout);
-        }
-        if (resp.status < 300 || resp.status >= 400) break;
-        const location = resp.headers.get("location");
-        if (!location) break;
-        if (++redirects > 5) return res.status(502).json({ message: "Too many redirects" });
-        let next: URL;
-        try { next = new URL(location, currentUrl); } catch { return res.status(400).json({ message: "Invalid redirect" }); }
-        if (next.protocol !== "http:" && next.protocol !== "https:") {
-          return res.status(400).json({ message: "URL not allowed" });
-        }
-        if (blockedPatterns.some(p => p.test(next.hostname.toLowerCase()))) {
-          return res.status(400).json({ message: "URL not allowed" });
-        }
-        currentUrl = next.toString();
+      // The hostname regexes above are a fast pre-filter only — the real
+      // gate is safePublicFetch, which resolves every hop's hostname and
+      // refuses private/link-local/metadata addresses (a public hostname
+      // can simply point its DNS at 10.x and walk past a regex).
+      let resp: Awaited<ReturnType<typeof fetch>>;
+      try {
+        const { safePublicFetch } = await import("./safe-fetch");
+        resp = await safePublicFetch(url, {
+          headers: { "User-Agent": "Mozilla/5.0 (compatible; BGPDashboard/1.0)" },
+          signal: AbortSignal.timeout(15000),
+        });
+      } catch (e: any) {
+        return res.status(400).json({ message: e?.message || "URL not allowed" });
       }
       if (!resp.ok) return res.status(502).json({ message: `Failed to fetch image: ${resp.status}` });
       const contentType = resp.headers.get("content-type") || "image/png";
       if (!contentType.startsWith("image/")) return res.status(400).json({ message: "URL is not an image" });
-      const arrayBuf = await resp.arrayBuffer();
-      const buffer = Buffer.from(arrayBuf);
+      const { readBodyCapped } = await import("./safe-fetch");
+      let buffer: Buffer;
+      try {
+        buffer = await readBodyCapped(resp, 25 * 1024 * 1024);
+      } catch {
+        return res.status(400).json({ message: "Image too large" });
+      }
       if (buffer.length === 0) return res.status(400).json({ message: "Empty image" });
       if (buffer.length > 25 * 1024 * 1024) return res.status(400).json({ message: "Image too large" });
       const ext = contentType.split("/")[1]?.replace("jpeg", "jpg") || "png";
@@ -702,7 +803,8 @@ export async function registerRoutes(
   });
 
   app.get("/api/config/maps-key", requireAuth, (_req, res) => {
-    res.json({ key: process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY || "" });
+    // Only the intentionally browser-visible Maps key may leave the server.
+    res.json({ key: process.env.VITE_GOOGLE_MAPS_API_KEY || "" });
   });
 
   const GOAD_DIR = path.join(process.cwd(), "data", "goad");
@@ -1495,12 +1597,13 @@ export async function registerRoutes(
         ? await pool.query(
             `SELECT * FROM team_events
               WHERE start_time >= $1 AND start_time <= $2
+                AND ${teamEventPrivacySql()}
                 AND lower(trim(company_name)) = (SELECT lower(trim(name)) FROM crm_companies WHERE id = $3)
               ORDER BY start_time`,
             [now.toISOString(), end.toISOString(), teScope]
           )
         : await pool.query(
-            `SELECT * FROM team_events WHERE start_time >= $1 AND start_time <= $2 ORDER BY start_time`,
+            `SELECT * FROM team_events WHERE start_time >= $1 AND start_time <= $2 AND ${teamEventPrivacySql()} ORDER BY start_time`,
             [now.toISOString(), end.toISOString()]
           );
       res.json(result.rows);
@@ -2214,15 +2317,32 @@ export async function registerRoutes(
     }
   });
 
+  // A thread is the caller's when they created it or are a member (the
+  // same rule GET /api/chat/threads lists by). Feedback log, 2026-10-26:
+  // the linked-object lookup, the rename route and member removal had no
+  // such check, so one person could be handed another's thread or drop a
+  // member from a thread they were not in.
+  const threadIsUsers = async (threadId: string, userId: string): Promise<boolean> => {
+    const r = await pool.query(
+      `SELECT 1 FROM chat_threads t WHERE t.id = $1
+          AND (t.created_by = $2 OR EXISTS (SELECT 1 FROM chat_thread_members m WHERE m.thread_id = t.id AND m.user_id = $2))
+        LIMIT 1`, [threadId, userId]);
+    return r.rows.length > 0;
+  };
+
   app.post("/api/chat/threads", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
       const { title, propertyId, propertyName, linkedType, linkedId, linkedName, isAiChat, memberIds } = req.body;
 
       if (linkedType && linkedId && isAiChat) {
+        // Only a thread the caller created or is a member of — never
+        // another user's conversation about the same object.
         const existingResult = await pool.query(
-          "SELECT * FROM chat_threads WHERE is_ai_chat = true AND linked_type = $1 AND linked_id = $2 LIMIT 1",
-          [linkedType, linkedId]
+          `SELECT t.* FROM chat_threads t WHERE t.is_ai_chat = true AND t.linked_type = $1 AND t.linked_id = $2
+              AND (t.created_by = $3 OR EXISTS (SELECT 1 FROM chat_thread_members m WHERE m.thread_id = t.id AND m.user_id = $3))
+            ORDER BY t.updated_at DESC NULLS LAST LIMIT 1`,
+          [linkedType, linkedId, userId]
         );
         if (existingResult.rows.length > 0) {
           return res.json(existingResult.rows[0]);
@@ -2279,6 +2399,7 @@ export async function registerRoutes(
       const id = req.params.id as string;
       const thread = await storage.getChatThread(id);
       if (!thread) return res.status(404).json({ message: "Thread not found" });
+      if (!(await threadIsUsers(id, req.session.userId!))) return res.status(403).json({ message: "Not a member of this thread" });
       const { title, propertyId, propertyName, linkedType, linkedId, linkedName, hasAiMember } = req.body;
       const updates: any = {};
       if (title !== undefined) updates.title = title;
@@ -2576,7 +2697,7 @@ export async function registerRoutes(
         }
 
         if (thread.hasAiMember && !thread.isAiChat) {
-          triggerAiGroupResponse(thread.id, userId, req).catch(async (err) => {
+          triggerAiGroupResponse(thread.id, userId, req, message.id).catch(async (err) => {
             console.error("[ai-group] Error triggering AI response:", err?.message);
             try {
               const fallback = "Sorry, I'm having a connection issue. Give me a moment and try again.";
@@ -2632,6 +2753,7 @@ export async function registerRoutes(
     try {
       const id = req.params.id as string;
       const memberId = req.params.userId as string;
+      if (!(await threadIsUsers(id, req.session.userId!))) return res.status(403).json({ message: "Not a member of this thread" });
       if (memberId === "__chatbgp__") {
         await storage.updateChatThread(id, { hasAiMember: false });
         emitMemberRemoved(id, "__chatbgp__");
@@ -2882,6 +3004,46 @@ export async function registerRoutes(
       res.json(await listSchemaDrift(pool));
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "schema drift check failed" });
+    }
+  });
+  // Lettings cleanup Phase 0 (Woody, 2026-10-26): read-only integrity report
+  // (tracker rows vs letting deals) and a gzipped data snapshot into file
+  // storage — server/letting-integrity.ts. Reports, never repairs.
+  app.get("/api/admin/letting-integrity", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { lettingIntegrityReport } = await import("./letting-integrity");
+      res.json(await lettingIntegrityReport(pool));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "letting integrity check failed" });
+    }
+  });
+  app.post("/api/admin/letting-snapshot", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { takeLettingSnapshot } = await import("./letting-integrity");
+      res.json(await takeLettingSnapshot(pool));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "letting snapshot failed" });
+    }
+  });
+  // Phase 2 backfills (server/letting-backfill.ts): { dryRun: true } previews
+  // and records the dry run; { dryRun: false } applies only within an hour
+  // of one and appends the ids it touched to the job's system_settings key.
+  app.post("/api/admin/letting-backfill/tracker-rows", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { runTrackerRowsBackfill } = await import("./letting-backfill");
+      const by = (req as any).session?.userId || (req as any).tokenUserId || null;
+      res.json(await runTrackerRowsBackfill(pool, { dryRun: req.body?.dryRun !== false, by }));
+    } catch (e: any) {
+      res.status(e?.status || 500).json({ message: e?.message || "tracker-rows backfill failed" });
+    }
+  });
+  app.post("/api/admin/letting-backfill/stub-pairs", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { runStubPairsBackfill } = await import("./letting-backfill");
+      const by = (req as any).session?.userId || (req as any).tokenUserId || null;
+      res.json(await runStubPairsBackfill(pool, { dryRun: req.body?.dryRun !== false, by }));
+    } catch (e: any) {
+      res.status(e?.status || 500).json({ message: e?.message || "stub-pairs backfill failed" });
     }
   });
   // Which Microsoft Graph application permissions the app's token carries
@@ -4891,6 +5053,139 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Unit search for the deal form and Add Unit (lettings cleanup, Phase 2):
+  // every physical unit the caller may see — property_units and the
+  // tenancy spine — with its tracker row and backing deal, so a letting
+  // lands on the unit that exists instead of minting a second one. Same
+  // client scope as the tracker GET; the trim/lower-case name identity the
+  // tracker's own pickers use. Up to 30 rows.
+  app.get("/api/letting/unit-search", requireAuth, async (req, res) => {
+    try {
+      const qText = String(req.query.q ?? "").trim();
+      const propertyId = req.query.propertyId ? String(req.query.propertyId) : null;
+      if (!qText && !propertyId) return res.json([]);
+      const scope = await resolveCompanyScope(req);
+      const params: any[] = [];
+      const where: string[] = [];
+      if (scope) {
+        params.push(scope);
+        where.push(`(p.landlord_id = $${params.length} OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $${params.length}))`);
+      }
+      if (propertyId) { params.push(propertyId); where.push(`p.id = $${params.length}`); }
+      let like = "", exact = "", prefix = "";
+      if (qText) {
+        params.push(`%${escapeLike(qText)}%`); like = `$${params.length}`;
+        params.push(qText.toLowerCase()); exact = `$${params.length}`;
+        params.push(`${escapeLike(qText.toLowerCase())}%`); prefix = `$${params.length}`;
+      }
+      const textMatch = (unitExpr: string) => like ? `(${unitExpr} ILIKE ${like} OR p.name ILIKE ${like} OR p.address::text ILIKE ${like})` : "TRUE";
+      // Each source is capped, so the exact and prefix unit-name matches
+      // come first: a short query ("un", "12") matches far more than 150
+      // rows and the one the agent wants must not be the row the cap drops.
+      const ordered = (unitExpr: string) => like
+        ? `ORDER BY (lower(trim(${unitExpr})) = ${exact}) DESC, (lower(trim(${unitExpr})) LIKE ${prefix}) DESC, p.name, ${unitExpr} LIMIT 150`
+        : `ORDER BY p.name, ${unitExpr} LIMIT 150`;
+      const base = `JOIN crm_properties p ON p.id = x.property_id WHERE ${where.length ? where.join(" AND ") : "TRUE"}`;
+      const tsName = "coalesce(nullif(trim(x.unit_number), ''), x.premises, '')";
+      const auName = "coalesce(pu.unit_name, x.unit_name)";
+      const [pus, tss, aus] = await Promise.all([
+        pool.query(
+          `SELECT x.id AS property_unit_id, x.property_id, x.unit_name, p.name AS property_name, p.address AS property_address, p.postcode AS property_postcode
+             FROM property_units x ${base} AND ${textMatch("x.unit_name")} ${ordered("x.unit_name")}`, params),
+        pool.query(
+          `SELECT x.id AS tenancy_unit_id, x.property_id, x.property_unit_id,
+                  coalesce(nullif(trim(x.unit_number), ''), x.premises) AS unit_name,
+                  coalesce(nullif(trim(x.occupancy_status), ''), x.status) AS occupancy,
+                  coalesce(nullif(trim(x.trading_name), ''), nullif(trim(x.tenant_name), '')) AS tenant_name,
+                  p.name AS property_name, p.address AS property_address, p.postcode AS property_postcode
+             FROM tenancy_schedule_units x ${base} AND ${textMatch(tsName)} ${ordered(tsName)}`, params),
+        pool.query(
+          `SELECT x.id AS tracker_row_id, x.property_id, x.unit_id AS property_unit_id, x.tenancy_unit_id,
+                  coalesce(pu.unit_name, x.unit_name) AS unit_name, x.marketing_status, x.created_at,
+                  d.id AS deal_id, d.deal_ref, d.status AS deal_status, d.deal_type, d.bgp_acting_for,
+                  p.name AS property_name, p.address AS property_address, p.postcode AS property_postcode
+             FROM available_units x
+             LEFT JOIN property_units pu ON pu.id = x.unit_id
+             LEFT JOIN crm_deals d ON d.id = x.deal_id
+             ${base} AND ${textMatch(auName)} ${ordered(auName)}`, params),
+      ]);
+      type UnitHit = {
+        propertyId: string; propertyName: string | null; propertyAddress: string | null; unitName: string;
+        propertyUnitId: string | null; tenancyUnitId: string | null; trackerRowId: string | null;
+        dealId: string | null; dealRef: number | null; statusCode: string | null; occupancy: string | null;
+        tenantName: string | null; liveLetting: boolean; dealSide: "landlord" | "tenant" | null;
+      };
+      const norm = (s: any) => String(s || "").trim().toLowerCase();
+      // One row per physical unit: the tracker stores "MSU9, Bluewater,
+      // Bluewater" where the spine has "MSU9", so the merge keys on the
+      // first comma segment (the tracker's own duplicate-guard identity;
+      // unitNameSegment in letting-service) — else the deal-less spine copy
+      // sidesteps the live-letting notice and the 409.
+      const keyOf = (r: any) => `${r.property_id}::${unitNameSegment(r.unit_name) || norm(r.unit_name)}`;
+      const byKey = new Map<string, UnitHit>();
+      const hit = (r: any): UnitHit => {
+        const k = keyOf(r);
+        let row = byKey.get(k);
+        if (!row) {
+          row = {
+            propertyId: r.property_id, propertyName: r.property_name ?? null, // crm_properties.address is jsonb — the row carries it as text (the
+            // object crashed a board row as a React child once; lender-routes).
+            propertyAddress: lenderAddressText(r.property_address, r.property_postcode) || null,
+            unitName: String(r.unit_name || "").trim(), propertyUnitId: null, tenancyUnitId: null, trackerRowId: null,
+            dealId: null, dealRef: null, statusCode: null, occupancy: null, tenantName: null, liveLetting: false, dealSide: null,
+          };
+          byKey.set(k, row);
+        }
+        return row;
+      };
+      for (const r of pus.rows) { if (norm(r.unit_name)) hit(r).propertyUnitId = r.property_unit_id; }
+      for (const r of tss.rows) {
+        if (!norm(r.unit_name)) continue;
+        const row = hit(r);
+        row.tenancyUnitId = row.tenancyUnitId || r.tenancy_unit_id;
+        row.propertyUnitId = row.propertyUnitId || r.property_unit_id || null;
+        row.occupancy = row.occupancy || r.occupancy || null;
+        row.tenantName = row.tenantName || r.tenant_name || null;
+      }
+      // One tracker row per unit: the live one wins, else the most recent.
+      const trackerByKey = new Map<string, any>();
+      for (const r of aus.rows) {
+        if (!norm(r.unit_name)) continue;
+        const code = effectiveStatus({ marketing_status: r.marketing_status }, r.deal_id ? { deal_type: r.deal_type, status: r.deal_status } : null);
+        const cand = { ...r, code, live: !isHistoricStatus(code) };
+        const cur = trackerByKey.get(keyOf(r));
+        if (!cur || (cand.live && !cur.live) || (cand.live === cur.live && new Date(cand.created_at) > new Date(cur.created_at))) trackerByKey.set(keyOf(r), cand);
+      }
+      for (const t of trackerByKey.values()) {
+        const row = hit(t);
+        row.trackerRowId = t.tracker_row_id;
+        row.propertyUnitId = row.propertyUnitId || t.property_unit_id || null;
+        row.tenancyUnitId = row.tenancyUnitId || t.tenancy_unit_id || null;
+        row.statusCode = t.code;
+        if (t.deal_id) {
+          row.dealId = t.deal_id;
+          row.dealRef = t.deal_ref ?? null;
+          row.liveLetting = isTrackerDeal({ deal_type: t.deal_type, status: t.deal_status });
+          row.dealSide = (t.bgp_acting_for || "landlord") === "tenant" ? "tenant" : "landlord";
+        }
+      }
+      const ql = qText.toLowerCase();
+      const rank = (r: UnitHit) => {
+        if (!ql) return 0;
+        const u = r.unitName.toLowerCase();
+        return u === ql ? 0 : u.startsWith(ql) ? 1 : u.includes(ql) ? 2 : 3;
+      };
+      const rows = Array.from(byKey.values())
+        .sort((a, b) => rank(a) - rank(b)
+          || String(a.propertyName || "").localeCompare(String(b.propertyName || ""))
+          || a.unitName.localeCompare(b.unitName, undefined, { numeric: true }))
+        .slice(0, 30);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Unit search failed" });
+    }
+  });
+
   app.get("/api/available-units/all-files", requireAuth, async (req, res) => {
     try {
       // unitName comes from property_units master with listing fallback
@@ -5063,6 +5358,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.get("/api/available-units/:id/interest", requireAuth, async (req, res) => {
     try {
       const { unitInterest } = await import("@shared/schema");
+      const unit = await storage.getAvailableUnit(req.params.id as string);
+      if (await assertUnitInClientScope(req, unit?.propertyId)) return res.status(403).json({ message: "Unit is outside your portfolio" });
       const rows = await db.select().from(unitInterest)
         .where(eq(unitInterest.unitId, req.params.id as string))
         .orderBy(desc(unitInterest.interestDate));
@@ -5078,6 +5375,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.post("/api/available-units/:id/interest", requireAuth, async (req, res) => {
     try {
       const { unitInterest, insertUnitInterestSchema } = await import("@shared/schema");
+      const unit = await storage.getAvailableUnit(req.params.id as string);
+      if (await assertUnitInClientScope(req, unit?.propertyId)) return res.status(403).json({ message: "Unit is outside your portfolio" });
       const parsed = insertUnitInterestSchema.parse({
         unitId: req.params.id,
         companyName: req.body.companyName || null,
@@ -5102,6 +5401,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/available-units/interest/:interestId", requireAuth, async (req, res) => {
     try {
       const { unitInterest } = await import("@shared/schema");
+      const [row] = await db.select().from(unitInterest).where(eq(unitInterest.id, req.params.interestId as string));
+      if (row?.unitId) {
+        const unit = await storage.getAvailableUnit(row.unitId);
+        if (await assertUnitInClientScope(req, unit?.propertyId)) return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       await db.delete(unitInterest).where(eq(unitInterest.id, req.params.interestId as string));
       res.json({ ok: true });
     } catch (err: any) {
@@ -5274,193 +5578,26 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/available-units", requireAuth, async (req, res) => {
     try {
-      const { insertAvailableUnitSchema } = await import("@shared/schema");
-      const parsed = insertAvailableUnitSchema.parse(req.body);
-      // Clients: own-portfolio only, and never set BGP's fee.
-      {
-        const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
-        const auScope = await resolveCompanyScope(req);
-        if (auScope) {
-          if (!parsed.propertyId || !(await isPropertyInScope(auScope, parsed.propertyId))) {
-            return res.status(403).json({ message: "Unit is outside your portfolio" });
-          }
-          delete (parsed as any).fee;
-        }
+      // Clients: own-portfolio only; the listing factory strips BGP's fee
+      // and pins their company as the backing deal's landlord.
+      const auScope = await resolveCompanyScope(req);
+      if (auScope && req.body?.propertyId && !(await isPropertyInScope(auScope, req.body.propertyId))) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
-
-      // One live listing per unit (Woody, 2026-08-04 — "sort the double
-      // counting"). Every add-to-tracker path funnels through this POST, and
-      // the client-side "already listed" guards miss when names differ in
-      // format ("MSU9" vs "MSU9, Bluewater, Bluewater"), so the server is
-      // the guard: an existing non-closed listing on the same property whose
-      // first name segment matches returns that listing instead of creating
-      // a duplicate.
-      if (parsed.propertyId && parsed.unitName?.trim()) {
-        const seg = parsed.unitName.split(",")[0].trim().toLowerCase();
-        if (seg.length >= 2) {
-          const dupe = await pool.query(
-            `SELECT * FROM available_units
-             WHERE property_id = $1
-               AND lower(trim(split_part(coalesce(unit_name, ''), ',', 1))) = $2
-               AND coalesce(marketing_status, '') NOT IN ('Withdrawn', 'WIT')
-             LIMIT 1`,
-            [parsed.propertyId, seg]
-          );
-          if (dupe.rows.length > 0) {
-            return res.status(200).json({ ...dupe.rows[0], alreadyListed: true });
-          }
-        }
-      }
-
-      // Ensure a property_units master row exists for this (property, unit name).
-      // Create one if missing, then set unit_id on the listing.
-      let unitMasterId: string | null = (parsed as any).unitId || null;
-      if (!unitMasterId && parsed.propertyId && parsed.unitName?.trim()) {
-        const existing = await pool.query(
-          `SELECT id FROM property_units
-           WHERE property_id = $1 AND lower(trim(unit_name)) = lower(trim($2))`,
-          [parsed.propertyId, parsed.unitName]
-        );
-        if (existing.rows.length > 0) {
-          unitMasterId = existing.rows[0].id;
-        } else {
-          const created = await pool.query(
-            `INSERT INTO property_units (property_id, unit_name, floor, sqft, use_class, condition, epc_rating)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             RETURNING id`,
-            [parsed.propertyId, parsed.unitName.trim(), parsed.floor || null, parsed.sqft ?? null,
-             parsed.useClass || null, parsed.condition || null, parsed.epcRating || null]
-          );
-          unitMasterId = created.rows[0].id;
-        }
-      }
-
-      const unit = await storage.createAvailableUnit({ ...parsed, unitId: unitMasterId || undefined } as any);
-
-      // Also create a leasing_schedule_units row on the same property so the
-      // unit shows up on the property's Leasing Schedule view automatically.
-      // Pre-SOL units belong on the leasing schedule but NOT on the deal CRM
-      // — the deal row gets created later by the SOL promotion flow.
-      try {
-        const existingLs = await pool.query(
-          `SELECT id FROM leasing_schedule_units
-           WHERE property_id = $1 AND lower(trim(coalesce(unit_name, ''))) = lower(trim($2))
-           LIMIT 1`,
-          [parsed.propertyId, parsed.unitName || ""]
-        );
-        if (existingLs.rows.length === 0) {
-          await pool.query(
-            `INSERT INTO leasing_schedule_units
-               (property_id, unit_name, sqft, rent_pa, status)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [parsed.propertyId, parsed.unitName || null, parsed.sqft ?? null,
-             parsed.askingRent ?? null, parsed.marketingStatus || "AVA"]
-          );
-        }
-      } catch (e: any) {
-        console.warn("[available-units POST] leasing-schedule sync failed:", e.message);
-      }
-
-      // Mirror onto the tenancy spine (the source of truth): create-or-link a
-      // standard, editable tenancy row, deduped by normalised unit name. Means
-      // a unit/deal created here shows as a normal row, not a read-only orphan.
-      try {
-        const { ensureTenancyRowForAvailableUnit } = await import("./unit-mirror");
-        await ensureTenancyRowForAvailableUnit(pool, (unit as any).id);
-      } catch (e: any) {
-        console.warn("[available-units POST] tenancy-spine sync failed:", e.message);
-      }
-
-      // Auto-create a backing CRM deal so every tracker row has a source of
-      // truth. Deal CRM kanban filters this back out for pre-SOL statuses so
-      // the kanban stays clean — see filteredDeals in client/src/pages/deals.tsx.
-      //
-      // STAGE 3a (unit spine cleanup): when UNIFIED_ADD_UNIT=1, skip this
-      // entirely. Deals are then born only at Solicitors promotion (the
-      // existing WIP flow at /api/available-units/:id/create-deal, which
-      // already handles a missing prior deal via its else-branch).
-      // Leaves all the other side-effects above (property_units master,
-      // available_units row, leasing_schedule_units row, tenancy spine
-      // mirror) untouched — only the silent pre-SOL deal goes away.
-      const UNIFIED_ADD_UNIT = process.env.UNIFIED_ADD_UNIT === "1";
-      if (!UNIFIED_ADD_UNIT && !unit.dealId) {
-        try {
-          const property = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
-          // Landlord linkage: prefer the value the user picked on the
-          // form (it may differ from property.landlord_id if they
-          // overrode), then fall back to property.landlord_id. Stamps
-          // the deal at AVA so AML on the landlord side fires the
-          // moment the deal flips to SOL.
-          const landlordId = (req.body as any).landlordId
-            || (property as any)?.landlordId
-            || null;
-          // Also backfill property.landlord_id if the user picked one
-          // and the property was missing one — so the next deal on
-          // this property doesn't repeat the same prompt.
-          if ((req.body as any).landlordId && property && !(property as any).landlordId) {
-            try {
-              await pool.query(
-                `UPDATE crm_properties SET landlord_id = $1 WHERE id = $2 AND landlord_id IS NULL`,
-                [(req.body as any).landlordId, property.id]
-              );
-            } catch (e: any) {
-              console.warn("[available-units POST] property landlord backfill failed:", e.message);
-            }
-          }
-          // feePercentage: comes only from the Add-Unit form body (the
-          // available_units table doesn't carry it). Without this the
-          // auto-created deal loses the % the user typed and reopens blank.
-          const feePctRaw = (req.body as any).feePercentage;
-          const feePct = feePctRaw != null && feePctRaw !== ""
-            ? parseFloat(String(feePctRaw))
-            : null;
-          // available_units stores agent user IDs (text[] of user.id),
-          // but crm_deals.internal_agent stores display names (the
-          // deal-detail chip render + add-agent dropdown both look up
-          // by name). Resolve IDs → names here so the auto-created deal
-          // matches the shape the rest of the UI expects.
-          const agentNames = await resolveAgentNames(unit.agentUserIds);
-          const deal = await storage.createCrmDeal({
-            name: property
-              ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
-              : unit.unitName,
-            propertyId: unit.propertyId || undefined,
-            unitId: unitMasterId || undefined,
-            status: unit.marketingStatus || "AVA",
-            dealType: (req.body as any).dealType || "New Letting",
-            internalAgent: agentNames,
-            fee: unit.fee ?? undefined,
-            feePercentage: feePct != null && !Number.isNaN(feePct) ? feePct : undefined,
-            rentPa: unit.askingRent ?? undefined,
-            totalAreaSqft: unit.sqft ?? undefined,
-            landlordId: landlordId || undefined,
-          } as any);
-          await storage.updateAvailableUnit(unit.id, { dealId: deal.id });
-          (unit as any).dealId = deal.id;
-          (unit as any).dealRef = deal.dealRef;
-        } catch (e: any) {
-          console.warn("[available-units POST] auto-create deal failed:", e.message);
-        }
-      }
-
-      // Canonical unit FK: stamp tenancy_unit_id when the new vacant
-      // unit's name matches a tenancy_schedule row on the property.
-      try {
-        await pool.query(
-          `UPDATE available_units au
-              SET tenancy_unit_id = (
-                SELECT ts.id FROM tenancy_schedule_units ts
-                 WHERE ts.property_id = au.property_id
-                   AND lower(trim(ts.unit_number)) = lower(trim(coalesce(au.unit_name, '')))
-                   AND coalesce(trim(ts.unit_number), '') <> ''
-                 LIMIT 1
-              )
-            WHERE au.id = $1 AND au.tenancy_unit_id IS NULL`,
-          [unit.id]
-        );
-      } catch (e: any) { console.warn("[available-units] tenancy_unit_id stamp failed:", e?.message); }
-
-      res.json(unit);
+      // The one write door for a tracker row (server/letting-service.ts):
+      // duplicate guard, property_units master row, the row, the leasing
+      // row, the spine link, the backing deal (Ref #), the landlord stamp
+      // and the fee split typed on the form. Response shapes unchanged: the
+      // raw row + alreadyListed for a duplicate, else the created unit with
+      // dealId / dealRef / dealCreated.
+      const { createListing } = await import("./letting-service");
+      const result = await createListing(req.body, {
+        userId: (req.session as any)?.userId || (req as any).tokenUserId || null,
+        source: auScope ? "client-add" : lettingSource(req, "add-unit"),
+        scope: auScope,
+      });
+      if (result.kind === "already_listed") return res.status(200).json(result.row);
+      res.json(result.unit);
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to create unit" });
@@ -5486,6 +5623,66 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             return res.status(403).json({ message: "Destination property is outside your portfolio" });
           }
           delete (partial as any).fee;
+        }
+      }
+
+      // Every tracker row has a backing deal (Woody, 2026-10-26). Heal an
+      // orphan (imported / mirror-born, or its deal was deleted) BEFORE the
+      // gates, at the row's CURRENT status, so a status edit then runs the
+      // same approval / AML checks and mirror as a POST-born unit. No stub
+      // for an edit whose only job is to close the row. Re-marketing a let /
+      // withdrawn row (an orphan at a historic status, or one linked to a
+      // closed deal) is a fresh cycle: a new stub at the NEW status, made
+      // before the row write so a fee typed on this same edit lands on the
+      // new deal and not the historic one — with none typed, the row's
+      // (the old letting's) goes.
+      const newStatusRaw = "marketingStatus" in partial ? String((partial as any).marketingStatus ?? "") : null;
+      const typedFee: number | null | undefined = "fee" in partial ? (partial as any).fee : undefined;
+      try {
+        const { ensureBackingDealForUnit, isHistoricUnitStatus } = await import("./unit-mirror");
+        const closing = newStatusRaw != null && isHistoricUnitStatus(newStatusRaw);
+        if (!existing.dealId) {
+          if (!closing) {
+            const reopening = newStatusRaw != null && isHistoricUnitStatus(existing.marketingStatus);
+            const backing = await ensureBackingDealForUnit(pool, existing.id, {
+              dealType: (req.body as any).dealType,
+              landlordId: (req.body as any).landlordId,
+              ...(reopening ? { status: newStatusRaw, fee: typedFee ?? null } : {}),
+            });
+            if (backing) (existing as any).dealId = backing.dealId;
+            if (reopening && typedFee === undefined) (partial as any).fee = null;
+          }
+        } else if (newStatusRaw != null && !closing) {
+          const { isFreshCycle, startFreshCycle } = await import("./lease-status-mirror");
+          const code = legacyToCode(newStatusRaw);
+          const dealStatus = (await pool.query(`SELECT status FROM crm_deals WHERE id = $1`, [existing.dealId])).rows[0]?.status ?? null;
+          if (code && isFreshCycle(dealStatus, code)) {
+            const stub = await startFreshCycle(
+              { pool, reason: "available_units.PATCH", actorUserId: (req.session as any)?.userId || (req as any).tokenUserId || null },
+              existing.dealId, dealStatus, existing.id, code, typedFee,
+            );
+            (existing as any).dealId = stub?.dealId ?? null;
+          }
+        }
+      } catch (e: any) {
+        console.warn("[available-units PATCH] backing deal failed:", e?.message);
+      }
+
+      // Senior-approval / AML gates run BEFORE any write when the status edit
+      // would move the linked deal — the same rules the deal PUT enforces.
+      // The mirror re-checks (and audits) as a backstop, but by then the unit
+      // row has already changed; denying here keeps the boards consistent.
+      if ("marketingStatus" in partial && existing.dealId) {
+        try {
+          const { dealStatusTransitionDenial } = await import("./deal-gates");
+          const denial = await dealStatusTransitionDenial(
+            (req.session as any)?.userId || (req as any).tokenUserId || null,
+            existing.dealId,
+            String((partial as any).marketingStatus ?? ""),
+          );
+          if (denial) return res.status(denial.status).json({ message: denial.error, code: denial.code });
+        } catch (e: any) {
+          console.warn("[available-units PATCH] deal gate check failed:", e?.message);
         }
       }
 
@@ -5536,44 +5733,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         if ("askingRent" in partial) dealPatch.rentPa = (partial as any).askingRent;
         if ((req.body as any).landlordId) dealPatch.landlordId = (req.body as any).landlordId;
         if ((req.body as any).dealType) dealPatch.dealType = (req.body as any).dealType;
+        if ((req.body as any).feePercentage != null && (req.body as any).feePercentage !== "") dealPatch.feePercentage = parseFloat(String((req.body as any).feePercentage));
         if (Object.keys(dealPatch).length > 0) {
           try {
             await storage.updateCrmDeal(existing.dealId, dealPatch as any);
           } catch (e: any) {
             console.warn(`[available-units PATCH] deal sync failed for ${existing.dealId}:`, e?.message);
           }
-        }
-      } else if ((req.body as any).dealType) {
-        // The unit has no backing deal (imported row, or born under
-        // UNIFIED_ADD_UNIT where deals wait for SOL) but the user
-        // explicitly set a Deal Type on the edit dialog. Zod strips
-        // dealType from the unit patch (available_units has no such
-        // column), so without this the edit silently went nowhere and
-        // the tracker's Deal Type column stayed "—". Create the backing
-        // deal now and link it — same shape as the POST auto-create.
-        try {
-          const property = existing.propertyId ? await storage.getCrmProperty(existing.propertyId) : null;
-          const dealLandlordId = (req.body as any).landlordId || (property as any)?.landlordId || null;
-          const agentNames = await resolveAgentNames((unit as any).agentUserIds);
-          const deal = await storage.createCrmDeal({
-            name: property
-              ? `${property.name}${(unit as any).unitName ? ` – ${(unit as any).unitName}` : ""}`
-              : (unit as any).unitName,
-            propertyId: existing.propertyId || undefined,
-            unitId: (existing as any).unitId || undefined,
-            status: (unit as any).marketingStatus || "AVA",
-            dealType: (req.body as any).dealType,
-            internalAgent: agentNames,
-            fee: (unit as any).fee ?? undefined,
-            rentPa: (unit as any).askingRent ?? undefined,
-            totalAreaSqft: (unit as any).sqft ?? undefined,
-            landlordId: dealLandlordId || undefined,
-          } as any);
-          await storage.updateAvailableUnit(req.params.id as string, { dealId: deal.id });
-          (unit as any).dealId = deal.id;
-          (unit as any).dealRef = (deal as any).dealRef;
-        } catch (e: any) {
-          console.warn("[available-units PATCH] deal auto-create failed:", e?.message);
         }
       }
 
@@ -5598,7 +5764,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if ("marketingStatus" in partial) {
         try {
           const { mirrorFromAvailableUnit } = await import("./lease-status-mirror");
-          await mirrorFromAvailableUnit(req.params.id as string, (partial as any).marketingStatus, { pool, reason: "available_units.PATCH" });
+          await mirrorFromAvailableUnit(req.params.id as string, (partial as any).marketingStatus, { pool, reason: "available_units.PATCH", actorUserId: (req.session as any)?.userId || (req as any).tokenUserId || null });
         } catch (e: any) {
           console.warn(`[available-units PATCH] status mirror failed for ${req.params.id}:`, e?.message);
           mirrorWarning = `Status saved, but syncing it to the Deals board / Leasing Schedule failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
@@ -6080,34 +6246,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/admin/backfill-tracker-deals", requireAuth, async (req, res) => {
     try {
-      const { availableUnits, investmentTracker: invTracker } = await import("@shared/schema");
-      let created = 0;
       const skipped = 0;
 
       // --- Letting Tracker ---
-      const unlinkedUnits = await db.select().from(availableUnits).where(sql`deal_id IS NULL`);
-      for (const unit of unlinkedUnits) {
-        try {
-          const property = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
-          const deal = await storage.createCrmDeal({
-            name: property
-              ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
-              : unit.unitName,
-            propertyId: unit.propertyId || undefined,
-            unitId: unit.unitId || undefined,
-            status: unit.marketingStatus || "AVA",
-            dealType: "Leasing",
-            internalAgent: await resolveAgentNames(unit.agentUserIds),
-            fee: unit.fee ?? undefined,
-            rentPa: unit.askingRent ?? undefined,
-            totalAreaSqft: unit.sqft ?? undefined,
-          } as any);
-          await db.update(availableUnits).set({ dealId: deal.id }).where(eq(availableUnits.id, unit.id));
-          created++;
-        } catch (e: any) {
-          console.warn(`[backfill] unit ${unit.id} failed:`, e.message);
-        }
-      }
+      const { backfillUnitBackingDeals } = await import("./unit-mirror");
+      const letting = await backfillUnitBackingDeals(pool);
+      let created = letting.created + letting.linked;
 
       // --- Investment Tracker ---
       created += await backfillInvestmentTrackerDeals();
@@ -6120,6 +6264,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   // Rename legacy long team names in crm_deals.team array
   app.post("/api/admin/rename-teams", requireAuth, async (req, res) => {
+    if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ message: LETTING_REPAIR_PAUSED });
     try {
       const renames: Record<string, string> = {
         "London Leasing Hospitality": "London Estate",
@@ -6705,13 +6850,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       // 2. Create listings for in-play strategy rows missing from the tracker.
       const { isJunkUnitName } = await import("./unit-junk");
+      const { ensureBackingDealForUnit } = await import("./unit-mirror");
       let added = 0;
       for (const m of missing) {
         if (isJunkUnitName(m.unit_name || m.unit_number || m.premises)) continue;
         try {
           const ins = await pool.query(
             `INSERT INTO available_units (property_id, unit_name, sqft, asking_rent, marketing_status, tenancy_unit_id)
-             VALUES ($1, $2, $3, $4, 'Available', $5) RETURNING id`,
+             VALUES ($1, $2, $3, $4, 'AVA', $5) RETURNING id`,
             [m.property_id, m.unit_name || m.unit_number || m.premises || "Unit",
              m.nia_sqft ?? m.gia_sqft ?? null, m.marketing_rent_pa ?? null, m.tenancy_unit_id]
           );
@@ -6719,6 +6865,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             `UPDATE tenancy_schedule_units SET letting_tracker_unit_id = $1 WHERE id = $2`,
             [ins.rows[0].id, m.tenancy_unit_id]
           );
+          await ensureBackingDealForUnit(pool, ins.rows[0].id);
           added++;
         } catch (e: any) {
           console.warn(`[tracker-focus] pull-in failed for ls ${m.ls_id}:`, e?.message);
@@ -6766,76 +6913,6 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     } catch (err: any) {
       console.error("[tracker-focus] failed:", err);
       res.status(500).json({ message: err?.message || "Tracker focus failed" });
-    }
-  });
-
-  app.post("/api/available-units/migrate-letting-deals", requireAuth, async (req, res) => {
-    try {
-      // Firm-wide bulk migration — staff only, even though the parent
-      // prefix is client-writable for tracker parity.
-      {
-        const { resolveCompanyScope } = await import("./company-scope");
-        if (await resolveCompanyScope(req)) return res.status(403).json({ message: "Not available for client accounts" });
-      }
-      const { crmDeals, availableUnits } = await import("@shared/schema");
-      // Match both canonical and legacy strings — migration may not yet have run
-      const NEGOTIATION_STATUSES = ["NEG", "Under Negotiation", "HOTs"];
-      const negDeals = await db.select().from(crmDeals)
-        .where(inArray(crmDeals.status, NEGOTIATION_STATUSES));
-
-      if (negDeals.length === 0) {
-        return res.json({ migrated: 0, message: "No negotiation deals to migrate" });
-      }
-
-      const existingUnits = await db.select().from(availableUnits);
-      const existingDealIds = new Set(existingUnits.filter(u => u.dealId).map(u => u.dealId));
-
-      let migrated = 0;
-      const skipped: string[] = [];
-      for (const deal of negDeals) {
-        if (existingDealIds.has(deal.id)) {
-          skipped.push(deal.name);
-          continue;
-        }
-
-        let propertyName = deal.name;
-        let assetClass: string | null = deal.assetClass || null;
-        if (deal.propertyId) {
-          const prop = await storage.getCrmProperty(deal.propertyId);
-          if (prop) {
-            propertyName = prop.name;
-            assetClass = assetClass || prop.assetClass || null;
-          }
-        }
-
-        await storage.createAvailableUnit({
-          propertyId: deal.propertyId || "",
-          unitName: deal.name || propertyName,
-          floor: null,
-          sqft: deal.totalAreaSqft || null,
-          askingRent: deal.rentPa || null,
-          ratesPa: null,
-          serviceChargePa: null,
-          useClass: assetClass,
-          condition: null,
-          availableDate: null,
-          marketingStatus: "Available",
-          epcRating: null,
-          notes: deal.comments || null,
-          restrictions: null,
-          fee: deal.fee || null,
-          dealId: deal.id,
-          agentUserIds: deal.internalAgent || null,
-          viewingsCount: 0,
-          lastViewingDate: null,
-          marketingStartDate: null,
-        });
-        migrated++;
-      }
-
-      res.json({ migrated, skipped: skipped.length, message: `Migrated ${migrated} deals to available units` });
-    } catch (err: any) {
-      res.status(500).json({ message: err?.message || "Migration failed" });
     }
   });
 
@@ -7188,6 +7265,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   });
 
   app.post("/api/admin/number-test-units", requireAuth, requireAdmin, async (_req, res) => {
+    if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ message: LETTING_REPAIR_PAUSED });
     try {
       const props = await pool.query(`SELECT DISTINCT property_id FROM property_units WHERE property_id IS NOT NULL`);
       let renamed = 0;
@@ -7218,6 +7296,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   });
 
   app.post("/api/available-units/backfill-leasing-schedule", requireAuth, requireAdmin, async (_req, res) => {
+    if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ message: LETTING_REPAIR_PAUSED });
     try {
       const { rows } = await pool.query(
         `WITH inserted AS (
@@ -7250,10 +7329,74 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
       const deal = await storage.getCrmDeal(dealId);
       if (!deal) return res.status(404).json({ message: "Deal not found" });
+      if (deal.id === existing.dealId) return res.json(existing);
+      // Only a letting deal sits on the Letting Tracker, and on one row. An
+      // untyped deal (the WIP import's Sage rows carry no type) is typed
+      // New Letting by the link — the same reading ensureBackingDealForUnit
+      // gives it — and the stamp is on the audit row.
+      const typeStamped = !deal.dealType ? DEFAULT_LETTING_TYPE : null;
+      if (!typeStamped && !isLettingType(deal.dealType)) {
+        return res.status(409).json({ message: `Only a letting deal (${LETTING_DEAL_TYPES.join(", ")}) can sit on the Letting Tracker — #${deal.dealRef ?? "?"} is ${deal.dealType}` });
+      }
+      // The deal must be this row's unit: same property, and the same unit
+      // when both sides name one.
+      if (deal.propertyId && existing.propertyId && deal.propertyId !== existing.propertyId) {
+        return res.status(409).json({ message: `Deal #${deal.dealRef ?? "?"} is on another property — it can't sit on this row` });
+      }
+      if (deal.unitId && existing.unitId && deal.unitId !== existing.unitId) {
+        return res.status(409).json({ message: `Deal #${deal.dealRef ?? "?"} is on another unit — it can't sit on this row` });
+      }
+      const elsewhere = await pool.query(`SELECT id FROM available_units WHERE deal_id = $1 AND id <> $2 ORDER BY created_at LIMIT 1`, [dealId, existing.id]);
+      if (elsewhere.rows[0]) {
+        return res.status(409).json({
+          message: `Deal #${deal.dealRef ?? "?"} is already on the Letting Tracker on another row — merge the rows instead`,
+          code: "LIVE_LETTING_EXISTS", existingDealId: deal.id, existingDealRef: deal.dealRef ?? null, trackerRowId: elsewhere.rows[0].id,
+        });
+      }
+      // A row that already carries a LIVE deal keeps it: linking over it
+      // would leave that deal off the tracker and put two live lettings on
+      // the unit. A historic one (the row's last letting) is the fresh cycle.
+      const { liveLettingMessage, logLettingService } = await import("./letting-service");
+      if (existing.dealId) {
+        const prev = await storage.getCrmDeal(existing.dealId);
+        if (prev && !isHistoricStatus(prev.status)) {
+          return res.status(409).json({
+            message: liveLettingMessage(prev.dealRef), code: "LIVE_LETTING_EXISTS",
+            existingDealId: prev.id, existingDealRef: prev.dealRef ?? null, trackerRowId: existing.id,
+          });
+        }
+      }
+      if (typeStamped) await storage.updateCrmDeal(deal.id, { dealType: typeStamped } as any);
       const unit = await storage.updateAvailableUnit(req.params.id as string, { dealId });
+      await logLettingService(pool, {
+        dealId, trackerRowId: existing.id, propertyUnitId: existing.unitId ?? null, tenancyUnitId: existing.tenancyUnitId ?? null,
+        created: [], adopted: [`available_units:${existing.id}`], linkDeal: true, previousDealId: existing.dealId ?? null,
+        ...(typeStamped ? { dealTypeStamped: typeStamped } : {}),
+      }, { userId: (req.session as any)?.userId || (req as any).tokenUserId || null, source: lettingSource(req) });
       res.json(unit);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to link deal" });
+    }
+  });
+
+  // Give an orphaned tracker row its backing deal (Ref #) without promoting
+  // it — /create-deal is the Solicitors promotion and forces SOL. Staff
+  // only: clients see '—' for a ref-less row and never mint BGP deals.
+  app.post("/api/available-units/:id/ensure-deal", requireAuth, async (req, res) => {
+    try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ message: "Staff only" });
+      const existing = await storage.getAvailableUnit(req.params.id as string);
+      if (!existing) return res.status(404).json({ message: "Unit not found" });
+      const { ensureBackingDealForUnit, isHistoricUnitStatus } = await import("./unit-mirror");
+      const backing = await ensureBackingDealForUnit(pool, existing.id);
+      if (!backing) {
+        return res.status(409).json({ message: isHistoricUnitStatus(existing.marketingStatus)
+          ? "Historic unit — a new letting is a new deal. Set it back to Marketing first."
+          : "A live deal for this unit already sits on another tracker row — merge the duplicate rows instead." });
+      }
+      res.json(backing);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to create deal" });
     }
   });
 
@@ -7320,7 +7463,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         propertyId: unit.propertyId,
         unitId: unit.unitId || undefined,
         status: "SOL",
-        dealType: body.dealType || "New Letting",
+        dealType: body.dealType || DEFAULT_LETTING_TYPE,
         team: mergedTeams,
         internalAgent: mergedAgents,
         fee: body.fee ? parseFloat(body.fee) : (unit.fee || undefined),
@@ -7894,7 +8037,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
   app.patch("/api/available-units/viewings/:viewingId", requireAuth, async (req, res) => {
     try {
       const patch: Record<string, any> = {};
-      for (const key of ["companyId", "contactId", "agentContactId", "ownerUserId", "requirementId", "viewingDate", "viewingTime", "outcome", "notes", "status", "nextAction", "followUpDate", "confirmDetails", "expectedUpdatedAt"]) {
+      for (const key of ["companyId", "contactId", "agentContactId", "ownerUserId", "requirementId", "viewingDate", "viewingTime", "outcome", "notes", "attendees", "status", "nextAction", "followUpDate", "confirmDetails", "expectedUpdatedAt"]) {
         if (key in req.body) patch[key] = req.body[key] === "" ? null : req.body[key];
       }
       if (patch.outcome === "No Show") { patch.status = "no_show"; patch.outcome = null; }
@@ -8269,7 +8412,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
       const deal = await storage.createCrmDeal({
         name: item.assetName || property?.name || "Investment Deal",
         propertyId: item.propertyId || undefined,
-        status: item.status && ["REP","SPEC","LIVE","AVA","NEG","SOL","EXC","COM","WIT","INV"].includes(item.status) ? item.status : "REP",
+        status: legacyToCode(item.status) || "REP",
         dealType: (item.boardType === "Sales") ? "Sale" : "Purchase",
         groupName: "Investment - Active",
         team: ["Investment"],
@@ -8409,62 +8552,6 @@ These terms are indicative only and do not constitute a binding agreement.`;
       console.error("[seed] Investment tracker auto-seed error:", e.message);
     }
   })();
-
-  (async () => {
-    try {
-      const { crmDeals, availableUnits } = await import("@shared/schema");
-      // Match both canonical and legacy strings — migration may not yet have run
-      const NEGOTIATION_STATUSES = ["NEG", "Under Negotiation", "HOTs"];
-      const negDeals = await db.select().from(crmDeals)
-        .where(inArray(crmDeals.status, NEGOTIATION_STATUSES));
-
-      if (negDeals.length === 0) return;
-
-      const existingUnits = await db.select().from(availableUnits);
-      const existingDealIds = new Set(existingUnits.filter(u => u.dealId).map(u => u.dealId));
-
-      let migrated = 0;
-      for (const deal of negDeals) {
-        if (existingDealIds.has(deal.id)) continue;
-
-        let useClass: string | null = deal.assetClass || null;
-        if (deal.propertyId) {
-          const prop = await storage.getCrmProperty(deal.propertyId);
-          if (prop) useClass = useClass || prop.assetClass || null;
-        }
-
-        await storage.createAvailableUnit({
-          propertyId: deal.propertyId || "",
-          unitName: deal.name || "Unnamed Unit",
-          floor: null,
-          sqft: deal.totalAreaSqft || null,
-          askingRent: deal.rentPa || null,
-          ratesPa: null,
-          serviceChargePa: null,
-          useClass,
-          condition: null,
-          availableDate: null,
-          marketingStatus: "Available",
-          epcRating: null,
-          notes: deal.comments || null,
-          restrictions: null,
-          fee: deal.fee || null,
-          dealId: deal.id,
-          agentUserIds: deal.internalAgent || null,
-          viewingsCount: 0,
-          lastViewingDate: null,
-          marketingStartDate: null,
-        });
-        migrated++;
-      }
-      if (migrated > 0) {
-        console.log(`[migration] Migrated ${migrated} letting tracker deals to available units`);
-      }
-    } catch (e: any) {
-      console.error("[migration] Letting deals migration error:", e.message);
-    }
-  })();
-
 
   // Lazy-init the table on first hit. Same pattern as
   // brand_score_history in brand-triggers.ts — keeps deploys self-healing
@@ -8794,13 +8881,13 @@ These terms are indicative only and do not constitute a binding agreement.`;
       // portfolio showed "0 active deals" while the Deals board was full.
       const dealsResult = await pool.query(
         `SELECT COUNT(DISTINCT d.id) as total,
-                COUNT(DISTINCT d.id) FILTER (WHERE d.status NOT IN ('WIT', 'COM', 'INV')) as active
+                COUNT(DISTINCT d.id) FILTER (WHERE d.status IS NOT NULL AND lower(trim(d.status)) <> ALL($2::text[])) as active
          FROM crm_deals d
          LEFT JOIN crm_properties p ON d.property_id = p.id
          WHERE d.landlord_id = $1
             OR p.landlord_id = $1
             OR d.group_name ILIKE '%' || (SELECT name FROM crm_companies WHERE id = $1) || '%'`,
-        [companyId]
+        [companyId, statusSpellingsFor(CLOSED_STATUSES)]
       );
 
       // Distinct people, not raw rows — imports create duplicate contact
@@ -8819,6 +8906,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
              SELECT DISTINCT lower(regexp_replace(title, '^(FW:|RE:|FWD:)\\s*', '', 'i')), start_time
              FROM team_events
              WHERE (property_id = ANY($1) OR company_name = $2)
+               AND ${teamEventPrivacySql()}
                AND start_time >= NOW()
                AND title NOT ILIKE 'cancelled:%'
                AND title NOT ILIKE '%team meeting (%'
@@ -8834,9 +8922,9 @@ These terms are indicative only and do not constitute a binding agreement.`;
         `SELECT d.id, d.name, d.status, d.property_id, d.deal_type as "dealType", p.name as property_name
          FROM crm_deals d
          LEFT JOIN crm_properties p ON d.property_id = p.id
-         WHERE d.landlord_id = $1 AND d.status NOT IN ('WIT', 'COM', 'INV')
+         WHERE d.landlord_id = $1 AND d.status IS NOT NULL AND lower(trim(d.status)) <> ALL($2::text[])
          ORDER BY p.name, d.created_at DESC`,
-        [companyId]
+        [companyId, statusSpellingsFor(CLOSED_STATUSES)]
       );
 
       // The dashboard portfolio boards (Leasing Schedule overview, Lease Expiry
@@ -8868,6 +8956,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
                   start_time, end_time, event_type, location, property_id
            FROM team_events
            WHERE (property_id = ANY($1) OR company_name = $2)
+             AND ${teamEventPrivacySql()}
              AND start_time >= NOW()
              AND title NOT ILIKE 'cancelled:%'
              AND title NOT ILIKE '%team meeting (%'
@@ -8886,6 +8975,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
            FROM team_events te
            LEFT JOIN crm_properties p ON te.property_id = p.id
            WHERE (te.property_id = ANY($1) OR te.company_name = $2)
+             AND ${teamEventPrivacySql("te")}
              AND te.start_time >= NOW() - INTERVAL '60 days'
              AND te.start_time <= NOW() + INTERVAL '90 days'
            ORDER BY te.start_time`,
@@ -9667,9 +9757,10 @@ These terms are indicative only and do not constitute a binding agreement.`;
 
       const stuckDeals = await pool.query(
         `SELECT id, name, status, updated_at FROM crm_deals 
-         WHERE status NOT IN ('COM', 'INV', 'WIT')
+         WHERE status IS NOT NULL AND lower(trim(status)) <> ALL($1::text[])
          AND updated_at < NOW() - INTERVAL '30 days'
-         ORDER BY updated_at ASC LIMIT 10`
+         ORDER BY updated_at ASC LIMIT 10`,
+        [statusSpellingsFor(CLOSED_STATUSES)]
       );
       for (const d of stuckDeals.rows) {
         const ms = Date.now() - new Date(d.updated_at).getTime();
@@ -10100,7 +10191,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
 
       // Stage detection now uses canonical 10-code helper (legacy strings still mapped)
       const { legacyToCode } = await import("@shared/deal-status");
-      const PIPELINE_STAGE_ORDER = ["REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "INV"];
+      const PIPELINE_STAGE_ORDER: readonly string[] = DEAL_STATUS_CODES;
 
       let totalWIP = 0;
       let totalInvoiced = 0;
@@ -10123,7 +10214,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
         }
 
         // Pipeline value: anything still in lifecycle (not COM/INV/WIT)
-        const isPreCompletion = code !== null && !["COM", "INV", "WIT"].includes(code);
+        const isPreCompletion = code !== null && !CLOSED_STATUSES.includes(code);
         if (isPreCompletion) {
           pipelineValue += fee;
         }
@@ -10134,7 +10225,8 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
         byDealType[dealType].fees += fee;
 
         // By status
-        byStatus[status || "Unknown"] = (byStatus[status || "Unknown"] || 0) + 1;
+        const statusKey = code || status || "Unknown";
+        byStatus[statusKey] = (byStatus[statusKey] || 0) + 1;
 
         // By agent (internal_agent is an array in the DB)
         const agents: string[] = Array.isArray(deal.internal_agent) ? deal.internal_agent : deal.internal_agent ? [deal.internal_agent] : [];
@@ -10459,7 +10551,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   });
 
   registerIngestRoutes(app);
-  registerGenericCrmRoutes(app);
+  // registerGenericCrmRoutes runs once from server/index.ts (was registered twice).
   setupStripeIssuingRoutes(app);
   registerExpenseAutoClassifyRoutes(app);
   registerMapAnnotationsRoutes(app);

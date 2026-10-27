@@ -1758,7 +1758,7 @@ function PeopleHub() {
   const effectiveTeam = activeTeam && activeTeam !== "all" ? activeTeam : user?.team;
   const isLandsec = effectiveTeam === "Landsec";
 
-  const [tab, setTab] = useState<PeopleTab>(isLandsec ? "agents" : "landlords");
+  const [tab, setTab] = useState<PeopleTab>(() => isLandsec ? "agents" : new URLSearchParams(window.location.search).get("tab") === "meetings" ? "meetings" : "landlords");
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">("card");
   const [hubAddContactOpen, setHubAddContactOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ type: "company" | "contact"; id: string; name: string } | null>(null);
@@ -1901,6 +1901,7 @@ function PeopleHub() {
       ) : (
         <>
           {tab === "landlords" && (
+            <>
             <LandlordsTab
               companies={companies}
               contacts={contacts}
@@ -1911,6 +1912,7 @@ function PeopleHub() {
               viewMode={viewMode}
               countsLoading={propertiesLoading || dealsLoading}
             />
+            </>
           )}
           {tab === "agents" && (
             <AgentsTab companies={companies} contacts={contacts} defaultTenantRep={isLandsec} onDeleteCompany={onDeleteCompany} />

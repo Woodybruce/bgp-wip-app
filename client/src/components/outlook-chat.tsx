@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { AddinAgentChat } from "@/components/addin-agent-chat";
-import { readOpenEmail, emailContext, runOutlookTool, isCompose, isAppointment } from "@/lib/outlook-agent-tools";
+import { readOpenEmail, emailContext, runOutlookTool, isCompose, isAppointment, PrivateOutlookItemError, PRIVATE_OUTLOOK_ITEM_MESSAGE } from "@/lib/outlook-agent-tools";
 
 const READ_PROMPTS = [
   { label: "Summarise", prompt: "Summarise this email thread and tell me what they want from us." },
@@ -30,6 +30,7 @@ const MEETING_COMPOSE_PROMPTS = [
 // ChatBGP inside Outlook, remembered per email thread (or per meeting).
 export function OutlookChat({ token, onUnauthorised }: { token: string; onUnauthorised: () => void }) {
   const readDoc = useCallback(async () => {
+    try {
     const e = await readOpenEmail();
     if (!e) return null;
     if (e.kind === "appointment") {
@@ -45,6 +46,11 @@ export function OutlookChat({ token, onUnauthorised }: { token: string; onUnauth
       context: emailContext(e),
       label: `${e.mode === "compose" ? "Writing" : "Reading"}: ${e.subject || "(no subject)"}${e.from ? ` · from ${e.from}` : ""}`,
     };
+    } catch (error) {
+      // A blocked/failed current read must replace the previous item's context.
+      return { key: "", context: "", unavailable: true, label: error instanceof PrivateOutlookItemError
+        ? PRIVATE_OUTLOOK_ITEM_MESSAGE : "The current Outlook item could not be read. Please reopen it and try again." };
+    }
   }, []);
   const watch = useCallback((reload: () => void) => {
     const Office = (window as any).Office;

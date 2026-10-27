@@ -48,6 +48,7 @@ import {
 import { escapeLike } from "./utils/escape-like";
 import { db, pool } from "./db";
 import { eq, ne, desc, and, or, inArray, ilike, sql, notInArray, isNull, arrayContains } from "drizzle-orm";
+import { CLOSED_STATUSES } from "@shared/deal-status";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -1026,15 +1027,15 @@ export class DatabaseStorage implements IStorage {
     if (filters?.dealType) conditions.push(eq(crmDeals.dealType, filters.dealType));
     if (filters?.propertyId) conditions.push(eq(crmDeals.propertyId, filters.propertyId));
     if (filters?.excludeTrackerDeals) {
-      // Deals CRM is SOL+ ONLY (Woody's team, 2026-08-25): the pre-Solicitors
-      // pipeline — Reporting / Available / Negotiating / HOTs, tracker-linked
-      // or not — lives on the Letting Tracker and the WIP report. The Deals
-      // board shows instructed deals from Solicitors onwards. NULL/unknown
-      // statuses stay visible rather than silently vanishing.
+      // The Deals board shows every deal from Marketing onwards (Woody,
+      // 2026-10-26: "marketing deals need a fee so need to sit in the WIP
+      // and deals so people can see them and add fees") — it used to start
+      // at Solicitors (2026-08-25). Only the pre-marketing investment
+      // pipeline (Opportunity / Reporting / Speculative / Live) stays on the
+      // trackers. NULL/unknown statuses stay visible rather than silently
+      // vanishing.
       conditions.push(sql`(${crmDeals.status} IS NULL OR lower(${crmDeals.status}) NOT IN (
-        'opp', 'opportunity', 'rep', 'reporting', 'spec', 'speculative', 'live',
-        'ava', 'available', 'neg', 'negotiating', 'negotiation',
-        'under negotiation', 'in negotiation', 'hot', 'hots', 'heads of terms'))`);
+        'opp', 'opportunity', 'rep', 'reporting', 'spec', 'speculative', 'live'))`);
     }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     if (filters?.page && filters?.limit) {
@@ -1292,7 +1293,7 @@ export class DatabaseStorage implements IStorage {
       // "active" matches the landlord board: anything not archived,
       // completed, invoiced or withdrawn is still being worked.
       db.select({ count: sql<number>`count(*)` }).from(crmDeals)
-        .where(sql`${crmDeals.status} IS NULL OR ${crmDeals.status} NOT IN ('ARCH','COM','INV','WIT')`),
+        .where(or(isNull(crmDeals.status), notInArray(crmDeals.status, CLOSED_STATUSES))),
       db.select({ count: sql<number>`count(*)` }).from(crmCompanies),
       db.select({ count: sql<number>`count(*)` }).from(crmContacts),
       db.select({ count: sql<number>`count(*)` }).from(crmLeads),
@@ -1355,7 +1356,10 @@ export class DatabaseStorage implements IStorage {
     const files = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, id));
     await db.transaction(async (tx) => {
       await tx.delete(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, id));
-      await tx.delete(unitViewings).where(eq(unitViewings.unitId, id));
+      // Soft-delete the viewings so the diary sync keeps its tombstones —
+      // a hard delete lets the next calendar sweep recreate them as
+      // needs-details rows for a unit that was deliberately removed.
+      await tx.update(unitViewings).set({ unitId: null, deletedAt: sql`COALESCE(${unitViewings.deletedAt}, NOW())`, updatedAt: new Date() }).where(eq(unitViewings.unitId, id));
       await tx.delete(unitOffers).where(eq(unitOffers.unitId, id));
       // Clear the rent roll's back-reference so it doesn't point at a
       // deleted tracker row.

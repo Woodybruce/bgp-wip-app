@@ -51,6 +51,9 @@ interface TriggerEvent {
   headline: string;
   detail: string;
   recipients: string[];
+  // Set on signal-driven alerts whose once-per-signal ledger claim should be
+  // released if the digest email fails to send.
+  signalId?: string;
 }
 
 // ─── Recipients lookup ───────────────────────────────────────────────────
@@ -90,7 +93,27 @@ async function ensureScoreHistoryTable(): Promise<void> {
     ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS score_version INTEGER DEFAULT 1;
     ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS sub_scores JSONB;
     ALTER TABLE brand_signals ADD COLUMN IF NOT EXISTS ai_relevant BOOLEAN;
+    CREATE TABLE IF NOT EXISTS brand_trigger_alerts (
+      brand_company_id VARCHAR NOT NULL,
+      type TEXT NOT NULL,
+      signal_id VARCHAR NOT NULL,
+      sent_at TIMESTAMP DEFAULT now(),
+      UNIQUE (brand_company_id, type, signal_id)
+    );
   `);
+}
+
+// Once-per-signal claim for the signal-driven alert legs. Their lookback
+// windows (24h/7d) are wider than the daily cadence, so without a sent
+// ledger the same administration headline re-emailed every day for a week.
+async function claimAlertOnce(brandId: string, type: string, signalId: string): Promise<boolean> {
+  const r = await pool.query(
+    `INSERT INTO brand_trigger_alerts (brand_company_id, type, signal_id)
+     VALUES ($1, $2, $3) ON CONFLICT (brand_company_id, type, signal_id) DO NOTHING
+     RETURNING signal_id`,
+    [brandId, type, signalId],
+  );
+  return (r.rowCount || 0) > 0;
 }
 
 // Alert-grade relevance check. Signals already judged (ai_relevant set at
@@ -276,12 +299,12 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean; recordOnly?: b
         new Date(s.created_at) >= new Date(Date.now() - 7 * 86400000) &&
         /insolven|administrat|liquidat|wind.up|ccj|adverse/i.test(s.headline || "")
       ));
-      if (recentInsolv) {
+      if (recentInsolv && (dryRun || (await claimAlertOnce(brand.id, "covenant_risk", recentInsolv.id)))) {
         events.push({
           brandId: brand.id, brandName: brand.name, type: "covenant_risk",
           headline: `${brand.name} — covenant red flag`,
           detail: `Recent signal: ${recentInsolv.headline}. Review covenant before any new pitch.`,
-          recipients,
+          recipients, signalId: recentInsolv.id,
         });
       }
     }
@@ -294,13 +317,13 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean; recordOnly?: b
       s.signal_type === "funding" &&
       new Date(s.created_at) >= new Date(Date.now() - 86400000)
     ));
-    if (recentFunding) {
+    if (recentFunding && (dryRun || (await claimAlertOnce(brand.id, "fundraise", recentFunding.id)))) {
       const isRaise = /\b(rais(e|es|ed|ing)|funding|investment|invests?|series [a-e]|secures|backs|backed)\b/i.test(recentFunding.headline || "");
       events.push({
         brandId: brand.id, brandName: brand.name, type: "fundraise",
         headline: isRaise ? `${brand.name} just raised` : `${brand.name} — money in motion`,
         detail: `${recentFunding.headline}. ${isRaise ? "Hot moment to reach out — they're spending." : "Funding/M&A signal — worth a look before someone else calls."}`,
-        recipients,
+        recipients, signalId: recentFunding.id,
       });
     }
 
@@ -315,12 +338,12 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean; recordOnly?: b
       new Date(s.created_at) >= new Date(Date.now() - 7 * 86400000) &&
       (s.headline || "").toLowerCase().includes(brandToken)
     ));
-    if (recentExec) {
+    if (recentExec && (dryRun || (await claimAlertOnce(brand.id, "exec_change_major", recentExec.id)))) {
       events.push({
         brandId: brand.id, brandName: brand.name, type: "exec_change_major",
         headline: `${brand.name} — major leadership move`,
         detail: `${recentExec.headline}. New leadership often means new property strategy.`,
-        recipients,
+        recipients, signalId: recentExec.id,
       });
     }
   }
@@ -456,6 +479,7 @@ router.post("/api/brand-triggers/run", requireAuth, async (req: Request, res: Re
         sent++;
       } catch (e: any) {
         console.warn(`[brand-triggers] email to ${to} failed:`, e.message);
+        await releaseFailedAlertClaims(recipientEvents);
       }
     }
     res.json({ events: events.length, sent });
@@ -475,8 +499,24 @@ export function startExpansionRescore() {
   });
 }
 
+async function releaseFailedAlertClaims(events: TriggerEvent[]): Promise<void> {
+  // A claimed-but-unsent alert would otherwise be suppressed forever. An
+  // event sent to several recipients where only one send failed will go to
+  // all of them again tomorrow — the lesser evil.
+  for (const e of events) {
+    if (!e.signalId) continue;
+    await pool.query(`DELETE FROM brand_trigger_alerts WHERE brand_company_id = $1 AND type = $2 AND signal_id = $3`,
+      [e.brandId, e.type, e.signalId]).catch(() => {});
+  }
+}
+
 export async function runDailyBrandTriggers(): Promise<{ events: number; sent: number }> {
   try {
+    // Retention: getLastSnapshot only reads the latest row per brand and the
+    // trend reader only needs recent history — unbounded, this grew ~700k
+    // rows a year.
+    await pool.query(`DELETE FROM brand_score_history WHERE checked_at < now() - interval '180 days'`)
+      .catch((e: any) => console.warn("[brand-triggers] history retention sweep failed:", e?.message));
     const events = await scanBrandTriggers({ dryRun: false });
     let sent = 0;
     const byRecipient = groupEventsByRecipient(events);
@@ -489,6 +529,7 @@ export async function runDailyBrandTriggers(): Promise<{ events: number; sent: n
         // Never swallow silently — a mail-transport failure (e.g. an expired
         // Azure client secret) is exactly how these alerts went dark before.
         console.error(`[brand-triggers] digest email to ${to} failed:`, e?.message);
+        await releaseFailedAlertClaims(recipientEvents);
       }
     }
     console.log(`[brand-triggers] ${events.length} alerts → ${sent}/${byRecipient.size} digest emails sent`);

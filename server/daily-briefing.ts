@@ -12,6 +12,8 @@
 //     already sitting there when the user opens the app.
 
 import { pool } from "./db";
+import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
+import { isPrivateMailboxAddress, isPrivateEmailRecord, PRIVATE_MAIL_POLICY_VERSION } from "./private-mail";
 
 export interface BriefingResult {
   briefing: string;
@@ -94,13 +96,15 @@ export async function generateBriefing(userId: string, msToken: string | null): 
          LEFT JOIN crm_properties p ON d.property_id = p.id
          LEFT JOIN crm_companies tc ON d.tenant_id = tc.id
          LEFT JOIN crm_companies lc ON p.landlord_id = lc.id
-         WHERE d.status NOT IN ('WIT', 'COM', 'INV')
+         WHERE d.status IS NOT NULL AND lower(trim(d.status)) <> ALL($2::text[])
            AND (d.group_name ILIKE '%' || $1 || '%'
                 OR d.team @> ARRAY[$1]::text[]
                 OR lc.name ILIKE $1
                 OR (d.landlord_id IS NOT NULL AND d.landlord_id IN (SELECT id FROM crm_companies WHERE name ILIKE $1)))
          ORDER BY d.updated_at DESC LIMIT 15`,
-        [userTeam]
+        // CLOSED_STATUSES, not the tracker's Historic set: an exchanged deal
+        // is still live in the briefing, and a NULL status stays out.
+        [userTeam, statusSpellingsFor(CLOSED_STATUSES)]
       )
     : await pool.query(
         `SELECT d.id, d.name, d.status, p.name as property_name, tc.name as tenant_name, d.updated_at
@@ -114,7 +118,7 @@ export async function generateBriefing(userId: string, msToken: string | null): 
 
   let calendarContext = "";
   let emailContext = "";
-  if (msToken) {
+  if (msToken && !isPrivateMailboxAddress(userEmail)) {
     // Today only — start of today → start of tomorrow (London). The old
     // window added 2 days, which is why tomorrow's meetings leaked in.
     const startToday = new Date(`${londonDateKey()}T00:00:00`);
@@ -127,7 +131,7 @@ export async function generateBriefing(userId: string, msToken: string | null): 
       );
       if (calRes.ok) {
         const calData = await calRes.json();
-        const events = (calData.value || []).map((e: any) => ({
+        const events = (calData.value || []).filter((e: any) => !isPrivateEmailRecord(e, userEmail)).map((e: any) => ({
           subject: e.subject, start: e.start?.dateTime, location: e.location?.displayName || "",
         }));
         if (events.length > 0) {
@@ -138,12 +142,12 @@ export async function generateBriefing(userId: string, msToken: string | null): 
 
     try {
       const emailRes = await fetch(
-        `https://graph.microsoft.com/v1.0/me/messages?$top=10&$orderby=receivedDateTime desc&$select=subject,from,receivedDateTime,isRead,importance,bodyPreview`,
+        `https://graph.microsoft.com/v1.0/me/messages?$top=10&$orderby=receivedDateTime desc&$select=subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,isRead,importance,bodyPreview`,
         { headers: { Authorization: `Bearer ${msToken}` } }
       );
       if (emailRes.ok) {
         const emailData = await emailRes.json();
-        const emails = (emailData.value || []).filter((e: any) => !e.isRead).slice(0, 8);
+        const emails = (emailData.value || []).filter((e: any) => !e.isRead && !isPrivateEmailRecord(e, userEmail)).slice(0, 8);
         if (emails.length > 0) {
           emailContext = `Unread emails (${emails.length}):\n${emails.map((e: any) => `- ${e.from?.emailAddress?.name || "Unknown"}: "${e.subject}" — ${(e.bodyPreview || "").slice(0, 80)}`).join("\n")}`;
         }
@@ -153,11 +157,11 @@ export async function generateBriefing(userId: string, msToken: string | null): 
 
   const stuckRes = await pool.query(
     `SELECT id, name, status, updated_at FROM crm_deals
-     WHERE status NOT IN ('COM', 'INV', 'WIT')
+     WHERE status IS NOT NULL AND lower(trim(status)) <> ALL($2::text[])
      AND updated_at < NOW() - INTERVAL '14 days'
      AND team @> ARRAY[$1]::text[]
      ORDER BY updated_at ASC LIMIT 5`,
-    [userTeam]
+    [userTeam, statusSpellingsFor(CLOSED_STATUSES)]
   );
   const stuckDeals = stuckRes.rows;
 
@@ -298,10 +302,22 @@ ${insightLines ? `MARKET PULSE (latest distilled insights — include a short "M
   };
 }
 
+// Namespace only the persisted key. Real user ids still drive generation,
+// permissions and pre-generation; older workers cannot repopulate this cache.
+function briefingCacheUserId(userId: string): string {
+  // Earlier caches checked mailbox identity but not copied recipients and
+  // could contain legacy insights. Keep those rows isolated from this policy.
+  return `${PRIVATE_MAIL_POLICY_VERSION}:source-v2:${userId}`;
+}
+
 async function readCached(userId: string, dateKey: string): Promise<BriefingResult | null> {
+  // /me does not expose its owner in the URL. Never serve stored mail-derived
+  // text for the excluded account, including if a user's email changed later.
+  const user = await pool.query("SELECT email FROM users WHERE id = $1", [userId]);
+  if (isPrivateMailboxAddress(user.rows[0]?.email)) return null;
   const r = await pool.query(
     `SELECT briefing, stats, generated_at FROM daily_briefings WHERE user_id = $1 AND briefing_date = $2`,
-    [userId, dateKey]
+    [briefingCacheUserId(userId), dateKey]
   );
   if (!r.rows[0]) return null;
   return {
@@ -317,7 +333,7 @@ async function store(userId: string, dateKey: string, result: BriefingResult): P
      VALUES ($1, $2, $3, $4::jsonb, $5)
      ON CONFLICT (user_id, briefing_date)
      DO UPDATE SET briefing = EXCLUDED.briefing, stats = EXCLUDED.stats, generated_at = EXCLUDED.generated_at`,
-    [userId, dateKey, result.briefing, JSON.stringify(result.stats), result.generatedAt]
+    [briefingCacheUserId(userId), dateKey, result.briefing, JSON.stringify(result.stats), result.generatedAt]
   );
 }
 

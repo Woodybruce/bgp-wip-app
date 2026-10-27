@@ -6,6 +6,12 @@ import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { contentDispositionFor } from "./utils/http-headers";
 import { listAllChildren, resolveUploadDestination } from "./microsoft-graph-pagination";
+import { delegatedAccountBelongsToUser } from "./microsoft-delegated-account";
+import { createMicrosoftDraftConsentHandlers, isMicrosoftDraftCallback } from "./microsoft-draft-consent";
+import { isPrivateMailboxAddress, PRIVATE_MAILBOX } from "./private-mail";
+import { teamDiaryCoverage, teamDiaryItems } from "./team-diary-availability";
+import { teamEventPrivacySql } from "./team-event-privacy";
+import { CLOSED_STATUSES, TERMINAL_STATUSES } from "@shared/deal-status";
 import {
   SHAREPOINT_HOST, SHAREPOINT_SITE_PATH, SHAREPOINT_ROOT_FOLDER,
   getSharePointDriveId, createFolderByPath, runChunked, createTreeBatched,
@@ -31,6 +37,14 @@ const SCOPES = [
   "Notes.ReadWrite.All",
 ];
 
+function isPrivateMicrosoftAccount(value: any): boolean {
+  // MSAL supplies account/claim metadata separately from token bytes. Never
+  // decode or inspect the access token to make this exclusion decision.
+  return [value, value?.account, value?.idTokenClaims, value?.account?.idTokenClaims]
+    .some(account => account && [account.username, account.userPrincipalName, account.email,
+      account.upn, account.preferred_username].some(isPrivateMailboxAddress));
+}
+
 let msalClient: ConfidentialClientApplication | null = null;
 let msalCacheLock: Promise<void> | null = null;
 
@@ -48,24 +62,26 @@ async function withMsalCacheLock<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-function getMsalClient(): ConfidentialClientApplication {
-  if (!msalClient) {
-    const clientId = process.env.AZURE_CLIENT_ID;
-    const clientSecret = (process.env.AZURE_SECRET_V2 || process.env.AZURE_CLIENT_SECRET)?.trim();
-    const tenantId = process.env.AZURE_TENANT_ID;
+function createMsalClient(): ConfidentialClientApplication {
+  const clientId = process.env.AZURE_CLIENT_ID;
+  const clientSecret = (process.env.AZURE_SECRET_V2 || process.env.AZURE_CLIENT_SECRET)?.trim();
+  const tenantId = process.env.AZURE_TENANT_ID;
 
-    if (!clientId || !clientSecret || !tenantId) {
-      throw new Error("Azure credentials not configured");
-    }
-
-    msalClient = new ConfidentialClientApplication({
-      auth: {
-        clientId,
-        clientSecret,
-        authority: `https://login.microsoftonline.com/${tenantId}`,
-      },
-    });
+  if (!clientId || !clientSecret || !tenantId) {
+    throw new Error("Azure credentials not configured");
   }
+
+  return new ConfidentialClientApplication({
+    auth: {
+      clientId,
+      clientSecret,
+      authority: `https://login.microsoftonline.com/${tenantId}`,
+    },
+  });
+}
+
+function getMsalClient(): ConfidentialClientApplication {
+  if (!msalClient) msalClient = createMsalClient();
   return msalClient;
 }
 
@@ -95,10 +111,12 @@ export async function getAppGraphToken(): Promise<string | null> {
 // silent refresh fails. Lets background jobs read a user's calendar using
 // the delegated Calendars.Read consent that's already in place, without
 // needing the app-only Application permission.
-export async function getDelegatedGraphTokenForUser(userId: string): Promise<string | null> {
+export async function getDelegatedGraphTokenForUser(userId: string, scopes: string[] = SCOPES): Promise<string | null> {
   if (!userId) return null;
   return withMsalCacheLock(async () => {
     try {
+      const user = (await pool.query("SELECT email, role, is_active FROM users WHERE id=$1", [userId])).rows[0];
+      if (!user || isPrivateMicrosoftAccount(user)) return null;
       const client = getMsalClient();
       const cacheData = await loadMsalCache(String(userId));
       const homeAccountId = await getHomeAccountId(String(userId));
@@ -107,16 +125,18 @@ export async function getDelegatedGraphTokenForUser(userId: string): Promise<str
       client.getTokenCache().deserialize(cacheData);
       const accounts = await client.getTokenCache().getAllAccounts();
       const account = accounts.find((a) => a.homeAccountId === homeAccountId);
-      if (!account) return null;
+      if (!account || isPrivateMicrosoftAccount(account) || !delegatedAccountBelongsToUser(user, account)) return null;
 
-      const result = await client.acquireTokenSilent({ scopes: SCOPES, account });
-      if (result?.accessToken) {
+      // Callers may request a narrower already-consented delegated scope. This
+      // silent flow never grants permission or falls back to another mailbox.
+      const result = await client.acquireTokenSilent({ scopes, account });
+      if (result?.accessToken && !isPrivateMicrosoftAccount(result)) {
         await saveMsalCache(String(userId), homeAccountId);
         return result.accessToken;
       }
       return null;
     } catch (e: any) {
-      console.warn(`[microsoft] delegated token for user ${userId} failed:`, e?.message);
+      console.warn(`[microsoft] delegated token for user ${userId} failed:`, e?.errorCode || "token_unavailable");
       return null;
     }
   });
@@ -240,15 +260,14 @@ export async function getValidMsToken(req: Request): Promise<string | null> {
   const roleRow = roleRes.rows[0];
   const isClientPrincipal = roleRow?.role === "Client" ||
     (roleRow?.email && !String(roleRow.email).toLowerCase().endsWith("@brucegillinghampollard.com"));
-  if (isClientPrincipal) return null;
+  if (isClientPrincipal || isPrivateMicrosoftAccount(roleRow) || isPrivateMicrosoftAccount(req.session.msTokens)) {
+    if (isPrivateMicrosoftAccount(roleRow) || isPrivateMicrosoftAccount(req.session.msTokens)) delete req.session.msTokens;
+    return null;
+  }
 
   const expiresOn = req.session.msTokens?.expiresOn;
   const token = req.session.msTokens?.accessToken;
   const isExpired = !expiresOn || new Date(expiresOn) < new Date(Date.now() + 5 * 60 * 1000);
-
-  if (token && !isExpired) {
-    return token;
-  }
 
   return withMsalCacheLock(async () => {
     try {
@@ -258,7 +277,13 @@ export async function getValidMsToken(req: Request): Promise<string | null> {
 
       if (!cacheData || !homeAccountId) {
         const fallback = await pool.query(
-          "SELECT user_id, cache_data, home_account_id FROM msal_token_cache WHERE cache_data IS NOT NULL AND home_account_id IS NOT NULL ORDER BY updated_at DESC NULLS LAST LIMIT 1"
+          `SELECT mt.user_id, mt.cache_data, mt.home_account_id FROM msal_token_cache mt
+           LEFT JOIN users u ON u.id = mt.user_id
+           WHERE mt.cache_data IS NOT NULL AND mt.home_account_id IS NOT NULL
+             AND lower(coalesce(u.email, '')) <> $1
+             AND lower(coalesce(u.email, '')) NOT LIKE $2
+           ORDER BY mt.updated_at DESC NULLS LAST LIMIT 1`,
+          [PRIVATE_MAILBOX, "equity+%@brucegillinghampollard.com"]
         );
         if (fallback.rows.length > 0) {
           cacheData = fallback.rows[0].cache_data;
@@ -277,16 +302,28 @@ export async function getValidMsToken(req: Request): Promise<string | null> {
         console.log("MSAL silent refresh: account not found in cache for user", userId);
         return null;
       }
+      if (isPrivateMicrosoftAccount(account)) {
+        delete req.session.msTokens;
+        return null;
+      }
+
+      // Legacy sessions have no mailbox identity on msTokens. Resolve the
+      // associated MSAL account before reusing any still-valid session token.
+      if (token && !isExpired && req.session.msAccountHomeId === homeAccountId) {
+        req.session.msTokens!.userPrincipalName = account.username;
+        return token;
+      }
 
       const result = await client.acquireTokenSilent({
         scopes: SCOPES,
         account,
       });
 
-      if (result?.accessToken) {
+      if (result?.accessToken && !isPrivateMicrosoftAccount(result)) {
         req.session.msTokens = {
           accessToken: result.accessToken,
           expiresOn: result.expiresOn?.toISOString() || "",
+          userPrincipalName: result.account?.username || account.username,
         };
         req.session.msAccountHomeId = homeAccountId;
         // Persist updated cache — silent refresh may rotate the refresh token
@@ -306,6 +343,7 @@ declare module "express-session" {
     msTokens?: {
       accessToken: string;
       expiresOn: string;
+      userPrincipalName?: string;
     };
     msAccountHomeId?: string;
     msOAuthState?: string;
@@ -313,7 +351,22 @@ declare module "express-session" {
 }
 
 export function setupMicrosoftRoutes(app: Express) {
-  app.get("/api/microsoft/auth", async (req: Request, res: Response) => {
+  const draftConsent = createMicrosoftDraftConsentHandlers({
+    getUser: async userId => (await pool.query("SELECT email, role, is_active FROM users WHERE id=$1", [userId])).rows[0] ?? null,
+    createClient: createMsalClient,
+    getRedirectUri,
+    saveCache: (userId, homeAccountId, cacheData) => withMsalCacheLock(async () => {
+      const existing = await pool.query("SELECT id FROM msal_token_cache WHERE user_id=$1", [userId]);
+      if (existing.rows.length) {
+        await pool.query("UPDATE msal_token_cache SET cache_data=$1, home_account_id=$2, updated_at=NOW() WHERE user_id=$3", [cacheData, homeAccountId, userId]);
+      } else {
+        await pool.query("INSERT INTO msal_token_cache (user_id, home_account_id, cache_data) VALUES ($1,$2,$3)", [userId, homeAccountId, cacheData]);
+      }
+    }),
+  });
+  app.get("/api/microsoft/auth", requireAuth, async (req: Request, res: Response) => {
+    if (req.query.purpose === "chat-drafts") return draftConsent.start(req, res);
+    if (req.query.purpose !== undefined) return res.status(400).json({ message: "Unknown Microsoft connection purpose" });
     if (!req.session.userId) {
       return res.status(401).json({ message: "Not authenticated" });
     }
@@ -341,6 +394,7 @@ export function setupMicrosoftRoutes(app: Express) {
   });
 
   app.get("/api/microsoft/callback", async (req: Request, res: Response) => {
+    if (isMicrosoftDraftCallback(req)) return draftConsent.callback(req, res);
     console.log("Microsoft OAuth callback received:", {
       hasCode: !!req.query.code,
       hasError: !!req.query.error,
@@ -383,10 +437,15 @@ export function setupMicrosoftRoutes(app: Express) {
         redirectUri,
       });
 
+      if (result?.accessToken && isPrivateMicrosoftAccount(result)) {
+        delete req.session.msTokens;
+        return res.redirect("/?microsoft_error=account_unavailable");
+      }
       if (result?.accessToken) {
         req.session.msTokens = {
           accessToken: result.accessToken,
           expiresOn: result.expiresOn?.toISOString() || "",
+          userPrincipalName: result.account?.username,
         };
         const homeAccountId = result.account?.homeAccountId || null;
         if (homeAccountId) {
@@ -882,7 +941,7 @@ export function setupMicrosoftRoutes(app: Express) {
       }
 
       const emails = teamMembers
-        .filter(u => u.email && u.email.includes("@brucegillinghampollard.com"))
+        .filter(u => u.email && u.email.includes("@brucegillinghampollard.com") && !isPrivateMailboxAddress(u.email))
         .map(u => ({ email: u.email!, name: u.name, team: u.team || "Unknown" }));
 
       if (emails.length === 0) {
@@ -944,17 +1003,13 @@ export function setupMicrosoftRoutes(app: Express) {
 
       const result = (scheduleData.value || []).map((schedule: any, idx: number) => {
         const member = emails.find(e => e.email.toLowerCase() === schedule.scheduleId?.toLowerCase()) || emails[idx];
-        const allItems = (schedule.scheduleItems || []).map((item: any) => ({
-          status: item.status,
-          subject: item.subject || "Busy",
-          location: item.location || "",
-          start: item.start,
-          end: item.end,
-          isPrivate: item.isPrivate || false,
-        }));
+        const allItems = teamDiaryItems(schedule);
         const filteredItems = allItems.filter((item: any) => {
           if (item.isPrivate) return false;
           if (item.status === "free" || item.status === "unknown") return false;
+          // Keep the occupied interval visible even when free/busy cannot
+          // safely supply the meeting's name or participants.
+          if (item.detailsUnavailable) return true;
           const subj = (item.subject || "").trim();
           if (!subj || subj === "Busy" || subj === "No subject") return false;
           if (PERSONAL_PATTERNS_TEAM.some(p => p.test(subj))) return false;
@@ -966,6 +1021,7 @@ export function setupMicrosoftRoutes(app: Express) {
           team: member?.team || "Unknown",
           availabilityView: schedule.availabilityView,
           scheduleItems: filteredItems,
+          coverage: teamDiaryCoverage([schedule], 1, "week"),
         };
       });
 
@@ -991,7 +1047,7 @@ export function setupMicrosoftRoutes(app: Express) {
                    d.pricing, d.deal_type, p.name as property_name
             FROM crm_deals d
             LEFT JOIN crm_properties p ON d.property_id = p.id
-            WHERE d.status NOT IN ('WIT', 'COM', 'INV')
+            WHERE d.status NOT IN (${CLOSED_STATUSES.map((s) => `'${s}'`).join(", ")})
               AND (d.tenant_id = $1 OR d.landlord_id = $1 OR d.purchaser_id = $1 OR d.vendor_id = $1
                    OR d.property_id IN (SELECT id FROM crm_properties WHERE landlord_id = $1))
             ORDER BY d.created_at DESC
@@ -1001,7 +1057,7 @@ export function setupMicrosoftRoutes(app: Express) {
                    d.pricing, d.deal_type, p.name as property_name
             FROM crm_deals d
             LEFT JOIN crm_properties p ON d.property_id = p.id
-            WHERE d.status NOT IN ('WIT', 'COM', 'INV')
+            WHERE d.status NOT IN (${CLOSED_STATUSES.map((s) => `'${s}'`).join(", ")})
             ORDER BY d.created_at DESC
           `);
       const activeDealRows = dealsResult.rows;
@@ -1012,6 +1068,7 @@ export function setupMicrosoftRoutes(app: Express) {
                    te.created_by, te.attendees
             FROM team_events te
             WHERE te.start_time >= NOW() - INTERVAL '30 days'
+              AND ${teamEventPrivacySql("te")}
               AND lower(trim(te.company_name)) = (SELECT lower(trim(name)) FROM crm_companies WHERE id = $1)
             ORDER BY te.start_time DESC
           `, [insightsScope])
@@ -1020,6 +1077,7 @@ export function setupMicrosoftRoutes(app: Express) {
                    te.created_by, te.attendees
             FROM team_events te
             WHERE te.start_time >= NOW() - INTERVAL '30 days'
+              AND ${teamEventPrivacySql("te")}
             ORDER BY te.start_time DESC
           `);
       const recentEvents = eventsResult.rows;
@@ -1035,6 +1093,7 @@ export function setupMicrosoftRoutes(app: Express) {
             JOIN available_units au ON au.id = uv.unit_id
             JOIN crm_properties p ON p.id = au.property_id
             WHERE uv.viewing_date ~ '^\\d{4}-\\d{2}-\\d{2}'
+              AND uv.deleted_at IS NULL AND COALESCE(uv.status,'') NOT IN ('cancelled','not_leasing')
               AND uv.viewing_date::date >= (NOW() - INTERVAL '30 days')::date
               AND (p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
           `, [insightsScope])
@@ -1044,6 +1103,7 @@ export function setupMicrosoftRoutes(app: Express) {
             JOIN available_units au ON au.id = uv.unit_id
             JOIN crm_properties p ON p.id = au.property_id
             WHERE uv.viewing_date ~ '^\\d{4}-\\d{2}-\\d{2}'
+              AND uv.deleted_at IS NULL AND COALESCE(uv.status,'') NOT IN ('cancelled','not_leasing')
               AND uv.viewing_date::date >= (NOW() - INTERVAL '30 days')::date
           `);
       const eventsForInsights = [
@@ -1313,7 +1373,7 @@ export function setupMicrosoftRoutes(app: Express) {
                      p.name as property_name, p.address as property_address
               FROM crm_deals d
               LEFT JOIN crm_properties p ON d.property_id = p.id
-              WHERE ${dealPartySql} AND d.status NOT IN ('WIT')
+              WHERE ${dealPartySql} AND d.status NOT IN (${TERMINAL_STATUSES.map((s) => `'${s}'`).join(", ")})
               ORDER BY d.created_at DESC
               LIMIT 10
             `, [dealCompanyIds])
@@ -1323,7 +1383,7 @@ export function setupMicrosoftRoutes(app: Express) {
                      p.name as property_name, p.address as property_address
               FROM crm_deals d
               LEFT JOIN crm_properties p ON d.property_id = p.id
-              WHERE ${dealPartySql} AND d.status NOT IN ('WIT')
+              WHERE ${dealPartySql} AND d.status NOT IN (${TERMINAL_STATUSES.map((s) => `'${s}'`).join(", ")})
               ORDER BY d.created_at DESC
               LIMIT 10
             `, [dealCompanyIds]);
@@ -1364,6 +1424,7 @@ export function setupMicrosoftRoutes(app: Express) {
           OR LOWER(te.property_name) = ANY($2)
         )
         AND te.start_time >= NOW() - INTERVAL '90 days'
+        AND ${teamEventPrivacySql("te")}
         AND te.start_time < NOW()
         ORDER BY te.start_time DESC
         LIMIT 10
@@ -1683,7 +1744,7 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
 
       const teamMembers = await db.select().from(users);
       const emails = teamMembers
-        .filter(u => u.email && u.email.includes("@brucegillinghampollard.com"))
+        .filter(u => u.email && u.email.includes("@brucegillinghampollard.com") && !isPrivateMailboxAddress(u.email))
         .map(u => ({ email: u.email!, name: u.name, team: u.team || "Unknown" }));
 
       if (emails.length === 0) {
@@ -1732,6 +1793,7 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       const isSkippableEvent = (item: any) => {
         if (item.isPrivate) return true;
         if (item.status === "free" || item.status === "unknown") return true;
+        if (item.detailsUnavailable) return true;
         const subj = (item.subject || "").trim();
         if (!subj || subj === "Busy" || subj === "No subject") return true;
         if (PERSONAL_PATTERNS.test(subj)) return true;
@@ -1741,14 +1803,7 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
 
       const schedules = (scheduleData.value || []).map((schedule: any, idx: number) => {
         const member = emails.find(e => e.email.toLowerCase() === schedule.scheduleId?.toLowerCase()) || emails[idx];
-        const allItems = (schedule.scheduleItems || []).map((item: any) => ({
-          status: item.status,
-          subject: item.subject || "Busy",
-          location: item.location || "",
-          start: item.start,
-          end: item.end,
-          isPrivate: item.isPrivate || false,
-        }));
+        const allItems = teamDiaryItems(schedule);
         return {
           email: schedule.scheduleId || member?.email,
           name: member?.name || schedule.scheduleId,
@@ -1793,9 +1848,12 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
         }
       }
 
-      let aiSummary = "";
+      const coverage = teamDiaryCoverage(scheduleData.value || [], emails.length, period);
+      let aiSummary = coverage.summary;
 
-      {
+      // Unknown titles are not evidence of a quiet diary. Keep this factual
+      // instead of asking AI to infer work meetings from availability alone.
+      if (!coverage.detailsUnavailable) {
         const { callClaude: callClaudeAI, CHATBGP_HELPER_MODEL: helperModel } = await import("./utils/anthropic-client");
 
         const periodLabel = period === "day" ? "today" : period === "month" ? "this month" : "this week";
@@ -1856,15 +1914,18 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
           name: s.name,
           team: s.team,
           email: s.email,
-          meetingCount: s.scheduleItems.length,
+          meetingCount: coverage.detailsUnavailable ? null : s.workItems.length,
+          busyBlockCount: s.scheduleItems.filter((item: any) => item.status !== "free" && item.status !== "unknown").length,
           items: s.scheduleItems.slice(0, 10),
         })),
         stats: {
           totalMembers: schedules.length,
-          totalMeetings,
-          busiestMember: busiestMember ? { name: busiestMember.name, count: busiestMember.workItems.length } : null,
-          crossTeamConnections: connections.length,
+          totalMeetings: coverage.detailsUnavailable ? null : totalMeetings,
+          busyBlocks: coverage.busyBlocks,
+          busiestMember: !coverage.detailsUnavailable && busiestMember ? { name: busiestMember.name, count: busiestMember.workItems.length } : null,
+          crossTeamConnections: coverage.detailsUnavailable ? null : connections.length,
         },
+        coverage,
         period,
       });
     } catch (err: any) {

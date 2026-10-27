@@ -8,13 +8,7 @@
 import { type Express } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
-
-const CLOSED_STATUSES = new Set([
-  "Completed",
-  "Lost",
-  "Invoiced",
-  "Leasing - Completed",
-]);
+import { CLOSED_STATUSES, legacyToCode } from "@shared/deal-status";
 
 function csvCell(v: unknown): string {
   if (v === null || v === undefined) return "";
@@ -50,9 +44,10 @@ async function buildWipPreview(): Promise<{ properties: string; landlords: strin
     status: string | null;
   }>(`select id, name, group_name, property_id, landlord_id, status from crm_deals`);
 
-  const activeDeals = dealsRes.rows.filter(
-    (d) => !d.status || !CLOSED_STATUSES.has(d.status)
-  );
+  const activeDeals = dealsRes.rows.filter((d) => {
+    const code = legacyToCode(d.status);
+    return !code || !CLOSED_STATUSES.includes(code);
+  });
 
   const propsRes = await pool.query<{
     id: string;

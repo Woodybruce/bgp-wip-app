@@ -916,7 +916,6 @@ export default function WipReport() {
     return filtered;
   }, [rawEntries, isLandsecView, activeTeam, isWipAdmin, canSeeAll]);
 
-  const INVOICED_STATUSES = useMemo(() => ["Invoiced", "Billed"], []);
   const [selectedClients, setSelectedClients] = useState<Set<string>>(() => new Set(savedFilters?.clients || []));
   const [selectedTeams, setSelectedTeams] = useState<Set<string>>(() => new Set(savedFilters?.teams || []));
   const [selectedMonths, setSelectedMonths] = useState<Set<string>>(() => new Set(savedFilters?.months || []));

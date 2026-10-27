@@ -125,7 +125,8 @@ export function EvidenceUnitUpload({ planId, unitId, unitRef, onSaved }: {
       onSaved(); setOpen(false); setPreview(null); setFile(null);
       if (pickCurrent) { setPickDone(prev => new Set(prev).add(pickCurrent)); setPickCurrent(null); setPickOpen(true); }
       toast({ title: result.duplicate ? "Already on this unit" : `Evidence added to unit ${unitRef}`,
-        description: result.duplicate ? "This file is already attached to this unit. Open its evidence entry to make changes." : `The original ${isPdf ? "PDF" : "workbook"} is available from the evidence entry.` });
+        description: result.duplicate ? "This file is already attached to this unit. Open its evidence entry to make changes."
+          : `The original ${isPdf ? "PDF" : "workbook"} is available from the evidence entry.${Array.isArray(result.filled) && result.filled.includes("sqft") ? " The unit's blank size was filled from the sheet." : ""}` });
     } catch (e: any) { setError(e.message || "Could not save. Your reviewed details are kept here."); }
     finally { inFlight.current = false; setBusy(null); }
   };

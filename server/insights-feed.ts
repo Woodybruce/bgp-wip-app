@@ -27,6 +27,9 @@ import { getAnthropicClient } from "./utils/anthropic-client";
 import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
+import { isPrivateMailboxAddress, isPrivateEmailRecord, PRIVATE_MAIL_POLICY_VERSION } from "./private-mail";
+import { isPublicNewsSource, publicNewsSourceSql, singleFlight } from "./news-ingestion";
+import { INSIGHTS_SOURCE_POLICY_VERSION, insightEvidenceForSources, isPublishableInsight, parseInsightEvidence, prepareInsightNewsBatch } from "./insights-source-policy";
 
 const INSIGHT_CATEGORIES = ["hospitality", "retail", "leisure", "fitness", "investment", "offices", "market"] as const;
 // The slice a Landsec-type client sees (mirrors CLIENT_CRM_CATEGORIES intent).
@@ -98,6 +101,7 @@ async function ensureTables(): Promise<void> {
       key TEXT PRIMARY KEY,
       cursor TIMESTAMP
     )`);
+  await pool.query(`ALTER TABLE insight_state ADD COLUMN IF NOT EXISTS cursor_id TEXT`);
   // Cross-tick dedupe for the report leg: the same Propel edition lands in
   // ~15 mailboxes, and copies can straddle a tick boundary — sender+subject+
   // day keys mark what's already been distilled. Pruned after 14 days.
@@ -123,8 +127,8 @@ async function activeThemes(limit = 20): Promise<any[]> {
     `SELECT theme_key, title, category, direction, strength,
             to_char(first_seen, 'DD Mon') AS first_seen
        FROM insight_themes
-      WHERE last_confirmed > now() - interval '60 days'
-      ORDER BY last_confirmed DESC LIMIT $1`, [limit]);
+      WHERE last_confirmed > now() - interval '60 days' AND theme_key LIKE $2
+      ORDER BY last_confirmed DESC LIMIT $1`, [limit, `${INSIGHTS_SOURCE_POLICY_VERSION}:%`]);
   return r.rows;
 }
 
@@ -133,7 +137,6 @@ async function activeThemes(limit = 20): Promise<any[]> {
 // open a new theme or strengthen an existing one.
 async function distil(materialLabel: string, material: string, sourceKind: "news" | "market-report", evidence: any[]): Promise<number> {
   const themes = await activeThemes();
-  const Anthropic = (await import("@anthropic-ai/sdk")).default;
   const client = getAnthropicClient(true);
   const prompt = `You are the market-intelligence brain of a UK retail/hospitality property brokerage. Distil the fresh material below into AT MOST 3 insights a landlord or leasing broker would act on. Fewer is better; return an empty list if nothing is genuinely new or decision-relevant.
 
@@ -148,9 +151,10 @@ Rules:
 - If the material confirms an active theme, reference its theme_key; the card should say what's NEW about the confirmation.
 - category: one of ${JSON.stringify(INSIGHT_CATEGORIES)}.
 - Everything here is public-source, so audience is "all".
+${sourceKind === "news" ? '- Every insight MUST include source_ids containing only the exact article_id values that directly support it (1–6 IDs). Do not cite an unrelated article or an active theme as new evidence. If the supplied articles do not support a claim, omit it.' : ''}
 
 Reply with ONLY JSON:
-{"insights": [{"headline": "<max 90 chars, decisive>", "detail": "<1-2 sentences, why it matters>", "category": "...", "theme_key": "<existing key or new kebab-case key>", "theme_title": "<short theme name>", "direction": "growing"|"fading"|"steady"}]}`;
+{"insights": [{"headline": "<max 90 chars, decisive>", "detail": "<1-2 sentences, why it matters>", "category": "...", "theme_key": "<existing key or new kebab-case key>", "theme_title": "<short theme name>", "direction": "growing"|"fading"|"steady"${sourceKind === "news" ? ', "source_ids": ["<supporting article_id>"]' : ''}}]}`;
 
   const resp = await client.messages.create({
     model: "claude-sonnet-4-6",
@@ -160,44 +164,58 @@ Reply with ONLY JSON:
   const text = resp.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
   let parsed: any;
   try { parsed = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)); }
-  catch { return 0; }
+  catch { throw new Error("Insight distillation returned invalid JSON; source batch remains pending"); }
+  if (!parsed || !Array.isArray(parsed.insights)) throw new Error("Insight distillation returned no valid result list; source batch remains pending");
 
   let inserted = 0;
-  for (const ins of (parsed.insights || []).slice(0, 3)) {
-    if (!ins.headline || !ins.theme_key) continue;
+  for (const ins of (Array.isArray(parsed.insights) ? parsed.insights : []).slice(0, 3)) {
+    if (!ins || typeof ins.headline !== "string" || !ins.headline.trim() || typeof ins.theme_key !== "string" || !ins.theme_key.trim()) continue;
+    const selectedEvidence = sourceKind === "news" ? insightEvidenceForSources(ins.source_ids, evidence) : evidence.slice(0, 6);
+    if (!selectedEvidence || !isPublishableInsight({ source_kind: sourceKind, evidence: selectedEvidence })) continue;
+    const themeKey = ins.theme_key.startsWith(`${INSIGHTS_SOURCE_POLICY_VERSION}:`) ? ins.theme_key : `${INSIGHTS_SOURCE_POLICY_VERSION}:${ins.theme_key}`;
     const theme = await pool.query(
       `INSERT INTO insight_themes (theme_key, title, category, direction, strength, first_seen, last_confirmed)
        VALUES ($1, $2, $3, $4, 1, now(), now())
        ON CONFLICT (theme_key) DO UPDATE
          SET strength = insight_themes.strength + 1, last_confirmed = now(),
              direction = COALESCE($4, insight_themes.direction)
-       RETURNING id, strength`, [ins.theme_key, ins.theme_title || ins.headline, ins.category || "market", ins.direction || "steady"]);
+       RETURNING id, strength`, [themeKey, ins.theme_title || ins.headline, ins.category || "market", ins.direction || "steady"]);
     await pool.query(
       `INSERT INTO insights (theme_id, headline, detail, category, audience, source_kind, evidence)
        VALUES ($1, $2, $3, $4, 'all', $5, $6)`,
-      [theme.rows[0].id, ins.headline, ins.detail || null, ins.category || "market", sourceKind, JSON.stringify(evidence.slice(0, 6))]);
+      [theme.rows[0].id, ins.headline, ins.detail || null, ins.category || "market", sourceKind, JSON.stringify(selectedEvidence)]);
     inserted++;
   }
+  if (parsed.insights.length && !inserted) throw new Error("Insight claims had no valid supporting sources; source batch remains pending");
   return inserted;
 }
 
-// Leg 1 — news. Batches every article since the cursor; skips quiet ticks.
+const runNewsSingleFlight = singleFlight<number>();
+// Leg 1 — public news. Exact timestamp + ID preserves rows sharing the same
+// microsecond. A legacy timestamp-only cursor starts with an empty tie-breaker.
 export async function runNewsLeg(): Promise<number> {
+  return runNewsSingleFlight(async () => {
   await ensureTables();
-  const cursor = (await getCursor("news")) || new Date(Date.now() - 24 * 3600 * 1000);
+  const state = (await pool.query("SELECT cursor::text AS cursor_timestamp, cursor_id FROM insight_state WHERE key='news'")).rows[0];
+  const cursor = state?.cursor_timestamp || new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  const cursorId = state?.cursor_id || "";
   const arts = await pool.query(
-    `SELECT id, title, source_name, summary, ai_summary, url, published_at
-       FROM news_articles
-      WHERE fetched_at > $1
-      ORDER BY fetched_at ASC LIMIT 60`, [cursor]);
-  if (arts.rows.length < 5) return 0; // wait for a meaningful batch
-  const material = arts.rows.map((a: any) =>
-    `- [${a.source_name || "?"}] ${a.title}: ${(a.ai_summary || a.summary || "").slice(0, 220)}`).join("\n");
-  const evidence = arts.rows.slice(0, 6).map((a: any) => ({ type: "article", id: a.id, title: a.title, url: a.url }));
-  const n = await distil(`${arts.rows.length} trade articles`, material, "news", evidence);
-  await setCursor("news", new Date());
-  console.log(`[insights] news leg: ${arts.rows.length} articles → ${n} insights`);
+    `SELECT a.id, a.title, a.source_name, a.summary, a.ai_summary, a.url, a.published_at,
+            a.fetched_at::text AS cursor_timestamp,s.type AS source_type,s.category AS source_category,s.active AS source_active
+       FROM news_articles a JOIN news_sources s ON s.id=a.source_id
+      WHERE (a.fetched_at,a.id) > ($1::timestamp,$2::varchar)
+        AND ${publicNewsSourceSql("s")}
+      ORDER BY a.fetched_at ASC,a.id ASC LIMIT 60`, [cursor, cursorId]);
+  const batch = prepareInsightNewsBatch(arts.rows);
+  if (!batch.lastScanned) return 0;
+  if (batch.evidence.length > 0 && batch.evidence.length < 5) return 0; // retain the existing batching budget
+  const n = batch.evidence.length ? await distil(`${batch.evidence.length} trade articles`, batch.material, "news", batch.evidence) : 0;
+  // Never advance to the clock: articles can arrive while the model is running.
+  await pool.query(`INSERT INTO insight_state (key,cursor,cursor_id) VALUES ('news',$1::timestamp,$2)
+    ON CONFLICT (key) DO UPDATE SET cursor=EXCLUDED.cursor,cursor_id=EXCLUDED.cursor_id`, [batch.lastScanned.cursor_timestamp, batch.lastScanned.id]);
+  console.log(`[insights] news leg: ${batch.evidence.length} articles → ${n} insights`);
   return n;
+  });
 }
 
 // Leg 2 — market-report emails from trade publishers. Sweeps the shared
@@ -221,7 +239,7 @@ export async function runReportLeg(): Promise<number> {
           AND COALESCE(role, '') <> 'Client'
           AND lower(COALESCE(NULLIF(TRIM(email), ''), username)) LIKE '%@brucegillinghampollard.com'`);
     for (const r of staff.rows) {
-      if (r.addr && r.addr !== "chatbgp@brucegillinghampollard.com") {
+      if (r.addr && !isPrivateMailboxAddress(r.addr) && r.addr !== "chatbgp@brucegillinghampollard.com") {
         mailboxes.push({ address: r.addr, shared: false });
       }
     }
@@ -233,10 +251,12 @@ export async function runReportLeg(): Promise<number> {
   try {
     const { graphRequest } = await import("./shared-mailbox");
     for (const mb of mailboxes) {
+      if (isPrivateMailboxAddress(mb.address)) continue;
       try {
         const r = await graphRequest(
-          `/users/${encodeURIComponent(mb.address)}/messages?$filter=receivedDateTime gt ${since}&$top=30&$select=subject,from,receivedDateTime,bodyPreview,body&$orderby=receivedDateTime asc`);
+          `/users/${encodeURIComponent(mb.address)}/messages?$filter=receivedDateTime gt ${since}&$top=30&$select=subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,bodyPreview,body&$orderby=receivedDateTime asc`);
         for (const m of r?.value || []) {
+          if (isPrivateEmailRecord(m, mb.address)) continue;
           const from = (m.from?.emailAddress?.address || "").toLowerCase();
           if (matchReportSender(from, mb.shared)) candidates.push(m);
         }
@@ -280,7 +300,7 @@ export async function runReportLeg(): Promise<number> {
       const from = m.from?.emailAddress?.address || "publisher";
       total += await distil(
         `market update email from ${from}: "${m.subject}"`, bodyText, "market-report",
-        [{ type: "report-email", title: m.subject, from, date: m.receivedDateTime }]);
+        [{ type: "report-email", title: m.subject, from, date: m.receivedDateTime, policyVersion: INSIGHTS_SOURCE_POLICY_VERSION, mailPrivacyPolicy: PRIVATE_MAIL_POLICY_VERSION }]);
       // Same email, second harvest: per-brand events → brand_signals, so the
       // Propel round-up feeds the expansion engine + daily alerts, not just
       // the Insights cards.
@@ -331,6 +351,7 @@ export async function runPortfolioLeg(): Promise<number> {
       JOIN crm_companies co ON co.id = p.landlord_id
       LEFT JOIN crm_companies t ON t.id = v.company_id
      WHERE v.created_at > $1 AND p.landlord_id IS NOT NULL
+       AND v.deleted_at IS NULL AND COALESCE(v.status,'') NOT IN ('cancelled','not_leasing')
      GROUP BY p.landlord_id, co.name, t.company_type
     HAVING count(*) >= 3`, [cursor]);
   let inserted = 0;
@@ -369,7 +390,7 @@ export function setupInsightsRoutes(app: Express): void {
             `SELECT i.*, t.title AS theme_title, t.strength AS theme_strength, t.first_seen AS theme_first_seen
                FROM insights i LEFT JOIN insight_themes t ON t.id = i.theme_id
               ORDER BY i.created_at DESC LIMIT $1`, [limit]);
-      res.json({ insights: (await q).rows });
+      res.json({ insights: await filterPublishedInsights((await q).rows) });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -404,9 +425,21 @@ export function startInsightsLoop(): void {
 export async function latestInsightsForEmail(limit = 3): Promise<any[]> {
   await ensureTables();
   const r = await pool.query(
-    `SELECT i.headline, i.detail, i.category, t.title AS theme_title, t.strength AS theme_strength
+    `SELECT i.headline, i.detail, i.category, i.source_kind,i.evidence,t.title AS theme_title, t.strength AS theme_strength
        FROM insights i LEFT JOIN insight_themes t ON t.id = i.theme_id
       WHERE i.audience = 'all' AND i.created_at > now() - interval '24 hours'
       ORDER BY i.created_at DESC LIMIT $1`, [limit]);
-  return r.rows;
+  return (await filterPublishedInsights(r.rows)).map(({source_kind, evidence, ...row}) => row);
+}
+
+/** Read-time quarantine preserves historical rows without repeating old
+ * private/unattributed output. Source metadata is sufficient for the current
+ * allowlist check; no historical article body or mailbox is retrieved. */
+async function filterPublishedInsights(rows: any[]): Promise<any[]> {
+  const screened = rows.filter(isPublishableInsight);
+  const articleIds = [...new Set<string>(screened.filter(row => row.source_kind === "news").flatMap(row => parseInsightEvidence(row.evidence).map(item => item.id)))];
+  if (!articleIds.length) return screened;
+  const sources = await pool.query(`SELECT a.id,s.type,s.category,s.active FROM news_articles a JOIN news_sources s ON s.id=a.source_id WHERE a.id=ANY($1)`, [articleIds]);
+  const allowed = new Set(sources.rows.filter(isPublicNewsSource).map(row => row.id));
+  return screened.filter(row => row.source_kind !== "news" || parseInsightEvidence(row.evidence).every(item => allowed.has(item.id)));
 }

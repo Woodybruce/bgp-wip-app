@@ -17,6 +17,7 @@ import { AGENT_ROLES } from "@shared/agent-roles";
 import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
 import { gbDate } from "@/lib/format";
 import { cleanUnit } from "@/components/account-deals-board";
+import { landlordInvestmentRequirementSummary } from "@/lib/landlord-investment-requirement";
 
 type Tab = "investment" | "tenantRep" | "leaseAdvisory" | "agents";
 
@@ -75,6 +76,31 @@ function Row({ href, title, sub, right }: { href?: string; title: React.ReactNod
     </div>
   );
   return href ? <Link href={href} className="block">{body}</Link> : body;
+}
+
+export function LandlordInvestmentRequirementRow({ requirement, status }: { requirement: any; status?: string }) {
+  const brief = landlordInvestmentRequirementSummary(requirement);
+  const dated = requirement.requirement_date && !isNaN(Date.parse(requirement.requirement_date));
+  const when = dated ? requirement.requirement_date : requirement.updated_at && !isNaN(Date.parse(requirement.updated_at)) ? requirement.updated_at : null;
+  return (
+    <div className="min-w-0 rounded border bg-card p-2.5 space-y-1.5" data-testid={`landlord-investment-requirement-${requirement.id}`}>
+      <div className="flex items-start justify-between gap-2">
+        <Link href={brief.href} className="min-w-0 text-sm font-medium text-primary hover:underline break-words">{brief.title}</Link>
+        {status && <RowPill>{status}</RowPill>}
+      </div>
+      {brief.summary && <p className="text-sm leading-relaxed break-words">{brief.summary}</p>}
+      {brief.excerpt && <p className="text-sm leading-relaxed break-words">{brief.excerpt}</p>}
+      {brief.notes !== brief.excerpt && <details className="text-sm">
+        <summary className="cursor-pointer text-xs text-muted-foreground">Read full note</summary>
+        <p className="mt-1 leading-relaxed break-words">{brief.notes}</p>
+      </details>}
+      {brief.missing && <p className="text-xs text-muted-foreground">{brief.missing}</p>}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+        {when && <span>{dated ? "Dated" : "Updated"} {fmtDate(when)}</span>}
+        <Link href={brief.href} className="text-primary hover:underline" aria-label={`Open ${brief.title}, reference ${requirement.id}`}>Open requirement · ref {String(requirement.id).slice(-4)}</Link>
+      </div>
+    </div>
+  );
 }
 
 export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
@@ -166,9 +192,19 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                     right={<>{money(t.guide_price) && <span className="text-xs font-mono tabular-nums">{money(t.guide_price)}</span>}{t.niy ? <span className="text-[11px] font-mono text-muted-foreground tabular-nums">{Number(t.niy).toFixed(2)}% NIY</span> : null}</>} />
                 ))}</div>}
               </Section>
-              <Section title="Might sell — flagged in the portfolio" empty="No properties marked for sale or investment work.">
+              <Section title="Might sell — flagged in the portfolio" link="/investment-tracker" linkLabel="Investment tracker" empty="No properties marked for sale or investment work.">
                 {inv.salesCandidates.length > 0 && <div className="space-y-1">{inv.salesCandidates.slice(0, 6).map((p: any) => (
                   <Row key={p.id} href={`/properties/${p.id}`} title={p.name} sub={[p.status && statusLabel(p.status), list(p.asset_class)].filter(Boolean).join(" · ")} />
+                ))}</div>}
+              </Section>
+              <Section title="Buying — on BGP's investment boards" link="/investment-tracker" linkLabel="Investment tracker" empty="Nothing they're buying on BGP's investment boards.">
+                {purchases.length > 0 && <div className="space-y-1">{purchases.slice(0, 5).map((t: any) => (
+                  <Row key={t.id} href={t.deal_id ? `/deals/${t.deal_id}` : "/investment-tracker"} title={<span className={CLOSED.test(t.status || "") ? "text-muted-foreground" : ""}>{t.asset_name}</span>} sub={[statusLabel(t.status), t.vendor && `vendor ${t.vendor}`].filter(Boolean).join(" · ")} right={money(t.guide_price) && <span className="text-xs font-mono tabular-nums">{money(t.guide_price)}</span>} />
+                ))}</div>}
+              </Section>
+              <Section title="Investment comps" link="/investment-comps" linkLabel="Comps" empty="No recorded trades as buyer or seller.">
+                {inv.comps.length > 0 && <div className="space-y-1">{inv.comps.slice(0, 5).map((c: any) => (
+                  <Row key={c.id} href={c.property_id ? `/properties/${c.property_id}` : "/investment-comps"} title={c.property_name || "Trade"} sub={[c.side === "sold" ? "Sold" : "Bought", c.city, c.cap_rate && `${(Number(c.cap_rate) < 1 ? Number(c.cap_rate) * 100 : Number(c.cap_rate)).toFixed(2)}%`].filter(Boolean).join(" · ")} right={<><span className="text-xs font-mono tabular-nums">{money(c.price)}</span><span className="text-[11px] font-mono tabular-nums text-muted-foreground">{fmtMonth(c.transaction_date)}</span></>} />
                 ))}</div>}
               </Section>
               {inv.debtEvents.length > 0 && (
@@ -181,33 +217,12 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
             </div>
             <div className="space-y-4">
               <Section title="Buying — investment requirements" link="/requirements?type=investment" linkLabel="Requirements" empty="No investment requirements recorded.">
-                {/* Title from the requirement itself (use / size / where),
-                    not the landlord's own name (Woody, 2026-09-28). */}
-                {/* With nothing descriptive, keep the requirement's own name
-                    plus its date — the generic "Investment requirement ·
-                    1 Mar 2026" made Shaftesbury's two rows identical; a
-                    repeat title also gets its ref (Woody, 2026-09-28). */}
-                {inv.requirements.length > 0 && <div className="space-y-1">{(() => {
-                  const rows = inv.requirements.slice(0, 6).map((r: any) => {
-                    const detail = [list(r.use_types), list(r.requirement_types), list(r.size_range), list(r.requirement_locations) || r.locations].filter((s: any) => s && String(s).trim()).join(" · ");
-                    const when = [r.requirement_date, r.updated_at].find((v: any) => v && !isNaN(Date.parse(v)));
-                    const title = !r.ownName ? r.name : detail || (r.comments ? String(r.comments).slice(0, 80) : `${r.name || "Investment requirement"}${when ? ` · ${fmtDate(when)}` : ""}`);
-                    return { r, detail, title: String(title || "") };
-                  });
-                  return rows.map(({ r, detail, title }: any) => {
-                    const repeat = rows.filter((o: any) => o.title === title).length > 1;
-                    const sub = [!r.ownName && detail, r.ownName && detail && r.comments && String(r.comments).slice(0, 80), r.updated_at && `updated ${fmtMonth(r.updated_at)}`].filter(Boolean).join(" · ");
-                    return <Row key={r.id} href="/requirements?type=investment" title={repeat ? `${title} · ref ${String(r.id).slice(-4)}` : title} sub={sub} right={r.status && <RowPill>{statusLabel(r.status)}</RowPill>} />;
-                  });
-                })()}</div>}
+                {inv.requirements.length > 0 && <div className="space-y-2">{inv.requirements.slice(0, 6).map((requirement: any) => (
+                  <LandlordInvestmentRequirementRow key={requirement.id} requirement={requirement} status={requirement.status && statusLabel(requirement.status)} />
+                ))}</div>}
                 {(f.mandate_asset_class || f.mandate_lot_size_min || f.mandate_lot_size_max) && (
                   <p className="text-[11px] text-muted-foreground">Mandate: {[f.mandate_asset_class, (f.mandate_lot_size_min || f.mandate_lot_size_max) && `${money(f.mandate_lot_size_min) || "—"}–${money(f.mandate_lot_size_max) || "—"} lots`, (f.mandate_geographies || []).join?.(", ")].filter(Boolean).join(" · ")}</p>
                 )}
-              </Section>
-              <Section title="Buying — on BGP's investment boards" link="/investment-tracker" linkLabel="Investment tracker" empty="Nothing they're buying on BGP's investment boards.">
-                {purchases.length > 0 && <div className="space-y-1">{purchases.slice(0, 5).map((t: any) => (
-                  <Row key={t.id} href={t.deal_id ? `/deals/${t.deal_id}` : "/investment-tracker"} title={<span className={CLOSED.test(t.status || "") ? "text-muted-foreground" : ""}>{t.asset_name}</span>} sub={[statusLabel(t.status), t.vendor && `vendor ${t.vendor}`].filter(Boolean).join(" · ")} right={money(t.guide_price) && <span className="text-xs font-mono tabular-nums">{money(t.guide_price)}</span>} />
-                ))}</div>}
               </Section>
               {(inv.sentToThem?.length > 0 || inv.theirBids?.length > 0 || inv.theirViewings?.length > 0) && (
                 <Section title="Sent to them / viewings / bids" link="/investment-tracker" linkLabel="Investment tracker">
@@ -224,11 +239,6 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                   </div>
                 </Section>
               )}
-              <Section title="Investment comps" link="/investment-comps" linkLabel="Comps" empty="No recorded trades as buyer or seller.">
-                {inv.comps.length > 0 && <div className="space-y-1">{inv.comps.slice(0, 5).map((c: any) => (
-                  <Row key={c.id} href={c.property_id ? `/properties/${c.property_id}` : "/investment-comps"} title={c.property_name || "Trade"} sub={[c.side === "sold" ? "Sold" : "Bought", c.city, c.cap_rate && `${(Number(c.cap_rate) < 1 ? Number(c.cap_rate) * 100 : Number(c.cap_rate)).toFixed(2)}%`].filter(Boolean).join(" · ")} right={<><span className="text-xs font-mono tabular-nums">{money(c.price)}</span><span className="text-[11px] font-mono tabular-nums text-muted-foreground">{fmtMonth(c.transaction_date)}</span></>} />
-                ))}</div>}
-              </Section>
             </div>
           </div>
         )}

@@ -1,5 +1,13 @@
 // The Outlook pane's half of ChatBGP-in-Outlook (server/outlook-agent.ts):
 // each outlook_* tool call is carried out on the open email with Office.js.
+import { isPrivateEmailRecord } from "../../../shared/private-mail";
+
+export const PRIVATE_OUTLOOK_ITEM_MESSAGE = "This private mailbox or item is not available to ChatBGP.";
+export class PrivateOutlookItemError extends Error {
+  readonly code = "PRIVATE_OUTLOOK_ITEM";
+  constructor() { super(PRIVATE_OUTLOOK_ITEM_MESSAGE); }
+}
+
 const office = () => (window as any).Office;
 const item = () => office()?.context?.mailbox?.item;
 
@@ -39,6 +47,8 @@ export interface OpenEmail {
   fromEmail?: string;
   to: string[];
   cc: string[];
+  bcc?: string[];
+  mailboxEmail?: string;
   date?: string;
   body: string;
   attachments: string[];
@@ -48,9 +58,31 @@ export interface OpenEmail {
 
 const iso = (d: any) => { try { const x = d instanceof Date ? d : new Date(d); return isNaN(x.getTime()) ? undefined : x.toISOString(); } catch { return undefined; } };
 
+// Check address metadata before reading the body. Failed recipient reads must
+// not silently become empty lists and authorise a private composed message.
+async function assertOutlookItemAllowed(it: any): Promise<{ mailboxEmail: string; bcc: string[] }> {
+  const mailboxEmail = office()?.context?.mailbox?.userProfile?.emailAddress || "";
+  const readPeople = async (value: any) => value?.getAsync
+    ? asyncCall<any[]>(cb => value.getAsync(cb)) : (Array.isArray(value) ? value : []);
+  const [to, cc, bcc, required, optional] = await Promise.all([
+    readPeople(it.to), readPeople(it.cc), readPeople(it.bcc), readPeople(it.requiredAttendees), readPeople(it.optionalAttendees),
+  ]);
+  if (isPrivateEmailRecord({ mailboxEmail, from: it.from, sender: it.sender, organizer: it.organizer,
+    to, cc, bcc, attendees: [...required, ...optional] })) throw new PrivateOutlookItemError();
+  return { mailboxEmail, bcc: people(bcc) };
+}
+
+async function checkedOutlookEmail(email: OpenEmail, openedItem: any): Promise<OpenEmail> {
+  if (item() !== openedItem) throw new Error("The open item changed. Please try again.");
+  const privacy = await assertOutlookItemAllowed(openedItem);
+  if (isPrivateEmailRecord(email)) throw new PrivateOutlookItemError();
+  return { ...email, ...privacy };
+}
+
 export async function readOpenEmail(maxBody = 30000): Promise<OpenEmail | null> {
   const it = item();
   if (!it) return null;
+  const privacy = await assertOutlookItemAllowed(it);
   const Office = office();
   if (isAppointment()) {
     if (isCompose()) {
@@ -63,12 +95,13 @@ export async function readOpenEmail(maxBody = 30000): Promise<OpenEmail | null> 
         asyncCall<any[]>(cb => it.optionalAttendees.getAsync(cb)).catch(() => []),
         asyncCall<string>(cb => it.body.getAsync(Office.CoercionType.Text, cb)).catch(() => ""),
       ]);
-      return { mode: "compose", kind: "appointment", subject, start: iso(start), end: iso(end), location: String(location || ""), required: people(required), optional: people(optional),
-        to: people(required), cc: people(optional), body: String(body || "").slice(0, maxBody), attachments: [], conversationId: it.conversationId || undefined };
+      return checkedOutlookEmail({ ...privacy, mode: "compose", kind: "appointment", subject, start: iso(start), end: iso(end), location: String(location || ""), required: people(required), optional: people(optional),
+        to: people(required), cc: people(optional), body: String(body || "").slice(0, maxBody), attachments: [], conversationId: it.conversationId || undefined }, it);
     }
     const body = await asyncCall<string>(cb => it.body.getAsync(Office.CoercionType.Text, cb)).catch(() => "");
     const org = it.organizer;
-    return {
+    return checkedOutlookEmail({
+      ...privacy,
       mode: "read", kind: "appointment",
       subject: it.subject || "",
       start: iso(it.start), end: iso(it.end), location: typeof it.location === "string" ? it.location : "",
@@ -81,7 +114,7 @@ export async function readOpenEmail(maxBody = 30000): Promise<OpenEmail | null> 
       attachments: (it.attachments || []).map((a: any) => a.name).filter(Boolean),
       conversationId: it.conversationId || undefined,
       itemId: it.itemId || undefined,
-    };
+    }, it);
   }
   if (isCompose()) {
     const [subject, to, cc, body] = await Promise.all([
@@ -90,10 +123,11 @@ export async function readOpenEmail(maxBody = 30000): Promise<OpenEmail | null> 
       asyncCall<any[]>(cb => it.cc.getAsync(cb)).catch(() => []),
       asyncCall<string>(cb => it.body.getAsync(Office.CoercionType.Text, cb)).catch(() => ""),
     ]);
-    return { mode: "compose", subject, to: people(to), cc: people(cc), body: String(body || "").slice(0, maxBody), attachments: [], conversationId: it.conversationId || undefined };
+    return checkedOutlookEmail({ ...privacy, mode: "compose", subject, to: people(to), cc: people(cc), body: String(body || "").slice(0, maxBody), attachments: [], conversationId: it.conversationId || undefined }, it);
   }
   const body = await asyncCall<string>(cb => it.body.getAsync(Office.CoercionType.Text, cb)).catch(() => "");
-  return {
+  return checkedOutlookEmail({
+    ...privacy,
     mode: "read",
     subject: it.subject || "",
     from: it.from?.displayName || it.from?.emailAddress || "",
@@ -104,7 +138,7 @@ export async function readOpenEmail(maxBody = 30000): Promise<OpenEmail | null> 
     attachments: (it.attachments || []).map((a: any) => a.name).filter(Boolean),
     conversationId: it.conversationId || undefined,
     itemId: it.itemId || undefined,
-  };
+  }, it);
 }
 
 const when = (e: OpenEmail) => {
@@ -117,6 +151,7 @@ const when = (e: OpenEmail) => {
 
 export function emailContext(e: OpenEmail | null): string {
   if (!e) return "";
+  if (isPrivateEmailRecord(e)) throw new PrivateOutlookItemError();
   if (e.kind === "appointment") {
     return [
       `Mode: ${e.mode === "compose" ? "the user is ORGANISING this meeting (writing the invite)" : "the user has this MEETING open in their calendar"}`,
@@ -147,6 +182,7 @@ const recipients = (list?: string[]) => (list || []).map(a => String(a).trim()).
 export async function runOutlookTool(name: string, args: any): Promise<any> {
   try {
     const it = item();
+    if (it) await assertOutlookItemAllowed(it);
     const Office = office();
     const mailbox = Office?.context?.mailbox;
     switch (name) {

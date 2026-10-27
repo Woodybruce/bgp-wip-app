@@ -260,7 +260,7 @@ export const DATA_ROOM: DataRoomSource[] = [
   { title: "British Land property list at 30 Sept 2016 (Woody's file)", kind: "owners", url: null, file: null, date: "2016-09-30", note: "Teesside Stockton 569,000 sq ft (100%), Glasgow Fort (76.5%), Giltbrook, Meadowhall (50%); leisure line is Virgin Active gyms and Debenhams" },
 ];
 
-// Gate for the public, read-only page at /public/leisure-platform/<token>.
-// Anyone with the link can read it; set LEISURE_PLATFORM_PUBLIC_TOKEN on
-// Railway to rotate it without a deploy.
-export const LEISURE_PLATFORM_PUBLIC_TOKEN = "766uc7el3s068nlf8062";
+// The public page's gate token lives ONLY in the LEISURE_PLATFORM_PUBLIC_TOKEN
+// env var (see leisure-platform-public.ts publicToken()). A baked-in fallback
+// made rotation illusory — the committed value stayed live whenever the env
+// var was unset, and sat readable in the repo and every build artefact.

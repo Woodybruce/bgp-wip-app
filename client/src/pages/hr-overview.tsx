@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect } from "react";
+import { PERKS_ENABLED } from "@shared/feature-flags";
 import { isHrPerson } from "@shared/teams";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -1258,7 +1259,7 @@ function HungerGamesStrip({ allStaff, isAdmin, onSelectPerson }: { allStaff: Sta
     { id: "active",   label: "Most active",    icon: Flame },
     { id: "kudos",    label: "Most kudos",     icon: Star },
     { id: "teams",    label: "Top team",       icon: Trophy },
-    { id: "awards",   label: "Awards",         icon: Coffee },
+    ...(PERKS_ENABLED ? [{ id: "awards" as const, label: "Awards", icon: Coffee }] : []),
   ];
 
   const list: IndividualLeader[] = (() => {
@@ -1734,7 +1735,7 @@ export default function HrOverview({ onSelectPerson }: { onSelectPerson?: (id: s
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-1 space-y-4">
           {currentUser && <YouPanel user={currentUser} onSelectPerson={onSelectPerson} showTasks={false} />}
-          <BruceyBonusesCard isAdmin={isAdmin} onSelectPerson={onSelectPerson} />
+          {PERKS_ENABLED && <BruceyBonusesCard isAdmin={isAdmin} onSelectPerson={onSelectPerson} />}
           <HungerGamesStrip allStaff={allStaff} isAdmin={isAdmin} onSelectPerson={onSelectPerson} />
         </div>
         <div className="lg:col-span-2 space-y-4">

@@ -1,3 +1,4 @@
+import { isPrivateMailboxAddress } from "./private-mail";
 import type { Express, Request, Response as ExpressResponse } from "express";
 type Response = ExpressResponse;
 import { requireAuth } from "./auth";
@@ -10,8 +11,11 @@ import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import multer from "multer";
-import { parseSlashCommand, setThreadModel, resolveChatModel, ackMessage, type ModelCommand } from "./chatbgp-model-router";
-import { APP_MAP } from "./chatbgp-app-map";
+import { parseSlashCommand, setThreadModel, resolveChatModel, ackMessage, selectChatModel, type ModelCommand } from "./chatbgp-model-router";
+import { searchAppGuide } from "./chat-app-guide";
+import { chatQualitySettings } from "./chat-quality-settings";
+import { buildChatToolResultContent } from "./chat-tool-result";
+import { getRelevantStaffMemoryContext } from "./utils/chat-memory-context";
 import mammoth from "mammoth";
 import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
 import { listAllChildren } from "./microsoft-graph-pagination";
@@ -49,10 +53,92 @@ import { escapeLike } from "./utils/escape-like";
 import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { chatProvider, getKimiClient, mapModelForKimi, mapModelForOpenAI, sanitizeParamsForKimi } from "./utils/ai-provider";
 import { callOpenAI, callOpenAIStreaming } from "./utils/openai-client";
-import { trimChatHistory } from "./utils/chat-history";
+import { selectChatHistory, trimChatHistory, documentExcerpt, documentTruncationNotice } from "./utils/chat-history";
+import { resolveAccessibleChatThread } from "./utils/chat-thread-access";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schema";
 import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
+import { legacyToCode, statusSpellingsFor, DEAL_STATUS_LABELS, SYSTEM_SET_STATUSES, TERMINAL_STATUSES, isExcludedLegacyStatus, type DealStatusCode } from "@shared/deal-status";
+import { LETTING_DEAL_TYPES, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES, TRACKER_LIVE_STATUSES, HISTORIC_STATUSES, isLettingType } from "@shared/letting-rules";
+
+// ── Lettings vocabulary (shared/letting-rules.ts) ────────────────────────
+// Tool descriptions and SQL IN-lists come from the one vocabulary, never
+// hand-typed here.
+const DEAL_TYPE_HINT = [...LETTING_DEAL_TYPES, ...TENANT_REP_TYPES, ...ADVISORY_UNIT_TYPES, "Sale", "Purchase"].join(", ");
+const TRACKER_STATUS_HINT = [...TRACKER_LIVE_STATUSES, ...HISTORIC_STATUSES]
+  .filter((c) => !SYSTEM_SET_STATUSES.includes(c))
+  .map((c) => `${c} (${DEAL_STATUS_LABELS[c]})`).join(", ");
+// Quoted IN-list of every stored spelling (code + legacy label) of `codes`,
+// for lower(trim(coalesce(col, ''))) comparisons — the same shape as
+// closedStatusSqlList() in shared/letting-rules.ts.
+const statusSqlList = (codes: readonly DealStatusCode[]) => statusSpellingsFor(codes).map((v) => `'${v.replace(/'/g, "''")}'`).join(", ");
+
+// The chat CRM write tools post to the app's own route with the caller's
+// login, so gates, client scope, mirrors and audit run once in one place
+// (the precedent is addUnitToLettingTracker in letting-tracker-chat.ts).
+// A server-originated call that has a user but no cookie / bearer to
+// forward (WhatsApp's stub request) gets a one-minute token for that user;
+// one with no user at all (the email-instruction stub) is refused.
+async function callOwnRoute(req: Request, method: "POST" | "PUT" | "PATCH", routePath: string, body: Record<string, unknown>): Promise<{ ok: boolean; status: number; json: any }> {
+  const protocol = (req.headers?.["x-forwarded-proto"] as string) || req.protocol || "http";
+  const host = (req.headers?.["x-forwarded-host"] as string) || (req.headers?.host as string) || `127.0.0.1:${process.env.PORT || "5000"}`;
+  // X-BGP-Source: the letting service's audit row says the write came
+  // through chat, not the deal form.
+  const headers: Record<string, string> = { "Content-Type": "application/json", "X-BGP-Source": "chat" };
+  if (req.headers?.cookie) headers.Cookie = String(req.headers.cookie);
+  if (req.headers?.authorization) headers.Authorization = String(req.headers.authorization);
+  let mintedToken: string | null = null;
+  if (!headers.Cookie && !headers.Authorization) {
+    const userId = (req as any).session?.userId || (req as any).tokenUserId;
+    if (!userId) return { ok: false, status: 401, json: { error: "No signed-in user to act as — this write runs through the app's own route and needs a login." } };
+    mintedToken = crypto.randomBytes(32).toString("hex");
+    await pool.query("INSERT INTO auth_tokens (token, user_id, expires_at) VALUES ($1, $2, NOW() + interval '1 minute')", [mintedToken, userId]);
+    headers.Authorization = `Bearer ${mintedToken}`;
+  }
+  try {
+    const res = await fetch(`${protocol}://${host}${routePath}`, { method, headers, body: JSON.stringify(body) });
+    const json = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, json };
+  } finally {
+    if (mintedToken) await pool.query("DELETE FROM auth_tokens WHERE token = $1", [mintedToken]).catch(() => {});
+  }
+}
+// The message a refused own-route call carries (crm.ts answers { error },
+// routes.ts { message }).
+const routeError = (r: { status: number; json: any }, fallback: string) => String(r.json?.error || r.json?.message || `${fallback} (${r.status})`);
+
+// create_deal's unit: a property_units id, a Letting Tracker unit id
+// (search_crm units → its unit / spine row), or a unit name on the
+// property, resolved to what POST /api/crm/deals takes (a property_units
+// id or the "__tenancy__<id>" token the deal form sends). Name identity is
+// the tracker's first-comma-segment rule (letting-service unitNameSegment).
+// A letting whose unit exists nowhere yet gets its property_units row —
+// the same "add the unit" the Add Unit form does; other types never add.
+async function resolveChatUnitId(propertyId: string, unitId: string | null, unitName: string | null, addIfMissing: boolean): Promise<string | null> {
+  const { unitNameSegment } = await import("./letting-service");
+  let name = unitName;
+  if (unitId) {
+    if (unitId.startsWith("__tenancy__")) return unitId;
+    const pu = await pool.query(`SELECT id FROM property_units WHERE id = $1 AND property_id = $2`, [unitId, propertyId]);
+    if (pu.rows[0]) return pu.rows[0].id;
+    const au = await pool.query(`SELECT unit_id, tenancy_unit_id, unit_name FROM available_units WHERE id = $1 AND property_id = $2`, [unitId, propertyId]);
+    if (au.rows[0]?.unit_id) return au.rows[0].unit_id;
+    if (au.rows[0]?.tenancy_unit_id) return `__tenancy__${au.rows[0].tenancy_unit_id}`;
+    if (au.rows[0]?.unit_name) name = name || au.rows[0].unit_name;
+  }
+  const seg = unitNameSegment(name);
+  if (!seg) return null;
+  const byName = await pool.query(
+    `SELECT id FROM property_units WHERE property_id = $1 AND lower(trim(split_part(coalesce(unit_name, ''), ',', 1))) = $2 LIMIT 1`, [propertyId, seg]);
+  if (byName.rows[0]) return byName.rows[0].id;
+  const spine = await pool.query(
+    `SELECT id FROM tenancy_schedule_units WHERE property_id = $1
+       AND lower(trim(split_part(coalesce(nullif(trim(unit_number), ''), premises, ''), ',', 1))) = $2 LIMIT 1`, [propertyId, seg]);
+  if (spine.rows[0]) return `__tenancy__${spine.rows[0].id}`;
+  if (!addIfMissing) return null;
+  const ins = await pool.query(`INSERT INTO property_units (property_id, unit_name) VALUES ($1, $2) RETURNING id`, [propertyId, String(name).trim()]);
+  return ins.rows[0]?.id ?? null;
+}
 import { EVIDENCE_PLAN_CHAT_TOOL } from "./evidence-plan-chat";
 
 const CHATBGP_MODEL = "claude-sonnet-4-6";      // Also the main chat default via chatbgp-model-router (Fable / Opus only on /fable, /opus).
@@ -151,7 +237,7 @@ function cleanOfficeText(v: any): string {
 // bytes are sniffed as well as the content-type. Falls through to the
 // original HTML-strip path for everything else.
 async function ingestNonPdfBody(response: globalThis.Response, targetUrl: string, contentType: string): Promise<{ title: string; extractedText: string }> {
-  const rawBuf = Buffer.from(await response.arrayBuffer());
+  const rawBuf = await (await import("./safe-fetch")).readBodyCapped(response);
   const isZip = contentType.includes("zip") || /\.zip($|\?)/i.test(targetUrl) ||
     (rawBuf.length > 4 && rawBuf[0] === 0x50 && rawBuf[1] === 0x4b && rawBuf[2] === 0x03 && rawBuf[3] === 0x04 && !contentType.includes("html"));
   if (isZip) {
@@ -160,8 +246,15 @@ async function ingestNonPdfBody(response: globalThis.Response, targetUrl: string
     const entries = zip.getEntries().filter((e: any) => !e.isDirectory && !e.entryName.startsWith("__MACOSX"));
     let title = decodeURIComponent((targetUrl.split("/").pop() || "").replace(/\?.*$/, "")) || "ZIP archive";
     const parts: string[] = [`ZIP archive — ${entries.length} file(s): ${entries.map((e: any) => e.entryName).join(", ")}`];
+    // Decompression caps: a 1MB zip can inflate to many GB and OOM the app.
+    const PER_ENTRY_CAP = 100 * 1024 * 1024, TOTAL_CAP = 200 * 1024 * 1024;
+    let inflated = 0;
+    const skipped: string[] = [];
     for (const e of entries.slice(0, 5)) {
       const name = e.entryName.toLowerCase();
+      const declaredSize = Number(e.header?.size || 0);
+      if (declaredSize > PER_ENTRY_CAP || inflated + declaredSize > TOTAL_CAP) { skipped.push(e.entryName); continue; }
+      inflated += declaredSize;
       const data = e.getData();
       try {
         if (/\.(xlsx|xls|csv)$/.test(name)) {
@@ -251,6 +344,7 @@ async function ingestNonPdfBody(response: globalThis.Response, targetUrl: string
         parts.push(`--- ${e.entryName} — could not extract: ${entryErr?.message} ---`);
       }
     }
+    if (skipped.length) parts.push(`Skipped ${skipped.length} oversized archive entr${skipped.length === 1 ? "y" : "ies"} (decompression cap): ${skipped.join(", ")}`);
     return { title, extractedText: parts.join("\n\n") };
   }
   const html = rawBuf.toString("utf8");
@@ -390,11 +484,16 @@ function setCache<T>(key: string, data: T, ttlMs: number): void {
 // KQL operators pass through as-is. Unbalanced quotes also 400, so strip
 // them when the count is odd.
 function toGraphSearchQuery(raw: string): string {
-  const q = String(raw || "").trim();
+  // Graph's $search takes ONE outer pair of double quotes with KQL inside;
+  // phrases inside it use escaped quotes (\"...\"). A model-written
+  //   "Stow Capital" OR "65 Brook Street"
+  // used to be passed through as-is, so Graph read only the first quoted
+  // token (or nothing at all) and returned recent unrelated mail.
+  let q = String(raw || "").trim();
+  if (/^"[^"]*"$/.test(q)) q = q.slice(1, -1).trim();
   const quoteCount = (q.match(/"/g) || []).length;
-  const balanced = quoteCount % 2 === 0 ? q : q.replace(/"/g, "");
-  if (balanced.includes('"') || /\b(OR|AND|NOT)\b/.test(balanced)) return balanced;
-  return `"${balanced}"`;
+  if (quoteCount % 2 !== 0) q = q.replace(/"/g, "");
+  return `"${q.replace(/\\?"/g, '\\"')}"`;
 }
 
 // Shared implementation of the search_emails tool, used by two handler sites.
@@ -411,6 +510,21 @@ function toGraphSearchQuery(raw: string): string {
 // only. Enforced here and on the two attachment tools — the app-only Graph
 // token would otherwise let any login read any colleague's mail.
 const SHARED_INBOX = "chatbgp@brucegillinghampollard.com";
+// A users row that has no real BGP mailbox: client logins (role Client, e.g.
+// Landsec) and guest/service addresses. Fanning out to them 404s on Graph.
+function isFanOutMailbox(u: { role?: string | null; email?: string | null; username?: string | null }): string | null {
+  const mb = u.email || u.username;
+  if (!mb || !/@brucegillinghampollard\.com$/i.test(mb)) return null;
+  if (mb.toLowerCase() === SHARED_INBOX || isPrivateMailboxAddress(mb)) return null;
+  if (u.role === "Client") return null;
+  if (/guest|noreply|no-reply|donotreply/i.test(mb.split("@")[0])) return null;
+  return mb;
+}
+// Graph says the mailbox doesn't exist (guest account, deleted user, no
+// Exchange licence). Not an error of the search — just nothing to read there.
+function isMissingMailboxError(err: any): boolean {
+  return /ErrorInvalidUser|ResourceNotFound|MailboxNotEnabledForRESTAPI|Graph API 404/i.test(String(err?.message || err));
+}
 async function mailboxCaller(req: any): Promise<{ isAdmin: boolean; email: string }> {
   const userId = req?.session?.userId || req?.tokenUserId;
   if (!userId) return { isAdmin: false, email: "" };
@@ -424,6 +538,7 @@ async function mailboxCaller(req: any): Promise<{ isAdmin: boolean; email: strin
 }
 export async function mailboxDenied(req: any, mailbox: string | undefined): Promise<string | null> {
   const mb = (mailbox || "").trim().toLowerCase();
+  if (isPrivateMailboxAddress(mb)) return "This mailbox is private and is not available in the app.";
   if (!mb || mb === "me") return null;
   const { isAdmin, email } = await mailboxCaller(req);
   if (isAdmin || mb === SHARED_INBOX || (email && mb === email)) return null;
@@ -471,14 +586,12 @@ export async function runSearchEmailsTool(opts: { query: string; top: number; ma
         mailboxes.push({ email: SHARED_INBOX, owner: "Shared inbox" });
         try {
           const activeUsers = await db
-            .select({ username: users.username, email: users.email, name: users.name })
+            .select({ username: users.username, email: users.email, name: users.name, role: users.role })
             .from(users)
             .where(eq(users.isActive, true));
           for (const u of activeUsers) {
-            const mb = u.email || u.username;
-            if (mb && /@brucegillinghampollard\.com$/i.test(mb) && mb.toLowerCase() !== "chatbgp@brucegillinghampollard.com") {
-              mailboxes.push({ email: mb, owner: u.name || mb });
-            }
+            const mb = isFanOutMailbox(u);
+            if (mb) mailboxes.push({ email: mb, owner: u.name || mb });
           }
         } catch {}
       } else {
@@ -500,12 +613,13 @@ export async function runSearchEmailsTool(opts: { query: string; top: number; ma
             collected.push(mapMsg(msg, mailbox === "all" ? mb.owner : undefined, mb.email));
           }
         } catch (err: any) {
+          if (mailbox === "all" && isMissingMailboxError(err)) continue;
           errors.push(`${mb.email}: ${String(err?.message || err).slice(0, 120)}`);
         }
       }
       collected.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
       const scope = mailbox === "all" ? `${mailboxes.length} mailboxes` : mailbox;
-      if (collected.length === 0 && errors.length > 0) {
+      if (collected.length === 0 && errors.length > 0 && errors.length >= mailboxes.length) {
         return { error: `No results, and all mailboxes errored. First: ${errors[0]}` };
       }
       return { messages: collected.slice(0, top), scope };
@@ -604,14 +718,12 @@ export async function runSearchCalendarTool(opts: {
         mailboxes.push({ email: "chatbgp@brucegillinghampollard.com", owner: "Shared inbox" });
         try {
           const activeUsers = await db
-            .select({ username: users.username, email: users.email, name: users.name })
+            .select({ username: users.username, email: users.email, name: users.name, role: users.role })
             .from(users)
             .where(eq(users.isActive, true));
           for (const u of activeUsers) {
-            const mb = u.email || u.username;
-            if (mb && /@brucegillinghampollard\.com$/i.test(mb) && mb.toLowerCase() !== "chatbgp@brucegillinghampollard.com") {
-              mailboxes.push({ email: mb, owner: u.name || mb });
-            }
+            const mb = isFanOutMailbox(u);
+            if (mb) mailboxes.push({ email: mb, owner: u.name || mb });
           }
         } catch {}
       } else {
@@ -650,12 +762,15 @@ export async function runSearchCalendarTool(opts: {
             collected.push(mapEvent(ev, mailbox === "all" ? mb.owner : undefined, mb.email));
           }
         } catch (err: any) {
+          // One guest/invalid mailbox (Graph 404 ErrorInvalidUser) must not
+          // sink the whole fan-out — skip it and keep the other calendars.
+          if (mailbox === "all" && isMissingMailboxError(err)) continue;
           errors.push(`${mb.email}: ${String(err?.message || err).slice(0, 120)}`);
         }
       }
       collected.sort((a, b) => new Date(b.start || 0).getTime() - new Date(a.start || 0).getTime());
       const scope = mailbox === "all" ? `${mailboxes.length} calendars` : mailbox;
-      if (collected.length === 0 && errors.length > 0) {
+      if (collected.length === 0 && errors.length > 0 && errors.length >= mailboxes.length) {
         return { error: `No results, and all calendars errored. First: ${errors[0]}` };
       }
       return { events: collected.slice(0, top), scope };
@@ -916,7 +1031,7 @@ function convertMessagesForClaude(messages: any[]): { system: string; messages: 
       system += (system ? "\n\n" : "") + (typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content));
     } else if (msg.role === "tool") {
       const last = claudeMessages[claudeMessages.length - 1];
-      const toolResultContent = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
+      const toolResultContent = typeof msg.content === "string" || Array.isArray(msg.content) ? msg.content : JSON.stringify(msg.content);
       const toolResult = { type: "tool_result" as const, tool_use_id: msg.tool_call_id, content: toolResultContent || "No output" };
       if (last && last.role === "user" && Array.isArray(last.content) && last.content.some((c: any) => c.type === "tool_result")) {
         last.content.push(toolResult);
@@ -1034,6 +1149,7 @@ function convertMessagesForClaude(messages: any[]): { system: string; messages: 
 }
 
 export async function callClaude(params: any): Promise<any> {
+  if (params.signal?.aborted) throw Object.assign(new Error("AI request aborted"), { name: "AbortError" });
   if (chatProvider() === "openai") {
     return callOpenAI({ ...params, model: mapModelForOpenAI(params.model || CHATBGP_MODEL), feature: params.feature || callerFeature() });
   }
@@ -1091,8 +1207,8 @@ export async function callClaude(params: any): Promise<any> {
       const client = useKimi ? anthropic : (attempt === 0 ? anthropic : getAnthropicClient(false));
       if (attempt > 0 && !useKimi && !downgraded) claudeParams.model = model;
       response = (!useKimi && usesBetaEndpoint(claudeParams.model))
-        ? await client.beta.messages.create(claudeParams)
-        : await client.messages.create(claudeParams);
+        ? await client.beta.messages.create(claudeParams, { signal: params.signal })
+        : await client.messages.create(claudeParams, { signal: params.signal });
       // Spend metering — exact token usage from the response, priced
       // server-side. Fire-and-forget; never blocks the call.
       try {
@@ -1102,6 +1218,7 @@ export async function callClaude(params: any): Promise<any> {
       break;
     } catch (err: any) {
       lastErr = err;
+      if (params.signal?.aborted) throw err;
       const errStatus = err?.status;
       const errMsg = JSON.stringify(err?.error || err?.body || "").slice(0, 500);
 
@@ -1414,7 +1531,7 @@ You are an active operational agent with full CRM read/write access, internet se
 - **File uploads / reads:** never tell the user a file "didn't save", "isn't persisting", "the upload didn't go through", or blame infrastructure (a DDoS, the hosting provider, storage being down) for a file problem — you cannot observe upload or storage health. If \`read_document\` or any file tool returns an error or "file not found", report exactly that and ask the user to re-attach the file. If you successfully read a file's text, the file IS stored — never claim otherwise.
 - **CRM writes are only real when a tool confirms them.** Never present a "filed / created / linked / ✅ done" summary for a property, company, deal, contact, or tracker entry unless the matching create_*/update_* tool was invoked in THIS turn and returned success. Do NOT infer records exist because you have the source text in context, and do NOT repeat earlier "done" claims you can't verify. If you haven't run the tools yet, say what you're *about* to do — don't report it as already done.
 - When you're unsure whether an action landed, call the relevant search/read tool to verify before reporting — never paper over uncertainty with a confident summary.
-- **In-app directions**: when telling a user where to find something in the dashboard or phone app, use ONLY the paths and controls in "The App — full map" below, and always say which platform you mean (desktop vs phone app). The two shells differ. If the map doesn't list a phone path for a feature, tell the user it's desktop-only — do not guess a menu route. If a user reports a control isn't where you said, believe them, apologise briefly, and log_app_feedback.
+- **In-app directions**: when telling a user where to find something in the dashboard or phone app, first call search_app_guide and use ONLY the paths and controls in its results, and always say which platform you mean (desktop vs phone app). The two shells differ. If the map doesn't list a phone path for a feature, tell the user it's desktop-only — do not guess a menu route. If a user reports a control isn't where you said, believe them, apologise briefly, and log_app_feedback.
 
 ## Key Tool Workflows
 - **CRM**: search_crm (fuzzy matching) → create/update entities. Search broadly with multiple variations before saying something doesn't exist.
@@ -1501,6 +1618,7 @@ Identifying the owner/parcel for a title or address is ALWAYS this free register
 - **Tone**: Confident, warm, professional, with a dry British wit when the moment suits it. British English. Like a senior property partner who actually enjoys their day.
 - **CRM actions**: Brief confirmation. No preamble.
 - **Research**: Match the question's depth. Headings/bullets/tables when genuinely useful; flowing prose when it reads better. Don't over-structure.
+- **Email drafts**: Put any explanation, caveats or commentary BEFORE the draft. Start the reusable draft with a plain \`Subject: ...\` line, followed by a blank line and the complete email body in Markdown. Everything after the Subject line belongs to the email: do not append assistant suggestions, commentary or a closing delimiter. Never put a Markdown table (pipes) in an email draft — pasted into Outlook it arrives as raw pipes (Woody, 2026-10-23); set tabular facts as labelled lines, one \`Label: value\` per line, or short paragraphs. Preserve headings, paragraphs and lists. Do not wrap the draft in a code fence. Deliver the complete draft rather than instructions for the user to reconstruct or reformat it. Drafting is not sending: only send when the user explicitly asks you to send.
 - **Checkbox suggestions**: Only when the user faces a genuine multi-option decision (e.g. picking between records, choosing an action). Never append them as ritual follow-up questions. If the answer is complete, just stop.
 - **Silent execution**: Don't narrate tool calls. Execute all, then give one clean answer.
 - **Proactive cross-referencing**: Connect dots from CRM context. Surface opportunities.
@@ -1527,10 +1645,11 @@ These are starting cues only — if save_learning memories or past chats contrad
 ## Fun facts / shared knowledge
 You have search_knowledge_base and search_chat_history. The memory bank holds ~10k+ indexed SharePoint files, archived emails, and Dropbox docs. Use them. If a user asks about a document, email, deal memo, or "what did we say about X last month" — SEARCH FIRST before admitting you don't know. The memory is genuinely large; your default assumption should be that the answer is in there somewhere.
 
-## You Are Claude — No Limits
-General-purpose AI with property expertise. Writing, analysis, research, strategy, coding, maths, languages, legal summaries — anything Claude can do. NEVER refuse because it's "outside scope."
+## General-purpose assistance
+You are ChatBGP, BGP's general-purpose AI colleague with property expertise. Help with writing, analysis, research, strategy, coding, maths and other work; do not limit an answer to CRM operations. Match the depth to the task and deliver a complete, useful result. Use available tools when evidence or actions are needed; distinguish supplied facts, calculated figures and assumptions. Latest user corrections take precedence over earlier drafts and saved context. Make reasonable routine assumptions and complete authorized work without unnecessary permission questions, while preserving the specific access, sending and paid-action rules above.
 
-${APP_MAP}
+## App navigation reference
+The full desktop and phone app guide is available through search_app_guide. Search it before giving in-app directions; use the returned sectionId/offset to read more when needed. The guide is reference material, not an additional user request.
 
 ## Dashboard Features
 - **Auto-Match**: Sparkles button on requirements/units matches by use/location/size.
@@ -1562,6 +1681,8 @@ When the user asks to log a deal, follow this checklist BEFORE calling create_de
 3. **Resolve company names to CRM company UUIDs.** If the user names a landlord/tenant/vendor/purchaser that isn't already in the CRM, call create_company first with the right companyType (Landlord / Tenant – Brand / Vendor / Purchaser), then pass the new id into create_deal.
 
 4. **Fee allocation is separate.** The "client" on the WIP report is now derived from the counterparty FKs above, NOT from fee allocations — so a deal with no allocation entered will STILL show the right client as long as you set landlordId / tenantId / vendorId / purchaserId correctly at create time.
+
+5. **A letting needs the unit.** For ${LETTING_DEAL_TYPES.join(" / ")} pass unitName (the unit as the user says it — "Unit 12", "Ground Floor") or unitId; the server refuses a letting with no unit (UNIT_REQUIRED) and refuses a second live letting on a unit that already has one (LIVE_LETTING_EXISTS, with the existing Ref #) — then open or update that deal, never create another. search_crm({entityType:'units'}) shows what is already on the Letting Tracker. A unit that exists nowhere yet is added on the property under that name.
 
 ## Frontend Sync Rules
 CRM_OPTIONS (crm-options.ts) and color maps (deals.tsx) MUST stay in sync. Missing color map entry = invisible badge. When adding values: update options list → update color map → then update database.
@@ -2039,9 +2160,9 @@ export async function getCrmContext(): Promise<string> {
           WHERE r.deal_id IS NULL ORDER BY r.created_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
         withTimeout<{ rows: any[] }>(pool.query(`SELECT au.unit_name, au.use_class, au.sqft, au.asking_rent, au.marketing_status, au.location, p.name as property_name 
           FROM available_units au LEFT JOIN crm_properties p ON au.property_id = p.id 
-          WHERE au.marketing_status IN ('Available', 'Under Offer') ORDER BY au.created_at DESC LIMIT 20`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
+          WHERE lower(trim(coalesce(au.marketing_status, ''))) IN (${statusSqlList(TRACKER_LIVE_STATUSES)}) ORDER BY au.created_at DESC LIMIT 20`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
         withTimeout<{ rows: any[] }>(pool.query(`SELECT asset_name as name, status, guide_price, address, asset_type, board_type FROM investment_tracker 
-          WHERE status NOT IN ('Dead', 'Withdrawn') ORDER BY updated_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
+          WHERE lower(trim(coalesce(status, ''))) NOT IN (${statusSqlList(TERMINAL_STATUSES)}) ORDER BY updated_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
         withTimeout<{ rows: any[] }>(pool.query(`SELECT tenant, name, area_location, headline_rent, rent_psf_nia, nia_sqft, use_class, transaction_type, lease_start 
           FROM crm_comps WHERE verified = true ORDER BY created_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
       ]);
@@ -2065,7 +2186,7 @@ export async function getCrmContext(): Promise<string> {
         }
       }
       if (unitRows.rows.length > 0) {
-        unitsCtx = "\n### Available/Under Offer Units\n";
+        unitsCtx = "\n### Letting Tracker — live units (Marketing to Solicitors)\n";
         for (const u of unitRows.rows) {
           unitsCtx += `- ${u.unit_name} at ${u.property_name || "Unknown"} — ${u.use_class || ""}, ${u.sqft ? u.sqft.toLocaleString() + " sqft" : ""}, ${u.asking_rent ? "£" + u.asking_rent + " psf" : ""} [${u.marketing_status}]\n`;
         }
@@ -2091,7 +2212,10 @@ export async function getCrmContext(): Promise<string> {
     ctx += `Total: ${properties.length} properties, ${deals.length} deals, ${companies.length} companies, ${contacts.length} contacts\n`;
 
     if (deals.length > 0) {
-      const activeDeals = deals.filter((d: any) => !["Dead", "Withdrawn", "Leasing Comps", "Investment Comps"].includes(d.status));
+      const activeDeals = deals.filter((d: any) => {
+        const code = legacyToCode(d.status);
+        return !(code && TERMINAL_STATUSES.includes(code)) && !isExcludedLegacyStatus(d.status);
+      });
       const byStage: Record<string, number> = {};
       let totalFees = 0;
       for (const d of activeDeals) {
@@ -2205,6 +2329,9 @@ export const CLIENT_BLOCKED_TOOLS = new Set([
   // House templates are firm-shared state — create/update were open while
   // only delete was blocked, letting a client session rewrite BGP's templates.
   "delete_document_template", "create_document_template", "update_document_template",
+  // The public bgp.uk.com website is firm-shared state — never editable
+  // from a client session.
+  "manage_website_content",
   "run_shell_command", "restart_application", "git_diff", "git_status",
   "grep_codebase", "read_source_file", "edit_source_file", "list_project_files",
   "list_chatbgp_branches", "merge_chatbgp_branch", "revert_chatbgp_commit",
@@ -2214,7 +2341,7 @@ export const CLIENT_BLOCKED_TOOLS = new Set([
   // fees) — same category as query_wip/query_xero. query_turnover reads the
   // whole turnover table unscoped, i.e. any landlord's tenant turnover.
   "query_wip", "query_xero", "get_aged_receivables", "query_turnover",
-  "search_knowledge_base", "save_learning",
+  "search_knowledge_base", "save_learning", "search_app_guide",
   "search_chat_history", "manage_chat_members",
   // Paid HMLR order on BGP's Business Gateway account.
   "order_hmlr_official_copy",
@@ -2232,6 +2359,77 @@ export function filterToolsForClientScope(tools: any[]): any[] {
   return tools.filter(t => isToolAllowedForClient(t?.function?.name));
 }
 
+// Per-record scope for the chat CRM write tools. The name blocklist says which
+// tools a client may CALL; this says which RECORDS those calls may touch.
+// Returns a denial message for a scoped client outside their portfolio/slice,
+// null to proceed. Mutates fnArgs only to strip BGP fee fields.
+export async function chatCrmWriteDenial(req: Request, fnName: string, fnArgs: any): Promise<string | null> {
+  const WRITE_TOOLS = new Set(["update_deal", "create_deal", "update_contact", "update_company", "update_available_unit", "import_leasing_schedule"]);
+  if (!WRITE_TOOLS.has(fnName)) return null;
+  const DENY = "Not available on client accounts — that record is outside your portfolio.";
+  let scope: string | null;
+  try { scope = await resolveCompanyScope(req); }
+  catch { return "Your account scope could not be verified. Please try again."; }
+  if (!scope) return null; // staff
+  const { NO_ACCESS_SCOPE } = await import("./company-scope");
+  // A client whose team maps to no company must not write at all — a
+  // create_deal would otherwise be stamped with the sentinel UUID.
+  if (scope === NO_ACCESS_SCOPE) return "Your account isn't linked to a client company yet — ask your BGP contact to finish the setup.";
+  const { pool } = await import("./db");
+  const inPortfolioDeal = async (dealId: string) => (await pool.query(
+    `SELECT 1 FROM crm_deals d WHERE d.id = $1 AND (d.landlord_id = $2 OR d.property_id IN (
+       SELECT p.id FROM crm_properties p WHERE p.landlord_id = $2 OR p.id IN (
+         SELECT property_id FROM crm_company_properties WHERE company_id = $2)))`, [dealId, scope])).rows.length > 0;
+  const inPortfolioProperty = async (propertyId: string) => (await pool.query(
+    `SELECT 1 FROM crm_properties p WHERE p.id = $1 AND (p.landlord_id = $2 OR p.id IN (
+       SELECT property_id FROM crm_company_properties WHERE company_id = $2))`, [propertyId, scope])).rows.length > 0;
+  if (fnName === "update_deal") {
+    delete fnArgs.fee; delete fnArgs.feePercentage; // clients never see or set BGP fees
+    if (!fnArgs.id || !(await inPortfolioDeal(String(fnArgs.id)))) return DENY;
+    return null;
+  }
+  if (fnName === "create_deal") {
+    delete fnArgs.fee; delete fnArgs.feePercentage;
+    for (const key of ["landlordId", "vendorId", "purchaserId"] as const) {
+      if (fnArgs[key] && String(fnArgs[key]) !== scope) return DENY;
+    }
+    if (!fnArgs.landlordId && !fnArgs.vendorId && !fnArgs.purchaserId) fnArgs.landlordId = scope;
+    if (fnArgs.propertyId && !(await inPortfolioProperty(String(fnArgs.propertyId)))) return DENY;
+    return null;
+  }
+  if (fnName === "update_available_unit") {
+    delete fnArgs.fee; // clients never see or set BGP fees
+    if (!fnArgs.id) return DENY;
+    const row = (await pool.query(`SELECT property_id FROM available_units WHERE id = $1`, [String(fnArgs.id)])).rows[0];
+    if (!row) return "Unit not found.";
+    if (!row.property_id || !(await inPortfolioProperty(String(row.property_id)))) return DENY;
+    return null;
+  }
+  // The workbook names its own properties, so the portfolio check runs per
+  // property inside the import handler; the scope itself is verified above.
+  if (fnName === "import_leasing_schedule") return null;
+  if (fnName === "update_contact") {
+    if (!fnArgs.id) return DENY;
+    const row = (await pool.query(`SELECT company_id FROM crm_contacts WHERE id = $1`, [String(fnArgs.id)])).rows[0];
+    if (!row) return "Contact not found.";
+    if (row.company_id === scope) return null;
+    const { isClientVisibleBrand } = await import("./company-scope");
+    if (row.company_id && await isClientVisibleBrand(row.company_id, scope)) return null;
+    return DENY;
+  }
+  if (fnName === "update_company") {
+    // A client may edit their own company row only, and never the visibility
+    // grant, the PO-required flag or the assigned BGP team — those are
+    // governed by their own flows (same strips as the REST company PUT).
+    if (String(fnArgs.id) !== scope) return DENY;
+    delete fnArgs.crmExtraBrandIds;
+    delete fnArgs.requiresPo;
+    delete fnArgs.bgpContactUserIds;
+    return null;
+  }
+  return null;
+}
+
 export const CLIENT_SYSTEM_PROMPT = `You are ChatBGP, the AI assistant of Bruce Gillingham Pollard (BGP), currently speaking with a CLIENT of BGP — not a BGP staff member.
 
 Strict rules:
@@ -2241,7 +2439,8 @@ Strict rules:
 - **You can drive the app on their behalf, not just answer questions.** You have the same app tooling an agent has for their portfolio: update properties and units, maintain the tenancy/leasing schedule, log viewings and offers, create and update deals, requirements, comps, companies and contacts, run the Property Pathway, generate documents/decks/PDFs/Word/Excel, create and edit images and file them to a building, manage tasks and diary entries, run KYC/covenant checks and look up market data. If a request maps to a tool, DO IT rather than telling them to ask their BGP team.
 - Two things you genuinely cannot do: (a) anything in BGP's own systems — SharePoint/OneDrive filing, BGP mailboxes, BGP diaries; and (b) raw database, bulk/merge/delete or app-administration operations. For those, say plainly that it's a BGP-team action and offer to do the in-app equivalent (e.g. attach the document to the property/unit record instead of a SharePoint folder).
 - Never reveal or infer anything about another client, another landlord's portfolio, BGP's internal fees/WIP or the firm's pipeline. Every tool call you make must concern THIS client's own properties, units, deals and tenants. If a request would require reaching outside their portfolio, decline that part.
-- Be professional and concise. Use UK English and UK date/number formats.`;
+- Be professional and concise. Use UK English and UK date/number formats.
+- For an email draft, put any explanation or commentary BEFORE a plain Subject: line, followed by a blank line and the complete Markdown body. Everything after the Subject line belongs to the email: no trailing assistant suggestions, commentary or closing delimiter. Never use a Markdown table in an email draft — set tabular facts as labelled lines (\`Label: value\`) or short paragraphs; preserve headings and lists; never suggest pasting plain text as a formatting repair. Drafting does not authorize sending.`;
 
 export async function getClientCrmContext(scopeCompanyId: string): Promise<string> {
   const cacheKey = `crmContext:client:${scopeCompanyId}`;
@@ -2272,7 +2471,7 @@ export async function getClientCrmContext(scopeCompanyId: string): Promise<strin
                   (SELECT name FROM crm_companies WHERE id = d.tenant_id) AS tenant_name
            FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
            WHERE (d.property_id = ANY($1) OR d.landlord_id = $2)
-             AND d.status NOT IN ('Dead','Withdrawn')
+             AND lower(trim(coalesce(d.status, ''))) NOT IN (${statusSqlList(TERMINAL_STATUSES)})
            ORDER BY d.updated_at DESC LIMIT 40`,
           [propIds, scopeCompanyId]
         ).catch(() => ({ rows: [] })),
@@ -2348,7 +2547,7 @@ export async function clientScopedCrmSearch(scopeCompanyId: string, rawQuery: st
             (SELECT name FROM crm_companies WHERE id = d.tenant_id) AS "tenantName"
      FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
      WHERE (d.property_id IN (${scopedPropsSql}) OR d.landlord_id = $1)
-       AND d.status NOT IN ('Dead','Withdrawn')
+       AND lower(trim(coalesce(d.status, ''))) NOT IN (${statusSqlList(TERMINAL_STATUSES)})
        AND (${like("d.name", 2)} OR ${like("p.name", 2 + patterns.length)})
      LIMIT 15`,
     [scopeCompanyId, ...patterns, ...patterns]
@@ -2418,7 +2617,21 @@ export async function getAvailableTools(): Promise<{
       fields: JSON.parse(t.fields || "[]"),
     }));
 
-  const tools: any[] = [];
+  const tools: any[] = [{
+    type: "function",
+    function: {
+      name: "search_app_guide",
+      description: "Look up the maintained BGP app guide before giving desktop or phone navigation instructions. Search by feature and platform; omit query to list sections. Read more using a returned sectionId and offset. This is a read-only guide, not live account data.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Feature and platform, e.g. phone add people to chat or desktop business card." },
+          sectionId: { type: "string", description: "Exact section ID returned by a previous search." },
+          offset: { type: "integer", minimum: 0, description: "Character offset or nextOffset returned for that section." },
+        },
+      },
+    },
+  }];
 
   if (modelTemplates.length > 0) {
     const templateDescriptions = modelTemplates.map((t) => {
@@ -2754,19 +2967,21 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "create_deal",
-      description: "Create a new deal in the BGP CRM. Use when the user asks to add a deal, log a transaction, or start tracking a new piece of work.\n\nIMPORTANT — client side picks the right counterparty:\n  • Tenant Rep / Lease Acquisition / Lease Disposal → tenantId is the client.\n  • New Letting → landlordId is the client.\n  • Sale → vendorId is the client. Purchase → purchaserId is the client.\nAlways set whichever of landlordId / tenantId / vendorId / purchaserId is the client BEFORE creating, otherwise the WIP report will show 'Unknown' for client. If the user names a client company that doesn't exist yet in the CRM, call create_company first, then pass the new id here.\n\nIMPORTANT — property linking + disambiguation: if the user gives an address, ALWAYS call search_crm({entityType:'properties'}) first. If it returns more than one property at that address, STOP and ask the user which one — show the candidates with their id, name, status, and any postcode/area. Do not pick the first one yourself. Once the user has picked, pass propertyId here.",
+      description: `Create a new deal in the BGP CRM. Use when the user asks to add a deal, log a transaction, or start tracking a new piece of work.\n\nIMPORTANT — client side picks the right counterparty:\n  • Tenant Rep / Lease Acquisition / Lease Disposal → tenantId is the client.\n  • New Letting → landlordId is the client.\n  • Sale → vendorId is the client. Purchase → purchaserId is the client.\nAlways set whichever of landlordId / tenantId / vendorId / purchaserId is the client BEFORE creating, otherwise the WIP report will show 'Unknown' for client. If the user names a client company that doesn't exist yet in the CRM, call create_company first, then pass the new id here.\n\nIMPORTANT — property linking + disambiguation: if the user gives an address, ALWAYS call search_crm({entityType:'properties'}) first. If it returns more than one property at that address, STOP and ask the user which one — show the candidates with their id, name, status, and any postcode/area. Do not pick the first one yourself. Once the user has picked, pass propertyId here.\n\nIMPORTANT — lettings need a unit: for ${LETTING_DEAL_TYPES.join(" / ")} pass unitName (or unitId) with propertyId. The server refuses a letting with no unit, and refuses a second live letting on a unit that already has one — it answers with the existing Ref #; open or update that deal instead.`,
       parameters: {
         type: "object",
         properties: {
           name: { type: "string", description: "Deal name (usually the property address)" },
           propertyId: { type: "string", description: "CRM property UUID. Set after the user has confirmed which property when multiple share the address." },
+          unitName: { type: "string", description: "The unit on the property, e.g. 'Unit 12', 'Ground Floor'. Required for every letting type; matched to the property's existing unit (tenancy schedule / Letting Tracker) by name, added when none exists." },
+          unitId: { type: "string", description: "Instead of unitName: a property unit id, or a Letting Tracker unit id from search_crm({entityType:'units'})." },
           landlordId: { type: "string", description: "CRM company UUID of the landlord. The client on New Letting deals." },
           tenantId: { type: "string", description: "CRM company UUID of the tenant. The client on Tenant Rep / Lease Acquisition / Lease Disposal deals." },
           vendorId: { type: "string", description: "CRM company UUID of the vendor. The client on Sale deals." },
           purchaserId: { type: "string", description: "CRM company UUID of the purchaser. The client on Purchase deals." },
           team: { type: "array", items: { type: "string" }, description: "Team(s): Shopping Centre, London Estate, High Street, City, Investment, Tenant Rep, Lease Advisory" },
           groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc." },
-          dealType: { type: "string", description: "Type: New Letting, Lease Acquisition, Lease Disposal, Lease Renewal, Rent Review, Sale, Purchase" },
+          dealType: { type: "string", description: `Type: ${DEAL_TYPE_HINT}` },
           status: { type: "string", description: "Status of the deal" },
           pricing: { type: "number", description: "Deal value/price in GBP" },
           fee: { type: "number", description: "BGP fee in GBP" },
@@ -2783,7 +2998,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "update_deal",
-      description: "Update an existing deal in the CRM. Use when the user asks to change a deal's status, price, stage, or any other field.",
+      description: "Update an existing deal in the CRM — name, price, parties, dates, areas and other fields. Deal STATUS changes are not made from chat (approval and AML gates run on the deal page); if asked to change a status, direct the user to the deal page instead of calling this.",
       parameters: {
         type: "object",
         properties: {
@@ -3552,7 +3767,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           condition: { type: "string", description: "e.g. Shell & Core, Cat A, Fitted" },
           location: { type: "string", description: "Region/location: Clapham, East Anglia, Ireland, London, Midlands, N. Ireland, National, North East, North West, Scotland, South East, South West, Wales" },
           availableDate: { type: "string", description: "Month the unit becomes available — month granularity, always the 1st: YYYY-MM-01" },
-          marketingStatus: { type: "string", description: "e.g. Available, Under Offer, Let, Withdrawn" },
+          marketingStatus: { type: "string", description: `Tracker status code: ${TRACKER_STATUS_HINT}. Default AVA. A legacy label such as 'Under Offer' or 'Let' is normalised to its code.` },
           epcRating: { type: "string" },
           notes: { type: "string", description: "Anything else from the brochure worth keeping (joint agent, floor split, planning)." },
           fee: { type: "number", description: "Fee percentage" },
@@ -3701,7 +3916,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           useClass: { type: "string" },
           condition: { type: "string" },
           availableDate: { type: "string" },
-          marketingStatus: { type: "string" },
+          marketingStatus: { type: "string", description: `Tracker status code: ${TRACKER_STATUS_HINT}. A legacy label such as 'Under Offer' or 'Let' is normalised to its code; anything else is refused.` },
           epcRating: { type: "string" },
           notes: { type: "string" },
           fee: { type: "number" },
@@ -4810,6 +5025,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           address: { type: "string", description: "For address-match-uprn: the street address to match. e.g. '10 Lowndes Street'" },
           uprn: { type: "string", description: "For uprn and uprn-title endpoints: the UPRN number to look up." },
           title: { type: "string", description: "For analyse-buildings: a single Land Registry title number. For land-registry-documents: one or MORE title numbers, comma-separated (e.g. 'TGL379483,TGL624521') — each is purchased and its register text extracted in one call (max 4)." },
+          confirmed: { type: "boolean", description: "land-registry-documents only: set true ONLY after the user has confirmed the titles and the per-document fee in this conversation. A call without confirmed:true returns the fee quote and orders nothing." },
           documents: { type: "string", enum: ["register", "plan", "both"], description: "For land-registry-documents: which documents to purchase. 'register' = Title Register, 'plan' = Title Plan, 'both' = both. Default: both." },
           extract_proprietor_data: { type: "boolean", description: "For land-registry-documents: extract proprietor name, address, price paid, and mortgage charges from the register (extra £1+VAT). Default: true." },
           property_type: { type: "string", description: "For commercial endpoints: retail, offices, industrial, restaurants, or pubs. For residential: flat, terraced, semi-detached, detached. For rebuild-cost: detached_house, semi_detached_house, mid_terrace_house, end_terrace_house, flat." },
@@ -4875,7 +5091,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
         properties: {
           team: { type: "string", description: "Filter by team: Shopping Centre, London Estate, High Street, City, Investment, Tenant Rep, Lease Advisory" },
           status: { type: "string", description: "Filter by status/stage e.g. Under Offer, Exchanged, Completed, New Instructions" },
-          dealType: { type: "string", description: "Filter by deal type: Letting, Acquisition, Sale, Lease Renewal, Rent Review" },
+          dealType: { type: "string", description: `Filter by deal type: ${DEAL_TYPE_HINT}` },
           summaryOnly: { type: "boolean", description: "If true, return just totals and counts. If false, return deal details." },
         },
         required: [],
@@ -6636,6 +6852,30 @@ export async function executeCrmToolRaw(
   fnArgs: any,
   req: Request
 ): Promise<{ data: any; action?: any }> {
+  if (fnName === "search_app_guide") {
+    // This maintained guide includes internal HR/finance/admin navigation.
+    // Raw callers must enforce the same boundary as the advertised tool list.
+    if ((await clientChatGuard(req)).isClient) return { data: { error: "The staff app guide is not available on client accounts." } };
+    return { data: searchAppGuide(fnArgs) };
+  }
+  // Single client chokepoint: direct callers (email instructions, WhatsApp
+  // fallback) bypass the chat loops' gates, so the name gate and per-record
+  // write scope are enforced here too — failing CLOSED on any error.
+  try {
+    const { isInternalStaffRequest } = await import("./chatbgp-internal");
+    if (!isInternalStaffRequest(req)) {
+      const { isClientRequestUser } = await import("./company-scope");
+      if (await isClientRequestUser(req)) {
+        if (!isToolAllowedForClient(fnName)) {
+          return { data: { success: false, error: "This capability is not available on client accounts. Your account covers your own portfolio only — contact your BGP team for anything further." } };
+        }
+        const denial = await chatCrmWriteDenial(req, fnName, fnArgs);
+        if (denial) return { data: { success: false, error: denial } };
+      }
+    }
+  } catch {
+    return { data: { success: false, error: "Your account scope could not be verified. Please try again." } };
+  }
   const { db } = await import("./db");
   const { pool } = await import("./db");
 
@@ -6666,7 +6906,14 @@ export async function executeCrmToolRaw(
       return or(...conditions);
     };
     if (entityType === "all" || entityType === "deals") {
-      results.deals = await db.select({ id: crmDeals.id, name: crmDeals.name, groupName: crmDeals.groupName, status: crmDeals.status }).from(crmDeals).where(buildOr([crmDeals.name, crmDeals.comments])).limit(100);
+      // "3892" / "#3892" is a deal Ref # — match deal_ref as well as the text columns.
+      const refMatch = rawQuery.match(/^#?\s*(\d{1,9})$/);
+      const dealConds: any[] = [buildOr([crmDeals.name, crmDeals.comments])];
+      if (refMatch) {
+        const { eq: eqRef } = await import("drizzle-orm");
+        dealConds.push(eqRef(crmDeals.dealRef, Number(refMatch[1])));
+      }
+      results.deals = await db.select({ id: crmDeals.id, dealRef: crmDeals.dealRef, name: crmDeals.name, groupName: crmDeals.groupName, status: crmDeals.status }).from(crmDeals).where(or(...dealConds)).limit(100);
     }
     if (entityType === "all" || entityType === "contacts") {
       results.contacts = await db.select({ id: crmContacts.id, name: crmContacts.name, email: crmContacts.email, role: crmContacts.role }).from(crmContacts).where(buildOr([crmContacts.name, crmContacts.email])).limit(100);
@@ -6854,15 +7101,23 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "update_deal") {
-    const { crmDeals } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
     const { id, ...updates } = fnArgs;
     const cleanUpdates: any = {};
     for (const [k, v] of Object.entries(updates)) {
       if (v !== undefined && v !== null) cleanUpdates[k] = v;
     }
-    await db.update(crmDeals).set(cleanUpdates).where(eq(crmDeals.id, id));
-    try { const { syncTrackerFromDeal } = await import("./investment-deal-sync"); await syncTrackerFromDeal(id, Object.keys(cleanUpdates)); } catch (e: any) { console.warn("[chatbgp] tracker sync failed:", e?.message); }
+    if ("status" in cleanUpdates) {
+      // Deal status moves carry senior-approval, AML and audit obligations the
+      // deal page enforces; chat must not write them raw. (Everything else on
+      // the deal stays editable from chat.)
+      return { data: { success: false, error: "Deal status changes aren't made from chat — use the deal page, where approval and AML checks run. Other fields can still be updated here." } };
+    }
+    if (!id) return { data: { success: false, error: "id is required" } };
+    // PUT /api/crm/deals/:id (crm.ts): client scope, fee stripping, audit and
+    // the investment-tracker sync run there, once — the same path as the
+    // deal page.
+    const r = await callOwnRoute(req, "PUT", `/api/crm/deals/${encodeURIComponent(String(id))}`, cleanUpdates);
+    if (!r.ok) return { data: { success: false, error: routeError(r, "Couldn't update the deal") } };
     return { data: { success: true, action: "updated", entity: "deal", id, fields: Object.keys(cleanUpdates) }, action: { type: "crm_updated", entityType: "deal", id } };
   }
 
@@ -6954,10 +7209,19 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "create_deal") {
-    const { crmDeals } = await import("@shared/schema");
-    const [created] = await db.insert(crmDeals).values({
+    // POST /api/crm/deals (crm.ts): status normalised to a code, client
+    // scope pinned, scheme defaults, rent analysis and the letting rules
+    // run there, once — the same path as the deal form.
+    const chatUnitId = fnArgs.propertyId && (fnArgs.unitId || fnArgs.unitName)
+      ? await resolveChatUnitId(String(fnArgs.propertyId), fnArgs.unitId ? String(fnArgs.unitId) : null, fnArgs.unitName ? String(fnArgs.unitName) : null, isLettingType(fnArgs.dealType))
+      : null;
+    if (isLettingType(fnArgs.dealType) && !chatUnitId) {
+      return { data: { success: false, error: `A letting needs a property and a unit (an actual address) — pass propertyId and unitName${fnArgs.propertyId ? "" : " (search_crm properties first)"}.` } };
+    }
+    const r = await callOwnRoute(req, "POST", "/api/crm/deals", {
       name: fnArgs.name,
       propertyId: fnArgs.propertyId || null,
+      unitId: chatUnitId,
       landlordId: fnArgs.landlordId || null,
       tenantId: fnArgs.tenantId || null,
       vendorId: fnArgs.vendorId || null,
@@ -6971,7 +7235,9 @@ export async function executeCrmToolRaw(
       rentPa: fnArgs.rentPa,
       totalAreaSqft: fnArgs.totalAreaSqft,
       comments: fnArgs.comments,
-    }).returning();
+    });
+    if (!r.ok) return { data: { success: false, error: routeError(r, "Couldn't create the deal") } };
+    const created = r.json;
     return { data: { success: true, action: "created", entity: "deal", id: created.id, name: created.name }, action: { type: "crm_created", entityType: "deal", id: created.id } };
   }
 
@@ -7196,16 +7462,24 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "update_available_unit") {
-    const { availableUnits } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
     const { id, ...updates } = fnArgs;
-    const existing = await db.select({ id: availableUnits.id, unitName: availableUnits.unitName }).from(availableUnits).where(eq(availableUnits.id, id)).limit(1);
-    if (!existing.length) return { data: { success: false, error: `No available unit found with ID "${id}"` } };
     const cleanUpdates: any = {};
     for (const [k, v] of Object.entries(updates)) { if (v !== undefined && v !== null) cleanUpdates[k] = v; }
-    cleanUpdates.updatedAt = new Date();
-    await db.update(availableUnits).set(cleanUpdates).where(eq(availableUnits.id, id));
-    return { data: { success: true, action: "updated", entity: "available unit", id, name: existing[0].unitName, fields: Object.keys(cleanUpdates) }, action: { type: "crm_updated", entityType: "unit", id } };
+    if ("marketingStatus" in cleanUpdates) {
+      // Codes only — chat must not write another legacy label.
+      const code = legacyToCode(cleanUpdates.marketingStatus);
+      if (!code) return { data: { success: false, error: `Unknown marketing status "${cleanUpdates.marketingStatus}" — use one of ${TRACKER_STATUS_HINT}.` } };
+      if (SYSTEM_SET_STATUSES.includes(code)) return { data: { success: false, error: `${DEAL_STATUS_LABELS[code]} (${code}) is set by the system, not from chat — use one of ${TRACKER_STATUS_HINT}.` } };
+      cleanUpdates.marketingStatus = code;
+    }
+    if (!id) return { data: { success: false, error: "id is required" } };
+    // PATCH /api/available-units/:id (routes.ts): client scope, the backing
+    // deal, approval / AML gates, master-unit fields and the status mirror
+    // run there, once — the same path as the tracker's inline edit.
+    const r = await callOwnRoute(req, "PATCH", `/api/available-units/${encodeURIComponent(String(id))}`, cleanUpdates);
+    if (r.status === 404) return { data: { success: false, error: `No available unit found with ID "${id}"` } };
+    if (!r.ok) return { data: { success: false, error: routeError(r, "Couldn't update the unit") } };
+    return { data: { success: true, action: "updated", entity: "available unit", id, name: r.json?.unitName, fields: Object.keys(cleanUpdates), ...(r.json?.mirrorWarning ? { warning: r.json.mirrorWarning } : {}) }, action: { type: "crm_updated", entityType: "unit", id } };
   }
 
   if (fnName === "log_viewing") {
@@ -7432,7 +7706,10 @@ export async function executeCrmToolRaw(
       };
       const mapping = tableMap[linkType];
       if (!mapping) return { data: { success: false, error: `Unknown link type "${linkType}"` } };
-      await pool.query(`INSERT INTO ${mapping.table} (id, ${mapping.col1}, ${mapping.col2}) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM ${mapping.table} WHERE ${mapping.col1} = $2 AND ${mapping.col2} = $3)`, [linkId, sourceId, targetId]);
+      // Each param appears once: the old INSERT ... SELECT $2 ... WHERE col = $2
+      // form made Postgres deduce two types for $2 ("inconsistent types deduced
+      // for parameter $2"). The pair unique indexes come from the boot MIGRATIONS.
+      await pool.query(`INSERT INTO ${mapping.table} (id, ${mapping.col1}, ${mapping.col2}) VALUES ($1, $2, $3) ON CONFLICT (${mapping.col1}, ${mapping.col2}) DO NOTHING`, [linkId, sourceId, targetId]);
       return { data: { success: true, action: "linked", linkType, sourceId, targetId } };
     } catch (err: any) {
       return { data: { success: false, error: err.message } };
@@ -8094,9 +8371,16 @@ export async function executeCrmToolRaw(
       const ext = mimeType.includes("jpeg") || mimeType.includes("jpg") ? "jpg" : "png";
       const uniqueName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
       const imageBuffer = Buffer.from(imagePart.inlineData.data, "base64");
-      const { saveFile } = await import("./file-storage");
+      const { saveFile, recordUserUpload } = await import("./file-storage");
       await saveFile(`chat-media/${uniqueName}`, imageBuffer, mimeType, `ai-generated-${uniqueName}`);
       const imageUrl = `/api/chat-media/${uniqueName}`;
+      // Record against the acting user so the chat-media client gate can
+      // serve a client their own generated image immediately (the URL only
+      // lands in chat_messages.action_data once the reply finishes).
+      {
+        const actingUserId = (req.session as any)?.userId || (req as any).tokenUserId;
+        if (actingUserId) await recordUserUpload(actingUserId, `chat-media/${uniqueName}`, `ai-generated-${uniqueName}`, mimeType, imageBuffer.length, imageUrl).catch(() => {});
+      }
       console.log("[chatbgp] Image saved to", imageUrl, `(${(imageBuffer.length / 1024).toFixed(0)}KB)`);
       return {
         data: { success: true, imageGenerated: true },
@@ -8831,6 +9115,11 @@ export async function executeCrmToolRaw(
     try {
       const t = await pool.query(`SELECT id, created_by FROM chat_threads WHERE id = $1`, [threadId]);
       if (!t.rows[0]) return { data: { error: "Thread not found." } };
+      // Only the thread's owner or a member may list, add or remove people.
+      if (sessionUserId && t.rows[0].created_by !== sessionUserId) {
+        const mine = await pool.query(`SELECT 1 FROM chat_thread_members WHERE thread_id = $1 AND user_id = $2 LIMIT 1`, [threadId, sessionUserId]);
+        if (!mine.rows.length) return { data: { error: "You're not a member of this thread." } };
+      }
       if (action === "list") {
         const m = await pool.query(
           `SELECT u.id, u.name, 'owner' AS kind FROM users u WHERE u.id = $2
@@ -8940,12 +9229,10 @@ export async function executeCrmToolRaw(
       // along automatically — without them a paywalled URL returns the
       // teaser, not the article BGP's subscription entitles it to.
       const { authHeadersForUrl } = await import("./auth-cookies");
-      const response = await fetch(targetUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
-          ...authHeadersForUrl(targetUrl),
-        },
-        redirect: "follow",
+      const { safePublicFetch } = await import("./safe-fetch");
+      const response = await safePublicFetch(targetUrl, {
+        headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36" },
+        headersForUrl: url => authHeadersForUrl(url),
       });
       if (!response.ok) return { data: { error: `Failed to fetch URL: HTTP ${response.status}` } };
       const contentType = response.headers.get("content-type") || "";
@@ -8953,7 +9240,7 @@ export async function executeCrmToolRaw(
       let title = "";
 
       if (contentType.includes("pdf") || targetUrl.toLowerCase().endsWith(".pdf")) {
-        const buffer = await response.arrayBuffer();
+        const buffer = await (await import("./safe-fetch")).readBodyCapped(response);
         const { PDFParse } = await import("pdf-parse");
         const parser = new PDFParse(new Uint8Array(buffer));
         const textResult = await parser.getText();
@@ -9164,6 +9451,17 @@ export async function executeCrmToolRaw(
     // space-separated) + server-side ZIP download and PDF text extraction so
     // the register contents come back readable instead of as a bare link.
     if (endpoint === "land-registry-documents") {
+      const { isInternalStaffRequest } = await import("./chatbgp-internal");
+      const { isClientRequestUser } = await import("./company-scope");
+      if (!isInternalStaffRequest(req) && await isClientRequestUser(req)) {
+        return { data: { error: "Paid Land Registry document purchases are a BGP-team action — ask your BGP contact to order the title pack." } };
+      }
+      if (fnArgs.confirmed !== true) {
+        const pendingTitles = String(fnArgs.title).split(/[,\s]+/).filter(Boolean);
+        return { data: { needsConfirmation: true, orderSubmitted: false, titles: pendingTitles,
+          fee: "£7.50+VAT per document (two documents per title with 'both') plus £1+VAT proprietor extraction",
+          note: "Ask the user to confirm these titles and fees, then call again with confirmed:true. Nothing has been ordered or charged." } };
+      }
       const titles = String(fnArgs.title).split(/[,\s]+/).filter(Boolean);
       const docs = await fetchLandRegistryDocuments(apiKey, titles, (fnArgs.documents as string) || "both", fnArgs.extract_proprietor_data !== false);
       const undelivered = docs.filter((d) => !d.delivered);
@@ -9323,12 +9621,14 @@ export async function executeCrmToolRaw(
       templates: "/templates", settings: "/settings", "land-registry": "/land-registry",
       "voa-rates": "/business-rates", "business-rates": "/business-rates",
       "intelligence-map": "/edozo", "leasing-units": "/available", "leasing-schedule": "/leasing-schedule",
-      "investment-tracker": "/investment-tracker", "wip-report": "/deals/report",
-      "property-map": "/property-map", map: "/property-map",
+      "investment-tracker": "/investment-tracker", "wip-report": "/wip-report",
+      // The map lives as a tab inside Property Intelligence (App.tsx redirects
+      // /map and /map-bgp there; /property-map was never a route).
+      "property-map": "/property-intelligence?tab=map", map: "/property-intelligence?tab=map",
     };
     let path = pageRoutes[fnArgs.page] || "/";
     if ((fnArgs.page === "property-map" || fnArgs.page === "map") && fnArgs.lat && fnArgs.lng) {
-      path += `?lat=${fnArgs.lat}&lng=${fnArgs.lng}` + (fnArgs.zoom ? `&zoom=${fnArgs.zoom}` : "&zoom=17");
+      path += `${path.includes("?") ? "&" : "?"}lat=${fnArgs.lat}&lng=${fnArgs.lng}` + (fnArgs.zoom ? `&zoom=${fnArgs.zoom}` : "&zoom=17");
     }
     return { data: { success: true, navigatedTo: fnArgs.page }, action: { type: "navigate", path } };
   }
@@ -10211,6 +10511,15 @@ export async function executeCrmToolRaw(
       const conditions: string[] = [];
       const params: any[] = [];
       let idx = 1;
+      // Client logins see their own portfolio only — mirror the REST layer's
+      // scoping (server/leasing-schedule.ts). The NO_ACCESS sentinel then
+      // fails closed for unresolvable client teams.
+      const lsScope = await resolveCompanyScope(req).catch(() => null);
+      if (lsScope) {
+        conditions.push(`(p.landlord_id = $${idx} OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $${idx}))`);
+        params.push(lsScope);
+        idx++;
+      }
       if (fnArgs.propertyName) {
         conditions.push(`p.name ILIKE $${idx}`);
         params.push(`%${fnArgs.propertyName}%`);
@@ -10439,6 +10748,13 @@ Be thorough — include every unit row you can classify, across all properties i
         : { rows: [] as Array<{ id: string; username: string }> };
       const user = userRes.rows[0];
 
+      // A client login imports only onto its own portfolio — checked per
+      // property, since the workbook names them (chatCrmWriteDenial has
+      // already verified the scope itself).
+      let importScope: string | null;
+      try { importScope = await resolveCompanyScope(req); }
+      catch { return { data: { error: "Your account scope could not be verified. Please try again." } }; }
+
       const results: any[] = [];
       for (const prop of properties) {
         const propName = String(prop.property_name || "").trim();
@@ -10452,6 +10768,10 @@ Be thorough — include every unit row you can classify, across all properties i
 
         if (!matched) {
           results.push({ property: propName, status: "property_not_found_in_crm", units_parsed: units.length, inserted: 0 });
+          continue;
+        }
+        if (importScope && !(await isPropertyInScope(importScope, matched.id))) {
+          results.push({ property: propName, matched_crm_property: matched.name, status: "outside_your_portfolio", units_parsed: units.length, inserted: 0 });
           continue;
         }
 
@@ -10523,6 +10843,7 @@ Be thorough — include every unit row you can classify, across all properties i
       const totalParsed = results.reduce((s, r) => s + (r.units_parsed || 0), 0);
       const totalInserted = results.reduce((s, r) => s + (r.inserted || 0), 0);
       const notMatched = results.filter(r => r.status === "property_not_found_in_crm").map(r => r.property);
+      const outsidePortfolio = results.filter(r => r.status === "outside_your_portfolio").map(r => r.property);
 
       return {
         data: {
@@ -10533,6 +10854,7 @@ Be thorough — include every unit row you can classify, across all properties i
           total_units_parsed: totalParsed,
           total_units_inserted: mode === "import" ? totalInserted : 0,
           properties_not_found_in_crm: notMatched,
+          properties_outside_portfolio: outsidePortfolio,
           results,
           ai_notes: parsed?.notes || null,
           next_step: mode === "preview"
@@ -11486,8 +11808,12 @@ Be thorough — include every unit row you can classify, across all properties i
 
       const params: any[] = [rawQuery];
       const whereClauses: string[] = [];
-      // Rank against the same tsvector expression as the GIN index
-      const tsExpr = "to_tsvector('english', coalesce(file_name,'') || ' ' || coalesce(summary,'') || ' ' || coalesce(content,'') || ' ' || coalesce(array_to_string(ai_tags, ' '),'') || ' ' || coalesce(category,''))";
+      // MUST be character-for-character the expression of knowledge_base_search_idx
+      // (server/index.ts, built off the boot path). The old version also folded
+      // ai_tags in, which is not the indexed expression, so Postgres seq-scanned
+      // and re-tokenised every row's content on each call — the 30s pool
+      // query_timeout ("Query read timeout") Woody/Ben/Carly kept hitting.
+      const tsExpr = "to_tsvector('english', coalesce(file_name,'') || ' ' || coalesce(summary,'') || ' ' || coalesce(content,'') || ' ' || coalesce(category,''))";
       whereClauses.push(`${tsExpr} @@ websearch_to_tsquery('english', $1)`);
       if (source) { params.push(source); whereClauses.push(`source = $${params.length}`); }
       if (category) { params.push(category); whereClauses.push(`category = $${params.length}`); }
@@ -12729,10 +13055,18 @@ export async function handleCrmToolCall(
     // blocking every mailbox sweep in client-triggered curations.
     const { isClientRequestUser } = await import("./company-scope");
     const { isInternalStaffRequest } = await import("./chatbgp-internal");
-    if (!isInternalStaffRequest(req) && await isClientRequestUser(req) && !CLIENT_SAFE_TOOLS.has(fnName)) {
-      return { handled: true, response: { reply: "That capability isn't available on client accounts — your account covers your own portfolio only. Contact your BGP team for anything further." } };
+    if (!isInternalStaffRequest(req) && await isClientRequestUser(req)) {
+      if (!CLIENT_SAFE_TOOLS.has(fnName)) {
+        return { handled: true, response: { reply: "That capability isn't available on client accounts — your account covers your own portfolio only. Contact your BGP team for anything further." } };
+      }
+      const denial = await chatCrmWriteDenial(req, fnName, fnArgs);
+      if (denial) return { handled: true, response: { reply: denial } };
     }
-  } catch {}
+  } catch {
+    // Fail closed: an error while resolving the caller's scope must not
+    // hand a possibly-client session the staff toolset.
+    return { handled: true, response: { reply: "Your account scope could not be verified. Please try again." } };
+  }
 
   const summaryHelper = async (toolResult: any) => {
     // Summarise this completed result in isolation. Replaying the surrounding
@@ -12749,278 +13083,19 @@ export async function handleCrmToolCall(
     return summaryCompletion.choices[0]?.message?.content;
   };
 
-  if (fnName === "create_deal") {
-    const { crmDeals } = await import("@shared/schema");
-    const [created] = await db.insert(crmDeals).values({
-      name: fnArgs.name,
-      propertyId: fnArgs.propertyId || null,
-      landlordId: fnArgs.landlordId || null,
-      tenantId: fnArgs.tenantId || null,
-      vendorId: fnArgs.vendorId || null,
-      purchaserId: fnArgs.purchaserId || null,
-      team: fnArgs.team || [],
-      groupName: fnArgs.groupName || "New Instructions",
-      dealType: fnArgs.dealType,
-      status: fnArgs.status,
-      pricing: fnArgs.pricing,
-      fee: fnArgs.fee,
-      rentPa: fnArgs.rentPa,
-      totalAreaSqft: fnArgs.totalAreaSqft,
-      comments: fnArgs.comments,
-    }).returning();
-    const reply = await summaryHelper({ success: true, action: "created", entity: "deal", record: { id: created.id, name: created.name } });
-    return { handled: true, response: { reply: reply || `Deal "${created.name}" created.`, action: { type: "crm_created", entityType: "deal", id: created.id, name: created.name } } };
-  }
-
-  if (fnName === "update_deal") {
-    const { crmDeals } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
-    const { id, ...updates } = fnArgs;
-    const cleanUpdates: any = {};
-    for (const [k, v] of Object.entries(updates)) {
-      if (v !== undefined && v !== null) cleanUpdates[k] = v;
-    }
-    await db.update(crmDeals).set(cleanUpdates).where(eq(crmDeals.id, id));
-    try { const { syncTrackerFromDeal } = await import("./investment-deal-sync"); await syncTrackerFromDeal(id, Object.keys(cleanUpdates)); } catch (e: any) { console.warn("[chatbgp] tracker sync failed:", e?.message); }
-    const reply = await summaryHelper({ success: true, action: "updated", entity: "deal", id, fields: Object.keys(cleanUpdates) });
-    return { handled: true, response: { reply: reply || `Deal updated.`, action: { type: "crm_updated", entityType: "deal", id } } };
-  }
-
-  if (fnName === "create_contact") {
-    const { crmContacts } = await import("@shared/schema");
-    const [created] = await db.insert(crmContacts).values({
-      name: fnArgs.name,
-      email: fnArgs.email,
-      phone: fnArgs.phone,
-      role: fnArgs.role,
-      companyName: fnArgs.companyName,
-      contactType: fnArgs.contactType,
-      notes: fnArgs.notes,
-    }).returning();
-    const reply = await summaryHelper({ success: true, action: "created", entity: "contact", record: { id: created.id, name: created.name } });
-    return { handled: true, response: { reply: reply || `Contact "${created.name}" created.`, action: { type: "crm_created", entityType: "contact", id: created.id, name: created.name } } };
-  }
-
-  if (fnName === "update_contact") {
-    const { crmContacts } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
-    const { id, ...updates } = fnArgs;
-    const cleanUpdates: any = {};
-    for (const [k, v] of Object.entries(updates)) {
-      if (v !== undefined && v !== null) cleanUpdates[k] = v;
-    }
-    await db.update(crmContacts).set(cleanUpdates).where(eq(crmContacts.id, id));
-    const reply = await summaryHelper({ success: true, action: "updated", entity: "contact", id, fields: Object.keys(cleanUpdates) });
-    return { handled: true, response: { reply: reply || `Contact updated.`, action: { type: "crm_updated", entityType: "contact", id } } };
-  }
-
-  if (fnName === "create_company") {
-    const { crmCompanies } = await import("@shared/schema");
-    const [created] = await db.insert(crmCompanies).values({
-      name: fnArgs.name,
-      companyType: fnArgs.companyType,
-      description: fnArgs.description,
-      domain: fnArgs.domain,
-      groupName: fnArgs.groupName,
-    }).returning();
-    const reply = await summaryHelper({ success: true, action: "created", entity: "company", record: { id: created.id, name: created.name } });
-    return { handled: true, response: { reply: reply || `Company "${created.name}" created.`, action: { type: "crm_created", entityType: "company", id: created.id, name: created.name } } };
-  }
-
-  if (fnName === "update_company") {
-    const { crmCompanies } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
-    const { id, ...updates } = fnArgs;
-    const cleanUpdates: any = {};
-    for (const [k, v] of Object.entries(updates)) {
-      if (v !== undefined && v !== null) cleanUpdates[k] = v;
-    }
-    await db.update(crmCompanies).set(cleanUpdates).where(eq(crmCompanies.id, id));
-    const reply = await summaryHelper({ success: true, action: "updated", entity: "company", id, fields: Object.keys(cleanUpdates) });
-    return { handled: true, response: { reply: reply || `Company updated.`, action: { type: "crm_updated", entityType: "company", id } } };
-  }
-
-  if (fnName === "update_investment_tracker") {
-    const { updateTrackerAsset, linkTrackerNames } = await import("./investment-tracker-service");
-    const { id, ...updates } = fnArgs;
-    const cleanUpdates: any = {};
-    for (const [k, v] of Object.entries(updates)) {
-      if (v !== undefined && v !== null) cleanUpdates[k] = v;
-    }
-    const out = await updateTrackerAsset(id, await linkTrackerNames(cleanUpdates), { id: (req as any)?.session?.userId || (req as any)?.tokenUserId || null });
-    if (out.status === 404) return { handled: true, response: { reply: `No investment tracker item found with ID "${id}". Please search first to find the correct record.` } };
-    if (out.status !== 200) return { handled: true, response: { reply: out.body?.message || "That update was refused." } };
-    const reply = await summaryHelper({ success: true, action: "updated", entity: "investment tracker item", id, name: out.body.assetName, fields: Object.keys(cleanUpdates), amlStarted: !!out.body.amlStarted, amlWarning: out.body.amlWarning || null });
-    return { handled: true, response: { reply: reply || `Investment tracker item "${out.body.assetName}" updated.`, action: { type: "crm_updated", entityType: "investment", id } } };
-  }
-
-  if (fnName === "search_crm") {
-    const { crmDeals, crmContacts, crmCompanies, crmProperties, investmentTracker, availableUnits } = await import("@shared/schema");
-    const { ilike, or } = await import("drizzle-orm");
-    const rawQuery = (fnArgs.query as string || "").trim();
-    if (rawQuery.length < 2) {
-      return { handled: true, response: { reply: "Please provide a longer search term (at least 2 characters)." } };
-    }
-    const legacySearchScope = req ? await resolveCompanyScope(req).catch(() => null) : null;
-    if (legacySearchScope) {
-      const scoped = await clientScopedCrmSearch(legacySearchScope, rawQuery);
-      const reply = await summaryHelper(scoped);
-      return { handled: true, response: { reply: reply || JSON.stringify(scoped) } };
-    }
-    const entityType = fnArgs.entityType || "all";
-    const results: any = {};
-
-    const words = rawQuery.split(/\s+/).filter(w => w.length >= 2);
-    const exactQ = `%${rawQuery}%`;
-    const wordPatterns = words.map(w => `%${w}%`);
-
-    const buildOr = (cols: any[]) => {
-      const conditions: any[] = [];
-      for (const col of cols) {
-        conditions.push(ilike(col, exactQ));
-        for (const wp of wordPatterns) {
-          conditions.push(ilike(col, wp));
-        }
-      }
-      return or(...conditions);
-    };
-
-    if (entityType === "all" || entityType === "deals") {
-      const deals = await db.select({ id: crmDeals.id, name: crmDeals.name, groupName: crmDeals.groupName, status: crmDeals.status }).from(crmDeals).where(buildOr([crmDeals.name, crmDeals.comments])).limit(100);
-      results.deals = deals;
-    }
-    if (entityType === "all" || entityType === "contacts") {
-      const contacts = await db.select({ id: crmContacts.id, name: crmContacts.name, email: crmContacts.email, role: crmContacts.role }).from(crmContacts).where(buildOr([crmContacts.name, crmContacts.email])).limit(100);
-      results.contacts = contacts;
-    }
-    if (entityType === "all" || entityType === "companies") {
-      const companies = await db.select({ id: crmCompanies.id, name: crmCompanies.name, companyType: crmCompanies.companyType }).from(crmCompanies).where(buildOr([crmCompanies.name])).limit(100);
-      results.companies = companies;
-    }
-    if (entityType === "all" || entityType === "properties") {
-      const { sql: sqlTag } = await import("drizzle-orm");
-      const addressText = sqlTag`${crmProperties.address}::text`;
-      const propConditions: any[] = [];
-      propConditions.push(ilike(crmProperties.name, exactQ));
-      for (const wp of wordPatterns) propConditions.push(ilike(crmProperties.name, wp));
-      propConditions.push(sqlTag`${addressText} ILIKE ${exactQ}`);
-      for (const wp of wordPatterns) propConditions.push(sqlTag`${addressText} ILIKE ${wp}`);
-      const properties = await db.select({ id: crmProperties.id, name: crmProperties.name, status: crmProperties.status, address: crmProperties.address }).from(crmProperties).where(or(...propConditions)).limit(100);
-      results.properties = properties;
-    }
-    if (entityType === "all" || entityType === "investment") {
-      const investments = await db.select({ id: investmentTracker.id, assetName: investmentTracker.assetName, address: investmentTracker.address, status: investmentTracker.status, boardType: investmentTracker.boardType, client: investmentTracker.client }).from(investmentTracker).where(buildOr([investmentTracker.assetName, investmentTracker.address, investmentTracker.client, investmentTracker.vendor])).limit(100);
-      results.investmentTracker = investments;
-    }
-    if (entityType === "all" || entityType === "units") {
-      const units = await db.select({ id: availableUnits.id, unitName: availableUnits.unitName, marketingStatus: availableUnits.marketingStatus, propertyId: availableUnits.propertyId }).from(availableUnits).where(buildOr([availableUnits.unitName])).limit(100);
-      results.availableUnits = units;
-    }
-    if (entityType === "all" || entityType === "requirements") {
-      const { pool } = await import("./db");
-      const reqConds = [exactQ, ...wordPatterns].map((p: string, i: number) => `(company_name ILIKE $${i+1} OR contact_name ILIKE $${i+1} OR location ILIKE $${i+1} OR notes ILIKE $${i+1})`);
-      const reqParams = [exactQ, ...wordPatterns];
-      const reqResult = await pool.query(`SELECT id, category, company_name AS "companyName", contact_name AS "contactName", location, status, priority FROM requirements WHERE ${reqConds.join(" OR ")} LIMIT 100`, reqParams);
-      results.requirements = reqResult.rows;
-    }
-    if (entityType === "all" || entityType === "comps") {
-      const { crmComps } = await import("@shared/schema");
-      results.comps = await db.select({ id: crmComps.id, name: crmComps.name, tenant: crmComps.tenant, landlord: crmComps.landlord, dealType: crmComps.dealType, headlineRent: crmComps.headlineRent, completionDate: crmComps.completionDate }).from(crmComps).where(buildOr([crmComps.name, crmComps.tenant, crmComps.landlord])).limit(100);
-    }
-
-    const totalFound = Object.values(results).reduce((sum: number, arr: any) => sum + (arr?.length || 0), 0);
-    const reply = await summaryHelper({ success: true, query: fnArgs.query, totalFound, results });
-    return { handled: true, response: { reply: reply || `Found ${totalFound} results for "${fnArgs.query}".` } };
-  }
-
-  if (fnName === "create_investment_tracker") {
-    const { createTrackerAsset, linkTrackerNames } = await import("./investment-tracker-service");
-    const fields: any = {};
-    for (const [k, v] of Object.entries(fnArgs || {})) if (v !== undefined && v !== null) fields[k] = v;
-    fields.status = fields.status || "REP";
-    fields.boardType = fields.boardType || "Purchases";
-    const created = await createTrackerAsset(await linkTrackerNames(fields));
-    const reply = await summaryHelper({ success: true, action: "created", entity: "investment tracker item", id: created.id, name: created.assetName, dealId: (created as any).dealId || null });
-    return { handled: true, response: { reply: reply || `Investment tracker item "${created.assetName}" created.`, action: { type: "crm_created", entityType: "investment", id: created.id, name: created.assetName } } };
-  }
-
-
-  if (fnName === "create_available_unit") {
-    try {
-      const { addUnitToLettingTracker } = await import("./letting-tracker-chat");
-      const r = await addUnitToLettingTracker(req, fnArgs as any);
-      const reply = await summaryHelper({ success: true, action: r.alreadyListed ? "updated" : "created", entity: "available unit", record: r });
-      return { handled: true, response: { reply: reply || `Unit "${r.unitName}" ${r.alreadyListed ? "updated on" : "added to"} the Letting Tracker.`, action: { type: r.alreadyListed ? "crm_updated" : "crm_created", entityType: "unit", id: r.unitId, name: r.unitName } } };
-    } catch (e: any) {
-      return { handled: true, response: { reply: `Couldn't add the unit: ${e?.message || e}` } };
-    }
-  }
-
-  if (fnName === "update_available_unit") {
-    const { availableUnits } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
-    const { id, ...updates } = fnArgs;
-    const existing = await db.select({ id: availableUnits.id, unitName: availableUnits.unitName }).from(availableUnits).where(eq(availableUnits.id, id)).limit(1);
-    if (!existing.length) {
-      return { handled: true, response: { reply: `No available unit found with that ID. Please search first.` } };
-    }
-    const cleanUpdates: any = {};
-    for (const [k, v] of Object.entries(updates)) {
-      if (v !== undefined && v !== null) cleanUpdates[k] = v;
-    }
-    cleanUpdates.updatedAt = new Date();
-    await db.update(availableUnits).set(cleanUpdates).where(eq(availableUnits.id, id));
-    const reply = await summaryHelper({ success: true, action: "updated", entity: "available unit", id, name: existing[0].unitName, fields: Object.keys(cleanUpdates) });
-    return { handled: true, response: { reply: reply || `Unit "${existing[0].unitName}" updated.`, action: { type: "crm_updated", entityType: "unit", id } } };
-  }
-
-  if (fnName === "log_viewing") {
-    if (fnArgs.entityType === "investment") {
-      const { investmentViewings } = await import("@shared/schema");
-      const [created] = await db.insert(investmentViewings).values({
-        trackerId: fnArgs.entityId,
-        company: fnArgs.company,
-        contact: fnArgs.contact,
-        viewingDate: fnArgs.viewingDate ? new Date(fnArgs.viewingDate) : new Date(),
-        attendees: fnArgs.attendees,
-        notes: fnArgs.notes,
-        outcome: fnArgs.outcome,
-      }).returning();
-      if (created) { const { linkInvestmentViewings } = await import("./investment-comp-sync"); await linkInvestmentViewings({ viewingIds: [created.id] }).catch(() => null); }
-      const reply = await summaryHelper({ success: true, action: "logged", entity: "investment viewing", company: fnArgs.company, date: fnArgs.viewingDate });
-      return { handled: true, response: { reply: reply || `Viewing logged for ${fnArgs.company || "unknown"} on ${fnArgs.viewingDate}.` } };
-    } else {
-      const result = await executeLeasingActivity("log_viewing", fnArgs, req);
-      const reply = !result.success ? result.error : result.needsDetails
-        ? `Viewing saved in the Letting Tracker. Still needed: ${result.missingDetails.join("; ") || "confirm the viewing details"}.`
-        : `Viewing saved in the Letting Tracker and viewing calendar for ${result.company || "the confirmed brand"} on ${result.date}.`;
-      return { handled: true, response: { reply, ...(result.success ? { action: { type: "crm_updated", entityType: "unit", id: fnArgs.entityId } } : {}) } };
-    }
-  }
-
-  if (fnName === "log_offer") {
-    if (fnArgs.entityType === "investment") {
-      const { investmentOffers } = await import("@shared/schema");
-      const [created] = await db.insert(investmentOffers).values({
-        trackerId: fnArgs.entityId,
-        company: fnArgs.company,
-        contact: fnArgs.contact,
-        offerDate: fnArgs.offerDate ? new Date(fnArgs.offerDate) : new Date(),
-        offerPrice: fnArgs.offerPrice,
-        niy: fnArgs.niy,
-        conditions: fnArgs.conditions,
-        status: fnArgs.status || "Pending",
-        notes: fnArgs.notes,
-      }).returning();
-      const reply = await summaryHelper({ success: true, action: "logged", entity: "investment offer", company: fnArgs.company, price: fnArgs.offerPrice });
-      return { handled: true, response: { reply: reply || `Offer logged from ${fnArgs.company || "unknown"} for £${fnArgs.offerPrice?.toLocaleString() || "TBC"}.` } };
-    } else {
-      const result = await executeLeasingActivity("log_offer", fnArgs, req);
-      const reply = !result.success ? result.error : result.needsDetails
-        ? "Offer saved in the Letting Tracker. Link the offering brand before it can be included in conversion reporting."
-        : `Offer saved in the Letting Tracker for ${result.company || "the confirmed brand"}${result.viewingId ? " and linked to its viewing" : ""}.`;
-      return { handled: true, response: { reply, ...(result.success ? { action: { type: "crm_updated", entityType: "unit", id: fnArgs.entityId } } : {}) } };
-    }
+  // One implementation per CRM write: these run through executeCrmToolRaw
+  // (whose deal / unit writes post to the app's own routes, so the gates,
+  // client scope, mirrors and audit run once). The second copy that lived
+  // here was deleted in the letting cleanup, Phase 1 (2026-10-26).
+  const RAW_EXECUTOR_TOOLS = new Set([
+    "create_deal", "update_deal", "create_contact", "update_contact", "create_company", "update_company",
+    "update_investment_tracker", "search_crm", "create_investment_tracker", "create_available_unit",
+    "update_available_unit", "log_viewing", "log_offer",
+  ]);
+  if (RAW_EXECUTOR_TOOLS.has(fnName)) {
+    const rawResult = await executeCrmToolRaw(fnName, fnArgs, req);
+    const reply = await summaryHelper(rawResult.data);
+    return { handled: true, response: { reply: reply || JSON.stringify(rawResult.data).substring(0, 500), action: rawResult.action } };
   }
 
   if (fnName === "create_property") {
@@ -13182,15 +13257,15 @@ export async function handleCrmToolCall(
       if (linkType === "contact-deal") {
         const check = await pool.query(`SELECT id FROM crm_contacts WHERE id = $1`, [sourceId]);
         if (!check.rows.length) return { handled: true, response: { reply: `Contact with ID "${sourceId}" not found.` } };
-        await pool.query(`INSERT INTO crm_contact_deals (id, contact_id, deal_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_contact_deals WHERE contact_id = $2 AND deal_id = $3)`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_contact_deals (id, contact_id, deal_id) VALUES ($1, $2, $3) ON CONFLICT (contact_id, deal_id) DO NOTHING`, [linkId, sourceId, targetId]);
       } else if (linkType === "contact-property") {
-        await pool.query(`INSERT INTO crm_contact_properties (id, contact_id, property_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_contact_properties WHERE contact_id = $2 AND property_id = $3)`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_contact_properties (id, contact_id, property_id) VALUES ($1, $2, $3) ON CONFLICT (contact_id, property_id) DO NOTHING`, [linkId, sourceId, targetId]);
       } else if (linkType === "contact-requirement") {
-        await pool.query(`INSERT INTO crm_contact_requirements (id, contact_id, requirement_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_contact_requirements WHERE contact_id = $2 AND requirement_id = $3)`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_contact_requirements (id, contact_id, requirement_id) VALUES ($1, $2, $3) ON CONFLICT (contact_id, requirement_id) DO NOTHING`, [linkId, sourceId, targetId]);
       } else if (linkType === "company-property") {
-        await pool.query(`INSERT INTO crm_company_properties (id, company_id, property_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_company_properties WHERE company_id = $2 AND property_id = $3)`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_company_properties (id, company_id, property_id) VALUES ($1, $2, $3) ON CONFLICT (company_id, property_id) DO NOTHING`, [linkId, sourceId, targetId]);
       } else if (linkType === "company-deal") {
-        await pool.query(`INSERT INTO crm_company_deals (id, company_id, deal_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_company_deals WHERE company_id = $2 AND deal_id = $3)`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_company_deals (id, company_id, deal_id) VALUES ($1, $2, $3) ON CONFLICT (company_id, deal_id) DO NOTHING`, [linkId, sourceId, targetId]);
       } else {
         return { handled: true, response: { reply: `Unknown link type "${linkType}".` } };
       }
@@ -13314,12 +13389,10 @@ export async function handleCrmToolCall(
       // along automatically — without them a paywalled URL returns the
       // teaser, not the article BGP's subscription entitles it to.
       const { authHeadersForUrl } = await import("./auth-cookies");
-      const response = await fetch(targetUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
-          ...authHeadersForUrl(targetUrl),
-        },
-        redirect: "follow",
+      const { safePublicFetch } = await import("./safe-fetch");
+      const response = await safePublicFetch(targetUrl, {
+        headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36" },
+        headersForUrl: url => authHeadersForUrl(url),
       });
       if (!response.ok) return { handled: true, response: { reply: `Sorry, I couldn't fetch that URL — got HTTP ${response.status}.` } };
       const contentType = response.headers.get("content-type") || "";
@@ -13327,7 +13400,7 @@ export async function handleCrmToolCall(
       let title = "";
 
       if (contentType.includes("pdf") || targetUrl.toLowerCase().endsWith(".pdf")) {
-        const buffer = await response.arrayBuffer();
+        const buffer = await (await import("./safe-fetch")).readBodyCapped(response);
         const { PDFParse } = await import("pdf-parse");
         const parser = new PDFParse(new Uint8Array(buffer));
         const textResult = await parser.getText();
@@ -13463,6 +13536,15 @@ export async function handleCrmToolCall(
     // Dedicated Land Registry path — multi-title + server-side ZIP/PDF
     // extraction (mirrors the property_data_lookup handler above).
     if (endpoint === "land-registry-documents") {
+      const { isInternalStaffRequest } = await import("./chatbgp-internal");
+      const { isClientRequestUser } = await import("./company-scope");
+      if (!isInternalStaffRequest(req) && await isClientRequestUser(req)) {
+        return { handled: true, response: { reply: "Paid Land Registry document purchases are a BGP-team action — ask your BGP contact to order the title pack." } };
+      }
+      if (fnArgs.confirmed !== true) {
+        const pendingTitles = String(fnArgs.title).split(/[,\s]+/).filter(Boolean);
+        return { handled: true, response: { reply: `Ordering the stamped Land Registry pack for ${pendingTitles.join(", ")} costs £7.50+VAT per document (two per title with 'both') plus £1+VAT proprietor extraction. Confirm and I will place the order — nothing has been charged yet.` } };
+      }
       const titles = String(fnArgs.title).split(/[,\s]+/).filter(Boolean);
       const docs = await fetchLandRegistryDocuments(apiKey, titles, (fnArgs.documents as string) || "both", fnArgs.extract_proprietor_data !== false);
       const replyParts = docs.map((d) => {
@@ -13654,12 +13736,14 @@ export async function handleCrmToolCall(
       templates: "/templates", settings: "/settings", "land-registry": "/land-registry",
       "voa-rates": "/business-rates", "business-rates": "/business-rates",
       "intelligence-map": "/edozo", "leasing-units": "/available", "leasing-schedule": "/leasing-schedule",
-      "investment-tracker": "/investment-tracker", "wip-report": "/deals/report",
-      "property-map": "/property-map", map: "/property-map",
+      "investment-tracker": "/investment-tracker", "wip-report": "/wip-report",
+      // The map lives as a tab inside Property Intelligence (App.tsx redirects
+      // /map and /map-bgp there; /property-map was never a route).
+      "property-map": "/property-intelligence?tab=map", map: "/property-intelligence?tab=map",
     };
     let path = pageRoutes[fnArgs.page] || "/";
     if ((fnArgs.page === "property-map" || fnArgs.page === "map") && fnArgs.lat && fnArgs.lng) {
-      path += `?lat=${fnArgs.lat}&lng=${fnArgs.lng}` + (fnArgs.zoom ? `&zoom=${fnArgs.zoom}` : "&zoom=17");
+      path += `${path.includes("?") ? "&" : "?"}lat=${fnArgs.lat}&lng=${fnArgs.lng}` + (fnArgs.zoom ? `&zoom=${fnArgs.zoom}` : "&zoom=17");
     }
     const reply = fnArgs.message || `Navigating you to ${fnArgs.page}.`;
     return { handled: true, response: { reply, action: { type: "navigate", path } } };
@@ -14132,6 +14216,19 @@ export async function handleCrmToolCall(
   return { handled: false };
 }
 
+async function getChatThreadAccess(req: Request, threadId: unknown) {
+  return resolveAccessibleChatThread(threadId, req.session?.userId || (req as any).tokenUserId, {
+    getThread: id => storage.getChatThread(id),
+    isMember: async (id, userId) => {
+      const result = await pool.query(
+        `SELECT 1 FROM chat_thread_members WHERE thread_id = $1 AND user_id = $2 LIMIT 1`,
+        [id, userId],
+      );
+      return !!result.rows[0];
+    },
+  });
+}
+
 export function setupChatBGPRoutes(app: Express) {
   if (!fs.existsSync(CHAT_UPLOADS_DIR)) {
     fs.mkdirSync(CHAT_UPLOADS_DIR, { recursive: true });
@@ -14144,7 +14241,9 @@ export function setupChatBGPRoutes(app: Express) {
 
   app.get("/api/chatbgp/status", requireAuth, (_req: Request, res: Response) => {
     const provider = chatProvider();
-    res.json({ connected: hasChatKeyConfigured(), provider });
+    const selected = selectChatModel();
+    res.json({ connected: hasChatKeyConfigured(), provider, defaultModel: selected.model,
+      reasoningEffort: chatQualitySettings(selected.model).effort });
   });
 
   app.post("/api/chatbgp/chat-with-files", requireAuth, chatUpload.array("files", 30), async (req: Request, res: Response) => {
@@ -14155,6 +14254,8 @@ export function setupChatBGPRoutes(app: Express) {
     let fcStarted = false;
     let fcClosed = false;
     let fcHeartbeat: ReturnType<typeof setInterval> | null = null;
+    const fcController = new AbortController();
+    let fcDeadlineTimer: ReturnType<typeof setTimeout> | null = null;
     let fcBufferHmlr = false;
     const fcHmlrReceipts: HmlrDeliveryReceipt[] = [];
     const fcProgress = (s: string) => { try { if (fcStarted && !fcClosed) res.write(`data: ${JSON.stringify({ progress: s })}\n\n`); } catch {} };
@@ -14184,13 +14285,16 @@ export function setupChatBGPRoutes(app: Express) {
         return res.status(400).json({ message: "Invalid messages format" });
       }
 
-      if (!messages.length) {
+      if (!Array.isArray(messages) || !messages.length) {
         return res.status(400).json({ message: "No messages provided" });
       }
 
-      // /opus or /sonnet at the start of the last user message — applies
-      // for this single request (no thread persistence here).
-      const fileThreadId = typeof req.body.threadId === "string" ? req.body.threadId : null;
+      // Verify the binding before a slash command can change a saved preference
+      // or the model router reads it. Shared members have the same chat access.
+      const fileAccess = await getChatThreadAccess(req, req.body.threadId);
+      if (!fileAccess.allowed) return res.status(403).json({ message: "Chat thread is not available to this account." });
+      const fileThreadId = fileAccess.threadId;
+      req.body.threadId = fileThreadId || undefined;
       let fileSlashOverride: ModelCommand | null = null;
       {
         const lastIdx = messages.length - 1;
@@ -14217,7 +14321,9 @@ export function setupChatBGPRoutes(app: Express) {
       });
       fcStarted = true;
       fcHeartbeat = setInterval(() => { try { res.write(": heartbeat\n\n"); } catch {} }, 5000);
-      req.on("close", () => { fcClosed = true; if (fcHeartbeat) clearInterval(fcHeartbeat); });
+      // Stop/abort closes the response stream. Cancel the in-flight provider
+      // request and prevent any later tool round from running without a reader.
+      res.on("close", () => { fcClosed = true; fcController.abort(); if (fcHeartbeat) clearInterval(fcHeartbeat); });
       if (files && files.length > 0) fcProgress(`Reading ${files.length} file${files.length === 1 ? "" : "s"}...`);
 
       const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic"];
@@ -14318,7 +14424,7 @@ export function setupChatBGPRoutes(app: Express) {
                 `=== FILE: ${file.originalname} ===\n` +
                 `chat-media filename: ${chatMediaName}\n` +
                 `(If the user asks to save this file to SharePoint, call upload_to_sharepoint with chatMediaFilename="${chatMediaName}" and the destinationFolderPath they specify.)\n\n` +
-                `--- Extracted text ---\n${text.slice(0, 15000)}`
+                `--- Extracted text ---\n${documentExcerpt(text, chatMediaName)}`
               );
             } catch (err: any) {
               console.error(`Chat file extract error (${file.originalname}):`, err?.message);
@@ -14359,10 +14465,9 @@ export function setupChatBGPRoutes(app: Express) {
       }
 
       const fileUserId = req.session.userId || (req as any).tokenUserId || "unknown";
-      // Lean mode: only the cheap personalisation line is still injected; the
-      // knowledge bank / memory / email+calendar / CRM dumps are fetched on
-      // demand via tools, so we skip building them here.
       const personalisation = await withTimeout(getUserPersonalisationContext(fileUserId), 2000, "");
+      const fileMemory = fileIsClient ? "" : await withTimeout(
+        getRelevantStaffMemoryContext(req, messages, { threadId: fileThreadId, scopeCompanyId: fileScopeCompanyId }), 2000, "");
       let systemPrompt: string;
       if (fileIsClient) {
         systemPrompt = CLIENT_SYSTEM_PROMPT
@@ -14376,16 +14481,17 @@ export function setupChatBGPRoutes(app: Express) {
       }
       // Lean context (see main chat handler) — keep only who you're talking to;
       // fetch knowledge / CRM / email on demand via tools rather than force-feeding.
-      const systemContent = systemPrompt + personalisation;
+      const fileHistory = selectChatHistory(messages);
+      const systemContent = systemPrompt + personalisation + fileMemory + (fileHistory.notice ? `\n\n${fileHistory.notice}` : "");
 
       const fileResolved = await resolveChatModel({ threadId: fileThreadId, override: fileSlashOverride });
       const completionOptions: any = {
         model: fileResolved.model,
         messages: [
           { role: "system", content: systemContent },
-          ...messages,
+          ...fileHistory.messages,
         ],
-        max_completion_tokens: 8192,
+        ...chatQualitySettings(fileResolved.model),
       };
 
       if (tools.length > 0) {
@@ -14401,11 +14507,12 @@ export function setupChatBGPRoutes(app: Express) {
       let convMessages: any[] = [...completionOptions.messages];
       let lastActionFile: any = null;
       let loopCountFile = 0;
-      const maxLoopsFile = 15;
-      const fileDeadline = Date.now() + 240000;
+      const maxLoopsFile = 100;
+      const fileDeadline = Date.now() + 10 * 60 * 1000;
+      fcDeadlineTimer = setTimeout(() => fcController.abort(), Math.max(1, fileDeadline - Date.now()));
 
       while (loopCountFile < maxLoopsFile) {
-        if (Date.now() > fileDeadline) {
+        if (fcClosed || fcController.signal.aborted || Date.now() > fileDeadline) {
           console.log(`[ChatBGP] File-chat deadline reached after ${loopCountFile} loops`);
           break;
         }
@@ -14415,9 +14522,9 @@ export function setupChatBGPRoutes(app: Express) {
         const loopOpts: any = {
           model: fileResolved.model,
           messages: convMessages,
-          max_completion_tokens: 8192,
+          ...chatQualitySettings(fileResolved.model),
           thinking: true,
-          effort: "medium", // interactive chat: trims Fable's default deep-think per turn (Woody, 2026-08-28: speed)
+          signal: fcController.signal,
         };
         if (!isLastLoop) {
           loopOpts.tools = tools;
@@ -14431,14 +14538,16 @@ export function setupChatBGPRoutes(app: Express) {
         try {
           if (useStreamingFile) {
             fcProgress("Composing response...");
-            completion = await callClaudeStreaming(loopOpts, (token) => fcDelta(token));
+            completion = await callClaudeStreaming(loopOpts, (token) => fcDelta(token),
+              () => fcClosed || fcController.signal.aborted);
           } else {
             completion = await callClaude(loopOpts);
           }
         } catch (thinkErr: any) {
+          if (fcClosed || fcController.signal.aborted) throw thinkErr;
           // If thinking mode is rejected (e.g. proxy doesn't support it), retry plain
           const isModelErr = thinkErr?.status === 400 || thinkErr?.status === 422;
-          if (isModelErr && loopCountFile === 1) {
+          if (chatProvider() !== "openai" && isModelErr && loopCountFile === 1) {
             console.warn("[ChatBGP file-chat] thinking mode failed, retrying plain:", thinkErr?.message);
             const plainOpts = { ...loopOpts, thinking: false };
             completion = await callClaude(plainOpts);
@@ -14446,6 +14555,7 @@ export function setupChatBGPRoutes(app: Express) {
             throw thinkErr;
           }
         }
+        if (fcClosed || fcController.signal.aborted) break;
         const message = completion.choices[0]?.message;
         if (!message) break;
 
@@ -14458,8 +14568,8 @@ export function setupChatBGPRoutes(app: Express) {
           fcProgress(fcToolNames.length === 1 ? getToolProgressLabel(fcToolNames[0]) : `Running ${fcToolNames.length} operations...`);
 
           for (const tc of message.tool_calls as unknown as ToolCall[]) {
-            if (Date.now() > fileDeadline) {
-              convMessages.push({ role: "tool" as const, tool_call_id: tc.id, content: JSON.stringify({ error: "Ran out of time" }) });
+            if (fcClosed || fcController.signal.aborted || Date.now() > fileDeadline) {
+              convMessages.push({ role: "tool" as const, tool_call_id: tc.id, content: JSON.stringify({ error: fcClosed ? "Stopped by user or connection closed" : "Ran out of time" }) });
               continue;
             }
             const tcName = tc.function.name;
@@ -14471,11 +14581,10 @@ export function setupChatBGPRoutes(app: Express) {
               const toolResult = await executeAnyTool(tcName, tcArgs, req, msTokenFile);
               if (tcName === "order_hmlr_official_copy" && toolResult.data && typeof toolResult.data === "object") fcHmlrReceipts.push(toolResult.data);
               if (toolResult.action) lastActionFile = toolResult.action;
-              const resultStr = typeof toolResult.data === "string" ? toolResult.data : JSON.stringify(toolResult.data);
               convMessages.push({
                 role: "tool" as const,
                 tool_call_id: tc.id,
-                content: resultStr.length > 80000 ? resultStr.slice(0, 80000) + "\n...[truncated — full result was " + resultStr.length + " chars]" : resultStr,
+                content: await buildChatToolResultContent(tcName, toolResult.data),
               });
             } catch (toolErr: any) {
               console.error(`[ChatBGP] Tool ${tcName} error:`, toolErr?.message);
@@ -14498,6 +14607,10 @@ export function setupChatBGPRoutes(app: Express) {
 
       fcSend({ reply: incompleteChatReply("The file-chat run ended before a final answer was completed."), partial: true, ...(lastActionFile ? { action: lastActionFile } : {}) });
     } catch (err: any) {
+      if (fcClosed) return;
+      if (fcController.signal.aborted) {
+        return fcSend({ reply: incompleteChatReply("The file-chat run reached its time limit before a final answer was completed."), partial: true });
+      }
       console.error("ChatBGP file chat error:", err?.status, err?.message || err, err?.error || "");
       const errMsg = String(err?.message || err || "");
       if (errMsg.includes("Could not process image")) {
@@ -14511,6 +14624,7 @@ export function setupChatBGPRoutes(app: Express) {
           });
           const retryOpts: any = {
             model: CHATBGP_HELPER_MODEL,
+            signal: fcController.signal,
             messages: [{ role: "system", content: "You are ChatBGP. The user tried to send an image but it could not be processed. Acknowledge this and help with their text message." }, ...textOnlyMessages],
             max_completion_tokens: 1024,
           };
@@ -14532,6 +14646,9 @@ export function setupChatBGPRoutes(app: Express) {
         files: fileSummary,
       });
     } finally {
+      if (fcDeadlineTimer) clearTimeout(fcDeadlineTimer);
+      if (fcHeartbeat) clearInterval(fcHeartbeat);
+      fcController.abort();
       if (files) {
         for (const file of files) {
           try { fs.unlinkSync(file.path); } catch {}
@@ -14559,10 +14676,16 @@ export function setupChatBGPRoutes(app: Express) {
     try {
       const { isClientRequestUser } = await import("./company-scope");
       const { isInternalStaffRequest } = await import("./chatbgp-internal");
-      if (!isInternalStaffRequest(req) && await isClientRequestUser(req) && !CLIENT_SAFE_TOOLS.has(tcName)) {
-        return { data: { success: false, error: "This capability is not available on client accounts. Your account covers your own portfolio only — contact your BGP team for anything further." } };
+      if (!isInternalStaffRequest(req) && await isClientRequestUser(req)) {
+        if (!CLIENT_SAFE_TOOLS.has(tcName)) {
+          return { data: { success: false, error: "This capability is not available on client accounts. Your account covers your own portfolio only — contact your BGP team for anything further." } };
+        }
+        const denial = await chatCrmWriteDenial(req, tcName, tcArgs);
+        if (denial) return { data: { success: false, error: denial } };
       }
-    } catch {}
+    } catch {
+      return { data: { success: false, error: "Your account scope could not be verified. Please try again." } };
+    }
     // SharePoint tools
     if (tcName === "browse_sharepoint_folder") {
       if (!msToken) return { data: { error: "Microsoft 365 not connected. Please connect via the SharePoint page." } };
@@ -14735,7 +14858,7 @@ export function setupChatBGPRoutes(app: Express) {
         if (!forceNew) {
           const existing = await db.select().from(propertyPathwayRuns).orderBy(desc(propertyPathwayRuns.updatedAt)).limit(200);
           const { findDuplicatePathwayRuns } = await import("./property-pathway");
-          const { exact: match, similar } = findDuplicatePathwayRuns(address, postcode, existing);
+          const { exact: match, similar } = findDuplicatePathwayRuns(address, postcode, existing, { propertyId: tcArgs.propertyId ? String(tcArgs.propertyId) : undefined, titleNumber: confirmedTitleNumber || undefined });
           if (!match && similar.length > 0) {
             return {
               data: {
@@ -15522,6 +15645,11 @@ export function setupChatBGPRoutes(app: Express) {
       return res.status(400).json({ message: "Invalid request" });
     }
 
+    const threadAccess = await getChatThreadAccess(req, result.data.threadId);
+    if (!threadAccess.allowed) return res.status(403).json({ message: "Chat thread is not available to this account." });
+    const verifiedThreadId = threadAccess.threadId;
+    req.body.threadId = verifiedThreadId || undefined;
+
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
@@ -15562,33 +15690,6 @@ export function setupChatBGPRoutes(app: Express) {
       safeSseWrite(`data: ${JSON.stringify({ delta: token })}\n\n`);
     };
 
-    const sseThreadId = result.data.threadId;
-
-    let verifiedThreadId: string | null = null;
-    if (sseThreadId) {
-      try {
-        const thread = await storage.getChatThread(sseThreadId);
-        if (thread && thread.createdBy === req.session.userId) {
-          verifiedThreadId = sseThreadId;
-        } else if (thread) {
-          // Shared thread: members chat in the same thread (that's what
-          // "add <name> to this chat" means), so their assistant replies
-          // must save too — creator-only would silently drop them.
-          const m = await pool.query(
-            `SELECT 1 FROM chat_thread_members WHERE thread_id = $1 AND user_id = $2 LIMIT 1`,
-            [sseThreadId, req.session.userId],
-          );
-          if (m.rows[0]) {
-            verifiedThreadId = sseThreadId;
-          } else {
-            console.warn(`[ChatBGP] threadId ${sseThreadId} not owned by or shared with user ${req.session.userId}`);
-          }
-        } else {
-          console.warn(`[ChatBGP] threadId ${sseThreadId} not found`);
-        }
-      } catch {}
-    }
-
     if (verifiedThreadId) {
       runRef.id = verifiedThreadId;
       activeChatRuns.set(verifiedThreadId, {
@@ -15612,6 +15713,7 @@ export function setupChatBGPRoutes(app: Express) {
       clearInterval(heartbeat);
       if (verifiedThreadId) activeChatRuns.delete(verifiedThreadId);
       let saved = false;
+      let messageId: string | undefined;
       if (verifiedThreadId && data.reply && !data.error) {
         try {
           // Never save the same assistant reply twice in a row — a stale
@@ -15631,12 +15733,13 @@ export function setupChatBGPRoutes(app: Express) {
               return;
             }
           } catch {}
-          await storage.createChatMessage({
+          const savedMessage = await storage.createChatMessage({
             threadId: verifiedThreadId,
             role: "assistant",
             content: data.reply,
             actionData: data.action ? JSON.stringify(data.action) : undefined,
           });
+          messageId = savedMessage.id;
           saved = true;
           console.log(`[ChatBGP] Saved assistant reply to thread ${verifiedThreadId} (${data.reply.length} chars)`);
           if (clientDisconnected) {
@@ -15655,7 +15758,7 @@ export function setupChatBGPRoutes(app: Express) {
           console.error(`[ChatBGP] Failed to save reply to thread:`, saveErr?.message);
         }
       }
-      if (!safeSseWrite(`data: ${JSON.stringify({ ...data, savedToThread: saved })}\n\n`)) return data.reply;
+      if (!safeSseWrite(`data: ${JSON.stringify({ ...data, savedToThread: saved, messageId })}\n\n`)) return data.reply;
       try { res.end(); } catch {}
       return data.reply;
     };
@@ -15744,12 +15847,9 @@ export function setupChatBGPRoutes(app: Express) {
         tools = sseScopeCompanyId ? filterToolsForClientScope(tools) : [];
       }
       const userId = req.session.userId!;
-      // Lean mode: the firm-wide context builders (memory, learnings, CRM
-      // summary, knowledge bank, and a live email/calendar Graph fetch) used to
-      // run on every turn and get force-fed into the prompt. They're no longer
-      // injected — the model pulls any of that on demand via tools — so we skip
-      // building them entirely. Just the current thread's property/deal context
-      // and the cheap "current user" line (below) remain.
+      // Build only this user's and thread's context. A bounded, scope-checked
+      // selection of relevant saved notes is added below; broader CRM,
+      // knowledge and email data remain available through their existing tools.
       let threadContext = "";
       let currentUserContext = "";
       if (isInternalStaffCall) {
@@ -15778,9 +15878,9 @@ export function setupChatBGPRoutes(app: Express) {
             const [propRows, dealRows, unitRows, reqRows] = await Promise.all([
               pool.query(`SELECT p.*, 
                 (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id) as unit_count,
-                (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND au.marketing_status = 'Available') as available_count
+                (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND lower(trim(coalesce(au.marketing_status, ''))) IN (${statusSqlList(["AVA"])})) as available_count
                 FROM crm_properties p WHERE p.id = $1`, [thread.propertyId]),
-              pool.query(`SELECT name, status, deal_type, fee, team FROM crm_deals WHERE property_id = $1 AND status NOT IN ('Dead','Withdrawn') ORDER BY created_at DESC LIMIT 10`, [thread.propertyId]).catch(() => ({ rows: [] })),
+              pool.query(`SELECT name, status, deal_type, fee, team FROM crm_deals WHERE property_id = $1 AND lower(trim(coalesce(status, ''))) NOT IN (${statusSqlList(TERMINAL_STATUSES)}) ORDER BY created_at DESC LIMIT 10`, [thread.propertyId]).catch(() => ({ rows: [] })),
               pool.query(`SELECT unit_name, use_class, sqft, asking_rent, marketing_status FROM available_units WHERE property_id = $1 ORDER BY unit_name LIMIT 15`, [thread.propertyId]).catch(() => ({ rows: [] })),
               pool.query(`SELECT r.name, r.use, r.size, c.name as company_name FROM crm_requirements_leasing r LEFT JOIN crm_companies c ON r.company_id = c.id WHERE r.requirement_locations IS NOT NULL AND EXISTS (SELECT 1 FROM crm_properties p WHERE p.id = $1 AND (r.requirement_locations && ARRAY[p.name])) LIMIT 5`, [thread.propertyId]).catch(() => ({ rows: [] })),
             ]);
@@ -15852,13 +15952,12 @@ export function setupChatBGPRoutes(app: Express) {
         }
       }
       // Split system prompt: static (cacheable) vs dynamic (per-request)
-      // Lean context: only the cheap, targeted bits — who you're talking to and
-      // the current thread's property/deal. The firm-wide dumps (knowledge,
-      // learnings, memory, email/calendar, CRM summary) used to be force-fed on
-      // every turn, bloating the window and diluting focus. The model now fetches
-      // any of those on demand via tools (search_crm, search_knowledge_base, the
-      // email/calendar tools) only when a request actually needs them.
-      const dynamicContext = currentUserContext + threadContext;
+      // Targeted current-user/thread context plus relevant saved notes. Do not
+      // inject firm-wide CRM/email dumps or personal facts into shared audiences.
+      const history = selectChatHistory(result.data.messages);
+      const relevantMemory = chatGuard.isClient || isInternalStaffCall ? "" : await withTimeout(
+        getRelevantStaffMemoryContext(req, result.data.messages, { threadId: verifiedThreadId, scopeCompanyId: sseScopeCompanyId }), 2000, "");
+      const dynamicContext = currentUserContext + threadContext + relevantMemory + (history.notice ? `\n\n${history.notice}` : "");
       const systemContent2 = systemPrompt2 + dynamicContext;
 
       // Build structured system prompt array for Anthropic prompt caching
@@ -15867,13 +15966,9 @@ export function setupChatBGPRoutes(app: Express) {
         { type: "text" as const, text: dynamicContext },
       ];
 
-      const MAX_AI_MESSAGES = 40; // was 80 — history is re-sent on every tool-loop call (cost, 2026-09-29)
-      const trimmedMessages = result.data.messages.length > MAX_AI_MESSAGES
-        ? result.data.messages.slice(-MAX_AI_MESSAGES)
-        : result.data.messages;
       const { readDocumentForAI } = await import("./document-reader");
       const DOC_LINK_IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic"];
-      const processedMessages = await Promise.all(trimmedMessages.map(async (msg: any) => {
+      const processedMessages = await Promise.all(history.messages.map(async (msg: any) => {
         if (msg.role !== "user" || typeof msg.content !== "string") return msg;
 
         // Resolve attached DOCUMENT links — [name](/api/chat-media/foo.xlsx) —
@@ -15896,7 +15991,7 @@ export function setupChatBGPRoutes(app: Express) {
               // The chat-media filename is what every file tool takes —
               // without it the model only knew the original name and
               // read_document came back "File not found" (2026-10-13).
-              docTexts.push(`=== FILE: ${label} ===\nchat-media filename: ${filename}\n${doc.text}${doc.textTruncated ? "\n\n[...truncated]" : ""}`);
+              docTexts.push(`=== FILE: ${label} ===\nchat-media filename: ${filename}\n${doc.text}${doc.textTruncated ? `\n\n${documentTruncationNotice(filename, doc.text.length)}` : ""}`);
             } else {
               docTexts.push(`=== FILE: ${label} ===\n(Could not read this file: ${doc.ok ? "no extractable text found" : doc.error})`);
             }
@@ -15951,14 +16046,17 @@ export function setupChatBGPRoutes(app: Express) {
         return { ...msg, content: contentParts };
       }));
 
+      // Extracted documents/images also count toward the conversation budget.
+      const documentHistory = selectChatHistory(processedMessages);
+      if (documentHistory.notice) systemArray.push({ type: "text", text: documentHistory.notice });
       const resolved = await resolveChatModel({ threadId: verifiedThreadId, override: slashOverride });
       const completionOptions: any = {
         model: resolved.model,
         messages: [
           { role: "system", content: systemContent2 },
-          ...processedMessages,
+          ...documentHistory.messages,
         ],
-        max_completion_tokens: 16384,
+        ...chatQualitySettings(resolved.model),
         systemArray, // structured system prompt for prompt caching
       };
 
@@ -15973,6 +16071,7 @@ export function setupChatBGPRoutes(app: Express) {
       conversationMessages = [...completionOptions.messages];
       let lastAction: any = null;
       let loopCount = 0;
+      let historyRecoveryNotice = "";
       // Soft cap to prevent a genuinely-stuck Claude looping forever
       // (e.g. tool keeps erroring, Claude keeps retrying it). Set
       // high enough that no legitimate multi-step task hits it —
@@ -16001,10 +16100,9 @@ export function setupChatBGPRoutes(app: Express) {
         const loopOpts: any = {
           model: resolved.model,
           messages: conversationMessages,
-          max_completion_tokens: 16384,
-          systemArray, // prompt caching on every call
-          thinking: true, // extended thinking for quality
-          effort: "medium", // interactive chat: trims Fable's default deep-think per turn (Woody, 2026-08-28: speed)
+          ...chatQualitySettings(resolved.model),
+          systemArray: historyRecoveryNotice ? [...systemArray, { type: "text", text: historyRecoveryNotice }] : systemArray,
+          thinking: true, // preserve reasoning between tools through the provider adapter
         };
         if (!isLastLoop) {
           loopOpts.tools = tools;
@@ -16040,8 +16138,11 @@ export function setupChatBGPRoutes(app: Express) {
             const isContextErr = streamErr?.status === 400 && (errStr.includes("too long") || errStr.includes("context_length") || errStr.includes("prompt is too long"));
             if (isContextErr && conversationMessages.length > 4) {
               console.warn("[ChatBGP] Context too long mid-stream — trimming history and retrying");
-              conversationMessages = trimChatHistory(conversationMessages);
+              const recovery = trimChatHistory(conversationMessages);
+              conversationMessages = recovery.messages;
+              historyRecoveryNotice = recovery.notice;
               loopOpts.messages = conversationMessages;
+              loopOpts.systemArray = historyRecoveryNotice ? [...systemArray, { type: "text", text: historyRecoveryNotice }] : systemArray;
               completion = await callClaudeStreaming(loopOpts, (token) => { sendDelta(token); }, isCancelled);
             } else {
               throw streamErr;
@@ -16056,8 +16157,11 @@ export function setupChatBGPRoutes(app: Express) {
             const isContextErr = callErr?.status === 400 && (errStr.includes("too long") || errStr.includes("context_length") || errStr.includes("prompt is too long"));
             if (isContextErr && conversationMessages.length > 4) {
               console.warn("[ChatBGP] Context too long in tool loop — trimming history and retrying");
-              conversationMessages = trimChatHistory(conversationMessages);
+              const recovery = trimChatHistory(conversationMessages);
+              conversationMessages = recovery.messages;
+              historyRecoveryNotice = recovery.notice;
               loopOpts.messages = conversationMessages;
+              loopOpts.systemArray = historyRecoveryNotice ? [...systemArray, { type: "text", text: historyRecoveryNotice }] : systemArray;
               completion = await callClaude(loopOpts);
             } else {
               throw callErr;
@@ -16108,11 +16212,10 @@ export function setupChatBGPRoutes(app: Express) {
               );
               if (tcName === "order_hmlr_official_copy" && toolResult.data && typeof toolResult.data === "object") hmlrReceipts.push(toolResult.data);
               if (toolResult.action) lastAction = toolResult.action;
-              const resultStr = typeof toolResult.data === "string" ? toolResult.data : JSON.stringify(toolResult.data);
               conversationMessages.push({
                 role: "tool" as const,
                 tool_call_id: tc.id,
-                content: resultStr.length > 80000 ? resultStr.slice(0, 80000) + "\n...[truncated — full result was " + resultStr.length + " chars]" : resultStr,
+                content: await buildChatToolResultContent(tcName, toolResult.data),
               });
             } catch (toolErr: any) {
               console.error(`[ChatBGP] Tool ${tcName} error:`, toolErr?.message);
@@ -16232,11 +16335,6 @@ export function setupChatBGPRoutes(app: Express) {
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ message: "messages array required" });
     }
-    if (messages.length > 40) {
-      // Don't hard-reject long sessions (Excel add-in model builds blow past 40).
-      // Keep the opening brief + the most recent turns so the chat keeps flowing.
-      messages = [messages[0], ...messages.slice(-39)];
-    }
     for (const m of messages) {
       if (!m || !["user", "assistant"].includes(m.role)) {
         return res.status(400).json({ message: "Each message must have role (user/assistant)" });
@@ -16257,7 +16355,10 @@ export function setupChatBGPRoutes(app: Express) {
     }
 
     // /opus or /sonnet slash-command interception (excel-chat).
-    const excelThreadId = typeof req.body.threadId === "string" ? req.body.threadId : null;
+    const excelAccess = await getChatThreadAccess(req, req.body.threadId);
+    if (!excelAccess.allowed) return res.status(403).json({ message: "Chat thread is not available to this account." });
+    const excelThreadId = excelAccess.threadId;
+    req.body.threadId = excelThreadId || undefined;
     let excelSlashOverride: ModelCommand | null = null;
     {
       const lastIdx = messages.length - 1;
@@ -16330,7 +16431,7 @@ export function setupChatBGPRoutes(app: Express) {
           } else {
             try {
               const text = await extractTextFromFile(file.path, file.originalname);
-              documentTexts.push(`=== FILE: ${file.originalname} ===\n${text.slice(0, 15000)}`);
+              documentTexts.push(`=== FILE: ${file.originalname} ===\nchat-media filename: ${chatMediaName}\n${documentExcerpt(text, chatMediaName)}`);
             } catch (err: any) {
               console.error(`[ChatBGP Excel] File extract error (${file.originalname}):`, err?.message);
             }
@@ -16439,6 +16540,8 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
             + (workbookName ? `\n**Open workbook:** ${workbookName}\n` : "")
             + (safeExcelContext ? `\n**Snapshot of the open workbook (may be stale mid-task — read ranges before relying on them):**\n${safeExcelContext}\n` : "");
       }
+      const excelHistory = selectChatHistory(messages);
+      if (excelHistory.notice) dynamicContext += `\n\n${excelHistory.notice}`;
       const systemContent = baseSystemPrompt + dynamicContext;
 
       // Load all the tools the main ChatBGP has
@@ -16462,17 +16565,15 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
       let msToken: string | null = null;
       try { msToken = await getValidMsToken(req); } catch {}
 
-      // Run the agentic loop — same pattern as /api/chatbgp/chat-with-files
-      // The Excel pane runs on Fable 5 — the same model as Claude's own Excel
-      // add-in (Woody, 2026-10-02). Elsewhere Opus 5.5 stays the default for
-      // cost; /opus or /sonnet in the pane still switches for that message.
+      // OpenAI honours the thread's saved model on every turn. Keep the older
+      // Excel Fable default only for the legacy providers that originally used it.
       const excelResolved = await resolveChatModel({
         threadId: excelThreadId,
-        override: excelSlashOverride || (host === "excel" ? "fable" : null),
+        override: excelSlashOverride || (chatProvider() !== "openai" && host === "excel" ? "fable" : null),
       });
       let convMessages: any[] = [
         { role: "system", content: systemContent },
-        ...messages.slice(-20),
+        ...excelHistory.messages,
       ];
       let lastAction: any = null;
       let loopCount = 0;
@@ -16498,7 +16599,7 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
               { type: "text" as const, text: dynamicContext },
             ],
             thinking: true,
-            effort: "medium",
+            ...chatQualitySettings(excelResolved.model),
           } : {}),
         };
         if (!isLastLoop && tools.length > 0) {
@@ -16557,11 +16658,10 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
                 { data: { error: "Tool didn't return within 10 minutes — looks hung. The chat has a hard 10-min cap as a safety net." } }
               );
               if (toolResult.action) lastAction = toolResult.action;
-              const resultStr = typeof toolResult.data === "string" ? toolResult.data : JSON.stringify(toolResult.data);
               convMessages.push({
                 role: "tool" as const,
                 tool_call_id: tc.id,
-                content: resultStr.length > 80000 ? resultStr.slice(0, 80000) + "\n...[truncated — full result was " + resultStr.length + " chars]" : resultStr,
+                content: await buildChatToolResultContent(tcName, toolResult.data),
               });
             } catch (toolErr: any) {
               console.error(`[ChatBGP Excel] Tool ${tcName} error:`, toolErr?.message);
@@ -16646,9 +16746,6 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ message: "messages array required" });
     }
-    if (messages.length > 40) {
-      messages = [messages[0], ...messages.slice(-39)];
-    }
     for (const m of messages) {
       if (!m || !["user", "assistant"].includes(m.role)) {
         return res.status(400).json({ message: "Each message must have role (user/assistant)" });
@@ -16663,7 +16760,10 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
     }
 
     // /opus or /sonnet slash-command interception (powerpoint-chat).
-    const pptThreadId = typeof req.body.threadId === "string" ? req.body.threadId : null;
+    const pptAccess = await getChatThreadAccess(req, req.body.threadId);
+    if (!pptAccess.allowed) return res.status(403).json({ message: "Chat thread is not available to this account." });
+    const pptThreadId = pptAccess.threadId;
+    req.body.threadId = pptThreadId || undefined;
     let pptSlashOverride: ModelCommand | null = null;
     {
       const lastIdx = messages.length - 1;
@@ -16733,7 +16833,7 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
           } else {
             try {
               const text = await extractTextFromFile(file.path, file.originalname);
-              documentTexts.push(`=== FILE: ${file.originalname} ===\n${text.slice(0, 15000)}`);
+              documentTexts.push(`=== FILE: ${file.originalname} ===\nchat-media filename: ${chatMediaName}\n${documentExcerpt(text, chatMediaName)}`);
             } catch (err: any) {
               console.error(`[ChatBGP PowerPoint] File extract error (${file.originalname}):`, err?.message);
             }
@@ -16791,7 +16891,8 @@ Don't invent other verbs (\`addSlide\`, \`setLayout\`, \`insertImage\`, \`setFon
 ${safePptContext ? `**Current slide / selection (read live from the open PowerPoint):**\n${safePptContext}\n` : "**Note:** No slide text was provided (the user may not have selected anything). Draft content freely; they'll click into a placeholder before inserting."}
 `;
 
-      const dynamicContext = pptSupplement;
+      const pptHistory = selectChatHistory(messages);
+      const dynamicContext = pptSupplement + (pptHistory.notice ? `\n\n${pptHistory.notice}` : "");
       const systemContent = baseSystemPrompt + dynamicContext;
 
       let { tools } = await getAvailableTools();
@@ -16802,7 +16903,7 @@ ${safePptContext ? `**Current slide / selection (read live from the open PowerPo
       const pptResolved = await resolveChatModel({ threadId: pptThreadId, override: pptSlashOverride });
       let convMessages: any[] = [
         { role: "system", content: systemContent },
-        ...messages.slice(-20),
+        ...pptHistory.messages,
       ];
       let lastAction: any = null;
       let loopCount = 0;
@@ -16819,7 +16920,8 @@ ${safePptContext ? `**Current slide / selection (read live from the open PowerPo
         const loopOpts: any = {
           model: pptResolved.model,
           messages: convMessages,
-          max_completion_tokens: 4096,
+          thinking: true,
+          ...chatQualitySettings(pptResolved.model),
         };
         if (!isLastLoop && tools.length > 0) {
           loopOpts.tools = tools;
@@ -16852,11 +16954,10 @@ ${safePptContext ? `**Current slide / selection (read live from the open PowerPo
                 { data: { error: "Tool didn't return within 10 minutes — looks hung. The chat has a hard 10-min cap as a safety net." } }
               );
               if (toolResult.action) lastAction = toolResult.action;
-              const resultStr = typeof toolResult.data === "string" ? toolResult.data : JSON.stringify(toolResult.data);
               convMessages.push({
                 role: "tool" as const,
                 tool_call_id: tc.id,
-                content: resultStr.length > 80000 ? resultStr.slice(0, 80000) + "\n...[truncated — full result was " + resultStr.length + " chars]" : resultStr,
+                content: await buildChatToolResultContent(tcName, toolResult.data),
               });
             } catch (toolErr: any) {
               console.error(`[ChatBGP PowerPoint] Tool ${tcName} error:`, toolErr?.message);

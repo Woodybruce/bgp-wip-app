@@ -2,6 +2,7 @@ import { aboutText } from "@/lib/about-text";
 import { Kyc4uStatusStrip } from "@/components/kyc4u-panel";
 import { formatSizeList } from "@/lib/format-size";
 import { snippetAddsNothing } from "@shared/news-snippet";
+import { CLOSED_STATUSES, legacyToCode } from "@shared/deal-status";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
 import { CompanyProfileImage, CompanyImageCoverChoice, dedupeGalleryImages, companyStripImages } from "@/components/company-profile-image";
@@ -36,6 +37,15 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
+import { LandlordMeetingsSummary } from "@/components/landlord-meetings-summary";
+import { LandlordEmailSummary } from "@/components/landlord-email-summary";
+import { LandlordRelationshipTeam } from "@/components/landlord-relationship-team";
+import { LandlordInterviewNotes } from "@/components/landlord-interview-notes";
+import { LandlordCovenantSummary } from "@/components/landlord-covenant-summary";
+import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
+import { landlordConfirmedCrmAction, landlordCrmActionQueryKeys } from "@/lib/landlord-chat-actions";
+import { ChatMessageMenu } from "@/components/chat-message-menu";
+import { LandlordChatBubble } from "@/components/landlord-chat-bubble";
 import { MemberAvatar } from "@/components/ClientTeamOrgChart";
 import { BGP_ACCOUNT_ROLES, canonicalBgpRole } from "@shared/bgp-account-roles";
 import { BrandEmailHistory } from "@/components/brand-email-history";
@@ -61,6 +71,7 @@ import { AccountEntitiesPanel } from "@/components/account-entities-panel";
 
 interface BrandProfile {
   identity?: { status: "verified" | "review"; domain: string | null };
+  dismissedDiscoveries?: string[];
   company: {
     id: string;
     name: string;
@@ -695,6 +706,12 @@ export const accountBoardContacts = (ws: NonNullable<ReturnType<typeof useAccoun
   linkedin_url: ct.linkedinUrl,
   interaction_count: ct.interactionCount,
   last_interaction_at: ct.lastInteractionAt,
+  email_count: ct.emailCount,
+  meeting_count: ct.meetingCount,
+  recent_interactions_90d: ct.recentInteractions90d,
+  recent_interactions_30d: ct.recentInteractions30d,
+  last_email_at: ct.lastEmailAt,
+  last_meeting_at: ct.lastMeetingAt,
   via: ct.via,
   employerName: ct.employerName,
   propertyNames: ct.propertyNames,
@@ -958,7 +975,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   const staffForSale = !!meForSale && meForSale.role !== "Client" && !meForSale.companyScopeId;
   const { data: trackerForSale = [] } = useQuery<any[]>({ queryKey: ["/api/investment-tracker"], enabled: staffForSale, staleTime: 10 * 60_000 });
   const forSaleIds = useMemo(() => new Set((Array.isArray(trackerForSale) ? trackerForSale : [])
-    .filter((t: any) => t.boardType === "Sales" && !["COM", "INV", "WIT"].includes(String(t.status || "").toUpperCase()))
+    .filter((t: any) => { const c = legacyToCode(t.status); return t.boardType === "Sales" && !(c && CLOSED_STATUSES.includes(c)); })
     .map((t: any) => t.propertyId)), [trackerForSale]);
   const [backersOpen, setBackersOpen] = useState(false);
   useEffect(() => { setEditing(false); setEmailsOpen(false); setAboutOpen(false); setBackersOpen(false); }, [companyId]);
@@ -1514,7 +1531,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   );
   const topInfo = (
     <>
-            <BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} suggestedDomain={c.ai_generated_fields?.website_suggestion?.domain} />
+            <BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} suggestedDomain={c.ai_generated_fields?.website_suggestion?.domain} landlordLinks={isLandlord ? { linkedinUrl: c.linkedin_url, instagramHandle: c.instagram_handle } : undefined} />
             {/* ── Details card ─────────────────────────────── */}
             {(() => {
               const a: any = c.head_office_address;
@@ -1568,16 +1585,16 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               );
             })()}
             <div className="flex items-center gap-2 flex-wrap" data-testid="brand-overview-actions">
-              {c.linkedin_url && <Button variant="outline" size="sm" asChild><a href={c.linkedin_url} target="_blank" rel="noreferrer" data-testid="link-linkedin"><Linkedin />LinkedIn</a></Button>}
-              {c.phone && <Button variant="outline" size="sm" asChild><a href={`tel:${c.phone}`} data-testid="link-phone"><Phone />Call</a></Button>}
-              {data.contacts.find(contact => contact.email) && <Button variant="outline" size="sm" asChild><a href={`mailto:${data.contacts.find(contact => contact.email)?.email}`}><Mail />Email</a></Button>}
-              {!isClientViewer && <>
+              {!isLandlord && c.linkedin_url && <Button variant="outline" size="sm" asChild><a href={c.linkedin_url} target="_blank" rel="noreferrer" data-testid="link-linkedin"><Linkedin />LinkedIn</a></Button>}
+              {!isLandlord && c.phone && <Button variant="outline" size="sm" asChild><a href={`tel:${c.phone}`} data-testid="link-phone"><Phone />Call</a></Button>}
+              {!isLandlord && data.contacts.find(contact => contact.email) && <Button variant="outline" size="sm" asChild><a href={`mailto:${data.contacts.find(contact => contact.email)?.email}`}><Mail />Email</a></Button>}
+              {!isClientViewer && !isLandlord && <>
                 <Button variant="outline" size="sm" onClick={runContactDiscovery} disabled={contactsFinding} data-testid="button-refresh-contacts"><RefreshCw className={contactsFinding ? "animate-spin" : ""} />{contactsFinding ? "Finding…" : "Refresh contacts"}</Button>
                 <Button variant="outline" size="sm" onClick={() => setAddContactOpen(true)} data-testid="button-add-contact-brand"><Plus />Add contact</Button>
                 <ContactFormDialog open={addContactOpen} onOpenChange={setAddContactOpen} defaultCompanyId={c.id} />
                 <CompanyInvoicingControls companyId={c.id} contactEmails={data.contacts.map(contact => contact.email)} />
               </>}
-              {currentUser?.role !== "Client" && <>
+              {currentUser?.role !== "Client" && !isLandlord && <>
                 <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)}><Plus />Add to deal</Button>
                 {!isLandlord && !isAgentFirm && !isLender && <Button variant="outline" size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}><Building2 />Pitch property</Button>}
               </>}
@@ -1589,10 +1606,57 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             // brand's shared thread, not a second answer panel stacked on top
             // of it (Woody, 2026-09-26).
             <div className="h-96 md:h-auto md:min-h-[24rem] md:flex-1 md:min-w-0" data-testid="brand-conversation">
-              <CompanyMiniChat companyId={companyId} companyName={c.name} fill title={isLender ? "Lender conversation" : isLandlord ? "Landlord conversation" : isAgentFirm ? "Agent conversation" : "Brand conversation"} starters={askTopics(c.name, isLandlord, isAgentFirm, isLender)} />
+              <CompanyMiniChat companyId={companyId} companyName={c.name} key={isLandlord ? companyId : undefined} landlord={isLandlord && !isBrand && !isLender} fill title={isLender ? "Lender conversation" : isLandlord ? "Landlord conversation" : isAgentFirm ? "Agent conversation" : "Brand conversation"} starters={askTopics(c.name, isLandlord, isAgentFirm, isLender)} />
             </div>
   );
   const aboutLen = aboutText(c.description).length;
+  const relationshipSummary = (
+            <div className={`space-y-2 ${!(isLandlord && flat && !isLender) && (aboutLen > 0 || c.backers || c.tiktok_handle || c.dept_store_presence || c.franchise_activity || c.stock_ticker || (c.instagram_handle && !isLandlord) || (isBrand && !isClientViewer)) ? "pt-2 border-t border-border" : ""}`} data-testid="brand-relationship-summary">
+            {/* Coverage sits in the header row; when nobody is set by hand the
+                server falls back to the BGP agents on this brand's deals. */}
+            <div className="space-y-1.5 [container-type:inline-size]">
+              <div className="flex items-center gap-2">
+                <Handshake className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-[11px] font-medium text-muted-foreground mr-1">BGP team</span>
+                {!isClientViewer && <BgpTeamMenu companyId={companyId} coverers={data.coverers || []} />}
+              </div>
+              {(data.coverers || []).length > 0 && (
+                <div className="grid gap-1.5 [@container(min-width:420px)]:grid-cols-2">
+                  {(data.coverers || []).map((cov: any) => (
+                    <CovererChip key={cov.id} cov={cov} companyId={companyId} />
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* One line: lead broker, last touch and email volume — from CRM
+                contacts AND the BGP inbox threads with the brand's people
+                (Honest Greens read "Last touch —" beside 49 inbox threads). */}
+            {(() => {
+              // Staff get the brand's whole email history (relationshipStats);
+              // clients fall back to their visible contacts' last touch.
+              const stats = data.relationshipStats;
+              const touches = [...data.contacts.map((ct: any) => ct.last_interaction_at), stats?.last_touch].filter(Boolean) as string[];
+              const last = touches.sort().reverse()[0];
+              const daysSince = last ? Math.floor((Date.now() - new Date(last).getTime()) / 864e5) : null;
+              const threads = stats?.threads || 0;
+              const active90 = stats ? stats.people_90d : data.contacts.filter((ct: any) => ct.last_interaction_at && Date.now() - new Date(ct.last_interaction_at).getTime() < 90 * 864e5).length;
+              const parts = [
+                c.bgp_contact_crm ? <span key="lead">Lead <span className="font-medium text-foreground">{c.bgp_contact_crm}</span></span> : null,
+                // No touch on record = no "Last touch —" (Woody, 2026-09-28).
+                daysSince == null ? null : <span key="touch">Last touch <span className={`font-medium ${daysSince < 30 ? "text-emerald-700" : daysSince < 90 ? "text-amber-600" : "text-red-600"}`}>{daysSince === 0 ? "today" : daysSince === 1 ? "yesterday" : `${daysSince} days ago`}</span></span>,
+                threads ? (stats
+                  ? <button key="threads" type="button" onClick={() => setEmailsOpen(true)} className="hover:text-foreground underline decoration-dotted underline-offset-2" data-testid="button-brand-emails"><span className="font-mono tabular-nums text-foreground">{threads.toLocaleString("en-GB")}</span> email thread{threads === 1 ? "" : "s"}</button>
+                  : <span key="threads"><span className="font-mono tabular-nums text-foreground">{threads.toLocaleString("en-GB")}</span> email thread{threads === 1 ? "" : "s"}</span>) : null,
+                active90 ? <span key="active"><span className="font-mono tabular-nums text-foreground">{active90}</span> {active90 === 1 ? "person" : "people"} active in 90 days</span> : null,
+              ].filter(Boolean);
+              return <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground empty:hidden" data-testid="brand-relationship-line">{parts}
+                {stats && <BrandEmailHistory companyId={companyId} companyName={c.name} open={emailsOpen} onOpenChange={setEmailsOpen} entities={commentaryEntities} />}
+              </div>;
+            })()}
+
+            <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} liveTenancies={liveLocations} pillsOnly={isLandlord || isAgentFirm} />
+            </div>
+  );
   // About's content on its own, so the company page can put it inside the
   // one profile card (header, website, details, actions, About) — elsewhere
   // it keeps its own card.
@@ -1780,55 +1844,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 </div>
               ) : null}
             </div>
-            {/* BGP team, last touch and portfolio activity sit with About
-                (Woody, 2026-09-24: "include this circled info in the about"). */}
-            {/* Its own rule only under About content — with no About the
-                profile card's rule sat right above this one (a double line). */}
-            <div className={`space-y-2 ${aboutLen > 0 || c.backers || c.tiktok_handle || c.dept_store_presence || c.franchise_activity || c.stock_ticker || (c.instagram_handle && !isLandlord) || (isBrand && !isClientViewer) ? "pt-2 border-t border-border" : ""}`} data-testid="brand-relationship-summary">
-            {/* Coverage sits in the header row; when nobody is set by hand the
-                server falls back to the BGP agents on this brand's deals. */}
-            <div className="space-y-1.5 [container-type:inline-size]">
-              <div className="flex items-center gap-2">
-                <Handshake className="w-3.5 h-3.5 text-muted-foreground" />
-                <span className="text-[11px] font-medium text-muted-foreground mr-1">BGP team</span>
-                {!isClientViewer && <BgpTeamMenu companyId={companyId} coverers={data.coverers || []} />}
-              </div>
-              {(data.coverers || []).length > 0 && (
-                <div className="grid gap-1.5 [@container(min-width:420px)]:grid-cols-2">
-                  {(data.coverers || []).map((cov: any) => (
-                    <CovererChip key={cov.id} cov={cov} companyId={companyId} />
-                  ))}
-                </div>
-              )}
-            </div>
-            {/* One line: lead broker, last touch and email volume — from CRM
-                contacts AND the BGP inbox threads with the brand's people
-                (Honest Greens read "Last touch —" beside 49 inbox threads). */}
-            {(() => {
-              // Staff get the brand's whole email history (relationshipStats);
-              // clients fall back to their visible contacts' last touch.
-              const stats = data.relationshipStats;
-              const touches = [...data.contacts.map((ct: any) => ct.last_interaction_at), stats?.last_touch].filter(Boolean) as string[];
-              const last = touches.sort().reverse()[0];
-              const daysSince = last ? Math.floor((Date.now() - new Date(last).getTime()) / 864e5) : null;
-              const threads = stats?.threads || 0;
-              const active90 = stats ? stats.people_90d : data.contacts.filter((ct: any) => ct.last_interaction_at && Date.now() - new Date(ct.last_interaction_at).getTime() < 90 * 864e5).length;
-              const parts = [
-                c.bgp_contact_crm ? <span key="lead">Lead <span className="font-medium text-foreground">{c.bgp_contact_crm}</span></span> : null,
-                // No touch on record = no "Last touch —" (Woody, 2026-09-28).
-                daysSince == null ? null : <span key="touch">Last touch <span className={`font-medium ${daysSince < 30 ? "text-emerald-700" : daysSince < 90 ? "text-amber-600" : "text-red-600"}`}>{daysSince === 0 ? "today" : daysSince === 1 ? "yesterday" : `${daysSince} days ago`}</span></span>,
-                threads ? (stats
-                  ? <button key="threads" type="button" onClick={() => setEmailsOpen(true)} className="hover:text-foreground underline decoration-dotted underline-offset-2" data-testid="button-brand-emails"><span className="font-mono tabular-nums text-foreground">{threads.toLocaleString("en-GB")}</span> email thread{threads === 1 ? "" : "s"}</button>
-                  : <span key="threads"><span className="font-mono tabular-nums text-foreground">{threads.toLocaleString("en-GB")}</span> email thread{threads === 1 ? "" : "s"}</span>) : null,
-                active90 ? <span key="active"><span className="font-mono tabular-nums text-foreground">{active90}</span> {active90 === 1 ? "person" : "people"} active in 90 days</span> : null,
-              ].filter(Boolean);
-              return <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground empty:hidden" data-testid="brand-relationship-line">{parts}
-                {stats && <BrandEmailHistory companyId={companyId} companyName={c.name} open={emailsOpen} onOpenChange={setEmailsOpen} entities={commentaryEntities} />}
-              </div>;
-            })()}
+            {!(isLandlord && flat && !isLender) && relationshipSummary}
 
-            <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} liveTenancies={liveLocations} pillsOnly={isLandlord || isAgentFirm} />
-            </div>
             </div>
   );
   // Who an agent represents (+ the add-representation picker, which the
@@ -1997,10 +2014,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 </button>
                 )}
               </div>
+              {isLandlord && <p className="text-xs text-muted-foreground mb-3 leading-relaxed">Changes from news and saved research that may be useful for the relationship. Check the source for context.</p>}
               {addSignalOpen && (
                 <div className="mb-2 p-2 rounded-md border border-dashed border-border bg-muted/30 space-y-1.5">
                   <Input
-                    placeholder="Headline (e.g. H&M opening Oxford Street flagship)"
+                    placeholder={isLandlord ? "Headline (e.g. new acquisition or leasing announcement)" : "Headline (e.g. H&M opening Oxford Street flagship)"}
                     value={newSignal.headline}
                     onChange={e => setNewSignal(v => ({ ...v, headline: e.target.value }))}
                     className="h-7 text-xs"
@@ -2088,7 +2106,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                           ) : (
                             <p className="font-medium line-clamp-2 break-words" title={s.headline}>{sentenceCaseShouting(s.headline)}</p>
                           )}
-                          {s.signal_date && <span className="text-[11px] text-muted-foreground">{ukDate(s.signal_date)}</span>}
+                          {isLandlord ? <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-2">
+                            <span>{s.signal_date ? ukDate(s.signal_date) : s.created_at ? `Logged ${ukDate(s.created_at)}` : "Date not recorded"}</span>
+                            {s.source?.startsWith("http") ? <a href={s.source} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">Source</a> : <span>{s.source || "Source not recorded"}</span>}
+                          </div> : s.signal_date && <span className="text-[11px] text-muted-foreground">{ukDate(s.signal_date)}</span>}
                         </div>
                         {!isClientViewer && (
                         <button
@@ -2161,13 +2182,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               <Label className="text-xs">Backers / investors</Label>
               <Input value={(form.backers as string) || ""} onChange={(e) => setForm({ ...form, backers: e.target.value })} placeholder="e.g. Sequoia, Index Ventures" />
             </div>
-            <div className={`grid gap-2 ${isLandlord ? "grid-cols-1" : "grid-cols-2"}`}>
-              {!isLandlord && (
+            <div className="grid gap-2 grid-cols-2">
                 <div>
                   <Label className="text-xs">Instagram handle</Label>
                   <Input value={(form.instagram_handle as string) || ""} onChange={(e) => setForm({ ...form, instagram_handle: e.target.value })} placeholder="@brandname" />
                 </div>
-              )}
               <div>
                 <Label className="text-xs">TikTok handle</Label>
                 <Input value={(form.tiktok_handle as string) || ""} onChange={(e) => setForm({ ...form, tiktok_handle: e.target.value })} placeholder="@brandname" />
@@ -2237,7 +2256,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // Profile card beside the conversation — the top row of the landlord and
   // agent layouts.
   const profileTopRow = (
-        <div className="[@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4">
+        <div className={`${isLandlord && !isLender ? "flex flex-col-reverse gap-3 " : ""}[@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4`}>
           <div className="min-w-0">
             <div className="rounded-xl border border-card-border bg-card shadow-sm px-3 pb-3" data-testid="brand-profile-card">
               {header}
@@ -2252,54 +2271,58 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               </>}
             </div>
           </div>
-          {conversationSlot || <div className="pt-3">{conversationBoard}</div>}
+          {conversationSlot || <div className={isLandlord && !isLender ? "min-w-0" : "pt-3"}>{conversationBoard}</div>}
         </div>
   );
 
-  // Landlord page — its own layout, split from the brand page (Woody,
-  // 2026-09-26: "they should be completely split"; portfolio first, the
-  // data check open to everyone). Account summary beside the conversation,
-  // then Portfolio (properties + data check), Deals & instructions, and the
-  // account boards balanced in two columns; Gallery last. Group entities
-  // sit with Compliance & KYC instead of heading the page.
+  // Landlord page — profile beside the conversation at the top, followed
+  // by the combined meeting/relationship/team brief and source-linked
+  // interview notes. This ordering is independent of the Brand layout.
   if (isLandlord && flat && !isLender) {
     const masonryCls = "space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense";
     return (
       <div className="flex flex-col gap-3 w-full min-w-0 [container-type:inline-size]" data-testid="landlord-profile">
         {profileTopRow}
         {refreshStatus}
-        {/* No BGP take on landlords: it is a fixed count of the linked
-            records ("30 linked CRM properties shown (up to 30)") that the
-            boards right below show properly — and it disagreed with them
-            (Woody, 2026-09-27). The relationship read stays — it's the
-            team's commentary on the account, not a count (Woody, 2026-09-28:
-            "the AI commentary on the relationship has disappeared"). */}
-        <BgpTakeStrip companyId={companyId} tab="activity" entities={commentaryEntities} />
+        <div data-testid="landlord-relationship-brief" className="[&_[data-testid=ai-commentary]]:text-sm [&_[data-testid=ai-commentary]]:leading-relaxed">
+          <BgpTakeStrip companyId={companyId} tab="activity" entities={commentaryEntities} landlord={!isClientViewer}
+            leading={!isClientViewer && <div className="grid grid-cols-1 [@container(min-width:760px)]:grid-cols-2 gap-3" data-testid="landlord-activity-pair">
+              <LandlordMeetingsSummary key={companyId} companyId={companyId} companyName={c.name} />
+              <LandlordEmailSummary key={`emails-${companyId}`} companyId={companyId} companyName={c.name} entities={commentaryEntities} />
+            </div>}
+            footer={!isClientViewer && <LandlordRelationshipTeam key={companyId} companyId={companyId} companyName={c.name} canEdit />} />
+        </div>
+        {!isClientViewer && <LandlordInterviewNotes companyId={companyId} />}
         <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
         <AccountDealsBoard companyId={companyId} />
         {!isClientViewer && <AccountTeamViewsCard companyId={companyId} />}
+        <div className="grid grid-cols-1 [@container(min-width:900px)]:grid-cols-2 gap-3 [@container(min-width:900px)]:gap-4 items-stretch" data-testid="landlord-contacts-checks">
+          <div className="grid min-w-0 [&>aside]:contents">
+            <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
+          </div>
+          <LandlordCompanyChecksCard key={companyId} companyId={companyId} company={c} isClientViewer={isClientViewer} />
+        </div>
         <MasonryGrid className={masonryCls}>
           <AccountNextActionsCard companyId={companyId} />
-          <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
           {/* Staff see these rows in Team view → Investment already. */}
           {isClientViewer && <InvestmentRequirementsCard companyId={companyId} />}
           <BrandProfileSidebar data={data} companyId={companyId} only={["team"]} />
-          <div className="flex flex-col gap-3">
-            <BrandProfileSidebar data={data} companyId={companyId} only={["compliance"]} />
-            <AccountEntitiesPanel companyId={companyId} />
-          </div>
-          <div className="flex flex-col gap-3">
-            {c.stock_ticker && <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />}
-            <BrandProfileSidebar data={data} companyId={companyId} only={["covenant"]} />
-          </div>
-          <BrandProfileSidebar data={data} companyId={companyId} only={["news"]} />
-          {dedupedSignals.length > 0 && <div className="rounded-xl border border-card-border bg-card shadow-sm p-3" data-testid="landlord-signals">{signalsFeed}</div>}
-          <div className="flex flex-col gap-3">
+          {c.stock_ticker && <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />}
+          {/* Signals are hidden on Landlord pages while the board is reviewed.
+              The underlying records and Brand presentation are retained. */}
+        </MasonryGrid>
+        <div className="min-w-0 w-full" data-testid="landlord-news-social-row">
+          <BrandProfileSidebar data={data} companyId={companyId} only={["news", "feed"]} />
+        </div>
+        <div className="grid grid-cols-1 [@container(min-width:900px)]:grid-cols-2 gap-3 [@container(min-width:900px)]:gap-4 items-start" data-testid="landlord-files-gallery">
+          <div className="flex flex-col gap-3 min-w-0">
             <BrandProfileSidebar data={data} companyId={companyId} only={["files"]} />
             <AccountFolderTreeCard companyId={companyId} />
           </div>
-        </MasonryGrid>
-        <BrandProfileSidebar data={data} companyId={companyId} only={["gallery"]} />
+          <div className="min-w-0">
+            <BrandProfileSidebar data={data} companyId={companyId} only={["gallery"]} />
+          </div>
+        </div>
         {viewerDialogs}
       </div>
     );
@@ -3242,10 +3265,10 @@ export function askTopics(brandName: string, isLandlord = false, isAgentFirm = f
     { label: "Email", question: `Draft a short catch-up email from BGP to our main contact at ${brandName}` },
   ];
   return isLandlord ? [
+    { label: "Meetings", question: `Check the linked calendar invitations for ${brandName}. What is coming up this week, who is attending, and what should BGP prepare? State any gaps in diary coverage.` },
     { label: "Overview", question: `Tell me everything BGP needs to know about ${brandName} as a landlord before a first call` },
     { label: "Portfolio", question: `What does ${brandName} own, where is BGP already active on their estate, and where aren't we?` },
     { label: "Opportunities", question: `Which of ${brandName}'s assets have vacancies, lease events or repositioning going on that BGP could act on?` },
-    { label: "Signals", question: `What are the key signals about ${brandName} right now (acquisitions, disposals, refinancing, leadership) and what should BGP do?` },
     { label: "Contacts", question: `Who are the decision-makers at ${brandName} BGP should be talking to, and what's the best approach?` },
     { label: "Covenant", question: `How financially strong is ${brandName} as a landlord — debt, lenders, recent transactions?` },
     { label: "Email", question: `Draft a brief introductory email from BGP to ${brandName}'s asset management team` },
@@ -3992,11 +4015,68 @@ const sameEntityName = (a: unknown, b: unknown) => {
   return !!norm(a) && norm(a) === norm(b);
 };
 
+export function LandlordCompanyChecksCard({ companyId, company, isClientViewer }: {
+  companyId: string;
+  company: BrandProfile["company"];
+  isClientViewer: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const companyNumber = company.companies_house_number?.trim();
+  const covenant = useCovenantReport(companyNumber);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const runCovenant = useMutation({
+    mutationFn: async () => apiRequest("POST", `/api/brand/${companyId}/credit-check`, {}),
+    onSuccess: () => {
+      void covenant.refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/landlord-relationships", companyId, "covenant"] });
+    },
+    onError: (error: Error) => toast({ title: "Covenant check failed", description: error.message, variant: "destructive" }),
+  });
+  return (
+    <Card className="h-full min-w-0 flex flex-col" data-testid="landlord-company-checks">
+      <CardHeader className="p-3 pb-2">
+        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <ShieldCheck className="w-3.5 h-3.5" /> Company checks
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-3 pt-0 flex flex-col gap-3 flex-1">
+        {!isClientViewer && <LandlordCovenantSummary companyId={companyId} companyName={company.name} companyNumber={companyNumber} covenantComputedAt={covenant.data?.computedAt} />}
+        <details className="border-t border-border pt-2 mt-auto" data-testid="landlord-checks-details" onToggle={event => setDetailsOpen(event.currentTarget.open)}>
+          <summary className="cursor-pointer text-xs font-medium text-primary py-1.5">{detailsOpen ? "Show less" : "Show more"}</summary>
+          <div className="pt-2 space-y-3">
+            {!isClientViewer && <Link href="/kyc-clouseau" className="inline-flex text-xs text-primary hover:underline" title="KYC4U — BGP's MLRO">Open KYC4U</Link>}
+            <BrandComplianceCard companyId={companyId} company={company} embedded landlord />
+            {!isClientViewer && companyNumber && !covenant.data?.grade && <section className="border-t border-border pt-3 space-y-2" aria-label="Covenant check">
+              <h3 className="text-xs font-semibold">Covenant check</h3>
+              {covenant.isLoading ? <p className="text-xs text-muted-foreground" role="status">Loading covenant…</p> : <p className="text-xs text-muted-foreground">
+                {covenant.isError ? "Covenant report unavailable." : "Covenant check not run yet."}{" "}
+                {covenant.isError
+                  ? <button type="button" className="underline underline-offset-2" onClick={() => void covenant.refetch()}>Retry</button>
+                  : <button type="button" className="underline underline-offset-2 disabled:opacity-50" disabled={runCovenant.isPending} onClick={() => runCovenant.mutate()}>{runCovenant.isPending ? "Running…" : "Run check"}</button>}
+              </p>}
+            </section>}
+            {!isClientViewer && <div className="border-t border-border pt-3">
+              <AccountEntitiesPanel companyId={companyId} embedded primaryCompanyNumber={companyNumber} />
+            </div>}
+            {!isClientViewer && <section className="border-t border-border pt-3 space-y-2" aria-label="Billing">
+              <h3 className="text-xs font-semibold">Billing</h3>
+              <CompanyInvoicingControls companyId={companyId} mode="billing" landlord />
+            </section>}
+          </div>
+        </details>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function BrandComplianceCard({
   companyId,
   company,
   embedded = false,
   prefix,
+  landlord = false,
 }: {
   companyId: string;
   company: BrandProfile["company"];
@@ -4008,6 +4088,8 @@ export function BrandComplianceCard({
   // trading entity row — used to inject the property's billing
   // entity field above the brand checks.
   prefix?: React.ReactNode;
+  // Only the combined landlord panel owns the separate covenant section.
+  landlord?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -4033,6 +4115,7 @@ export function BrandComplianceCard({
       });
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
+      if (landlord) queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "entities"] });
     },
     onError: (e: any) => toast({ title: "Scrape failed", description: e.message, variant: "destructive" }),
   });
@@ -4046,6 +4129,7 @@ export function BrandComplianceCard({
       toast({ title: "UK trading entity saved" });
       setEditing(false);
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
+      if (landlord) queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "entities"] });
     },
     onError: (e: any) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
@@ -4110,7 +4194,7 @@ export function BrandComplianceCard({
       {!bcIsClient && <Kyc4uStatusStrip companyId={companyId} />}
       <div>
         <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
-          UK trading entity
+          {landlord ? "Registered entity" : "UK trading entity"}
             {hasEntity && !editing && (
               <Pill active={false}>Recorded</Pill>
             )}
@@ -4219,9 +4303,9 @@ export function BrandComplianceCard({
         </div>
 
         <div className="border-t pt-2">
-          <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Downstream checks</div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">{landlord ? "Company records" : "Downstream checks"}</div>
           <div className="space-y-0.5">
-            {downstreamChecks.map((row) => (
+            {downstreamChecks.filter(row => !landlord || row.key !== "covenant").map((row) => (
               <div key={row.key} className="flex items-center gap-1.5 text-[11px]">
                 {row.done ? (
                   <Check className="w-3 h-3 text-foreground shrink-0" />
@@ -4554,8 +4638,14 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
 // conversation doesn't mean losing the page. Reuses the group-chat machinery:
 // one thread per company (linked_id), ChatBGP as a member, so plain message
 // POSTs get a real Fable answer server-side and we just poll the thread.
-export function CompanyMiniChat({ companyId, companyName, fill, title, starters }: { companyId: string; companyName: string; fill?: boolean; title?: string; starters?: AskTopic[] }) {
-  const [threadId, setThreadId] = useState<string | null>(null);
+export function CompanyMiniChat({ companyId, companyName, fill, title, starters, landlord = false }: { companyId: string; companyName: string; fill?: boolean; title?: string; starters?: AskTopic[]; landlord?: boolean }) {
+  const [threadSelection, setThreadSelection] = useState<{ companyId: string; id: string } | null>(null);
+  // The same panel can be reused while navigating between company records.
+  // Hide the old Landlord thread immediately, before effects or polling run.
+  const threadId = threadSelection && (!landlord || threadSelection.companyId === companyId) ? threadSelection.id : null;
+  const setThreadId = (id: string) => setThreadSelection({ companyId, id });
+  const activeCompany = useRef(companyId);
+  activeCompany.current = companyId;
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -4582,6 +4672,31 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
     refetchInterval: 5000,
   });
   const messages: any[] = thread?.messages || [];
+  // Polling returns fresh objects every five seconds. Only a changed human
+  // message (including edits/deletions) should refresh the landlord brief.
+  const landlordConversationSignature = landlord ? JSON.stringify(messages
+    .filter(message => message.role !== "assistant")
+    .map(message => [message.id, message.content, message.updatedAt || message.updated_at])) : null;
+  const hasLoadedThread = !!thread;
+  useEffect(() => {
+    if (!landlord || !hasLoadedThread) return;
+    void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "ai-take"] });
+  }, [landlord, companyId, hasLoadedThread, landlordConversationSignature]);
+  const confirmedActions = landlord ? messages.map(message => landlordConfirmedCrmAction(message, companyId)).filter((action): action is NonNullable<typeof action> => !!action) : [];
+  const confirmedActionSignature = JSON.stringify(confirmedActions.map(action => action.key));
+  const appliedActions = useRef<{ scope: string; keys: Set<string> }>({ scope: "", keys: new Set() });
+  useEffect(() => {
+    if (!landlord || !hasLoadedThread) return;
+    const scope = `${companyId}:${threadId || thread?.id || ""}`;
+    if (appliedActions.current.scope !== scope) appliedActions.current = { scope, keys: new Set() };
+    const queryKeys = new Map<string, string[]>();
+    for (const action of confirmedActions) {
+      if (appliedActions.current.keys.has(action.key)) continue;
+      appliedActions.current.keys.add(action.key);
+      for (const key of landlordCrmActionQueryKeys(companyId, action)) queryKeys.set(JSON.stringify(key), key);
+    }
+    for (const queryKey of queryKeys.values()) void queryClient.invalidateQueries({ queryKey });
+  }, [landlord, companyId, threadId, hasLoadedThread, confirmedActionSignature]);
 
   // A starter question waits on ChatBGP's reply in the shared thread — show
   // it's coming until a new assistant message lands (or two minutes pass).
@@ -4608,7 +4723,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
   const pendingTagsRef = useRef<Map<string, { type: TagType; id: string; name: string }>>(new Map());
   const inputRef = useRef<HTMLInputElement>(null);
   const { data: mcMe } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const { data: mcUsers = [] } = useQuery<Array<{ id: string; name: string }>>({ queryKey: ["/api/users"] });
+  const { data: mcUsers = [] } = useQuery<Array<{ id: string; name: string; profilePicUrl?: string | null }>>({ queryKey: ["/api/users"] });
 
   const { data: trackerData } = useQuery<any>({
     queryKey: ["/api/brands", companyId, "tracker-comments"],
@@ -4648,7 +4763,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
       linkedName: companyName,
     });
     const created = await res.json();
-    setThreadId(created.id);
+    if (!landlord || activeCompany.current === companyId) setThreadId(created.id);
     return created.id;
   };
 
@@ -4657,11 +4772,30 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [showEmoji, setShowEmoji] = useState(false);
 
+  const previousCompany = useRef(companyId);
+  useEffect(() => {
+    if (previousCompany.current === companyId) return;
+    previousCompany.current = companyId;
+    if (!landlord) return;
+    setDraft("");
+    setSending(false);
+    setAwaitingAi(null);
+    setEditingMsgId(null);
+    setEditDraft("");
+    setConfirmDeleteId(null);
+    setShowEmoji(false);
+    setMentionQuery(null);
+    setMentionStart(-1);
+    pendingTagsRef.current.clear();
+    setTab("chat");
+  }, [landlord, companyId]);
+
   const deleteMsg = async (messageId: string) => {
     if (!threadId) return;
     try {
       await apiRequest("DELETE", `/api/chat/threads/${threadId}/messages/${messageId}`);
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
+      if (landlord) void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "ai-take"] });
     } catch (e: any) {
       mcToast({ title: "Couldn't delete message", description: e?.message, variant: "destructive" });
     } finally {
@@ -4682,6 +4816,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
     try {
       await apiRequest("PUT", `/api/chat/threads/${threadId}/messages/${messageId}`, { content: body });
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
+      if (landlord) void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "ai-take"] });
     } catch (e: any) {
       mcToast({ title: "Couldn't edit message", description: e?.message, variant: "destructive" });
     } finally {
@@ -4753,10 +4888,11 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
     try {
       const tid = await ensureThread();
       await apiRequest("POST", `/api/chat/threads/${tid}/messages`, { content: body });
-      setDraft("");
+      if (!landlord || activeCompany.current === companyId) setDraft("");
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", tid] });
+      if (landlord) void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "ai-take"] });
     } catch { /* surfaced by global toast */ }
-    finally { setSending(false); }
+    finally { if (!landlord || activeCompany.current === companyId) setSending(false); }
   };
 
   // Starters post into the brand's shared thread, so the answer stays on the
@@ -4793,9 +4929,14 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
   };
 
   const addableUsers = (Array.isArray(mcUsers) ? mcUsers : []).filter(u => !memberIds.has(u.id) && u.id !== mcMe?.id);
+  const landlordMessage = (message: any) => ({
+    id: message.id, role: message.role, content: String(message.content || ""), userId: message.userId || message.user_id,
+    userName: message.userName || mcUsers.find(user => user.id === (message.userId || message.user_id))?.name,
+    createdAt: message.createdAt || message.created_at, editedAt: message.editedAt || message.edited_at,
+  });
 
   return (
-    <Card className={fill ? "h-full flex flex-col overflow-hidden" : undefined}>
+    <Card className={fill ? "h-full flex flex-col overflow-hidden" : undefined} style={landlord ? { fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" } : undefined} data-testid={landlord ? "landlord-conversation" : undefined}>
       <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2 shrink-0">
         <CardTitle className="text-xs flex items-center gap-1 uppercase tracking-wider text-muted-foreground">
           {title && <span className="mr-1.5 flex items-center gap-2 text-sm font-medium normal-case tracking-normal text-foreground"><MessageSquare className="w-4 h-4 text-muted-foreground" />{title}</span>}
@@ -4870,7 +5011,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
             ))}
           </div>
         ) : (
-        <div ref={scrollRef} className={`${fill ? "flex-1" : "max-h-[280px]"} overflow-y-auto space-y-2 pr-1`} data-testid="minichat-messages">
+        <div ref={scrollRef} className={`${fill ? "flex-1" : "max-h-[280px]"} overflow-y-auto ${landlord ? "rounded-xl bg-muted/25 px-2 pb-3" : "space-y-2 pr-1"}`} data-testid="minichat-messages">
           {messages.length === 0 && !awaitingAi ? (
             <div className={`py-4 text-center space-y-3 ${fill ? "h-full flex flex-col justify-center" : ""}`}>
               {starters && starters.length > 0 && <>
@@ -4882,12 +5023,39 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
               </p>
             </div>
           ) : (
-            messages.map((m: any) => {
-              const isOwn = m.role === "user" && mcMe?.id && m.userId === mcMe.id;
+            messages.map((m: any, index: number) => {
+              const authorId = m.userId || (landlord ? m.user_id : undefined);
+              const isOwn = m.role === "user" && mcMe?.id && authorId === mcMe.id;
+              if (landlord) return <LandlordChatBubble key={m.id} message={landlordMessage(m)} previous={index > 0 ? landlordMessage(messages[index - 1]) : undefined}
+                currentUserId={mcMe?.id} photoUrl={mcUsers.find(user => user.id === authorId)?.profilePicUrl}
+                participantIds={[...memberIds, ...messages.filter(message => message.role === "user").map(message => message.userId || message.user_id).filter(Boolean)]}
+                threadId={threadId} menuDisabled={editingMsgId === m.id}
+                onEdit={isOwn ? () => { setEditingMsgId(m.id); setEditDraft(m.content); } : undefined}
+                onDelete={isOwn ? () => setConfirmDeleteId(m.id) : undefined}>
+                {confirmDeleteId === m.id && <div className="mb-2 rounded border border-destructive/30 p-2 text-xs" role="alert">
+                  <p>Delete this message?</p>
+                  <div className="mt-1 flex gap-3"><button type="button" className="font-semibold text-destructive" onClick={() => deleteMsg(m.id)} data-testid={`button-minichat-delete-confirm-${m.id}`}>Delete</button><button type="button" onClick={() => setConfirmDeleteId(null)}>Cancel</button></div>
+                </div>}
+
+                {editingMsgId === m.id ? <div className="flex flex-wrap items-center gap-1">
+                  <input autoFocus aria-label="Edit message" className="min-w-0 flex-1 h-9 rounded border bg-background px-2 text-sm outline-none focus:ring-1 focus:ring-ring" value={editDraft} onChange={event => setEditDraft(event.target.value)} onKeyDown={event => { if (event.key === "Enter") saveEdit(m.id); if (event.key === "Escape") setEditingMsgId(null); }} data-testid={`input-minichat-edit-${m.id}`} />
+                  <button className="text-xs px-2 py-1 rounded border bg-card hover:bg-muted" onClick={() => saveEdit(m.id)}>Save</button>
+                  <button className="text-xs px-2 py-1 text-muted-foreground" onClick={() => setEditingMsgId(null)}>Cancel</button>
+                </div> : <ChatBGPMarkdown content={String(m.content || "")} />}
+                {(() => {
+                  const action = landlordConfirmedCrmAction(m, companyId);
+                  return action?.href ? <Link href={action.href} className="mt-2 inline-flex text-xs font-medium text-primary underline underline-offset-2" data-testid="landlord-chat-record-link">Open {action.requirementType} requirement</Link> : null;
+                })()}
+              </LandlordChatBubble>;
               return (
-              <div key={m.id} className={`group/msg relative text-xs rounded-lg px-2.5 py-1.5 whitespace-pre-wrap break-words ${
-                m.role === "assistant" ? "bg-muted/60" : "bg-primary/10 ml-6"
-              }`}>
+              <div key={m.id} className={`group/msg relative text-xs rounded-lg px-2.5 py-1.5 whitespace-pre-wrap break-words ${m.role === "assistant" ? "bg-muted/60" : "bg-primary/10 ml-6"}`}>
+                <ChatMessageMenu content={String(m.content || "")} threadId={threadId} disabled={editingMsgId === m.id}
+                  onEdit={isOwn ? () => { setEditingMsgId(m.id); setEditDraft(m.content); } : undefined}
+                  onDelete={isOwn ? () => setConfirmDeleteId(m.id) : undefined}>
+                {confirmDeleteId === m.id && <div className="mb-2 rounded border border-destructive/30 p-2 text-xs" role="alert">
+                  <p>Delete this message?</p><div className="mt-1 flex gap-3"><button type="button" className="font-semibold text-destructive" onClick={() => deleteMsg(m.id)} data-testid={`button-minichat-delete-confirm-${m.id}`}>Delete</button><button type="button" onClick={() => setConfirmDeleteId(null)}>Cancel</button></div>
+                </div>}
+
                 {/* Every message carries its author — a shared brand chat is
                     useless if you can't tell who said what (Woody, 2026-08-04). */}
                 <span className="font-semibold text-[11px] block text-muted-foreground">
@@ -4924,37 +5092,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
                 ) : (
                   renderContent(m.content)
                 )}
-                {isOwn && editingMsgId !== m.id && (
-                  <span className="absolute top-1 right-1 flex items-center gap-1.5 opacity-0 group-hover/msg:opacity-100 transition-opacity">
-                    <button
-                      className="text-muted-foreground hover:text-foreground"
-                      title="Edit message"
-                      onClick={() => { setEditingMsgId(m.id); setEditDraft(m.content); }}
-                      data-testid={`button-minichat-edit-${m.id}`}
-                    >
-                      <Pencil className="w-3 h-3" />
-                    </button>
-                    {confirmDeleteId === m.id ? (
-                      <button
-                        className="text-[11px] font-semibold text-red-600 hover:text-red-700"
-                        onClick={() => deleteMsg(m.id)}
-                        onMouseLeave={() => setConfirmDeleteId(null)}
-                        data-testid={`button-minichat-delete-confirm-${m.id}`}
-                      >
-                        Delete?
-                      </button>
-                    ) : (
-                      <button
-                        className="text-muted-foreground hover:text-red-600"
-                        title="Delete message"
-                        onClick={() => setConfirmDeleteId(m.id)}
-                        data-testid={`button-minichat-delete-${m.id}`}
-                      >
-                        <XIcon className="w-3 h-3" />
-                      </button>
-                    )}
-                  </span>
-                )}
+                </ChatMessageMenu>
               </div>
             );
             })
@@ -5003,7 +5141,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
           <div className="flex items-center gap-1.5">
             <input
               ref={inputRef}
-              className="flex-1 h-8 rounded-md border bg-background px-2.5 text-xs outline-none focus:ring-1 focus:ring-ring"
+              className={landlord ? "flex-1 min-w-0 h-11 rounded-md border bg-background px-2.5 text-sm outline-none focus:ring-1 focus:ring-ring" : "flex-1 h-8 rounded-md border bg-background px-2.5 text-xs outline-none focus:ring-1 focus:ring-ring"}
               placeholder={`Message about ${companyName} — @ to tag`}
               value={draft}
               onChange={onDraftChange}
@@ -5023,7 +5161,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
             >
               😊
             </button>
-            <Button size="sm" className="h-8 px-3 text-xs" onClick={sendWithTags} disabled={sending || !draft.trim()} data-testid="button-minichat-send">
+            <Button size="sm" className={landlord ? "h-11 px-3 text-sm" : "h-8 px-3 text-xs"} onClick={sendWithTags} disabled={sending || !draft.trim()} data-testid="button-minichat-send">
               {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Send"}
             </Button>
           </div>
@@ -5197,6 +5335,22 @@ function TenantRepsBlock({ companyId, reps }: { companyId: string; reps: any[] }
   );
 }
 
+function LandlordContactActions({ companyId, contactEmails }: { companyId: string; contactEmails: Array<string | null | undefined> }) {
+  const [open, setOpen] = useState(false);
+  const onOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (!next) {
+      void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      void queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "workspace"] });
+    }
+  };
+  return <div className="flex flex-wrap items-center gap-2 mb-3" data-testid="landlord-contact-actions">
+    <Button variant="outline" size="sm" onClick={() => setOpen(true)} data-testid="button-add-contact-landlord"><Plus />Add contact</Button>
+    <CompanyInvoicingControls companyId={companyId} contactEmails={contactEmails} mode="contact-emails" landlord />
+    <ContactFormDialog open={open} onOpenChange={onOpenChange} defaultCompanyId={companyId} />
+  </div>;
+}
+
 type SidebarPart = "contacts" | "menu" | "compliance" | "covenant" | "files" | "news" | "feed" | "team" | "gallery";
 const SIDEBAR_BOTTOM: SidebarPart[] = ["team", "gallery"];
 function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }: { data: BrandProfile; companyId: string; column?: "grid" | "bottom"; only?: SidebarPart[]; heroStrip?: boolean }) {
@@ -5321,9 +5475,10 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
           Best sellers. The chat moved up into the banner's second pane at
           the very top of the profile. */}
       <div className={pairCls}>
-      {show("contacts") && <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} isLandlord={isLandlord}
+      {show("contacts") && <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} dismissedSuggestions={data.dismissedDiscoveries || []} isLandlord={isLandlord}
         filterPropertyTier={!(!isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type))}
-        topSlot={isBrand ? <TenantRepsBlock companyId={companyId} reps={data.representedBy || []} /> : null} />}
+        topSlot={isBrand ? <TenantRepsBlock companyId={companyId} reps={data.representedBy || []} />
+          : isLandlord && !sbIsClient ? <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} /> : null} />}
       {show("menu") && !isLandlord && (
         <MenuIntelCard
           companyId={companyId}
@@ -5417,7 +5572,7 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
           half-width beside an empty slot read as broken (Woody, 2026-08-18). */}
       <div className={column || only ? "contents" : data.news && data.news.length > 0 ? pairCls : "space-y-3"}>
       {/* News & Media */}
-      {show("news") && data.news && data.news.length > 0 && (() => {
+      {!isLandlord && show("news") && data.news && data.news.length > 0 && (() => {
         const relDate = (d: string | null): string => {
           if (!d) return "";
           const days = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
@@ -5638,7 +5793,7 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
         );
       })()}
 
-      {show("feed") && !isLandlord && <BrandFeedCard companyId={companyId} canSetUp={!sbIsClient} />}
+      {show("feed") && <BrandFeedCard companyId={companyId} canSetUp={!sbIsClient} landlord={isLandlord} news={isLandlord ? data.news : undefined} companyName={c.name} domain={c.domain || c.domain_url} instagramHandle={c.instagram_handle} />}
       </div>
 
       {(show("team") || show("gallery")) && <>

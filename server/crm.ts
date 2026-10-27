@@ -32,7 +32,9 @@ import {
   dealAuditLog,
   type CrmCompany, type CrmContact,
 } from "@shared/schema";
-import { isInvoicedStatus, legacyToCode, WIP_STATUSES, deriveStageFromStatus } from "@shared/deal-status";
+import { isInvoicedStatus, legacyToCode, WIP_STATUSES, deriveStageFromStatus, DEAL_STATUS_CODES, CLOSED_STATUSES } from "@shared/deal-status";
+import { LETTING_DEAL_TYPES, LEGACY_LETTING_TYPES, DEFAULT_LETTING_TYPE, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES } from "@shared/letting-rules";
+import { createDeal, updateDeal, writeDealFeeAllocations, resolveTenancyTokenToUnitId, LettingRefusal, lettingSource } from "./letting-service";
 import { isClientCrmCategory } from "@shared/tenant-categories";
 import { bgpTeamsOnly } from "@shared/property-labels";
 import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
@@ -42,11 +44,13 @@ import { searchPipnetRequirements } from "./pipnet";
 import { xeroApi, refreshXeroToken, SALES_ACCOUNT_CODE, feeCurrencyOf, invoiceCurrencyFields } from "./xero";
 import { scrapeTrlPage, KNOWN_TRL_PAGES, discoverTrlPages, scrapeTrlOccupierDirectory, scrapeTrlAgencyDirectory, scrapeTrlAgencyListing, scrapeTrlAgencyDetailPage, scrapeTrlRequirementSearch } from "./trl";
 import { getPlanningSummary } from "./planning-summary";
+import { getLandlordInterviewMentions } from "./landlord-interview-links";
+import { canReadLandlordMeetings } from "./landlord-meetings";
 import { parseRequirementBrochure } from "./requirement-vision-parser";
 
 import { randomUUID } from "crypto";
 import type { Pool, PoolClient } from "pg";
-import { FIRM_ONLY_DEAL_TYPES, isFirmOnlyDealType } from "../shared/fee-policy";
+import { FIRM_ONLY_DEAL_TYPES } from "../shared/fee-policy";
 import { dealPoCheck, poMissingMessage, poRequiredSql } from "./deal-po";
 import { resolveEstateUnit, estateUnitMessage } from "./estate-units";
 
@@ -97,16 +101,11 @@ async function maybeCopyDealToComps(deal: any): Promise<void> {
     // unlinked comp with the fee as the price.
     const { completeInvestmentDeal } = await import("./investment-deal-sync");
     await completeInvestmentDeal(deal.id);
-  } else {
-    const existing = await pool.query(`SELECT 1 FROM crm_comps WHERE deal_id = $1 LIMIT 1`, [deal.id]);
-    if ((existing.rowCount ?? 0) > 0) return;
-    await pool.query(
-      `INSERT INTO crm_comps (id, name, deal_id, property_id, deal_type, completion_date)
-       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)`,
-      [deal.name || "Untitled deal", deal.id, deal.propertyId || null, deal.dealType || null, deal.completedAt ? new Date(deal.completedAt).toISOString().slice(0, 10) : null]
-    );
-    console.log(`[deal->comps] Copied leasing deal ${deal.id} (${deal.name}) into crm_comps`);
   }
+  // Leasing deals: no stub here. The detailed leasing-comp insert in the PUT
+  // handler (rent, areas, tenant, landlord, zone A) runs on the same EXC/COM
+  // transition and dedupes by deal_id — a stub created first would starve it
+  // forever, leaving an evidence-free comp that nothing backfills.
 }
 
 function parseAiJson(raw: string): any {
@@ -978,6 +977,7 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
     }
 
     let created = 0, updated = 0, propertiesCreated = 0;
+    const refused: { ref: string; name: string; code: string; message: string }[] = [];
     const unmatchedGroups = new Set<string>();
     const unmatchedProjects = new Set<string>();
 
@@ -1114,12 +1114,21 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
         );
         updated++;
       } else {
-        const dealId = randomUUID();
-        await client.query(
-          `INSERT INTO crm_deals (id, name, group_name, property_id, landlord_id, tenant_id, deal_type, status, team, internal_agent, fee, comments, target_date, completed_at, invoiced_at, xero_contact_name, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8::text[], $9::text[], $10, $11, $12, $13, $14, $15, NOW(), NOW())`,
-          [dealId, dealName, deal.group_name || '', propertyId, landlordId, tenantId, status, teamPg, agentPg, fee, comments, targetDate, completedAt, invoicedAt, billingEntityName]
-        );
+        // The deal factory, on this transaction's connection. A Sage row
+        // carries no deal type, so the letting rules don't fire today; a
+        // refused row (a letting without a unit, a second live letting on
+        // a unit) is reported in the import result, never thrown.
+        let dealId: string;
+        try {
+          const made = await createDeal({
+            name: dealName, groupName: deal.group_name || '', propertyId, landlordId, tenantId, dealType: null, status,
+            team: teamPg, internalAgent: agentPg, fee, comments, targetDate, completedAt, invoicedAt, xeroContactName: billingEntityName,
+          }, { userId: null, source: "wip-import", client });
+          dealId = made.id;
+        } catch (e: any) {
+          if (e instanceof LettingRefusal) { refused.push({ ref: String(deal.ref), name: dealName, code: e.code, message: e.message }); continue; }
+          throw e;
+        }
         await client.query(
           `UPDATE wip_entries SET deal_id=$1, property_id=$2 WHERE ref=$3`,
           [dealId, propertyId, deal.ref]
@@ -1141,8 +1150,8 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
     await client.query('COMMIT');
     const unmatchedGroupList = [...unmatchedGroups];
     const unmatchedProjectList = [...unmatchedProjects];
-    console.log(`[WIP Sync] Created: ${created}, Updated: ${updated}, New properties: ${propertiesCreated}, Unmatched groups: ${unmatchedGroupList.join(", ") || "none"}, Unmatched projects: ${unmatchedProjectList.join(", ") || "none"}`);
-    return { created, updated, propertiesCreated, unmatchedGroups: unmatchedGroupList, unmatchedProjects: unmatchedProjectList };
+    console.log(`[WIP Sync] Created: ${created}, Updated: ${updated}, Refused: ${refused.length}, New properties: ${propertiesCreated}, Unmatched groups: ${unmatchedGroupList.join(", ") || "none"}, Unmatched projects: ${unmatchedProjectList.join(", ") || "none"}`);
+    return { created, updated, propertiesCreated, refused, unmatchedGroups: unmatchedGroupList, unmatchedProjects: unmatchedProjectList };
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('[WIP Sync] Error:', err);
@@ -1403,7 +1412,7 @@ export function setupCrmRoutes(app: Express) {
       const { rows } = await pool.query(
         `SELECT id, status FROM crm_deals
           WHERE status IS NOT NULL
-            AND status NOT IN ('REP','SPEC','LIVE','AVA','NEG','SOL','EXC','COM','WIT','INV','ARCH')`
+            AND status NOT IN (${DEAL_STATUS_CODES.map((c) => `'${c}'`).join(",")})`
       );
       if (rows.length === 0) return;
       const { legacyToCode } = await import("../shared/deal-status");
@@ -1513,6 +1522,14 @@ export function setupCrmRoutes(app: Express) {
     "National": "Shopping Centre",
     "Development": "High Street",
   };
+
+  app.get("/api/crm/landlords/interview-links", requireAuth, async (req, res) => {
+    try {
+      if (!await canReadLandlordMeetings(req)) return res.status(403).json({ error: "Landlord meeting notes are available to BGP staff only" });
+      const companyId = typeof req.query.companyId === "string" ? req.query.companyId : undefined;
+      res.json(await getLandlordInterviewMentions(companyId));
+    } catch { res.status(500).json({ error: "Landlord interview links could not be loaded" }); }
+  });
 
   app.get("/api/crm/interviews", async (req, res) => {
     try {
@@ -1673,10 +1690,10 @@ export function setupCrmRoutes(app: Express) {
         FROM crm_companies c
         LEFT JOIN (
           SELECT landlord_id,
-                 COUNT(*) FILTER (WHERE status NOT IN ('ARCH','COM','INV','WIT')) AS active_deals,
+                 COUNT(*) FILTER (WHERE status NOT IN (${CLOSED_STATUSES.map((s) => `'${s}'`).join(",")})) AS active_deals,
                  -- WIP stages only (WIP_STATUSES), so pre-instruction rows
                  -- don't inflate the fee past the WIP report (Woody, 2026-09-27).
-                 SUM(COALESCE(fee, 0)) FILTER (WHERE status IN ('AVA','NEG','HOT','SOL','EXC','COM','INV')) AS total_fee,
+                 SUM(COALESCE(fee, 0)) FILTER (WHERE status IN (${WIP_STATUSES.map((s) => `'${s}'`).join(",")})) AS total_fee,
                  MAX(updated_at) AS last_deal_update
             FROM crm_deals
            WHERE landlord_id IS NOT NULL
@@ -2026,7 +2043,11 @@ export function setupCrmRoutes(app: Express) {
         return res.status(403).json({ error: "Access denied" });
       }
       // Whether invoices need a PO is BGP's billing setting, not the client's.
-      if (updateScope && req.body) delete req.body.requiresPo;
+      // crmExtraBrandIds is the visibility grant itself — a client editing it
+      // here would self-grant access to any company; changes go through the
+      // tenant-gated /api/client/crm/add-brand flow. Coverer assignments are
+      // BGP team management, not the client's.
+      if (updateScope && req.body) { delete req.body.requiresPo; delete req.body.crmExtraBrandIds; delete req.body.bgpContactUserIds; }
       const coverersEdited = req.body && "bgpContactUserIds" in req.body;
       const before: string[] = coverersEdited
         ? ((await pool.query(`SELECT bgp_contact_user_ids FROM crm_companies WHERE id = $1`, [req.params.id])).rows[0]?.bgp_contact_user_ids || [])
@@ -2258,6 +2279,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         // Agent-company contacts are included too: the requirements board a
         // client sees names the acquiring agent per requirement, and agents
         // are market-facing (not another client's private data).
+        if (scopeCompanyId === NO_ACCESS_SCOPE) return res.json([]);
         const slice = await clientBrandSliceSql(scopeCompanyId);
         const allowedRows = await pool.query(
           `SELECT id FROM crm_companies WHERE id = $1 OR company_type ILIKE 'Agent%' OR ${slice}`,
@@ -2310,6 +2332,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   // sub-resource reads must accept them too or every agent row in the list
   // 403s when opened. Writes stay on clientCanTouchCompany.
   const clientCanReadContactCompany = async (scopeCompanyId: string, companyId: string | null | undefined): Promise<boolean> => {
+    if (scopeCompanyId === NO_ACCESS_SCOPE) return false;
     if (await clientCanTouchCompany(scopeCompanyId, companyId)) return true;
     if (!companyId) return false;
     const r = await pool.query(
@@ -2613,11 +2636,18 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           updates[f] = new Date(updates[f]);
         }
       }
+      const before = await storage.getCrmProperty(String(req.params.id));
       const property = await storage.updateCrmProperty(String(req.params.id), updates);
       res.json(property);
       // Staff owner changes can refresh shared company/KYC metadata, as on
       // staff reads above. Scoped clients retain their ordinary property edits.
-      if (!scopeCompanyId && ["freeholderId", "longLeaseholderId", "landlordId", "proprietorName", "proprietorCompanyNumber"].some(k => k in updates)) {
+      // A property that only now gains a postcode (bulk tracker updates,
+      // Woody 2026-09-15) gets the same pass the create route fires — VOA /
+      // owner / asset class could not run without one.
+      const gainedPostcode = "postcode" in updates
+        && !!String(updates.postcode || "").trim()
+        && !String(before?.postcode || "").trim();
+      if (!scopeCompanyId && (gainedPostcode || ["freeholderId", "longLeaseholderId", "landlordId", "proprietorName", "proprietorCompanyNumber"].some(k => k in updates))) {
         enrichPropertyInBackground(String(req.params.id), { force: true });
       }
       // An address typed without the picker carries no pin — place it.
@@ -2810,6 +2840,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // rows on the deals list bypassed both gates entirely.
       const failures: { id: string; reason: string }[] = [];
       const passing: string[] = [];
+      const oldStatusById = new Map<string, string | null>();
+      let bulkActorEmail: string | null = null;
 
       if (field === "status") {
         const userId = (req as any).session?.userId || (req as any).tokenUserId;
@@ -2823,13 +2855,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           }
         }
         const APPROVAL_STATUSES = new Set(["INV", "COM", "Invoiced", "Completed", "Billed"]);
-        const SENIOR_EMAILS = new Set([
-          "woody@brucegillinghampollard.com",
-          "charlotte@brucegillinghampollard.com",
-          "rupert@brucegillinghampollard.com",
-          "jack@brucegillinghampollard.com",
-        ]);
-        const isSenior = isUserAdmin || SENIOR_EMAILS.has(changedByEmail);
+        const { SENIOR_APPROVER_EMAILS } = await import("./deal-gates");
+        const isSenior = isUserAdmin || SENIOR_APPROVER_EMAILS.has(changedByEmail);
+        bulkActorEmail = changedByEmail || null;
         // AML gate (mirrors single-deal PUT). Any bulk move into SOL+ must
         // satisfy counterparty KYC unless aml_check_completed = 'YES' on
         // the deal (MLRO override).
@@ -2843,6 +2871,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           const oldDeal = await storage.getCrmDeal(id);
           if (!oldDeal) { failures.push({ id, reason: "deal not found" }); continue; }
           if (oldDeal.status === value) { passing.push(id); continue; }
+          oldStatusById.set(id, (oldDeal as any).status ?? null);
 
           if (APPROVAL_STATUSES.has(value) && !isSenior) {
             failures.push({ id, reason: `senior approval required for ${value}` });
@@ -2867,8 +2896,29 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         passing.push(...ids);
       }
 
+      const bulkActorId = (req as any).session?.userId || (req as any).tokenUserId || null;
       for (const id of passing) {
         await storage.updateCrmDeal(id, { [field]: value });
+        // Bulk status moves leave the same trace as the single PUT: an audit
+        // row, the board mirror and the AML sweep. Best-effort per row — one
+        // mirror failure must not abort the remaining deals.
+        if (field === "status" && oldStatusById.has(id)) {
+          const oldStatus = oldStatusById.get(id) ?? null;
+          try {
+            await pool.query(
+              `INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by) VALUES ($1, 'status', $2, $3, 'Bulk update', $4)`,
+              [id, oldStatus, String(value), bulkActorId]
+            );
+          } catch (e: any) { console.warn(`[deals] bulk audit failed for ${id}:`, e?.message); }
+          try {
+            const { mirrorFromDeal } = await import("./lease-status-mirror");
+            await mirrorFromDeal(id, String(value), { pool, reason: "crm_deals.bulk-update", actorUserId: bulkActorId });
+          } catch (e: any) { console.warn(`[deals] bulk status mirror failed for ${id}:`, e?.message); }
+          try {
+            const { startAmlOnStatus } = await import("./investment-deal-sync");
+            await startAmlOnStatus(id, oldStatus, String(value), { id: bulkActorId, name: bulkActorEmail });
+          } catch (e: any) { console.warn(`[deals] bulk AML start failed for ${id}:`, e?.message); }
+        }
       }
       res.json({
         ok: true,
@@ -3564,40 +3614,19 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.post("/api/crm/deals", async (req, res) => {
     try {
-      // A client creating a deal: pin it to their own company as landlord and
-      // strip every fee field — clients can make deals but never set BGP's
-      // fee. (Woody, 2026-07: "client can make a deal, just hide the fee.")
+      // The deal factory (server/letting-service.ts): a client's deal is
+      // pinned to their own company as landlord with every fee field
+      // stripped, a "__tenancy__<id>" unit token resolves to the unit,
+      // legacy status labels become codes, scheme defaults fill the blanks,
+      // the letting rules run (a letting needs a property and a unit; one
+      // live landlord-side letting per unit — 409 with the existing Ref #),
+      // the spine is stamped and a live letting gets its tracker row.
       const dealScope = await resolveCompanyScope(req);
-      if (dealScope) {
-        req.body = {
-          ...req.body,
-          landlordId: dealScope,
-          fee: null, feePercentage: null, feeNotes: null,
-          feeAgreement: null, feeAgreementUrl: null, commission: null,
-        };
-      }
-      // Resolve a "__tenancy__<id>" unitId picked from the tenancy
-      // schedule directly. Finds (or creates) a matching property_units
-      // row on the same property, then swaps the token for the real
-      // unit id so the rest of the pipeline (audit, rent_analysis,
-      // tenancy_unit_id stamp) keeps working unchanged.
-      if (req.body?.unitId && typeof req.body.unitId === "string" && req.body.unitId.startsWith("__tenancy__")) {
-        const resolved = await resolveTenancyTokenToUnitId(req.body.unitId, req.body.propertyId);
-        if (resolved) req.body.unitId = resolved; else delete req.body.unitId;
-      }
-      // Normalise legacy status labels ("HOTs", "Under Offer"…) to the
-      // canonical 10-code set so new deals never persist non-canonical
-      // statuses that boards/filters can't see.
-      if (typeof req.body?.status === "string") {
-        const { legacyToCode } = await import("../shared/deal-status");
-        const canonical = legacyToCode(req.body.status);
-        if (canonical) req.body.status = canonical;
-      }
-      const parsed = insertCrmDealSchema.parse(req.body);
-      // On an estate with schemes, the scheme decides who invoices go to:
-      // its landlord entity and inbox fill whatever the deal left blank.
-      if (!dealScope) Object.assign(parsed, await (await import("./property-schemes")).schemeDealDefaults(pool, parsed));
-      const deal = await storage.createCrmDeal(parsed);
+      const deal = await createDeal(req.body, {
+        userId: (req as any).session?.userId || (req as any).tokenUserId || null,
+        source: lettingSource(req),
+        scope: dealScope,
+      });
 
       const ra = calculateRentAnalysis(deal);
       const { pricePsf, priceItza } = calculateDevaluation(deal);
@@ -3614,66 +3643,12 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         if (priceItza !== null) (deal as any).priceItza = priceItza;
       }
 
-      // Canonical unit FK: when the new deal points at a property_units
-      // row, stamp the matching tenancy_schedule_units id so the deal
-      // is bound to the canonical unit by ID, not by a soft-matched
-      // unit_name. No-op for deals that aren't linked to a unit yet.
-      if ((deal as any).propertyId && (deal as any).unitId) {
-        await pool.query(
-          `UPDATE crm_deals d
-              SET tenancy_unit_id = (
-                SELECT ts.id FROM tenancy_schedule_units ts
-                 WHERE ts.property_id = d.property_id
-                   AND lower(trim(ts.unit_number)) = lower(trim(coalesce(
-                     (SELECT unit_name FROM property_units WHERE id = d.unit_id), '')))
-                   AND coalesce(trim(ts.unit_number), '') <> ''
-                 LIMIT 1
-              )
-            WHERE d.id = $1 AND d.tenancy_unit_id IS NULL`,
-          [deal.id]
-        ).catch((e: any) => console.warn("[deals] tenancy_unit_id stamp failed:", e?.message));
-      }
-
       res.status(201).json(deal);
-    } catch (e: any) { res.status(400).json({ error: e.message }); }
-  });
-
-  // Turn a "__tenancy__<id>" token into a real property_units.id by
-  // matching unit_name on the same property. Creates the property_units
-  // row if no match exists — this is what removes the "needs promote"
-  // friction in DealUnitPicker. Returns null if the token can't be
-  // resolved (tenancy row gone, no property_id, blank unit_number),
-  // letting callers decide whether to drop the field or error.
-  async function resolveTenancyTokenToUnitId(token: string, propertyId: string | null | undefined): Promise<string | null> {
-    if (!token || !token.startsWith("__tenancy__") || !propertyId) return null;
-    const tenancyId = token.slice("__tenancy__".length);
-    if (!tenancyId) return null;
-    try {
-      const t = await pool.query(
-        "SELECT unit_number, nia_sqft FROM tenancy_schedule_units WHERE id = $1 LIMIT 1",
-        [tenancyId]
-      );
-      const unitName: string | null = t.rows[0]?.unit_number?.toString().trim() || null;
-      if (!unitName) return null;
-      // Case-insensitive name match against the existing shadow rows.
-      const existing = await pool.query(
-        "SELECT id FROM property_units WHERE property_id = $1 AND lower(trim(unit_name)) = lower($2) LIMIT 1",
-        [propertyId, unitName]
-      );
-      if (existing.rows[0]?.id) return existing.rows[0].id as string;
-      const nia: number | null = t.rows[0]?.nia_sqft ?? null;
-      const ins = await pool.query(
-        `INSERT INTO property_units (property_id, unit_name, sqft)
-         VALUES ($1, $2, $3)
-         RETURNING id`,
-        [propertyId, unitName, nia]
-      );
-      return ins.rows[0]?.id as string ?? null;
     } catch (e: any) {
-      console.warn("[deals] resolveTenancyTokenToUnitId failed:", e?.message);
-      return null;
+      if (e instanceof LettingRefusal) return res.status(e.status).json(e.toBody());
+      res.status(400).json({ error: e.message });
     }
-  }
+  });
 
   function calculateRentAnalysis(deal: { rentPa?: number | null; rentFree?: number | null; leaseLength?: number | null; capitalContribution?: number | null; totalAreaSqft?: number | null }): number | null {
     const rentPa = deal.rentPa;
@@ -3793,7 +3768,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // it sees the canonical id, not the token.
       if (req.body?.unitId && typeof req.body.unitId === "string" && req.body.unitId.startsWith("__tenancy__")) {
         const propertyId = req.body.propertyId || oldDeal?.propertyId;
-        const resolved = await resolveTenancyTokenToUnitId(req.body.unitId, propertyId);
+        const resolved = await resolveTenancyTokenToUnitId(pool, req.body.unitId, propertyId);
         if (resolved) req.body.unitId = resolved; else delete req.body.unitId;
       }
 
@@ -3814,13 +3789,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // --- Approval gate for Invoiced / Completed ---
       // Senior approval required to set these statuses (canonical + legacy)
       const APPROVAL_STATUSES = ["INV", "COM", "Invoiced", "Completed", "Billed"];
-      const SENIOR_EMAILS = new Set([
-        "woody@brucegillinghampollard.com",
-        "charlotte@brucegillinghampollard.com",
-        "rupert@brucegillinghampollard.com",
-        "jack@brucegillinghampollard.com",
-      ]);
-      const isSenior = isUserAdmin || SENIOR_EMAILS.has(changedByEmail);
+      const { SENIOR_APPROVER_EMAILS } = await import("./deal-gates");
+      const isSenior = isUserAdmin || SENIOR_APPROVER_EMAILS.has(changedByEmail);
       if (req.body.status && oldDeal && oldDeal.status !== req.body.status && APPROVAL_STATUSES.includes(req.body.status)) {
         if (!isSenior) {
           // Log the rejected attempt
@@ -3986,7 +3956,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // Strip `learning` from body so it doesn't hit the generic updater
       if ("learning" in req.body) delete req.body.learning;
 
-      const deal = await storage.updateCrmDeal(req.params.id, req.body);
+      // The deal factory writes the row, re-stamps the spine when the
+      // (property, unit) pair moved, and gives a live letting with a unit
+      // its tracker row. An existing deal is never refused for lacking one.
+      const deal = await updateDeal(req.params.id, req.body, { userId: userId || null, source: lettingSource(req), scope: editScope });
 
       // Derive crm_deals.kyc_approved from the counterparty gate so the
       // deal-level flag stays in sync with the brand-level KYC state.
@@ -4011,28 +3984,6 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         }
       } catch (e: any) {
         console.warn(`[deals] kyc_approved derivation failed for ${deal.id}:`, e?.message);
-      }
-
-      // Re-resolve tenancy_unit_id whenever property_id or unit_id
-      // changes — the canonical unit FK must stay aligned with the
-      // (property, unit) pair the deal points at. Best-effort.
-      if ("propertyId" in req.body || "unitId" in req.body) {
-        await pool.query(
-          `UPDATE crm_deals d
-              SET tenancy_unit_id = CASE
-                WHEN d.unit_id IS NULL THEN NULL
-                ELSE (
-                  SELECT ts.id FROM tenancy_schedule_units ts
-                   WHERE ts.property_id = d.property_id
-                     AND lower(trim(ts.unit_number)) = lower(trim(coalesce(
-                       (SELECT unit_name FROM property_units WHERE id = d.unit_id), '')))
-                     AND coalesce(trim(ts.unit_number), '') <> ''
-                   LIMIT 1
-                )
-              END
-            WHERE d.id = $1`,
-          [req.params.id]
-        ).catch((e: any) => console.warn("[deals] tenancy_unit_id re-stamp failed:", e?.message));
       }
 
       // Auto-copy to comps schedule on COM transition (snapshot, deal stays on tracker until INV).
@@ -4063,6 +4014,46 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           await startAmlOnStatus(deal.id, oldDeal?.status, deal.status, { id: userId || null, name: changedByName });
         } catch (e: any) {
           console.warn(`[deals] AML start failed for ${deal.id}:`, e?.message);
+        }
+        // Reverting out of COM (an accidental completion) undoes what the
+        // completion wrote — otherwise the stale auto-comp and the stamped
+        // spine row make the real completion months later a silent no-op.
+        try {
+          const oldC = legacyToCode(oldDeal?.status);
+          const newC = legacyToCode(deal.status);
+          if (oldC === "COM" && newC && !CLOSED_STATUSES.includes(newC)) {
+            await pool.query(`UPDATE crm_deals SET completed_at = NULL WHERE id = $1`, [deal.id]);
+            await pool.query(`DELETE FROM crm_comps WHERE deal_id = $1 AND created_by IN ('auto-from-deal', 'Auto-Promotion')`, [deal.id]);
+            const spine = await pool.query(
+              `SELECT d.tenancy_unit_id, d.rent_pa, tc.id AS tenant_company_id, tc.name AS tenant_name
+                 FROM crm_deals d LEFT JOIN crm_companies tc ON tc.id = d.tenant_id
+                WHERE d.id = $1`,
+              [deal.id]
+            );
+            const srow = spine.rows[0];
+            if (srow?.tenancy_unit_id) {
+              const completionDate = oldDeal?.completedAt
+                ? new Date(oldDeal.completedAt as any).toISOString().slice(0, 10)
+                : new Date().toISOString().slice(0, 10);
+              await pool.query(
+                `UPDATE tenancy_schedule_units
+                    SET status = 'Under Offer',
+                        tenant_name = CASE WHEN tenant_name = $2 THEN NULL ELSE tenant_name END,
+                        tenant_company_id = CASE WHEN tenant_company_id = $3 THEN NULL ELSE tenant_company_id END,
+                        passing_rent_pa = CASE WHEN passing_rent_pa = $4 THEN NULL ELSE passing_rent_pa END,
+                        lease_start = CASE WHEN lease_start = $5::date THEN NULL ELSE lease_start END,
+                        updated_at = NOW()
+                  WHERE id = $1 AND lower(coalesce(status, '')) = 'occupied'`,
+                [srow.tenancy_unit_id, srow.tenant_name || null, srow.tenant_company_id || null, srow.rent_pa != null ? Number(srow.rent_pa) : null, completionDate]
+              );
+              // No fanOutTenancyStatus here: mirrorFromDeal above already set
+              // the tracker + leasing rows from the deal's NEW status, and a
+              // fan-out from the un-stamped spine would overwrite them with a
+              // coarser mapping.
+            }
+          }
+        } catch (e: any) {
+          console.warn(`[deals] completion revert cleanup failed for ${deal.id}:`, e?.message);
         }
       }
 
@@ -4608,78 +4599,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (!Array.isArray(allocations)) {
         return res.status(400).json({ error: "allocations must be an array" });
       }
-      // Firm-only deal types (Secondment): whatever the form sent, the fee
-      // is 100% BGP House with no agent rows.
-      const { rows: policyRows } = await pool.query(`SELECT deal_type FROM crm_deals WHERE id = $1`, [String(req.params.id)]);
-      if (isFirmOnlyDealType(policyRows[0]?.deal_type)) {
-        const result = await storage.setDealFeeAllocations(String(req.params.id), [{
-          dealId: String(req.params.id),
-          agentName: "BGP House",
-          allocationType: "percentage",
-          percentage: 100,
-          fixedAmount: null,
-          isBgpHouse: true,
-        }] as any);
-        return res.json(result);
-      }
-      const validated = allocations.map((a: any) => ({
-        dealId: String(req.params.id),
-        agentName: String(a.agentName || ""),
-        allocationType: a.allocationType === "fixed" ? "fixed" : "percentage",
-        percentage: a.allocationType === "percentage" ? Number(a.percentage) || 0 : null,
-        fixedAmount: a.allocationType === "fixed" ? Number(a.fixedAmount) || 0 : null,
-        // Canonical flag for the firm overhead slice. Sage import has
-        // historically inferred this from the " (BGP House)" name suffix;
-        // the form now sends the boolean directly. Accept either signal.
-        isBgpHouse: a.isBgpHouse === true || /\(BGP House\)/i.test(String(a.agentName || "")),
-      })).filter((a: any) => a.agentName.length > 0);
-      // Validate percentage allocations: sum must land on 100% (with a
-      // small tolerance for 33.33 × 3 type splits) AND a BGP House row
-      // must be present. Allowing partial saves silently let deals land
-      // with 30%-total splits or no firm slice at all.
-      const pctRows = validated.filter((a: any) => a.allocationType === "percentage");
-      if (pctRows.length > 0) {
-        const totalPct = pctRows.reduce((sum: number, a: any) => sum + (a.percentage || 0), 0);
-        if (Math.abs(totalPct - 100) > 0.05) {
-          return res.status(400).json({
-            error: `Percentage allocations must sum to 100% — currently ${totalPct.toFixed(2)}%. Adjust the agent rows to make the total balance.`,
-          });
-        }
-      }
-      // BGP House takes 15% off the top of EVERY deal — a fee split must always
-      // include the BGP House row, whatever the split type (percentage OR fixed)
-      // and even if it's the only row. This used to be enforced for percentage
-      // splits only, so a fixed-amount or empty split slipped through with no
-      // firm slice (that's how deal 3511 ended up with none).
-      const hasBgpHouse = validated.some((a: any) => a.isBgpHouse);
-      if (!hasBgpHouse) {
-        return res.status(400).json({
-          error: "Fee split must include the BGP House 15% row. Open the editor to re-add it (it auto-inserts).",
-        });
-      }
-      const result = await storage.setDealFeeAllocations(String(req.params.id), validated);
-      // Keep crm_deals.internal_agent in sync with the fee-allocation
-      // agents. Without this, the Deals board's BGP Contact column
-      // (which reads internal_agent) diverges from the WIP report's
-      // Agent column (which reads from allocations) — Evie North
-      // appeared on the WIP but never on the deal row.
-      try {
-        const allocAgents = validated
-          .filter((a: any) => !a.isBgpHouse && a.agentName)
-          .map((a: any) => String(a.agentName).trim())
-          .filter((n: string) => n.length > 0);
-        const dealRow = await storage.getCrmDeal(String(req.params.id));
-        const existing: string[] = Array.isArray((dealRow as any)?.internalAgent)
-          ? ((dealRow as any).internalAgent as string[])
-          : ((dealRow as any)?.internalAgent ? [(dealRow as any).internalAgent as string] : []);
-        const merged = Array.from(new Set([...existing, ...allocAgents]));
-        if (merged.length !== existing.length || merged.some((n, i) => n !== existing[i])) {
-          await storage.updateCrmDeal(String(req.params.id), { internalAgent: merged } as any);
-        }
-      } catch (mergeErr: any) {
-        console.warn(`[fee-allocations] internal_agent sync failed for ${String(req.params.id)}:`, mergeErr?.message);
-      }
-      res.json(result);
+      // The one write path for a deal's fee split (server/letting-service.ts
+      // writeDealFeeAllocations — Add Unit's feeAllocations go through it
+      // too): firm-only types collapse to BGP House, percentages must sum
+      // to 100% with the BGP House row present, internal_agent kept in sync.
+      const w = await writeDealFeeAllocations(String(req.params.id), allocations);
+      if (!w.ok) return res.status(400).json({ error: w.error });
+      res.json(w.result);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -4869,7 +4795,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
   "fee": number - total fee amount in GBP if mentioned,
   "feeAgreement": "string - fee basis e.g. 'Standard %', 'Fixed Fee'",
   "targetDate": "ISO date string - expected exchange or completion date",
-  "dealType": "string - one of: New Letting, Lease Renewal, Rent Review, Sub-Letting, Assignment, Lease Disposal, Purchase, Sale, Lease Acquisition, Regear, Temp Lease, Licence",
+  "dealType": "string - one of: ${[...LETTING_DEAL_TYPES, ...TENANT_REP_TYPES, ...ADVISORY_UNIT_TYPES, "Purchase", "Sale"].join(", ")}",
   "assetClass": "string - one of: Retail, Office, Industrial, Residential, Mixed-Use, F&B, Leisure, Healthcare, Other",
   "serviceCharge": "string - service charge details",
   "useClass": "string - planning use class",
@@ -4969,7 +4895,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
           `SELECT v.id, v.viewing_date, au.unit_name, p.id AS property_id, p.name AS property_name
              FROM unit_viewings v JOIN available_units au ON au.id = v.unit_id
              JOIN crm_properties p ON p.id = au.property_id
-            WHERE v.company_id = $1 ${propScope(2)}`, p2([brandId])),
+            WHERE v.company_id = $1 AND v.deleted_at IS NULL AND COALESCE(v.status,'') NOT IN ('cancelled','not_leasing') ${propScope(2)}`, p2([brandId])),
       ]);
 
       const tenantAt = [
@@ -6094,6 +6020,9 @@ Return a JSON object with these fields (use null for any field you cannot find):
 
   app.get("/api/crm/leads", async (req, res) => {
     try {
+      // BGP's BD pipeline is staff-only (the gateway also blocks /api/crm/leads
+      // for clients; this is the handler-level belt).
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
       const filters = {
         search: req.query.search as string | undefined,
         groupName: req.query.groupName as string | undefined,
@@ -6107,6 +6036,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
 
   app.get("/api/crm/leads/:id", async (req, res) => {
     try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
       const lead = await storage.getCrmLead(req.params.id);
       if (!lead) return res.status(404).json({ error: "Not found" });
       res.json(lead);
@@ -6211,7 +6141,16 @@ Return a JSON object with these fields (use null for any field you cannot find):
       if (await forbidsContactRead(req, req.params.id)) return res.status(403).json({ error: "Access denied" });
       const links = await db.select().from(crmContactProperties).where(eq(crmContactProperties.contactId, req.params.id));
       if (links.length === 0) return res.json([]);
-      const propertyIds = links.map(l => l.propertyId);
+      let propertyIds = links.map(l => l.propertyId);
+      // Scoped callers see only their own portfolio's properties here.
+      const propScopeId = await resolveCompanyScope(req);
+      if (propScopeId) {
+        const owned = await pool.query(
+          `SELECT id FROM crm_properties p WHERE p.id = ANY($1::varchar[]) AND (p.landlord_id = $2 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $2))`,
+          [propertyIds, propScopeId]);
+        propertyIds = owned.rows.map((r: any) => r.id);
+        if (propertyIds.length === 0) return res.json([]);
+      }
       const properties = await db.select().from(crmProperties).where(inArray(crmProperties.id, propertyIds));
       res.json(properties);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -6277,6 +6216,13 @@ Return a JSON object with these fields (use null for any field you cannot find):
           seenIds.add(d.id);
         }
       }
+      // A client may open an agent contact, but sees only deals in their own
+      // portfolio, with BGP fee fields stripped.
+      const dealScope = await resolveCompanyScope(req);
+      if (dealScope) {
+        const inScope = await Promise.all(results.map(d => isDealInScope(dealScope, d.id)));
+        return res.json(results.filter((_, i) => inScope[i]).map(stripDealFees));
+      }
       res.json(results);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -6297,6 +6243,8 @@ Return a JSON object with these fields (use null for any field you cannot find):
   app.get("/api/crm/contacts/:id/investment-tracker", async (req, res) => {
     try {
       if (await forbidsContactRead(req, req.params.id)) return res.status(403).json({ error: "Access denied" });
+      // The investment tracker is a staff surface.
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
       const contactId = req.params.id;
       const items = await db.select().from(investmentTracker).where(
         or(
@@ -6351,6 +6299,12 @@ Return a JSON object with these fields (use null for any field you cannot find):
           results.push({ ...r, requirementType: "investment", linkSource: "agent" });
           seenIds.add(r.id);
         }
+      }
+      // Scoped callers see only requirements for brands in their CRM slice.
+      const reqScope = await resolveCompanyScope(req);
+      if (reqScope) {
+        const visible = await Promise.all(results.map(r => r.companyId ? isClientVisibleBrand(r.companyId, reqScope) : Promise.resolve(false)));
+        return res.json(results.filter((_, i) => visible[i]));
       }
       res.json(results);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -7402,9 +7356,17 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const agents = allocsByDeal.get(deal.id);
 
         if (agents && agents.length > 0) {
+          // Reconcile shares to the deal fee exactly as /api/wip does — fixed
+          // amounts + percentages can over/under-shoot the fee, and summing
+          // them raw made this dashboard disagree with the WIP schedule.
+          const rawWeight = (a: any) => a.fixedAmount != null && a.fixedAmount !== 0
+            ? a.fixedAmount
+            : totalFee * ((a.percentage || 0) / 100);
+          const weightTotal = agents.reduce((s, a) => s + rawWeight(a), 0);
           for (const alloc of agents) {
             if (!senior && WIP_RESTRICTED_AGENTS.has(alloc.agentName.toLowerCase())) continue;
-            const agentFee = alloc.fixedAmount ?? Math.round(totalFee * ((alloc.percentage || 0) / 100) * 100) / 100;
+            const share = weightTotal > 0 ? rawWeight(alloc) / weightTotal : 1 / agents.length;
+            const agentFee = Math.round(totalFee * share * 100) / 100;
             const entry = agentTotals.get(alloc.agentName) || { invoiced: 0, wip: 0 };
             if (isInvoiced) entry.invoiced += agentFee;
             else entry.wip += agentFee;
@@ -7475,8 +7437,12 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           const agentAlloc = dealAllocs.find(a => a.agentName.toLowerCase() === agentName.toLowerCase());
           if (agentAlloc) {
             isRelevant = true;
-            const pct = (agentAlloc.percentage || 0) / 100;
-            allocatedAmount = agentAlloc.fixedAmount ?? (totalFee * pct);
+            const rawWeight = (a: any) => a.fixedAmount != null && a.fixedAmount !== 0
+              ? a.fixedAmount
+              : totalFee * ((a.percentage || 0) / 100);
+            const weightTotal = dealAllocs.reduce((s, a) => s + rawWeight(a), 0);
+            const share = weightTotal > 0 ? rawWeight(agentAlloc) / weightTotal : 1 / dealAllocs.length;
+            allocatedAmount = totalFee * share;
           }
         } else {
           const agentNames = Array.isArray(deal.internalAgent) ? deal.internalAgent : (deal.internalAgent ? [deal.internalAgent] : []);
@@ -7592,8 +7558,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
       // WIP report shows every crm_deal in a fee-bearing status. Sage WIP
       // imports are no longer the source of truth — the Deals Board +
-      // Letting Tracker are. Anything in NEG/SOL/EXC/COM/INV with a fee
-      // shows up.
+      // Letting Tracker are. Anything in AVA/NEG/SOL/EXC/COM/INV shows up —
+      // a Marketing deal with no fee yet is on the report precisely so the
+      // fee gets added (Woody, 2026-10-26).
       let entries: any[] = [];
       // Defensive on-the-fly normalisation for legacy deal_type strings so
       // the WIP report displays canonical labels even on rows where
@@ -7602,7 +7569,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       const normaliseDealType = (raw: string | null | undefined): string | null => {
         if (!raw) return null;
         const t = String(raw).trim();
-        if (t === "Letting") return "New Letting";
+        if ((LEGACY_LETTING_TYPES as readonly string[]).includes(t)) return DEFAULT_LETTING_TYPE;
         return t || null;
       };
       const eligibleDeals = deals.filter(d => {
@@ -10460,7 +10427,7 @@ export async function computeWipHealth(): Promise<any> {
   } catch { /* tables not created yet */ }
   const noKyc4u = wipDeals.filter((r: any) => {
     if (!r.createdAt || new Date(r.createdAt) < KYC4U_FROM) return false;
-    if (["WIT"].includes(legacyToCode(r.status) as string)) return false;
+    if (["WIT", "OPP", "AVA"].includes(legacyToCode(r.status) as string)) return false; // KYC4U is raised at SOL — marketing stubs have no counterparty yet
     const parties = [r.landlordId, r.tenantId, r.vendorId, r.purchaserId].filter(Boolean);
     return parties.length > 0 && parties.some((id: string) => !kyc4uCovered.has(id));
   });

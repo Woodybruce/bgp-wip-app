@@ -34,7 +34,7 @@ function mainFixture({ context = messages, getFile = async () => null, receipts 
     verifyHmlrChatDelivery, result: { data: { messages: context } }, hmlrReceipts: receipts, getFile,
     clearInterval() {}, heartbeat: 1, verifiedThreadId: 'thread', activeChatRuns: runs,
     pool: { query: async () => ({ rows: [] }) },
-    storage: { createChatMessage: async message => { saved.push(message); } },
+    storage: { createChatMessage: async message => { saved.push(message); return { ...message, id: 'saved-assistant-message' }; } },
     clientDisconnected: false, safeSseWrite: response.write, res: response.res,
     console: { log() {}, warn() {}, error() {} },
   };

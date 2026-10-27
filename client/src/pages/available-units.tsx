@@ -61,16 +61,18 @@ import { MonthYearSelect } from "@/components/month-year-select";
 import PDFViewer from "@/components/pdf-viewer";
 import { EntityCombobox } from "@/components/entity-combobox";
 import { XeroContactPicker } from "@/components/xero-contact-picker";
-import { FeeAllocationEditor, type FeeAllocationRow } from "@/components/fee-allocation-editor";
+import { FeeAllocationEditor, BGP_HOUSE_PCT, type FeeAllocationRow } from "@/components/fee-allocation-editor";
 
-import { LETTING_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
+import { LETTING_STATUSES, DEAL_STATUS_LABELS, WIP_STATUSES, legacyToCode, type DealStatusCode } from "@shared/deal-status";
+import { DEFAULT_LETTING_TYPE, LEGACY_LETTING_TYPES, TRACKER_LIVE_STATUSES, HISTORIC_STATUSES, PRE_MARKETING_STATUSES } from "@shared/letting-rules";
+import { tenancyStatusMatches } from "@shared/tenancy-schedule-display";
 const MARKETING_STATUSES = LETTING_STATUSES;
 // The per-row Deal Status dropdown offers the deal pipeline only (Woody,
 // 2026-09-01): Opportunity/Available belong to Unit Status, Withdrawn moved
 // to the bulk Change Status menu (historic WIT rows keep their chip). AVA
 // reads as "Marketing" on this board — same stored code (legacyToCode
 // already maps "marketing" → AVA), so WIP / deals boards are untouched.
-const DEAL_PIPELINE_STATUSES: DealStatusCode[] = ["AVA", "NEG", "HOT", "SOL", "EXC", "COM", "INV"];
+const DEAL_PIPELINE_STATUSES: DealStatusCode[] = WIP_STATUSES;
 const DEAL_PIPELINE_LABELS: Record<string, string> = { ...DEAL_STATUS_LABELS, AVA: "Marketing" };
 // Feedback (2026-08-14): a unit itself is only ever an Opportunity or
 // Available — everything past that (NEG/HOT/SOL/…) is the DEAL's status,
@@ -91,7 +93,7 @@ function displayUnitName(name: string): string {
 
 // Website column — opt-in publish with the same completeness gate the public
 // feed enforces (address, rent or POA, size, photo, lease terms).
-const PUBLIC_CODES = new Set<DealStatusCode>(["AVA", "NEG", "HOT", "SOL"]);
+const PUBLIC_CODES = new Set<DealStatusCode>(TRACKER_LIVE_STATUSES.filter(s => s !== "OPP"));
 function websiteMissing(u: any, property: any): string[] {
   const m: string[] = [];
   const addr = property?.address;
@@ -282,11 +284,12 @@ function FocalPicker({ file, loadUrl, onSave, onClose }: { file: UnitMarketingFi
 
 const UNIT_STATUSES: DealStatusCode[] = ["OPP", "AVA"];
 // Status pill row: the live pipeline up front, the historic tail (Exchanged /
-// Completed / Withdrawn / Invoiced) folded behind one "Historic" pill that
-// expands on click (Woody, 2026-09-04 — "search pills include historic").
-const LIVE_PILL_STATUSES: DealStatusCode[] = ["OPP", "AVA", "NEG", "HOT", "SOL"];
-const HISTORIC_PILL_STATUSES: DealStatusCode[] = ["EXC", "COM", "WIT", "INV"];
-const UNIT_STAGE_EDITABLE = new Set<DealStatusCode>(["OPP", "AVA", "REP", "SPEC", "LIVE"]);
+// Completed / Withdrawn / Invoiced / Archived) folded behind one "Historic"
+// pill that expands on click (Woody, 2026-09-04 — "search pills include
+// historic"). An Archived sub-pill only shows when a row's backing deal is ARCH.
+const LIVE_PILL_STATUSES: DealStatusCode[] = TRACKER_LIVE_STATUSES;
+const HISTORIC_PILL_STATUSES: DealStatusCode[] = HISTORIC_STATUSES;
+const UNIT_STAGE_EDITABLE = new Set<DealStatusCode>([...PRE_MARKETING_STATUSES, "AVA"]);
 const USE_CLASSES = ["E", "E(a)", "E(b)", "E(c)", "E(d)", "E(e)", "A1", "A2", "A3", "A4", "A5", "B1", "B2", "B8", "C1", "C3", "D1", "D2", "F1", "F2", "Sui Generis"];
 const FLOORS = ["Basement", "Lower Ground", "Ground", "Mezzanine", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "Upper"];
 const CONDITIONS = ["Shell & Core", "Cat A", "Cat A+", "Cat B", "Fitted", "Turn Key", "As Is"];
@@ -390,7 +393,7 @@ interface UnitFormState {
 const emptyForm: UnitFormState = {
   unitName: "",
   propertyId: "",
-  dealType: "New Letting",
+  dealType: DEFAULT_LETTING_TYPE,
   floor: "",
   sqft: "",
   askingRent: "",
@@ -418,7 +421,7 @@ function formToPayload(f: UnitFormState) {
   return {
     unitName: f.unitName,
     propertyId: f.propertyId,
-    dealType: f.dealType || "New Letting",
+    dealType: f.dealType || DEFAULT_LETTING_TYPE,
     floor: f.floor || null,
     sqft: f.sqft ? parseFloat(f.sqft) : null,
     askingRent: f.askingRent ? parseFloat(f.askingRent) : null,
@@ -446,7 +449,7 @@ function unitToForm(u: AvailableUnit, dealType?: string | null, landlord?: { id:
   return {
     unitName: u.unitName || "",
     propertyId: u.propertyId || "",
-    dealType: dealType || "New Letting",
+    dealType: dealType || DEFAULT_LETTING_TYPE,
     floor: u.floor || "",
     sqft: u.sqft?.toString() || "",
     askingRent: u.askingRent?.toString() || "",
@@ -658,7 +661,7 @@ export default function AvailableUnitsPage() {
   const [contactSearchOpen, setContactSearchOpen] = useState<"viewing" | "offer" | null>(null);
   const [wipUnit, setWipUnit] = useState<AvailableUnit | null>(null);
   const [wipForm, setWipForm] = useState({
-    dealType: "New Letting",
+    dealType: DEFAULT_LETTING_TYPE,
     team: [] as string[],
     agent: "",
     // Tenant brand (crm_companies.id) + cached display name. Replaces the
@@ -1035,38 +1038,34 @@ export default function AvailableUnitsPage() {
 
   const createMutation = useMutation({
     mutationFn: async ({ data, feeRows, feeAllocType }: { data: any; feeRows: FeeAllocationRow[]; feeAllocType: "percentage" | "fixed" }) => {
-      const res = await apiRequest("POST", "/api/available-units", data);
-      const unit = await res.json();
-      // The server auto-creates a backing deal and stamps its id on the
-      // unit. Fold the user's fee split onto that deal so it lands with
-      // BGP House + agents pre-baked instead of empty (which used to
-      // require re-opening the deal to lock in).
-      const dealId = unit?.dealId;
-      if (dealId && feeRows.length > 0) {
-        const allocations = feeRows
+      // The fee split travels in the create body (letting-cleanup Phase 2):
+      // the letting service writes deal_fee_allocations on the backing deal
+      // through the same path as the deal page's PUT, so the deal is born
+      // with its split instead of a second request racing the create. Rows
+      // are the editor's shape plus the BGP user id (or the external name
+      // for a Consultant row). A lone BGP House row is the editor's
+      // placeholder, not a split — only send when an agent is named. The
+      // server decides whether an adopted or re-added deal keeps its own.
+      const feeAllocations = feeRows.some(r => !r.isBgpHouse && r.agentName)
+        ? feeRows
           .filter(r => (r.isBgpHouse || r.agentName))
-          .map(r => ({
-            agentName: r.isBgpHouse ? (r.agentName || "BGP House") : r.agentName,
-            allocationType: feeAllocType,
-            percentage: feeAllocType === "percentage" ? r.percentage : null,
-            fixedAmount: feeAllocType === "fixed" ? r.fixedAmount : null,
-            isBgpHouse: !!r.isBgpHouse,
-          }));
-        if (allocations.length > 0) {
-          try {
-            await apiRequest("PUT", `/api/crm/deals/${dealId}/fee-allocations`, { allocations });
-          } catch (e: any) {
-            toast({
-              title: "Unit added, fee split failed to save",
-              description: e?.message || "Open the deal to set the split there.",
-              variant: "destructive",
-            });
-          }
-        }
-      }
-      return unit;
+          .map(r => {
+            const user = r.isBgpHouse ? null : bgpUsers.find(u => u.name === r.agentName);
+            return {
+              agentName: r.isBgpHouse ? (r.agentName || "BGP House") : r.agentName,
+              allocationType: feeAllocType,
+              percentage: r.percentage || 0,
+              fixedAmount: r.fixedAmount || 0,
+              isBgpHouse: !!r.isBgpHouse,
+              ...(user ? { userId: String(user.id) } : {}),
+              ...(!user && !r.isBgpHouse ? { externalName: r.agentName } : {}),
+            };
+          })
+        : undefined;
+      const res = await apiRequest("POST", "/api/available-units", feeAllocations ? { ...data, feeAllocations } : data);
+      return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (unit: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       invalidateDealCaches();
       setCreateOpen(false);
@@ -1074,7 +1073,18 @@ export default function AvailableUnitsPage() {
       setUnitFeeRows([]);
       setUnitFeeAllocType("percentage");
       setShowAllUnitFields(false);
-      toast({ title: "Unit added" });
+      // The split travels in the create body; a rejected one comes back on
+      // the 200 as feeAllocationsError (the unit and deal exist) and the
+      // user is told to set it on the deal, as the old two-request flow did.
+      if (unit?.feeAllocationsError) {
+        toast({
+          title: "Unit added, fee split failed to save",
+          description: `${unit.feeAllocationsError} Open deal #${unit.dealRef ?? "…"} to set it.`,
+          variant: "destructive",
+        });
+        return;
+      }
+      toast({ title: unit?.alreadyListed ? "Already on the tracker" : "Unit added" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -1249,11 +1259,11 @@ export default function AvailableUnitsPage() {
   });
 
   const createDealMutation = useMutation({
-    mutationFn: (id: string) => apiRequest("POST", `/api/available-units/${id}/create-deal`),
+    mutationFn: (id: string) => apiRequest("POST", `/api/available-units/${id}/ensure-deal`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       invalidateDealCaches();
-      toast({ title: "Deal created and linked" });
+      toast({ title: "Deal reference created" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -1317,9 +1327,9 @@ export default function AvailableUnitsPage() {
     // fields that matter at the SOL handover.
     const existingDeal = unit.dealId ? dealMap[unit.dealId] : null;
     setWipForm({
-      // Map legacy "Letting" (pre-fix) → canonical "New Letting" so the
-      // dropdown shows a real value for older flipped deals.
-      dealType: (existingDeal?.dealType === "Letting" ? "New Letting" : existingDeal?.dealType) || "New Letting",
+      // Map legacy letting labels (pre-fix "Letting" / "Leasing") → canonical
+      // "New Letting" so the dropdown shows a real value for older flipped deals.
+      dealType: ((LEGACY_LETTING_TYPES as readonly string[]).includes(existingDeal?.dealType || "") ? DEFAULT_LETTING_TYPE : existingDeal?.dealType) || DEFAULT_LETTING_TYPE,
       team: Array.isArray(existingDeal?.team) ? existingDeal.team : (existingDeal?.team ? [existingDeal.team] : []),
       agent: (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || "",
       tenantId: existingDeal?.tenantId || "",
@@ -1526,7 +1536,7 @@ export default function AvailableUnitsPage() {
     // unit moves to Solicitors it lives on the Deals board; we hide SOL+ from
     // the default view here so the tracker stays focused. Users can still
     // click an SOL/EXC/COM lozenge to drill back in.
-    const PRE_SOL_CODES = new Set(["OPP", "REP", "SPEC", "LIVE", "AVA", "NEG", "HOT"]);
+    const PRE_SOL_CODES = new Set<string>([...PRE_MARKETING_STATUSES, ...TRACKER_LIVE_STATUSES.filter(s => s !== "SOL")]);
     let result = viewAll
       ? [...toolbarFiltered]
       : statusFilter !== "all"
@@ -2197,6 +2207,12 @@ export default function AvailableUnitsPage() {
                         <p className="text-xs text-muted-foreground truncate mt-0.5">{[u.unitName ? prop?.name : null, u.floor].filter(Boolean).join(" · ")}</p>
                       )}
                     </div>
+                    {(() => {
+                      const ref = deal?.dealRef ?? (isClientTracker ? null : (u as any).dealRef) ?? null;
+                      return u.dealId && ref ? (
+                        <a href={`/deals/${u.dealId}`} className="shrink-0 text-[11px] font-mono text-primary" data-testid={`mobile-deal-ref-${u.id}`}>#{ref}</a>
+                      ) : null;
+                    })()}
                     {/* Grouped by status, the group header already says it —
                         a "Marketing" chip on all 103 cards was noise. */}
                     {!viewAll && (
@@ -2388,34 +2404,54 @@ export default function AvailableUnitsPage() {
                       </TableCell>
                       {showCol("ref") && (
                       <TableCell rowSpan={unitRowSpan} className="px-1 py-1 text-xs font-mono text-muted-foreground whitespace-nowrap">
-                        {deal?.dealRef ? (
-                          <div className="flex items-center gap-1.5">
-                            <a
-                              href={`/deals/${deal.id}`}
-                              className="text-primary hover:underline"
-                              title={`Open deal ${deal.dealRef}`}
-                              data-testid={`link-deal-ref-${u.id}`}
+                        {(() => {
+                          // The row carries the ref straight from GET /api/available-units;
+                          // dealMap (GET /api/crm/deals, 10s refetch) is the fallback and feeds
+                          // the compliance dot. Clients keep today's behaviour — a link only when
+                          // the deal is in their scoped list.
+                          const ref = deal?.dealRef ?? (isClientTracker ? null : (u as any).dealRef) ?? null;
+                          if (u.dealId && ref) return (
+                            <div className="flex items-center gap-1.5">
+                              <a
+                                href={`/deals/${u.dealId}`}
+                                className="text-primary hover:underline"
+                                title={`Open deal ${ref} — fees and the BGP fee split are set on the deal page`}
+                                data-testid={`link-deal-ref-${u.id}`}
+                              >
+                                #{ref}
+                              </a>
+                              {deal && (() => {
+                                const amlOk = deal.amlCheckCompleted === "YES" || deal.amlCheckCompleted === "N-A";
+                                const feeOk = deal.feeAgreement === "YES";
+                                const code = legacyToCode(deal.status);
+                                // Only flag for deals on/past SOL — pre-SOL the fields don't matter yet.
+                                const promoted = code === "SOL" || code === "EXC" || code === "COM" || code === "INV";
+                                if (!promoted) return null;
+                                if (amlOk && feeOk) return null;
+                                return (
+                                  <span
+                                    className="inline-block w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0"
+                                    title={`Compliance gap: ${[!amlOk && "AML", !feeOk && "Fee agreement"].filter(Boolean).join(" + ")}`}
+                                    data-testid={`compliance-flag-${u.id}`}
+                                  />
+                                );
+                              })()}
+                            </div>
+                          );
+                          if (isClientTracker || HISTORIC_PILL_STATUSES.includes(rowCode)) return "—";
+                          return (
+                            <button
+                              type="button"
+                              className="text-[11px] text-muted-foreground hover:text-primary underline-offset-2 hover:underline"
+                              title="Give this unit its deal reference"
+                              onClick={() => createDealMutation.mutate(u.id)}
+                              disabled={createDealMutation.isPending}
+                              data-testid={`create-deal-ref-${u.id}`}
                             >
-                              #{deal.dealRef}
-                            </a>
-                            {(() => {
-                              const amlOk = deal.amlCheckCompleted === "YES" || deal.amlCheckCompleted === "N-A";
-                              const feeOk = deal.feeAgreement === "YES";
-                              const code = legacyToCode(deal.status);
-                              // Only flag for deals on/past SOL — pre-SOL the fields don't matter yet.
-                              const promoted = code === "SOL" || code === "EXC" || code === "COM" || code === "INV";
-                              if (!promoted) return null;
-                              if (amlOk && feeOk) return null;
-                              return (
-                                <span
-                                  className="inline-block w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0"
-                                  title={`Compliance gap: ${[!amlOk && "AML", !feeOk && "Fee agreement"].filter(Boolean).join(" + ")}`}
-                                  data-testid={`compliance-flag-${u.id}`}
-                                />
-                              );
-                            })()}
-                          </div>
-                        ) : "—"}
+                              Create ref
+                            </button>
+                          );
+                        })()}
                       </TableCell>
                       )}
                       <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 max-w-[180px]">
@@ -3063,6 +3099,8 @@ export default function AvailableUnitsPage() {
         isEdit={true}
         photoCount={(editItem as any)?.photoCount ?? 0}
         unitId={editItem?.id ?? null}
+        dealId={editItem?.dealId ?? null}
+        dealRef={editItem ? (dealMap[editItem.dealId || ""]?.dealRef ?? (editItem as any).dealRef ?? null) : null}
         // Opens the row's Files dialog ON TOP of the edit form (for
         // move/delete/focal point) — form edits survive underneath.
         onOpenFiles={() => editItem && setFilesUnit(editItem)}
@@ -4730,7 +4768,7 @@ function UnitFormDialog({
   open, onOpenChange, title, form, setForm, properties, propertyUnits = [], bgpUsers, crmCompanies = [],
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
   showAllFields, setShowAllFields, isEdit,
-  onSubmit, isPending, photoCount, onOpenFiles, unitId,
+  onSubmit, isPending, photoCount, onOpenFiles, unitId, dealId, dealRef,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -4758,9 +4796,45 @@ function UnitFormDialog({
   // The unit being edited — enables the in-form Files section (uploads need
   // an existing row to attach to).
   unitId?: string | null;
+  // Its backing deal (Ref #) — fees and the fee split are set on the deal page.
+  dealId?: string | null;
+  dealRef?: number | string | null;
 }) {
   const upd = (field: keyof UnitFormState, value: string) => setForm({ ...form, [field]: value });
   const { toast } = useToast();
+
+  // Fee split pre-fill (create only), the way the SOL/WIP flip dialog seeds
+  // its editor: the BGP contacts named on the unit share the agents' 85%
+  // (one agent 85%, two 42.5% each…); FeeAllocationEditor adds the BGP
+  // House 15% row itself. Re-seeds as the contacts change until someone
+  // touches the agent rows by hand (add, remove, rename or re-weight) —
+  // from then on their numbers win.
+  const autoSeedRef = useRef<FeeAllocationRow[]>([]);
+  useEffect(() => {
+    if (!open) { autoSeedRef.current = []; return; }
+    if (isEdit) return;
+    const agentRows = feeRows.filter(r => !r.isBgpHouse);
+    const untouched = agentRows.length === autoSeedRef.current.length
+      && agentRows.every(r => autoSeedRef.current.some(s => s.agentName === r.agentName && s.percentage === r.percentage));
+    if (!untouched) return;
+    const names = form.agentUserIds
+      .map(id => bgpUsers.find(u => u.id === id)?.name)
+      .filter((n): n is string => !!n);
+    const target = 100 - BGP_HOUSE_PCT;
+    const each = Math.round((target / Math.max(names.length, 1)) * 100) / 100;
+    const seed: FeeAllocationRow[] = names.map((agentName, i) => ({
+      agentName,
+      allocationType: feeAllocType,
+      percentage: i === names.length - 1 ? Math.round((target - each * (names.length - 1)) * 100) / 100 : each,
+      fixedAmount: 0,
+    }));
+    const same = seed.length === agentRows.length
+      && seed.every((s, i) => agentRows[i]?.agentName === s.agentName && agentRows[i]?.percentage === s.percentage);
+    autoSeedRef.current = seed;
+    if (same) return;
+    setFeeRows([...feeRows.filter(r => r.isBgpHouse), ...seed]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, isEdit, form.agentUserIds, bgpUsers, feeRows, feeAllocType]);
 
   // In-form file uploads (photos / floor plans). Same endpoint, categories
   // and cache key as the row's Files dialog, so both views stay in sync.
@@ -4840,7 +4914,7 @@ function UnitFormDialog({
       const key = (t.unit_number || "").trim().toLowerCase();
       if (!key || seen.has(key)) continue;
       seen.add(key);
-      const isVacant = (t.status || "").toLowerCase() === "vacant" || (t.tenant_name || "").toLowerCase() === "vacant";
+      const isVacant = tenancyStatusMatches(t.status, "vacant") || tenancyStatusMatches(t.tenant_name, "vacant");
       out.push({
         id: String(t.id),
         name: t.unit_number,
@@ -4888,7 +4962,9 @@ function UnitFormDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
-            Saving will auto-create a linked Leasing deal on the <a href="/deals" className="underline">deals board</a>.
+            {isEdit && dealId ? (
+              <>Deal <a href={`/deals/${dealId}`} className="underline font-mono">#{dealRef ?? "…"}</a> — fees, % and the BGP fee split are set on the deal page.</>
+            ) : "Saving gives the unit its deal reference (#) — fees and the fee split live on that deal."}
           </DialogDescription>
         </DialogHeader>
         {(() => {
@@ -5239,16 +5315,20 @@ function UnitFormDialog({
             </div>
             <div>
               <Label className="text-xs">BGP fee split</Label>
-              <div className="border rounded-md p-2.5 bg-muted/30">
-                <FeeAllocationEditor
-                  rows={feeRows}
-                  onChange={setFeeRows}
-                  allocType={feeAllocType}
-                  onAllocTypeChange={setFeeAllocType}
-                  dealFee={parseFloat(form.fee) || null}
-                  bgpAgents={bgpUsers.map(u => ({ id: String(u.id), name: u.name }))}
-                />
-              </div>
+              {isEdit ? (
+                <p className="text-xs text-muted-foreground">Fee split is managed on the deal — {dealId ? <a href={`/deals/${dealId}`} className="underline">open deal #{dealRef}</a> : "save once to create the deal, then open it from the Ref column"}.</p>
+              ) : (
+                <div className="border rounded-md p-2.5 bg-muted/30">
+                  <FeeAllocationEditor
+                    rows={feeRows}
+                    onChange={setFeeRows}
+                    allocType={feeAllocType}
+                    onAllocTypeChange={setFeeAllocType}
+                    dealFee={parseFloat(form.fee) || null}
+                    bgpAgents={bgpUsers.map(u => ({ id: String(u.id), name: u.name }))}
+                  />
+                </div>
+              )}
             </div>
           </div>
 

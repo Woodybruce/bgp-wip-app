@@ -1137,7 +1137,7 @@ export async function importUnitEvidence(req: Request): Promise<any> {
   try {
     await db.query("BEGIN");
     // Serialise imports for this unit so a double click cannot duplicate a sheet.
-    const current = (await db.query(`SELECT id, unit_ref FROM evidence_plan_units WHERE id = $1 AND plan_id = $2 FOR UPDATE`, [unitId, planId])).rows[0];
+    const current = (await db.query(`SELECT * FROM evidence_plan_units WHERE id = $1 AND plan_id = $2 FOR UPDATE`, [unitId, planId])).rows[0];
     if (!current) throw new EvidencePlanError(404, "The selected unit has been removed. Reload the plan before uploading");
     if (current.unit_ref !== unit.unit_ref) throw new EvidencePlanError(409, "The selected unit was renamed while uploading. Reload it and review the sheet again");
     const currentPlan = (await db.query(`SELECT id, property_id FROM evidence_plans WHERE id = $1 FOR SHARE`, [planId])).rows[0];
@@ -1151,9 +1151,27 @@ export async function importUnitEvidence(req: Request): Promise<any> {
     values.push(planId, sourceKey, (req as any).session?.userId || (req as any).tokenUserId || null);
     const { rows: [entry] } = await db.query(`INSERT INTO evidence_plan_entries (${keys.map(key => ENTRY_FIELDS[key]).join(", ")}, plan_id, source_key, created_by)
       VALUES (${values.map((_, index) => `$${index + 1}`).join(", ")}) RETURNING *`, values);
+    // Pete (2026-10-02): saving a sheet to a unit should fill the unit's top
+    // facts too. The sheet carries one fact the unit can take, the demise
+    // size — ITZA, Zone A, term and headline rent are evidence, and expiry or
+    // passing rent are never inferred from a term and a date. Blank only: a
+    // saved fact that disagrees with the sheet stays as it is. A unit on the
+    // tenancy schedule keeps its facts there, so the blank goes on that row.
+    const filled: string[] = [];
+    if (typeof patch.sizeSqft === "number" && patch.sizeSqft > 0) {
+      const linked = matchEvidenceScheduleRow(current, await evidenceScheduleRows(unit.property_id, db)).row;
+      if (linked) {
+        const { rowCount } = await db.query(`UPDATE tenancy_schedule_units SET nia_sqft = $1, updated_at = now()
+          WHERE id = $2 AND nia_sqft IS NULL AND gia_sqft IS NULL`, [patch.sizeSqft, linked.id]);
+        if (rowCount) filled.push("sqft");
+      } else if (current.sqft == null) {
+        await db.query(`UPDATE evidence_plan_units SET sqft = $1, updated_at = now() WHERE id = $2 AND sqft IS NULL`, [patch.sizeSqft, unitId]);
+        filled.push("sqft");
+      }
+    }
     await db.query(`UPDATE evidence_plans SET updated_at = now() WHERE id = $1`, [planId]);
     await db.query("COMMIT");
-    return { entry, duplicate: false };
+    return { entry, duplicate: false, filled };
   } catch (error) { await db.query("ROLLBACK"); throw error; }
   finally { db.release(); }
 }

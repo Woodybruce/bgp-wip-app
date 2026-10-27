@@ -7,6 +7,7 @@ import { Link } from "wouter";
 import { useMemo, useState } from "react";
 import { TrendingUp, ChevronRight, X } from "lucide-react";
 import type { InvestmentTracker as InvTracker } from "@shared/schema";
+import { legacyToCode } from "@shared/deal-status";
 
 export function InvestmentTrackerWidget() {
   const { data: items = [] } = useQuery<InvTracker[]>({ queryKey: ["/api/investment-tracker"] });
@@ -30,26 +31,23 @@ export function InvestmentTrackerWidget() {
 
   const activeItems = useMemo(() => {
     if (statusFilter) return items.filter(u => normStatus(u.status) === statusFilter).slice(0, 30);
-    return items.filter(u => normStatus(u.status) !== "COMPLETED").slice(0, 12);
+    return items.filter(u => legacyToCode(u.status) !== "COM").slice(0, 12);
   }, [items, statusFilter]);
 
+  // Keyed by status code (legacyToCode folds the label variants); SOLD is a
+  // tracker-only word with no code.
   const statusColors: Record<string, string> = {
-    REPORTING: "bg-slate-500",
     REP: "bg-slate-500",
-    SPECULATIVE: "bg-violet-500",
     SPEC: "bg-violet-500",
     LIVE: "bg-blue-500",
-    AVAILABLE: "bg-amber-500",
     AVA: "bg-amber-500",
-    "UNDER OFFER": "bg-orange-500",
     OPP: "bg-orange-500",
     SOL: "bg-orange-500",
-    COMPLETED: "bg-green-500",
     COM: "bg-green-500",
     SOLD: "bg-green-500",
     WIT: "bg-neutral-400",
   };
-  const dotFor = (s: string | null | undefined) => statusColors[normStatus(s)] || "bg-neutral-400";
+  const dotFor = (s: string | null | undefined) => statusColors[legacyToCode(s || "Reporting") ?? normStatus(s)] || "bg-neutral-400";
 
   return (
     <Card className="h-full flex flex-col">
@@ -78,7 +76,7 @@ export function InvestmentTrackerWidget() {
                 }`}
                 data-testid={`inv-widget-filter-${key.toLowerCase().replace(/\s/g, "-")}`}
               >
-                <div className={`w-2 h-2 rounded-full ${statusColors[key] || "bg-neutral-400"}`} />
+                <div className={`w-2 h-2 rounded-full ${dotFor(label)}`} />
                 <span className={`text-xs ${active ? "" : "text-muted-foreground"}`}>{label}</span>
                 <span className="text-xs font-semibold tabular-nums">{count}</span>
                 {active && <X className="w-3 h-3" />}

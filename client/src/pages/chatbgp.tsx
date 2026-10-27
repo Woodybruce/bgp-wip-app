@@ -37,6 +37,8 @@ import {
 import { useLocation } from "wouter";
 import type { UnitMarketingFile } from "@shared/schema";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
+import { ChatResponse } from "@/components/chat-response";
+import { ChatMessageMenu } from "@/components/chat-message-menu";
 import { useChatBGPState, type LocalMessage } from "@/contexts/chatbgp-context";
 
 function formatFileSize(bytes: number | null) {
@@ -395,7 +397,9 @@ function isFailedChatResponse(message: Pick<LocalMessage, "role" | "content">): 
     || content.endsWith("\n\nThis response is incomplete. Some actions may already have run; check their results before retrying, especially a paid order.");
 }
 
-function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, completedActions, onRetry }: {
+function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, completedActions, onRetry, threadId, onDraftSaved }: {
+  threadId?: string | null;
+  onDraftSaved?: (content: string) => void;
   message: LocalMessage;
   isOwn?: boolean;
   onEdit?: (msgId: string, content: string) => void;
@@ -434,7 +438,10 @@ function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, comple
             </div>
           </div>
         ) : (
-          <div className="relative max-w-[85%] group">
+          <div className="relative max-w-[85%] group/msg">
+            <ChatMessageMenu content={message.content} threadId={threadId}
+              onEdit={isOwn && message.id && onEdit ? () => { setEditContent(message.content); setEditing(true); } : undefined}
+              onDelete={isOwn && message.id && onDelete ? () => onDelete(message.id!) : undefined}>
             <div className="rounded-2xl rounded-br-md px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap bg-primary text-primary-foreground">
               {(() => {
                 const audioMatch = message.content.match(/\[([^\]]+)\]\((\/api\/chat-media\/[^\)]+\.(webm|ogg|m4a|wav|mp4))\)/);
@@ -452,26 +459,7 @@ function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, comple
                 return formatted || message.content;
               })()}
             </div>
-            {isOwn && message.id && (
-              <div className="absolute -bottom-1 left-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    {/* Larger touch target (44px min) for mobile */}
-                    <button className="w-8 h-8 min-w-[44px] min-h-[44px] rounded-full bg-background border shadow-sm flex items-center justify-center" style={{ touchAction: "manipulation" }} data-testid={`button-message-actions-${message.id}`}>
-                      <MoreHorizontal className="w-3.5 h-3.5" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-32">
-                    <DropdownMenuItem onClick={() => { setEditContent(message.content); setEditing(true); }} className="min-h-[44px]" data-testid="button-edit-message">
-                      <Pencil className="w-3.5 h-3.5 mr-2" /> Edit
-                    </DropdownMenuItem>
-                    <DropdownMenuItem className="text-destructive min-h-[44px]" onClick={() => onDelete?.(message.id!)} data-testid="button-delete-message">
-                      <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            )}
+            </ChatMessageMenu>
           </div>
         )}
       </div>
@@ -490,7 +478,7 @@ function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, comple
       <div className="flex-1 min-w-0">
         {textParts.length > 0 && (
           <div className={`text-sm leading-relaxed ${isErrorMessage ? "text-destructive/80" : "text-foreground"}`}>
-            <ChatBGPMarkdown content={textParts.join("\n")} />
+            <ChatResponse content={textParts.join("\n")} threadId={threadId} messageId={message.id} originalContent={message.content} onDraftSaved={onDraftSaved} actions={!isErrorMessage} />
           </div>
         )}
         {isErrorMessage && onRetry && (
@@ -2457,10 +2445,11 @@ export default function ChatBGP() {
       };
       return attemptSend(1);
     },
-    onSuccess: async (data: { reply: string; action?: any; savedToThread?: boolean }) => {
+    onSuccess: async (data: { reply: string; action?: any; savedToThread?: boolean; messageId?: string }) => {
       setProgressLabel("");
       setStreamingContent("");
-      setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
+      const replyMessage: LocalMessage = { id: data.messageId, role: "assistant", content: data.reply };
+      setMessages((prev) => [...prev, replyMessage]);
       const threadId = activeThreadIdRef.current;
       if (threadId) {
         // Server already wrote the assistant reply via sendResult ->
@@ -2469,7 +2458,8 @@ export default function ChatBGP() {
         // the thread twice and shows up duplicated whenever the thread
         // gets reloaded (or any consumer refetches /chat/threads/:id).
         if (!data.savedToThread) {
-          await saveMessageMutation.mutateAsync({ threadId, role: "assistant", content: data.reply });
+          const saved = await saveMessageMutation.mutateAsync({ threadId, role: "assistant", content: data.reply });
+          setMessages(prev => prev.map(message => message === replyMessage ? { ...message, id: saved.id } : message));
         }
         apiRequest("POST", `/api/chat/threads/${threadId}/auto-title`, {})
           .then(() => queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] }))
@@ -4085,6 +4075,8 @@ export default function ChatBGP() {
                     <MessageBubble
                       key={msg.id || i}
                       message={msg}
+                      threadId={activeThreadId}
+                      onDraftSaved={content => setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content } : m))}
                       isOwn={msg.role === "user" && (!msg.userId || msg.userId === currentUser?.id)}
                       onEdit={handleEditMessage}
                       onDelete={handleDeleteMessage}

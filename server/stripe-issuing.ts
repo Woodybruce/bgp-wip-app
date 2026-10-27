@@ -807,6 +807,18 @@ export function setupStripeIssuingRoutes(app: Express) {
         const code = await getCategoryCode(String(updates.category));
         if (code) updates.xeroAccountCode = code;
       }
+      // A code sent directly (not derived from the category above) must be
+      // one the chart knows — live Xero list or EXPENSE_CATEGORY_MAP. Codes
+      // that weren't in the chart were reaching Xero and bouncing at post
+      // time (Wendy, 2026-06-17); refuse them here instead of storing junk.
+      const rawCode = updates.xeroAccountCode;
+      if (rawCode !== undefined && rawCode !== null && String(rawCode).trim() !== "") {
+        const { isKnownExpenseCode } = await import("./expense-categories");
+        if (!(await isKnownExpenseCode(String(rawCode)))) {
+          return res.status(400).json({ error: `Unknown Xero account code "${rawCode}" — pick a category instead.` });
+        }
+        updates.xeroAccountCode = String(rawCode).trim();
+      }
       // If isPersonal is flipping from false → true on this PATCH, mirror
       // the side-effects of the dedicated /mark-personal route so the
       // row's status, category and Xero code all land in the right place

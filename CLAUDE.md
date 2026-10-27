@@ -93,6 +93,65 @@ employee at a qualifying firm. Preserve people whose firm is unconfirmed;
 do not infer an employer or change stored company attachments. The shared
 brand slice (including self-added brands) still defines eligible brands.
 
+## Lettings: units, deals and the Letting Tracker (DECIDED 2026-10-26 — do not re-litigate)
+
+Woody's answers to the cleanup report (`docs/letting-cleanup-thoughts.md`,
+appendix `docs/letting-cleanup-technical-appendix.md`):
+
+- **Every Letting Tracker unit has a backing deal (Ref #) from the moment
+  it exists**; the fee and the fee split live on the deal. The fee split is
+  entered on the Add Unit form at creation (the deal page edits it later).
+- **The Letting Tracker becomes a view of letting deals** (the structural
+  change): one record per letting from Marketing to Invoiced, shown on the
+  tracker, the Deals board and the WIP. The tracker row keeps only
+  marketing collateral (website flag, lease terms, available date, photos,
+  brochures, HOTs document, viewings, offers) and keeps its id (bgp.uk.com
+  listing URLs).
+- **Letting deal types:** New Letting, Lease Disposal, Temp Lease, Licence,
+  Sub-Letting. Lease Disposal (and Sub-Letting) are **tenant-side**
+  instructions; New Letting / Temp Lease / Licence are landlord-side. The
+  side is derived from the type on CREATE; existing deals are only moved
+  after Woody has seen the list.
+- **Tracker statuses:** Marketing (AVA), Negotiating (NEG), HOTs (HOT) and
+  Solicitors (SOL) are live on the tracker; Exchanged / Completed /
+  Withdrawn / Invoiced fold under Historic. Solicitors shows as "Under
+  Offer" on the website.
+- **Marketing deals sit on the Deals board and the WIP from birth** with
+  or without a fee (no fee = "fee needed" on Needs Attention, not "not
+  WIP") — this is the leasing fee forecast.
+- **No unplaced letting deals:** a letting deal must have a property and a
+  unit (an actual address); otherwise it is refused, never parked.
+- **Client-added units** (Landsec logins) create a BGP instruction (deal +
+  Ref #).
+- **Re-marketing** a let or withdrawn unit starts a new deal record (the
+  completed one keeps its Ref #, fee and invoice); it is still ONE unit and
+  ONE live deal on the tracker; previous viewings and offers stay visible
+  on the unit.
+- **Leasing Schedule (Landsec board):** recommended to become a lens over
+  the tenancy schedule + live deals, keeping only their strategy fields;
+  needs Landsec's nod (Phase 6).
+- **Freeze:** the deploy-time NEG-deal → tracker loop is deleted and the
+  overlapping admin repair buttons (Sync Tracker → Leasing Schedule,
+  Renumber Units, Rename Legacy Teams, firm-wide Re-sync) are frozen while
+  the cleanup runs. Integrity is REPORTED (`GET /api/admin/letting-integrity`),
+  not silently repaired at boot.
+- **One write door (Phase 2, 2026-10-26):** `server/letting-service.ts` —
+  `createDeal` / `updateDeal` behind POST/PUT `/api/crm/deals` (and the WIP
+  import, import-anything, ChatBGP via the routes), `createListing` behind
+  POST `/api/available-units`, `ensureTrackerRowForDeal` (deal ⇒ tracker,
+  never two rows for one deal), `writeDealFeeAllocations`. A letting
+  create without property + unit is refused (409 `UNIT_REQUIRED`); a
+  second live landlord-side letting on a unit is refused with the existing
+  Ref # (409 `LIVE_LETTING_EXISTS`); existing deals are never refused for
+  lacking a unit. Every row it makes or links gets one `deal_audit_log`
+  row (field `letting_service`). Repairs are admin Preview → Apply only:
+  `server/letting-backfill.ts` (tracker rows for the off-tracker deals,
+  stub + real pairs) and `server/letting-sweep-undo.ts` (the 26 Oct sweep).
+  Do not add a boot-time sweep again — the 26 Oct one minted 178 stubs.
+- **Still parked for Woody:** the one-live-letting index (schema change)
+  and wiring `actingForFromType` (Lease Disposal / Sub-Letting → tenant
+  side) — both wait on his review of the integrity report's lists.
+
 ## Document design preferences (the "house style" pattern)
 
 For Claude-driven document generation (Why Buy decks initially, Document

@@ -1,3 +1,10 @@
+import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
+
+// Lettings cleanup (Phase 0b): a replacement import NULLs
+// crm_deals.tenancy_unit_id for the whole property, so it is refused until
+// Phase 4 makes it re-link.
+export const TENANCY_REPLACE_PAUSED = `${LETTING_REPAIR_PAUSED} — import without replacing existing rows, or ask Woody`;
+
 type ScheduleRow = Record<string, any>;
 export type ParsedTenancyImportRow = { sourceRow: number; values: ScheduleRow };
 export type TenancyImportReview = {
@@ -89,6 +96,7 @@ export function classifyTenancyImportRow(incoming: ParsedTenancyImportRow, exist
 
 export async function importTenancyRows(pool: any, propertyId: string, rows: ParsedTenancyImportRow[],
   options: { clearExisting?: boolean; allowedFields: readonly string[]; explicitEdits?: Array<ParsedTenancyImportRow & { id: string }> }) {
+  if (options.clearExisting && !LETTING_REPAIR_TOOLS_ENABLED) throw new TenancyImportError(409, TENANCY_REPLACE_PAUSED);
   const explicitEdits = options.explicitEdits || [];
   if (!rows.length && !explicitEdits.length) throw new TenancyImportError(400, "No tenancy rows were found for this property. The existing schedule is unchanged.");
   if (options.clearExisting && explicitEdits.length) throw new TenancyImportError(400, "A replacement import cannot also edit existing row IDs.");

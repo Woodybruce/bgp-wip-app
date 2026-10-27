@@ -4,7 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 // OpenAI uses Responses (OPENAI_API_KEY); Kimi uses the Anthropic-compatible
 // endpoint (MOONSHOT_API_KEY); Anthropic remains available for rollback.
 // OPENAI_CHAT_MODEL defaults to Sol 6.1, OPENAI_HELPER_MODEL to Luna, and
-// OPENAI_ADVANCED_MODEL to Astra (only explicitly selected per thread).
+// OPENAI_ADVANCED_MODEL to Astra (the interactive chat default; /sol and /luna remain available).
 // Direct Anthropic SDK pipelines are intentionally unchanged by these flags.
 
 export type AiProvider = "anthropic" | "kimi" | "openai";

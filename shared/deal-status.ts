@@ -14,6 +14,8 @@ export const DEAL_STATUS_CODES = [
   "COM",  // Completed (also covers "Let" on the letting tracker)
   "WIT",  // Withdrawn (also covers Lost/Dead)
   "INV",  // Invoiced — system-set when a Xero invoice syncs
+  "ARCH", // Archived — system-set by the WIP import's soft-archive (crm.ts);
+          // folds under Historic like WIT, never a kanban column or a picker option
 ] as const;
 
 export type DealStatusCode = typeof DEAL_STATUS_CODES[number];
@@ -31,6 +33,7 @@ export const DEAL_STATUS_LABELS: Record<DealStatusCode, string> = {
   COM: "Completed",
   WIT: "Withdrawn",
   INV: "Invoiced",
+  ARCH: "Archived",
 };
 
 // Tailwind colour classes per status — used by chips/dots across the app
@@ -47,6 +50,7 @@ export const DEAL_STATUS_COLORS: Record<DealStatusCode, string> = {
   COM: "bg-emerald-100 text-emerald-800",
   WIT: "bg-stone-100 text-stone-600",
   INV: "bg-green-100 text-green-800",
+  ARCH: "bg-stone-100 text-stone-600",
 };
 
 // Solid dot swatches per status — same hue family as the chip map above so a
@@ -64,6 +68,7 @@ export const DEAL_STATUS_DOT_COLORS: Record<DealStatusCode, string> = {
   COM: "bg-emerald-500",
   WIT: "bg-stone-400",
   INV: "bg-green-600",
+  ARCH: "bg-stone-400",
 };
 
 // Per-tracker subsets — which codes each view's dropdown should offer
@@ -73,18 +78,21 @@ export const DEAL_STATUS_DOT_COLORS: Record<DealStatusCode, string> = {
 export const LETTING_STATUSES: DealStatusCode[]    = ["OPP", "AVA", "NEG", "HOT", "SOL", "EXC", "COM", "WIT", "INV"];
 export const INVESTMENT_STATUSES: DealStatusCode[] = ["REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "WIT", "INV"];
 // WIP report covers every fee-bearing stage including pre-deal pipeline.
-// AVA + NEG live on the Letting Tracker side; SOL+ live on the Deals
-// Board. Both feed the WIP report (visual reflection of both boards per
-// the post-Sage model). REP dropped from WIP (Woody, 2026-08-31: "delete
+// AVA + NEG live on the Letting Tracker AND the Deals board (Woody,
+// 2026-10-26: a Marketing deal sits on the WIP and the Deals board from
+// birth so its fee gets added); SOL+ carry on through the Deals board. REP dropped from WIP (Woody, 2026-08-31: "delete
 // reporting" — matching Alex's 2026-08-12 letting-tracker call); REP
 // deals stay on the Investment tracker and deal pages, they just don't
 // count as WIP.
 export const WIP_STATUSES: DealStatusCode[]        = ["AVA", "NEG", "HOT", "SOL", "EXC", "COM", "INV"];
-export const DEAL_PAGE_STATUSES: DealStatusCode[]  = [...DEAL_STATUS_CODES];
+// Every code a person may pick on a deal — ARCH is system-set (see above)
+// and never offered.
+export const DEAL_PAGE_STATUSES: DealStatusCode[]  = DEAL_STATUS_CODES.filter((c) => c !== "ARCH");
 
-// INV is set automatically when a Xero invoice syncs onto the deal — UI should
-// render it but disable manual selection.
-export const SYSTEM_SET_STATUSES: DealStatusCode[] = ["INV"];
+// INV is set automatically when a Xero invoice syncs onto the deal, ARCH by
+// the WIP import's soft-archive — UI should render them but disable manual
+// selection.
+export const SYSTEM_SET_STATUSES: DealStatusCode[] = ["INV", "ARCH"];
 
 // Maps legacy free-text status strings to canonical codes. Used at every read
 // site as a safety net while old data still exists, and by the one-shot
@@ -123,12 +131,15 @@ const LEGACY_MAP: Record<string, DealStatusCode> = {
   "available": "AVA",
   "ava": "AVA",
   "marketing": "AVA",
+  "vacant": "AVA",                // tenancy-schedule occupancy word, leaks into tracker rows
   "occupied": "COM",              // leasing-schedule unit status — occupied unit = completed deal
   // archived
   "withdrawn": "WIT",
   "wit": "WIT",
   "lost": "WIT",
   "dead": "WIT",
+  "arch": "ARCH",
+  "archived": "ARCH",
 };
 
 export function legacyToCode(raw: string | null | undefined): DealStatusCode | null {
@@ -145,8 +156,19 @@ export function legacyToCode(raw: string | null | undefined): DealStatusCode | n
 // Status groups used by server-side SQL exclusion lists.
 // Use these instead of maintaining divergent hardcoded strings in each file.
 // All SQL queries should compare against canonical codes (post-migration).
-export const CLOSED_STATUSES: DealStatusCode[]   = ["WIT", "COM", "INV"]; // fully closed — dead, completed, invoiced
-export const TERMINAL_STATUSES: DealStatusCode[] = ["WIT"];               // dead/withdrawn only (keep COM/INV in view)
+export const CLOSED_STATUSES: DealStatusCode[]   = ["WIT", "COM", "INV", "ARCH"]; // fully closed — dead, completed, invoiced, archived
+export const TERMINAL_STATUSES: DealStatusCode[] = ["WIT", "ARCH"];               // dead/withdrawn/archived only (keep COM/INV in view)
+
+// Every stored spelling that reads as one of `codes`, lower-cased: the codes
+// themselves plus their legacy labels, in a fixed order. For SQL IN-lists
+// compared against lower(trim(coalesce(col, ''))) — see shared/letting-rules.ts.
+export function statusSpellingsFor(codes: readonly DealStatusCode[]): string[] {
+  const out = codes.map((c) => c.toLowerCase());
+  for (const [label, code] of Object.entries(LEGACY_MAP)) {
+    if (codes.includes(code) && !out.includes(label)) out.push(label);
+  }
+  return out;
+}
 
 // Statuses that should be excluded from active deal views (legacy, comps).
 // `crm_deals.status` rows that match these are not in the 10-code set and

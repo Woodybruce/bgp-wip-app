@@ -14,6 +14,8 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { pool } from "./db";
 import { getDelegatedGraphTokenForUser } from "./microsoft";
+import { isPrivateMailboxAddress } from "./private-mail";
+import { isShareableClientCalendarEvent } from "./team-event-privacy";
 
 const PERSONAL_PATTERNS = [
   /\blunch\b/i, /\bbreakfast\b/i, /\bdinner\b/i, /\bgym\b/i, /\bworkout\b/i,
@@ -40,12 +42,13 @@ export async function syncClientTeamEvents(clientCompanyId: string): Promise<{
 
   // Account team = the client-team board members (BGP staff).
   const teamRes = await pool.query(
-    `SELECT DISTINCT user_id FROM crm_client_team_members WHERE client_company_id = $1`,
+    `SELECT DISTINCT tm.user_id,u.email FROM crm_client_team_members tm
+      JOIN users u ON u.id=tm.user_id WHERE tm.client_company_id = $1`,
     [clientCompanyId]
   );
-  const teamUserIds: string[] = teamRes.rows.map((r: any) => r.user_id).filter(Boolean);
-  stats.teamMembers = teamUserIds.length;
-  if (teamUserIds.length === 0) return stats;
+  const teamMembers = teamRes.rows.filter((r: any) => r.user_id && !isPrivateMailboxAddress(r.email));
+  stats.teamMembers = teamMembers.length;
+  if (teamMembers.length === 0) return stats;
 
   // Match set: the client's property names + id, their tenant/contact brands,
   // and their contact emails (broader match = attendee is a client contact).
@@ -83,6 +86,7 @@ export async function syncClientTeamEvents(clientCompanyId: string): Promise<{
 
   type Ev = { title: string; start: string; end: string; location: string; propertyId: string | null; uid: string; attendees: string[] };
   const matchedEvents = new Map<string, Ev>();
+  const excludedEvents = new Set<string>();
 
   const isClientAddress = (addr: string): boolean => {
     if (!addr) return false;
@@ -91,9 +95,18 @@ export async function syncClientTeamEvents(clientCompanyId: string): Promise<{
     return !!dom && clientDomains.has(dom);
   };
 
-  const considerEvent = (e: any): void => {
+  const considerEvent = (e: any, mailbox: string): void => {
     stats.scanned++;
     const subject = e.subject || "";
+    const uid2 = e.iCalUId || `${subject}|${e.start?.dateTime}`;
+    if (!isShareableClientCalendarEvent(e, mailbox)) {
+      // A copy with fewer attendees must not reintroduce an invitation which
+      // another checked diary identifies as private or cancelled.
+      excludedEvents.add(uid2);
+      matchedEvents.delete(uid2);
+      return;
+    }
+    if (excludedEvents.has(uid2)) return;
     const location = e.location?.displayName || "";
     const hay = norm(subject + " " + location);
     if (!hay.trim()) return;
@@ -117,7 +130,6 @@ export async function syncClientTeamEvents(clientCompanyId: string): Promise<{
     if (!matched) return;
 
     stats.matched++;
-    const uid2 = e.iCalUId || `${subject}|${e.start?.dateTime}`;
     if (!matchedEvents.has(uid2)) {
       // "Name <email>" per attendee so the client's Event Details can
       // show who is in the room.
@@ -143,9 +155,10 @@ export async function syncClientTeamEvents(clientCompanyId: string): Promise<{
     }
   };
 
-  const CAL_SELECT = "$select=subject,start,end,location,attendees,organizer,iCalUId,isAllDay,showAs";
+  const CAL_SELECT = "$select=subject,start,end,location,attendees,organizer,iCalUId,isAllDay,showAs,sensitivity,isCancelled";
 
-  for (const uid of teamUserIds) {
+  for (const member of teamMembers) {
+    const uid = member.user_id;
     const token = await getDelegatedGraphTokenForUser(uid).catch(() => null);
     if (!token) continue;
     stats.connected++;
@@ -156,7 +169,7 @@ export async function syncClientTeamEvents(clientCompanyId: string): Promise<{
       });
       if (!res.ok) continue;
       const data = await res.json();
-      for (const e of data.value || []) considerEvent(e);
+      for (const e of data.value || []) considerEvent(e, member.email);
     } catch (err: any) {
       console.warn(`[client-events-sync] member ${uid} failed:`, err?.message);
     }
@@ -173,7 +186,7 @@ export async function syncClientTeamEvents(clientCompanyId: string): Promise<{
       `/users/chatbgp@brucegillinghampollard.com/calendarView?startDateTime=${start.toISOString()}&endDateTime=${end.toISOString()}&$top=100&$orderby=start/dateTime&${CAL_SELECT}`,
       { headers: { Prefer: 'outlook.timezone="Europe/London"' } }
     );
-    for (const e of data?.value || []) considerEvent(e);
+    for (const e of data?.value || []) considerEvent(e, "chatbgp@brucegillinghampollard.com");
   } catch (err: any) {
     console.warn("[client-events-sync] invite-mailbox sweep failed:", err?.message);
   }
