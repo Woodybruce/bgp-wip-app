@@ -11,9 +11,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Pill, PillCount } from "@/components/ui/pill";
 import { AiCommentary } from "@/components/ai-commentary";
+import { LandlordInstagramPreview, landlordInstagramUsername } from "@/components/landlord-instagram-preview";
+import { mergeLandlordNewsTabs, type FeedItem, type FeedTab, type LandlordNewsArticle } from "@/lib/landlord-news-feed";
 
-type FeedItem = { id: string; title: string; summary: string | null; url: string; image_url: string | null; at: string; type: string; baseline?: boolean; followed_at?: string | null };
-type FeedTab = { type: string; label: string; sourceUrl: string | null; items: FeedItem[] };
 type FeedResponse = { tabs: FeedTab[]; read: { text: string; at: string } | null; stale: boolean; latest: string | null };
 
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
@@ -52,33 +52,38 @@ function InstagramGrid({ companyId }: { companyId: string }) {
 }
 
 function ItemList({ items, landlord = false }: { items: FeedItem[]; landlord?: boolean }) {
+  const [showAll, setShowAll] = useState(false);
+  useEffect(() => setShowAll(false), [items[0]?.type]);
   if (!items.length) return <p className="text-xs text-muted-foreground">{landlord ? "No items have been retrieved from this source yet. Open the source page to check its latest updates." : "Nothing new on this page yet — new items appear as the brand posts them."}</p>;
   const followed = items.find(item => item.baseline)?.followed_at;
+  const visible = landlord && !showAll ? items.slice(0, 6) : items;
   return (
     <div className="space-y-1.5">
     {/* The first read of a page is what was already there (existing sites,
         standing roles); anything added since is marked New. */}
     {followed && <p className="text-[11px] text-muted-foreground">Listed on {landlord ? "the source" : "the brand's"} page when BGP started following on {day(followed)} — anything added since is marked <span className="font-medium text-foreground">New</span>.</p>}
     <ul className="divide-y divide-border max-h-[520px] overflow-y-auto">
-      {items.map(item => (
+      {visible.map(item => (
         <li key={item.id} className="py-2 flex gap-2.5 min-w-0">
           {realImage(item.image_url) && <img src={item.image_url!} alt="" className="w-12 h-12 rounded object-cover shrink-0 bg-muted" loading="lazy" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
           <div className="min-w-0 flex-1">
             <a href={item.url} target="_blank" rel="noreferrer" className="text-sm font-medium hover:underline break-words">{item.title}</a>
             <div className="text-[11px] text-muted-foreground tabular-nums flex items-center gap-1.5">
               {followed && !item.baseline && <span className="rounded-full bg-foreground text-background px-1.5 py-px text-[11px] font-semibold">New</span>}
-              {!item.baseline && day(item.at)}
+              {landlord && item.publisher && <span>{item.publisher}</span>}
+              {!item.baseline && item.at && !Number.isNaN(Date.parse(item.at)) && day(item.at)}
             </div>
             {item.summary && <p className="text-xs text-muted-foreground line-clamp-2">{item.summary}</p>}
           </div>
         </li>
       ))}
     </ul>
+    {landlord && items.length > 6 && <button className="text-xs text-primary hover:underline min-h-8" onClick={() => setShowAll(value => !value)}>{showAll ? "Show fewer" : `View all ${items.length} updates`}</button>}
     </div>
   );
 }
 
-export function BrandFeedCard({ companyId, canSetUp = false, landlord = false }: { companyId: string; canSetUp?: boolean; landlord?: boolean }) {
+export function BrandFeedCard({ companyId, canSetUp = false, landlord = false, news, companyName = "", domain, instagramHandle }: { companyId: string; canSetUp?: boolean; landlord?: boolean; news?: LandlordNewsArticle[] | null; companyName?: string; domain?: string | null; instagramHandle?: string | null }) {
   const { toast } = useToast();
   const key = ["/api/brand", companyId, "feed"];
   const { data, isLoading, isError, refetch } = useQuery<FeedResponse>({
@@ -88,7 +93,8 @@ export function BrandFeedCard({ companyId, canSetUp = false, landlord = false }:
   });
   useInstagram(companyId, !landlord);
   const [active, setActive] = useState<string | null>(null);
-  useEffect(() => setActive(null), [companyId]);
+  const [activeSocial, setActiveSocial] = useState<string | null>(null);
+  useEffect(() => { setActive(null); setActiveSocial(null); }, [companyId]);
   const read = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/brand/${companyId}/feed/read`)).json(),
     onSuccess: (out: { read: FeedResponse["read"] }) => queryClient.setQueryData<FeedResponse>(key, prev => prev ? { ...prev, read: out.read } : prev),
@@ -119,35 +125,53 @@ export function BrandFeedCard({ companyId, canSetUp = false, landlord = false }:
     onError: (e: Error) => toast({ title: "Couldn't set up feeds", description: e.message, variant: "destructive" }),
   });
 
-  if (isLoading || !data) return landlord ? <Card data-testid="landlord-news-social">
-    <CardHeader className="p-3 pb-2"><CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground"><Rss className="w-3.5 h-3.5" />News &amp; social</CardTitle></CardHeader>
-    <CardContent className="p-3 pt-0 text-sm text-muted-foreground">{isError ? <>Sources could not be loaded. <button className="underline" onClick={()=>refetch()}>Try again</button></> : "Loading connected sources…"}</CardContent>
-  </Card> : null;
-  const tabs = data.tabs;
-  const webTabs = tabs.filter(tab => tab.type !== "rssapp_instagram");
+  if ((isLoading || !data) && !landlord) return null;
+  const tabs = landlord ? mergeLandlordNewsTabs(data?.tabs || [], news, { companyName, domain, instagramHandle }) : data!.tabs;
+  const webTabs = (data?.tabs || []).filter(tab => tab.type !== "rssapp_instagram");
+  const instagramUsername = landlordInstagramUsername(instagramHandle);
   if (!tabs.length && !canSetUp && !landlord) return null;
   const current = tabs.find(tab => tab.type === active) || tabs.find(tab => tab.items.length) || tabs[0];
+  const newsTabs = tabs.filter(tab => !["rssapp_instagram", "rssapp_linkedin"].includes(tab.type));
+  const socialTabs = tabs.filter(tab => ["rssapp_instagram", "rssapp_linkedin"].includes(tab.type));
+  const newsCurrent = newsTabs.find(tab => tab.type === active) || newsTabs.find(tab => tab.items.length) || newsTabs[0];
+  const socialCurrent = socialTabs.find(tab => tab.type === activeSocial) || socialTabs.find(tab => tab.type === "rssapp_instagram" && instagramUsername) || socialTabs[0];
+  const landlordChannel = (choices: FeedTab[], selected: FeedTab | undefined, select: (type: string) => void, label: string) => <section className="min-w-0 space-y-3" aria-label={label}>
+    <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label={label}>
+      {choices.map(tab => <Pill key={tab.type} active={selected?.type === tab.type} role="tab" aria-selected={selected?.type === tab.type} onClick={() => select(tab.type)} data-testid={`brand-feed-tab-${tab.label.toLowerCase().replace(/\s+/g, "-")}`}>
+        {tab.type === "rssapp_instagram" && <Instagram className="w-3 h-3" />}{tab.label}{tab.items.length > 0 && <PillCount n={tab.items.length} active={selected?.type === tab.type} />}
+      </Pill>)}
+      {selected?.sourceUrl && <a href={selected.sourceUrl} target="_blank" rel="noreferrer" className="ml-auto text-xs text-muted-foreground hover:text-foreground underline underline-offset-2">Open source</a>}
+    </div>
+    {selected && (selected.type === "rssapp_instagram" && instagramUsername
+      ? <LandlordInstagramPreview companyId={companyId} handle={instagramUsername} canSetUp={canSetUp} />
+      : <ItemList key={selected.type} items={selected.items} landlord />)}
+  </section>;
 
   return (
-    <Card data-testid={landlord ? "landlord-news-social" : "brand-feed-card"}>
+    <Card className={landlord ? "[container-type:inline-size]" : undefined} data-testid={landlord ? "landlord-news-social" : "brand-feed-card"}>
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Rss className="w-3.5 h-3.5" /> {landlord ? "News & social" : "Brand feed"}
-          {current?.sourceUrl && <a href={current.sourceUrl} target="_blank" rel="noreferrer" className="ml-auto text-[11px] normal-case font-normal hover:text-foreground inline-flex items-center gap-1">Open page <ExternalLink className="w-3 h-3" /></a>}
+          {!landlord && current?.sourceUrl && <a href={current.sourceUrl} target="_blank" rel="noreferrer" className="ml-auto text-[11px] normal-case font-normal hover:text-foreground inline-flex items-center gap-1">Open page <ExternalLink className="w-3 h-3" /></a>}
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-3">
+        {landlord && (isLoading || isError) && <p className="text-xs text-muted-foreground">{isError ? <>Connected channels could not be loaded. <button className="underline" onClick={() => refetch()}>Try again</button></> : "Loading connected channels…"}</p>}
         {/* No read and none coming → no box; "The read isn't available right
             now" sat on top of the feed as a dead panel. */}
-        {hasItems && (data.read || read.isPending) && (
+        {hasItems && (data?.read || read.isPending) && (
           <section className="rounded-lg border border-border bg-muted/30 p-2.5 space-y-1" data-testid="brand-feed-read">
-            <h4 className="text-[11px] font-medium text-muted-foreground flex items-center gap-1.5"><Sparkles className="w-3 h-3 text-primary" />What's new</h4>
-            {data.read ? <AiCommentary text={data.read.text} />
+            <h4 className="text-[11px] font-medium text-muted-foreground flex items-center gap-1.5"><Sparkles className="w-3 h-3 text-primary" />{landlord ? "Channel summary" : "What's new"}</h4>
+            {data?.read ? <AiCommentary text={data.read.text} />
               : read.isPending ? <p className="text-xs text-muted-foreground flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" />{landlord ? "Reading connected sources…" : "Reading the brand's channels…"}</p>
               : <p className="text-xs text-muted-foreground">The read isn't available right now.</p>}
           </section>
         )}
-        {tabs.length > 0 && (
+        {landlord && tabs.length > 0 && <div className={`grid gap-4 ${newsTabs.length && socialTabs.length ? "[@container(min-width:760px)]:grid-cols-2" : "grid-cols-1"}`} data-testid="landlord-news-social-spread">
+          {newsTabs.length > 0 && landlordChannel(newsTabs, newsCurrent, setActive, "News and media")}
+          {socialTabs.length > 0 && landlordChannel(socialTabs, socialCurrent, setActiveSocial, "Social updates")}
+        </div>}
+        {!landlord && tabs.length > 0 && (
           <div className="flex flex-wrap gap-1.5" role="tablist">
             {tabs.map(tab => (
               <Pill key={tab.type} active={current?.type === tab.type} onClick={() => setActive(tab.type)} data-testid={`brand-feed-tab-${tab.label.toLowerCase().replace(/\s+/g, "-")}`}>
@@ -156,8 +180,8 @@ export function BrandFeedCard({ companyId, canSetUp = false, landlord = false }:
             ))}
           </div>
         )}
-        {current && (current.type === "rssapp_instagram" && !landlord ? <InstagramGrid companyId={companyId} /> : <ItemList items={current.items} landlord={landlord} />)}
-        {landlord && !tabs.length && <p className="text-sm text-muted-foreground">No news or social feeds are connected yet. Only updates from connected sources will appear here.</p>}
+        {!landlord && current && (current.type === "rssapp_instagram" ? <InstagramGrid companyId={companyId} /> : <ItemList items={current.items} />)}
+        {landlord && !tabs.length && !isLoading && !isError && <p className="text-sm text-muted-foreground">No news or social feeds are connected yet. Only updates from connected sources will appear here.</p>}
         {canSetUp && !webTabs.length && (
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2.5">
             <p className="text-xs text-muted-foreground">{landlord ? "Find news and LinkedIn sources from the confirmed official website." : "Follow this brand's openings page, website news, jobs and LinkedIn."}</p>

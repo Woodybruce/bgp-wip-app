@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
-import { LandlordInstagramPreview, landlordInstagramUsername } from "@/components/landlord-instagram-preview";
+import { landlordInstagramUsername } from "@/components/landlord-instagram-preview";
 
 type BrandIdentity = { status?: string; domain?: string | null; verifiedAt?: string };
 const domainHost = (value?: string | null) => {
@@ -144,7 +144,6 @@ export function BrandIdentityControl({ companyId, domain, identity, savedAliases
   landlordLinks?: { linkedinUrl?: string | null; instagramHandle?: string | null };
 }) {
   const [open, setOpen] = useState(false);
-  const [instagramOpen, setInstagramOpen] = useState(false);
   const instagramUsername = landlordInstagramUsername(landlordLinks?.instagramHandle);
   const suggestion = !domain && suggestedDomain ? suggestedDomain : null;
   const [draft, setDraft] = useState(domain || suggestion || "");
@@ -152,7 +151,7 @@ export function BrandIdentityControl({ companyId, domain, identity, savedAliases
   const [draftAliases, setDraftAliases] = useState(aliasesText);
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  useEffect(() => { setDraft(domain || suggestion || ""); setDraftAliases(aliasesText); setOpen(false); setInstagramOpen(false); }, [companyId, domain, suggestion, aliasesText]);
+  useEffect(() => { setDraft(domain || suggestion || ""); setDraftAliases(aliasesText); setOpen(false); }, [companyId, domain, suggestion, aliasesText]);
   const verified = identity?.status === "verified" && !!domainHost(domain) && domainHost(identity.domain) === domainHost(domain);
   const confirm = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/brand/${companyId}/identity`, { domain: draft.trim(),
@@ -177,7 +176,7 @@ export function BrandIdentityControl({ companyId, domain, identity, savedAliases
           {canConfirm && <Button variant="outline" size="sm" type="button" onClick={() => setOpen(value => !value)} aria-expanded={open} aria-label={open ? "Close website editor" : domainHost(domain || suggestion) ? "Change website" : "Add website"} title={open ? "Close website editor" : domainHost(domain || suggestion) ? "Change website" : "Add website"} className="min-h-11 sm:min-h-8 min-w-8 rounded-l-none px-2"><Pencil /></Button>}
         </div>
         {landlordLinks.linkedinUrl && <Button variant="outline" size="sm" asChild className="min-h-11 sm:min-h-8"><a href={landlordLinks.linkedinUrl} target="_blank" rel="noopener noreferrer" data-testid="link-linkedin"><Linkedin />LinkedIn</a></Button>}
-        {instagramUsername && <Button variant="outline" size="sm" className="min-h-11 sm:min-h-8" onClick={() => setInstagramOpen(value => !value)} aria-expanded={instagramOpen} aria-controls={`landlord-instagram-${companyId}`}><Instagram />Instagram</Button>}
+        {instagramUsername && <Button variant="outline" size="sm" asChild className="min-h-11 sm:min-h-8"><a href={`https://www.instagram.com/${instagramUsername}/`} target="_blank" rel="noopener noreferrer"><Instagram />Instagram</a></Button>}
       </div> : <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
         {verified ? <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-primary" /> : <Globe className="w-3.5 h-3.5 shrink-0" />}
         <span data-testid={suggestion && !verified ? "brand-website-suggestion" : undefined}>
@@ -192,7 +191,6 @@ export function BrandIdentityControl({ companyId, domain, identity, savedAliases
           {open ? "Cancel" : verified ? "Change" : suggestion || domainHost(domain) ? "Confirm" : "Add website"}
         </button>}
       </div>}
-      {instagramUsername && instagramOpen && <LandlordInstagramPreview companyId={companyId} handle={instagramUsername} canSetUp={canConfirm} />}
       {previousFactsNeedReview && canConfirm && <BrandRetainedFactsReview key={companyId} companyId={companyId} identityVerified={verified} />}
       {open && <form className="space-y-2 border-t border-border pt-3" onSubmit={event => { event.preventDefault(); confirm.mutate(); }}>
         <Label htmlFor={`official-brand-website-${companyId}`} className="text-[11px] uppercase tracking-wider text-muted-foreground">{landlordLinks ? "Company’s official website" : "Brand’s official website"}</Label>

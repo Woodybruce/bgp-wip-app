@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { BrandEmailHistory } from "@/components/brand-email-history";
 import { LandlordMeetingsHistory } from "@/components/landlord-meetings-summary";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Users, Mail, Linkedin, Loader2, RefreshCw, Plus, ChevronDown, ChevronRight, Phone, MoreHorizontal } from "lucide-react";
+import { Users, Mail, Linkedin, Loader2, RefreshCw, Plus, ChevronDown, ChevronRight, Phone, MoreHorizontal, X } from "lucide-react";
 
 function formatRelativeShort(iso: string): string {
   const then = new Date(iso).getTime();
@@ -220,7 +220,7 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
           </a>
         )}
         {hasLinkedin && (
-          <a href={contact.linkedin_url} target="_blank" rel="noreferrer" className={`${iconLink} hidden md:inline-flex`} aria-label={`${contact.name} on LinkedIn`} onClick={(e) => e.stopPropagation()}>
+          <a href={contact.linkedin_url} target="_blank" rel="noreferrer" className={`${iconLink} ${isLandlord ? "inline-flex" : "hidden md:inline-flex"}`} aria-label={`${contact.name} on LinkedIn`} onClick={(e) => e.stopPropagation()}>
             <Linkedin className="w-4 h-4" />
           </a>
         )}
@@ -586,6 +586,30 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
     const conf = k.ai?.confidence;
     const confCls = conf == null ? "" : conf >= 70 ? "text-primary border-border" : conf >= 40 ? "text-muted-foreground border-border" : "text-destructive border-border";
     const src = provenance(k);
+    if (isLandlord) return (
+      <div key={`found-${rowKey}`} className={`grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-start gap-2 text-sm rounded px-1 py-1.5 -mx-1 hover:bg-muted/50 transition-colors ${item.hidden ? "opacity-60" : ""}`} data-testid={`landlord-contact-suggestion-${rowKey}`}>
+        <span className="w-5 h-5 mt-1 rounded-full bg-muted/70 border border-dashed flex items-center justify-center text-[11px] font-medium">
+          {(k.name || k.email || "?").split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase()}
+        </span>
+        <div className="min-w-0 pt-0.5">
+          <p className="font-semibold break-words">{contactDisplayName(k.name) || k.email}</p>
+          <p className="text-xs text-muted-foreground break-words" title={[k.title, k.email, k.phone || k.mobile].filter(Boolean).join(" · ")}>{k.title || "Role not recorded"}</p>
+        </div>
+        <div className="flex flex-col items-end gap-1" data-testid="landlord-contact-suggestion-actions">
+          <div className="flex items-center justify-end">
+            {k.email && <a href={`mailto:${k.email}`} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted" aria-label={`Email ${k.name || k.email}`} title={k.email}><Mail className="w-4 h-4" /></a>}
+            {(k.phone || k.mobile) && <a href={`tel:${String(k.phone || k.mobile).replace(/[^\d+]/g, "")}`} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted" aria-label={`Call ${k.name || k.email}`} title={k.phone || k.mobile}><Phone className="w-4 h-4" /></a>}
+            {(k.linkedin_url || k.linkedin) && <a href={k.linkedin_url || k.linkedin} target="_blank" rel="noreferrer" className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted" aria-label={`${k.name || k.email} on LinkedIn`} title="LinkedIn"><Linkedin className="w-4 h-4" /></a>}
+          </div>
+          {added ? <Link href={`/contacts/${added.id}`} className="inline-flex items-center min-h-8 text-xs underline" data-testid={`contact-cascade-open-${rowKey}`}>In CRM · open</Link> : !kcIsClient && <div className="flex items-center justify-end gap-1">
+            <Button size="sm" variant="outline" className="h-8 min-h-8 px-1.5 text-[11px] gap-1" onClick={() => addToCrm(k)} disabled={addingEmail !== null} aria-label={`Add ${k.name || k.email} to CRM`} title="Add to CRM" data-testid={`button-add-known-${rowKey}`}>
+              {addingEmail === rowKey ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}<span className="hidden [@container(min-width:480px)]:inline">Add to CRM</span>
+            </Button>
+            <Button size="sm" variant="ghost" className="h-8 min-h-8 px-1.5 text-[11px] gap-1" onClick={() => dismissSuggestion.mutate(k)} disabled={dismissSuggestion.isPending || addingEmail !== null} aria-label={`Dismiss suggestion for ${k.name || k.email}`} title="Dismiss suggestion" data-testid={`contact-suggestion-dismiss-${rowKey}`}><X className="w-3 h-3" /><span className="hidden [@container(min-width:480px)]:inline">Dismiss</span></Button>
+          </div>}
+        </div>
+      </div>
+    );
     return (
       <div key={`found-${rowKey}`} className={`flex items-center gap-2 text-sm rounded px-1 py-1 md:py-0.5 -mx-1 hover:bg-muted/50 transition-colors ${isLandlord ? "flex-wrap [@container(min-width:560px)]:flex-nowrap" : ""} ${item.hidden ? "opacity-60" : ""}`}>
         <span className="w-5 h-5 rounded-full bg-muted/70 border border-dashed flex items-center justify-center text-[11px] font-medium shrink-0">

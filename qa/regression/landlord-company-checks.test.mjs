@@ -44,16 +44,47 @@ test('combined landlord card preserves the covenant run action and invalidates t
   assert.deepEqual(JSON.parse(JSON.stringify(calls[0])), ['POST', '/api/brand/landlord/credit-check', {}]);
   assert.equal(refetched, 1);
   assert.deepEqual(Array.from(invalidated[0]), ['/api/brand', 'landlord', 'profile']);
+  assert.deepEqual(Array.from(invalidated[1]), ['/api/landlord-relationships', 'landlord', 'covenant']);
 });
 
 test('client view does not gain group-entity data or staff check actions', () => {
   const render = component(panel, 'LandlordCompanyChecksCard', { useCovenantReport: () => ({ data: null }), useMutation: () => ({}) });
   const tree = render({ companyId: 'landlord', company: { companies_house_number: '12345678' }, isClientViewer: true });
+  assert.equal(nodes(tree).some(node => node.type === 'LandlordCovenantSummary'), false);
   assert.equal(nodes(tree).some(node => node.type === 'AccountEntitiesPanel'), false);
   assert.equal(nodes(tree).some(node => node.props.href === '/kyc-clouseau'), false);
   assert.equal(nodes(tree).some(node => node.type === 'button'), false);
   assert.equal(nodes(tree).some(node => node.type === 'CompanyInvoicingControls'), false);
   assert.equal(nodes(tree).some(node => node.type === 'BrandComplianceCard'), true);
+});
+
+
+test('landlord checks lead with the scoped summary and keep all existing controls in closed details', () => {
+  let expanded = false;
+  const render = component(panel, 'LandlordCompanyChecksCard', {
+    useCovenantReport: () => ({ data: { grade: 'A' } }),
+    useMutation: () => ({}),
+    useState: () => [expanded, value => { expanded = value; }],
+  });
+  const props = { companyId: 'landlord', company: { name: 'Example Estates', companies_house_number: ' 12345678 ' }, isClientViewer: false };
+  const tree = render(props), all = nodes(tree);
+  const summary = all.find(node => node.type === 'LandlordCovenantSummary');
+  assert.equal(summary.props.companyId, 'landlord');
+  assert.equal(summary.props.companyName, 'Example Estates');
+  assert.equal(summary.props.companyNumber, '12345678');
+  assert.equal(all.some(node => node.type === 'CovenantCommentary' || node.type === 'CovenantBadge'), false);
+  const details = all.find(node => node.type === 'details');
+  assert.equal(details.props.open, undefined, 'native details must start collapsed');
+  assert.ok(all.indexOf(summary) < all.indexOf(details));
+  assert.equal(nodes(details).some(node => node.type === 'LandlordCovenantSummary'), false);
+  for (const name of ['BrandComplianceCard', 'AccountEntitiesPanel', 'CompanyInvoicingControls']) {
+    assert.equal(nodes(details).filter(node => node.type === name).length, 1, `${name} remains available once opened`);
+  }
+  assert.equal(nodes(details).find(node => node.type === 'summary').props.children, 'Show more');
+  details.props.onToggle({ currentTarget: { open: true } });
+  assert.equal(nodes(render(props)).find(node => node.type === 'summary').props.children, 'Show less');
+  details.props.onToggle({ currentTarget: { open: false } });
+  assert.equal(nodes(render(props)).find(node => node.type === 'summary').props.children, 'Show more');
 });
 
 test('embedded entities avoid repeating the account identity while keeping review, child identities and per-entity actions', () => {

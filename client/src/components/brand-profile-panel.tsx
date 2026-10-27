@@ -41,6 +41,7 @@ import { LandlordMeetingsSummary } from "@/components/landlord-meetings-summary"
 import { LandlordEmailSummary } from "@/components/landlord-email-summary";
 import { LandlordRelationshipTeam } from "@/components/landlord-relationship-team";
 import { LandlordInterviewNotes } from "@/components/landlord-interview-notes";
+import { LandlordCovenantSummary } from "@/components/landlord-covenant-summary";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
 import { landlordConfirmedCrmAction, landlordCrmActionQueryKeys } from "@/lib/landlord-chat-actions";
 import { LandlordChatBubble } from "@/components/landlord-chat-bubble";
@@ -2174,13 +2175,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               <Label className="text-xs">Backers / investors</Label>
               <Input value={(form.backers as string) || ""} onChange={(e) => setForm({ ...form, backers: e.target.value })} placeholder="e.g. Sequoia, Index Ventures" />
             </div>
-            <div className={`grid gap-2 ${isLandlord ? "grid-cols-1" : "grid-cols-2"}`}>
-              {!isLandlord && (
+            <div className="grid gap-2 grid-cols-2">
                 <div>
                   <Label className="text-xs">Instagram handle</Label>
                   <Input value={(form.instagram_handle as string) || ""} onChange={(e) => setForm({ ...form, instagram_handle: e.target.value })} placeholder="@brandname" />
                 </div>
-              )}
               <div>
                 <Label className="text-xs">TikTok handle</Label>
                 <Input value={(form.tiktok_handle as string) || ""} onChange={(e) => setForm({ ...form, tiktok_handle: e.target.value })} placeholder="@brandname" />
@@ -2290,22 +2289,33 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
         <AccountDealsBoard companyId={companyId} />
         {!isClientViewer && <AccountTeamViewsCard companyId={companyId} />}
+        <div className="grid grid-cols-1 [@container(min-width:900px)]:grid-cols-2 gap-3 [@container(min-width:900px)]:gap-4 items-stretch" data-testid="landlord-contacts-checks">
+          <div className="grid min-w-0 [&>aside]:contents">
+            <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
+          </div>
+          <LandlordCompanyChecksCard key={companyId} companyId={companyId} company={c} isClientViewer={isClientViewer} />
+        </div>
         <MasonryGrid className={masonryCls}>
           <AccountNextActionsCard companyId={companyId} />
-          <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
           {/* Staff see these rows in Team view → Investment already. */}
           {isClientViewer && <InvestmentRequirementsCard companyId={companyId} />}
           <BrandProfileSidebar data={data} companyId={companyId} only={["team"]} />
-          <LandlordCompanyChecksCard key={companyId} companyId={companyId} company={c} isClientViewer={isClientViewer} />
           {c.stock_ticker && <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />}
+          {/* Signals are hidden on Landlord pages while the board is reviewed.
+              The underlying records and Brand presentation are retained. */}
+        </MasonryGrid>
+        <div className="min-w-0 w-full" data-testid="landlord-news-social-row">
           <BrandProfileSidebar data={data} companyId={companyId} only={["news", "feed"]} />
-          {dedupedSignals.length > 0 && <div className="rounded-xl border border-card-border bg-card shadow-sm p-3" data-testid="landlord-signals">{signalsFeed}</div>}
-          <div className="flex flex-col gap-3">
+        </div>
+        <div className="grid grid-cols-1 [@container(min-width:900px)]:grid-cols-2 gap-3 [@container(min-width:900px)]:gap-4 items-start" data-testid="landlord-files-gallery">
+          <div className="flex flex-col gap-3 min-w-0">
             <BrandProfileSidebar data={data} companyId={companyId} only={["files"]} />
             <AccountFolderTreeCard companyId={companyId} />
           </div>
-        </MasonryGrid>
-        <BrandProfileSidebar data={data} companyId={companyId} only={["gallery"]} />
+          <div className="min-w-0">
+            <BrandProfileSidebar data={data} companyId={companyId} only={["gallery"]} />
+          </div>
+        </div>
         {viewerDialogs}
       </div>
     );
@@ -3252,7 +3262,6 @@ export function askTopics(brandName: string, isLandlord = false, isAgentFirm = f
     { label: "Overview", question: `Tell me everything BGP needs to know about ${brandName} as a landlord before a first call` },
     { label: "Portfolio", question: `What does ${brandName} own, where is BGP already active on their estate, and where aren't we?` },
     { label: "Opportunities", question: `Which of ${brandName}'s assets have vacancies, lease events or repositioning going on that BGP could act on?` },
-    { label: "Signals", question: `What are the key signals about ${brandName} right now (acquisitions, disposals, refinancing, leadership) and what should BGP do?` },
     { label: "Contacts", question: `Who are the decision-makers at ${brandName} BGP should be talking to, and what's the best approach?` },
     { label: "Covenant", question: `How financially strong is ${brandName} as a landlord — debt, lenders, recent transactions?` },
     { label: "Email", question: `Draft a brief introductory email from BGP to ${brandName}'s asset management team` },
@@ -4008,51 +4017,48 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer }
   const { toast } = useToast();
   const companyNumber = company.companies_house_number?.trim();
   const covenant = useCovenantReport(companyNumber);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const runCovenant = useMutation({
     mutationFn: async () => apiRequest("POST", `/api/brand/${companyId}/credit-check`, {}),
     onSuccess: () => {
       void covenant.refetch();
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/landlord-relationships", companyId, "covenant"] });
     },
     onError: (error: Error) => toast({ title: "Covenant check failed", description: error.message, variant: "destructive" }),
   });
   return (
-    <Card data-testid="landlord-company-checks">
+    <Card className="h-full min-w-0 flex flex-col" data-testid="landlord-company-checks">
       <CardHeader className="p-3 pb-2">
-        <div className="flex items-center justify-between gap-2">
-          <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-            <ShieldCheck className="w-3.5 h-3.5" /> Company checks
-          </CardTitle>
-          {!isClientViewer && <Link href="/kyc-clouseau" className="text-xs text-primary hover:underline" title="KYC4U — BGP's MLRO">KYC4U</Link>}
-        </div>
+        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <ShieldCheck className="w-3.5 h-3.5" /> Company checks
+        </CardTitle>
       </CardHeader>
-      <CardContent className="p-3 pt-0 space-y-3">
-        <BrandComplianceCard companyId={companyId} company={company} embedded landlord />
-        {!(isClientViewer && companyNumber && !covenant.data?.grade) && (
-          <section className="border-t border-border pt-3 space-y-2" aria-label="Covenant">
-            <h3 className="text-xs font-semibold flex items-center gap-2">
-              Covenant {companyNumber && <CovenantBadge companyNumber={companyNumber} />}
-            </h3>
-            {companyNumber ? <>
-              {covenant.isLoading ? <p className="text-xs text-muted-foreground" role="status">Loading covenant…</p>
-                : covenant.data?.grade ? <CovenantCommentary companyNumber={companyNumber} className="[&]:border-0 [&]:bg-transparent [&]:p-0" />
-                : <p className="text-xs text-muted-foreground">
-                  {covenant.isError ? "Covenant report unavailable." : "Covenant check not run yet."}
-                  {!isClientViewer && <> {covenant.isError
-                    ? <button type="button" className="underline underline-offset-2" onClick={() => void covenant.refetch()}>Retry</button>
-                    : <button type="button" className="underline underline-offset-2 disabled:opacity-50" disabled={runCovenant.isPending} onClick={() => runCovenant.mutate()}>{runCovenant.isPending ? "Running…" : "Run check"}</button>}
-                  </>}
-                </p>}
-            </> : <p className="text-xs text-muted-foreground">Available once the registered entity has a Companies House match.</p>}
-          </section>
-        )}
-        {!isClientViewer && <div className="border-t border-border pt-3">
-          <AccountEntitiesPanel companyId={companyId} embedded primaryCompanyNumber={companyNumber} />
-        </div>}
-        {!isClientViewer && <section className="border-t border-border pt-3 space-y-2" aria-label="Billing">
-          <h3 className="text-xs font-semibold">Billing</h3>
-          <CompanyInvoicingControls companyId={companyId} mode="billing" landlord />
-        </section>}
+      <CardContent className="p-3 pt-0 flex flex-col gap-3 flex-1">
+        {!isClientViewer && <LandlordCovenantSummary companyId={companyId} companyName={company.name} companyNumber={companyNumber} />}
+        <details className="border-t border-border pt-2 mt-auto" data-testid="landlord-checks-details" onToggle={event => setDetailsOpen(event.currentTarget.open)}>
+          <summary className="cursor-pointer text-xs font-medium text-primary py-1.5">{detailsOpen ? "Show less" : "Show more"}</summary>
+          <div className="pt-2 space-y-3">
+            {!isClientViewer && <Link href="/kyc-clouseau" className="inline-flex text-xs text-primary hover:underline" title="KYC4U — BGP's MLRO">Open KYC4U</Link>}
+            <BrandComplianceCard companyId={companyId} company={company} embedded landlord />
+            {!isClientViewer && companyNumber && !covenant.data?.grade && <section className="border-t border-border pt-3 space-y-2" aria-label="Covenant check">
+              <h3 className="text-xs font-semibold">Covenant check</h3>
+              {covenant.isLoading ? <p className="text-xs text-muted-foreground" role="status">Loading covenant…</p> : <p className="text-xs text-muted-foreground">
+                {covenant.isError ? "Covenant report unavailable." : "Covenant check not run yet."}{" "}
+                {covenant.isError
+                  ? <button type="button" className="underline underline-offset-2" onClick={() => void covenant.refetch()}>Retry</button>
+                  : <button type="button" className="underline underline-offset-2 disabled:opacity-50" disabled={runCovenant.isPending} onClick={() => runCovenant.mutate()}>{runCovenant.isPending ? "Running…" : "Run check"}</button>}
+              </p>}
+            </section>}
+            {!isClientViewer && <div className="border-t border-border pt-3">
+              <AccountEntitiesPanel companyId={companyId} embedded primaryCompanyNumber={companyNumber} />
+            </div>}
+            {!isClientViewer && <section className="border-t border-border pt-3 space-y-2" aria-label="Billing">
+              <h3 className="text-xs font-semibold">Billing</h3>
+              <CompanyInvoicingControls companyId={companyId} mode="billing" landlord />
+            </section>}
+          </div>
+        </details>
       </CardContent>
     </Card>
   );
@@ -5579,7 +5585,7 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
           half-width beside an empty slot read as broken (Woody, 2026-08-18). */}
       <div className={column || only ? "contents" : data.news && data.news.length > 0 ? pairCls : "space-y-3"}>
       {/* News & Media */}
-      {show("news") && data.news && data.news.length > 0 && (() => {
+      {!isLandlord && show("news") && data.news && data.news.length > 0 && (() => {
         const relDate = (d: string | null): string => {
           if (!d) return "";
           const days = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
@@ -5800,7 +5806,7 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
         );
       })()}
 
-      {show("feed") && <BrandFeedCard companyId={companyId} canSetUp={!sbIsClient} landlord={isLandlord} />}
+      {show("feed") && <BrandFeedCard companyId={companyId} canSetUp={!sbIsClient} landlord={isLandlord} news={isLandlord ? data.news : undefined} companyName={c.name} domain={c.domain || c.domain_url} instagramHandle={c.instagram_handle} />}
       </div>
 
       {(show("team") || show("gallery")) && <>
