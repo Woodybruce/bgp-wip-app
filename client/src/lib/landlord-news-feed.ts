@@ -12,6 +12,7 @@ export type FeedItem = {
   baseline?: boolean;
   followed_at?: string | null;
   publisher?: string | null;
+  coverage?: "company" | "industry";
 };
 export type FeedTab = { type: string; label: string; sourceUrl: string | null; items: FeedItem[] };
 export type LandlordNewsArticle = {
@@ -23,13 +24,14 @@ export type LandlordNewsArticle = {
   image_url?: string | null;
   published_at?: string | null;
   source_name?: string | null;
+  coverage?: "company" | "industry";
 };
 
 const WEBSITE = "rssapp_web_news";
 const MEDIA = "landlord_media";
 const LINKEDIN = "rssapp_linkedin";
 const INSTAGRAM = "rssapp_instagram";
-const LABELS: Record<string, string> = { [WEBSITE]: "Website news", [MEDIA]: "Media", [LINKEDIN]: "LinkedIn", [INSTAGRAM]: "Instagram" };
+const LABELS: Record<string, string> = { [WEBSITE]: "Website news", [MEDIA]: "Industry news", [LINKEDIN]: "LinkedIn", [INSTAGRAM]: "Instagram" };
 const normalName = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 function safeUrl(value?: string | null): URL | null {
@@ -141,11 +143,14 @@ export function mergeLandlordNewsTabs(
       image_url: safeUrl(article.image_url)?.href || null,
       at: validDate(article.published_at),
       type,
+      ...(article.coverage ? { coverage: article.coverage } : {}),
       publisher: ownDomain || ownSource || ownPublisher ? context.companyName : parsed.publisher || (/^(?:news\.)?google\.com$/.test(host) ? null : host),
     });
     seenUrls.add(canonical);
     if (key.length >= 35) seenTitles.add(key);
   }
-  for (const tab of tabs) tab.items.sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
+  for (const tab of tabs) tab.items.sort((a, b) =>
+    (tab.type === MEDIA ? (a.coverage === "company" ? 0 : 1) - (b.coverage === "company" ? 0 : 1) : 0)
+    || (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
   return tabs;
 }

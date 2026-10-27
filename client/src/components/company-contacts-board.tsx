@@ -6,6 +6,7 @@
 // sections for surfaces that add related people (deal brands, agents).
 import { isKeyContactRole, nameKey, isEmailPlaceholderName, keyContactHiddenReason, compareKeyContacts, type KeyContactSignals, type KeyContactHiddenReason } from "@shared/contact-tiers";
 import { isDismissedLandlordContact, showLandlordEmployerBadge } from "@shared/landlord-contact-suggestions";
+import { landlordContactIdentityKeys, landlordDisplayContacts } from "@shared/landlord-contact-identity";
 import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -78,6 +79,7 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
   const [editingRole, setEditingRole] = useState(false);
   const [roleDraft, setRoleDraft] = useState(contact.role || "");
   const [activityHistory, setActivityHistory] = useState<"email" | "meeting" | null>(null);
+  const [historyContact, setHistoryContact] = useState<{ id: string; name: string } | null>(null);
 
   const saveRole = useMutation({
     mutationFn: async (value: string) => {
@@ -113,7 +115,7 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
   const activityCount = (kind: "email" | "meeting", label: string, className: string, title?: string) => canOpenHistory
     ? <button type="button" data-no-min-touch className={`${className} underline decoration-dotted underline-offset-2 hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2`}
         title={title} aria-label={`View ${kind === "email" ? "emails" : "meetings"} with ${contactDisplayName(contact.name)}`}
-        data-testid={`key-contact-${kind}-history-${contact.id}`} onClick={event => { event.stopPropagation(); setActivityHistory(kind); }}>{label}</button>
+        data-testid={`key-contact-${kind}-history-${contact.id}`} onClick={event => { event.stopPropagation(); setHistoryContact(null); setActivityHistory(kind); }}>{label}</button>
     : <span className={className} title={title}>{label}</span>;
   const leftLabel = contact.left_at ? `Left · ${new Date(contact.left_at).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}` : null;
   // "mshulman" stays as saved (the server renames from signatures) but reads
@@ -142,7 +144,7 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
       type="button"
       data-no-min-touch
       onClick={() => setEditingRole(true)}
-      className="text-[11px] [@container(min-width:560px)]:text-xs text-left truncate min-w-0 text-muted-foreground hover:text-foreground hover:underline decoration-dotted"
+      className={`text-[11px] [@container(min-width:560px)]:text-xs text-left ${isLandlord ? "w-full whitespace-normal break-words [@container(min-width:560px)]:w-auto [@container(min-width:560px)]:truncate" : "truncate"} min-w-0 text-muted-foreground hover:text-foreground hover:underline decoration-dotted`}
       title={contact.role ? `${contact.role} — click to edit` : "Add role"}
     >
       {contact.role || <span className="italic text-muted-foreground/70">add role…</span>}
@@ -156,7 +158,7 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
       </Link>
       <div className="min-w-0 flex-1 [@container(min-width:560px)]:flex [@container(min-width:560px)]:items-center [@container(min-width:560px)]:gap-2">
         <div className="flex items-center gap-1 min-w-0 [@container(min-width:560px)]:max-w-[45%] [@container(min-width:560px)]:shrink-0">
-          <Link href={`/contacts/${contact.id}`} className={`hover:underline truncate ${placeholderName ? "font-normal text-muted-foreground" : "font-semibold"}`}>{contactDisplayName(contact.name)}</Link>
+          <Link href={`/contacts/${contact.id}`} className={`hover:underline ${isLandlord ? "break-words [@container(min-width:560px)]:truncate" : "truncate"} ${placeholderName ? "font-normal text-muted-foreground" : "font-semibold"}`}>{contactDisplayName(contact.name)}</Link>
           {placeholderName && <span className="text-[11px] text-muted-foreground/70 shrink-0 whitespace-nowrap" title="Saved from an inbox — the real name replaces it once BGP sees their signature">name from email</span>}
           {isLead && <Badge variant="outline" className="text-[11px] px-1 py-0 shrink-0 bg-foreground text-background border-transparent" title="The AI check's read of BGP's main property contact here">Lead</Badge>}
           {/* A "Title?" / "Left?" badge on every row was noise — a small dot
@@ -173,13 +175,13 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
             </Badge>
           ) : null}
         </div>
-        <div className="flex items-center gap-1.5 min-w-0 [@container(min-width:560px)]:flex-1">
+        <div className={`flex items-center gap-x-1.5 min-w-0 [@container(min-width:560px)]:flex-1 ${isLandlord ? "flex-wrap [@container(min-width:560px)]:flex-nowrap" : "gap-y-1.5"}`}>
           {roleOrStatus}
-          {/* Phone: status / count end the role line (line two). */}
+          {/* Landlord phone rows give the role its own line before activity. */}
           {leftLabel ? (
-            <span className="[@container(min-width:560px)]:hidden shrink-0 text-[11px] text-muted-foreground" title={contact.left_note || undefined}>· {leftLabel}</span>
+            <span className="[@container(min-width:560px)]:hidden shrink-0 text-[11px] text-muted-foreground" title={contact.left_note || undefined}>{isLandlord ? leftLabel : `· ${leftLabel}`}</span>
           ) : touches > 0 && (
-            activityCount("email", `· ${touchText}`, "[@container(min-width:560px)]:hidden shrink-0 text-[11px] text-muted-foreground font-mono tabular-nums", touchTitle)
+            activityCount("email", isLandlord ? touchText : `· ${touchText}`, "[@container(min-width:560px)]:hidden shrink-0 text-[11px] text-muted-foreground font-mono tabular-nums", touchTitle)
           )}
           {meetingCount > 0 && activityCount("meeting", `${meetingCount} ${meetingCount === 1 ? "meeting" : "meetings"}`, "[@container(min-width:560px)]:hidden shrink-0 text-[11px] text-muted-foreground font-mono tabular-nums")}
         </div>
@@ -235,6 +237,15 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
             <DropdownMenuItem asChild><Link href={`/contacts/${contact.id}`}>Open contact</Link></DropdownMenuItem>
             <DropdownMenuItem onClick={() => setEditingRole(true)}>{contact.role ? "Edit role" : "Add role"}</DropdownMenuItem>
             {hasLinkedin && <DropdownMenuItem asChild className="md:hidden"><a href={contact.linkedin_url} target="_blank" rel="noreferrer">LinkedIn</a></DropdownMenuItem>}
+            {isLandlord && (contact.relatedContactRecords || []).length > 0 && <>
+              <DropdownMenuSeparator />
+              {(contact.relatedContactRecords || []).map((record: any) => <div key={record.id}>
+                <DropdownMenuItem asChild><Link href={`/contacts/${record.id}`}>Linked CRM record{record.email ? ` · ${record.email}` : ""}</Link></DropdownMenuItem>
+                {record.email && <DropdownMenuItem asChild><a href={`mailto:${record.email}`}>Email {record.email}</a></DropdownMenuItem>}
+                {canOpenHistory && <DropdownMenuItem onClick={() => { setHistoryContact({ id: record.id, name: contactDisplayName(contact.name) }); setActivityHistory("email"); }}>Email history{record.email ? ` · ${record.email}` : ""}</DropdownMenuItem>}
+                {canOpenHistory && <DropdownMenuItem onClick={() => { setHistoryContact({ id: record.id, name: contactDisplayName(contact.name) }); setActivityHistory("meeting"); }}>Meeting history{record.email ? ` · ${record.email}` : ""}</DropdownMenuItem>}
+              </div>)}
+            </>}
             {/* Staff only — the endpoint 403s clients. */}
             {canMarkLeft && !rowIsClient && (
               <>
@@ -249,8 +260,8 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
       </div>
     </div>
     {canOpenHistory && <>
-      <BrandEmailHistory companyId={companyId} companyName={companyName} landlord person={{contactId:contact.id,name:contactDisplayName(contact.name)}} open={activityHistory === "email"} onOpenChange={open => { if (!open) setActivityHistory(null); }} />
-      <LandlordMeetingsHistory companyId={companyId} companyName={companyName} person={{contactId:contact.id,name:contactDisplayName(contact.name)}} open={activityHistory === "meeting"} onOpenChange={open => { if (!open) setActivityHistory(null); }} />
+      <BrandEmailHistory companyId={companyId} companyName={companyName} landlord person={{contactId:historyContact?.id || contact.id,name:historyContact?.name || contactDisplayName(contact.name)}} open={activityHistory === "email"} onOpenChange={open => { if (!open) setActivityHistory(null); }} />
+      <LandlordMeetingsHistory companyId={companyId} companyName={companyName} person={{contactId:historyContact?.id || contact.id,name:historyContact?.name || contactDisplayName(contact.name)}} open={activityHistory === "meeting"} onOpenChange={open => { if (!open) setActivityHistory(null); }} />
     </>}
   </>);
 }
@@ -436,6 +447,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   // The same person saved twice ("Mark  Standish" / "Mark Standish") shows
   // once — the row with an email / BGP history wins.
   const allContacts = (() => {
+    if (isLandlord) return landlordDisplayContacts(contacts || []);
     const byName = new Map<string, any>();
     const out: any[] = [];
     for (const c of contacts || []) {
@@ -458,10 +470,17 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   }
   const discoveryFor = (c: any) => discoveryByKey.get(normEmail(c.email)) || discoveryByKey.get(normName(c.name)) || null;
   const seenDiscovered = new Set<string>();
+  const savedIdentities = new Set((contacts || []).flatMap(landlordContactIdentityKeys));
   const discovered = (cascade?.contacts || [])
     .filter((k: any) => k.ai?.verdict !== "drop" && !k.bgp?.inCrm && !isMachineMailbox(k.email))
     .filter((candidate: any) => !isLandlord || !isDismissedLandlordContact(candidate, dismissedContacts))
     .filter((k: any) => {
+      if (isLandlord) {
+        const keys = landlordContactIdentityKeys(k);
+        if (keys.some(key => savedIdentities.has(key) || seenDiscovered.has(key))) return false;
+        keys.forEach(key => seenDiscovered.add(key));
+        return true;
+      }
       const e = normEmail(k.email);
       const n = normName(k.name);
       if (e && crmEmailSet.has(e)) return false;
@@ -511,8 +530,9 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
     }),
   ];
   const byRank = (a: BoardItem, b: BoardItem) => compareKeyContacts(a.sig, b.sig, { landlord: isLandlord, now });
-  const current = items.filter(i => !i.hidden).sort(byRank);
-  const retired = items.filter(i => i.hidden).sort((a, b) => (HIDDEN_ORDER[a.hidden!] - HIDDEN_ORDER[b.hidden!]) || byRank(a, b));
+  const suggestions = items.filter(i => i.kind === "discovered").sort(byRank);
+  const current = items.filter(i => !i.hidden && (!isLandlord || i.kind === "crm")).sort(byRank);
+  const retired = items.filter(i => i.hidden && (!isLandlord || i.kind === "crm")).sort((a, b) => (HIDDEN_ORDER[a.hidden!] - HIDDEN_ORDER[b.hidden!]) || byRank(a, b));
   // Brands lead with property / C-suite only (Woody, 2026-09-25: "we don't
   // want any regional managers"); if a brand has none, the top list falls
   // back to whoever BGP emails. Landlords and agents rank everyone.
@@ -520,7 +540,8 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   const topPool = applyTierFilter && !tierEmpty ? current.filter(i => isPropertyTier(i.sig.role)) : current;
   const top = topPool.slice(0, KEY_CONTACTS_SHOWN);
   const rest = current.filter(i => !top.includes(i));
-  const totalPeople = items.length;
+  const totalPeople = isLandlord ? accountFiltered.length : items.length;
+  const shownPeople = isLandlord && showAll ? totalPeople : top.length;
   const summary = cascade?.summary;
   // A sender already listed above (CRM or discovered) isn't shown again
   // (Woody, 2026-09-23: David Menendez twice on Honest Greens).
@@ -531,7 +552,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   const moreCount = rest.length + retired.length;
   // Nothing to expand but the discovery summary → the summary line shows on
   // its own; a "Show 0 from BGP inboxes" toggle opened onto nothing.
-  const hasMore = moreCount > 0 || inboxSenders.length > 0;
+  const hasMore = moreCount > 0 || (!isLandlord && inboxSenders.length > 0);
 
   const addToCrm = async (k: any) => {
     const rowKey = normEmail(k.email) || normName(k.name);
@@ -587,25 +608,25 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
     const confCls = conf == null ? "" : conf >= 70 ? "text-primary border-border" : conf >= 40 ? "text-muted-foreground border-border" : "text-destructive border-border";
     const src = provenance(k);
     if (isLandlord) return (
-      <div key={`found-${rowKey}`} className={`grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-start gap-2 text-sm rounded px-1 py-1.5 -mx-1 hover:bg-muted/50 transition-colors ${item.hidden ? "opacity-60" : ""}`} data-testid={`landlord-contact-suggestion-${rowKey}`}>
-        <span className="w-5 h-5 mt-1 rounded-full bg-muted/70 border border-dashed flex items-center justify-center text-[11px] font-medium">
+      <div key={`found-${rowKey}`} className={`grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-center gap-2 text-sm rounded px-1 py-1 [@container(min-width:560px)]:py-0.5 -mx-1 hover:bg-muted/50 transition-colors ${item.hidden ? "opacity-60" : ""}`} data-testid={`landlord-contact-suggestion-${rowKey}`}>
+        <span className="w-5 h-5 rounded-full bg-muted/70 border border-dashed flex items-center justify-center text-[11px] font-medium">
           {(k.name || k.email || "?").split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase()}
         </span>
-        <div className="min-w-0 pt-0.5">
-          <p className="font-semibold break-words">{contactDisplayName(k.name) || k.email}</p>
-          <p className="text-xs text-muted-foreground break-words" title={[k.title, k.email, k.phone || k.mobile].filter(Boolean).join(" · ")}>{k.title || "Role not recorded"}</p>
+        <div className="min-w-0 [@container(min-width:560px)]:flex [@container(min-width:560px)]:items-center [@container(min-width:560px)]:gap-2">
+          <p className="font-semibold truncate [@container(min-width:560px)]:max-w-[55%] [@container(min-width:560px)]:shrink-0">{contactDisplayName(k.name) || k.email}</p>
+          <p className="text-[11px] [@container(min-width:560px)]:text-xs text-muted-foreground truncate min-w-0" title={[k.title, k.email, k.phone || k.mobile].filter(Boolean).join(" · ")}>{k.title || "Role not recorded"}</p>
         </div>
-        <div className="flex flex-col items-end gap-1" data-testid="landlord-contact-suggestion-actions">
+        <div className="flex items-center justify-end gap-0.5" data-testid="landlord-contact-suggestion-actions">
           <div className="flex items-center justify-end">
-            {k.email && <a href={`mailto:${k.email}`} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted" aria-label={`Email ${k.name || k.email}`} title={k.email}><Mail className="w-4 h-4" /></a>}
-            {(k.phone || k.mobile) && <a href={`tel:${String(k.phone || k.mobile).replace(/[^\d+]/g, "")}`} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted" aria-label={`Call ${k.name || k.email}`} title={k.phone || k.mobile}><Phone className="w-4 h-4" /></a>}
-            {(k.linkedin_url || k.linkedin) && <a href={k.linkedin_url || k.linkedin} target="_blank" rel="noreferrer" className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted" aria-label={`${k.name || k.email} on LinkedIn`} title="LinkedIn"><Linkedin className="w-4 h-4" /></a>}
+            {k.email && <a href={`mailto:${k.email}`} className="p-1.5 md:p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted" aria-label={`Email ${k.name || k.email}`} title={k.email}><Mail className="w-4 h-4" /></a>}
+            {(k.phone || k.mobile) && <a href={`tel:${String(k.phone || k.mobile).replace(/[^\d+]/g, "")}`} className="p-1.5 md:p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted" aria-label={`Call ${k.name || k.email}`} title={k.phone || k.mobile}><Phone className="w-4 h-4" /></a>}
+            {(k.linkedin_url || k.linkedin) && <a href={k.linkedin_url || k.linkedin} target="_blank" rel="noreferrer" className="p-1.5 md:p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted" aria-label={`${k.name || k.email} on LinkedIn`} title="LinkedIn"><Linkedin className="w-4 h-4" /></a>}
           </div>
           {added ? <Link href={`/contacts/${added.id}`} className="inline-flex items-center min-h-8 text-xs underline" data-testid={`contact-cascade-open-${rowKey}`}>In CRM · open</Link> : !kcIsClient && <div className="flex items-center justify-end gap-1">
-            <Button size="sm" variant="outline" className="h-8 min-h-8 px-1.5 text-[11px] gap-1" onClick={() => addToCrm(k)} disabled={addingEmail !== null} aria-label={`Add ${k.name || k.email} to CRM`} title="Add to CRM" data-testid={`button-add-known-${rowKey}`}>
-              {addingEmail === rowKey ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}<span className="hidden [@container(min-width:480px)]:inline">Add to CRM</span>
+            <Button size="sm" variant="outline" data-no-min-touch className="h-7 min-h-7 px-1 text-[11px]" onClick={() => addToCrm(k)} disabled={addingEmail !== null} aria-label={`Add ${k.name || k.email} to CRM`} title="Add to CRM" data-testid={`button-add-known-${rowKey}`}>
+              {addingEmail === rowKey ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}<span className="sr-only">Add to CRM</span>
             </Button>
-            <Button size="sm" variant="ghost" className="h-8 min-h-8 px-1.5 text-[11px] gap-1" onClick={() => dismissSuggestion.mutate(k)} disabled={dismissSuggestion.isPending || addingEmail !== null} aria-label={`Dismiss suggestion for ${k.name || k.email}`} title="Dismiss suggestion" data-testid={`contact-suggestion-dismiss-${rowKey}`}><X className="w-3 h-3" /><span className="hidden [@container(min-width:480px)]:inline">Dismiss</span></Button>
+            <Button size="sm" variant="ghost" data-no-min-touch className="h-7 min-h-7 px-1 text-[11px]" onClick={() => dismissSuggestion.mutate(k)} disabled={dismissSuggestion.isPending || addingEmail !== null} aria-label={`Dismiss suggestion for ${k.name || k.email}`} title="Dismiss suggestion" data-testid={`contact-suggestion-dismiss-${rowKey}`}><X className="w-3.5 h-3.5" /><span className="sr-only">Dismiss</span></Button>
           </div>}
         </div>
       </div>
@@ -656,7 +677,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
         {/* "6 of 33" — how many of the company's people this shows (Woody, 2026-09-28). */}
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Users className="w-3.5 h-3.5" /> Key contacts
-          {totalPeople > 0 && <span className="font-mono tabular-nums normal-case tracking-normal" data-testid="key-contacts-count">· {top.length === totalPeople ? totalPeople : `${top.length} of ${totalPeople}`}</span>}
+          {totalPeople > 0 && <span className="font-mono tabular-nums normal-case tracking-normal" data-testid="key-contacts-count">· {shownPeople === totalPeople ? totalPeople : `${shownPeople} of ${totalPeople}`}</span>}
         </CardTitle>
         {!kcIsClient && (
         <Button
@@ -735,7 +756,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
             the ranked list, then leavers / placeholders / the long-silent
             greyed at the end, the discovery summary and the inbox senders
             (Woody, 2026-09-28). */}
-        {hasMore && (
+        {!isLandlord && hasMore && (
           <button
             type="button"
             onClick={() => setShowAll(v => !v)}
@@ -754,7 +775,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
                 <div className="space-y-0.5">{retired.map(renderItem)}</div>
               </div>
             )}
-            {summary && !kcIsClient && (
+            {summary && !kcIsClient && !isLandlord && (
               <p className="text-[11px] text-muted-foreground mt-1.5">
                 {allContacts.length} in CRM{!isLandlord && crmAiChecked > 0 ? ` (${crmAiChecked} AI-verified)` : ""}
                 {discovered.length > 0 ? ` · ${discovered.length} ${isLandlord ? "suggestions" : "new discovered"}` : " · no new contacts found"}
@@ -762,9 +783,18 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
                 {scanning ? " · rescanning…" : ""}
               </p>
             )}
-            <PendingSendersList suggestions={inboxSenders} companyId={companyId} onDismiss={isLandlord ? candidate => dismissSuggestion.mutate(candidate) : undefined} dismissing={dismissSuggestion.isPending} />
+            {!isLandlord && <PendingSendersList suggestions={inboxSenders} companyId={companyId} dismissing={dismissSuggestion.isPending} />}
           </>
         )}
+        {isLandlord && hasMore && <button type="button" onClick={() => setShowAll(value => !value)} className={`${pillMetrics} ${pillInactive} mt-2`} data-testid="key-contacts-show-all">
+          {showAll ? "Show fewer" : `Show all ${totalPeople}`}
+        </button>}
+        {isLandlord && (suggestions.length > 0 || inboxSenders.length > 0) && <details className="mt-3 pt-2 border-t border-border/40" data-testid="landlord-contact-suggestions">
+          <summary className="text-xs text-muted-foreground cursor-pointer py-1">Suggested contacts · {suggestions.length + inboxSenders.length}</summary>
+          <p className="text-[11px] text-muted-foreground mt-1 mb-1.5">Not saved in CRM. Use + to add or × to dismiss.</p>
+          <div className="space-y-0.5">{suggestions.map(renderItem)}</div>
+          <PendingSendersList suggestions={inboxSenders} companyId={companyId} onDismiss={candidate => dismissSuggestion.mutate(candidate)} dismissing={dismissSuggestion.isPending} />
+        </details>}
         {/* The AI's notes on the list are working notes ("Adrian's email
             domain is unusual…") — folded behind one line, open on click
             (Woody, 2026-09-27); below the people, it's secondary

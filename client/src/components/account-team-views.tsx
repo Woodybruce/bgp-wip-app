@@ -197,6 +197,16 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                   <Row key={p.id} href={`/properties/${p.id}`} title={p.name} sub={[p.status && statusLabel(p.status), list(p.asset_class)].filter(Boolean).join(" · ")} />
                 ))}</div>}
               </Section>
+              <Section title="Buying — on BGP's investment boards" link="/investment-tracker" linkLabel="Investment tracker" empty="Nothing they're buying on BGP's investment boards.">
+                {purchases.length > 0 && <div className="space-y-1">{purchases.slice(0, 5).map((t: any) => (
+                  <Row key={t.id} href={t.deal_id ? `/deals/${t.deal_id}` : "/investment-tracker"} title={<span className={CLOSED.test(t.status || "") ? "text-muted-foreground" : ""}>{t.asset_name}</span>} sub={[statusLabel(t.status), t.vendor && `vendor ${t.vendor}`].filter(Boolean).join(" · ")} right={money(t.guide_price) && <span className="text-xs font-mono tabular-nums">{money(t.guide_price)}</span>} />
+                ))}</div>}
+              </Section>
+              <Section title="Investment comps" link="/investment-comps" linkLabel="Comps" empty="No recorded trades as buyer or seller.">
+                {inv.comps.length > 0 && <div className="space-y-1">{inv.comps.slice(0, 5).map((c: any) => (
+                  <Row key={c.id} href={c.property_id ? `/properties/${c.property_id}` : "/investment-comps"} title={c.property_name || "Trade"} sub={[c.side === "sold" ? "Sold" : "Bought", c.city, c.cap_rate && `${(Number(c.cap_rate) < 1 ? Number(c.cap_rate) * 100 : Number(c.cap_rate)).toFixed(2)}%`].filter(Boolean).join(" · ")} right={<><span className="text-xs font-mono tabular-nums">{money(c.price)}</span><span className="text-[11px] font-mono tabular-nums text-muted-foreground">{fmtMonth(c.transaction_date)}</span></>} />
+                ))}</div>}
+              </Section>
               {inv.debtEvents.length > 0 && (
                 <Section title="Debt & capital events">
                   <div className="space-y-1">{inv.debtEvents.slice(0, 5).map((e: any) => (
@@ -214,11 +224,6 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                   <p className="text-[11px] text-muted-foreground">Mandate: {[f.mandate_asset_class, (f.mandate_lot_size_min || f.mandate_lot_size_max) && `${money(f.mandate_lot_size_min) || "—"}–${money(f.mandate_lot_size_max) || "—"} lots`, (f.mandate_geographies || []).join?.(", ")].filter(Boolean).join(" · ")}</p>
                 )}
               </Section>
-              <Section title="Buying — on BGP's investment boards" link="/investment-tracker" linkLabel="Investment tracker" empty="Nothing they're buying on BGP's investment boards.">
-                {purchases.length > 0 && <div className="space-y-1">{purchases.slice(0, 5).map((t: any) => (
-                  <Row key={t.id} href={t.deal_id ? `/deals/${t.deal_id}` : "/investment-tracker"} title={<span className={CLOSED.test(t.status || "") ? "text-muted-foreground" : ""}>{t.asset_name}</span>} sub={[statusLabel(t.status), t.vendor && `vendor ${t.vendor}`].filter(Boolean).join(" · ")} right={money(t.guide_price) && <span className="text-xs font-mono tabular-nums">{money(t.guide_price)}</span>} />
-                ))}</div>}
-              </Section>
               {(inv.sentToThem?.length > 0 || inv.theirBids?.length > 0 || inv.theirViewings?.length > 0) && (
                 <Section title="Sent to them / viewings / bids" link="/investment-tracker" linkLabel="Investment tracker">
                   <div className="space-y-1">
@@ -234,11 +239,6 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                   </div>
                 </Section>
               )}
-              <Section title="Investment comps" link="/investment-comps" linkLabel="Comps" empty="No recorded trades as buyer or seller.">
-                {inv.comps.length > 0 && <div className="space-y-1">{inv.comps.slice(0, 5).map((c: any) => (
-                  <Row key={c.id} href={c.property_id ? `/properties/${c.property_id}` : "/investment-comps"} title={c.property_name || "Trade"} sub={[c.side === "sold" ? "Sold" : "Bought", c.city, c.cap_rate && `${(Number(c.cap_rate) < 1 ? Number(c.cap_rate) * 100 : Number(c.cap_rate)).toFixed(2)}%`].filter(Boolean).join(" · ")} right={<><span className="text-xs font-mono tabular-nums">{money(c.price)}</span><span className="text-[11px] font-mono tabular-nums text-muted-foreground">{fmtMonth(c.transaction_date)}</span></>} />
-                ))}</div>}
-              </Section>
             </div>
           </div>
         )}

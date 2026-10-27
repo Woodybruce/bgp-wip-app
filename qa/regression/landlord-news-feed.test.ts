@@ -94,3 +94,15 @@ test("invalid Instagram handles never generate a profile link", () => {
   }
   assert.equal(mergeLandlordNewsTabs([], [], { ...context, instagramHandle: "https://www.instagram.com/aew_global/" })[0].sourceUrl, "https://www.instagram.com/aew_global/");
 });
+
+
+test("industry tab preserves company coverage priority while own channels remain chronological", () => {
+  const tabs = mergeLandlordNewsTabs([], [
+    { id: "industry", title: "UK office market investment update", url: "https://propertyweek.com/market", published_at: "2026-10-27", coverage: "industry" },
+    { id: "company", title: "AEW announces a new office investment", url: "https://propertyweek.com/aew", published_at: "2026-10-20", coverage: "company" },
+    { id: "own-old", title: "Our portfolio update", url: "https://aew.com/news/old", published_at: "2026-10-20", coverage: "company" },
+    { id: "own-new", title: "Our latest report", url: "https://aew.com/news/new", published_at: "2026-10-27" },
+  ], { companyName: "AEW", domain: "aew.com" });
+  assert.deepEqual(tabs.find(tab => tab.type === "landlord_media")?.items.map(item => item.id), ["media-company", "media-industry"]);
+  assert.deepEqual(tabs.find(tab => tab.type === "rssapp_web_news")?.items.map(item => item.id), ["media-own-new", "media-own-old"]);
+});

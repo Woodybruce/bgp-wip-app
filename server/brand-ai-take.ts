@@ -277,7 +277,7 @@ async function loadIntelSlice(companyId: string) {
             (SELECT name FROM crm_companies WHERE id = $1) AS co
       WHERE (n.title ILIKE '%' || co.name || '%' OR n.summary ILIKE '%' || co.name || '%'
              OR n.ai_summary ILIKE '%' || co.name || '%')
-      ORDER BY n.published_at DESC NULLS LAST LIMIT 6`,
+      ORDER BY n.published_at DESC NULLS LAST LIMIT 30`,
     [companyId]
   ).catch(() => ({ rows: [] }));
   // Every firmographic API we pay for feeds the same read, with fetch

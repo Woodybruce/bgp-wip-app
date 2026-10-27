@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import React from 'react';
+import {landlordContactIdentityKeys, landlordDisplayContacts} from '../../shared/landlord-contact-identity.ts';
 import {landlordContactSuggestionKeys, isDismissedLandlordContact, showLandlordEmployerBadge} from '../../shared/landlord-contact-suggestions.ts';
 const require=createRequire(import.meta.url);
 const {source,find,evaluate,ts}=require('./source-harness.cjs');
@@ -53,18 +54,18 @@ test('clients, non-Landlords and empty identities cannot save dismissals',async(
  const invalid=routeHarness();assert.equal((await invalid.post({id:'saved-contact',key:'scraped:property'})).status,400);assert.equal(invalid.writes.length,0);
 });
 
-function renderComponent(name,props,{dismissed=[],history=null,viewer={role:'Admin'}}={}) {
+function renderComponent(name,props,{dismissed=[],history=null,historyContact=null,viewer={role:'Admin'},expanded=false,candidates=[candidate]}={}) {
  const file='client/src/components/company-contacts-board.tsx',ast=ts.createSourceFile(file,source(file),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
  const declaration=ast.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text===name),tags={};
  function visit(node){if((ts.isJsxOpeningElement(node)||ts.isJsxSelfClosingElement(node))&&ts.isIdentifier(node.tagName))tags[node.tagName.text]=node.tagName.text;ts.forEachChild(node,visit);}visit(declaration);
  const mutations=[],requests=[],invalidations=[],cache=[],stateChanges=[];let stateIndex=0;
  const queryClient={invalidateQueries:args=>invalidations.push(args),setQueryData:(key,update)=>cache.push({key,value:update({contacts:[candidate]})})};
  const code=ts.transpileModule(declaration.getText(ast),{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
- const exports=evaluate(code,{require,...tags,useQueryClient:()=>queryClient,useToast:()=>({toast(){}}),useState:value=>{const index=stateIndex++;return[name==='KeyContactRow'&&index===2?history:value,next=>stateChanges.push({index,next})];},useEffect(){},
-  useQuery:options=>options.queryKey[0]==='/api/auth/me'?{data:viewer}:{data:{contacts:[candidate],dismissedContactKeys:dismissed,summary:{revealed:5}},isFetching:false,refetch(){}},
+ const exports=evaluate(code,{require,...tags,useQueryClient:()=>queryClient,useToast:()=>({toast(){}}),useState:value=>{const index=stateIndex++;return[name==='KeyContactRow'&&index===2?history:name==='KeyContactRow'&&index===3?historyContact:name==='CompanyContactsBoard'&&index===0?expanded:value,next=>stateChanges.push({index,next})];},useEffect(){},
+  useQuery:options=>options.queryKey[0]==='/api/auth/me'?{data:viewer}:{data:{contacts:candidates,dismissedContactKeys:dismissed,summary:{revealed:5}},isFetching:false,refetch(){}},
   useMutation:options=>{mutations.push(options);return{isPending:false,mutate:input=>options.mutationFn(input)};},
   apiRequest:async(method,url,body)=>{requests.push({method,url,body});return{json:async()=>({dismissedKeys:landlordContactSuggestionKeys(body)})};},
-  isDismissedLandlordContact,showLandlordEmployerBadge,useContactsCheck:()=>({check:null}),isKeyContactRole:()=>true,isMachineMailbox:()=>false,
+  isDismissedLandlordContact,showLandlordEmployerBadge,landlordContactIdentityKeys,landlordDisplayContacts,useContactsCheck:()=>({check:null}),isKeyContactRole:()=>true,isMachineMailbox:()=>false,
   nameKey:value=>String(value).toLowerCase(),keyContactHiddenReason:()=>null,compareKeyContacts:()=>0,isEmailPlaceholderName:()=>false,
   formatRelativeShort:()=>'',contactDisplayName:value=>value,KEY_CONTACTS_SHOWN:6,HIDDEN_ORDER:{},AI_FLAG_LABELS:{},pillMetrics:'',pillInactive:'',
  });
@@ -135,4 +136,59 @@ test('Brand and client counts stay plain; recorded discovery email counts use th
  const discovered=renderComponent('KeyContactRow',{...props,isLandlord:true,contact:{id:'saved',name:'Jane Smith'},discovery:{bgp:{threadCount:4}}});
  const count=elements(discovered.tree).find(node=>node.props['data-testid']==='key-contact-email-history-saved');
  assert.match(text(count),/4 threads/);count.props.onClick({stopPropagation(){}});assert.equal(discovered.stateChanges.at(-1).next,'email');
+});
+
+
+test('Landlord display groups only strong identities and preserves linked record access without summing mail counts',()=>{
+ const imported={id:'imported',name:'PAYNE Martin',email:'martin.payne@eu.example.test',linkedin_url:'http://www.linkedin.com/in/martin-payne-example',role:'Director Asset Management',interaction_count:1407};
+ const enriched={id:'enriched',name:'Martin Payne',email:'martin.payne@example.test',linkedin_url:'https://uk.linkedin.com/in/MARTIN-PAYNE-EXAMPLE/?trk=search',role:'Director',interaction_count:15};
+ const sameNameOtherPerson={id:'unrelated',name:'Martin Payne',email:'another@example.test',linkedin_url:'https://www.linkedin.com/in/another-martin'};
+ const rows=[imported,enriched,sameNameOtherPerson],before=JSON.stringify(rows),display=landlordDisplayContacts(rows);
+ assert.equal(display.length,2);
+ assert.equal(display[0].id,'imported');assert.equal(display[0].name,'Martin Payne');assert.equal(display[0].interaction_count,1407);
+ assert.equal(display[0].email,imported.email);assert.equal(display[0].relatedContactRecords[0].id,'enriched');
+ assert.equal(JSON.stringify(rows),before,'display grouping must not edit CRM rows');
+ assert.equal(landlordDisplayContacts([{id:'a',name:'One',email:'one@example.test'},{id:'b',name:'ONE',email:' ONE@example.test '}]).length,1);
+ assert.equal(landlordDisplayContacts([{id:'a',name:'Same Name'},{id:'b',name:'Same Name'}]).length,2);
+ assert.equal(landlordDisplayContacts([{id:'a',linkedin_url:'https://linkedin.com/company/example'},{id:'b',linkedin_url:'https://linkedin.com/company/example'}]).length,2);
+ assert.equal(landlordDisplayContacts([{id:'a',linkedin_url:'https://linkedin.com.evil.test/in/person'},{id:'b',linkedin_url:'https://linkedin.com.evil.test/in/person'}]).length,2);
+});
+
+test('Landlord saved contacts lead, suggestions stay separate and Show fewer follows the complete saved list',()=>{
+ const contacts=Array.from({length:8},(_,index)=>({id:`saved-${index}`,name:`Saved Person ${index}`,email:`saved-${index}@example.test`,role:'Asset Manager'}));
+ const props={companyId:'aew',companyName:'AEW',contacts,isLandlord:true};
+ const closed=renderComponent('CompanyContactsBoard',props),all=elements(closed.tree);
+ const top=all.find(node=>node.props['data-testid']==='key-contacts-top');
+ assert.equal(elements(top).filter(node=>node.type==='KeyContactRow').length,6);
+ assert.equal(elements(top).some(node=>String(node.props['data-testid']).startsWith('landlord-contact-suggestion-')),false);
+ const suggestions=all.find(node=>node.props['data-testid']==='landlord-contact-suggestions');
+ assert.equal(suggestions.type,'details');assert.equal(suggestions.props.open,undefined);
+ assert.equal(elements(suggestions).filter(node=>String(node.props['data-testid']).startsWith('button-add-known-')).length,1);
+ const expanded=elements(renderComponent('CompanyContactsBoard',props,{expanded:true}).tree);
+ const rest=expanded.findIndex(node=>node.props['data-testid']==='key-contacts-rest'),toggle=expanded.findIndex(node=>node.props['data-testid']==='key-contacts-show-all');
+ assert.ok(rest>=0&&toggle>rest);assert.match(text(expanded[toggle]),/Show fewer/);
+ assert.equal(expanded.filter(node=>node.type==='KeyContactRow').length,8);
+ assert.equal(text(expanded.find(node=>node.props['data-testid']==='key-contacts-count')).replace(/\s+/g,' ').trim(),'· 8');
+ const brand=elements(renderComponent('CompanyContactsBoard',{...props,isLandlord:false}).tree);
+ assert.equal(brand.some(node=>node.props['data-testid']==='landlord-contact-suggestions'),false);
+});
+
+test('a suggestion with an alternate email but the same personal LinkedIn cannot duplicate a saved Landlord contact',()=>{
+ const contact={id:'saved',name:'Jane Smith',email:'jane.old@example.test',linkedin_url:candidate.linkedin};
+ const out=renderComponent('CompanyContactsBoard',{companyId:'aew',companyName:'AEW',contacts:[contact],isLandlord:true});
+ assert.equal(elements(out.tree).filter(node=>node.type==='KeyContactRow').length,1);
+ assert.equal(elements(out.tree).some(node=>String(node.props['data-testid']).startsWith('button-add-known-')),false);
+});
+
+test('grouped Landlord contact menus retain alternate compose, saved record and person history access',()=>{
+ const contact={id:'primary',name:'Martin Payne',email:'primary@example.test',relatedContactRecords:[{id:'alternate',email:'alternate@example.test'}]};
+ const props={contact,companyId:'aew',companyName:'AEW',isLandlord:true};
+ const out=renderComponent('KeyContactRow',props),all=elements(out.tree);
+ assert.ok(all.some(node=>node.type==='Link'&&node.props.href==='/contacts/alternate'));
+ assert.ok(all.some(node=>node.type==='a'&&node.props.href==='mailto:alternate@example.test'));
+ const action=all.find(node=>node.type==='DropdownMenuItem'&&text(node).startsWith('Email history'));
+ action.props.onClick();
+ assert.deepEqual(JSON.parse(JSON.stringify(out.stateChanges.find(change=>change.index===3).next)),{id:'alternate',name:'Martin Payne'});
+ const opened=elements(renderComponent('KeyContactRow',props,{history:'email',historyContact:{id:'alternate',name:'Martin Payne'}}).tree);
+ assert.equal(opened.find(node=>node.type==='BrandEmailHistory').props.person.contactId,'alternate');
 });

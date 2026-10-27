@@ -17,6 +17,7 @@ import { getBrandIdentity, normalizeBrandDomain } from "./brand-identity";
 import { UK_CENTRES } from "../shared/uk-centres";
 import { BRAND_FEED_TABS, BRAND_WATCH_FILTERS, BRAND_WEB_FEED_TYPES, MARKET_FEED_TYPES, type BrandWebFeedKind } from "../shared/brand-feed-types";
 import { LANDLORD_CATALOGUE_PREDICATE } from "./landlord-meeting-matching";
+import { registerLandlordNewsRoutes } from "./landlord-news";
 
 const anthropic = getAnthropicClient(true);
 const MODELS = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"];
@@ -334,6 +335,7 @@ async function staffOnly(req: any, res: any) {
 }
 
 export function registerBrandWebFeedRoutes(app: Express) {
+  registerLandlordNewsRoutes(app, requireAuth);
   // Brand page: every channel's items, grouped by tab, plus the saved AI read.
   app.get("/api/brand/:companyId/feed", requireAuth, async (req, res) => {
     try {

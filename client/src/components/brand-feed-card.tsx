@@ -4,7 +4,7 @@
 // the Instagram page maybe as tabs … then some AI commentary").
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Instagram, Loader2, Rss, Sparkles, ExternalLink } from "lucide-react";
+import { Instagram, Loader2, Rss, Sparkles, ExternalLink, RefreshCw } from "lucide-react";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,6 +13,7 @@ import { Pill, PillCount } from "@/components/ui/pill";
 import { AiCommentary } from "@/components/ai-commentary";
 import { LandlordInstagramPreview, landlordInstagramUsername } from "@/components/landlord-instagram-preview";
 import { mergeLandlordNewsTabs, type FeedItem, type FeedTab, type LandlordNewsArticle } from "@/lib/landlord-news-feed";
+import { canReadLandlordIndustryNews, type LandlordIndustryNews } from "@shared/landlord-news";
 
 type FeedResponse = { tabs: FeedTab[]; read: { text: string; at: string } | null; stale: boolean; latest: string | null };
 
@@ -54,7 +55,7 @@ function InstagramGrid({ companyId }: { companyId: string }) {
 function ItemList({ items, landlord = false }: { items: FeedItem[]; landlord?: boolean }) {
   const [showAll, setShowAll] = useState(false);
   useEffect(() => setShowAll(false), [items[0]?.type]);
-  if (!items.length) return <p className="text-xs text-muted-foreground">{landlord ? "No items have been retrieved from this source yet. Open the source page to check its latest updates." : "Nothing new on this page yet — new items appear as the brand posts them."}</p>;
+  if (!items.length) return <p className="text-xs text-muted-foreground">{landlord ? "No updates have been retrieved for this channel yet." : "Nothing new on this page yet — new items appear as the brand posts them."}</p>;
   const followed = items.find(item => item.baseline)?.followed_at;
   const visible = landlord && !showAll ? items.slice(0, 6) : items;
   return (
@@ -71,6 +72,7 @@ function ItemList({ items, landlord = false }: { items: FeedItem[]; landlord?: b
             <div className="text-[11px] text-muted-foreground tabular-nums flex items-center gap-1.5">
               {followed && !item.baseline && <span className="rounded-full bg-foreground text-background px-1.5 py-px text-[11px] font-semibold">New</span>}
               {landlord && item.publisher && <span>{item.publisher}</span>}
+              {landlord && item.coverage === "company" && <span className="text-primary">Company coverage</span>}
               {!item.baseline && item.at && !Number.isNaN(Date.parse(item.at)) && day(item.at)}
             </div>
             {item.summary && <p className="text-xs text-muted-foreground line-clamp-2">{item.summary}</p>}
@@ -90,6 +92,24 @@ export function BrandFeedCard({ companyId, canSetUp = false, landlord = false, n
     queryKey: key,
     queryFn: async () => (await apiRequest("GET", `/api/brand/${companyId}/feed`)).json(),
     staleTime: 10 * 60_000,
+  });
+  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"], enabled: landlord });
+  const canReadIndustry = landlord && canReadLandlordIndustryNews(viewer);
+  const industryKey = ["/api/landlord-relationships", companyId, "news"];
+  const industry = useQuery<LandlordIndustryNews>({
+    queryKey: industryKey,
+    queryFn: async () => (await apiRequest("GET", `/api/landlord-relationships/${companyId}/news`)).json(),
+    enabled: canReadIndustry,
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+  const refreshNews = useMutation({
+    mutationFn: async (): Promise<LandlordIndustryNews> => (await apiRequest("POST", `/api/landlord-relationships/${companyId}/news/refresh`, {})).json(),
+    onSuccess: out => {
+      queryClient.setQueryData(industryKey, out);
+      toast({ title: "Industry news updated", ...(out.research.status === "unavailable" ? { description: "Saved trade-press stories are available; the live news search is currently unavailable." } : {}) });
+    },
+    onError: () => toast({ title: "Couldn’t refresh industry news", description: "The saved stories remain available. Try again shortly.", variant: "destructive" }),
   });
   useInstagram(companyId, !landlord);
   const [active, setActive] = useState<string | null>(null);
@@ -126,22 +146,32 @@ export function BrandFeedCard({ companyId, canSetUp = false, landlord = false, n
   });
 
   if ((isLoading || !data) && !landlord) return null;
-  const tabs = landlord ? mergeLandlordNewsTabs(data?.tabs || [], news, { companyName, domain, instagramHandle }) : data!.tabs;
+  const tabs = landlord ? mergeLandlordNewsTabs([
+    ...(data?.tabs || []), ...(canReadIndustry ? [{ type: "landlord_media", label: "Industry news", sourceUrl: null, items: [] }] : []),
+  ], [...(canReadIndustry ? industry.data?.items || [] : []), ...(news || [])], { companyName, domain, instagramHandle }) : data!.tabs;
   const webTabs = (data?.tabs || []).filter(tab => tab.type !== "rssapp_instagram");
   const instagramUsername = landlordInstagramUsername(instagramHandle);
   if (!tabs.length && !canSetUp && !landlord) return null;
   const current = tabs.find(tab => tab.type === active) || tabs.find(tab => tab.items.length) || tabs[0];
   const newsTabs = tabs.filter(tab => !["rssapp_instagram", "rssapp_linkedin"].includes(tab.type));
   const socialTabs = tabs.filter(tab => ["rssapp_instagram", "rssapp_linkedin"].includes(tab.type));
-  const newsCurrent = newsTabs.find(tab => tab.type === active) || newsTabs.find(tab => tab.items.length) || newsTabs[0];
+  const newsCurrent = newsTabs.find(tab => tab.type === active) || newsTabs.find(tab => tab.type === "landlord_media" && tab.items.length) || newsTabs.find(tab => tab.items.length) || newsTabs[0];
   const socialCurrent = socialTabs.find(tab => tab.type === activeSocial) || socialTabs.find(tab => tab.type === "rssapp_instagram" && instagramUsername) || socialTabs[0];
   const landlordChannel = (choices: FeedTab[], selected: FeedTab | undefined, select: (type: string) => void, label: string) => <section className="min-w-0 space-y-3" aria-label={label}>
     <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label={label}>
       {choices.map(tab => <Pill key={tab.type} active={selected?.type === tab.type} role="tab" aria-selected={selected?.type === tab.type} onClick={() => select(tab.type)} data-testid={`brand-feed-tab-${tab.label.toLowerCase().replace(/\s+/g, "-")}`}>
         {tab.type === "rssapp_instagram" && <Instagram className="w-3 h-3" />}{tab.label}{tab.items.length > 0 && <PillCount n={tab.items.length} active={selected?.type === tab.type} />}
       </Pill>)}
-      {selected?.sourceUrl && <a href={selected.sourceUrl} target="_blank" rel="noreferrer" className="ml-auto text-xs text-muted-foreground hover:text-foreground underline underline-offset-2">Open source</a>}
     </div>
+    {selected?.type === "landlord_media" && <div className="space-y-1.5">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-xs text-muted-foreground">Trade-press coverage and wider property-market updates. Not every story concerns {companyName || "this landlord"}.</p>
+        {canReadIndustry && <Button size="sm" variant="ghost" className="h-7 shrink-0 px-2 text-xs" disabled={refreshNews.isPending} onClick={() => refreshNews.mutate()}><RefreshCw className={`h-3 w-3 ${refreshNews.isPending ? "animate-spin" : ""}`} />{refreshNews.isPending ? "Checking…" : "Refresh news"}</Button>}
+      </div>
+      {canReadIndustry && industry.data?.research.checkedAt && <p className="text-[11px] text-muted-foreground">Additional news search checked {day(industry.data.research.checkedAt)}.</p>}
+      {canReadIndustry && industry.isLoading && <p className="text-xs text-muted-foreground">Loading industry news…</p>}
+      {canReadIndustry && industry.isError && <p className="text-xs text-muted-foreground">Industry news could not be loaded. <button className="underline" onClick={() => industry.refetch()}>Try again</button></p>}
+    </div>}
     {selected && (selected.type === "rssapp_instagram" && instagramUsername
       ? <LandlordInstagramPreview companyId={companyId} handle={instagramUsername} canSetUp={canSetUp} />
       : <ItemList key={selected.type} items={selected.items} landlord />)}

@@ -75,17 +75,17 @@ function TeamMember({ companyId, member, properties, canEdit, onSaved, onOpenAct
     <p className="text-xs text-muted-foreground">{sources.length ? sources.map((source,index) => <span key={source.kind || source.label}>
       {index > 0 && " · "}{source.kind ? <button type="button" className="underline underline-offset-2 decoration-border hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring rounded-sm" aria-haspopup="dialog" aria-label={`View ${source.label} involving ${member.name}`} onClick={() => onOpenActivity(source.kind!)}>{source.label}</button> : source.label}
     </span>) : "Saved account assignment"}{last && <span className="whitespace-nowrap"> · Last {last}</span>}</p>
-    {member.assignedRole && <p className="text-xs font-medium">{member.assignedRole} <span className="font-normal text-muted-foreground">· saved account role</span></p>}
+    {member.assignedRole && <p className="text-xs font-medium">{member.assignedRole}</p>}
     {!!member.contexts.length && <div className="space-y-2">
       {member.contexts.map(context => <div key={context.id} className="rounded-md bg-muted/40 px-2 py-1.5 space-y-1" data-testid="landlord-team-context">
-        <p className="text-xs font-semibold">{context.role} <span className="font-normal">· {context.propertyName || (context.propertyId ? "Property name unavailable" : "Account-wide")}</span></p>
-        <p className="text-[11px] text-muted-foreground">{context.origin === "manual" ? "Confirmed role" : "Suggested from records"}</p>
-        {context.origin === "manual" && context.notes && <p className="text-xs leading-relaxed text-muted-foreground">{context.notes}</p>}
-        {!!context.sources.length && <details className="text-xs"><summary className="cursor-pointer text-muted-foreground">Evidence ({context.sources.length})</summary>{context.notes && <p className="text-muted-foreground mt-1 leading-relaxed">{context.notes}</p>}<ul className="mt-1 space-y-1">{context.sources.map(source => <li key={`${source.kind}:${source.id}`}><a className="underline underline-offset-2" href={source.url}>{source.label}</a></li>)}</ul></details>}
-        {canEdit && <div className="flex items-center gap-2 pt-1">
-          {context.origin === "suggested" ? <><button className="text-xs text-primary inline-flex items-center gap-1 hover:underline disabled:opacity-50" disabled={save.isPending} onClick={()=>save.mutate({role:context.role,propertyId:context.propertyId,notes:context.notes})}><Check className="h-3 w-3" />Confirm role</button><button className="text-xs text-muted-foreground hover:underline" onClick={()=>editContext(context)}>Adjust</button></>
-            : <button className="text-xs text-muted-foreground hover:underline disabled:opacity-50" disabled={remove.isPending} onClick={()=>remove.mutate(context.id)}>Remove saved role</button>}
-        </div>}
+        <div className="flex items-center justify-between gap-2"><p className="text-xs font-semibold">{context.role} <span className="font-normal">· {context.propertyName || (context.propertyId ? "Property name unavailable" : "Account-wide")}</span></p>
+          {canEdit && context.origin === "manual" && <button className="shrink-0 rounded p-1 text-muted-foreground hover:text-foreground disabled:opacity-50" disabled={remove.isPending} onClick={()=>remove.mutate(context.id)} aria-label={`Remove ${context.role} role for ${member.name}`} title="Remove saved role"><X className="h-3 w-3" /></button>}
+        </div>
+        {context.origin === "suggested" && <>
+          <p className="text-[11px] text-muted-foreground">Suggested from records</p>
+          {!!context.sources.length && <details className="text-xs"><summary className="cursor-pointer text-muted-foreground">Evidence ({context.sources.length})</summary>{context.notes && <p className="text-muted-foreground mt-1 leading-relaxed">{context.notes}</p>}<ul className="mt-1 space-y-1">{context.sources.map(source => <li key={`${source.kind}:${source.id}`}><a className="underline underline-offset-2" href={source.url}>{source.label}</a></li>)}</ul></details>}
+          {canEdit && <div className="flex items-center gap-2 pt-1"><button className="text-xs text-primary inline-flex items-center gap-1 hover:underline disabled:opacity-50" disabled={save.isPending} onClick={()=>save.mutate({role:context.role,propertyId:context.propertyId,notes:context.notes})}><Check className="h-3 w-3" />Confirm role</button><button className="text-xs text-muted-foreground hover:underline" onClick={()=>editContext(context)}>Adjust</button></div>}
+        </>}
       </div>)}
     </div>}
     {!member.contexts.length && !member.assignedRole && <p className="text-xs text-muted-foreground">Role not recorded</p>}

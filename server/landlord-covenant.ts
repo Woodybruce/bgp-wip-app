@@ -2,8 +2,9 @@ import type { Express, Request, RequestHandler, Response } from "express";
 import type { CovenantReport } from "./covenant-engine";
 import type { LandlordCovenantReport } from "../shared/landlord-covenant";
 import { LANDLORD_CATALOGUE_PREDICATE } from "./landlord-meeting-matching";
+import { buildLandlordCovenantOverview, reviewedOperatingCompanyNumber, type LandlordCovenantCompanyContext } from "./landlord-covenant-overview";
 
-type Company = { name: string; uk_entity_name?: string | null; companies_house_number: string | null; status?: string | null };
+type Company = LandlordCovenantCompanyContext & { uk_entity_name?: string | null; companies_house_number: string | null; status?: string | null };
 type InsolvencyEvidence = { available: boolean; cases: any[]; status?: string; checkedAt: string };
 type Queryable = { query: (text: string, values?: any[]) => Promise<{ rows: any[] }> };
 const MVL = "members-voluntary-liquidation";
@@ -120,18 +121,34 @@ export async function handleLandlordCovenant(req: Request, res: Response, deps: 
     const canRead = deps.canRead || (await import("./landlord-meetings")).canReadLandlordMeetings;
     if (!await canRead(req)) return res.status(403).json({ error: "Available to BGP staff only" });
     const q = deps.q || (await import("./db")).pool;
-    const company = (await q.query(`SELECT c.name,c.uk_entity_name,c.companies_house_number,c.companies_house_data->>'company_status' AS status FROM crm_companies c WHERE c.id=$1 AND ${LANDLORD_CATALOGUE_PREDICATE}`, [String(req.params.companyId)])).rows[0] as Company | undefined;
+    const company = (await q.query(`SELECT c.name,c.industry,c.backers,c.uk_entity_name,c.companies_house_number,c.companies_house_data->>'company_status' AS status,
+      p.name AS parent_name,p.companies_house_number AS parent_number,pr.report AS parent_report
+      FROM crm_companies c LEFT JOIN crm_companies p ON p.id=c.parent_company_id AND p.merged_into_id IS NULL
+      LEFT JOIN covenant_reports pr ON pr.company_number=p.companies_house_number
+      WHERE c.id=$1 AND ${LANDLORD_CATALOGUE_PREDICATE}`, [String(req.params.companyId)])).rows[0] as Company | undefined;
     if (!company) return res.status(404).json({ error: "Landlord not found" });
     const number = companyNumber(company.companies_house_number);
     const checkedAt = new Date((deps.now || Date.now)()).toISOString();
-    if (!number) return res.json(interpretLandlordCovenant(company, null, { available: false, cases: [], checkedAt }));
-    const [cached, insolvency] = await Promise.all([
+    if (!number) {
+      const result = interpretLandlordCovenant(company, null, { available: false, cases: [], checkedAt });
+      result.overview = buildLandlordCovenantOverview(company, result);
+      return res.json(result);
+    }
+    const operatingNumber = reviewedOperatingCompanyNumber(number);
+    const readInsolvency = deps.insolvency || readLandlordInsolvency;
+    const [cached, insolvency, operatingInsolvency] = await Promise.all([
       // Read the existing engine report without calling its recomputation /
       // stale-while-revalidate path. This view never writes shared cache data.
       q.query("SELECT report FROM covenant_reports WHERE company_number=$1", [number]).catch(() => ({ rows: [] })),
-      (deps.insolvency || readLandlordInsolvency)(number, { refresh: req.query.refresh === "1" }),
+      readInsolvency(number, { refresh: req.query.refresh === "1" }),
+      operatingNumber && operatingNumber !== number ? readInsolvency(operatingNumber, { refresh: req.query.refresh === "1" }) : null,
     ]);
-    return res.json(interpretLandlordCovenant(company, cached.rows[0]?.report || null, insolvency));
+    const result = interpretLandlordCovenant(company, cached.rows[0]?.report || null, insolvency);
+    const operating = operatingInsolvency && operatingNumber
+      ? interpretLandlordCovenant({ name: "AEW UK Investment Management LLP", companies_house_number: operatingNumber }, null, operatingInsolvency)
+      : operatingNumber === number ? result : undefined;
+    result.overview = buildLandlordCovenantOverview(company, result, operating);
+    return res.json(result);
   } catch { return res.status(502).json({ error: "The legal entity check could not be loaded. Try again shortly." }); }
 }
 

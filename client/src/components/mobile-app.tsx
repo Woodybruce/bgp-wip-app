@@ -3731,14 +3731,10 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     enabled: tab === "menu" && moreSubTab === "news",
   });
 
-  // Dismiss a news article so it disappears from the feed. Optimistic
-  // update + server delete; the source itself can be removed via the
-  // News Sources tab if a whole feed is noisy.
+  // Dismiss only for this reader; the shared article remains available to
+  // colleagues, company profiles and saved lists.
   const dismissNewsMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const r = await fetch(`/api/news-feed/articles/${id}`, { method: "DELETE", credentials: "include" });
-      if (!r.ok) throw new Error(`Couldn't dismiss (${r.status})`);
-    },
+    mutationFn: (id: string) => apiRequest("POST", "/api/news-feed/engage", { articleId: id, action: "dismiss" }),
     onMutate: async (id: string) => {
       await queryClient.cancelQueries({ queryKey: ["/api/news-feed/articles"] });
       const prev = queryClient.getQueryData<any[]>(["/api/news-feed/articles"]);
@@ -3747,6 +3743,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     },
     onError: (_e, _id, ctx) => {
       if (ctx?.prev) queryClient.setQueryData(["/api/news-feed/articles"], ctx.prev);
+      toast({ title: "Not dismissed", description: "The article could not be hidden. Please try again.", variant: "destructive" });
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/news-feed/articles"] });
@@ -4949,7 +4946,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                             )}
                           </div>
                         </a>
-                        {/* Dismiss — kills off-topic articles individually. The
+                        {/* Dismiss hides this article for the reader. The
                             click intentionally lives OUTSIDE the <a> so it
                             doesn't open the article while you're trying to
                             remove it. */}

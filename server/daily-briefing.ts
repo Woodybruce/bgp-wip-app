@@ -13,7 +13,7 @@
 
 import { pool } from "./db";
 import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
-import { isPrivateMailboxAddress, PRIVATE_MAIL_POLICY_VERSION } from "./private-mail";
+import { isPrivateMailboxAddress, isPrivateEmailRecord, PRIVATE_MAIL_POLICY_VERSION } from "./private-mail";
 
 export interface BriefingResult {
   briefing: string;
@@ -131,7 +131,7 @@ export async function generateBriefing(userId: string, msToken: string | null): 
       );
       if (calRes.ok) {
         const calData = await calRes.json();
-        const events = (calData.value || []).map((e: any) => ({
+        const events = (calData.value || []).filter((e: any) => !isPrivateEmailRecord(e, userEmail)).map((e: any) => ({
           subject: e.subject, start: e.start?.dateTime, location: e.location?.displayName || "",
         }));
         if (events.length > 0) {
@@ -142,12 +142,12 @@ export async function generateBriefing(userId: string, msToken: string | null): 
 
     try {
       const emailRes = await fetch(
-        `https://graph.microsoft.com/v1.0/me/messages?$top=10&$orderby=receivedDateTime desc&$select=subject,from,receivedDateTime,isRead,importance,bodyPreview`,
+        `https://graph.microsoft.com/v1.0/me/messages?$top=10&$orderby=receivedDateTime desc&$select=subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,isRead,importance,bodyPreview`,
         { headers: { Authorization: `Bearer ${msToken}` } }
       );
       if (emailRes.ok) {
         const emailData = await emailRes.json();
-        const emails = (emailData.value || []).filter((e: any) => !e.isRead).slice(0, 8);
+        const emails = (emailData.value || []).filter((e: any) => !e.isRead && !isPrivateEmailRecord(e, userEmail)).slice(0, 8);
         if (emails.length > 0) {
           emailContext = `Unread emails (${emails.length}):\n${emails.map((e: any) => `- ${e.from?.emailAddress?.name || "Unknown"}: "${e.subject}" — ${(e.bodyPreview || "").slice(0, 80)}`).join("\n")}`;
         }
@@ -305,7 +305,9 @@ ${insightLines ? `MARKET PULSE (latest distilled insights — include a short "M
 // Namespace only the persisted key. Real user ids still drive generation,
 // permissions and pre-generation; older workers cannot repopulate this cache.
 function briefingCacheUserId(userId: string): string {
-  return `${PRIVATE_MAIL_POLICY_VERSION}:${userId}`;
+  // Earlier caches checked mailbox identity but not copied recipients and
+  // could contain legacy insights. Keep those rows isolated from this policy.
+  return `${PRIVATE_MAIL_POLICY_VERSION}:source-v2:${userId}`;
 }
 
 async function readCached(userId: string, dateKey: string): Promise<BriefingResult | null> {
