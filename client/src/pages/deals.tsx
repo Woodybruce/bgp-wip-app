@@ -106,7 +106,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
 import { startXeroConnect } from "@/lib/queryClient";
-import { usePropertySchemeList } from "@/components/property-schemes-panel";
+import { usePropertySchemeList, SchemePillRow, schemeFilterMatches } from "@/components/property-schemes-panel";
 import { useRoute, Link, useLocation } from "wouter";
 import type { CrmDeal, CrmProperty, CrmCompany, CrmContact, DealFeeAllocation, AvailableUnit, PropertyUnit } from "@shared/schema";
 import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineLinkSelect } from "@/components/inline-edit";
@@ -5778,6 +5778,9 @@ interface SavedDealListFilters {
   search: string;
   activeGroup: string;
   columnFilters: Record<string, string[]>;
+  propertyId?: string | null;
+  scheme?: string;
+  location?: string;
 }
 
 function loadSavedDealListFilters(key: string): SavedDealListFilters | null {
@@ -5806,15 +5809,28 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   // (the fee-split save syncs split agents into internalAgent) — always show
   // regardless of the team filter.
   const myName = (currentUserForViews?.name || "").trim().toLowerCase();
-  const urlParams = new URLSearchParams(window.location.search);
+  // Read once at mount: the toolbar writes its filters back into the query
+  // string (a filtered view is shareable, like the Letting Tracker's
+  // ?propertyId= / ?status= deep links), so re-reading per render would turn
+  // every team pick into a "?team=" deep link and stop the global team
+  // switcher seeding the team filter.
+  const [urlParams] = useState(() => new URLSearchParams(window.location.search));
   const urlTeamParam = urlParams.get("team");
   const listFiltersKey = `bgp-deals-list-filters:${mode}`;
   const [savedListFilters] = useState(() => loadSavedDealListFilters(listFiltersKey));
-  const [search, setSearch] = useState(urlParams.get("search") || savedListFilters?.search || "");
+  // URL wins over the session snapshot when present ("search" is the legacy
+  // spelling of "q").
+  const [search, setSearch] = useState(urlParams.get("q") || urlParams.get("search") || savedListFilters?.search || "");
   // Deep links from DealsSummary (the Deals twin of the tracker summary):
   // /deals/list?status=NEG&propertyId=… lands here pre-filtered.
   const [activeGroup, setActiveGroup] = useState(() => legacyToCode(urlParams.get("status")) || savedListFilters?.activeGroup || "all");
-  const [propertyIdFilter, setPropertyIdFilter] = useState<string | null>(urlParams.get("propertyId"));
+  const [propertyIdFilter, setPropertyIdFilter] = useState<string | null>(urlParams.get("propertyId") || savedListFilters?.propertyId || null);
+  // One estate chosen (Canary Wharf): filter by its schemes — same pill row
+  // as the Letting Tracker. Reset whenever the property changes.
+  const [schemeFilter, setSchemeFilter] = useState(() => urlParams.get("scheme") || savedListFilters?.scheme || "");
+  // Location is the tracker unit's region (deals carry none themselves),
+  // falling back to the region of the property's other tracker units.
+  const [locationFilter, setLocationFilter] = useState(() => urlParams.get("location") || savedListFilters?.location || "all");
   // ?new=1 deep link — the WIP report's New Deal button lands here with the
   // create dialog already open.
   const [createOpen, setCreateOpen] = useState(() => urlParams.get("new") === "1");
@@ -5828,7 +5844,16 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const dealsSort = useTableSort(null, "asc");
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [hotsChecklistDeal, setHotsChecklistDeal] = useState<CrmDeal | null>(null);
-  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>(savedListFilters?.columnFilters || {});
+  // Team / Agent / Asset class are the SAME columnFilters keys the header
+  // popovers use — the toolbar dropdowns and the popovers stay in step.
+  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>(() => {
+    const next: Record<string, string[]> = { ...(savedListFilters?.columnFilters || {}) };
+    for (const key of ["team", "agent", "assetClass"] as const) {
+      const raw = urlParams.get(key);
+      if (raw) next[key] = raw.split(",").map(s => s.trim()).filter(Boolean);
+    }
+    return next;
+  });
   const [teamFilterInitialised, setTeamFilterInitialised] = useState(false);
   const isMobile = useIsMobile();
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">(
@@ -5882,12 +5907,42 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   useEffect(() => {
     if (!teamFilterInitialised) return;
     try {
-      const snapshot: SavedDealListFilters = { search, activeGroup, columnFilters };
+      const snapshot: SavedDealListFilters = { search, activeGroup, columnFilters, propertyId: propertyIdFilter, scheme: schemeFilter, location: locationFilter };
       sessionStorage.setItem(listFiltersKey, JSON.stringify(snapshot));
     } catch {
       // storage unavailable — filters just won't survive navigation
     }
-  }, [search, activeGroup, columnFilters, teamFilterInitialised, listFiltersKey]);
+  }, [search, activeGroup, columnFilters, propertyIdFilter, schemeFilter, locationFilter, teamFilterInitialised, listFiltersKey]);
+
+  // Shareable view: every toolbar filter lives in the query string and is
+  // seeded from it on load (q, status, propertyId, scheme, location,
+  // assetClass, team, agent). replaceState, not push — Back shouldn't walk
+  // through every filter change. Skipped on a deal profile (/deals/:id).
+  const isListView = !params?.id || params.id === "list";
+  useEffect(() => {
+    if (!teamFilterInitialised || !isListView) return;
+    try {
+      const qs = new URLSearchParams(window.location.search);
+      qs.delete("search");
+      const entries: Array<[string, string]> = [
+        ["q", search.trim()],
+        ["status", activeGroup !== "all" ? activeGroup : ""],
+        ["propertyId", propertyIdFilter || ""],
+        ["scheme", propertyIdFilter ? schemeFilter : ""],
+        ["location", locationFilter !== "all" ? locationFilter : ""],
+        ["assetClass", (columnFilters["assetClass"] || []).join(",")],
+        ["team", (columnFilters["team"] || []).join(",")],
+        ["agent", (columnFilters["agent"] || []).join(",")],
+      ];
+      for (const [k, v] of entries) { if (v) qs.set(k, v); else qs.delete(k); }
+      const query = qs.toString();
+      const next = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+      const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (next !== current) window.history.replaceState(window.history.state, "", next);
+    } catch {
+      // URL not writable (very old browsers) — filters still work, just not shareable
+    }
+  }, [search, activeGroup, propertyIdFilter, schemeFilter, locationFilter, columnFilters, teamFilterInitialised, isListView]);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
     unit: false,
     // 'landlord' (renders as 'Client') is folded into clientXero by default
@@ -5998,8 +6053,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     queryKey: ["/api/available-units"],
     // Clients also need this to count their tracker-only deals — the board
     // header otherwise reads as data loss next to the dashboard's Active
-    // Deals KPI (UX-NOTES #7).
-    enabled: isNegotiationsMode || isClientDeals,
+    // Deals KPI (UX-NOTES #7). Staff need it too: the toolbar's Location
+    // filter reads the region off the deal's tracker unit (deals and
+    // properties carry no region of their own).
   });
 
   const migratedDealIds = useMemo(() => {
@@ -6153,7 +6209,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [activeGroup, search, columnFilters]);
+  }, [activeGroup, search, columnFilters, propertyIdFilter, schemeFilter, locationFilter]);
 
   const handleInlineSave = useCallback((dealId: string, field: string, value: unknown) => {
     if (field === "status" && value === "HOTs") {
@@ -6283,11 +6339,63 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     return Array.from(s).sort();
   }, [deals]);
 
+  const propertyById = useMemo(() => new Map(properties.map((p) => [p.id, p])), [properties]);
+  // Asset class is property-level: a deal without one takes its property's
+  // so the toolbar dropdown / header popover don't skip half the schedule.
+  const dealAssetClass = useCallback((d: CrmDeal): string | null =>
+    d.assetClass || (d.propertyId ? propertyById.get(d.propertyId)?.assetClass || null : null), [propertyById]);
+
   const assetClassValues = useMemo(() => {
     const s = new Set<string>();
-    deals.forEach((d) => { if (d.assetClass) s.add(d.assetClass); });
+    deals.forEach((d) => { const c = dealAssetClass(d); if (c) s.add(c); });
     return Array.from(s).sort();
+  }, [deals, dealAssetClass]);
+
+  // BGP contacts named on deals (internalAgent — the names column the
+  // Deals page already filters "my deals" by).
+  const agentValues = useMemo(() => {
+    const s = new Set<string>();
+    deals.forEach((d) => {
+      const names = Array.isArray(d.internalAgent) ? d.internalAgent : d.internalAgent ? [d.internalAgent as string] : [];
+      names.forEach(n => { if (n) s.add(n); });
+    });
+    return Array.from(s).sort((a, b) => a.localeCompare(b, "en-GB", { sensitivity: "base" }));
   }, [deals]);
+
+  // Toolbar Property dropdown — only properties that have deals, A→Z.
+  // A deep-linked ?propertyId= with no deal on this schedule is kept in the
+  // list so the dropdown shows what the page is filtered by.
+  const dealProperties = useMemo(() => {
+    const ids = new Set(deals.map(d => d.propertyId).filter(Boolean));
+    if (propertyIdFilter) ids.add(propertyIdFilter);
+    return properties.filter(p => ids.has(p.id)).sort((a, b) => a.name.localeCompare(b.name, "en-GB", { sensitivity: "base" }));
+  }, [deals, properties, propertyIdFilter]);
+
+  // Location: the deal's tracker unit's region, else the region of the
+  // property's other tracker units (deals and properties have no region).
+  const dealLocation = useMemo(() => {
+    const byDealId = new Map<string, string>();
+    const byPropertyId = new Map<string, string>();
+    for (const u of availableUnitsData) {
+      if (!u.location) continue;
+      if (u.dealId && !byDealId.has(u.dealId)) byDealId.set(u.dealId, u.location);
+      if (u.propertyId && !byPropertyId.has(u.propertyId)) byPropertyId.set(u.propertyId, u.location);
+    }
+    return (d: CrmDeal): string | null =>
+      byDealId.get(d.id) || (d.propertyId ? byPropertyId.get(d.propertyId) : undefined) || null;
+  }, [availableUnitsData]);
+  const locationValues = useMemo(() => {
+    const present = new Set<string>();
+    deals.forEach(d => { const l = dealLocation(d); if (l) present.add(l); });
+    // Same list and order as the Letting Tracker, limited to regions that
+    // actually have a deal.
+    return CRM_OPTIONS.reqLeasingLocations.filter((l: string) => present.has(l));
+  }, [deals, dealLocation]);
+
+  // Schemes of the chosen estate (Canary Wharf) — the tracker's pill row.
+  const { data: schemeData } = usePropertySchemeList(propertyIdFilter);
+  const schemes = propertyIdFilter ? schemeData?.schemes || [] : [];
+  const unitNameById = useMemo(() => new Map(propertyUnits.map((u) => [u.id, u.unitName])), [propertyUnits]);
 
   const activeFilterCount = useMemo(() => {
     return Object.values(columnFilters).reduce((sum, arr) => sum + arr.length, 0);
@@ -6399,20 +6507,15 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     );
   }, [search, properties, companies, propertyUnits]);
 
-  const filteredDeals = useMemo(() => {
+  // Toolbar + header filters WITHOUT the status axis (status pills /
+  // Deal Status popover). The status chips count from this set so they
+  // mirror every other active filter, as the Letting Tracker's status
+  // pills do; the status filters then apply on top for the rows.
+  const toolbarFilteredDeals = useMemo(() => {
     return baseDeals.filter((deal) => {
       if (propertyIdFilter && deal.propertyId !== propertyIdFilter) return false;
-      const dealCode = legacyToCode(deal.status);
-      // Always compare canonical codes — statusValues only ever offers codes
-      // (legacy free-text rows are normalised through legacyToCode), so the
-      // old raw-string branch silently dropped legacy-status rows from the
-      // comps/negotiations filters.
-      const statusMatch = (target: string) => dealCode === target;
-      if (activeGroup !== "all" && !statusMatch(activeGroup)) return false;
-      if (columnFilters["status"]?.length) {
-        const ok = columnFilters["status"].some(statusMatch);
-        if (!ok) return false;
-      }
+      if (propertyIdFilter && schemeFilter && !schemeFilterMatches(schemes, (deal as any).scheme, schemeFilter, deal.unitId ? unitNameById.get(deal.unitId) : null)) return false;
+      if (locationFilter !== "all" && dealLocation(deal) !== locationFilter) return false;
       if (columnFilters["type"]?.length && (!deal.dealType || !columnFilters["type"].includes(deal.dealType))) return false;
       // A deal you're on always shows on your deals page, even if its team
       // doesn't match the team filter (or it has no team). "On it" = you're in
@@ -6437,51 +6540,43 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           if (!matchesClientGroup) return false;
         }
       }
-      if (columnFilters["assetClass"]?.length && (!deal.assetClass || !columnFilters["assetClass"].includes(deal.assetClass))) return false;
+      if (columnFilters["agent"]?.length && !dealAgents.some(a => columnFilters["agent"].includes(a))) return false;
+      if (columnFilters["assetClass"]?.length) {
+        const cls = dealAssetClass(deal);
+        if (!cls || !columnFilters["assetClass"].includes(cls)) return false;
+      }
       if (search && !matchesSearch(deal)) return false;
       return true;
     });
-  }, [baseDeals, activeGroup, columnFilters, search, matchesSearch, myName, propertyIdFilter]);
+  }, [baseDeals, columnFilters, search, matchesSearch, myName, propertyIdFilter, schemeFilter, schemes, unitNameById, locationFilter, dealLocation, dealAssetClass]);
 
-  const teamFilteredDeals = useMemo(() => {
-    if (!columnFilters["team"]?.length) return baseDeals;
-    return baseDeals.filter(deal => {
-      const dealTeams: string[] = Array.isArray(deal.team) ? deal.team : deal.team ? [deal.team] : [];
-      if (dealTeams.length === 0) return false;
-      const matchesTeam = dealTeams.some(t => 
-        columnFilters["team"].some(filter => 
-          t === filter || t.startsWith(filter + " ") || (filter.startsWith(t) && filter.includes(" "))
-        )
-      );
-      if (matchesTeam) return true;
-      return columnFilters["team"].some(filter =>
-        !INTERNAL_BGP_TEAMS.has(filter) &&
-        deal.groupName &&
-        deal.groupName.toLowerCase().replace(/\s+/g, "") === filter.toLowerCase().replace(/\s+/g, "")
-      );
+  const filteredDeals = useMemo(() => {
+    return toolbarFilteredDeals.filter((deal) => {
+      const dealCode = legacyToCode(deal.status);
+      // Always compare canonical codes — statusValues only ever offers codes
+      // (legacy free-text rows are normalised through legacyToCode), so the
+      // old raw-string branch silently dropped legacy-status rows from the
+      // comps/negotiations filters.
+      const statusMatch = (target: string) => dealCode === target;
+      if (activeGroup !== "all" && !statusMatch(activeGroup)) return false;
+      if (columnFilters["status"]?.length && !columnFilters["status"].some(statusMatch)) return false;
+      return true;
     });
-  }, [baseDeals, columnFilters]);
-
-  // The "All" chip/card must agree with the status chips while a search is
-  // active (UX #63) — count the searched set, not the raw team-filtered one.
-  const searchedDeals = useMemo(
-    () => (search ? teamFilteredDeals.filter(matchesSearch) : teamFilteredDeals),
-    [teamFilteredDeals, search, matchesSearch],
-  );
+  }, [toolbarFilteredDeals, activeGroup, columnFilters]);
 
   // Phone card view renders 30 cards then "Show more" — every deal at once
   // made a ~54,000px page (Woody, 2026-09-27).
   const PHONE_PAGE = 30;
   const [phoneShown, setPhoneShown] = useState(PHONE_PAGE);
-  useEffect(() => { setPhoneShown(PHONE_PAGE); }, [search, activeGroup, columnFilters, activeTeam, propertyIdFilter]);
+  useEffect(() => { setPhoneShown(PHONE_PAGE); }, [search, activeGroup, columnFilters, activeTeam, propertyIdFilter, schemeFilter, locationFilter]);
 
   const statusCounts = useMemo(() => {
     return statusValues
       .filter(s => isCompsMode ? COMPLETED_STATUS_CODES.includes(s as DealStatusCode) : true)
       .map((s) => {
-        const inStatus = teamFilteredDeals.filter((d) => legacyToCode(d.status) === s && (!search || matchesSearch(d)));
         // statusValues are canonical codes across all modes — match via
         // legacyToCode so older free-text rows still bucket into the right chip.
+        const inStatus = toolbarFilteredDeals.filter((d) => legacyToCode(d.status) === s);
         return {
           name: s,
           count: inStatus.length,
@@ -6489,7 +6584,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         };
       })
       .filter(s => s.count > 0);
-  }, [teamFilteredDeals, statusValues, isCompsMode, mode, search, matchesSearch]);
+  }, [toolbarFilteredDeals, statusValues, isCompsMode, mode]);
 
   // If the last deal matching the active filter chip moves out of the
   // view, the chip itself is hidden (count==0 filter above). Without
@@ -6515,6 +6610,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     setSearch("");
     setActiveGroup("all");
     setPropertyIdFilter(null);
+    setSchemeFilter("");
+    setLocationFilter("all");
     // Clear everything, including the team filter — "Clear all" should mean all.
     // It used to re-apply the team filter here, so someone whose team switcher
     // was set to their own team could never drop it from the deals page and
@@ -6522,7 +6619,94 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     setColumnFilters({});
   };
 
-  const hasFilters = search || activeGroup !== "all" || activeFilterCount > 0 || !!propertyIdFilter;
+  const hasFilters = !!search || activeGroup !== "all" || activeFilterCount > 0 || !!propertyIdFilter || !!schemeFilter || locationFilter !== "all";
+
+  // Toolbar dropdowns over the multi-select column filters: one value picks
+  // that one; the popover may have picked several, shown as "n selected".
+  const selectValueFor = (vals: string[] | undefined) => !vals?.length ? "all" : vals.length === 1 ? vals[0] : "__multi__";
+  const setSingleColumnFilter = (column: string, v: string) => {
+    if (v === "__multi__") return;
+    setColumnFilters(prev => {
+      const { [column]: _dropped, ...rest } = prev;
+      return v === "all" ? rest : { ...rest, [column]: [v] };
+    });
+  };
+  const selectClass = isMobile ? "w-full" : undefined;
+  // The Letting Tracker's filter row (Property / Location / Team / Agent /
+  // asset class), rendered inline on desktop and as a grid under the
+  // sticky search on the phone. Team + Agent are BGP-internal — hidden for
+  // client logins, as on the tracker.
+  const toolbarFilterSelects = (
+    <>
+      <Select value={propertyIdFilter || "all"} onValueChange={(v) => { setPropertyIdFilter(v === "all" ? null : v); setSchemeFilter(""); }}>
+        <SelectTrigger className={selectClass || "w-[220px]"} data-testid="select-property-filter">
+          <SelectValue placeholder="All Properties" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Properties</SelectItem>
+          {dealProperties.map(p => (
+            <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Select value={locationFilter} onValueChange={setLocationFilter}>
+        <SelectTrigger className={selectClass || "w-[180px]"} data-testid="select-location-filter">
+          <SelectValue placeholder="All Locations" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Locations</SelectItem>
+          {locationValues.map((l: string) => (
+            <SelectItem key={l} value={l}>
+              <span className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${CRM_OPTIONS.reqLeasingLocationsColors[l] || "bg-muted-foreground"}`} />
+                {l}
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {!isClientDeals && (<>
+      <Select value={selectValueFor(columnFilters["team"])} onValueChange={(v) => setSingleColumnFilter("team", v)}>
+        <SelectTrigger className={selectClass || "w-[170px]"} data-testid="select-team-filter">
+          <SelectValue placeholder="All Teams" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Teams</SelectItem>
+          {(columnFilters["team"]?.length || 0) > 1 && <SelectItem value="__multi__">{columnFilters["team"].length} teams selected</SelectItem>}
+          {teamValues.map(t => (
+            <SelectItem key={t} value={t}>{t}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Select value={selectValueFor(columnFilters["agent"])} onValueChange={(v) => setSingleColumnFilter("agent", v)}>
+        <SelectTrigger className={selectClass || "w-[170px]"} data-testid="select-agent-filter">
+          <SelectValue placeholder="All Agents" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Agents</SelectItem>
+          {(columnFilters["agent"]?.length || 0) > 1 && <SelectItem value="__multi__">{columnFilters["agent"].length} agents selected</SelectItem>}
+          {agentValues.map(a => (
+            <SelectItem key={a} value={a}>{a}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      </>)}
+      {assetClassValues.length > 0 && (
+        <Select value={selectValueFor(columnFilters["assetClass"])} onValueChange={(v) => setSingleColumnFilter("assetClass", v)}>
+          <SelectTrigger className={selectClass || "w-[170px]"} data-testid="select-asset-class-filter">
+            <SelectValue placeholder="All Asset Classes" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Asset Classes</SelectItem>
+            {(columnFilters["assetClass"]?.length || 0) > 1 && <SelectItem value="__multi__">{columnFilters["assetClass"].length} classes selected</SelectItem>}
+            {assetClassValues.map(c => (
+              <SelectItem key={c} value={c}>{c}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+    </>
+  );
 
   if (error) {
     return (
@@ -6656,7 +6840,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       {isMobile ? (
         <div className="flex flex-wrap gap-1.5 shrink-0">
           <Pill active={activeGroup === "all"} onClick={() => setActiveGroup("all")} data-testid="chip-group-all">
-            {isCompsMode ? "All Comps" : "All"} <span className="opacity-70 font-mono tabular-nums">{searchedDeals.length}</span>
+            {isCompsMode ? "All Comps" : "All"} <span className="opacity-70 font-mono tabular-nums">{toolbarFilteredDeals.length}</span>
           </Pill>
           {statusCounts.map((s) => (
             <Pill
@@ -6684,13 +6868,13 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
               <div className="flex items-center gap-2">
                 <Handshake className="w-4 h-4 text-muted-foreground" />
                 <div>
-                  <p className="text-lg font-bold">{searchedDeals.length}</p>
+                  <p className="text-lg font-bold">{toolbarFilteredDeals.length}</p>
                   <p className="text-xs text-muted-foreground">{isCompsMode ? "All Comps" : "All Deals"}</p>
                   {/* Fees are stripped from client responses, so for a client
                       this line could only ever read £0 — looks broken and
                       surfaces the idea of BGP's fee. Staff keep the total. */}
                   {!isClientDeals && (
-                    <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(searchedDeals.reduce((sum, d) => sum + (Number((d as any).fee) || 0), 0))}</p>
+                    <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(toolbarFilteredDeals.reduce((sum, d) => sum + (Number((d as any).fee) || 0), 0))}</p>
                   )}
                 </div>
               </div>
@@ -6732,15 +6916,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             data-testid="input-search-deals"
           />
         </div>
-        {propertyIdFilter && (
-          <Badge variant="secondary" className="gap-1 shrink-0" data-testid="chip-property-filter">
-            {properties.find(p => p.id === propertyIdFilter)?.name || "Property"}
-            <button onClick={() => setPropertyIdFilter(null)} className="ml-0.5 hover:text-destructive" aria-label="Clear property filter">
-              <X className="w-3 h-3" />
-            </button>
-          </Badge>
-        )}
         {!isMobile && (<>
+        {toolbarFilterSelects}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" data-testid="button-toggle-columns">
@@ -6854,6 +7031,34 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         <ViewToggle view={viewMode} onToggle={setViewMode} showBoard />
         </>)}
       </div>
+      {isMobile && (
+        <div className="shrink-0 space-y-2" data-testid="deals-phone-filters">
+          <div className="grid grid-cols-2 gap-2">
+            {toolbarFilterSelects}
+          </div>
+          {hasFilters && (
+            <button
+              type="button"
+              onClick={clearAllFilters}
+              className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+              data-testid="button-clear-filters-phone"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+      )}
+      {propertyIdFilter && schemes.length > 0 && (
+        <div className="shrink-0">
+          <SchemePillRow
+            schemes={schemes}
+            items={baseDeals.filter(d => d.propertyId === propertyIdFilter).map(d => ({ label: (d as any).scheme, name: d.unitId ? unitNameById.get(d.unitId) : null }))}
+            value={schemeFilter}
+            onChange={setSchemeFilter}
+            testId="deals-scheme-pills"
+          />
+        </div>
+      )}
 
       {viewMode === "board" ? (
         isLoading ? (
@@ -7061,7 +7266,21 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {effectiveColumns.feeCombined && <TableHead className="w-[110px] min-w-[110px]">Fee</TableHead>}
                     {effectiveColumns.fee && <SortableTableHead sortKey="fee" sort={dealsSort} align="right" className="min-w-[80px]">Fee</SortableTableHead>}
                     {effectiveColumns.feeAlloc && !isClientDeals && <TableHead className="w-[160px] min-w-[160px] whitespace-nowrap">Fee Split</TableHead>}
-                    {effectiveColumns.agent && <SortableTableHead sortKey="agent" sort={dealsSort} className="min-w-[80px]">BGP Contact</SortableTableHead>}
+                    {effectiveColumns.agent && (
+                      <TableHead className="min-w-[80px] whitespace-nowrap">
+                        <div className="flex items-center gap-1">
+                          <ColumnFilterPopover
+                            label="BGP Contact"
+                            options={agentValues}
+                            activeFilters={columnFilters["agent"] || []}
+                            onToggleFilter={(val) => toggleFilter("agent", val)}
+                          />
+                          <button type="button" onClick={() => dealsSort.toggle("agent")} title="Sort by BGP contact" className={`shrink-0 hover:text-foreground transition-colors ${dealsSort.sortKey === "agent" ? "text-primary" : "opacity-50"}`} data-testid="sort-agent">
+                            {dealsSort.sortKey === "agent" ? (dealsSort.direction === "asc" ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />) : <ChevronsUpDown className="w-3 h-3" />}
+                          </button>
+                        </div>
+                      </TableHead>
+                    )}
                     {effectiveColumns.assetClass && (
                       <TableHead className="min-w-[80px]">
                         <ColumnFilterPopover
