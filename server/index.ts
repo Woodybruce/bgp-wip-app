@@ -39,12 +39,21 @@ import { ensurePrivateMailBoundary, blockPrivateMailCopies, flushPrivateMailQuar
 installGoogleBudgetGuard();
 installPrivateMailGraphGuard((record, mailbox, kind) => blockPrivateMailCopies(pool, record, mailbox, kind));
 
+// Existing installs apply the privacy boundary before background schema
+// maintenance can take competing locks on the same mail table. A fresh DB
+// must first receive its schema, but still cannot serve before the boundary.
+const privateMailStartup = (async () => {
+  const ready = await pool.query("SELECT to_regclass('crm_interactions') IS NOT NULL AND to_regclass('crm_companies') IS NOT NULL AND to_regclass('system_settings') IS NOT NULL AS ready");
+  return ready.rows[0]?.ready ? ensurePrivateMailBoundary(pool) : null;
+})();
+
 // Auto-migrate: add columns/tables that may be missing after database restore.
 // CRITICAL: each statement runs in its own try/catch so one failure (e.g. an
 // IMMUTABLE-check on a GIN index expression under older Postgres) does NOT
 // abort the whole batch. A single multi-statement pool.query stops at the
 // first error, which is how compliance_board/training tables went missing.
-(async () => {
+const schemaStartup = (async () => {
+  await privateMailStartup;
   const MIGRATIONS: string[] = [
     // Per-client CRM: extra brands added from the global directory beyond
     // the client's auto category slice.
@@ -4307,7 +4316,9 @@ app.use("/api/branding/assets", express.static(
 ));
 
 (async () => {
-  const privateRowsRemoved = await ensurePrivateMailBoundary(pool);
+  const startupResult = await privateMailStartup;
+  if (startupResult === null) await schemaStartup;
+  const privateRowsRemoved = startupResult ?? await ensurePrivateMailBoundary(pool);
   while (await flushPrivateMailQuarantine(pool)) { /* drain any copies found by the database trigger */ }
   const quarantineTimer = setInterval(() => {
     flushPrivateMailQuarantine(pool).catch(() => console.error("[private-mail] Archive maintenance failed; records remain excluded in the private buffer."));

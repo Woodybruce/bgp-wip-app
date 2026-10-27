@@ -85,3 +85,83 @@ test('private mail migration removes copies, seals source records, blocks reinge
     await pool.end();
   }
 });
+
+test('startup quarantine completes multiple batches without revisiting retained mail or missing final partial batch', async () => {
+  const schema = `private_mail_batches_${randomUUID().replaceAll('-', '')}`;
+  const pool = new pg.Pool({ host: '/tmp', database: 'postgres', max: 1 });
+  try {
+    await pool.query(`CREATE SCHEMA ${schema}`);
+    await pool.query(`SET search_path TO ${schema}`);
+    await pool.query(`CREATE TABLE crm_interactions(id TEXT PRIMARY KEY, bgp_user TEXT, participants JSONB, microsoft_id TEXT, subject TEXT);
+      CREATE TABLE crm_companies(id TEXT PRIMARY KEY, ai_generated_fields JSONB);
+      CREATE TABLE system_settings(key TEXT PRIMARY KEY, value JSONB, updated_at TIMESTAMP);`);
+    await pool.query(`INSERT INTO crm_interactions
+      SELECT lpad(n::text, 8, '0'), CASE WHEN n % 5 = 0 THEN $1 ELSE 'staff@example.test' END,
+        '[]'::jsonb, 'synthetic-' || n, 'Synthetic batch regression'
+      FROM generate_series(1, 6005) n`, [address]);
+    assert.equal(await ensurePrivateMailBoundary(pool, secret), 1201);
+    assert.equal((await pool.query('SELECT count(*)::int n FROM crm_interactions')).rows[0].n, 4804);
+    assert.equal((await pool.query('SELECT count(*)::int n FROM private_mail_quarantine')).rows[0].n, 1201);
+    assert.equal((await pool.query('SELECT count(*)::int n FROM crm_interactions WHERE bgp_user=$1', [address])).rows[0].n, 0);
+    assert.equal(await ensurePrivateMailBoundary(pool, secret), 0);
+  } finally {
+    await pool.query('SET search_path TO public');
+    await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await pool.end();
+  }
+});
+
+test('quarantine overrides a short pool read timeout while PostgreSQL owns statement cancellation', async () => {
+  const schema = `private_mail_timeout_${randomUUID().replaceAll('-', '')}`;
+  const pool = new pg.Pool({ host: '/tmp', database: 'postgres', max: 1, query_timeout: 25 });
+  const setup = (text, values) => pool.query({ text, values, query_timeout: 2000 });
+  try {
+    await setup(`CREATE SCHEMA ${schema}`);
+    await setup(`SET search_path TO ${schema}`);
+    await setup(`CREATE TABLE crm_interactions(id TEXT PRIMARY KEY, bgp_user TEXT, participants JSONB, microsoft_id TEXT, subject TEXT);
+      CREATE TABLE crm_companies(id TEXT PRIMARY KEY, ai_generated_fields JSONB);
+      CREATE TABLE system_settings(key TEXT PRIMARY KEY, value JSONB, updated_at TIMESTAMP);
+      CREATE TABLE private_mail_quarantine(source_id TEXT PRIMARY KEY, sealed_record TEXT NOT NULL, policy_version TEXT NOT NULL);
+      CREATE FUNCTION slow_archive() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.075); RETURN NEW; END $$;
+      CREATE TRIGGER archive_delay BEFORE INSERT ON private_mail_quarantine FOR EACH ROW EXECUTE FUNCTION slow_archive();`);
+    await setup("INSERT INTO crm_interactions VALUES ('slow-private',$1,'[]','slow-private','Synthetic')", [address]);
+    assert.equal(await ensurePrivateMailBoundary(pool, secret), 1, 'a valid 75ms statement must not inherit the 25ms client read timeout');
+    await setup("INSERT INTO private_mail_pending_quarantine VALUES ('later-private','{}')");
+    assert.equal(await flushPrivateMailQuarantine(pool, secret), 1, 'buffer maintenance uses the same positive timeout override');
+    await setup("INSERT INTO private_mail_pending_quarantine VALUES ('cancelled-private','{}')");
+    await setup("CREATE OR REPLACE FUNCTION slow_archive() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.5); RETURN NEW; END $$");
+    // Shorten only the explicit server-side deadline so this regression can
+    // exercise real cancellation without waiting 30 seconds.
+    const shortStatementPool = { connect: async () => {
+      const client = await pool.connect();
+      return {
+        query: config => client.query(config.text === "SET LOCAL statement_timeout = '30s'"
+          ? { ...config, text: "SET LOCAL statement_timeout = '30ms'" } : config),
+        release: error => client.release(error),
+      };
+    } };
+    await assert.rejects(flushPrivateMailQuarantine(shortStatementPool, secret), error => error.code === '57014');
+    assert.equal((await setup("SELECT count(*)::int n FROM private_mail_pending_quarantine WHERE source_id='cancelled-private'")).rows[0].n, 1, 'cancelled archive remains excluded and retryable');
+    assert.equal((await setup("SELECT count(*)::int n FROM private_mail_quarantine WHERE source_id='cancelled-private'")).rows[0].n, 0, 'failed statement was rolled back');
+    assert.equal((await setup('SELECT 1 AS healthy')).rows[0].healthy, 1, 'connection is usable after SQL cancellation and rollback');
+  } finally {
+    await setup('SET search_path TO public');
+    await setup(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await pool.end();
+  }
+});
+
+test('client read timeout destroys the private transaction connection without queuing a rollback', async () => {
+  for (const operation of [ensurePrivateMailBoundary, flushPrivateMailQuarantine]) {
+    const calls = [];
+    const timeout = new Error('Query read timeout');
+    let released;
+    const pool = { connect: async () => ({
+      query: async config => { calls.push(config.text); throw timeout; },
+      release: error => { released = error; },
+    }) };
+    await assert.rejects(operation(pool, secret), error => error === timeout);
+    assert.equal(released, timeout, 'release(error) discards the socket and rolls back the abandoned backend transaction');
+    assert.deepEqual(calls, ['BEGIN'], 'no ROLLBACK is queued behind a query that may still be executing');
+  }
+});

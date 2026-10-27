@@ -1,10 +1,30 @@
 import { createCipheriv, createHash, randomBytes } from "node:crypto";
-import type { Pool } from "pg";
+import type { Pool, PoolClient, QueryResult } from "pg";
 import { PRIVATE_MAIL_POLICY_VERSION } from "./private-mail";
 
 // Match a whole address in either the mailbox column or JSON participant data.
 // Escaped + aliases are private too; similarly named external addresses are not.
 const privateAddressPattern = '(^|[^a-zA-Z0-9_.+@-])equity([+][^@[:space:]<>"\\,;]+)?@brucegillinghampollard[.]com($|[^a-zA-Z0-9_.@-])';
+
+// pg treats query_timeout: 0 as “inherit the pool timeout”, not as disabling
+// it. Give PostgreSQL's statement timeout time to return a normal SQL error.
+function transactionQuery(client: PoolClient) {
+  return (text: string, values?: any[]): Promise<QueryResult<Record<string, any>>> =>
+    client.query<Record<string, any>>({ text, values, query_timeout: 45_000 } as any);
+}
+
+async function rollbackPrivateTransaction(client: PoolClient, error: unknown): Promise<Error | undefined> {
+  const failure = error instanceof Error ? error : new Error(String(error));
+  const code = String((error as any)?.code || "");
+  // A client read timeout does not cancel the SQL statement. Queueing a
+  // rollback behind it can leave the backend holding locks indefinitely.
+  if (/query read timeout|connection.*(?:closed|terminated|error)|not queryable/i.test(failure.message)
+    || /^(?:08|57P0[123]|ECONN|EPIPE|ETIMEDOUT)/.test(code)) return failure;
+  try {
+    await client.query({ text: "ROLLBACK", query_timeout: 5_000 } as any);
+    return undefined;
+  } catch { return failure; }
+}
 
 export function sealPrivateMail(row: unknown, secret: string): string {
   if (!secret) throw new Error("A stable secret is required to quarantine private mail.");
@@ -21,19 +41,22 @@ export function sealPrivateMail(row: unknown, secret: string): string {
 export async function flushPrivateMailQuarantine(pool: Pool, secret = process.env.SESSION_SECRET): Promise<number> {
   if (!secret) throw new Error("SESSION_SECRET is required to quarantine private mail.");
   const client = await pool.connect();
+  const query = transactionQuery(client);
+  let releaseError: Error | undefined;
   try {
-    await client.query("BEGIN");
-    const { rows } = await client.query("SELECT source_id, source_record FROM private_mail_pending_quarantine ORDER BY source_id LIMIT 500 FOR UPDATE SKIP LOCKED");
+    await query("BEGIN");
+    await query("SET LOCAL statement_timeout = '30s'");
+    const { rows } = await query("SELECT source_id, source_record FROM private_mail_pending_quarantine ORDER BY source_id LIMIT 500 FOR UPDATE SKIP LOCKED");
     if (rows.length) {
-      await client.query(`INSERT INTO private_mail_quarantine(source_id, sealed_record, policy_version)
+      await query(`INSERT INTO private_mail_quarantine(source_id, sealed_record, policy_version)
         SELECT source_id, sealed_record, $3 FROM unnest($1::text[], $2::text[]) AS r(source_id, sealed_record)
         ON CONFLICT(source_id) DO NOTHING`, [rows.map(r => r.source_id), rows.map(r => sealPrivateMail(r.source_record, secret)), PRIVATE_MAIL_POLICY_VERSION]);
-      await client.query("DELETE FROM private_mail_pending_quarantine WHERE source_id = ANY($1::text[])", [rows.map(r => r.source_id)]);
+      await query("DELETE FROM private_mail_pending_quarantine WHERE source_id = ANY($1::text[])", [rows.map(r => r.source_id)]);
     }
-    await client.query("COMMIT");
+    await query("COMMIT");
     return rows.length;
-  } catch (error) { await client.query("ROLLBACK"); throw error; }
-  finally { client.release(); }
+  } catch (error) { releaseError = await rollbackPrivateTransaction(client, error); throw error; }
+  finally { client.release(releaseError); }
 }
 
 export async function blockPrivateMailCopies(pool: Pool, record: Record<string, unknown>, mailbox: string | undefined, kind: "messages" | "events") {
@@ -48,27 +71,30 @@ export async function blockPrivateMailCopies(pool: Pool, record: Record<string, 
 // The database trigger is a backstop for every ingestion path, not just sync.
 export async function ensurePrivateMailBoundary(pool: Pool, secret = process.env.SESSION_SECRET): Promise<number> {
   const client = await pool.connect();
+  const query = transactionQuery(client);
+  let releaseError: Error | undefined;
   try {
-    await client.query("BEGIN");
-    await client.query("SELECT pg_advisory_xact_lock(271027631)");
-    await client.query(`CREATE TABLE IF NOT EXISTS private_mail_quarantine (
+    await query("BEGIN");
+    await query("SET LOCAL statement_timeout = '30s'");
+    await query("SELECT pg_advisory_xact_lock(271027631)");
+    await query(`CREATE TABLE IF NOT EXISTS private_mail_quarantine (
       source_id TEXT PRIMARY KEY, sealed_record TEXT NOT NULL,
       policy_version TEXT NOT NULL, quarantined_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )`);
-    await client.query(`CREATE OR REPLACE FUNCTION bgp_private_mail_record(mailbox TEXT, participants JSONB)
+    await query(`CREATE OR REPLACE FUNCTION bgp_private_mail_record(mailbox TEXT, participants JSONB)
       RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS $$
       SELECT (coalesce(mailbox, '') || ' ' || coalesce(participants::text, '')) ~* '${privateAddressPattern.replaceAll("'", "''")}'
     $$`);
-    await client.query(`CREATE TABLE IF NOT EXISTS private_mail_blocked_messages (microsoft_id TEXT PRIMARY KEY)`);
-    await client.query(`CREATE TABLE IF NOT EXISTS private_mail_pending_quarantine (source_id TEXT PRIMARY KEY, source_record JSONB NOT NULL)`);
-    await client.query(`CREATE OR REPLACE FUNCTION bgp_invalidate_private_mail_caches()
+    await query(`CREATE TABLE IF NOT EXISTS private_mail_blocked_messages (microsoft_id TEXT PRIMARY KEY)`);
+    await query(`CREATE TABLE IF NOT EXISTS private_mail_pending_quarantine (source_id TEXT PRIMARY KEY, source_record JSONB NOT NULL)`);
+    await query(`CREATE OR REPLACE FUNCTION bgp_invalidate_private_mail_caches()
       RETURNS VOID LANGUAGE plpgsql AS $$ BEGIN
       UPDATE crm_companies SET ai_generated_fields = ai_generated_fields - 'email_summary' WHERE ai_generated_fields ? 'email_summary';
       DELETE FROM system_settings WHERE key LIKE 'brand-prepared-take:%';
       IF to_regclass('daily_briefings') IS NOT NULL THEN DELETE FROM daily_briefings; END IF;
       IF to_regclass('crm_activity_cache') IS NOT NULL THEN DELETE FROM crm_activity_cache; END IF;
       END $$`);
-    await client.query(`CREATE OR REPLACE FUNCTION bgp_block_private_copies(message_id TEXT)
+    await query(`CREATE OR REPLACE FUNCTION bgp_block_private_copies(message_id TEXT)
       RETURNS VOID LANGUAGE plpgsql AS $$ DECLARE moved INTEGER; BEGIN
       PERFORM pg_advisory_xact_lock(271027632, hashtext(message_id));
       INSERT INTO private_mail_blocked_messages VALUES (message_id) ON CONFLICT DO NOTHING;
@@ -80,11 +106,11 @@ export async function ensurePrivateMailBoundary(pool: Pool, secret = process.env
         PERFORM bgp_invalidate_private_mail_caches();
       END IF;
       END $$`);
-    await client.query(`INSERT INTO private_mail_blocked_messages(microsoft_id)
+    await query(`INSERT INTO private_mail_blocked_messages(microsoft_id)
       SELECT DISTINCT microsoft_id FROM crm_interactions
       WHERE microsoft_id IS NOT NULL AND bgp_private_mail_record(bgp_user, participants)
       ON CONFLICT DO NOTHING`);
-    await client.query(`CREATE OR REPLACE FUNCTION bgp_reject_private_interaction()
+    await query(`CREATE OR REPLACE FUNCTION bgp_reject_private_interaction()
       RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN
       IF NEW.microsoft_id IS NOT NULL THEN PERFORM pg_advisory_xact_lock(271027632, hashtext(NEW.microsoft_id)); END IF;
       IF bgp_private_mail_record(NEW.bgp_user, NEW.participants) THEN
@@ -102,52 +128,52 @@ export async function ensurePrivateMailBoundary(pool: Pool, secret = process.env
       END IF;
       IF NEW.microsoft_id IS NOT NULL AND EXISTS (SELECT 1 FROM private_mail_blocked_messages WHERE microsoft_id=NEW.microsoft_id) THEN RETURN NULL; END IF;
       RETURN NEW; END $$`);
-    await client.query("DROP TRIGGER IF EXISTS bgp_private_mail_boundary ON crm_interactions");
-    await client.query(`CREATE TRIGGER bgp_private_mail_boundary BEFORE INSERT OR UPDATE ON crm_interactions
+    await query("DROP TRIGGER IF EXISTS bgp_private_mail_boundary ON crm_interactions");
+    await query(`CREATE TRIGGER bgp_private_mail_boundary BEFORE INSERT OR UPDATE ON crm_interactions
       FOR EACH ROW EXECUTE FUNCTION bgp_reject_private_interaction()`);
     // Find old private rows once; batching must not rescan the entire mail
     // archive for every 500 records during production startup.
-    await client.query(`CREATE TEMP TABLE bgp_private_mail_migration_ids ON COMMIT DROP AS
+    await query(`CREATE TEMP TABLE bgp_private_mail_migration_ids ON COMMIT DROP AS
       SELECT id FROM crm_interactions WHERE bgp_private_mail_record(bgp_user, participants)
         OR microsoft_id IN (SELECT microsoft_id FROM private_mail_blocked_messages)`);
     let removed = 0;
     while (true) {
-      const { rows } = await client.query(`SELECT i.* FROM crm_interactions i
-        JOIN bgp_private_mail_migration_ids p ON p.id=i.id
-        ORDER BY i.id LIMIT 500 FOR UPDATE OF i`);
+      const { rows } = await query(`WITH batch AS MATERIALIZED (
+          SELECT id FROM bgp_private_mail_migration_ids ORDER BY id LIMIT 500
+        ) SELECT i.* FROM batch p JOIN crm_interactions i ON i.id=p.id FOR UPDATE OF i`);
       if (!rows.length) break;
       // Never silently discard private source records if encryption cannot run.
       if (!secret) throw new Error("SESSION_SECRET is required to quarantine existing private mail.");
       const ids = rows.map(row => String(row.id));
       const sealed = rows.map(row => sealPrivateMail(row, secret));
-      await client.query(`INSERT INTO private_mail_quarantine(source_id, sealed_record, policy_version)
+      await query(`INSERT INTO private_mail_quarantine(source_id, sealed_record, policy_version)
         SELECT source_id, sealed_record, $3 FROM unnest($1::text[], $2::text[]) AS r(source_id, sealed_record)
         ON CONFLICT(source_id) DO NOTHING`, [ids, sealed, PRIVATE_MAIL_POLICY_VERSION]);
-      const deleted = await client.query("DELETE FROM crm_interactions WHERE id = ANY($1::text[])", [ids]);
-      await client.query("DELETE FROM bgp_private_mail_migration_ids WHERE id = ANY($1::text[])", [ids]);
+      const deleted = await query("DELETE FROM crm_interactions WHERE id = ANY($1::text[])", [ids]);
+      await query("DELETE FROM bgp_private_mail_migration_ids WHERE id = ANY($1::text[])", [ids]);
       removed += deleted.rowCount || 0;
     }
-    const { rows: applied } = await client.query("SELECT value FROM system_settings WHERE key = 'private-mail-policy'");
+    const { rows: applied } = await query("SELECT value FROM system_settings WHERE key = 'private-mail-policy'");
     if (removed || applied[0]?.value?.version !== PRIVATE_MAIL_POLICY_VERSION) {
       // These are generated caches, not user-authored business records.
-      await client.query(`UPDATE crm_companies SET ai_generated_fields = ai_generated_fields - 'email_summary'
+      await query(`UPDATE crm_companies SET ai_generated_fields = ai_generated_fields - 'email_summary'
         WHERE ai_generated_fields ? 'email_summary'`);
-      await client.query("DELETE FROM system_settings WHERE key LIKE 'brand-prepared-take:%'");
+      await query("DELETE FROM system_settings WHERE key LIKE 'brand-prepared-take:%'");
       // Briefings are generated from mail and calendars and can be regenerated.
-      await client.query(`DO $$ BEGIN IF to_regclass('daily_briefings') IS NOT NULL THEN
+      await query(`DO $$ BEGIN IF to_regclass('daily_briefings') IS NOT NULL THEN
         DELETE FROM daily_briefings;
       END IF; END $$`);
-      await client.query(`DO $$ BEGIN IF to_regclass('crm_activity_cache') IS NOT NULL THEN
+      await query(`DO $$ BEGIN IF to_regclass('crm_activity_cache') IS NOT NULL THEN
         DELETE FROM crm_activity_cache;
       END IF; END $$`);
-      await client.query(`INSERT INTO system_settings(key, value, updated_at) VALUES ('private-mail-policy', $1::jsonb, now())
+      await query(`INSERT INTO system_settings(key, value, updated_at) VALUES ('private-mail-policy', $1::jsonb, now())
         ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
         [JSON.stringify({ version: PRIVATE_MAIL_POLICY_VERSION })]);
     }
-    await client.query("COMMIT");
+    await query("COMMIT");
     return removed;
   } catch (error) {
-    await client.query("ROLLBACK");
+    releaseError = await rollbackPrivateTransaction(client, error);
     throw error;
-  } finally { client.release(); }
+  } finally { client.release(releaseError); }
 }
