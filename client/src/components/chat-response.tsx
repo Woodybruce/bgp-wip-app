@@ -4,9 +4,11 @@ import DOMPurify from "dompurify";
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 import { extractChatEmailDraft } from "@shared/chat-email-draft";
-import { exportRichTextText, renderEmailHtml } from "@shared/chat-rich-text";
+import { renderEmailHtml } from "@shared/chat-rich-text";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
 import { copyChatContent } from "@/lib/chat-clipboard";
+import { ChatMessageMenu } from "@/components/chat-message-menu";
+import { downloadChatWord } from "@/lib/chat-word";
 import { getAuthHeaders } from "@/lib/queryClient";
 
 class DraftRequestError extends Error {
@@ -37,20 +39,20 @@ async function draftRequest(path: string, body: Record<string, unknown>) {
   return response;
 }
 
-export function ChatResponse({ content, threadId, messageId, originalContent = content, onDraftSaved, renderBefore, children, actions = true }: {
+export function ChatResponse({ content, threadId, messageId, originalContent = content, onDraftSaved, renderBefore, children, actions = true, hideResponseActions = false }: {
   content: string; threadId?: string | null; messageId?: string; originalContent?: string;
   onDraftSaved?: (content: string) => void; renderBefore?: (content: string) => ReactNode;
-  children?: ReactNode; actions?: boolean;
+  children?: ReactNode; actions?: boolean; hideResponseActions?: boolean;
 }) {
   const draft = useMemo(() => extractChatEmailDraft(content), [content]);
   if (draft && actions) return <>
     {draft.before && (renderBefore ? renderBefore(draft.before) : <ChatBGPMarkdown content={draft.before} />)}
     <EmailDraftCard key={`${draft.subject}\n${draft.bodyMarkdown}`} subject={draft.subject} body={draft.bodyMarkdown} threadId={threadId} messageId={messageId} originalContent={originalContent} onSaved={onDraftSaved} />
   </>;
-  return <>
-    {children ?? <ChatBGPMarkdown content={content} />}
-    {actions && content.trim() && <ResponseActions markdown={content} threadId={threadId} />}
-  </>;
+  const body = children ?? <ChatBGPMarkdown content={content} />;
+  return actions && !hideResponseActions && content.trim()
+    ? <ChatMessageMenu content={content} threadId={threadId}>{body}</ChatMessageMenu>
+    : <>{body}</>;
 }
 
 function ResponseActions({ markdown, subject, threadId, disabled = false }: { markdown: string; subject?: string; threadId?: string | null; disabled?: boolean }) {
@@ -98,13 +100,7 @@ function ResponseActions({ markdown, subject, threadId, disabled = false }: { ma
         await copyChatContent(markdown, false); return "Plain text copied.";
       })}>Copy plain text</button>
       <button type="button" className={buttonClass} disabled={!!busy || disabled} onClick={() => run("word", async () => {
-        const response = await draftRequest("/api/chat-drafts/word", { subject: subject || "BGP note", bodyMarkdown: markdown, ...(threadId ? { threadId } : {}) });
-        const url = URL.createObjectURL(await response.blob());
-        const link = document.createElement("a");
-        link.href = url; link.download = `${exportRichTextText(subject || "BGP note").replace(/[^a-z0-9 -]/gi, "").slice(0, 80) || "BGP note"}.docx`;
-        document.body.append(link); link.click(); link.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 60_000);
-        return "Word document downloaded.";
+        return downloadChatWord(markdown, threadId, subject);
       })} data-testid="download-chat-word"><Download className="h-3.5 w-3.5" />Word</button>
       {subject && <button type="button" className={buttonClass} disabled={!!busy || disabled || outlook?.fingerprint === fingerprint} onClick={() => run("outlook", async () => {
         // Stable across a reload or a lost response. The server additionally

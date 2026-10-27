@@ -38,6 +38,7 @@ import { useLocation } from "wouter";
 import type { UnitMarketingFile } from "@shared/schema";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
 import { ChatResponse } from "@/components/chat-response";
+import { ChatMessageMenu } from "@/components/chat-message-menu";
 import { useChatBGPState, type LocalMessage } from "@/contexts/chatbgp-context";
 
 function formatFileSize(bytes: number | null) {
@@ -437,7 +438,10 @@ function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, comple
             </div>
           </div>
         ) : (
-          <div className="relative max-w-[85%] group">
+          <div className="relative max-w-[85%] group/msg">
+            <ChatMessageMenu content={message.content} threadId={threadId}
+              onEdit={isOwn && message.id && onEdit ? () => { setEditContent(message.content); setEditing(true); } : undefined}
+              onDelete={isOwn && message.id && onDelete ? () => onDelete(message.id!) : undefined}>
             <div className="rounded-2xl rounded-br-md px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap bg-primary text-primary-foreground">
               {(() => {
                 const audioMatch = message.content.match(/\[([^\]]+)\]\((\/api\/chat-media\/[^\)]+\.(webm|ogg|m4a|wav|mp4))\)/);
@@ -455,26 +459,7 @@ function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, comple
                 return formatted || message.content;
               })()}
             </div>
-            {isOwn && message.id && (
-              <div className="absolute -bottom-1 left-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    {/* Larger touch target (44px min) for mobile */}
-                    <button className="w-8 h-8 min-w-[44px] min-h-[44px] rounded-full bg-background border shadow-sm flex items-center justify-center" style={{ touchAction: "manipulation" }} data-testid={`button-message-actions-${message.id}`}>
-                      <MoreHorizontal className="w-3.5 h-3.5" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-32">
-                    <DropdownMenuItem onClick={() => { setEditContent(message.content); setEditing(true); }} className="min-h-[44px]" data-testid="button-edit-message">
-                      <Pencil className="w-3.5 h-3.5 mr-2" /> Edit
-                    </DropdownMenuItem>
-                    <DropdownMenuItem className="text-destructive min-h-[44px]" onClick={() => onDelete?.(message.id!)} data-testid="button-delete-message">
-                      <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            )}
+            </ChatMessageMenu>
           </div>
         )}
       </div>

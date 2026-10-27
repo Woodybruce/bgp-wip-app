@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useTypingIndicator } from "@/hooks/use-socket";
 import { emitMarkSeen } from "@/lib/socket";
 import { ChatBGPMarkdown, AuthDownloadLink } from "@/components/chatbgp-markdown";
+import { ChatMessageMenu } from "@/components/chat-message-menu";
 import { ChatResponse } from "@/components/chat-response";
 import { LandlordChatBubble, type LandlordChatMessage } from "@/components/landlord-chat-bubble";
 import { isLandlordCompany } from "@/lib/company-kind";
@@ -478,11 +479,9 @@ function MessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, 
   };
 
   if (landlord) return <LandlordChatBubble message={message} previous={previousMessage} currentUserId={currentUserId} photoUrl={photoUrl} participantIds={participantIds}
-    actions={isOwn && message.id && threadId && !editing ? <div className="absolute top-1 right-1 opacity-100 sm:opacity-0 sm:group-hover/msg:opacity-100 focus-within:opacity-100 transition-opacity">
-      <DropdownMenu><DropdownMenuTrigger asChild><button aria-label="Message actions" className="w-6 h-6 rounded-full bg-card border flex items-center justify-center" data-testid={`button-message-actions-${message.id}`}><MoreVertical className="w-3 h-3" /></button></DropdownMenuTrigger>
-        <DropdownMenuContent align="end"><DropdownMenuItem onClick={() => { setEditContent(message.content); setEditing(true); }}><Pencil className="w-3 h-3 mr-2" />Edit</DropdownMenuItem><DropdownMenuItem className="text-destructive" onClick={() => onDelete?.(message.id!)}><Trash2 className="w-3 h-3 mr-2" />Delete</DropdownMenuItem></DropdownMenuContent>
-      </DropdownMenu>
-    </div> : undefined}>
+    threadId={threadId} menuDisabled={editing}
+    onEdit={isOwn && message.id && threadId && onEdit ? () => { setEditContent(message.content); setEditing(true); } : undefined}
+    onDelete={isOwn && message.id && threadId && onDelete ? () => onDelete(message.id!) : undefined}>
     {message.attachments?.map((attachment, index) => {
       let file: any;
       try { file = JSON.parse(attachment); } catch { file = null; }
@@ -494,7 +493,7 @@ function MessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, 
     {editing ? <div className="space-y-2">
       <Textarea value={editContent} onChange={event => setEditContent(event.target.value)} className="min-h-16 text-sm" autoFocus aria-label="Edit message" />
       <div className="flex justify-end gap-2"><Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button><Button size="sm" onClick={handleSaveEdit}>Save</Button></div>
-    </div> : <ChatResponse content={message.content} threadId={threadId} messageId={message.id} onDraftSaved={onDraftSaved} actions={!isUser}
+    </div> : <ChatResponse content={message.content} threadId={threadId} messageId={message.id} onDraftSaved={onDraftSaved} actions={!isUser} hideResponseActions
       renderBefore={content => <RenderMessageContent content={content} onCheckboxClick={onCheckboxClick} />}>
       <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} />
     </ChatResponse>}
@@ -561,37 +560,20 @@ function MessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, 
             </div>
           </div>
         ) : (
-          <div className="relative group">
+          <ChatMessageMenu content={message.content} threadId={threadId}
+            onEdit={isOwn && message.id && threadId && onEdit ? () => { setEditContent(message.content); setEditing(true); } : undefined}
+            onDelete={isOwn && message.id && threadId && onDelete ? () => onDelete(message.id!) : undefined}>
             <div
               className={`rounded-2xl px-3 py-2 text-[13px] leading-relaxed whitespace-pre-wrap break-words ${
                 isOwn ? "bg-gray-900 text-white rounded-br-sm" : "bg-gray-100 dark:bg-gray-800 text-foreground rounded-bl-sm"
               }`}
             >
-              <ChatResponse content={message.content} threadId={threadId} messageId={message.id} onDraftSaved={onDraftSaved} actions={!isUser}
+              <ChatResponse content={message.content} threadId={threadId} messageId={message.id} onDraftSaved={onDraftSaved} actions={!isUser} hideResponseActions
                 renderBefore={content => <RenderMessageContent content={content} onCheckboxClick={onCheckboxClick} />}>
                 <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} />
               </ChatResponse>
             </div>
-            {isOwn && message.id && threadId && (
-              <div className="absolute -top-1 right-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button className="w-5 h-5 rounded-full bg-background border shadow-sm flex items-center justify-center" data-testid={`button-message-actions-${message.id}`}>
-                      <MoreVertical className="w-3 h-3" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-28">
-                    <DropdownMenuItem onClick={() => { setEditContent(message.content); setEditing(true); }} data-testid="button-edit-message">
-                      <Pencil className="w-3 h-3 mr-2" /> Edit
-                    </DropdownMenuItem>
-                    <DropdownMenuItem className="text-destructive" onClick={() => onDelete?.(message.id!)} data-testid="button-delete-message">
-                      <Trash2 className="w-3 h-3 mr-2" /> Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            )}
-          </div>
+          </ChatMessageMenu>
         )}
         {message.action && <ActionCard action={message.action} />}
       </div>

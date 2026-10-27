@@ -16,6 +16,7 @@ import * as voiceRecovery from "@/lib/voice-recovery";
 import { messageContentWithAttachments } from "@/lib/chat-attachments";
 import { AuthDownloadLink, ChatBGPMarkdown } from "@/components/chatbgp-markdown";
 import { ChatResponse } from "@/components/chat-response";
+import { ChatMessageMenu } from "@/components/chat-message-menu";
 import { useLocation } from "wouter";
 import { useTeam } from "@/lib/team-context";
 import { TagChip, TAG_TOKEN_SOURCE, TAG_META, buildTagToken, type TagType } from "@/components/chat-tags";
@@ -500,74 +501,10 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
   const isOtherUser = isUser && !isOwn;
   const isAiMsg = !isUser && isAiThread;
   const showName = isGroupChat && message.userName && (isOtherUser || message.role === "assistant");
-  const { toast } = useToast();
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
-  const [showActions, setShowActions] = useState(false);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(message.content);
-    toast({ title: "Copied" });
-    setShowActions(false);
-  };
-
-  const handleLongPress = useRef<NodeJS.Timeout | null>(null);
-  // Copy is the OS's job (Woody, 2026-08-28: "use the normal Apple version
-  // of copy and paste rather than our own") — ChatBGP replies and other
-  // people's messages carry NO touch handlers, so press-and-hold gives the
-  // native iOS/Android selection menu. Only your OWN messages keep this
-  // long-press menu, because Edit/Delete need a home; it still stands down
-  // if a text selection has started.
-  const touchStart = useRef<{ x: number; y: number } | null>(null);
-  const LONG_PRESS_MS = 600;
-  const MOVE_TOLERANCE_PX = 10;
-
-  // In an AI thread every user bubble is your own (1:1 with ChatBGP), even
-  // when the message row carries no userId.
+  // A user message in a personal ChatBGP thread may predate stored author IDs.
   const ownEditable = isOwn || (isUser && isAiThread);
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (!ownEditable) return;
-    const t = e.touches[0];
-    touchStart.current = t ? { x: t.clientX, y: t.clientY } : null;
-    handleLongPress.current = setTimeout(() => {
-      const sel = window.getSelection();
-      if (sel && !sel.isCollapsed) return;
-      setShowActions(true);
-    }, LONG_PRESS_MS);
-  };
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (!touchStart.current || !handleLongPress.current) return;
-    const t = e.touches[0];
-    if (!t) return;
-    const dx = t.clientX - touchStart.current.x;
-    const dy = t.clientY - touchStart.current.y;
-    if (dx * dx + dy * dy > MOVE_TOLERANCE_PX * MOVE_TOLERANCE_PX) {
-      clearTimeout(handleLongPress.current);
-      handleLongPress.current = null;
-    }
-  };
-  const handleTouchEnd = () => {
-    if (handleLongPress.current) clearTimeout(handleLongPress.current);
-    handleLongPress.current = null;
-    touchStart.current = null;
-  };
-
-  // Native context menus dismiss on any outside touch; without this the
-  // pill floats until its X is found (r405).
-  const bubbleRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!showActions) return;
-    const dismiss = (e: Event) => {
-      if (bubbleRef.current && e.target instanceof Node && bubbleRef.current.contains(e.target)) return;
-      setShowActions(false);
-    };
-    document.addEventListener("touchstart", dismiss, true);
-    document.addEventListener("mousedown", dismiss, true);
-    return () => {
-      document.removeEventListener("touchstart", dismiss, true);
-      document.removeEventListener("mousedown", dismiss, true);
-    };
-  }, [showActions]);
 
   const renderAttachments = () => {
     if (!message.attachments || message.attachments.length === 0) return null;
@@ -639,13 +576,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
               </div>
             </div>
           ) : (
-            <div
-              className="relative"
-              onTouchStart={handleTouchStart}
-              onTouchMove={handleTouchMove}
-              onTouchEnd={handleTouchEnd}
-              onTouchCancel={handleTouchEnd}
-            >
+            <div className="relative">
               <div className="text-[15px] leading-[1.7] text-foreground whitespace-pre-wrap break-words select-text">
                 <ChatResponse content={message.content} threadId={threadId} messageId={message.id} onDraftSaved={onDraftSaved}
                   renderBefore={content => <RenderMessageContent content={content} onCheckboxClick={onCheckboxClick} isUserBubble={false} selectedCheckboxes={selectedCheckboxes} markdown />}>
@@ -679,14 +610,10 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
             </div>
           </div>
         ) : (
-          <div
-            ref={bubbleRef}
-            className="relative"
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
-            onTouchCancel={handleTouchEnd}
-          >
+          <div className="relative group/msg">
+            <ChatMessageMenu content={message.content} threadId={threadId}
+              onEdit={ownEditable && message.id && onEdit ? () => { setEditContent(message.content); setEditing(true); } : undefined}
+              onDelete={ownEditable && message.id && onDelete ? () => onDelete(message.id!) : undefined}>
             {/* WhatsApp anatomy (Woody, 2026-08-22): mine = soft green with
                 time + ticks INSIDE the bubble, theirs = white. */}
             <div className={`rounded-2xl px-3.5 py-2 text-[15px] leading-[1.55] whitespace-pre-wrap break-words shadow-sm ${
@@ -694,7 +621,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
                 ? "bg-[#F6E3DA] text-[#292524] rounded-br-md"
                 : "bg-white text-[#292524] rounded-bl-md"
             }`}>
-              <ChatResponse content={message.content} threadId={threadId} messageId={message.id} onDraftSaved={onDraftSaved} actions={!isUser}
+              <ChatResponse content={message.content} threadId={threadId} messageId={message.id} onDraftSaved={onDraftSaved} actions={!isUser} hideResponseActions
                 renderBefore={content => <RenderMessageContent content={content} onCheckboxClick={onCheckboxClick} isUserBubble={false} selectedCheckboxes={selectedCheckboxes} markdown />}>
                 <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} isUserBubble={false} selectedCheckboxes={!isUser ? selectedCheckboxes : undefined} markdown={!isUser} />
               </ChatResponse>
@@ -707,29 +634,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
                 </span>
               )}
             </div>
-            {showActions && (
-              <div className={`absolute -top-11 ${isOwn ? "right-0" : "left-0"} flex items-center gap-1 bg-white rounded-xl shadow-lg border border-border px-1 py-1 z-20 animate-in fade-in zoom-in-95 duration-150`}>
-                <button onClick={handleCopy} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-muted-foreground active:bg-muted" data-testid="button-copy-message">
-                  <Copy className="w-3.5 h-3.5" /> Copy
-                </button>
-                {ownEditable && message.id && (
-                  <>
-                    <div className="w-px h-4 bg-border" />
-                    <button onClick={() => { setEditContent(message.content); setEditing(true); setShowActions(false); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-muted-foreground active:bg-muted">
-                      <Pencil className="w-3.5 h-3.5" /> Edit
-                    </button>
-                    <div className="w-px h-4 bg-border" />
-                    <button onClick={() => { onDelete?.(message.id!); setShowActions(false); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-red-500 active:bg-red-50">
-                      <Trash2 className="w-3.5 h-3.5" /> Delete
-                    </button>
-                  </>
-                )}
-                <div className="w-px h-4 bg-border" />
-                <button onClick={() => setShowActions(false)} className="px-2 py-1.5 rounded-lg active:bg-muted">
-                  <X className="w-3.5 h-3.5 text-muted-foreground/70" />
-                </button>
-              </div>
-            )}
+            </ChatMessageMenu>
           </div>
         )}
         {message.action && <ActionCard action={message.action} />}

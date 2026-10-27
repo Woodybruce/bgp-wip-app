@@ -91,13 +91,35 @@ test('full chat styling requires the matching landlord company and never applies
 test('full landlord chat keeps rich content, attachments and action controls while default bubbles remain unchanged', () => {
   const app = load('client/src/components/chat-panel.tsx', { getNameColor: () => 'text-blue-600', isImageFile: () => false, isAudioFile: () => false }, ['MessageBubble']);
   const message = { ...msg('woody', '2026-10-27T09:00:00Z'), content: '**Legacy deal**', attachments: ['{"url":"/document.pdf","name":"Lease.pdf"}'] };
-  const landlord = app.MessageBubble({ message, currentUserId: 'woody', threadId: 'aew-chat', landlord: true });
+  const landlord = app.MessageBubble({ message, currentUserId: 'woody', threadId: 'aew-chat', landlord: true, onEdit: () => {}, onDelete: () => {} });
   assert.equal(landlord.type, 'LandlordChatBubble');
   assert.ok(nodes(landlord).some(node => node.type === 'ChatResponse' && node.props.content === '**Legacy deal**'));
   assert.ok(nodes(landlord).some(node => node.type === 'a' && node.props.href === '/document.pdf'));
-  assert.ok(nodes(landlord.props.actions).some(node => node.props['data-testid'] === `button-message-actions-${message.id}`));
+  assert.equal(typeof landlord.props.onEdit, 'function');
+  assert.equal(typeof landlord.props.onDelete, 'function');
+  assert.ok(nodes(landlord).some(node => node.type === 'ChatResponse' && node.props.hideResponseActions === true));
   const original = app.MessageBubble({ message, currentUserId: 'woody', threadId: 'brand-chat' });
   assert.equal(original.type, 'div');
   assert.ok(nodes(original).some(node => node.props.className?.includes('bg-gray-900 text-white rounded-br-sm')));
   assert.equal(nodes(original).some(node => node.type === 'LandlordChatBubble'), false);
+});
+
+
+test('ordinary chat answers use contextual actions while email drafts keep their deliberate controls', () => {
+  const plain = load('client/src/components/chat-response.tsx', { useMemo: work => work(), extractChatEmailDraft: () => null }, ['ChatResponse']);
+  const normal = plain.ChatResponse({ content: 'Here is the update.' });
+  const contextual = plain.ChatResponse({ content: 'Here is the update.', hideResponseActions: true });
+  assert.equal(nodes(normal).some(node => node.type === 'ChatMessageMenu'), true);
+  assert.equal(nodes(contextual).some(node => node.type === 'ChatMessageMenu'), false);
+  assert.ok(nodes(contextual).some(node => node.type === 'ChatBGPMarkdown' && node.props.content === 'Here is the update.'));
+  const drafts = load('client/src/components/chat-response.tsx', { useMemo: work => work(), extractChatEmailDraft: () => ({subject: 'Portfolio review', bodyMarkdown: 'Hi Alex, please bring the schedule.', before: ''}) }, ['ChatResponse']);
+  assert.equal(nodes(drafts.ChatResponse({ content: 'draft', hideResponseActions: true })).some(node => node.type === 'EmailDraftCard'), true);
+});
+
+test('the shared menu never offers editing or deletion of another author’s message', () => {
+  const app = load(file);
+  const bubble = app.LandlordChatBubble({ message: msg('nick', '2026-10-27T09:00:00Z'), currentUserId: 'woody', children: 'Meeting tomorrow.', onEdit: () => {}, onDelete: () => {} });
+  const menu = nodes(bubble).find(node => node.type === 'ChatMessageMenu');
+  assert.equal(menu.props.onEdit, undefined);
+  assert.equal(menu.props.onDelete, undefined);
 });

@@ -1,8 +1,10 @@
 import { useState, type ReactNode } from "react";
+import { ChatMessageMenu } from "@/components/chat-message-menu";
 
 export type LandlordChatMessage = {
   id?: string;
   role: string;
+  content?: string;
   userId?: string | null;
   userName?: string;
   createdAt?: string | null;
@@ -54,9 +56,10 @@ export function landlordMessagePresentation(message: LandlordChatMessage, previo
   };
 }
 
-export function LandlordChatBubble({ message, previous, currentUserId, photoUrl, participantIds, children, actions }: {
+export function LandlordChatBubble({ message, previous, currentUserId, photoUrl, participantIds, children, actions, threadId, menuDisabled, onEdit, onDelete }: {
   message: LandlordChatMessage; previous?: LandlordChatMessage; currentUserId?: string | null;
   photoUrl?: string | null; participantIds?: string[]; children: ReactNode; actions?: ReactNode;
+  threadId?: string | null; menuDisabled?: boolean; onEdit?: () => void; onDelete?: () => void;
 }) {
   const [failedPhoto, setFailedPhoto] = useState<string | null>(null);
   const own = message.role === "user" && !!currentUserId && message.userId === currentUserId;
@@ -72,6 +75,7 @@ export function LandlordChatBubble({ message, previous, currentUserId, photoUrl,
           : <span className={`h-7 w-7 rounded-full bg-muted border border-border/60 flex items-center justify-center text-[11px] font-semibold ${colour}`}>{initials}</span>)}
       </div>}
       <div className={`relative min-w-0 w-fit max-w-[min(88%,42rem)] rounded-2xl px-3 py-2 shadow-sm ${own ? `bg-emerald-100/70 dark:bg-emerald-950/60 ${grouped ? "" : "rounded-tr-sm"}` : `bg-stone-50 dark:bg-stone-900 border border-border/60 ${grouped ? "" : "rounded-tl-sm"}`}`}>
+        <ChatMessageMenu content={message.content} threadId={threadId} disabled={menuDisabled} onEdit={own ? onEdit : undefined} onDelete={own ? onDelete : undefined}>
         {!grouped && <p className={`mb-0.5 pr-5 text-xs font-semibold ${colour}`} data-testid="landlord-chat-author">{name}</p>}
         <div className="break-words [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_ul]:my-1 [&_ol]:my-1">{children}</div>
         {(timeLabel || message.editedAt) && <p className="mt-1 text-right text-[11px] text-muted-foreground tabular-nums">
@@ -79,6 +83,7 @@ export function LandlordChatBubble({ message, previous, currentUserId, photoUrl,
           {timeLabel && <time dateTime={message.createdAt || undefined} title="London time">{timeLabel}</time>}
         </p>}
         {actions}
+        </ChatMessageMenu>
       </div>
     </div>
   </div>;

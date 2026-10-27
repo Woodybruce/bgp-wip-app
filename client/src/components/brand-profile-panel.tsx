@@ -44,6 +44,7 @@ import { LandlordInterviewNotes } from "@/components/landlord-interview-notes";
 import { LandlordCovenantSummary } from "@/components/landlord-covenant-summary";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
 import { landlordConfirmedCrmAction, landlordCrmActionQueryKeys } from "@/lib/landlord-chat-actions";
+import { ChatMessageMenu } from "@/components/chat-message-menu";
 import { LandlordChatBubble } from "@/components/landlord-chat-bubble";
 import { MemberAvatar } from "@/components/ClientTeamOrgChart";
 import { BGP_ACCOUNT_ROLES, canonicalBgpRole } from "@shared/bgp-account-roles";
@@ -4923,7 +4924,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
 
   const addableUsers = (Array.isArray(mcUsers) ? mcUsers : []).filter(u => !memberIds.has(u.id) && u.id !== mcMe?.id);
   const landlordMessage = (message: any) => ({
-    id: message.id, role: message.role, userId: message.userId || message.user_id,
+    id: message.id, role: message.role, content: String(message.content || ""), userId: message.userId || message.user_id,
     userName: message.userName || mcUsers.find(user => user.id === (message.userId || message.user_id))?.name,
     createdAt: message.createdAt || message.created_at, editedAt: message.editedAt || message.edited_at,
   });
@@ -5022,11 +5023,14 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
               if (landlord) return <LandlordChatBubble key={m.id} message={landlordMessage(m)} previous={index > 0 ? landlordMessage(messages[index - 1]) : undefined}
                 currentUserId={mcMe?.id} photoUrl={mcUsers.find(user => user.id === authorId)?.profilePicUrl}
                 participantIds={[...memberIds, ...messages.filter(message => message.role === "user").map(message => message.userId || message.user_id).filter(Boolean)]}
-                actions={isOwn && editingMsgId !== m.id ? <span className="absolute top-1 right-1 flex items-center gap-1.5 opacity-100 sm:opacity-0 sm:group-hover/msg:opacity-100 focus-within:opacity-100 transition-opacity">
-                  <button className="text-muted-foreground hover:text-foreground" title="Edit message" aria-label="Edit message" onClick={() => { setEditingMsgId(m.id); setEditDraft(m.content); }} data-testid={`button-minichat-edit-${m.id}`}><Pencil className="w-3 h-3" /></button>
-                  {confirmDeleteId === m.id ? <button className="text-[11px] font-semibold text-destructive" onClick={() => deleteMsg(m.id)} onMouseLeave={() => setConfirmDeleteId(null)} data-testid={`button-minichat-delete-confirm-${m.id}`}>Delete?</button>
-                    : <button className="text-muted-foreground hover:text-destructive" title="Delete message" aria-label="Delete message" onClick={() => setConfirmDeleteId(m.id)} data-testid={`button-minichat-delete-${m.id}`}><XIcon className="w-3 h-3" /></button>}
-                </span> : undefined}>
+                threadId={threadId} menuDisabled={editingMsgId === m.id}
+                onEdit={isOwn ? () => { setEditingMsgId(m.id); setEditDraft(m.content); } : undefined}
+                onDelete={isOwn ? () => setConfirmDeleteId(m.id) : undefined}>
+                {confirmDeleteId === m.id && <div className="mb-2 rounded border border-destructive/30 p-2 text-xs" role="alert">
+                  <p>Delete this message?</p>
+                  <div className="mt-1 flex gap-3"><button type="button" className="font-semibold text-destructive" onClick={() => deleteMsg(m.id)} data-testid={`button-minichat-delete-confirm-${m.id}`}>Delete</button><button type="button" onClick={() => setConfirmDeleteId(null)}>Cancel</button></div>
+                </div>}
+
                 {editingMsgId === m.id ? <div className="flex flex-wrap items-center gap-1">
                   <input autoFocus aria-label="Edit message" className="min-w-0 flex-1 h-9 rounded border bg-background px-2 text-sm outline-none focus:ring-1 focus:ring-ring" value={editDraft} onChange={event => setEditDraft(event.target.value)} onKeyDown={event => { if (event.key === "Enter") saveEdit(m.id); if (event.key === "Escape") setEditingMsgId(null); }} data-testid={`input-minichat-edit-${m.id}`} />
                   <button className="text-xs px-2 py-1 rounded border bg-card hover:bg-muted" onClick={() => saveEdit(m.id)}>Save</button>
@@ -5039,6 +5043,13 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
               </LandlordChatBubble>;
               return (
               <div key={m.id} className={`group/msg relative text-xs rounded-lg px-2.5 py-1.5 whitespace-pre-wrap break-words ${m.role === "assistant" ? "bg-muted/60" : "bg-primary/10 ml-6"}`}>
+                <ChatMessageMenu content={String(m.content || "")} threadId={threadId} disabled={editingMsgId === m.id}
+                  onEdit={isOwn ? () => { setEditingMsgId(m.id); setEditDraft(m.content); } : undefined}
+                  onDelete={isOwn ? () => setConfirmDeleteId(m.id) : undefined}>
+                {confirmDeleteId === m.id && <div className="mb-2 rounded border border-destructive/30 p-2 text-xs" role="alert">
+                  <p>Delete this message?</p><div className="mt-1 flex gap-3"><button type="button" className="font-semibold text-destructive" onClick={() => deleteMsg(m.id)} data-testid={`button-minichat-delete-confirm-${m.id}`}>Delete</button><button type="button" onClick={() => setConfirmDeleteId(null)}>Cancel</button></div>
+                </div>}
+
                 {/* Every message carries its author — a shared brand chat is
                     useless if you can't tell who said what (Woody, 2026-08-04). */}
                 <span className="font-semibold text-[11px] block text-muted-foreground">
@@ -5075,37 +5086,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
                 ) : (
                   renderContent(m.content)
                 )}
-                {isOwn && editingMsgId !== m.id && (
-                  <span className="absolute top-1 right-1 flex items-center gap-1.5 opacity-0 group-hover/msg:opacity-100 transition-opacity">
-                    <button
-                      className="text-muted-foreground hover:text-foreground"
-                      title="Edit message"
-                      onClick={() => { setEditingMsgId(m.id); setEditDraft(m.content); }}
-                      data-testid={`button-minichat-edit-${m.id}`}
-                    >
-                      <Pencil className="w-3 h-3" />
-                    </button>
-                    {confirmDeleteId === m.id ? (
-                      <button
-                        className="text-[11px] font-semibold text-red-600 hover:text-red-700"
-                        onClick={() => deleteMsg(m.id)}
-                        onMouseLeave={() => setConfirmDeleteId(null)}
-                        data-testid={`button-minichat-delete-confirm-${m.id}`}
-                      >
-                        Delete?
-                      </button>
-                    ) : (
-                      <button
-                        className="text-muted-foreground hover:text-red-600"
-                        title="Delete message"
-                        onClick={() => setConfirmDeleteId(m.id)}
-                        data-testid={`button-minichat-delete-${m.id}`}
-                      >
-                        <XIcon className="w-3 h-3" />
-                      </button>
-                    )}
-                  </span>
-                )}
+                </ChatMessageMenu>
               </div>
             );
             })
