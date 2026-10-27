@@ -192,7 +192,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                     right={<>{money(t.guide_price) && <span className="text-xs font-mono tabular-nums">{money(t.guide_price)}</span>}{t.niy ? <span className="text-[11px] font-mono text-muted-foreground tabular-nums">{Number(t.niy).toFixed(2)}% NIY</span> : null}</>} />
                 ))}</div>}
               </Section>
-              <Section title="Might sell — flagged in the portfolio" empty="No properties marked for sale or investment work.">
+              <Section title="Might sell — flagged in the portfolio" link="/investment-tracker" linkLabel="Investment tracker" empty="No properties marked for sale or investment work.">
                 {inv.salesCandidates.length > 0 && <div className="space-y-1">{inv.salesCandidates.slice(0, 6).map((p: any) => (
                   <Row key={p.id} href={`/properties/${p.id}`} title={p.name} sub={[p.status && statusLabel(p.status), list(p.asset_class)].filter(Boolean).join(" · ")} />
                 ))}</div>}
