@@ -69,13 +69,13 @@ test('PostgreSQL: exact landlord scope, role upsert, private-chat boundary and d
   try{
     await client.query('BEGIN');
     await client.query(`CREATE TEMP TABLE crm_companies(id text,name text,company_type text,domain text,domain_url text,bgp_contact_user_ids text[],merged_into_id text);
-      CREATE TEMP TABLE users(id text,name text,username text,email text,role text,profile_pic_url text,is_active boolean);
+      CREATE TEMP TABLE users(id text,name text,username text,email text,role text,profile_pic_url text,is_active boolean,address text);
       CREATE TEMP TABLE crm_properties(id text,name text,landlord_id text,freeholder_id text,long_leaseholder_id text,asset_manager_id text);
       CREATE TEMP TABLE crm_company_properties(company_id text,property_id text);
       CREATE TEMP TABLE crm_company_deals(company_id text,deal_id text);
       CREATE TEMP TABLE crm_deals(id text,name text,deal_ref text,status text,property_id text,deal_type text,bgp_acting_for text,team text[],internal_agent text[],internal_agent_ids text[],landlord_id text,vendor_id text,purchaser_id text,tenant_id text);
       CREATE TEMP TABLE crm_company_bgp_roles(company_id text,user_id text,role text);
-      CREATE TEMP TABLE crm_contacts(id text,company_id text);
+      CREATE TEMP TABLE crm_contacts(id text,company_id text,email text);
       CREATE TEMP TABLE crm_interactions(id text,microsoft_id text,interaction_date timestamptz,bgp_user text,participants jsonb,type text,company_id text,contact_id text);
       CREATE TEMP TABLE pla_matters(id text,property_id text,matter_type text,acting_for text,status text,lead_user_id text,team_user_ids text[],client_company_id text);
       CREATE TEMP TABLE crm_property_agents(property_id text,user_id text,role text);
@@ -88,16 +88,17 @@ test('PostgreSQL: exact landlord scope, role upsert, private-chat boundary and d
     await client.query(create[1].replace('CREATE TABLE IF NOT EXISTS','CREATE TEMP TABLE'));
     await client.query(index[1]);
     await client.query(`INSERT INTO crm_companies VALUES('aew','AEW','Landlord','aew.com',NULL,'{}',NULL),('brand','Brand','Tenant - Retail',NULL,NULL,'{}',NULL);
-      INSERT INTO users VALUES('will','Will Penfold','will','will@brucegillinghampollard.com','Agent',NULL,true),('nick','Nick','nick','nick@brucegillinghampollard.com','Agent',NULL,true),('woody','Woody','woody','woody@brucegillinghampollard.com','Admin',NULL,true);
+      INSERT INTO users VALUES('will','Will Penfold','will','will@brucegillinghampollard.com','Agent',NULL,true,'An unrelated postal address'),('nick','Nick','nick','nick@brucegillinghampollard.com','Agent',NULL,true,'An unrelated postal address'),('woody','Woody','woody','woody@brucegillinghampollard.com','Admin',NULL,true,'Another postal address');
       INSERT INTO crm_properties VALUES('p1','New Oxford Street','aew',NULL,NULL,NULL),('outside','Other',NULL,NULL,NULL,NULL);
       INSERT INTO crm_deals VALUES('d1','Dough','3629','SOL','p1','Lease Acquisition','tenant','{}','{}','{will}','aew',NULL,NULL,NULL);
-      INSERT INTO crm_interactions VALUES('i1','msg1',now()-interval '1 day','nick@brucegillinghampollard.com','["nick@brucegillinghampollard.com","ben@eu.aew.com"]','email',NULL,NULL),('i2','msg1',now()-interval '1 day','nick@brucegillinghampollard.com','["ben@eu.aew.com"]','email',NULL,NULL),('i3','bad',now()-interval '1 day','nick@brucegillinghampollard.com','["ben@aew.com.evil.test"]','email',NULL,NULL);
+      INSERT INTO crm_contacts VALUES('external',NULL,'ben@eu.aew.com'),('spoof',NULL,'ben@aew.com.evil.test');
+      INSERT INTO crm_interactions VALUES('i1','msg1',now()-interval '1 day','nick@brucegillinghampollard.com','["nick@brucegillinghampollard.com","will@brucegillinghampollard.com","ben@eu.aew.com"]','email',NULL,'external'),('i2','msg1',now()-interval '1 day','nick@brucegillinghampollard.com','["ben@eu.aew.com"]','email',NULL,'external'),('i3','bad',now()-interval '1 day','nick@brucegillinghampollard.com','["ben@aew.com.evil.test"]','email',NULL,'spoof');
       INSERT INTO chat_threads VALUES('visible','company','aew','woody'),('hidden','company','aew','nick');
       INSERT INTO chat_messages VALUES('m1','visible','woody','user',now()),('m2','hidden','will','user',now());`);
     const q={query:(sql:string,params?:any[])=>client.query(sql,params)};
     const digest:any=async()=>({meetings:[],coverage:{status:'current'}});
     const data=await api.getLandlordRelationshipTeam('aew',{q,viewerId:'woody',meetingDigest:digest});
-    assert.equal(data?.issues.length,0);assert.equal(data?.members.find(x=>x.id==='nick')?.emailCount,1);
+    assert.equal(data?.issues.length,0);assert.equal(data?.members.find(x=>x.id==='nick')?.emailCount,1);assert.equal(data?.members.find(x=>x.id==='will')?.emailCount,1);
     assert.equal(data?.members.find(x=>x.id==='woody')?.conversationCount,1);assert.equal(data?.members.find(x=>x.id==='will')?.conversationCount,0);
     assert.equal(data?.members.find(x=>x.id==='will')?.contexts[0].propertyName,'New Oxford Street');
     assert.equal(await api.getLandlordRelationshipTeam('brand',{q,meetingDigest:digest}),null);

@@ -10,6 +10,33 @@ const PROPERTIES = `SELECT p.id,p.name FROM crm_properties p WHERE p.landlord_id
   OR EXISTS(SELECT 1 FROM crm_company_properties cp WHERE cp.property_id=p.id AND cp.company_id=$1)
   OR EXISTS(SELECT 1 FROM crm_deals d WHERE d.property_id=p.id AND (d.landlord_id=$1 OR d.vendor_id=$1 OR d.purchaser_id=$1
     OR EXISTS(SELECT 1 FROM crm_company_deals cd WHERE cd.deal_id=d.id AND cd.company_id=$1)))`;
+export function landlordTeamEmailPath(domains: string[]): string | null {
+  if (!domains.length) return null;
+  const escaped = domains.map(domain => domain.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return '$[*] ? (@ like_regex ' + JSON.stringify('@([^.@]+[.])*(' + escaped.join('|') + ')$') + ' flag "i")';
+}
+
+export const LANDLORD_TEAM_EMAIL_SQL = `WITH linked_contacts AS MATERIALIZED (
+  SELECT ct.id FROM crm_contacts ct WHERE ct.company_id=$1
+    OR ($2::jsonpath IS NOT NULL AND jsonb_path_exists(jsonb_build_array(ct.email),$2::jsonpath))
+), linked AS MATERIALIZED (
+  SELECT i.id,i.microsoft_id,i.interaction_date,i.bgp_user,i.participants
+  FROM crm_interactions i WHERE i.company_id=$1 AND i.type='email' AND i.interaction_date<=now()
+  UNION ALL
+  SELECT i.id,i.microsoft_id,i.interaction_date,i.bgp_user,i.participants
+  FROM linked_contacts contact JOIN crm_interactions i ON i.contact_id=contact.id
+  WHERE i.type='email' AND i.interaction_date<=now()
+), participants AS (
+  SELECT COALESCE(NULLIF(i.microsoft_id,''),i.id::text) message_key,i.interaction_date,lower(trim(i.bgp_user)) email FROM linked i
+  UNION ALL
+  SELECT COALESCE(NULLIF(i.microsoft_id,''),i.id::text),i.interaction_date,lower(trim(participant.email))
+  FROM linked i CROSS JOIN LATERAL jsonb_array_elements_text(
+    CASE WHEN jsonb_typeof(i.participants)='array' THEN i.participants ELSE '[]'::jsonb END) AS participant(email)
+)
+SELECT u.id user_id,COUNT(DISTINCT participant.message_key)::int email_count,MAX(participant.interaction_date) last_touch
+FROM participants participant JOIN users u ON lower(trim(u.email))=participant.email
+WHERE ${STAFF} GROUP BY u.id`;
+
 const iso = (value: unknown) => { const date = new Date(String(value || '')); return Number.isFinite(date.getTime()) ? date.toISOString() : null; };
 
 export function assembleLandlordRelationshipTeam(input: {
@@ -103,13 +130,7 @@ export async function getLandlordRelationshipTeam(companyId: string, deps: { q?:
     read(`SELECT u.id,COALESCE(u.name,u.username,u.email) name,lower(trim(u.email)) email,u.role title,u.profile_pic_url,u.is_active FROM users u WHERE ${STAFF}`, [], 'BGP people'),
     read(`SELECT user_id,role FROM crm_company_bgp_roles WHERE company_id=$1`, [companyId], 'Saved account roles'),
     read(PROPERTIES,[companyId],'Linked properties'),
-    read(`WITH linked AS (SELECT i.id,i.microsoft_id,i.interaction_date,i.bgp_user,i.participants FROM crm_interactions i
-      WHERE i.type='email' AND i.interaction_date<=now() AND (i.company_id=$1 OR EXISTS(SELECT 1 FROM crm_contacts ct WHERE ct.id=i.contact_id AND ct.company_id=$1)
-        OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(i.participants)='array' THEN i.participants ELSE '[]'::jsonb END) address,
-          unnest($2::text[]) domain WHERE split_part(lower(address),'@',2)=domain OR right(split_part(lower(address),'@',2),length(domain)+1)='.'||domain)))
-      SELECT u.id user_id,COUNT(DISTINCT COALESCE(NULLIF(i.microsoft_id,''),i.id))::int email_count,MAX(i.interaction_date) last_touch
-      FROM linked i JOIN users u ON ${STAFF} AND (lower(trim(u.email))=lower(i.bgp_user) OR EXISTS(SELECT 1
-        FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(i.participants)='array' THEN i.participants ELSE '[]'::jsonb END) address WHERE lower(address)=lower(trim(u.email)))) GROUP BY u.id`, [companyId,landlordDomains({...company,contacts:[]})], 'Email interactions'),
+    read(LANDLORD_TEAM_EMAIL_SQL, [companyId,landlordTeamEmailPath(landlordDomains({...company,contacts:[]}))], 'Email interactions'),
     read(`SELECT x.*,p.name property_name FROM crm_landlord_team_contexts x LEFT JOIN crm_properties p ON p.id=x.property_id WHERE x.company_id=$1`,[companyId],'Saved role contexts'),
     (deps.meetingDigest || getLandlordMeetingDigest)({companyId},q).catch(()=>({meetings:[],coverage:{status:'not_synced',issues:['Diaries could not be checked']}})),
     deps.viewerId ? read(`SELECT m.user_id,COUNT(DISTINCT m.id)::int message_count,MAX(m.created_at) last_touch

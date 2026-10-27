@@ -12,7 +12,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { instagramCardState, isFeedEligibleCompany } from "./instagram-card-state";
+import { instagramCardState, isFeedEligibleCompany, isOnDemandInstagramEligible } from "./instagram-card-state";
 
 describe("instagramCardState", () => {
   it("no handle → no_handle, no externalUrl, regardless of everything else", () => {
@@ -88,4 +88,15 @@ describe("isFeedEligibleCompany", () => {
     assert.equal(isFeedEligibleCompany("Agent", true), false);
     assert.equal(isFeedEligibleCompany("Supplier", true), false);
   });
+});
+
+
+it("landlord on-demand Instagram requires explicit opt-in; scheduled and tenant rules stay unchanged", () => {
+  const landlord = {company_type:"Landlord",is_landlord:true,on_deal:false};
+  assert.equal(isOnDemandInstagramEligible(landlord), false);
+  assert.equal(isOnDemandInstagramEligible(landlord,true), true);
+  assert.equal(isFeedEligibleCompany("Landlord",true), false);
+  assert.equal(isOnDemandInstagramEligible({company_type:"Tenant - Retail",on_deal:false,is_landlord:true},true), false);
+  assert.equal(isOnDemandInstagramEligible({company_type:"Tenant - Retail",on_deal:true},false), true);
+  assert.equal(isOnDemandInstagramEligible({company_type:"Agent",is_landlord:false},true), false);
 });

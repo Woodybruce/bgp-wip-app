@@ -1521,7 +1521,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   );
   const topInfo = (
     <>
-            <BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} suggestedDomain={c.ai_generated_fields?.website_suggestion?.domain} />
+            <BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} suggestedDomain={c.ai_generated_fields?.website_suggestion?.domain} landlordLinks={isLandlord ? { linkedinUrl: c.linkedin_url, instagramHandle: c.instagram_handle } : undefined} />
             {/* ── Details card ─────────────────────────────── */}
             {(() => {
               const a: any = c.head_office_address;
@@ -1575,16 +1575,17 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               );
             })()}
             <div className="flex items-center gap-2 flex-wrap" data-testid="brand-overview-actions">
-              {c.linkedin_url && <Button variant="outline" size="sm" asChild><a href={c.linkedin_url} target="_blank" rel="noreferrer" data-testid="link-linkedin"><Linkedin />LinkedIn</a></Button>}
-              {c.phone && <Button variant="outline" size="sm" asChild><a href={`tel:${c.phone}`} data-testid="link-phone"><Phone />Call</a></Button>}
-              {data.contacts.find(contact => contact.email) && <Button variant="outline" size="sm" asChild><a href={`mailto:${data.contacts.find(contact => contact.email)?.email}`}><Mail />Email</a></Button>}
-              {!isClientViewer && <>
+              {!isLandlord && c.linkedin_url && <Button variant="outline" size="sm" asChild><a href={c.linkedin_url} target="_blank" rel="noreferrer" data-testid="link-linkedin"><Linkedin />LinkedIn</a></Button>}
+              {!isLandlord && c.phone && <Button variant="outline" size="sm" asChild><a href={`tel:${c.phone}`} data-testid="link-phone"><Phone />Call</a></Button>}
+              {!isLandlord && data.contacts.find(contact => contact.email) && <Button variant="outline" size="sm" asChild><a href={`mailto:${data.contacts.find(contact => contact.email)?.email}`}><Mail />Email</a></Button>}
+              {!isClientViewer && !isLandlord && <>
                 <Button variant="outline" size="sm" onClick={runContactDiscovery} disabled={contactsFinding} data-testid="button-refresh-contacts"><RefreshCw className={contactsFinding ? "animate-spin" : ""} />{contactsFinding ? "Finding…" : "Refresh contacts"}</Button>
                 <Button variant="outline" size="sm" onClick={() => setAddContactOpen(true)} data-testid="button-add-contact-brand"><Plus />Add contact</Button>
                 <ContactFormDialog open={addContactOpen} onOpenChange={setAddContactOpen} defaultCompanyId={c.id} />
                 <CompanyInvoicingControls companyId={c.id} contactEmails={data.contacts.map(contact => contact.email)} />
               </>}
-              {currentUser?.role !== "Client" && <>
+              {!isClientViewer && isLandlord && <CompanyInvoicingControls companyId={c.id} mode="billing" landlord />}
+              {currentUser?.role !== "Client" && !isLandlord && <>
                 <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)}><Plus />Add to deal</Button>
                 {!isLandlord && !isAgentFirm && !isLender && <Button variant="outline" size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}><Building2 />Pitch property</Button>}
               </>}
@@ -5235,6 +5236,22 @@ function TenantRepsBlock({ companyId, reps }: { companyId: string; reps: any[] }
   );
 }
 
+function LandlordContactActions({ companyId, contactEmails }: { companyId: string; contactEmails: Array<string | null | undefined> }) {
+  const [open, setOpen] = useState(false);
+  const onOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (!next) {
+      void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      void queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "workspace"] });
+    }
+  };
+  return <div className="flex flex-wrap items-center gap-2 mb-3" data-testid="landlord-contact-actions">
+    <Button variant="outline" size="sm" onClick={() => setOpen(true)} data-testid="button-add-contact-landlord"><Plus />Add contact</Button>
+    <CompanyInvoicingControls companyId={companyId} contactEmails={contactEmails} mode="contact-emails" landlord />
+    <ContactFormDialog open={open} onOpenChange={onOpenChange} defaultCompanyId={companyId} />
+  </div>;
+}
+
 type SidebarPart = "contacts" | "menu" | "compliance" | "covenant" | "files" | "news" | "feed" | "team" | "gallery";
 const SIDEBAR_BOTTOM: SidebarPart[] = ["team", "gallery"];
 function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }: { data: BrandProfile; companyId: string; column?: "grid" | "bottom"; only?: SidebarPart[]; heroStrip?: boolean }) {
@@ -5361,7 +5378,8 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
       <div className={pairCls}>
       {show("contacts") && <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} isLandlord={isLandlord}
         filterPropertyTier={!(!isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type))}
-        topSlot={isBrand ? <TenantRepsBlock companyId={companyId} reps={data.representedBy || []} /> : null} />}
+        topSlot={isBrand ? <TenantRepsBlock companyId={companyId} reps={data.representedBy || []} />
+          : isLandlord && !sbIsClient ? <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} /> : null} />}
       {show("menu") && !isLandlord && (
         <MenuIntelCard
           companyId={companyId}

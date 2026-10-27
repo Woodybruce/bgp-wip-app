@@ -84,6 +84,33 @@ test('compact relationship summary retains the work and reported changes without
  assert.doesNotMatch(text,/Next meeting|next meeting Wed|Manish|Ben Sykes|BGP team|Will Penfold/);
 });
 
+test('same-property legacy deals are retained as related context with explicit provenance and conflicting property links',async()=>{
+ const queries=[];
+ const deals=[{id:'dandan',deal_ref:3327,name:'DanDan',property_name:'New Oxford Street',status:'NEG',landlord_id:'aew',bgp_acting_for:'tenant',at_deal_linked_property:true},
+  {id:'dough2',deal_ref:3629,name:'Dough T2',property_name:'New Oxford Street',status:'SOL',at_deal_linked_property:true},
+  {id:'dough1',deal_ref:3295,name:'Dough T1',property_name:'New Oxford Street',status:'INV',at_deal_linked_property:true}];
+ const q={query:async(sql,params)=>{queries.push({sql,params});
+  if(sql.includes('AS is_landlord'))return{rows:[{id:'aew',name:'AEW',is_landlord:true}]};
+  if(sql.includes('LEFT(d.comments'))return{rows:deals};
+  if(sql.includes('AS other_property_companies'))return{rows:[{name:'New Oxford Street',direct_company_link:false,via_company_deal:true,other_property_companies:['Dulwich Estate']}]};
+  return{rows:[]};}};
+ const evidence=await getLandlordRelationshipEvidence('aew',{pool:q,relationshipTeam:async()=>null,meetingDigest:async()=>({meetings:[],nextMeeting:null,coverage:{status:'current'}}),interviews:async()=>[]});
+ const query=queries.find(row=>row.sql.includes('LEFT(d.comments')).sql;
+ assert.match(query,/linked_deal\.property_id=p\.id/);
+ assert.match(query,/linked_deal\.landlord_id=\$1/);
+ assert.match(query,/linked_company\.deal_id=linked_deal\.id AND linked_company\.company_id=\$1/);
+ assert.doesNotMatch(query,/ILIKE|lower\(p\.name\)/);
+ assert.equal(evidence.deals[1].linkBasis,'same_property_as_company_deal');
+ assert.equal(evidence.deals[1].relationship.instruction,false);
+ assert.equal(evidence.deals[2].relationship.instruction,false);
+ const text=renderLandlordRelationshipBrief({...evidence,conversationUpdates:[{speaker:'Woody',report:'AEW was disinstructed but Dough T2 continues as legacy.',date:'2026-10-27'}]}, {omitMeetingAndTeam:true});
+ assert.match(text,/via AEW's deal link; property record links Dulwich Estate/);
+ assert.match(text,/Dough T2 #3629 — with solicitors/);assert.match(text,/Dough T1 #3295 — invoiced/);
+ assert.match(text,/DanDan #3327 — negotiating.*tenant representation/);
+ assert.doesNotMatch(text,/before the meeting|AEW instruction|AEW ownership/);
+ assert.match(landlordChatEvidencePrompt(evidence,'Woody'),/do not establish that this landlord owned that property or instructed BGP/);
+});
+
 test('empty or partial calendar coverage is not a claim that no meeting exists',()=>{
  const text=renderLandlordRelationshipBrief({...fixture(),nextMeeting:null,coverage:{status:'partial'},bgpTeam:[],deals:[]});
  assert.match(text,/No upcoming linked meeting is available; the diary check is incomplete/);
