@@ -16,7 +16,8 @@ test('summary uses invitation metadata only and separates past, ongoing and futu
   assert.equal(evidence.upcoming[0].phase,'scheduled time in progress');
   assert.equal(evidence.upcoming[1].phase,'upcoming invitation');assert.equal(evidence.recent[0].phase,'past invitation');
   const prompt=landlordMeetingSummaryPrompt(evidence);
-  assert.match(prompt,/not proof of attendance, acceptance/);assert.match(prompt,/incomplete coverage/);assert.match(prompt,/60–80 words/);
+  assert.match(prompt,/not proof of attendance, acceptance/);assert.match(prompt,/incomplete coverage/);assert.match(prompt,/100–160 words/);
+  assert.match(prompt,/40–80 words or fewer/);assert.match(prompt,/high invitation count alone is not a reason for a longer summary/);
   assert.match(prompt,/Ben Sykes/);assert.match(prompt,/One diary unavailable/);assert.doesNotMatch(prompt,/Private body|Do not pass this|sourceId|webLink/);
 });
 
@@ -56,11 +57,16 @@ test('route requires staff before reading evidence, rejects non-landlords and fa
   assert.deepEqual(success.body,{summary:{text:'Summary',at:'2026-10-27T10:00:00Z'}});
 });
 
-test('recent evidence keeps the latest three invitations before describing the nearest two future invitations',()=>{
+test('recurring invitations retain dates and counts without crowding out distinct workstreams',()=>{
   const meetings=[28,21,29,25,30,26,22].map(day=>invitation(`2026-10-${day}T10:00:00Z`,`2026-10-${day}T11:00:00Z`));
+  meetings.push({...invitation('2026-10-20T10:00:00Z','2026-10-20T11:00:00Z'),subject:'Trinity leasing review'},
+    {...invitation('2026-11-02T10:00:00Z','2026-11-02T11:00:00Z'),subject:'Bluewater lease advisory'});
   const evidence=landlordMeetingSummaryEvidence(source(meetings),new Date('2026-10-27T10:00:00Z'));
-  assert.deepEqual(evidence.recent.map(row=>row.start.slice(8,10)),['26','25','22']);
-  assert.deepEqual(evidence.upcoming.map(row=>row.start.slice(8,10)),['28','29']);
+  assert.deepEqual(evidence.recent.map(row=>row.subject),['AEW / BGP catch-up','Trinity leasing review']);
+  assert.equal(evidence.recent[0].start,'2026-10-26T10:00:00Z');assert.equal(evidence.recent[0].invitationCount,4);
+  assert.equal(evidence.recent[0].firstInvitation,'2026-10-21T10:00:00Z');assert.equal(evidence.recentCount,5);
+  assert.deepEqual(evidence.upcoming.map(row=>row.subject),['AEW / BGP catch-up','Bluewater lease advisory']);
+  assert.equal(evidence.upcoming[0].start,'2026-10-28T10:00:00Z');assert.equal(evidence.upcoming[0].invitationCount,3);
   const prompt=landlordMeetingSummaryPrompt(evidence);
   assert.match(prompt,/Recent paragraph MUST comment on the latest past invitations even when future invitations exist/);
   assert.match(prompt,/\*\*Recent:\*\* and \*\*Next:\*\*/);
@@ -79,6 +85,7 @@ test('manual notes and CRM interview excerpts keep provenance and do not misclas
     {interviewId:'old',team:'Leasing',interviewee:'Nick',meetingDate:'2025-01-01',updatedAt:'2026-10-26',questionId:'q',excerpt:'Old material',companyId:'aew',companyName:'AEW',sourceUrl:''},
   ]});
   assert.match(sql,/i\.type='meeting' AND i\.match_method='manual'/);
+  assert.ok(sql.indexOf('NOT bgp_private_mail_record') < sql.indexOf('LIMIT 30'));
   assert.match(sql,/i\.company_id=\$1/);assert.equal(params[0],'aew');
   assert.equal(out.notes.length,2);assert.equal(out.notesUnavailable,false);
   assert.equal(out.notes[0].source,'manual meeting note');assert.equal(out.notes[1].source,'CRM interview');
@@ -103,4 +110,42 @@ test('private mailbox participants and notes cannot be sent to the meeting summa
   let called=false;
   assert.equal(await getLandlordMeetingSummary('private-only',source([privateInvite]),{generate:async()=>{called=true;return 'Must not generate';}}),null);
   assert.equal(called,false);
+});
+
+test('meeting notes alone produce a summary and retain substantive longer responses within the bounded limit',async()=>{
+  const now=new Date('2026-10-27T10:00:00Z');
+  const notes=[{source:'manual meeting note' as const,id:'note',date:'2026-10-26T10:00:00Z',author:'Nick',subject:'Landsec leasing',
+    excerpt:'Trinity leasing: Nick to circulate the updated schedule. Bluewater lease advisory: Lizzie requested the rent review dates.',sourceUrl:'/companies/landsec'}];
+  let prompt='';const answer=`**Recent:** ${'Recorded detail '.repeat(70).trim()}\n\n**Next:** None is linked in the checked diaries.`;
+  const result=await getLandlordMeetingSummary('notes-only',{...source([]),notes},{now,generate:async(value)=>{prompt=value;return answer;}});
+  assert.ok(result);assert.equal(result!.text,answer);
+  assert.match(prompt,/Trinity leasing/);assert.match(prompt,/Bluewater lease advisory/);
+  assert.match(prompt,/without a linked calendar invitation, summarise those notes with attribution/);
+  assert.match(prompt,/do not describe it as all BGP work or conclude little\/no work/);
+  assert.match(prompt,/never invent an owner or deadline/);
+});
+
+test('notes selection spans different saved records, preserves fuller excerpts, and excludes private/future/old evidence',()=>{
+  const now=new Date('2026-10-27T10:00:00Z');
+  const note=(id:string,excerpt:string,date='2026-10-26T09:00:00Z')=>({source:'CRM interview' as const,id,date,author:'Lizzie',subject:'Leasing',excerpt,sourceUrl:'/contacts?tab=meetings'});
+  const long=note('new-interview',`${'Lease review detail. '.repeat(40)}Nick to send the Trinity schedule.`);
+  const notes=[long,...Array.from({length:12},(_,i)=>note('new-interview',`Another answer ${i}`)),
+    note('different-meeting','Bluewater follow-up: review rent dates.','2026-10-25T09:00:00Z'),
+    {...note('copied-private','Exclude this private note'),participants:[PRIVATE_MAILBOX]},
+    {...note('private-owner','Exclude this owner note'),bgp_user:PRIVATE_MAILBOX},
+    note('future','Exclude future','2026-11-20T09:00:00Z'),note('old','Exclude stale','2025-01-01T09:00:00Z'),long];
+  const evidence=landlordMeetingSummaryEvidence({...source([]),notes},now);
+  assert.equal(evidence.notes.length,12);assert.equal(evidence.evidenceSelection.notesAvailable,14);
+  assert.equal(evidence.evidenceSelection.omittedNotes,2);
+  assert.ok(evidence.notes.some(n=>n.id==='different-meeting'));
+  assert.match(evidence.notes.find(n=>n.id==='new-interview')!.excerpt,/Nick to send the Trinity schedule/);
+  assert.doesNotMatch(JSON.stringify(evidence),/Exclude this|Exclude future|Exclude stale|equity@/);
+});
+
+test('large diaries expose bounded topic coverage rather than silently representing the sample as the entire history',()=>{
+  const meetings=Array.from({length:20},(_,i)=>({...invitation('2026-10-20T10:00:00Z','2026-10-20T11:00:00Z'),subject:`Property ${i} leasing`}));
+  const evidence=landlordMeetingSummaryEvidence(source(meetings),new Date('2026-10-27T10:00:00Z'));
+  assert.equal(evidence.recent.length,12);assert.equal(evidence.recentCount,20);
+  assert.equal(evidence.evidenceSelection.recentTopics,20);assert.equal(evidence.evidenceSelection.omittedRecentTopics,8);
+  assert.match(evidence.evidenceSelection.calendarScope,/not a full relationship history/);
 });

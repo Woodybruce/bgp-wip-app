@@ -4,6 +4,8 @@ import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, TEAM_LEADS_2026, isHrPerson, rosterN
 import { TERMINAL_STATUSES } from "@shared/deal-status";
 import type { Express } from "express";
 import { pool } from "./db";
+import { isShareableClientCalendarEvent, teamEventPrivacySql } from "./team-event-privacy";
+import { isPrivateMailboxAddress } from "./private-mail";
 import { requireAuth, requireAdmin } from "./auth";
 import { xeroApi, xeroPayrollApi } from "./xero";
 import { getValidMsToken } from "./microsoft";
@@ -5469,6 +5471,7 @@ Use the language and tone of BGP's review docs.`,
       teamEventId?: string;
     };
     const byKey = new Map<string, TeamEvent>();
+    const excludedEventKeys = new Set<string>();
     // The whole-company invite list. Events have to include this address as
     // an attendee for us to surface them as team events.
     const COMPANY_INVITE = "team@brucegillinghampollard.com";
@@ -5480,26 +5483,30 @@ Use the language and tone of BGP's review docs.`,
            JOIN staff_profiles sp ON sp.user_id = u.id
            WHERE u.is_active = true AND u.email IS NOT NULL AND u.email <> ''`,
         );
-        const slice = staff.slice(0, 30);
-        // Normalise an event to a stable key — subject (lowercased, trimmed) +
-        // start hour. This collapses the same event across everyone's calendars.
-        const keyOf = (subject: string, start: string) =>
-          `${(subject || "").toLowerCase().replace(/\s+/g, " ").trim()}@${start.slice(0, 13)}`;
+        const slice = staff.filter(u => !isPrivateMailboxAddress(u.email)).slice(0, 30);
+        // Prefer the shared invitation UID so a private copy can suppress
+        // other staff copies, even if the invitation was renamed or moved.
+        const keyOf = (subject: string, start: string, uid?: string) => uid ? `outlook:${uid}`
+          : `${(subject || "").toLowerCase().replace(/\s+/g, " ").trim()}@${start.slice(0, 13)}`;
         for (const u of slice) {
           try {
-            const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(u.email)}/calendarView?startDateTime=${encodeURIComponent(startStr)}&endDateTime=${encodeURIComponent(endStr)}&$select=subject,start,end,isAllDay,showAs,location,bodyPreview,attendees&$top=40&$orderby=start/dateTime`;
+            const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(u.email)}/calendarView?startDateTime=${encodeURIComponent(startStr)}&endDateTime=${encodeURIComponent(endStr)}&$select=subject,start,end,isAllDay,showAs,location,bodyPreview,attendees,organizer,iCalUId,sensitivity,isCancelled&$top=40&$orderby=start/dateTime`;
             const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Prefer: 'outlook.timezone="Europe/London"' } });
             if (!r.ok) continue;
             const data = await r.json();
             for (const e of (data.value || [])) {
               const subject = e.subject || "";
+              const start = e.start?.dateTime || e.start || "";
+              const k = keyOf(subject, start, e.iCalUId);
+              if (!isShareableClientCalendarEvent(e,u.email)) {
+                excludedEventKeys.add(k); byKey.delete(k); continue;
+              }
+              if (excludedEventKeys.has(k)) continue;
               // Skip OOO / leave / WFH — Layla doesn't want those here.
               const showAs = String(e.showAs || "").toLowerCase();
               if (["oof", "workingelsewhere"].includes(showAs)) continue;
               if (/\b(holiday|annual leave|on leave|out of office|\booo\b|wfh|working from home|sick)\b/i.test(subject)) continue;
-              const start = e.start?.dateTime || e.start || "";
               if (!start) continue;
-              const k = keyOf(subject, start);
               const attendeeEmails: string[] = Array.isArray(e.attendees)
                 ? e.attendees
                     .map((a: any) => String(a?.emailAddress?.address || "").toLowerCase())
@@ -5540,7 +5547,7 @@ Use the language and tone of BGP's review docs.`,
     try {
       const { rows: tableEvents } = await pool.query(
         `SELECT id, title, event_type, start_time, end_time, location, notes, attendees, property_name, company_name
-         FROM team_events WHERE start_time >= $1 AND start_time <= $2 ORDER BY start_time ASC`,
+         FROM team_events WHERE start_time >= $1 AND start_time <= $2 AND ${teamEventPrivacySql()} ORDER BY start_time ASC`,
         [now.toISOString(), horizon.toISOString()],
       );
       for (const t of tableEvents) {

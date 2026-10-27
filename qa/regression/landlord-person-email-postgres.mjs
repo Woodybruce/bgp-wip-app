@@ -10,6 +10,9 @@ const decl=name=>find(file,node=>(ts.isVariableStatement(node)&&node.declaration
 const privacy=evaluate(source('shared/private-mail.ts'));
 const highlights=evaluate(source('server/landlord-email-highlights.ts'));
 const module=evaluate(['LANDLORD_EMAIL_ROWS_SQL','BGP_DOMAIN','normSubject','cleanPreview','personList','groupEmailConversations'].map(decl).join('\n')+'\nexports.SQL=LANDLORD_EMAIL_ROWS_SQL;', {...privacy,...highlights});
+const privacyPattern=find('server/private-mail-store.ts',n=>ts.isVariableDeclaration(n)&&n.name.getText()==='privateAddressPattern');
+const privacyFunction=find('server/private-mail-store.ts',n=>ts.isTemplateExpression(n)&&n.head.text.startsWith('CREATE OR REPLACE FUNCTION bgp_private_mail_record'));
+const privacySql=evaluate(`const ${privacyPattern}; export const sql=${privacyFunction};`).sql;
 const nick='nick@brucegillinghampollard.com',ben='ben@brucegillinghampollard.com',manish='manish@eu.aew.com';
 
 test('Landlord person email lookup filters messages before grouping, preserves contact links and rejects unrelated/private correspondence',async()=>{
@@ -17,6 +20,7 @@ test('Landlord person email lookup filters messages before grouping, preserves c
  const pool=new pg.Pool({host:'/tmp',database:'postgres',max:1});
  try {
   await pool.query(`CREATE SCHEMA ${schema}`);await pool.query(`SET search_path TO ${schema}`);
+  await pool.query(privacySql);
   await pool.query('CREATE TABLE crm_interactions(id text,microsoft_id text,company_id text,contact_id text,subject text,type text,direction text,bgp_user text,preview text,participants jsonb,interaction_date timestamptz)');
   let n=0;
   const add=(company,staff,participants,preview,contact=null)=>pool.query('INSERT INTO crm_interactions VALUES ($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[
@@ -29,7 +33,7 @@ test('Landlord person email lookup filters messages before grouping, preserves c
   await add('aew',nick,[nick,privacy.PRIVATE_MAILBOX],'Private correspondence');
   const params=['aew',['aew.com'],[manish],nick,null,['manish-id']];
   const rows=(await pool.query(module.SQL,params)).rows;
-  assert.deepEqual(rows.map(row=>row.preview),['Private correspondence','Nested participant','Linked saved contact only','Nick earlier message']);
+  assert.deepEqual(rows.map(row=>row.preview),['Nested participant','Linked saved contact only','Nick earlier message']);
   const grouped=module.groupEmailConversations(rows,'aew.com',new Set([manish]),['aew.com']);
   assert.equal(grouped.length,1);assert.equal(grouped[0].messages,3);assert.equal(grouped[0].preview,'Nested participant');
   assert.doesNotMatch(JSON.stringify(grouped),/Ben later|Unrelated company|Private correspondence/);
@@ -45,6 +49,7 @@ test('Landlord indexed candidates retain historical and nested domain/contact ev
  const pool=new pg.Pool({host:'/tmp',database:'postgres',max:1});
  try {
   await pool.query(`CREATE SCHEMA ${schema}`);await pool.query(`SET search_path TO ${schema},public`);
+  await pool.query(privacySql);
   await pool.query('CREATE TABLE crm_interactions(id text PRIMARY KEY,microsoft_id text,company_id text,contact_id text,subject text,type text,direction text,bgp_user text,preview text,participants jsonb,interaction_date timestamptz)');
   const add=(id,participants,{company=null,contact=null,staff=nick,date='2001-01-01',type='email'}={})=>pool.query('INSERT INTO crm_interactions VALUES ($1,$1,$2,$3,$1,$4,$5,$6,$1,$7,$8)',[id,company,contact,type,'in',staff,JSON.stringify(participants),date]);
   await add('old-subdomain',['Person@EU.AEW.COM']);
@@ -75,6 +80,7 @@ test('Landlord candidate lookup uses existing lookup indexes instead of expandin
  try {
   await pool.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
   await pool.query(`CREATE SCHEMA ${schema}`);await pool.query(`SET search_path TO ${schema},public`);
+  await pool.query(privacySql);
   await pool.query('CREATE TABLE crm_interactions(id text PRIMARY KEY,microsoft_id text,company_id text,contact_id text,subject text,type text,direction text,bgp_user text,preview text,participants jsonb,interaction_date timestamptz)');
   await pool.query(`INSERT INTO crm_interactions SELECT g::text,g::text,'other',null,'Noise','email','in',$1,'Unrelated',jsonb_build_array('other'||g||'@elsewhere.com'),'2020-01-01'::timestamptz FROM generate_series(1,24000) g`,[nick]);
   await pool.query(`INSERT INTO crm_interactions VALUES ('target','target',null,null,'Target','email','in',$1,'Older relevant mail',$2,'2001-01-01')`,[nick,JSON.stringify([nick,manish])]);
@@ -88,5 +94,27 @@ test('Landlord candidate lookup uses existing lookup indexes instead of expandin
   assert.ok(nodes.some(node=>node['Index Name']==='candidate_participants_idx'),'trigram index supplies domain candidates');
   assert.ok(!nodes.some(node=>node['Node Type']==='Seq Scan'&&node['Relation Name']==='crm_interactions'),'mail log is not scanned');
   assert.equal((await pool.query(module.SQL,params)).rows[0].preview,'Older relevant mail');
+ } finally {await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await pool.end();}
+});
+
+test('private Landlord mail is excluded before the 1,500-message limit and conversation evidence',async()=>{
+ const schema=`landlord_private_limit_${randomUUID().replaceAll('-','')}`;
+ const pool=new pg.Pool({host:'/tmp',database:'postgres',max:1});
+ try {
+  await pool.query(`CREATE SCHEMA ${schema}`);await pool.query(`SET search_path TO ${schema}`);
+  await pool.query(privacySql);
+  await pool.query('CREATE TABLE crm_interactions(id text PRIMARY KEY,microsoft_id text,company_id text,contact_id text,subject text,type text,direction text,bgp_user text,preview text,participants jsonb,interaction_date timestamptz)');
+  await pool.query(`INSERT INTO crm_interactions SELECT 'private-'||g,'private-message-'||g,'aew',null,'Private terms','email','in',
+    CASE WHEN g%2=0 THEN $1 ELSE $2 END,'PRIVATE TERMS',
+    CASE WHEN g%2=0 THEN jsonb_build_array($3::text) ELSE jsonb_build_array(jsonb_build_object('emailAddress',jsonb_build_object('address',$1::text)),$3::text) END,
+    '2020-01-01'::timestamptz FROM generate_series(1,1600) g`,[privacy.PRIVATE_MAILBOX,nick,manish]);
+  await pool.query(`INSERT INTO crm_interactions VALUES('older-public','public-message','aew',null,'Public terms','email','in',$1,'The revised terms remain subject to landlord approval.',$2,'2001-01-01')`,[nick,JSON.stringify([nick,manish])]);
+  const params=['aew',['aew.com'],[manish],null,null,[]];
+  const rows=(await pool.query(module.SQL,params)).rows;
+  assert.equal(rows.length,1);assert.equal(rows[0].subject,'Public terms');
+  const grouped=module.groupEmailConversations(rows,'aew.com',new Set([manish]),['aew.com']);
+  assert.equal(grouped[0].messages,1);
+  assert.doesNotMatch(JSON.stringify(grouped),/PRIVATE TERMS|Private terms|equity@/);
+  assert.match(highlights.landlordEmailSummaryPrompt('AEW',grouped),/revised terms remain subject to landlord approval/);
  } finally {await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await pool.end();}
 });

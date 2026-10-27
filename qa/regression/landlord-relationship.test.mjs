@@ -70,6 +70,8 @@ test('evidence reads company-linked and property-linked deals plus bounded exact
  const mail=queries.find(query=>query.sql.includes('FROM crm_interactions i'));
  assert.deepEqual(mail.params,['aew',['aew.com']]);
  assert.match(mail.sql,/i.type='email'/);assert.match(mail.sql,/BETWEEN now\(\)-interval '90 days' AND now\(\)/);
+ assert.match(mail.sql,/NOT bgp_private_mail_record\(i.bgp_user, i.participants\)/);
+ assert.ok(mail.sql.indexOf('NOT bgp_private_mail_record') < mail.sql.indexOf('LIMIT 60'));
  assert.match(mail.sql,/split_part\(lower\(trim\(participant\)\),'@',2\)=domain/);
  assert.match(mail.sql,/length\(domain\)\+1\)='\.'\|\|domain/);
  assert.doesNotMatch(mail.sql,/i.preview|ILIKE/);

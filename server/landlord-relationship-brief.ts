@@ -81,6 +81,7 @@ export async function getLandlordRelationshipEvidence(companyId: string, deps: {
       LEFT JOIN users u ON lower(u.email)=lower(i.bgp_user)
       LEFT JOIN crm_contacts contact ON contact.id=i.contact_id
       WHERE i.type='email' AND i.interaction_date BETWEEN now()-interval '90 days' AND now()
+        AND NOT bgp_private_mail_record(i.bgp_user, i.participants)
         AND NULLIF(trim(i.subject),'') IS NOT NULL
         AND (i.company_id=$1 OR contact.company_id=$1 OR EXISTS (
           SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(i.participants)='array' THEN i.participants ELSE '[]'::jsonb END) participant,

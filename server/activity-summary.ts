@@ -17,12 +17,13 @@ import { getAnthropicClient } from "./utils/anthropic-client";
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { teamEventPrivacySql } from "./team-event-privacy";
 import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 
 const router = Router();
 
-const EVENT_NOISE = `title NOT ILIKE 'cancelled:%'
+const EVENT_NOISE = `${teamEventPrivacySql()} AND title NOT ILIKE 'cancelled:%'
   AND title NOT ILIKE '%team meeting (%'
   AND title NOT ILIKE '%weekly call%'
   AND title NOT ILIKE '%padel%'`;

@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { pool } from "./db";
+import { teamEventPrivacySql } from "./team-event-privacy";
 import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
 import { setPipnetCreds, clearPipnetCreds, getPipnetCredsStatus } from "./integration-credentials";
 import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds, getClientVisibleUserIds, clientBrandSliceSql } from "./company-scope";
@@ -1596,12 +1597,13 @@ export async function registerRoutes(
         ? await pool.query(
             `SELECT * FROM team_events
               WHERE start_time >= $1 AND start_time <= $2
+                AND ${teamEventPrivacySql()}
                 AND lower(trim(company_name)) = (SELECT lower(trim(name)) FROM crm_companies WHERE id = $3)
               ORDER BY start_time`,
             [now.toISOString(), end.toISOString(), teScope]
           )
         : await pool.query(
-            `SELECT * FROM team_events WHERE start_time >= $1 AND start_time <= $2 ORDER BY start_time`,
+            `SELECT * FROM team_events WHERE start_time >= $1 AND start_time <= $2 AND ${teamEventPrivacySql()} ORDER BY start_time`,
             [now.toISOString(), end.toISOString()]
           );
       res.json(result.rows);
@@ -8904,6 +8906,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
              SELECT DISTINCT lower(regexp_replace(title, '^(FW:|RE:|FWD:)\\s*', '', 'i')), start_time
              FROM team_events
              WHERE (property_id = ANY($1) OR company_name = $2)
+               AND ${teamEventPrivacySql()}
                AND start_time >= NOW()
                AND title NOT ILIKE 'cancelled:%'
                AND title NOT ILIKE '%team meeting (%'
@@ -8953,6 +8956,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
                   start_time, end_time, event_type, location, property_id
            FROM team_events
            WHERE (property_id = ANY($1) OR company_name = $2)
+             AND ${teamEventPrivacySql()}
              AND start_time >= NOW()
              AND title NOT ILIKE 'cancelled:%'
              AND title NOT ILIKE '%team meeting (%'
@@ -8971,6 +8975,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
            FROM team_events te
            LEFT JOIN crm_properties p ON te.property_id = p.id
            WHERE (te.property_id = ANY($1) OR te.company_name = $2)
+             AND ${teamEventPrivacySql("te")}
              AND te.start_time >= NOW() - INTERVAL '60 days'
              AND te.start_time <= NOW() + INTERVAL '90 days'
            ORDER BY te.start_time`,

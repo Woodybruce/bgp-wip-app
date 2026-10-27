@@ -10,6 +10,7 @@ import { delegatedAccountBelongsToUser } from "./microsoft-delegated-account";
 import { createMicrosoftDraftConsentHandlers, isMicrosoftDraftCallback } from "./microsoft-draft-consent";
 import { isPrivateMailboxAddress, PRIVATE_MAILBOX } from "./private-mail";
 import { teamDiaryCoverage, teamDiaryItems } from "./team-diary-availability";
+import { teamEventPrivacySql } from "./team-event-privacy";
 import { CLOSED_STATUSES, TERMINAL_STATUSES } from "@shared/deal-status";
 import {
   SHAREPOINT_HOST, SHAREPOINT_SITE_PATH, SHAREPOINT_ROOT_FOLDER,
@@ -1067,6 +1068,7 @@ export function setupMicrosoftRoutes(app: Express) {
                    te.created_by, te.attendees
             FROM team_events te
             WHERE te.start_time >= NOW() - INTERVAL '30 days'
+              AND ${teamEventPrivacySql("te")}
               AND lower(trim(te.company_name)) = (SELECT lower(trim(name)) FROM crm_companies WHERE id = $1)
             ORDER BY te.start_time DESC
           `, [insightsScope])
@@ -1075,6 +1077,7 @@ export function setupMicrosoftRoutes(app: Express) {
                    te.created_by, te.attendees
             FROM team_events te
             WHERE te.start_time >= NOW() - INTERVAL '30 days'
+              AND ${teamEventPrivacySql("te")}
             ORDER BY te.start_time DESC
           `);
       const recentEvents = eventsResult.rows;
@@ -1421,6 +1424,7 @@ export function setupMicrosoftRoutes(app: Express) {
           OR LOWER(te.property_name) = ANY($2)
         )
         AND te.start_time >= NOW() - INTERVAL '90 days'
+        AND ${teamEventPrivacySql("te")}
         AND te.start_time < NOW()
         ORDER BY te.start_time DESC
         LIMIT 10

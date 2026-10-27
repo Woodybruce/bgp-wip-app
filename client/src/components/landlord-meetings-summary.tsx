@@ -92,9 +92,9 @@ export function LandlordMeetingsSummary({ companyId, companyName = "this landlor
   const recent = (data?.meetings || []).filter(meeting => Number.isFinite(Date.parse(meeting.end)) && Date.parse(meeting.end) < Date.now())
     .sort((a, b) => Date.parse(b.start) - Date.parse(a.start));
   const summary = useQuery<{ summary: { text: string; at: string } | null }>({
-    queryKey: ["/api/crm/landlords", companyId, "meeting-summary", "recent-next-v2", personQuery, landlordMeetingSummarySignature(data, dataUpdatedAt || Date.now())],
+    queryKey: ["/api/crm/landlords", companyId, "meeting-summary", "recent-next-workstreams-v3", personQuery, landlordMeetingSummarySignature(data, dataUpdatedAt || Date.now())],
     queryFn: async () => (await apiRequest("POST", `/api/crm/landlords/${encodeURIComponent(companyId)}/meetings/summary${personQuery}`, {})).json(),
-    enabled: (!historyOnly || open) && !isError && !!data?.meetings.length,
+    enabled: (!historyOnly || open) && !isError && !!data,
     staleTime: 5 * 60_000,
     retry: false,
   });
@@ -131,7 +131,7 @@ export function LandlordMeetingsSummary({ companyId, companyName = "this landlor
         <DialogDescription>Linked calendar invitations · London time. Past invitations are not confirmation that a meeting took place.</DialogDescription>
         <section className="rounded-lg border border-border bg-card p-3 space-y-2">
           <h3 className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-primary" />Meeting summary</h3>
-          {!isError && !!data?.meetings.length && summary.data?.summary?.text ? <AiCommentary text={summary.data.summary.text} size="sm" />
+          {!isError && summary.data?.summary?.text ? <AiCommentary text={summary.data.summary.text} size="sm" />
             : <p className="text-sm text-muted-foreground">{summary.isFetching ? "Reading the invitations…" : "A summary is not available yet. The invitations are below."}</p>}
         </section>
         <div className="flex flex-wrap items-center gap-2">

@@ -14,17 +14,17 @@ function fixture(data, error = false, summaryText = null) {
   const file = 'client/src/components/landlord-meetings-summary.tsx';
   const ast = ts.createSourceFile(file, source(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const script = ast.statements.filter(node => !ts.isImportDeclaration(node)).map(node => node.getText(ast)).join('\n');
-  let query, mutation;
+  let query, mutation, summaryQuery;
   const invalidations = [];
   const sandbox = { exports: {}, require, Date: TestDate, encodeURIComponent, landlordActivityPersonQuery, useEffect() {},
     Calendar: 'Calendar', MapPin: 'MapPin', RefreshCw: 'RefreshCw', Users: 'Users', Sparkles: 'Sparkles', Dialog: 'Dialog', DialogTitle: 'DialogTitle', DialogDescription: 'DialogDescription', DialogContent: 'DialogContent', Input: 'Input', LandlordActivityCard: 'LandlordActivityCard', AiCommentary: 'AiCommentary', Button: 'Button', MeetingViewerDialog: 'MeetingViewerDialog',
     useState: initial => [initial, () => {}], useQueryClient: () => ({ invalidateQueries(options) { invalidations.push(options); } }), getAuthHeaders: () => ({}),
-    useQuery: options => { if (options.queryKey[2] === 'meeting-summary') return { data: {summary: summaryText ? {text:summaryText} : null}, isFetching: false }; query = options; return { data, isLoading: false, isError: error }; },
+    useQuery: options => { if (options.queryKey[2] === 'meeting-summary') { summaryQuery=options; return { data: {summary: summaryText ? {text:summaryText} : null}, isFetching: false }; } query = options; return { data, isLoading: false, isError: error }; },
     useMutation: options => { mutation = options; return { isPending: false, isError: false }; },
     apiRequest: async () => ({ json: async () => ({ running: true }) }),
   };
   vm.runInNewContext(ts.transpileModule(script, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText, sandbox);
-  return { ...sandbox.exports, invalidations, get query() { return query; }, get mutation() { return mutation; } };
+  return { ...sandbox.exports, invalidations, get query() { return query; }, get mutation() { return mutation; }, get summaryQuery() { return summaryQuery; } };
 }
 const meeting = (id, start, end) => ({ id, companyId: 'aew', companyName: 'AEW', subject: 'AEW catch-up', start, end, location: 'Office',
   participants: [{ name: 'Manish', email: 'manish@eu.aew.com' }, { name: 'Ben Sykes', email: 'ben@eu.aew.com' }],
@@ -129,4 +129,14 @@ test('recent and next summary paragraphs are visible together without changing t
   assert.equal(nodes(compact).find(node=>node.type==='AiCommentary').props.text,summary);
   assert.equal(nodes(tree).filter(node=>node.props['data-testid']==='landlord-meeting-preview').length,2);
   assert.ok(nodes(tree).some(node=>node.props['data-testid']==='landlord-meetings-dialog'));
+});
+
+test('saved meeting notes can be summarised even when no linked calendar invitation is present',()=>{
+  const summary='**Recent:** Lizzie’s saved meeting note records the Trinity leasing follow-up.\n\n**Next:** No invitation is linked in the checked diaries.';
+  const app=fixture({meetings:[],coverage},false,summary);
+  const tree=app.LandlordMeetingsSummary({companyId:'landsec'});
+  assert.equal(app.summaryQuery.enabled,true);
+  assert.equal(nodes(tree).filter(node=>node.type==='AiCommentary' && node.props.text===summary).length,2);
+  const failed=fixture(undefined,true);failed.LandlordMeetingsSummary({companyId:'landsec'});
+  assert.equal(failed.summaryQuery.enabled,false);
 });

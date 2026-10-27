@@ -11,7 +11,7 @@ import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { LANDLORD_CATALOGUE_PREDICATE, landlordDomains } from "./landlord-meeting-matching";
 import { isPrivateEmailRecord, PRIVATE_MAIL_POLICY_VERSION } from "./private-mail";
-import { cleanLandlordEmailPreview, selectLandlordEmailHighlights, landlordEmailSummaryPrompt, LANDLORD_EMAIL_SUMMARY_VERSION } from "./landlord-email-highlights";
+import { cleanLandlordEmailPreview, selectLandlordEmailHighlights, selectLandlordEmailExcerpts, landlordEmailSummaryPrompt, LANDLORD_EMAIL_SUMMARY_VERSION } from "./landlord-email-highlights";
 import { landlordPersonRequest, resolveLandlordActivityPerson, LandlordPersonScopeError, type LandlordPersonScope } from "./landlord-activity-person";
 
 const anthropic = getAnthropicClient(true);
@@ -58,6 +58,7 @@ export const LANDLORD_EMAIL_ROWS_SQL = `WITH search_patterns AS MATERIALIZED (
         i.subject, i.direction, i.bgp_user, i.preview, i.participants, i.interaction_date
       FROM candidate_ids candidate JOIN crm_interactions i ON i.id=candidate.id
       WHERE i.interaction_date <= now() AND (i.type IS NULL OR i.type ILIKE '%email%')
+        AND NOT bgp_private_mail_record(i.bgp_user, i.participants)
         AND ($4::text IS NULL OR lower(trim(i.bgp_user))=$4 OR i.contact_id=$5 OR EXISTS (SELECT 1 FROM jsonb_array_elements(
           CASE WHEN jsonb_typeof(i.participants)='array' THEN i.participants ELSE '[]'::jsonb END) participant
           WHERE lower(trim(CASE WHEN jsonb_typeof(participant)='string' THEN participant #>> '{}'
@@ -72,6 +73,7 @@ export const LANDLORD_EMAIL_ROWS_SQL = `WITH search_patterns AS MATERIALIZED (
       ORDER BY COALESCE(i.microsoft_id, i.subject || '|' || i.interaction_date::text), i.interaction_date DESC
     ) messages ORDER BY interaction_date DESC LIMIT 1500`;
 
+export type LandlordEmailExcerpt = { date: string; text: string };
 export type EmailConversation = {
   subject: string;
   messages: number;
@@ -83,6 +85,7 @@ export type EmailConversation = {
   firms?: string[];
   preview: string;
   previewAt?: string;
+  excerpts?: LandlordEmailExcerpt[];
 };
 
 const normSubject = (subject: string | null) => (subject || "(no subject)").replace(/^\s*((re|fw|fwd|aw|sv)\s*(\[\d+\])?\s*:\s*)+/i, "").replace(/\s+/g, " ").trim() || "(no subject)";
@@ -101,7 +104,7 @@ const personList = (participants: unknown, structured = false): string[] => {
 
 export function groupEmailConversations(rows: any[], domain: string, landlordEmails?: Set<string>, domains = [domain.toLowerCase()]): EmailConversation[] {
   const at = `@${domain.toLowerCase()}`;
-  const byKey = new Map<string, EmailConversation & { _bgp: Set<string>; _brand: Set<string>; _others: Set<string> }>();
+  const byKey = new Map<string, EmailConversation & { _bgp: Set<string>; _brand: Set<string>; _others: Set<string>; _excerpts: LandlordEmailExcerpt[] }>();
   const sorted = rows.filter(row=>!isPrivateEmailRecord(row)).sort((a, b) => new Date(b.interaction_date).getTime() - new Date(a.interaction_date).getTime());
   for (const row of sorted) {
     const subject = normSubject(row.subject);
@@ -110,12 +113,13 @@ export function groupEmailConversations(rows: any[], domain: string, landlordEma
     const preview = landlordEmails ? cleanLandlordEmailPreview(row.preview) : cleanPreview(row.preview);
     let conv = byKey.get(key);
     if (!conv) {
-      conv = { subject, messages: 0, first: date, last: date, bgp: [], brand: [], others: [], preview, ...(landlordEmails && preview ? {previewAt:date} : {}), _bgp: new Set(), _brand: new Set(), _others: new Set() };
+      conv = { subject, messages: 0, first: date, last: date, bgp: [], brand: [], others: [], preview, ...(landlordEmails && preview ? {previewAt:date} : {}), _bgp: new Set(), _brand: new Set(), _others: new Set(), _excerpts: [] };
       byKey.set(key, conv);
     }
     conv.messages++;
     if (date < conv.first) conv.first = date;
     if (!conv.preview && preview) { conv.preview = preview; if(landlordEmails)conv.previewAt=date; }
+    if (landlordEmails) conv._excerpts.push({date,text:cleanLandlordEmailPreview(row.preview,500)});
     const people = personList(row.participants, !!landlordEmails);
     if (row.bgp_user) people.push(String(row.bgp_user).toLowerCase());
     for (const p of people) {
@@ -124,9 +128,11 @@ export function groupEmailConversations(rows: any[], domain: string, landlordEma
       else conv._others.add(p);
     }
   }
-  return Array.from(byKey.values()).map(({ _bgp, _brand, _others, ...conv }) => ({
-    ...conv, bgp: Array.from(_bgp), brand: Array.from(_brand), others: Array.from(_others),
-  }));
+  return Array.from(byKey.values()).map(({ _bgp, _brand, _others, _excerpts, ...conv }) => {
+    const excerpts = landlordEmails ? selectLandlordEmailExcerpts(_excerpts) : undefined;
+    return {...conv, bgp:Array.from(_bgp),brand:Array.from(_brand),others:Array.from(_others),
+      ...(excerpts ? {excerpts,...(excerpts[0] ? {preview:cleanLandlordEmailPreview(excerpts[0].text),previewAt:excerpts[0].date} : {})} : {})};
+  });
 }
 
 async function brandFor(companyId: string) {
@@ -234,7 +240,7 @@ export function registerBrandEmailThreadRoutes(router: Router) {
       let lastErr: any = null;
       for (const model of MODELS) {
         try {
-          const msg = await anthropic.messages.create({ model, max_tokens: 400, messages: [{ role: "user", content: prompt }] }, { timeout: 30_000, maxRetries: 0 });
+          const msg = await anthropic.messages.create({ model, max_tokens: out.company.is_landlord ? 750 : 400, messages: [{ role: "user", content: prompt }] }, { timeout: 30_000, maxRetries: 0 });
           text = msg.content.map((b: any) => (b.type === "text" ? b.text : "")).join("").trim();
           if (text) break;
         } catch (e: any) { lastErr = e; }
