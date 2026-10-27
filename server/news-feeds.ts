@@ -926,7 +926,7 @@ Respond in JSON format:
   ]
 }`
           },
-          { role: "user", content: articlesText },
+          { role: "user", content: `Return a JSON object with the article scores, tags and factual summaries in the specified format. Score only the supplied articles:\n\n${articlesText}` },
         ],
         max_completion_tokens: 2048,
         response_format: { type: "json_object" },
