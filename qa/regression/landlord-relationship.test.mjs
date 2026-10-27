@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRequire } from 'node:module';
-import { getLandlordRelationshipEvidence, renderLandlordRelationshipBrief, landlordChatEvidencePrompt, landlordChatHistory, guardLandlordSaveClaim, landlordConversationUpdates, isInternalLandlordThread } from '../../server/landlord-relationship-brief.ts';
+import { getLandlordRelationshipEvidence, renderLandlordRelationshipBrief, landlordChatEvidencePrompt, landlordChatHistory, guardLandlordSaveClaim, landlordConversationUpdates, isInternalLandlordThread, landlordDealRelationship, landlordCorrespondence } from '../../server/landlord-relationship-brief.ts';
 
 const fixture = () => ({ company: { id:'aew', name:'AEW' }, coverage: { status:'current' },
   nextMeeting: { subject:'AEW / BGP catch-up', start:'2026-10-28T10:00:00Z', participants:[{name:'Manish',email:'manish@eu.aew.com'},{name:'Ben Sykes',email:'ben@eu.aew.com'}],bgpParticipants:[{name:'Nick',email:'nick@bgp.example'},{name:'Vics',email:'vics@bgp.example'}] },
@@ -22,6 +22,57 @@ test('landlord relationship starts with dated meeting and participants before te
 test('mail volume and previous AI text cannot invent warmth or change the factual summary',()=>{
  const evidence=fixture(), expected=renderLandlordRelationshipBrief(evidence);
  assert.equal(renderLandlordRelationshipBrief({...evidence, interactions_90d:999, old_summary:'AEW is warm with a current mandate'}),expected);
+});
+
+test('relationship take separates tenant representation at linked assets from landlord-side deals and preserves legacy notes and stages',()=>{
+ const text=renderLandlordRelationshipBrief({...fixture(),
+  properties:[{name:'New Oxford Street',status:'BGP Instruction'}],
+  deals:[{name:'Dough T2',deal_ref:3629,status:'SOL',property_name:'New Oxford Street',landlord_id:'aew',bgp_acting_for:'landlord',notes:'Continues as a legacy deal after the wider disinstruction.'},
+   {name:'DanDan',deal_ref:4001,status:'NEG',property_name:'New Oxford Street',landlord_id:'aew',bgp_acting_for:'tenant',tenant_name:'DanDan'}],
+  communications:{items:[{subject:'RE: AEW catch-up',date:'2026-10-26',bgpName:'Nick',contactName:'Manish'}]},
+  interviewMentions:[{interviewee:'Lizzie',meetingDate:'2026-10-20',excerpt:'AEW: confirm the legacy deal position.'}]});
+ assert.match(text,/New Oxford Street \(CRM status: BGP Instruction\)/);
+ assert.match(text,/Links do not confirm a current instruction/);
+ assert.match(text,/Dough T2 #3629 — with solicitors at New Oxford Street \(recorded landlord-side deal\)/);
+ assert.match(text,/CRM note: “Continues as a legacy deal/);
+ assert.match(text,/DanDan #4001 — negotiating at New Oxford Street \(tenant representation\)/);
+ assert.match(text,/26 Oct 2026, Nick \/ Manish/);
+ assert.match(text,/Saved subjects, not confirmed outcomes/);
+ assert.match(text,/Lizzie, 20 Oct 2026/);
+ assert.doesNotMatch(text,/DanDan[^\n]*landlord-side deal|warm|strong relationship|key decision/);
+});
+
+test('property/deal links alone never establish an instruction and tenant representation overrides a landlord counterparty field',()=>{
+ assert.equal(landlordDealRelationship({bgp_acting_for:'tenant',landlord_id:'aew'},'aew').instruction,false);
+ assert.equal(landlordDealRelationship({bgp_acting_for:'landlord',landlord_id:'other',company_deal_link:true,at_linked_property:true},'aew').instruction,false);
+ assert.equal(landlordDealRelationship({landlord_id:'aew'},'aew').instruction,false);
+ assert.equal(landlordDealRelationship({bgp_acting_for:'landlord',landlord_id:'aew'},'aew').instruction,true);
+ assert.equal(landlordDealRelationship({deal_type:'Lease Disposal',bgp_acting_for:'landlord',landlord_id:'aew'},'aew').kind,'conflict');
+ assert.equal(landlordDealRelationship({deal_type:'Lease Disposal',landlord_id:'aew'},'aew').kind,'tenant_rep');
+});
+
+test('recent correspondence deduplicates reply chains and exposes subject metadata without email bodies or invented outcomes',()=>{
+ const result=landlordCorrespondence([{id:'latest',subject:'Re: RE: AEW meeting',interaction_date:'2026-10-27',preview:'Private body',bgp_name:'Nick'},
+  {id:'older',subject:'AEW meeting',interaction_date:'2026-10-26'},{id:'different',subject:'New Oxford Street',interaction_date:'2026-10-25'}]);
+ assert.deepEqual(result.map(row=>row.id),['latest','different']);
+ assert.equal(result[0].subject,'AEW meeting');assert.equal(result[0].bgpName,'Nick');
+ assert.match(result[0].source,/contents and outcome not reviewed/);
+ assert.doesNotMatch(JSON.stringify(result),/Private body|preview/);
+});
+
+test('evidence reads company-linked and property-linked deals plus bounded exact-domain correspondence',async()=>{
+ const queries=[];
+ const q={query:async(sql,params)=>{queries.push({sql,params});if(sql.includes('AS is_landlord'))return{rows:[{id:'aew',name:'AEW',domain:'aew.com',is_landlord:true}]};return{rows:[]};}};
+ await getLandlordRelationshipEvidence('aew',{pool:q,relationshipTeam:async()=>null,meetingDigest:async()=>({meetings:[],nextMeeting:null,coverage:{status:'current'}}),interviews:async()=>[]});
+ const deals=queries.find(query=>query.sql.includes('LEFT(d.comments'));
+ assert.match(deals.sql,/crm_company_deals/);assert.match(deals.sql,/cp.property_id=p.id AND cp.company_id=\$1/);
+ assert.match(deals.sql,/p.asset_manager_id=\$1/);assert.match(deals.sql,/d.bgp_acting_for/);
+ const mail=queries.find(query=>query.sql.includes('FROM crm_interactions i'));
+ assert.deepEqual(mail.params,['aew',['aew.com']]);
+ assert.match(mail.sql,/i.type='email'/);assert.match(mail.sql,/BETWEEN now\(\)-interval '90 days' AND now\(\)/);
+ assert.match(mail.sql,/split_part\(lower\(trim\(participant\)\),'@',2\)=domain/);
+ assert.match(mail.sql,/length\(domain\)\+1\)='\.'\|\|domain/);
+ assert.doesNotMatch(mail.sql,/i.preview|ILIKE/);
 });
 
 test('compact relationship summary retains the work and reported changes without repeating meeting or team panels',()=>{
@@ -65,7 +116,7 @@ test('unsupported or failed CRM save claims are replaced, but a real successful 
 
 test('tenant companies never load landlord diary or interview data',async()=>{
  let reads=0;
- const evidence=await getLandlordRelationshipEvidence('brand',{pool:{query:async()=>({rows:[{id:'brand',name:'Brand',is_landlord:false}]})},meetingDigest:async()=>{reads++;throw Error('Must not read');},interviews:async()=>{reads++;return[];}});
+ const evidence=await getLandlordRelationshipEvidence('brand',{pool:{query:async()=>({rows:[{id:'brand',name:'Brand',is_landlord:false}]})},relationshipTeam:async()=>null,meetingDigest:async()=>{reads++;throw Error('Must not read');},interviews:async()=>{reads++;return[];}});
  assert.equal(evidence,null);assert.equal(reads,0);
 });
 
@@ -87,7 +138,7 @@ test('human disinstruction and legacy-deal reports stay attributed, while greeti
 test('conversation evidence is restricted to the requesting viewer’s linked threads',async()=>{
  const queries=[];
  const q={query:async(sql,params)=>{queries.push({sql,params});if(sql.includes('AS is_landlord'))return{rows:[{id:'aew',name:'AEW',is_landlord:true}]};return{rows:[]};}};
- await getLandlordRelationshipEvidence('aew',{pool:q,viewerId:'woody',meetingDigest:async()=>({meetings:[],nextMeeting:null,coverage:{status:'current'}}),interviews:async()=>[]});
+ await getLandlordRelationshipEvidence('aew',{pool:q,viewerId:'woody',relationshipTeam:async()=>null,meetingDigest:async()=>({meetings:[],nextMeeting:null,coverage:{status:'current'}}),interviews:async()=>[]});
  const read=queries.find(q=>q.sql.includes('FROM chat_messages'));
  assert.deepEqual(read.params,['aew','woody',null]);assert.match(read.sql,/t.created_by=\$2 OR EXISTS/);assert.match(read.sql,/tm.user_id=\$2/);assert.match(read.sql,/m.role='user'/);
 });
@@ -95,10 +146,25 @@ test('conversation evidence is restricted to the requesting viewer’s linked th
 test('group evidence cannot import reports from other company threads the sender can access',async()=>{
  const queries=[];
  const q={query:async(sql,params)=>{queries.push({sql,params});if(sql.includes('AS is_landlord'))return{rows:[{id:'aew',name:'AEW',is_landlord:true}]};return{rows:[]};}};
- await getLandlordRelationshipEvidence('aew',{pool:q,viewerId:'woody',conversationThreadId:'current-group',meetingDigest:async()=>({meetings:[],nextMeeting:null,coverage:{status:'current'}}),interviews:async()=>[]});
+ await getLandlordRelationshipEvidence('aew',{pool:q,viewerId:'woody',conversationThreadId:'current-group',relationshipTeam:async()=>null,meetingDigest:async()=>({meetings:[],nextMeeting:null,coverage:{status:'current'}}),interviews:async()=>[]});
  const read=queries.find(q=>q.sql.includes('FROM chat_messages'));
  assert.deepEqual(read.params,['aew','woody','current-group']);
  assert.match(read.sql,/\(\$3::text IS NULL OR t.id=\$3\)/);
+});
+
+test('relationship take shares the full team model while group context excludes private other-thread activity',async()=>{
+ const q={query:async(sql)=>({rows:sql.includes('AS is_landlord')?[{id:'aew',name:'AEW',is_landlord:true}]:[]})};
+ const member={id:'nick',name:'Nick',assigned:true,assignedRole:'Relationship lead',contexts:[{role:'Tenant representative',sources:[{kind:'deal',id:'dandan'}]}],emailCount:4,meetingCount:1};
+ for(const conversationThreadId of [undefined,'current-group']) {
+  let options;
+  const evidence=await getLandlordRelationshipEvidence('aew',{pool:q,viewerId:'woody',conversationThreadId,
+   relationshipTeam:async(id,input)=>{assert.equal(id,'aew');options=input;return{members:[member]};},
+   meetingDigest:async()=>({meetings:[],nextMeeting:null,coverage:{status:'current'}}),interviews:async()=>[]});
+  assert.equal(options.viewerId,conversationThreadId?undefined:'woody');
+  assert.equal(evidence.bgpTeam[0].role,'Relationship lead');
+  assert.equal(evidence.bgpTeam[0].source,'assigned');
+  assert.deepEqual(evidence.relationshipTeam.members,[member]);
+ }
 });
 
 test('landlord group evidence refuses external, unknown or missing members before loading staff diary context',async()=>{
@@ -146,7 +212,7 @@ test('both landlord evidence entry points use the shared staff predicate, token 
 test('landlord evidence reads records and exposes failed sources instead of inventing activity',async()=>{
  const queries=[];
  const q={query:async(sql)=>{queries.push(sql); if(sql.includes('AS is_landlord'))return{rows:[{id:'aew',name:'AEW',is_landlord:true}]}; if(sql.includes('LEFT(d.comments'))throw Error('unavailable');return{rows:[]};}};
- const evidence=await getLandlordRelationshipEvidence('aew',{pool:q,meetingDigest:async()=>({meetings:[],nextMeeting:null,coverage:{status:'not_synced'}}),interviews:async()=>[]});
+ const evidence=await getLandlordRelationshipEvidence('aew',{pool:q,relationshipTeam:async()=>null,meetingDigest:async()=>({meetings:[],nextMeeting:null,coverage:{status:'not_synced'}}),interviews:async()=>[]});
  assert.deepEqual(evidence.issues,['Deal records unavailable']);
  assert.deepEqual(evidence.deals,[]);
  assert.ok(queries.every(sql=>!/^\s*(UPDATE|INSERT|DELETE)/.test(sql)));

@@ -40,3 +40,15 @@ test('summary prompt names people and copied firms from the conversations', () =
   assert.match(prompt, /other people: Richard \(etchgroup\.com\)/);
   assert.match(prompt, /sender not recorded/);
 });
+
+
+test('Landlord email grouping accepts exact contacts and genuine subdomains without changing Brand grouping', () => {
+  const people = ['nick@brucegillinghampollard.com', 'manish@eu.aew.com', 'other@notaew.com', 'known@agency.test'];
+  const rows = [{ subject: 'Catch up', participants: people, interaction_date: '2026-10-27T11:00:00Z' }];
+  const landlord = groupEmailConversations(rows, 'aew.com', new Set(['known@agency.test']), ['aew.com'])[0];
+  assert.deepEqual([...landlord.brand].sort(), ['known@agency.test', 'manish@eu.aew.com']);
+  assert.deepEqual([...landlord.others], ['other@notaew.com']);
+  const brand = groupEmailConversations(rows, 'aew.com')[0];
+  assert.deepEqual([...brand.brand], []);
+  assert.equal(brand.others.length, 3);
+});

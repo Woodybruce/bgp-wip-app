@@ -6,6 +6,7 @@ import { getAppToken } from './shared-mailbox';
 import { isClientRequestUser, resolveCompanyScope } from './company-scope';
 import { parseGraphDateTime } from './viewing-matching';
 import { LANDLORD_CATALOGUE_PREDICATE, matchLandlordMeeting, londonWeek, type LandlordCatalogueEntry } from './landlord-meeting-matching';
+import { registerLandlordMeetingSummaryRoutes } from './landlord-meeting-summary';
 
 type Queryable = { query: (text: string, values?: any[]) => Promise<{ rows: any[] }> };
 const PREFIX = 'landlord_diary_v1:';
@@ -381,6 +382,7 @@ async function staffOnly(req: Request, res: Response): Promise<boolean> {
 }
 
 export function registerLandlordMeetingRoutes(app: Express): void {
+  registerLandlordMeetingSummaryRoutes(app, requireAuth);
   app.get('/api/crm/landlords/meetings/week', requireAuth, async (req,res) => {
     try { if (await staffOnly(req,res)) res.json(await getLandlordMeetingDigest({ weekOnly: true })); }
     catch { res.status(503).json({ error: 'Landlord diary summary is unavailable. No meetings have been removed.' }); }

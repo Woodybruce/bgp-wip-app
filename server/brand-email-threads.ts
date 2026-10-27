@@ -4,10 +4,12 @@
 // be able to see summary of those ... understand the context, who to etc").
 // Staff-only: built from BGP's correspondence log (crm_interactions).
 import Anthropic from "@anthropic-ai/sdk";
+import { createHash } from "node:crypto";
 import { getAnthropicClient } from "./utils/anthropic-client";
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { LANDLORD_CATALOGUE_PREDICATE, landlordDomains } from "./landlord-meeting-matching";
 
 const anthropic = getAnthropicClient(true);
 const MODELS = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"];
@@ -52,7 +54,7 @@ const personList = (participants: unknown): string[] => {
   return list.map(p => String(p || "").trim().toLowerCase()).filter(p => p.includes("@"));
 };
 
-export function groupEmailConversations(rows: any[], domain: string): EmailConversation[] {
+export function groupEmailConversations(rows: any[], domain: string, landlordEmails?: Set<string>, domains = [domain.toLowerCase()]): EmailConversation[] {
   const at = `@${domain.toLowerCase()}`;
   const byKey = new Map<string, EmailConversation & { _bgp: Set<string>; _brand: Set<string>; _others: Set<string> }>();
   const sorted = [...rows].sort((a, b) => new Date(b.interaction_date).getTime() - new Date(a.interaction_date).getTime());
@@ -72,7 +74,7 @@ export function groupEmailConversations(rows: any[], domain: string): EmailConve
     if (row.bgp_user) people.push(String(row.bgp_user).toLowerCase());
     for (const p of people) {
       if (p.endsWith(BGP_DOMAIN)) conv._bgp.add(p);
-      else if (p.endsWith(at)) conv._brand.add(p);
+      else if (landlordEmails ? landlordEmails.has(p) || domains.some(d => p.split("@")[1] === d || p.split("@")[1]?.endsWith(`.${d}`)) : p.endsWith(at)) conv._brand.add(p);
       else conv._others.add(p);
     }
   }
@@ -82,7 +84,7 @@ export function groupEmailConversations(rows: any[], domain: string): EmailConve
 }
 
 async function brandFor(companyId: string) {
-  const c = (await pool.query(`SELECT id, name, domain, domain_url, ai_generated_fields FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+  const c = (await pool.query(`SELECT c.id, c.name, c.domain, c.domain_url, c.ai_generated_fields, (${LANDLORD_CATALOGUE_PREDICATE}) AS is_landlord FROM crm_companies c WHERE c.id = $1`, [companyId])).rows[0];
   if (!c) return null;
   const domain = String(c.domain || c.domain_url || "").replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").toLowerCase();
   return { ...c, domain };
@@ -97,19 +99,31 @@ async function staffOnly(req: Request, res: Response) {
 async function loadConversations(companyId: string) {
   const c = await brandFor(companyId);
   if (!c) return null;
-  if (!c.domain) return { company: c, conversations: [] as EmailConversation[] };
-  const rows = (await pool.query(BRAND_EMAIL_ROWS_SQL, [`%@${c.domain}`, companyId])).rows;
-  const conversations = groupEmailConversations(rows, c.domain);
+  if (!c.domain && !c.is_landlord) return { company: c, conversations: [] as EmailConversation[] };
+  const domains = c.is_landlord ? landlordDomains({ ...c, contacts: [] }) : [c.domain];
+  const contacts = c.is_landlord ? (await pool.query(`SELECT lower(trim(email)) AS email FROM crm_contacts WHERE company_id=$1 AND email IS NOT NULL`, [companyId])).rows.map(row => row.email) : [];
+  const rows = c.is_landlord ? (await pool.query(`SELECT * FROM (
+      SELECT DISTINCT ON (COALESCE(i.microsoft_id, i.subject || '|' || i.interaction_date::text))
+        i.subject, i.direction, i.bgp_user, i.preview, i.participants, i.interaction_date
+      FROM crm_interactions i WHERE i.interaction_date <= now() AND (i.type IS NULL OR i.type ILIKE '%email%')
+        AND (i.company_id=$1 OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(
+          CASE WHEN jsonb_typeof(i.participants)='array' THEN i.participants ELSE '[]'::jsonb END) p
+          WHERE lower(trim(p))=ANY($3::text[]) OR EXISTS (SELECT 1 FROM unnest($2::text[]) d
+            WHERE split_part(lower(trim(p)), '@', 2)=d OR right(split_part(lower(trim(p)), '@', 2), length(d)+1)='.' || d)))
+      ORDER BY COALESCE(i.microsoft_id, i.subject || '|' || i.interaction_date::text), i.interaction_date DESC
+    ) messages ORDER BY interaction_date DESC LIMIT 1500`, [companyId, domains, contacts])).rows
+    : (await pool.query(BRAND_EMAIL_ROWS_SQL, [`%@${c.domain}`, companyId])).rows;
+  const conversations = groupEmailConversations(rows, c.domain, c.is_landlord ? new Set<string>(contacts) : undefined, domains);
   // Name the other firms copied in from the CRM by their email domain
   // (cwg.com → Canary Wharf Group), falling back to the domain itself.
-  const domains = Array.from(new Set(conversations.flatMap(conv => conv.others.map(o => o.split("@")[1]))));
+  const otherDomains = Array.from(new Set(conversations.flatMap(conv => conv.others.map(o => o.split("@")[1]))));
   const firmByDomain = new Map<string, string>();
-  if (domains.length) {
+  if (otherDomains.length) {
     const hits = await pool.query(
       `SELECT DISTINCT ON (d) d, name FROM (
          SELECT LOWER(REGEXP_REPLACE(REGEXP_REPLACE(COALESCE(domain, domain_url, ''), '^https?://(www\.)?', '', 'i'), '/.*$', '')) AS d, name
            FROM crm_companies WHERE merged_into_id IS NULL) x
-        WHERE d = ANY($1) ORDER BY d, length(name)`, [domains]).catch(() => ({ rows: [] as any[] }));
+        WHERE d = ANY($1) ORDER BY d, length(name)`, [otherDomains]).catch(() => ({ rows: [] as any[] }));
     for (const row of hits.rows) firmByDomain.set(row.d, row.name);
   }
   for (const conv of conversations) conv.firms = Array.from(new Set(conv.others.map(o => firmByDomain.get(o.split("@")[1]) || o.split("@")[1])));
@@ -117,6 +131,7 @@ async function loadConversations(companyId: string) {
 }
 
 const nameFromEmail = (email: string) => email.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, ch => ch.toUpperCase());
+const landlordEmailFingerprint = (conversations: EmailConversation[]) => createHash("sha256").update(JSON.stringify(conversations)).digest("hex");
 
 export function emailSummaryPrompt(brand: string, conversations: EmailConversation[]) {
   const lines = conversations.slice(0, 25).map(conv =>
@@ -137,7 +152,9 @@ export function registerBrandEmailThreadRoutes(router: Router) {
       if (!out) return res.status(404).json({ error: "Company not found" });
       const cached = out.company.ai_generated_fields?.email_summary || null;
       const last = out.conversations[0]?.last || null;
-      res.json({ domain: out.company.domain, conversations: out.conversations.slice(0, 200), total: out.conversations.length, summary: cached && cached.last === last ? cached : null });
+      const evidenceKey = out.company.is_landlord ? landlordEmailFingerprint(out.conversations) : undefined;
+      res.json({ domain: out.company.domain, conversations: out.conversations.slice(0, 200), total: out.conversations.length, evidenceKey,
+        summary: cached && cached.last === last && (!out.company.is_landlord || cached.evidenceKey === evidenceKey) ? cached : null });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
@@ -148,6 +165,7 @@ export function registerBrandEmailThreadRoutes(router: Router) {
       const out = await loadConversations(companyId);
       if (!out) return res.status(404).json({ error: "Company not found" });
       if (!out.conversations.length) return res.json({ summary: null });
+      const evidenceKey = out.company.is_landlord ? landlordEmailFingerprint(out.conversations) : undefined;
       const prompt = emailSummaryPrompt(out.company.name, out.conversations);
       let text = "";
       let lastErr: any = null;
@@ -159,7 +177,11 @@ export function registerBrandEmailThreadRoutes(router: Router) {
         } catch (e: any) { lastErr = e; }
       }
       if (!text) return res.status(502).json({ error: `Summary unavailable: ${lastErr?.message || "no response"}` });
-      const summary = { text, at: new Date().toISOString(), last: out.conversations[0].last };
+      if (out.company.is_landlord) {
+        const latest = await loadConversations(companyId);
+        if (!latest || landlordEmailFingerprint(latest.conversations) !== evidenceKey) return res.json({ summary: null, evidenceKey: latest ? landlordEmailFingerprint(latest.conversations) : null });
+      }
+      const summary = { text, at: new Date().toISOString(), last: out.conversations[0].last, ...(evidenceKey ? { evidenceKey } : {}) };
       await pool.query(`UPDATE crm_companies SET ai_generated_fields = COALESCE(ai_generated_fields, '{}'::jsonb) || jsonb_build_object('email_summary', $2::jsonb) WHERE id = $1`, [companyId, JSON.stringify(summary)]);
       res.json({ summary });
     } catch (err: any) { res.status(500).json({ error: err.message }); }

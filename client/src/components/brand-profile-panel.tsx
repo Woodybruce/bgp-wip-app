@@ -38,8 +38,11 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import { LandlordMeetingsSummary } from "@/components/landlord-meetings-summary";
+import { LandlordEmailSummary } from "@/components/landlord-email-summary";
+import { LandlordRelationshipTeam } from "@/components/landlord-relationship-team";
 import { LandlordInterviewNotes } from "@/components/landlord-interview-notes";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
+import { LandlordChatBubble } from "@/components/landlord-chat-bubble";
 import { MemberAvatar } from "@/components/ClientTeamOrgChart";
 import { BGP_ACCOUNT_ROLES, canonicalBgpRole } from "@shared/bgp-account-roles";
 import { BrandEmailHistory } from "@/components/brand-email-history";
@@ -2271,8 +2274,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         {refreshStatus}
         <div data-testid="landlord-relationship-brief" className="[&_[data-testid=ai-commentary]]:text-sm [&_[data-testid=ai-commentary]]:leading-relaxed">
           <BgpTakeStrip companyId={companyId} tab="activity" entities={commentaryEntities} landlord={!isClientViewer}
-            leading={!isClientViewer && <LandlordMeetingsSummary key={companyId} companyId={companyId} />}
-            footer={relationshipSummary} />
+            leading={!isClientViewer && <div className="grid grid-cols-1 [@container(min-width:760px)]:grid-cols-2 gap-3" data-testid="landlord-activity-pair">
+              <LandlordMeetingsSummary key={companyId} companyId={companyId} companyName={c.name} />
+              <LandlordEmailSummary key={`emails-${companyId}`} companyId={companyId} companyName={c.name} entities={commentaryEntities} />
+            </div>}
+            footer={!isClientViewer && <LandlordRelationshipTeam key={companyId} companyId={companyId} canEdit />} />
         </div>
         {!isClientViewer && <LandlordInterviewNotes companyId={companyId} />}
         <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
@@ -4619,7 +4625,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
   const pendingTagsRef = useRef<Map<string, { type: TagType; id: string; name: string }>>(new Map());
   const inputRef = useRef<HTMLInputElement>(null);
   const { data: mcMe } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const { data: mcUsers = [] } = useQuery<Array<{ id: string; name: string }>>({ queryKey: ["/api/users"] });
+  const { data: mcUsers = [] } = useQuery<Array<{ id: string; name: string; profilePicUrl?: string | null }>>({ queryKey: ["/api/users"] });
 
   const { data: trackerData } = useQuery<any>({
     queryKey: ["/api/brands", companyId, "tracker-comments"],
@@ -4807,6 +4813,11 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
   };
 
   const addableUsers = (Array.isArray(mcUsers) ? mcUsers : []).filter(u => !memberIds.has(u.id) && u.id !== mcMe?.id);
+  const landlordMessage = (message: any) => ({
+    id: message.id, role: message.role, userId: message.userId || message.user_id,
+    userName: message.userName || mcUsers.find(user => user.id === (message.userId || message.user_id))?.name,
+    createdAt: message.createdAt || message.created_at, editedAt: message.editedAt || message.edited_at,
+  });
 
   return (
     <Card className={fill ? "h-full flex flex-col overflow-hidden" : undefined} style={landlord ? { fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" } : undefined} data-testid={landlord ? "landlord-conversation" : undefined}>
@@ -4884,7 +4895,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
             ))}
           </div>
         ) : (
-        <div ref={scrollRef} className={`${fill ? "flex-1" : "max-h-[280px]"} overflow-y-auto space-y-2 pr-1`} data-testid="minichat-messages">
+        <div ref={scrollRef} className={`${fill ? "flex-1" : "max-h-[280px]"} overflow-y-auto ${landlord ? "rounded-xl bg-muted/25 px-2 pb-3" : "space-y-2 pr-1"}`} data-testid="minichat-messages">
           {messages.length === 0 && !awaitingAi ? (
             <div className={`py-4 text-center space-y-3 ${fill ? "h-full flex flex-col justify-center" : ""}`}>
               {starters && starters.length > 0 && <>
@@ -4896,18 +4907,29 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
               </p>
             </div>
           ) : (
-            messages.map((m: any) => {
+            messages.map((m: any, index: number) => {
               const authorId = m.userId || (landlord ? m.user_id : undefined);
               const isOwn = m.role === "user" && mcMe?.id && authorId === mcMe.id;
+              if (landlord) return <LandlordChatBubble key={m.id} message={landlordMessage(m)} previous={index > 0 ? landlordMessage(messages[index - 1]) : undefined}
+                currentUserId={mcMe?.id} photoUrl={mcUsers.find(user => user.id === authorId)?.profilePicUrl}
+                participantIds={[...memberIds, ...messages.filter(message => message.role === "user").map(message => message.userId || message.user_id).filter(Boolean)]}
+                actions={isOwn && editingMsgId !== m.id ? <span className="absolute top-1 right-1 flex items-center gap-1.5 opacity-100 sm:opacity-0 sm:group-hover/msg:opacity-100 focus-within:opacity-100 transition-opacity">
+                  <button className="text-muted-foreground hover:text-foreground" title="Edit message" aria-label="Edit message" onClick={() => { setEditingMsgId(m.id); setEditDraft(m.content); }} data-testid={`button-minichat-edit-${m.id}`}><Pencil className="w-3 h-3" /></button>
+                  {confirmDeleteId === m.id ? <button className="text-[11px] font-semibold text-destructive" onClick={() => deleteMsg(m.id)} onMouseLeave={() => setConfirmDeleteId(null)} data-testid={`button-minichat-delete-confirm-${m.id}`}>Delete?</button>
+                    : <button className="text-muted-foreground hover:text-destructive" title="Delete message" aria-label="Delete message" onClick={() => setConfirmDeleteId(m.id)} data-testid={`button-minichat-delete-${m.id}`}><XIcon className="w-3 h-3" /></button>}
+                </span> : undefined}>
+                {editingMsgId === m.id ? <div className="flex flex-wrap items-center gap-1">
+                  <input autoFocus aria-label="Edit message" className="min-w-0 flex-1 h-9 rounded border bg-background px-2 text-sm outline-none focus:ring-1 focus:ring-ring" value={editDraft} onChange={event => setEditDraft(event.target.value)} onKeyDown={event => { if (event.key === "Enter") saveEdit(m.id); if (event.key === "Escape") setEditingMsgId(null); }} data-testid={`input-minichat-edit-${m.id}`} />
+                  <button className="text-xs px-2 py-1 rounded border bg-card hover:bg-muted" onClick={() => saveEdit(m.id)}>Save</button>
+                  <button className="text-xs px-2 py-1 text-muted-foreground" onClick={() => setEditingMsgId(null)}>Cancel</button>
+                </div> : <ChatBGPMarkdown content={String(m.content || "")} />}
+              </LandlordChatBubble>;
               return (
-              <div key={m.id} className={landlord
-                ? `group/msg relative w-fit max-w-[94%] rounded-2xl px-3 py-2 text-sm leading-relaxed break-words ${isOwn ? "ml-auto rounded-br-sm bg-primary/10" : "mr-auto rounded-bl-sm border border-border/60 bg-muted/40"}`
-                : `group/msg relative text-xs rounded-lg px-2.5 py-1.5 whitespace-pre-wrap break-words ${m.role === "assistant" ? "bg-muted/60" : "bg-primary/10 ml-6"}`}
-                data-testid={landlord ? "landlord-chat-message" : undefined}>
+              <div key={m.id} className={`group/msg relative text-xs rounded-lg px-2.5 py-1.5 whitespace-pre-wrap break-words ${m.role === "assistant" ? "bg-muted/60" : "bg-primary/10 ml-6"}`}>
                 {/* Every message carries its author — a shared brand chat is
                     useless if you can't tell who said what (Woody, 2026-08-04). */}
                 <span className="font-semibold text-[11px] block text-muted-foreground">
-                  {m.role === "assistant" ? "ChatBGP" : (isOwn ? "You" : (m.userName || (landlord ? mcUsers.find(u => u.id === authorId)?.name || "Team member" : "Team")))}
+                  {m.role === "assistant" ? "ChatBGP" : (isOwn ? "You" : (m.userName || "Team"))}
                   {(() => {
                     const ts = m.createdAt || m.created_at;
                     if (!ts) return null;
@@ -4938,7 +4960,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
                     <button className="text-[11px] px-1 text-muted-foreground" onClick={() => setEditingMsgId(null)}>✕</button>
                   </div>
                 ) : (
-                  landlord ? <ChatBGPMarkdown content={String(m.content || "")} /> : renderContent(m.content)
+                  renderContent(m.content)
                 )}
                 {isOwn && editingMsgId !== m.id && (
                   <span className="absolute top-1 right-1 flex items-center gap-1.5 opacity-0 group-hover/msg:opacity-100 transition-opacity">

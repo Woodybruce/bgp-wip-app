@@ -9,6 +9,7 @@ import { pool } from "./db";
 import { users as usersTable } from "@shared/schema";
 import { parseGraphDateTime } from "./viewing-matching";
 import { newAutoContactRun, resolveAutoContacts, type AutoContactRun } from "./email-auto-contacts";
+import { registerLandlordTeamRoutes } from "./landlord-relationship-team";
 import { captureLandlordDiary, recordLandlordDiaryFailure, registerLandlordMeetingRoutes } from "./landlord-meetings";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -1208,6 +1209,7 @@ async function requireAdminCheck(req: Request): Promise<boolean> {
 
 export function registerInteractionRoutes(app: Express) {
   registerLandlordMeetingRoutes(app);
+  registerLandlordTeamRoutes(app);
   startAutoSync();
   // The 150-day backfill only runs when an admin starts it (Woody,
   // 2026-09-29: stopped) — POST /api/interactions/backfill-contacts.

@@ -97,7 +97,7 @@ export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty, f
   if (hideWhenEmpty && !isLoading && !text && !running && !refreshing && !currentRefreshError && !intro) return null;
 
   return (
-    <div className="rounded-xl border border-card-border bg-card shadow-sm p-3">
+    <div className={`rounded-xl border border-card-border bg-card shadow-sm ${landlord ? "p-4" : "p-3"}`}>
       {intro && (
         <>
           <AiCommentary text={intro} entities={entities} size="sm" />
@@ -106,7 +106,7 @@ export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty, f
       )}
       <div className="flex items-center justify-between mb-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-muted-foreground">
-          <Sparkles className="w-3 h-3 text-primary" /> {TAB_LABELS[tab]}
+          <Sparkles className="w-3 h-3 text-primary" /> {landlord ? "BGP take" : TAB_LABELS[tab]}
           {!!data?.generatedAt && <span className="font-normal">· {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep")}{data.stale ? " · Update pending" : ""}</span>}
         </div>
         <Button
@@ -121,7 +121,7 @@ export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty, f
           <RefreshCw className={`w-3 h-3 ${refreshing || running ? "animate-spin" : ""}`} />
         </Button>
       </div>
-      {leading && <div className="border-b border-border/60 mb-3 pb-3" data-testid="bgp-take-leading">{leading}</div>}
+      {leading && <div className="mb-4 mt-2" data-testid="bgp-take-leading">{leading}</div>}
       {isLoading ? (
         <div className="space-y-2 animate-pulse" aria-label="Loading saved BGP take"><div className="h-3 rounded bg-muted" /><div className="h-3 w-3/4 rounded bg-muted" /></div>
       ) : text ? <AiCommentary text={text} entities={entities} size={landlord ? "sm" : undefined} /> : null}

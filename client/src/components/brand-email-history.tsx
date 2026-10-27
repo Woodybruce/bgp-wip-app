@@ -1,7 +1,7 @@
 // The brand's email history with BGP as conversations — subject, who at BGP,
 // who at the brand, other firms copied, dates and the latest line — with a
 // short AI read at the top. Opened from "N email threads" under About.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Loader2, Mail, Sparkles } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -10,16 +10,17 @@ import { Input } from "@/components/ui/input";
 import { AiCommentary, type CommentaryEntity } from "@/components/ai-commentary";
 
 type Conversation = { subject: string; messages: number; first: string; last: string; bgp: string[]; brand: string[]; others: string[]; firms?: string[]; preview: string };
-type ThreadsResponse = { domain: string; total: number; conversations: Conversation[]; summary: { text: string; at: string } | null };
+export type ThreadsResponse = { domain: string; total: number; conversations: Conversation[]; evidenceKey?: string; summary: { text: string; at: string; evidenceKey?: string } | null };
 
 const personName = (email: string) => email.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, ch => ch.toUpperCase());
 const firmOf = (email: string) => (email.split("@")[1] || "").replace(/\.(co\.uk|com|uk|net|org|io|es|pt|fr)$/i, "");
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
-export function BrandEmailHistory({ companyId, companyName, open, onOpenChange, entities }: {
-  companyId: string; companyName: string; open: boolean; onOpenChange: (open: boolean) => void; entities?: CommentaryEntity[];
+export function BrandEmailHistory({ companyId, companyName, open, onOpenChange, entities, landlord = false }: {
+  companyId: string; companyName: string; open: boolean; onOpenChange: (open: boolean) => void; entities?: CommentaryEntity[]; landlord?: boolean;
 }) {
   const [search, setSearch] = useState("");
+  const attemptedLandlordSummary = useRef("");
   const key = ["/api/brand", companyId, "email-threads"];
   const { data, isLoading, isError } = useQuery<ThreadsResponse>({
     queryKey: key,
@@ -29,11 +30,16 @@ export function BrandEmailHistory({ companyId, companyName, open, onOpenChange, 
   });
   const summarise = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/brand/${companyId}/email-threads/summary`)).json(),
-    onSuccess: (out: { summary: ThreadsResponse["summary"] }) => queryClient.setQueryData<ThreadsResponse>(key, prev => prev ? { ...prev, summary: out.summary } : prev),
+    onSuccess: (out: { summary: ThreadsResponse["summary"] }) => queryClient.setQueryData<ThreadsResponse>(key, prev => prev && (!landlord || !out.summary || out.summary.evidenceKey === prev.evidenceKey) ? { ...prev, summary: out.summary } : prev),
   });
   // Build the AI read the first time the history opens (or when new mail has arrived).
   useEffect(() => {
-    if (open && data && !data.summary && data.conversations.length && !summarise.isPending && !summarise.isError) summarise.mutate();
+    const evidence = `${companyId}:${data?.evidenceKey || data?.conversations[0]?.last || ""}`;
+    if (open && data && !data.summary && data.conversations.length && !summarise.isPending && !summarise.isError
+      && (!landlord || attemptedLandlordSummary.current !== evidence)) {
+      if (landlord) attemptedLandlordSummary.current = evidence;
+      summarise.mutate();
+    }
   }, [open, data]);
   const q = search.trim().toLowerCase();
   const rows = (data?.conversations || []).filter(conv => !q || conv.subject.toLowerCase().includes(q) || conv.preview.toLowerCase().includes(q)
@@ -44,15 +50,15 @@ export function BrandEmailHistory({ companyId, companyName, open, onOpenChange, 
       <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" data-testid="brand-email-history">
         <DialogTitle className="flex items-center gap-2"><Mail className="w-4 h-4" />Emails with {companyName}</DialogTitle>
         <DialogDescription>
-          {data ? <><span className="font-mono tabular-nums">{data.total}</span> conversations · <span className="font-mono tabular-nums">{emails}</span> emails with @{data.domain}</> : "BGP's email history with the brand."}
+          {data ? <><span className="font-mono tabular-nums">{data.total}</span> conversations · <span className="font-mono tabular-nums">{emails}</span> emails{landlord ? " · linked correspondence" : ` with @${data.domain}`}</> : landlord ? "BGP's email history with this landlord." : "BGP's email history with the brand."}
         </DialogDescription>
         {isLoading ? <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />Loading emails…</p>
           : isError ? <p className="text-sm text-muted-foreground">The email history couldn't be loaded.</p>
-          : !data?.conversations.length ? <p className="text-sm text-muted-foreground">No emails with this brand's domain yet.</p>
+          : !data?.conversations.length ? <p className="text-sm text-muted-foreground">{landlord ? "No email conversations linked to this landlord yet." : "No emails with this brand's domain yet."}</p>
           : <>
             <section className="rounded-lg border border-border bg-card p-3 space-y-1.5">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5"><Sparkles className="w-3 h-3 text-primary" />What the emails are about</h3>
-              {data.summary ? <AiCommentary text={data.summary.text} entities={entities} />
+              {data.summary ? <AiCommentary text={data.summary.text} entities={entities} size={landlord ? "sm" : undefined} />
                 : summarise.isPending ? <p className="text-xs text-muted-foreground flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" />Reading the emails…</p>
                 : summarise.isError ? <p className="text-xs text-muted-foreground">The summary isn't available right now — the conversations are below.</p>
                 : null}

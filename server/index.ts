@@ -953,6 +953,14 @@ installGoogleBudgetGuard();
        updated_at TIMESTAMPTZ DEFAULT NOW(),
        PRIMARY KEY (company_id, user_id)
      )`,
+    // Landlord-only role/property contexts; inferred participation stays read-only.
+    `CREATE TABLE IF NOT EXISTS crm_landlord_team_contexts (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       company_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL,
+       property_id TEXT, notes TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_landlord_team_context ON crm_landlord_team_contexts(company_id,user_id,role,(COALESCE(property_id,'')))`,
     // Property plans (Goad / leasing plan / agent-supplied PDF). One
     // row per FLOOR per property — a centre like Bluewater needs
     // Ground + First. The plan image lives in file_storage; we keep

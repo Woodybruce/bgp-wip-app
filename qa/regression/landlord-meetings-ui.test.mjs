@@ -16,9 +16,9 @@ function fixture(data, error = false) {
   let query, mutation;
   const invalidations = [];
   const sandbox = { exports: {}, require, Date: TestDate, encodeURIComponent,
-    Calendar: 'Calendar', MapPin: 'MapPin', RefreshCw: 'RefreshCw', Users: 'Users', Button: 'Button', MeetingViewerDialog: 'MeetingViewerDialog',
+    Calendar: 'Calendar', MapPin: 'MapPin', RefreshCw: 'RefreshCw', Users: 'Users', Sparkles: 'Sparkles', Dialog: 'Dialog', DialogTitle: 'DialogTitle', DialogDescription: 'DialogDescription', DialogContent: 'DialogContent', Input: 'Input', LandlordActivityCard: 'LandlordActivityCard', AiCommentary: 'AiCommentary', Button: 'Button', MeetingViewerDialog: 'MeetingViewerDialog',
     useState: initial => [initial, () => {}], useQueryClient: () => ({ invalidateQueries(options) { invalidations.push(options); } }), getAuthHeaders: () => ({}),
-    useQuery: options => { query = options; return { data, isLoading: false, isError: error }; },
+    useQuery: options => { if (options.queryKey[2] === 'meeting-summary') return { data: {summary: null}, isFetching: false }; query = options; return { data, isLoading: false, isError: error }; },
     useMutation: options => { mutation = options; return { isPending: false, isError: false }; },
     apiRequest: async () => ({ json: async () => ({ running: true }) }),
   };
@@ -45,7 +45,7 @@ test('tomorrow’s AEW meeting exposes invite attendees and BGP participants bef
   assert.match(text(tree), /Tomorrow · 09:30/);
   for (const name of ['Manish', 'Ben Sykes', 'Nick', 'Vics']) assert.match(text(tree), new RegExp(name));
   assert.ok(nodes(tree).some(node => node.type === 'Button' && text(node) === 'Invitation'));
-  assert.match(text(tree), /On the invitation:/);
+  assert.match(text(tree), /Meetings with/);
   assert.ok(nodes(tree).some(node => node.type === 'a' && node.props.href.startsWith('https://outlook.') && node.props.rel === 'noopener noreferrer'));
   assert.equal(nodes(tree).some(node => node.type === 'MeetingViewerDialog'), false);
   assert.match(text(tree), /partial \(2 of 4 connected diaries checked\)/);
@@ -60,11 +60,15 @@ test('no meetings with incomplete coverage never claims there are no landlord me
   assert.doesNotMatch(text(tree), /no landlord meetings/i);
 });
 
-test('limited meeting preview retains an explicit Show all action and refresh polls authoritative GET', () => {
+test('compact preview shows two invitations and the separate dialog keeps the full list', () => {
   const app = fixture({ meetings: Array.from({ length: 5 }, (_, i) => meeting(String(i), `2026-10-${28 + i}T09:00:00Z`, `2026-10-${28 + i}T10:00:00Z`)).filter(row => Number.isFinite(Date.parse(row.start))), coverage });
   const tree = app.LandlordMeetingsSummary({ companyId: 'aew' });
-  assert.equal(nodes(tree).filter(node => node.props['data-testid'] === 'landlord-meeting').length, 3);
-  assert.match(text(tree), /Show all 4 meetings/);
+  assert.equal(nodes(tree).filter(node => node.props['data-testid'] === 'landlord-meeting-preview').length, 2);
+  assert.equal(nodes(tree).filter(node => node.props['data-testid'] === 'landlord-meeting').length, 4);
+  const card = nodes(tree).find(node => node.type === 'LandlordActivityCard');
+  assert.equal(card.props.actionLabel, 'View meetings');
+  assert.equal(card.props.count, '4 upcoming');
+  assert.ok(nodes(tree).some(node => node.props['data-testid'] === 'landlord-meetings-dialog'));
   assert.equal(app.query.refetchInterval({ state: { data: { coverage: { refreshing: true } } } }), 5_000);
   assert.equal(app.query.refetchInterval({ state: { data: { coverage: { refreshing: false } } } }), 60_000);
 });
@@ -99,4 +103,17 @@ test('refreshing a profile updates both calendar views without touching Brand or
   assert.equal(match(['/api/crm/landlords/meetings/week']), true);
   assert.equal(match(['/api/crm/landlords/interview-links']), false);
   assert.equal(match(['/api/brand', 'brand', 'ai-take', 'brand']), false);
+});
+
+test('AI summary identity changes when any invitation, coverage or meeting phase changes', () => {
+  const app = fixture();
+  const first = meeting('one', '2026-10-27T12:00:00Z', '2026-10-27T13:00:00Z');
+  const second = meeting('two', '2026-10-28T12:00:00Z', '2026-10-28T13:00:00Z');
+  const digest = {meetings:[first,second],coverage};
+  const before = app.landlordMeetingSummarySignature(digest, +now);
+  for (const changed of [{...digest,meetings:[first]}, {...digest,meetings:[first,{...second,subject:'Revised subject'}]}, {...digest,coverage:{...coverage,status:'current'}}]) {
+    assert.notEqual(app.landlordMeetingSummarySignature(changed, +now), before);
+  }
+  assert.notEqual(app.landlordMeetingSummarySignature(digest, Date.parse('2026-10-27T12:15:00Z')), before);
+  assert.equal(app.landlordMeetingSummarySignature(digest, +now), before);
 });

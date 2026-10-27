@@ -10,6 +10,8 @@ import { useTypingIndicator } from "@/hooks/use-socket";
 import { emitMarkSeen } from "@/lib/socket";
 import { ChatBGPMarkdown, AuthDownloadLink } from "@/components/chatbgp-markdown";
 import { ChatResponse } from "@/components/chat-response";
+import { LandlordChatBubble, type LandlordChatMessage } from "@/components/landlord-chat-bubble";
+import { isLandlordCompany } from "@/lib/company-kind";
 import { copyChatContent } from "@/lib/chat-clipboard";
 import {
   Sparkles,
@@ -110,6 +112,8 @@ type LocalChatMessage = {
   attachments?: string[];
   userName?: string;
   userId?: string | null;
+  createdAt?: string | null;
+  editedAt?: string | null;
 };
 
 type ThreadMember = { id: string; name: string; seen: boolean };
@@ -144,8 +148,16 @@ type ThreadData = {
     actionData: string | null;
     attachments: string[] | null;
     createdAt: string;
+    editedAt?: string | null;
   }>;
 };
+
+type LinkedCompanyChatProfile = { company: { id: string; company_type?: string | null }; isLandlord?: boolean };
+export function isLandlordLinkedConversation(thread?: Pick<ThreadData, "isAiChat" | "linkedType" | "linkedId">, profile?: LinkedCompanyChatProfile) {
+  return !!thread && !thread.isAiChat && thread.linkedType === "company" && !!thread.linkedId
+    && profile?.company?.id === thread.linkedId && !/^tenant/i.test(profile.company.company_type || "")
+    && isLandlordCompany(profile.company.company_type, profile.isLandlord);
+}
 
 const AI_SUGGESTIONS = [
   "Show me live deals",
@@ -437,7 +449,7 @@ function RenderMessageContent({ content, onCheckboxClick }: { content: string; o
   );
 }
 
-function MessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, onDelete, onCheckboxClick, onDraftSaved }: {
+function MessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, onDelete, onCheckboxClick, onDraftSaved, landlord = false, previousMessage, photoUrl, participantIds }: {
   message: LocalChatMessage;
   onDraftSaved?: (content: string) => void;
   currentUserId?: string;
@@ -446,6 +458,10 @@ function MessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, 
   onEdit?: (msgId: string, content: string) => void;
   onDelete?: (msgId: string) => void;
   onCheckboxClick?: (text: string) => void;
+  landlord?: boolean;
+  previousMessage?: LandlordChatMessage;
+  photoUrl?: string | null;
+  participantIds?: string[];
 }) {
   const isUser = message.role === "user";
   const isOwn = isUser && currentUserId && message.userId === currentUserId;
@@ -460,6 +476,30 @@ function MessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, 
       setEditing(false);
     }
   };
+
+  if (landlord) return <LandlordChatBubble message={message} previous={previousMessage} currentUserId={currentUserId} photoUrl={photoUrl} participantIds={participantIds}
+    actions={isOwn && message.id && threadId && !editing ? <div className="absolute top-1 right-1 opacity-100 sm:opacity-0 sm:group-hover/msg:opacity-100 focus-within:opacity-100 transition-opacity">
+      <DropdownMenu><DropdownMenuTrigger asChild><button aria-label="Message actions" className="w-6 h-6 rounded-full bg-card border flex items-center justify-center" data-testid={`button-message-actions-${message.id}`}><MoreVertical className="w-3 h-3" /></button></DropdownMenuTrigger>
+        <DropdownMenuContent align="end"><DropdownMenuItem onClick={() => { setEditContent(message.content); setEditing(true); }}><Pencil className="w-3 h-3 mr-2" />Edit</DropdownMenuItem><DropdownMenuItem className="text-destructive" onClick={() => onDelete?.(message.id!)}><Trash2 className="w-3 h-3 mr-2" />Delete</DropdownMenuItem></DropdownMenuContent>
+      </DropdownMenu>
+    </div> : undefined}>
+    {message.attachments?.map((attachment, index) => {
+      let file: any;
+      try { file = JSON.parse(attachment); } catch { file = null; }
+      if (!file?.url) return <p key={index} className="text-xs">{attachment}</p>;
+      if (isImageFile(file.type || file.name || "")) return <a key={index} href={file.url} target="_blank" rel="noopener noreferrer"><img src={file.url} alt={file.name || "Attachment"} className="rounded-lg max-w-full max-h-64 object-contain mb-2" /></a>;
+      if (isAudioFile(file.name || file.type || "")) return <audio key={index} src={file.url} controls preload="metadata" className="max-w-full h-9 mb-2" />;
+      return <a key={index} href={file.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 underline mb-2"><FileIcon className="w-4 h-4" />{file.name || "Attachment"}</a>;
+    })}
+    {editing ? <div className="space-y-2">
+      <Textarea value={editContent} onChange={event => setEditContent(event.target.value)} className="min-h-16 text-sm" autoFocus aria-label="Edit message" />
+      <div className="flex justify-end gap-2"><Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button><Button size="sm" onClick={handleSaveEdit}>Save</Button></div>
+    </div> : <ChatResponse content={message.content} threadId={threadId} messageId={message.id} onDraftSaved={onDraftSaved} actions={!isUser}
+      renderBefore={content => <RenderMessageContent content={content} onCheckboxClick={onCheckboxClick} />}>
+      <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} />
+    </ChatResponse>}
+    {message.action && <ActionCard action={message.action} />}
+  </LandlordChatBubble>;
 
   return (
     <div
@@ -1519,6 +1559,14 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   }, [currentUser?.id]);
 
   const isActiveThreadAi = activeThread?.isAiChat ?? true;
+  const linkedCompanyId = !isActiveThreadAi && activeThread?.linkedType === "company" ? activeThread.linkedId : null;
+  const { data: linkedCompanyProfile } = useQuery<LinkedCompanyChatProfile>({
+    queryKey: ["/api/brand", linkedCompanyId, "profile"],
+    queryFn: async () => (await apiRequest("GET", `/api/brand/${encodeURIComponent(linkedCompanyId!)}/profile`)).json(),
+    enabled: !!linkedCompanyId && !chatIsClient,
+    staleTime: 60_000,
+  });
+  const isLandlordConversation = isLandlordLinkedConversation(activeThread, linkedCompanyProfile);
 
   const mentionUsers = useMemo(() => {
     if (mentionQuery === null || !allUsers) return [];
@@ -1682,8 +1730,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
 
   const messagesKey = useMemo(() => {
     if (!activeThread?.messages) return "";
+    if (isLandlordConversation) return JSON.stringify(activeThread.messages.map(message => [message.id, message.content, message.editedAt]));
     return activeThread.messages.map(m => `${m.id}:${m.content?.length}`).join("|");
-  }, [activeThread?.messages]);
+  }, [activeThread?.messages, isLandlordConversation]);
 
   useEffect(() => {
     if (activeThread?.messages) {
@@ -1707,6 +1756,8 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
           attachments: m.attachments || undefined,
           userId: m.userId,
           userName,
+          createdAt: m.createdAt,
+          editedAt: m.editedAt,
         };
       });
       setMessages(loaded);
@@ -3169,7 +3220,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                 </p>
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className={isLandlordConversation ? "rounded-xl bg-muted/25 p-2" : "space-y-3"}>
                 {messages.map((msg, i) => (
                   <MessageBubble
                     key={msg.id || i}
@@ -3181,6 +3232,10 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                     onEdit={handleEditMessage}
                     onDelete={handleDeleteMessage}
                     onCheckboxClick={handleCheckboxClick}
+                    landlord={isLandlordConversation}
+                    previousMessage={i > 0 ? messages[i - 1] : undefined}
+                    photoUrl={msg.userId ? userPics[msg.userId] : undefined}
+                    participantIds={[...(activeThread?.members || []).map(member => member.id), ...messages.filter(message => message.role === "user").map(message => message.userId).filter((id): id is string => !!id)]}
                   />
                 ))}
                 {aiSendMutation.isPending && (
