@@ -385,14 +385,9 @@ export function classifyDealForAccount(
 
 // ─── DB-backed assembly ──────────────────────────────────────────────────
 
-export async function resolveAccountView(
-  companyId: string,
-  opts: { scopeCompanyId?: string | null } = {},
-  deps: { pool?: Querier } = {},
-): Promise<AccountView> {
-  const q = deps.pool ?? await defaultPool();
-  const scopeCompanyId = opts.scopeCompanyId ?? null;
-
+// Shared identity scope for the full account view and person-history lookups.
+// Keep the entity walk identical; history links do not need deal/stat assembly.
+async function loadAccountEntityScope(companyId: string, q: Querier) {
   // 1. Entity tree — fetch the rows that can participate (ancestors via
   //    parent walk, descendants via BFS), then assemble purely so cycle
   //    flagging is deterministic and testable.
@@ -464,6 +459,39 @@ export async function resolveAccountView(
   const entities = walkEntityTree([...collected.values()], tradingRows as TradingEntityGraphRow[], companyId);
   const rootEntity = entities.find(e => e.relation === "self")!;
   const companyIds = entities.filter(e => e.relation !== "trading_entity").map(e => e.companyId);
+
+  return { entities, rootEntity, companyIds };
+}
+
+export async function resolveAccountContactIdentity(companyId: string, contactId: string, q: Querier): Promise<{ name: string; email: string | null } | null> {
+  const contact = (await q.query(`SELECT id,name,email,company_id FROM crm_contacts WHERE id=$1`, [contactId])).rows[0];
+  if (!contact) return null;
+  if (contact.company_id === companyId) return { name: contact.name, email: contact.email };
+  const { companyIds } = await loadAccountEntityScope(companyId, q);
+  if (companyIds.includes(contact.company_id)) return { name: contact.name, email: contact.email };
+  // Matches the full account panel's portfolio and contact-link scope. No
+  // interaction, deal, unit-count or contact-stat queries are needed here.
+  const linked = (await q.query(`WITH portfolio AS (
+      SELECT p.id FROM crm_properties p
+       WHERE p.landlord_id=ANY($1::text[]) OR p.freeholder_id=ANY($1::text[]) OR p.long_leaseholder_id=ANY($1::text[])
+      UNION SELECT p.id FROM crm_company_properties cp JOIN crm_properties p ON p.id=cp.property_id
+       WHERE cp.company_id=ANY($1::text[])
+    ) SELECT 1 FROM (
+      SELECT property_id FROM crm_contact_properties WHERE contact_id=$2
+      UNION SELECT property_id FROM crm_property_clients WHERE contact_id=$2
+    ) links JOIN portfolio p ON p.id=links.property_id LIMIT 1`, [companyIds, contactId])).rows.length > 0;
+  return linked ? { name: contact.name, email: contact.email } : null;
+}
+
+export async function resolveAccountView(
+  companyId: string,
+  opts: { scopeCompanyId?: string | null } = {},
+  deps: { pool?: Querier } = {},
+): Promise<AccountView> {
+  const q = deps.pool ?? await defaultPool();
+  const scopeCompanyId = opts.scopeCompanyId ?? null;
+
+  const { entities, rootEntity, companyIds } = await loadAccountEntityScope(companyId, q);
 
   // 2. Properties — landlord_id ∪ freeholder/long_leaseholder ∪ company links.
   const ownershipSql = `SELECT p.id, p.name, p.postcode, p.country,

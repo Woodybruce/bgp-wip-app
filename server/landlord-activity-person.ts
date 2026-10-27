@@ -1,4 +1,4 @@
-import type { Querier, AccountView } from "./account-resolver";
+import type { Querier } from "./account-resolver";
 import type { LandlordMeetingDigest } from "../shared/landlord-meetings";
 import { LANDLORD_CATALOGUE_PREDICATE } from "./landlord-meeting-matching";
 import { isPrivateEmailRecord, isPrivateMailboxAddress } from "./private-mail";
@@ -18,7 +18,7 @@ export function landlordPersonRequest(query: any): { userId?: string; contactId?
 }
 
 export async function resolveLandlordActivityPerson(companyId: string, request: ReturnType<typeof landlordPersonRequest>, options: {
-  q?: Querier; account?: (companyId: string) => Promise<Pick<AccountView, "contacts">>;
+  q?: Querier; contact?: (companyId: string, contactId: string) => Promise<{ name: string; email: string | null } | null>;
 } = {}): Promise<LandlordPersonScope | null> {
   if (!request) return null;
   const q = options.q || (await import("./db")).pool;
@@ -33,8 +33,7 @@ export async function resolveLandlordActivityPerson(companyId: string, request: 
       AND lower(trim(email)) LIKE '%@brucegillinghampollard.com'`, [request.userId])).rows[0];
   } else {
     // Same employer/property contact scope as the existing account panel.
-    const account = await (options.account || (async id => (await import("./account-resolver")).resolveAccountView(id, {}, { pool: q })))(companyId);
-    const contact = account.contacts.find(contact => contact.contactId === request.contactId);
+    const contact = await (options.contact || (async (id, contactId) => (await import("./account-resolver")).resolveAccountContactIdentity(id, contactId, q)))(companyId, request.contactId!);
     if (contact?.email) person = { name: contact.name, email: contact.email };
   }
   const email = String(person?.email || "").trim().toLowerCase();

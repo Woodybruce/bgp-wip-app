@@ -33,18 +33,42 @@ export const BRAND_EMAIL_ROWS_SQL = `
 
 // Person scope is applied to individual messages before conversation grouping
 // or the row limit, so another colleague's reply cannot leak into the preview.
-export const LANDLORD_EMAIL_ROWS_SQL = `SELECT * FROM (
+// Collect indexed candidates first. Expanding participants on the entire
+// correspondence log makes each landlord lookup scan hundreds of thousands
+// of messages. The text match is only a broad prefilter: exact email/domain
+// and person checks below still decide which messages belong in this view.
+export const LANDLORD_EMAIL_ROWS_SQL = `WITH search_patterns AS MATERIALIZED (
+      SELECT DISTINCT '%' || replace(replace(replace(needle, chr(92), chr(92)||chr(92)),
+        '%', chr(92)||'%'), '_', chr(92)||'_') || '%' AS pattern
+      FROM (
+        SELECT d AS needle FROM unnest($2::text[]) d WHERE d <> ''
+        UNION SELECT email FROM unnest($3::text[]) email WHERE email <> ''
+          AND NOT EXISTS (SELECT 1 FROM unnest($2::text[]) d
+            WHERE split_part(email, '@', 2)=d OR right(split_part(email, '@', 2), length(d)+1)='.' || d)
+      ) needles
+    ), candidate_ids AS MATERIALIZED (
+      SELECT id FROM crm_interactions WHERE company_id=$1
+      UNION SELECT id FROM crm_interactions WHERE contact_id=ANY($6::text[])
+      UNION SELECT hit.id FROM search_patterns pattern CROSS JOIN LATERAL (
+        SELECT id FROM crm_interactions WHERE participants::text ILIKE pattern.pattern OFFSET 0
+      ) hit
+    )
+    SELECT * FROM (
       SELECT DISTINCT ON (COALESCE(i.microsoft_id, i.subject || '|' || i.interaction_date::text))
         i.subject, i.direction, i.bgp_user, i.preview, i.participants, i.interaction_date
-      FROM crm_interactions i WHERE i.interaction_date <= now() AND (i.type IS NULL OR i.type ILIKE '%email%')
+      FROM candidate_ids candidate JOIN crm_interactions i ON i.id=candidate.id
+      WHERE i.interaction_date <= now() AND (i.type IS NULL OR i.type ILIKE '%email%')
         AND ($4::text IS NULL OR lower(trim(i.bgp_user))=$4 OR i.contact_id=$5 OR EXISTS (SELECT 1 FROM jsonb_array_elements(
           CASE WHEN jsonb_typeof(i.participants)='array' THEN i.participants ELSE '[]'::jsonb END) participant
           WHERE lower(trim(CASE WHEN jsonb_typeof(participant)='string' THEN participant #>> '{}'
             ELSE COALESCE(participant->>'email',participant->>'address',participant->'emailAddress'->>'address') END))=$4))
-        AND (i.company_id=$1 OR i.contact_id=ANY($6::text[]) OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(
-          CASE WHEN jsonb_typeof(i.participants)='array' THEN i.participants ELSE '[]'::jsonb END) p
-          WHERE lower(trim(p))=ANY($3::text[]) OR EXISTS (SELECT 1 FROM unnest($2::text[]) d
-            WHERE split_part(lower(trim(p)), '@', 2)=d OR right(split_part(lower(trim(p)), '@', 2), length(d)+1)='.' || d)))
+        AND (i.company_id=$1 OR i.contact_id=ANY($6::text[]) OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(i.participants)='array' THEN i.participants ELSE '[]'::jsonb END) participant
+          CROSS JOIN LATERAL (SELECT lower(trim(CASE WHEN jsonb_typeof(participant)='string' THEN participant #>> '{}'
+            ELSE COALESCE(participant->>'email',participant->>'address',participant->'emailAddress'->>'address') END)) AS email) p
+          WHERE p.email=ANY($3::text[]) OR EXISTS (SELECT 1 FROM unnest($2::text[]) d
+            WHERE split_part(p.email, '@', 2)=d OR right(split_part(p.email, '@', 2), length(d)+1)='.' || d)))
       ORDER BY COALESCE(i.microsoft_id, i.subject || '|' || i.interaction_date::text), i.interaction_date DESC
     ) messages ORDER BY interaction_date DESC LIMIT 1500`;
 
@@ -70,9 +94,9 @@ const cleanPreview = (text: string | null) => (text || "")
   .trim()
   .slice(0, 220);
 
-const personList = (participants: unknown): string[] => {
+const personList = (participants: unknown, structured = false): string[] => {
   const list = Array.isArray(participants) ? participants : [];
-  return list.map(p => String(p || "").trim().toLowerCase()).filter(p => p.includes("@"));
+  return list.map(p => String(structured && p && typeof p === "object" ? p.email || p.address || p.emailAddress?.address || "" : p || "").trim().toLowerCase()).filter(p => p.includes("@"));
 };
 
 export function groupEmailConversations(rows: any[], domain: string, landlordEmails?: Set<string>, domains = [domain.toLowerCase()]): EmailConversation[] {
@@ -92,7 +116,7 @@ export function groupEmailConversations(rows: any[], domain: string, landlordEma
     conv.messages++;
     if (date < conv.first) conv.first = date;
     if (!conv.preview && preview) { conv.preview = preview; if(landlordEmails)conv.previewAt=date; }
-    const people = personList(row.participants);
+    const people = personList(row.participants, !!landlordEmails);
     if (row.bgp_user) people.push(String(row.bgp_user).toLowerCase());
     for (const p of people) {
       if (p.endsWith(BGP_DOMAIN)) conv._bgp.add(p);

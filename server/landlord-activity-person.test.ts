@@ -42,10 +42,10 @@ test('person resolution verifies landlord and uses saved staff identity, includi
 
 test('contacts must belong to the resolved landlord account and private addresses are never available',async()=>{
   const q={query:async()=>({rows:[{id:'aew'}]})};
-  const account=async()=>({contacts:[{contactId:'manish-id',name:'Manish',email:'MANISH@eu.aew.com'}] as any});
-  assert.equal((await resolveLandlordActivityPerson('aew',{contactId:'manish-id'},{q,account}))?.email,'manish@eu.aew.com');
-  await assert.rejects(resolveLandlordActivityPerson('aew',{contactId:'unrelated-id'},{q,account}),/no available linked email/);
-  await assert.rejects(resolveLandlordActivityPerson('aew',{contactId:'private-id'},{q,account:async()=>({contacts:[{contactId:'private-id',name:'Private',email:PRIVATE_MAILBOX}] as any})}),/no available linked email/);
+  const contact=async(_companyId:string,contactId:string)=>contactId==='manish-id'?{name:'Manish',email:'MANISH@eu.aew.com'}:null;
+  assert.equal((await resolveLandlordActivityPerson('aew',{contactId:'manish-id'},{q,contact}))?.email,'manish@eu.aew.com');
+  await assert.rejects(resolveLandlordActivityPerson('aew',{contactId:'unrelated-id'},{q,contact}),/no available linked email/);
+  await assert.rejects(resolveLandlordActivityPerson('aew',{contactId:'private-id'},{q,contact:async()=>({name:'Private',email:PRIVATE_MAILBOX})}),/no available linked email/);
 });
 
 test('person matching uses participant metadata only, not names, notes, domains or quoted body',()=>{
