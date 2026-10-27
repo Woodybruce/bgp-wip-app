@@ -12,6 +12,9 @@ import { newAutoContactRun, resolveAutoContacts, type AutoContactRun } from "./e
 import { registerLandlordTeamRoutes } from "./landlord-relationship-team";
 import { captureLandlordDiary, recordLandlordDiaryFailure, registerLandlordMeetingRoutes } from "./landlord-meetings";
 
+import { isPrivateEmailRecord, isPrivateMailboxAddress } from "./private-mail";
+import { blockPrivateMailCopies } from "./private-mail-store";
+
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
 // Background-job state for the interactions sync (see POST /api/interactions/sync).
@@ -86,7 +89,7 @@ async function getBgpEmails(): Promise<string[]> {
       .select({ email: usersTable.email })
       .from(usersTable);
     return result
-      .filter(u => u.email && u.email.endsWith("@brucegillinghampollard.com"))
+      .filter(u => u.email && u.email.toLowerCase().endsWith("@brucegillinghampollard.com") && !isPrivateMailboxAddress(u.email))
       .map(u => u.email!.toLowerCase());
   } catch (err: any) {
     console.error("[interactions] getBGPUserEmails error:", err?.message);
@@ -257,7 +260,8 @@ async function syncEmailsForUser(
     // ImmutableId: default Graph ids are mailbox-folder-local, so filing an
     // email into a project folder re-keyed it and the next sweep filed it
     // again as a brand-new interaction. Immutable ids survive moves.
-    const messages = await graphGetPaged(token, url, options.maxPages ?? 5, { delayMs: options.pageDelayMs, headers: { Prefer: 'IdType="ImmutableId"' } });
+    const messages = (await graphGetPaged(token, url, options.maxPages ?? 5, { delayMs: options.pageDelayMs, headers: { Prefer: 'IdType="ImmutableId"' } }))
+      .filter(message => !isPrivateEmailRecord(message, userEmail));
 
     if (options.captureSignals !== false) {
       // Email → offers check: offer-looking emails anchored to a tracker unit
@@ -377,7 +381,7 @@ async function syncEmailsForUser(
 // An email already filed under someone else, now also filed under the people
 // the auto-contact pass just added. One row per (email, contact).
 async function fileAgainstAddedContacts(msg: any, msId: string, added: ContactMatch[], userEmail: string): Promise<number> {
-  if (!added.length) return 0;
+  if (!added.length || isPrivateEmailRecord(msg, userEmail)) return 0;
   const participants = [msg.from, ...(msg.toRecipients || []), ...(msg.ccRecipients || [])]
     .map((r: any) => r?.emailAddress?.address).filter(Boolean).map((a: string) => a.toLowerCase());
   const isBgpSender = (msg.from?.emailAddress?.address || "").toLowerCase().endsWith("@brucegillinghampollard.com");
@@ -1283,10 +1287,16 @@ export function registerInteractionRoutes(app: Express) {
       // the Outlook add-in omits it and keeps the original email path.
       const entryType = ["call", "meeting", "note", "email"].includes(String(type || "")) ? String(type) : "email";
       const matchMethod = type ? "manual" : "outlook-addin";
+      if (isPrivateEmailRecord(req.body) || isPrivateMailboxAddress(senderEmail)) {
+        if (microsoftId) await blockPrivateMailCopies(pool, { id: String(microsoftId) }, req.body?.mailboxEmail, "messages");
+        return res.status(403).json({ error: "This email is private and cannot be filed in the app." });
+      }
       if (!contactId && !companyId && !dealId) {
         return res.status(400).json({ error: "link the interaction to a contact, company, or deal" });
       }
       if (microsoftId) {
+        const blocked = await pool.query("SELECT 1 FROM private_mail_blocked_messages WHERE microsoft_id = ANY($1::text[]) LIMIT 1", [[String(microsoftId), `email_${String(microsoftId)}`]]);
+        if (blocked.rows.length) return res.status(403).json({ error: "This email is private and cannot be filed in the app." });
         const dupe = await pool.query(
           `SELECT id FROM crm_interactions WHERE microsoft_id = $1 LIMIT 1`, [String(microsoftId)]
         );
@@ -1329,7 +1339,7 @@ export function registerInteractionRoutes(app: Express) {
           direction === "outbound" ? "outbound" : "inbound",
           String(subject || "").slice(0, 500) || "(no subject)",
           String(preview || "").slice(0, 1000) || null,
-          JSON.stringify(senderEmail ? [String(senderEmail)] : []),
+          JSON.stringify([...new Set([...(Array.isArray(req.body?.participants) ? req.body.participants.filter((email: unknown) => typeof email === "string") : []), ...(senderEmail ? [String(senderEmail)] : [])])]),
           microsoftId ? String(microsoftId) : null,
           interactionDate ? new Date(interactionDate) : new Date(),
           (req as any).user?.name || (req as any).user?.username || null,
@@ -1337,6 +1347,7 @@ export function registerInteractionRoutes(app: Express) {
           matchMethod,
         ]
       );
+      if (!ins.rows[0]) return res.status(403).json({ error: "This email is private and cannot be filed in the app." });
       res.json({ logged: true, id: ins.rows[0].id, contactId: resolvedContactId, contactCreated });
     } catch (err: any) {
       console.error("[interactions/log]", err?.message);

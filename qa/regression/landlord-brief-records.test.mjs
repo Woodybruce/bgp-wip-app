@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { landlordBriefFromRecords } from '../../server/brand-brief-evidence.ts';
+import { PRIVATE_MAIL_POLICY_VERSION } from '../../shared/private-mail.ts';
 
 const evidence = () => ({ name: 'Hammerson', landlord: true,
   recorded_properties: [
@@ -68,13 +69,13 @@ test('landlord correction invalidates its old brief without invalidating prepare
   const { currentOfficialProfileEvidence } = await import('../../server/brand-profile-evidence.ts');
   const { BRAND_BRIEF_POLICY_VERSION } = await import('../../server/brand-brief-evidence.ts');
   const company={id:'test',name:'Test',company_type:'Tenant - Retail',domain:'example.com',ai_generated_fields:{brand_identity:{status:'verified',domain:'example.com'}}};
-  const saved={text:'Prepared tenant brief',policyVersion:BRAND_BRIEF_POLICY_VERSION,fingerprint:getBrandIdentity(company).fingerprint,generatedAt:100,expiresAt:Date.now()+10000};
-  const code=find('server/brand-ai-take.ts',n=>ts.isFunctionDeclaration(n)&&n.name?.text==='readPreparedBrandAiTake');
-  const {readPreparedBrandAiTake}=evaluate(code,{getBrandIdentity,currentOfficialProfileEvidence,BRAND_BRIEF_POLICY_VERSION,takeKey:()=>'',pool:{query:async sql=>({rows:sql.includes('crm_companies')?[company]:[{value:saved}]})}});
+  const saved={text:'Prepared tenant brief',policyVersion:`${BRAND_BRIEF_POLICY_VERSION}:${PRIVATE_MAIL_POLICY_VERSION}`,fingerprint:getBrandIdentity(company).fingerprint,generatedAt:100,expiresAt:Date.now()+10000};
+  const code=['preparedTakePolicyVersion','readPreparedBrandAiTake'].map(name=>find('server/brand-ai-take.ts',n=>ts.isFunctionDeclaration(n)&&n.name?.text===name)).join('\n');
+  const {readPreparedBrandAiTake}=evaluate(code,{getBrandIdentity,currentOfficialProfileEvidence,BRAND_BRIEF_POLICY_VERSION,PRIVATE_MAIL_POLICY_VERSION,takeKey:()=>'',pool:{query:async sql=>({rows:sql.includes('crm_companies')?[company]:[{value:saved}]})}});
   assert.equal((await readPreparedBrandAiTake('test','brand')).text,saved.text);
   company.company_type='Landlord';
   assert.equal((await readPreparedBrandAiTake('test','brand')).text,'');
-  saved.policyVersion+=':landlord-records-1';saved.text='Factual landlord brief';
+  saved.policyVersion=`${BRAND_BRIEF_POLICY_VERSION}:landlord-records-1:${PRIVATE_MAIL_POLICY_VERSION}`;saved.text='Factual landlord brief';
   assert.equal((await readPreparedBrandAiTake('test','brand')).text,saved.text);
 });
 
@@ -90,9 +91,9 @@ test('actual landlord preparation replaces the old brief with deterministic CRM 
   let helperCalls = 0, modelCalls = 0, released = 0;
   const old = { text: 'Confirmed decision-makers and active leasing momentum', policyVersion: BRAND_BRIEF_POLICY_VERSION,
     fingerprint: getBrandIdentity(company).fingerprint, dataHash: 'same-data', expiresAt: Date.now() + 10000 };
-  const code = find('server/brand-ai-take.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'prepareBrandAiTake');
+  const code = ['preparedTakePolicyVersion','prepareBrandAiTake'].map(name=>find('server/brand-ai-take.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === name)).join('\n');
   const { prepareBrandAiTake } = evaluate(code, {
-    getBrandIdentity, BRAND_BRIEF_POLICY_VERSION, CACHE_TTL_MS: 7 * 86400000,
+    getBrandIdentity, BRAND_BRIEF_POLICY_VERSION, PRIVATE_MAIL_POLICY_VERSION, CACHE_TTL_MS: 7 * 86400000,
     takeKey: () => 'brand-prepared-take:hammerson:brand', dataHash: () => 'same-data',
     loadBrandSlice: async () => records, landlordPrompt: () => 'Unused model prompt',
     landlordBriefFromRecords: slice => { helperCalls++; assert.equal(slice, records); return landlordBriefFromRecords(slice); },
@@ -113,7 +114,7 @@ test('actual landlord preparation replaces the old brief with deterministic CRM 
   assert.equal(helperCalls, 1); assert.equal(modelCalls, 0);
   assert.equal(result.cached, false); assert.equal(result.text, landlordBriefFromRecords(records));
   assert.equal(writes.length, 1); assert.equal(writes[0].text, result.text);
-  assert.equal(writes[0].policyVersion, `${BRAND_BRIEF_POLICY_VERSION}:landlord-records-1`);
+  assert.equal(writes[0].policyVersion, `${BRAND_BRIEF_POLICY_VERSION}:landlord-records-1:${PRIVATE_MAIL_POLICY_VERSION}`);
   assert.equal(writes[0].fingerprint, getBrandIdentity(company).fingerprint);
   assert.equal(transactions.at(-1), 'COMMIT'); assert.equal(released, 1);
 });

@@ -145,7 +145,14 @@ const fmtAddress = (a: any): string | null => {
 
 const CH_BASE = "https://find-and-update.company-information.service.gov.uk/company";
 
-export function AccountEntitiesPanel({ companyId, hideSingleEntity = false }: { companyId: string; hideSingleEntity?: boolean }) {
+export function AccountEntitiesPanel({ companyId, hideSingleEntity = false, embedded = false, primaryCompanyNumber }: {
+  companyId: string;
+  hideSingleEntity?: boolean;
+  embedded?: boolean;
+  // In the combined landlord checks panel, the account identity is already
+  // shown above. Keep its review/status row without repeating those facts.
+  primaryCompanyNumber?: string | null;
+}) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   // Approve / reject are the MLRO's decisions (MLR 2017 Reg 21).
@@ -197,10 +204,11 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false }: { 
     [s.rejected, "rejected", TONE.rejected],
   ];
   const reviewing = review ? rows.find(r => r.key === review.key)?.e ?? null : null;
+  const Container = embedded ? "section" : Card;
 
   return (
-    <Card data-testid={`account-entities-${companyId}`}>
-      <CardHeader className="p-3 pb-2">
+    <Container data-testid={`account-entities-${companyId}`}>
+      <CardHeader className={embedded ? "p-0 pb-2" : "p-3 pb-2"}>
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground flex-wrap">
           <Building2 className="w-3.5 h-3.5" /> Group entities
           <span className={tone(s.current === s.total ? TONE.current : TONE.expired)} data-testid="entities-current-summary">
@@ -211,7 +219,7 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false }: { 
           ))}
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-3 pt-0">
+      <CardContent className={embedded ? "p-0" : "p-3 pt-0"}>
         {/* Name gets the width and wraps to two lines; the chips drop
             beneath it until the card is wide enough to sit them alongside —
             side by side they cut the name to "THE ARD…" (Woody, 2026-09-28). */}
@@ -219,6 +227,8 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false }: { 
           {rows.map(({ e, key }) => {
             const bucket = bucketOf(e);
             const actionable = isMlro && e.entityId;
+            const primaryShown = embedded && e.relation === "self" && !!primaryCompanyNumber?.trim()
+              && e.companiesHouseNumber?.trim().toUpperCase() === primaryCompanyNumber.trim().toUpperCase();
             return (
               <div key={key} className="flex items-start gap-1.5 py-1.5" data-testid={`entity-row-${e.entityId ?? key}`}>
                 <button
@@ -231,17 +241,17 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false }: { 
                   <span className="flex items-start gap-1.5 min-w-0 [@container(min-width:560px)]:flex-1">
                     <Building2 className="w-3.5 h-3.5 mt-px text-muted-foreground shrink-0" />
                     <span className="min-w-0 flex flex-col leading-tight">
-                      <span className="text-xs font-medium line-clamp-2 break-words">{e.name}</span>
-                      {e.tradingAs && <span className="text-[11px] text-muted-foreground line-clamp-1 break-words">trading as {e.tradingAs}</span>}
+                      <span className="text-xs font-medium line-clamp-2 break-words">{primaryShown ? "Review account entity" : e.name}</span>
+                      {!primaryShown && e.tradingAs && <span className="text-[11px] text-muted-foreground line-clamp-1 break-words">trading as {e.tradingAs}</span>}
                     </span>
                   </span>
                   <span className="flex flex-wrap items-center gap-1 pl-5 [@container(min-width:560px)]:pl-0 [@container(min-width:560px)]:shrink-0 [@container(min-width:560px)]:justify-end">
-                    {e.companiesHouseNumber ? (
+                    {!primaryShown && (e.companiesHouseNumber ? (
                       <span className={chip}>CH <span className="font-mono">{e.companiesHouseNumber}</span></span>
                     ) : (
                       <span className={tone(TONE.expired)}>No CH no.</span>
-                    )}
-                    <span className={chip}>{RELATION_LABEL[e.relation]}</span>
+                    ))}
+                    {!primaryShown && <span className={chip}>{RELATION_LABEL[e.relation]}</span>}
                     {e.representationConflicts.length > 0 && (
                       <span title={e.representationConflicts.join("\n")} data-testid={`entity-conflict-${e.entityId ?? key}`}>
                         <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
@@ -300,7 +310,7 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false }: { 
         onApprove={(e) => approve.mutate(e)}
         onReject={(e, reason) => reject.mutate({ e, reason })}
       />
-    </Card>
+    </Container>
   );
 }
 

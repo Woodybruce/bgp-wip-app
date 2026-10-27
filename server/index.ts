@@ -31,10 +31,13 @@ process.on("uncaughtException", (err: any) => {
 import { registerRoutes } from "./routes";
 import { pool } from "./db";
 import { installGoogleBudgetGuard } from "./google-budget";
+import { installPrivateMailGraphGuard } from "./private-mail-graph";
+import { ensurePrivateMailBoundary, blockPrivateMailCopies, flushPrivateMailQuarantine } from "./private-mail-store";
 
 // £200/day hard cap on Google Maps/Places spend (Woody, 2026-09-01) —
 // installed before anything can fire an outbound googleapis call.
 installGoogleBudgetGuard();
+installPrivateMailGraphGuard((record, mailbox, kind) => blockPrivateMailCopies(pool, record, mailbox, kind));
 
 // Auto-migrate: add columns/tables that may be missing after database restore.
 // CRITICAL: each statement runs in its own try/catch so one failure (e.g. an
@@ -4304,6 +4307,13 @@ app.use("/api/branding/assets", express.static(
 ));
 
 (async () => {
+  const privateRowsRemoved = await ensurePrivateMailBoundary(pool);
+  while (await flushPrivateMailQuarantine(pool)) { /* drain any copies found by the database trigger */ }
+  const quarantineTimer = setInterval(() => {
+    flushPrivateMailQuarantine(pool).catch(() => console.error("[private-mail] Archive maintenance failed; records remain excluded in the private buffer."));
+  }, 60_000);
+  quarantineTimer.unref();
+  console.log(`[private-mail] Boundary ready; ${privateRowsRemoved} private CRM records quarantined.`);
   // Token-scoped read-only access works for anonymous and client accounts.
   // Run before session gates so old/deactivated account cookies cannot block
   // token-authorized images. Management retains the staff and client gates.

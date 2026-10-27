@@ -7,6 +7,7 @@ import { isClientRequestUser, resolveCompanyScope } from './company-scope';
 import { parseGraphDateTime } from './viewing-matching';
 import { LANDLORD_CATALOGUE_PREDICATE, matchLandlordMeeting, londonWeek, type LandlordCatalogueEntry } from './landlord-meeting-matching';
 import { registerLandlordMeetingSummaryRoutes } from './landlord-meeting-summary';
+import { isPrivateEmailRecord, isPrivateMailboxAddress } from './private-mail';
 
 type Queryable = { query: (text: string, values?: any[]) => Promise<{ rows: any[] }> };
 const PREFIX = 'landlord_diary_v1:';
@@ -34,7 +35,7 @@ interface DiarySnapshot {
   start: string;
   end: string;
   events: DiaryEvent[];
-  revocations?: Array<{ id: string; uid: string; at: string; modifiedAt: string | null; private: boolean; excluded?: boolean }>;
+  revocations?: Array<{ id: string; uid: string; at: string; modifiedAt: string | null; private: boolean; excluded?: boolean; accountPrivate?: boolean }>;
   issue: string | null;
 }
 
@@ -50,7 +51,7 @@ async function staffMailboxes(q: Queryable = pool): Promise<Array<{ email: strin
   const { rows } = await q.query(`SELECT lower(trim(email)) AS email,name FROM users
     WHERE lower(trim(email)) LIKE '%@brucegillinghampollard.com'
       AND COALESCE(role,'') <> 'Client' AND is_active IS DISTINCT FROM false`);
-  return [...new Map(rows.map(row => [row.email, row])).values()];
+  return [...new Map(rows.filter(row => !isPrivateMailboxAddress(row.email)).map(row => [row.email, row])).values()];
 }
 
 function person(raw: any): LandlordMeetingPerson | null {
@@ -73,6 +74,7 @@ export function isLandlordDiaryAbsence(subject: unknown): boolean {
 
 export function normaliseLandlordDiaryEvent(raw: any): DiaryEvent | null {
   // The diary sync is business context, never a way to reveal private events.
+  if (isPrivateEmailRecord(raw)) return null;
   if (!raw.sensitivity) throw new Error('Microsoft did not return the meeting privacy setting');
   if (raw.sensitivity !== 'normal') return null;
   if (raw.type === 'seriesMaster') return null;
@@ -99,25 +101,32 @@ export async function captureLandlordDiary(
   if (!(await staffMailboxes(q)).some(member => member.email === mailbox.toLowerCase())) return;
   const catalogue = options.catalogue || await loadLandlordCatalogue(q);
   const checkedAt = (options.now || new Date()).toISOString();
-  const events = rawEvents.map(normaliseLandlordDiaryEvent).filter((event): event is DiaryEvent => !!event)
+  const visibleEvents = rawEvents.map(normaliseLandlordDiaryEvent).filter((event): event is DiaryEvent => !!event)
     .filter(event => !isLandlordDiaryAbsence(event.subject) && matchLandlordMeeting(event.subject, event.participants, catalogue).length > 0);
   const previous = (await q.query('SELECT value FROM system_settings WHERE key=$1', [PREFIX + mailbox.toLowerCase()])).rows[0]?.value as DiarySnapshot | undefined;
   const eventKey = (event: { id: string; uid: string }) => event.uid || event.id;
+  const accountPrivateKeys = new Set([
+    ...(previous?.revocations || []).filter(revocation => revocation.accountPrivate),
+    ...(previous?.events || []).filter(event => isPrivateEmailRecord(event, mailbox)),
+  ].map(eventKey));
+  const events = visibleEvents.filter(event => !accountPrivateKeys.has(eventKey(event)));
   const currentKeys = new Set(events.map(eventKey));
-  const revocations = (previous?.revocations || []).filter(revocation => !currentKeys.has(eventKey(revocation)));
+  const revocations = (previous?.revocations || []).filter(revocation => revocation.accountPrivate || !currentKeys.has(eventKey(revocation)));
   for (const event of previous?.events || []) {
     if (event.start >= window.start && event.start < window.end && !currentKeys.has(eventKey(event))) {
-      revocations.push({ id: event.id, uid: event.uid, at: checkedAt, modifiedAt: event.modifiedAt, private: false });
+      const accountPrivate = isPrivateEmailRecord(event, mailbox);
+      revocations.push({ id: event.id, uid: event.uid, at: checkedAt, modifiedAt: event.modifiedAt, private: accountPrivate, accountPrivate });
     }
   }
   for (const event of rawEvents) {
     const excluded = isLandlordDiaryAbsence(event.subject);
-    if ((event.sensitivity === 'normal' && !excluded) || !event.id) continue;
+    const accountPrivate = isPrivateEmailRecord(event, mailbox);
+    if ((event.sensitivity === 'normal' && !excluded && !accountPrivate) || !event.id) continue;
     // Keep only revocation identifiers, never excluded/private diary details.
     // Older shared copies must not reintroduce them into landlord meetings.
     revocations.push({ id: String(event.id), uid: String(event.iCalUId || ''), at: checkedAt,
       modifiedAt: event.lastModifiedDateTime && Number.isFinite(Date.parse(event.lastModifiedDateTime)) ? new Date(event.lastModifiedDateTime).toISOString() : null,
-      private: event.sensitivity !== 'normal', excluded });
+      private: event.sensitivity !== 'normal' || accountPrivate, excluded, accountPrivate });
   }
   const snapshot: DiarySnapshot = { mailbox: mailbox.toLowerCase(), checkedAt, attemptedAt: checkedAt, scanStartedAt: options.scanStartedAt || checkedAt, ...window, events,
     revocations: [...new Map(revocations.map(revocation => [eventKey(revocation), revocation])).values()], issue: null };
@@ -127,6 +136,7 @@ export async function captureLandlordDiary(
 }
 
 export async function recordLandlordDiaryFailure(mailbox: string, issue: string, q: Queryable = pool): Promise<void> {
+  if (isPrivateMailboxAddress(mailbox)) return;
   const patch = { mailbox: mailbox.toLowerCase(), attemptedAt: new Date().toISOString(), issue };
   await q.query(`INSERT INTO system_settings(key,value,updated_at) VALUES($1,$2::jsonb,now())
     ON CONFLICT(key) DO UPDATE SET value=COALESCE(system_settings.value,'{}'::jsonb)||EXCLUDED.value,updated_at=now()`,
@@ -139,6 +149,14 @@ export function buildLandlordMeetingDigest(
 ): LandlordMeetingDigest {
   const now = options.now || new Date();
   const week = londonWeek(now);
+  staff = staff.filter(member => !isPrivateMailboxAddress(member.email));
+  // Identify copies before excluding old private snapshots. A shared invitation
+  // must not reappear from a colleague's cache with a shortened attendee list.
+  const privateKeys = new Set(snapshots.flatMap(snapshot => [
+    ...(snapshot.events || []).filter(event => isPrivateEmailRecord(event, snapshot.mailbox)),
+    ...(snapshot.revocations || []).filter(revocation => revocation.accountPrivate),
+  ].map(event => event.uid || `${snapshot.mailbox}:${event.id}`)));
+  snapshots = snapshots.filter(snapshot => !isPrivateMailboxAddress(snapshot.mailbox));
   const staffNames = new Map(staff.map(member => [member.email.toLowerCase(), member.name]));
   const byMailbox = new Map(snapshots.map(snapshot => [snapshot.mailbox, snapshot]));
   const checked = staff.filter(member => byMailbox.get(member.email)?.checkedAt);
@@ -158,6 +176,7 @@ export function buildLandlordMeetingDigest(
       // iCalUId distinguishes individual recurrence instances and survives
       // reschedules. A mailbox-local id is never treated as a shared uid.
       const key = event.uid || `${snapshot.mailbox}:${event.id}`;
+      if (privateKeys.has(key) || isPrivateEmailRecord(event, snapshot.mailbox)) continue;
       const prior = sources.get(key);
       const version = event.modifiedAt || snapshot.checkedAt;
       const priorVersion = prior?.event.modifiedAt || prior?.snapshot.checkedAt || '';
@@ -170,9 +189,9 @@ export function buildLandlordMeetingDigest(
   for (const [key, { event, snapshot }] of sources) {
     if (event.cancelled) continue;
     if (isLandlordDiaryAbsence(event.subject)) continue;
-    if (revoked.some(revocation => revocation.key === key && (revocation.private || revocation.excluded
+    if (revoked.some(revocation => revocation.key === key && (revocation.accountPrivate || (revocation.private || revocation.excluded
       ? (event.modifiedAt || snapshot.checkedAt!) <= (revocation.modifiedAt || revocation.at)
-      : snapshot.checkedAt! <= revocation.at))) continue;
+      : snapshot.checkedAt! <= revocation.at)))) continue;
     if (options.weekOnly && (event.start < week.start || event.start >= week.end)) continue;
     const matches = matchLandlordMeeting(event.subject, event.participants, catalogue);
     for (const { company, reasons } of matches) {
@@ -204,6 +223,7 @@ export async function getLandlordMeetingDigest(
 }
 
 export async function fetchLandlordCalendar(token: string, mailbox: string, window: { start: string; end: string }, fetcher: typeof fetch = fetch): Promise<any[]> {
+  if (isPrivateMailboxAddress(mailbox)) throw new Error('This mailbox is excluded from diary access');
   const select = 'id,iCalUId,subject,start,end,attendees,organizer,location,isCancelled,sensitivity,webLink,type,lastModifiedDateTime';
   let url: string | null = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(mailbox)}/calendarView?startDateTime=${window.start}&endDateTime=${window.end}&$select=${select}&$top=250&$orderby=start/dateTime`;
   const events: any[] = [];
@@ -341,8 +361,9 @@ export async function searchLandlordMeetings(options: LandlordCalendarSearch, de
         const events = rawEvents.map(normaliseLandlordDiaryEvent).filter((event): event is DiaryEvent => !!event)
           .filter(event => !isLandlordDiaryAbsence(event.subject) && (event.cancelled || matchLandlordMeeting(event.subject, event.participants, catalogue).some(match => match.company.id === company.id)));
         const checkedAt = (deps.now || new Date()).toISOString();
-        const revocations = rawEvents.filter(event => (event.sensitivity !== 'normal' || isLandlordDiaryAbsence(event.subject)) && event.id).map(event => ({
-          id: String(event.id), uid: String(event.iCalUId || ''), at: checkedAt, private: event.sensitivity !== 'normal', excluded: isLandlordDiaryAbsence(event.subject),
+        const revocations = rawEvents.filter(event => (event.sensitivity !== 'normal' || isLandlordDiaryAbsence(event.subject) || isPrivateEmailRecord(event, member.email)) && event.id).map(event => ({
+          id: String(event.id), uid: String(event.iCalUId || ''), at: checkedAt, private: event.sensitivity !== 'normal' || isPrivateEmailRecord(event, member.email),
+          accountPrivate: isPrivateEmailRecord(event, member.email), excluded: isLandlordDiaryAbsence(event.subject),
           modifiedAt: event.lastModifiedDateTime && Number.isFinite(Date.parse(event.lastModifiedDateTime)) ? new Date(event.lastModifiedDateTime).toISOString() : null,
         }));
         snapshots.push({ mailbox: member.email, checkedAt, attemptedAt: checkedAt, ...window, events, revocations, issue: null });
@@ -392,8 +413,10 @@ export function registerLandlordMeetingRoutes(app: Express): void {
       if (!await staffOnly(req,res)) return;
       const companyId = String(req.params.companyId);
       if (!(await loadLandlordCatalogue()).some(company => company.id === companyId)) return res.status(404).json({ error: 'Landlord not found' });
-      res.json(await getLandlordMeetingDigest({ companyId }));
-    } catch { res.status(503).json({ error: 'Landlord diary summary is unavailable. No meetings have been removed.' }); }
+      const { landlordPersonRequest, resolveLandlordActivityPerson, scopeLandlordMeetingDigest } = await import('./landlord-activity-person');
+      const person = await resolveLandlordActivityPerson(companyId, landlordPersonRequest(req.query));
+      res.json(scopeLandlordMeetingDigest(await getLandlordMeetingDigest({ companyId }), person));
+    } catch (error: any) { res.status(error?.status || 503).json({ error: error?.status ? error.message : 'Landlord diary summary is unavailable. No meetings have been removed.' }); }
   });
   app.post('/api/crm/landlords/meetings/refresh', requireAuth, async (req,res) => {
     try {

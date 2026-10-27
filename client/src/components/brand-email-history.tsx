@@ -8,33 +8,35 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { AiCommentary, type CommentaryEntity } from "@/components/ai-commentary";
+import { landlordActivityPersonQuery, type LandlordActivityPerson } from "@shared/landlord-activity-person";
 
-type Conversation = { subject: string; messages: number; first: string; last: string; bgp: string[]; brand: string[]; others: string[]; firms?: string[]; preview: string };
-export type ThreadsResponse = { domain: string; total: number; conversations: Conversation[]; evidenceKey?: string; summary: { text: string; at: string; evidenceKey?: string } | null };
+type Conversation = { subject: string; messages: number; first: string; last: string; bgp: string[]; brand: string[]; others: string[]; firms?: string[]; preview: string; previewAt?: string };
+export type ThreadsResponse = { domain: string; total: number; conversations: Conversation[]; highlights?: Conversation[]; evidenceKey?: string; summary: { text: string; at: string; evidenceKey?: string } | null };
 
 const personName = (email: string) => email.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, ch => ch.toUpperCase());
 const firmOf = (email: string) => (email.split("@")[1] || "").replace(/\.(co\.uk|com|uk|net|org|io|es|pt|fr)$/i, "");
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
-export function BrandEmailHistory({ companyId, companyName, open, onOpenChange, entities, landlord = false }: {
-  companyId: string; companyName: string; open: boolean; onOpenChange: (open: boolean) => void; entities?: CommentaryEntity[]; landlord?: boolean;
+export function BrandEmailHistory({ companyId, companyName, open, onOpenChange, entities, landlord = false, person }: {
+  companyId: string; companyName: string; open: boolean; onOpenChange: (open: boolean) => void; entities?: CommentaryEntity[]; landlord?: boolean; person?: LandlordActivityPerson;
 }) {
   const [search, setSearch] = useState("");
   const attemptedLandlordSummary = useRef("");
-  const key = ["/api/brand", companyId, "email-threads"];
+  const personQuery = landlord ? landlordActivityPersonQuery(person) : "";
+  const key = ["/api/brand", companyId, "email-threads", ...(personQuery ? [personQuery] : [])];
   const { data, isLoading, isError } = useQuery<ThreadsResponse>({
     queryKey: key,
-    queryFn: async () => (await apiRequest("GET", `/api/brand/${companyId}/email-threads`)).json(),
+    queryFn: async () => (await apiRequest("GET", `/api/brand/${companyId}/email-threads${personQuery}`)).json(),
     enabled: open,
     staleTime: 5 * 60_000,
   });
   const summarise = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/brand/${companyId}/email-threads/summary`)).json(),
+    mutationFn: async () => (await apiRequest("POST", `/api/brand/${companyId}/email-threads/summary${personQuery}`)).json(),
     onSuccess: (out: { summary: ThreadsResponse["summary"] }) => queryClient.setQueryData<ThreadsResponse>(key, prev => prev && (!landlord || !out.summary || out.summary.evidenceKey === prev.evidenceKey) ? { ...prev, summary: out.summary } : prev),
   });
   // Build the AI read the first time the history opens (or when new mail has arrived).
   useEffect(() => {
-    const evidence = `${companyId}:${data?.evidenceKey || data?.conversations[0]?.last || ""}`;
+    const evidence = `${companyId}:${personQuery}:${data?.evidenceKey || data?.conversations[0]?.last || ""}`;
     if (open && data && !data.summary && data.conversations.length && !summarise.isPending && !summarise.isError
       && (!landlord || attemptedLandlordSummary.current !== evidence)) {
       if (landlord) attemptedLandlordSummary.current = evidence;
@@ -48,7 +50,7 @@ export function BrandEmailHistory({ companyId, companyName, open, onOpenChange, 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" data-testid="brand-email-history">
-        <DialogTitle className="flex items-center gap-2"><Mail className="w-4 h-4" />Emails with {companyName}</DialogTitle>
+        <DialogTitle className="flex items-center gap-2"><Mail className="w-4 h-4" />Emails with {companyName}{personQuery && person ? ` · ${person.name}` : ""}</DialogTitle>
         <DialogDescription>
           {data ? <><span className="font-mono tabular-nums">{data.total}</span> conversations · <span className="font-mono tabular-nums">{emails}</span> emails{landlord ? " · linked correspondence" : ` with @${data.domain}`}</> : landlord ? "BGP's email history with this landlord." : "BGP's email history with the brand."}
         </DialogDescription>

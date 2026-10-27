@@ -309,6 +309,8 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
 
   const sender = await storage.getUser(senderUserId);
   const senderName = sender?.name || "A team member";
+  let confirmedLandlordAction: any = null;
+  let isLandlordConversation = false;
 
   try {
     const chatbgp = await import("./chatbgp");
@@ -344,6 +346,7 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
           viewerId: req.session?.userId || req.tokenUserId, conversationThreadId: threadId,
         });
         if (landlordEvidence) {
+          isLandlordConversation = true;
           landlordContext = landlordChatEvidencePrompt(landlordEvidence, senderName);
           const authored = await pool.query(`SELECT m.role, m.content, m.user_id, m.created_at, u.name AS sender_name
             FROM chat_messages m LEFT JOIN users u ON u.id=m.user_id
@@ -353,7 +356,7 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
         }
       }
     }
-    const groupTools = (groupIsClient && !groupClientScope) ? [] : ((allTools as any).tools?.filter((t: any) => {
+    let groupTools = (groupIsClient && !groupClientScope) ? [] : ((allTools as any).tools?.filter((t: any) => {
       const name = t.function?.name;
       if (!GROUP_CHAT_TOOLS.includes(name) && !(landlordEvidence && ["search_calendar", "query_calendar"].includes(name))) return false;
       if (groupIsClient && !isToolAllowedForClient(name)) return false;
@@ -361,6 +364,10 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
     }) || []).map((tool: any) => landlordEvidence && ["search_calendar", "query_calendar"].includes(tool.function?.name)
       ? { ...tool, function: { ...tool.function, description: "Check normal-sensitivity calendar invitations linked to this landlord only, across active BGP staff diaries. Private/confidential, cancelled and unrelated meetings are excluded. Search by subject, attendees or location within a bounded date range (default next 30 days, maximum 120 days); use mailbox='all' for the team. Returns checked coverage and source invitations. An incomplete check is not proof that a meeting does not exist." } }
       : tool);
+    const { landlordRequirementTools, executeLandlordRequirementTool } = await import("./landlord-chat-requirements");
+    if (landlordEvidence) {
+      groupTools = [...groupTools.filter((tool: any) => !["create_requirement", "update_requirement"].includes(tool.function?.name)), ...landlordRequirementTools];
+    }
 
     const lastUserMsg = recentMessages.filter(m => m.role === "user").pop()?.content || "";
     const mentionsChatBGP = AI_MENTION_REGEX.test(lastUserMsg);
@@ -461,11 +468,23 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
               if (completionOptions.landlordEvidence && ["search_calendar", "query_calendar"].includes(fnName)) {
                 outcome = await searchLandlordMeetings({ ...fnArgs, req, companyId: landlordEvidence.company.id });
                 lastHandledReply = outcome?.error ? "The landlord diary check did not complete." : null;
+              } else if (completionOptions.landlordEvidence && ["search_landlord_requirements", "create_requirement", "update_requirement"].includes(fnName)) {
+                const raw = await executeLandlordRequirementTool(req, { companyId: landlordEvidence.company.id, threadId, messageId: triggerMessageId }, fnName, fnArgs);
+                outcome = raw.data;
+                landlordToolOutcomes.push({ ...raw.data, tool: fnName });
+                if (raw.data?.success === true && "action" in raw && raw.action) {
+                  lastAction = raw.action;
+                  confirmedLandlordAction = raw.action;
+                  lastHandledReply = "The investment requirement has been saved on this landlord’s Requirements board. You can open the saved record below.";
+                } else if (raw.data?.success === false) lastHandledReply = "The requirement was not saved. " + ("error" in raw.data ? raw.data.error : "Please check the requirement details.");
               } else if (completionOptions.landlordEvidence && ["search_crm", "create_deal", "update_deal", "create_contact", "update_contact", "create_company", "update_company", "create_property", "create_available_unit", "update_available_unit", "create_requirement", "create_task", "create_diary_entry", "create_investment_tracker", "update_investment_tracker", "log_viewing", "log_offer", "delete_record"].includes(fnName)) {
                 const raw = await chatbgp.executeCrmToolRaw(fnName, fnArgs, req);
                 outcome = raw.data;
                 landlordToolOutcomes.push({ ...raw.data, tool: fnName });
-                if (raw.data?.success === true) lastAction = raw.action || lastAction;
+                if (raw.data?.success === true && raw.action) {
+                  lastAction = { ...raw.action, success: true, companyId: landlordEvidence.company.id };
+                  confirmedLandlordAction = lastAction;
+                }
                 lastHandledReply = raw.data?.error ? "The requested check or change did not complete. No successful save was confirmed." : null;
               } else if (fnName === "search_app_guide") {
                 // Evidence for the next model round, never a final chat reply.
@@ -529,13 +548,16 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
   } catch (err: any) {
     console.error("[ai-group] AI response failed:", err?.message);
     if (io) io.to(`thread:${threadId}`).emit("stop_typing", { threadId, userId: "__chatbgp__" });
-    const fallback = "Sorry, I had a bit of a hiccup there. Could you say that again?";
+    const fallback = confirmedLandlordAction
+      ? "The CRM change was saved, but I couldn’t finish the rest of my reply." + (confirmedLandlordAction.entityType === "requirement" ? " The saved record is linked below." : " Please check the updated record before repeating the request.")
+      : isLandlordConversation ? "Sorry, I couldn’t complete that request. No successful save was confirmed; please try again."
+      : "Sorry, I had a bit of a hiccup there. Could you say that again?";
     const saved = await storage.createChatMessage({
       threadId,
       role: "assistant",
       content: fallback,
       userId: null,
-      actionData: null,
+      actionData: confirmedLandlordAction ? JSON.stringify(confirmedLandlordAction) : null,
       attachments: null,
     });
     emitNewMessage(threadId, saved, "ChatBGP");

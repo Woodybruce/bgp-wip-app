@@ -224,8 +224,9 @@ test('both landlord evidence entry points use the shared staff predicate, token 
     require:name=>{assert.equal(name,'./landlord-relationship-brief');return{getLandlordRelationshipEvidence:loader,renderLandlordRelationshipBrief,
       landlordChatEvidencePrompt,landlordChatHistory,isInternalLandlordThread:async()=>internal};},
    };
-   const {run}=evaluate(`export async function run() { let landlordEvidence=null;let landlordContext='';let recentMessages=[];${block}; }`,bindings);
-   await run();
+   const {run}=evaluate(`export async function run() { let landlordEvidence=null;let landlordContext='';let recentMessages=[];let isLandlordConversation=false;${block};return {isLandlordConversation}; }`,bindings);
+   const outcome=await run();
+   if(isGroup)assert.equal(outcome.isLandlordConversation,allowed&&internal);
    assert.equal(gateCalls,1);
    assert.equal(evidenceReads.length,allowed&&(!isGroup||internal)?1:0);
    if(evidenceReads.length){assert.equal(evidenceReads[0].options.viewerId,'token-staff');

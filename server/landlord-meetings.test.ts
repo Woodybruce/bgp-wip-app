@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { before, test } from 'node:test';
 import { createRequire } from 'node:module';
 import { matchLandlordMeeting, londonWeek, type LandlordCatalogueEntry } from './landlord-meeting-matching';
+import { PRIVATE_MAILBOX } from './private-mail';
 
 let api: typeof import('./landlord-meetings');
 before(async () => {
@@ -275,4 +276,63 @@ test('coverage preserves a first-scan error and explains a missing Outlook calen
   const live=await api.searchLandlordMeetings({req:searchRequest,companyId:'aew',mailbox:'me'},deps);
   assert.equal(live.coverage!.status,'not_synced');
   assert.match(live.coverage!.issues[0],/could not find an Outlook calendar/);
+});
+
+test('private account invitations are excluded even with normal sensitivity and from legacy shared snapshot copies', () => {
+  for (const change of [
+    { organizer:{emailAddress:{address:PRIVATE_MAILBOX}} },
+    { attendees:[{emailAddress:{address:PRIVATE_MAILBOX}}] },
+    { mailbox:PRIVATE_MAILBOX },
+  ]) assert.equal(api.normaliseLandlordDiaryEvent(raw(change)),null);
+  const shared = api.normaliseLandlordDiaryEvent(raw())!;
+  const privateCopy = {...shared, id:'private-copy', participants:[...shared.participants,person(PRIVATE_MAILBOX)]};
+  const newerShared = {...shared,modifiedAt:'2026-10-27T09:59:00Z'};
+  for (const oldSnapshot of [snapshot(PRIVATE_MAILBOX,[shared]),snapshot(staff[0].email,[privateCopy])]) {
+    const digest=api.buildLandlordMeetingDigest([oldSnapshot,snapshot(staff[1].email,[newerShared])],[aew],
+      [...staff,{email:PRIVATE_MAILBOX,name:'Private account'}],{now});
+    assert.equal(digest.meetings.length,0);
+    assert.equal(digest.coverage.mailboxesExpected,2);
+    assert.doesNotMatch(JSON.stringify(digest),/Private account|equity@/i);
+  }
+});
+
+test('private invitation capture retains only permanent revocation identifiers and skips the private mailbox itself', async () => {
+  const earlier=snapshot(staff[0].email,[api.normaliseLandlordDiaryEvent(raw())!]);
+  let saved:any;let writes=0;
+  const q={query:async(sql:string,values?:any[])=>{
+    if(sql.startsWith('SELECT lower'))return {rows:[...staff,{email:PRIVATE_MAILBOX,name:'Private account'}]};
+    if(sql.startsWith('SELECT value'))return {rows:[{value:earlier}]};
+    writes++;saved=JSON.parse(values![1]);return {rows:[]};
+  }};
+  await api.captureLandlordDiary([raw({subject:'Private account context',attendees:[{emailAddress:{address:PRIVATE_MAILBOX}}]})],staff[0].email,
+    {start:'2026-10-01',end:'2027-01-01'},{q,catalogue:[aew],now});
+  assert.equal(saved.events.length,0);assert.equal(saved.revocations[0].private,true);assert.equal(saved.revocations[0].accountPrivate,true);
+  assert.doesNotMatch(JSON.stringify(saved),/Private account context|equity@|Ben Sykes/);
+  const laterCopy=api.normaliseLandlordDiaryEvent(raw({lastModifiedDateTime:'2026-10-27T11:30:00Z'}))!;
+  assert.equal(api.buildLandlordMeetingDigest([saved,snapshot(staff[1].email,[laterCopy])],[aew],staff,{now}).meetings.length,0);
+  const privateSnapshot=saved;
+  await api.captureLandlordDiary([raw({lastModifiedDateTime:'2026-10-27T11:30:00Z'})],staff[0].email,
+    {start:'2026-10-01',end:'2027-01-01'},{q:{query:async(sql:string,values?:any[])=>{
+      if(sql.startsWith('SELECT lower'))return {rows:staff};
+      if(sql.startsWith('SELECT value'))return {rows:[{value:privateSnapshot}]};
+      saved=JSON.parse(values![1]);return {rows:[]};
+    }},catalogue:[aew],now});
+  assert.equal(saved.events.length,0);assert.equal(saved.revocations[0].accountPrivate,true);
+  await api.captureLandlordDiary([raw()],PRIVATE_MAILBOX,{start:'2026-10-01',end:'2027-01-01'},{q,catalogue:[aew],now});
+  await api.recordLandlordDiaryFailure(PRIVATE_MAILBOX,'Unavailable',q);
+  assert.equal(writes,1);
+});
+
+test('live diary search never fetches the private mailbox and suppresses private shared copies', async () => {
+  const sample=searchDependencies({[staff[0].email]:[raw({attendees:[{emailAddress:{address:PRIVATE_MAILBOX}}]})],
+    [staff[1].email]:[raw({id:'copy',lastModifiedDateTime:'2026-10-27T11:30:00Z'})]});
+  const originalQuery=sample.deps.q.query;
+  sample.deps.q.query=async(sql:string)=>sql.startsWith('SELECT lower(trim(email)) AS email,name')
+    ? {rows:[...staff,{email:PRIVATE_MAILBOX,name:'Private account'}]} : originalQuery(sql);
+  const result=await api.searchLandlordMeetings({req:searchRequest,companyId:'aew'},sample.deps);
+  assert.equal(result.events!.length,0);assert.equal(result.coverage!.mailboxesExpected,2);
+  assert.equal(sample.requested.some(item=>item.mailbox===PRIVATE_MAILBOX),false);
+  const direct=await api.searchLandlordMeetings({req:searchRequest,companyId:'aew',mailbox:PRIVATE_MAILBOX},sample.deps);
+  assert.ok(direct.error);assert.equal(sample.requested.length,2);
+  await assert.rejects(api.fetchLandlordCalendar('test',PRIVATE_MAILBOX,{start:'x',end:'y'},async()=>{throw Error('Must not fetch');}),/excluded from diary access/);
 });

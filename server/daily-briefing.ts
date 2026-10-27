@@ -13,6 +13,7 @@
 
 import { pool } from "./db";
 import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
+import { isPrivateMailboxAddress, PRIVATE_MAIL_POLICY_VERSION } from "./private-mail";
 
 export interface BriefingResult {
   briefing: string;
@@ -117,7 +118,7 @@ export async function generateBriefing(userId: string, msToken: string | null): 
 
   let calendarContext = "";
   let emailContext = "";
-  if (msToken) {
+  if (msToken && !isPrivateMailboxAddress(userEmail)) {
     // Today only — start of today → start of tomorrow (London). The old
     // window added 2 days, which is why tomorrow's meetings leaked in.
     const startToday = new Date(`${londonDateKey()}T00:00:00`);
@@ -301,10 +302,20 @@ ${insightLines ? `MARKET PULSE (latest distilled insights — include a short "M
   };
 }
 
+// Namespace only the persisted key. Real user ids still drive generation,
+// permissions and pre-generation; older workers cannot repopulate this cache.
+function briefingCacheUserId(userId: string): string {
+  return `${PRIVATE_MAIL_POLICY_VERSION}:${userId}`;
+}
+
 async function readCached(userId: string, dateKey: string): Promise<BriefingResult | null> {
+  // /me does not expose its owner in the URL. Never serve stored mail-derived
+  // text for the excluded account, including if a user's email changed later.
+  const user = await pool.query("SELECT email FROM users WHERE id = $1", [userId]);
+  if (isPrivateMailboxAddress(user.rows[0]?.email)) return null;
   const r = await pool.query(
     `SELECT briefing, stats, generated_at FROM daily_briefings WHERE user_id = $1 AND briefing_date = $2`,
-    [userId, dateKey]
+    [briefingCacheUserId(userId), dateKey]
   );
   if (!r.rows[0]) return null;
   return {
@@ -320,7 +331,7 @@ async function store(userId: string, dateKey: string, result: BriefingResult): P
      VALUES ($1, $2, $3, $4::jsonb, $5)
      ON CONFLICT (user_id, briefing_date)
      DO UPDATE SET briefing = EXCLUDED.briefing, stats = EXCLUDED.stats, generated_at = EXCLUDED.generated_at`,
-    [userId, dateKey, result.briefing, JSON.stringify(result.stats), result.generatedAt]
+    [briefingCacheUserId(userId), dateKey, result.briefing, JSON.stringify(result.stats), result.generatedAt]
   );
 }
 

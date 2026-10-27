@@ -39,13 +39,13 @@ export function LandlordEmailSummary({ companyId, companyName, entities }: {
         : isError ? <p role="status" className="text-sm text-muted-foreground">Emails could not be loaded. <button className="underline" onClick={() => refetch()}>Try again</button></p>
         : !data?.conversations.length ? <p className="text-sm text-muted-foreground">No email conversations linked yet.</p>
         : <>
-          {data.summary?.text ? <div className="line-clamp-3 text-sm leading-relaxed" data-testid="landlord-email-ai-summary"><AiCommentary text={data.summary.text} size="sm" entities={entities} /></div>
+          {data.summary?.text ? <div className="text-sm leading-relaxed" data-testid="landlord-email-ai-summary"><AiCommentary text={data.summary.text} size="sm" entities={entities} /></div>
             : <p className="text-sm text-muted-foreground">{summarise.isPending ? "Preparing the email summary…" : "Recent correspondence with the landlord and people copied in."}</p>}
           <div className="divide-y divide-border/60">
-            {data.conversations.slice(0, 2).map(conversation => <button key={conversation.subject + conversation.last} onClick={() => setOpen(true)} className="block w-full text-left py-2 first:pt-0 hover:text-primary">
+            {(data.highlights || data.conversations).slice(0, 2).map(conversation => <button key={conversation.subject + conversation.last} onClick={() => setOpen(true)} className="block w-full text-left py-2 first:pt-0 hover:text-primary">
               <p className="text-xs font-medium text-primary">{new Date(conversation.last).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Europe/London" })} · {conversation.messages} {conversation.messages === 1 ? "email" : "emails"}</p>
               <p className="text-sm font-medium truncate mt-0.5">{conversation.subject}</p>
-              <p className="text-xs text-muted-foreground truncate mt-0.5">{conversation.preview || "Open to see the people and correspondence."}</p>
+              <p className="text-xs text-muted-foreground truncate mt-0.5">{conversation.previewAt && conversation.previewAt !== conversation.last ? `Excerpt ${new Date(conversation.previewAt).toLocaleDateString("en-GB",{day:"numeric",month:"short",timeZone:"Europe/London"})}: ` : ""}{conversation.preview || "Open to see the people and correspondence."}</p>
             </button>)}
           </div>
         </>}

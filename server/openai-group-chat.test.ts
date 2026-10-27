@@ -18,6 +18,8 @@ const harness = ts.transpileModule(`
     const chatbgp = {handleCrmToolCall: deps.handle, executeCrmToolRaw: deps.raw};
     const landlordEvidence = deps.landlord ? {company:{id:'aew'}} : null;
     const searchLandlordMeetings = deps.calendarSearch;
+    const executeLandlordRequirementTool = deps.requirementTool;
+    const threadId = 'landlord-thread', triggerMessageId = 'message-1';
     const callGroupModel = () => deps.respond(completionOptions);
     const groupDeadline = deps.deadline ?? Date.now() + 60000;
     const req = deps.req || {};
@@ -27,6 +29,7 @@ const harness = ts.transpileModule(`
     let loopCount = 0;
     const maxLoops = 6;
     let lastAction: any = null;
+    let confirmedLandlordAction: any = null;
     let lastHandledReply: string | null = null;
     const landlordToolOutcomes: any[] = [];
     ${loop}
@@ -173,4 +176,17 @@ test("landlord calendar tools use only the scoped safe reader and cannot overrid
   assert.equal(reads[0].query,'Ben Sykes');assert.equal(reads[1].teamMember,'Nick');
   assert.deepEqual(result.landlordToolOutcomes,[]);
   assert.ok(result.messages.filter((m:any)=>m.role==='tool').every((m:any)=>JSON.parse(m.content).coverage.status==='partial'));
+});
+
+test('landlord requirement writes use the linked current board and expose only successful receipts', async () => {
+  const receipts = [{ data: { success: true, action: 'created', id: 'req-1' }, action: { success: true, type: 'crm_created', entityType: 'requirement', companyId: 'aew', id: 'req-1' } }, { data: { success: false, error: 'Wrong company' } }];
+  const seen: any[] = [];
+  const result = await runGroupLoop({ landlord: true,
+    message: message([call('new', 'create_requirement', '{"budget":"£5m"}'), call('edit', 'update_requirement', '{"id":"other-company"}')]), allowed: ['create_requirement', 'update_requirement'],
+    raw: async () => { throw Error('Must not write legacy requirements'); }, handle: async () => { throw Error('Must not write legacy requirements'); },
+    requirementTool: async (_req: any, context: any, name: string) => { seen.push({ context, name }); return receipts.shift(); }, respond: async () => final });
+  assert.equal(seen[0].context.companyId, 'aew');
+  assert.equal(seen[0].context.threadId, 'landlord-thread');
+  assert.equal(result.lastAction.id, 'req-1');
+  assert.deepEqual(result.landlordToolOutcomes.map((o: any) => o.success), [true, false]);
 });

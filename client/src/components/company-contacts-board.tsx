@@ -5,6 +5,7 @@
 // and deduped, provenance/AI badges on the right, optional extra grouped
 // sections for surfaces that add related people (deal brands, agents).
 import { isKeyContactRole, nameKey, isEmailPlaceholderName, keyContactHiddenReason, compareKeyContacts, type KeyContactSignals, type KeyContactHiddenReason } from "@shared/contact-tiers";
+import { isDismissedLandlordContact, showLandlordEmployerBadge } from "@shared/landlord-contact-suggestions";
 import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -14,6 +15,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { pillMetrics, pillInactive } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
+import { BrandEmailHistory } from "@/components/brand-email-history";
+import { LandlordMeetingsHistory } from "@/components/landlord-meetings-summary";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Users, Mail, Linkedin, Loader2, RefreshCw, Plus, ChevronDown, ChevronRight, Phone, MoreHorizontal } from "lucide-react";
 
@@ -67,13 +70,14 @@ function ContactAvatar({ url, name }: { url?: string | null; name?: string | nul
 // One line per person on desktop, two on the phone: name · role · emails ·
 // small icon links · ⋯ — the 3-line rows with round buttons made a
 // 33-person board a page long (Woody, 2026-09-28).
-export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead, canMarkLeft = false, muted = false }: { contact: any; companyId: string; discovery?: any; aiFlag?: { issue: string; note: string } | null; isLead?: boolean; canMarkLeft?: boolean; muted?: boolean }) {
+export function KeyContactRow({ contact, companyId, companyName = "", isLandlord = false, discovery, aiFlag, isLead, canMarkLeft = false, muted = false }: { contact: any; companyId: string; companyName?: string; isLandlord?: boolean; discovery?: any; aiFlag?: { issue: string; note: string } | null; isLead?: boolean; canMarkLeft?: boolean; muted?: boolean }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: rowViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const rowIsClient = !rowViewer || rowViewer.role === "Client" || !!rowViewer.companyScopeId;
   const [editingRole, setEditingRole] = useState(false);
   const [roleDraft, setRoleDraft] = useState(contact.role || "");
+  const [activityHistory, setActivityHistory] = useState<"email" | "meeting" | null>(null);
 
   const saveRole = useMutation({
     mutationFn: async (value: string) => {
@@ -104,10 +108,18 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead, c
   const lastTouchLabel = lastTouch ? formatRelativeShort(lastTouch) : null;
   const touchText = `${touches.toLocaleString("en-GB")} email${touches === 1 ? "" : "s"}${lastTouchLabel ? ` · ${lastTouchLabel}` : ""}`;
   const touchTitle = lastTouch ? `${touches} email${touches === 1 ? "" : "s"} with BGP · last ${new Date(lastTouch).toLocaleDateString("en-GB")}` : `${touches} emails with BGP`;
+  const meetingCount = isLandlord ? Number(contact.meeting_count || contact.meetingCount || 0) : 0;
+  const canOpenHistory = isLandlord && !rowIsClient && !!contact.id;
+  const activityCount = (kind: "email" | "meeting", label: string, className: string, title?: string) => canOpenHistory
+    ? <button type="button" data-no-min-touch className={`${className} underline decoration-dotted underline-offset-2 hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2`}
+        title={title} aria-label={`View ${kind === "email" ? "emails" : "meetings"} with ${contactDisplayName(contact.name)}`}
+        data-testid={`key-contact-${kind}-history-${contact.id}`} onClick={event => { event.stopPropagation(); setActivityHistory(kind); }}>{label}</button>
+    : <span className={className} title={title}>{label}</span>;
   const leftLabel = contact.left_at ? `Left · ${new Date(contact.left_at).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}` : null;
   // "mshulman" stays as saved (the server renames from signatures) but reads
   // as a stand-in, not a person's name.
   const placeholderName = isEmailPlaceholderName(contact.name, contact.email);
+  const showEmployer = !!contact.employerName && (!isLandlord || showLandlordEmployerBadge(contact, companyId, companyName));
   const iconLink = "p-1.5 md:p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted shrink-0";
   const roleOrStatus = editingRole ? (
     <input
@@ -137,7 +149,7 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead, c
     </button>
   );
 
-  return (
+  return (<>
     <div className={`flex items-center gap-2 text-sm hover:bg-muted/50 rounded px-1 py-1 [@container(min-width:560px)]:py-0.5 -mx-1 transition-colors ${muted ? "opacity-60" : ""}`} data-testid={`key-contact-row-${contact.id}`}>
       <Link href={`/contacts/${contact.id}`} className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[11px] font-medium shrink-0 overflow-hidden">
         <ContactAvatar url={contact.avatar_url} name={contact.name} />
@@ -152,10 +164,10 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead, c
               notes (Woody, 2026-09-27). */}
           {aiFlag && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" title={`${AI_FLAG_LABELS[aiFlag.issue] || "Check"} ${aiFlag.note}`} aria-label={`AI check: ${AI_FLAG_LABELS[aiFlag.issue] || "Check"}`} data-testid="key-contact-ai-flag" />}
           {!touches && discovery?.bgp?.threadCount ? (
-            <Badge variant="outline" className="text-[11px] px-1 py-0 shrink-0 tabular-nums bg-primary/10 text-primary border-primary/30" title="BGP has real email history with this person">
+            canOpenHistory ? activityCount("email", `known · ${discovery.bgp.threadCount} threads`, "text-[11px] shrink-0 tabular-nums text-muted-foreground", "BGP has recorded email history with this person") : <Badge variant="outline" className="text-[11px] px-1 py-0 shrink-0 tabular-nums bg-primary/10 text-primary border-primary/30" title="BGP has real email history with this person">
               known · {discovery.bgp.threadCount} threads
             </Badge>
-          ) : !touches && discovery?.ai?.confidence != null ? (
+          ) : !isLandlord && !touches && discovery?.ai?.confidence != null ? (
             <Badge variant="outline" className="text-[11px] px-1 py-0 shrink-0 tabular-nums bg-primary/10 text-primary border-primary/30" title={discovery.ai?.reason || "AI-verified against RocketReach/Apollo"}>
               AI {discovery.ai.confidence}
             </Badge>
@@ -167,15 +179,16 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead, c
           {leftLabel ? (
             <span className="[@container(min-width:560px)]:hidden shrink-0 text-[11px] text-muted-foreground" title={contact.left_note || undefined}>· {leftLabel}</span>
           ) : touches > 0 && (
-            <span className="[@container(min-width:560px)]:hidden shrink-0 text-[11px] text-muted-foreground font-mono tabular-nums" title={touchTitle}>· {touchText}</span>
+            activityCount("email", `· ${touchText}`, "[@container(min-width:560px)]:hidden shrink-0 text-[11px] text-muted-foreground font-mono tabular-nums", touchTitle)
           )}
+          {meetingCount > 0 && activityCount("meeting", `${meetingCount} ${meetingCount === 1 ? "meeting" : "meetings"}`, "[@container(min-width:560px)]:hidden shrink-0 text-[11px] text-muted-foreground font-mono tabular-nums")}
         </div>
         {/* Account-mode provenance (Delivery 3): where this contact enters
             the account — employer, property links, portfolio names. Only
             renders when the caller passes workspace-shaped contacts. */}
-        {(contact.employerName || (contact.via && contact.via.length > 0) || (contact.propertyNames && contact.propertyNames.length > 0)) && (
+        {(showEmployer || (contact.via || []).some((via: string) => via !== "employer") || (contact.propertyNames && contact.propertyNames.length > 0)) && (
           <div className="hidden [@container(min-width:560px)]:flex items-center gap-1 shrink-0 max-w-[40%] overflow-hidden">
-            {contact.employerName && (
+            {showEmployer && (
               <Badge variant="outline" className="text-[11px] px-1 py-0 text-muted-foreground truncate">{contact.employerName}</Badge>
             )}
             {(contact.via || []).filter((v: string) => v !== "employer").map((v: string) => (
@@ -192,8 +205,9 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead, c
       {leftLabel ? (
         <span className="hidden [@container(min-width:560px)]:inline shrink-0 text-[11px] text-muted-foreground" title={contact.left_note || undefined} data-testid="key-contact-left">{leftLabel}</span>
       ) : touches > 0 && (
-        <span className="hidden [@container(min-width:560px)]:inline shrink-0 text-[11px] text-muted-foreground font-mono tabular-nums" title={touchTitle}>{touchText}</span>
+        activityCount("email", touchText, "hidden [@container(min-width:560px)]:inline shrink-0 text-[11px] text-muted-foreground font-mono tabular-nums", touchTitle)
       )}
+      {meetingCount > 0 && activityCount("meeting", `${meetingCount} ${meetingCount === 1 ? "meeting" : "meetings"}`, "hidden [@container(min-width:560px)]:inline shrink-0 text-[11px] text-muted-foreground font-mono tabular-nums")}
       <div className="flex items-center shrink-0">
         {hasEmail && (
           <a href={`mailto:${contact.email}`} className={iconLink} aria-label={`Email ${contact.name}`} title={contact.email} onClick={(e) => e.stopPropagation()}>
@@ -234,7 +248,11 @@ export function KeyContactRow({ contact, companyId, discovery, aiFlag, isLead, c
         </DropdownMenu>
       </div>
     </div>
-  );
+    {canOpenHistory && <>
+      <BrandEmailHistory companyId={companyId} companyName={companyName} landlord person={{contactId:contact.id,name:contactDisplayName(contact.name)}} open={activityHistory === "email"} onOpenChange={open => { if (!open) setActivityHistory(null); }} />
+      <LandlordMeetingsHistory companyId={companyId} companyName={companyName} person={{contactId:contact.id,name:contactDisplayName(contact.name)}} open={activityHistory === "meeting"} onOpenChange={open => { if (!open) setActivityHistory(null); }} />
+    </>}
+  </>);
 }
 
 interface PromotedContact {
@@ -261,7 +279,7 @@ const HIDDEN_ORDER: Record<KeyContactHiddenReason, number> = { left: 0, placehol
 // "Jane Smith/GBR" — a directory's country suffix, display only.
 export const contactDisplayName = (name: string | null | undefined) => String(name || "").replace(/\s*\/\s*[A-Z]{2,3}\s*$/, "");
 
-function PendingSendersList({ suggestions: allSuggestions, companyId }: { suggestions: any[]; companyId: string }) {
+function PendingSendersList({ suggestions: allSuggestions, companyId, onDismiss, dismissing = false }: { suggestions: any[]; companyId: string; onDismiss?: (candidate: any) => void; dismissing?: boolean }) {
   const suggestions = allSuggestions.filter(s => !isMachineMailbox(s.email));
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -298,7 +316,7 @@ function PendingSendersList({ suggestions: allSuggestions, companyId }: { sugges
             <Mail className="w-2.5 h-2.5 text-muted-foreground shrink-0" />
             <span className="truncate flex-1 text-[11px]">{s.email}</span>
             <span className="text-[11px] text-muted-foreground shrink-0 tabular-nums" title="Emails with BGP · last one">{Number(s.touches || 0).toLocaleString("en-GB")} email{Number(s.touches) === 1 ? "" : "s"}{s.last_touch ? ` · ${formatRelativeShort(s.last_touch)}` : ""}</span>
-            {!psIsClient && (saved[`${companyId}:${s.email}`] ? <Link href={`/contacts/${saved[`${companyId}:${s.email}`].id}`} className="inline-flex min-h-11 md:min-h-0 items-center text-sm md:text-xs underline">In CRM</Link> :
+            {!psIsClient && (saved[`${companyId}:${s.email}`] ? <Link href={`/contacts/${saved[`${companyId}:${s.email}`].id}`} className="inline-flex min-h-11 md:min-h-0 items-center text-sm md:text-xs underline">In CRM</Link> : <>
             <Button variant="outline" size="sm"
               onClick={() => promote.mutate({ sender: s, sourceCompanyId: companyId })} disabled={promote.isPending}
               className="min-h-11 md:min-h-0 md:h-7 md:px-2 text-sm md:text-xs shrink-0" data-testid={`pending-sender-add-${s.email}`}
@@ -306,6 +324,8 @@ function PendingSendersList({ suggestions: allSuggestions, companyId }: { sugges
             >
               <Plus className="w-3 h-3 mr-1" /> Add to CRM
             </Button>
+            {onDismiss && <Button variant="ghost" size="sm" className="min-h-11 md:min-h-0 md:h-7 px-2 text-xs shrink-0" onClick={() => onDismiss(s)} disabled={dismissing || promote.isPending} aria-label={`Dismiss suggestion for ${s.name || s.email}`}>Dismiss</Button>}
+            </>
             )}
           </div>
         ))}
@@ -319,11 +339,12 @@ function PendingSendersList({ suggestions: allSuggestions, companyId }: { sugges
   );
 }
 
-export function CompanyContactsBoard({ companyId, companyName, contacts, pendingSenders = [], extraSections = [], discovery = true, filterPropertyTier = true, isLandlord = false, topSlot = null }: {
+export function CompanyContactsBoard({ companyId, companyName, contacts, pendingSenders = [], dismissedSuggestions = [], extraSections = [], discovery = true, filterPropertyTier = true, isLandlord = false, topSlot = null }: {
   companyId: string;
   companyName: string;
   contacts: any[];
   pendingSenders?: any[];
+  dismissedSuggestions?: string[];
   // Additional grouped sections (e.g. the dashboard's "Brands on your deals"
   // and "Agents") rendered under the main list with the same row design.
   extraSections?: Array<{ key: string; title: string; tint?: string; rows: any[] }>;
@@ -351,6 +372,25 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   const [addedContacts, setAddedContacts] = useState<Record<string, PromotedContact>>({});
   const [lastAdded, setLastAdded] = useState<{ companyId: string; contact: PromotedContact } | null>(null);
   const [addingEmail, setAddingEmail] = useState<string | null>(null);
+  const [localDismissals, setLocalDismissals] = useState<Record<string, string[]>>({});
+  const dismissSuggestion = useMutation({
+    mutationFn: async (candidate: any) => {
+      const dismissedCompanyId = companyId;
+      const result = await (await apiRequest("POST", `/api/landlord/${dismissedCompanyId}/dismiss-contact-suggestion`, {
+        name: candidate.name, email: candidate.email, linkedin: candidate.linkedin_url || candidate.linkedin,
+      })).json() as { dismissedKeys: string[] };
+      return { ...result, dismissedCompanyId };
+    },
+    onSuccess: ({ dismissedKeys, dismissedCompanyId }) => {
+      setLocalDismissals(previous => ({ ...previous, [dismissedCompanyId]: [...new Set([...(previous[dismissedCompanyId] || []), ...dismissedKeys])] }));
+      queryClient.setQueryData(["/api/brand", dismissedCompanyId, "contacts-cascade"], (previous: any) => previous ? {
+        ...previous, dismissedContactKeys: [...new Set([...(previous.dismissedContactKeys || []), ...dismissedKeys])],
+      } : previous);
+      void queryClient.invalidateQueries({ queryKey: ["/api/brand", dismissedCompanyId, "profile"] });
+      toast({ title: "Suggestion dismissed" });
+    },
+    onError: () => toast({ title: "Couldn't dismiss suggestion", description: "Please try again.", variant: "destructive" }),
+  });
   // Extra sections are collapsed to headers by default — their titles and
   // counts are visible right under the main list instead of a full page of
   // scrolling (Woody, 2026-08-05: "can we have headers instead?").
@@ -381,6 +421,9 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
     staleTime: 10 * 60 * 1000,
     retry: 1,
   });
+
+  const dismissedContacts = new Set<string>(isLandlord
+    ? [...dismissedSuggestions, ...(cascade?.dismissedContactKeys || []), ...(localDismissals[companyId] || [])] : []);
 
   // ONE deduped list: CRM contacts first, then discovered candidates that
   // don't match a CRM row (matched by email, falling back to name). When a
@@ -417,6 +460,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   const seenDiscovered = new Set<string>();
   const discovered = (cascade?.contacts || [])
     .filter((k: any) => k.ai?.verdict !== "drop" && !k.bgp?.inCrm && !isMachineMailbox(k.email))
+    .filter((candidate: any) => !isLandlord || !isDismissedLandlordContact(candidate, dismissedContacts))
     .filter((k: any) => {
       const e = normEmail(k.email);
       const n = normName(k.name);
@@ -482,7 +526,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   // (Woody, 2026-09-23: David Menendez twice on Honest Greens).
   const inboxSenders = pendingSenders.filter((sender: any) => {
     const e = normEmail(sender.email);
-    return !sender.in_crm && !isMachineMailbox(sender.email) && (!e || (!crmEmailSet.has(e) && !discovered.some((k: any) => normEmail(k.email) === e)));
+    return !sender.in_crm && (!isLandlord || !isDismissedLandlordContact(sender, dismissedContacts)) && !isMachineMailbox(sender.email) && (!e || (!crmEmailSet.has(e) && !discovered.some((k: any) => normEmail(k.email) === e)));
   });
   const moreCount = rest.length + retired.length;
   // Nothing to expand but the discovery summary → the summary line shows on
@@ -532,7 +576,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
       const note = hiddenLabel(item);
       return (
         <div key={`crm-${dm.id}`} title={note || undefined}>
-          <KeyContactRow contact={dm} companyId={companyId} discovery={discoveryFor(dm)} aiFlag={aiFlagFor(dm.id)} isLead={aiCheck.check?.lead === String(dm.id)} canMarkLeft={canMarkLeft} muted={!!item.hidden} />
+          <KeyContactRow contact={dm} companyId={companyId} companyName={companyName} isLandlord={isLandlord} discovery={discoveryFor(dm)} aiFlag={aiFlagFor(dm.id)} isLead={aiCheck.check?.lead === String(dm.id)} canMarkLeft={canMarkLeft} muted={!!item.hidden} />
         </div>
       );
     }
@@ -543,23 +587,28 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
     const confCls = conf == null ? "" : conf >= 70 ? "text-primary border-border" : conf >= 40 ? "text-muted-foreground border-border" : "text-destructive border-border";
     const src = provenance(k);
     return (
-      <div key={`found-${rowKey}`} className={`flex items-center gap-2 text-sm rounded px-1 py-1 md:py-0.5 -mx-1 hover:bg-muted/50 transition-colors ${item.hidden ? "opacity-60" : ""}`}>
+      <div key={`found-${rowKey}`} className={`flex items-center gap-2 text-sm rounded px-1 py-1 md:py-0.5 -mx-1 hover:bg-muted/50 transition-colors ${isLandlord ? "flex-wrap [@container(min-width:560px)]:flex-nowrap" : ""} ${item.hidden ? "opacity-60" : ""}`}>
         <span className="w-5 h-5 rounded-full bg-muted/70 border border-dashed flex items-center justify-center text-[11px] font-medium shrink-0">
           {(k.name || k.email || "?").split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase()}
         </span>
-        <div className="min-w-0 flex-1 [@container(min-width:560px)]:flex [@container(min-width:560px)]:items-center [@container(min-width:560px)]:gap-2">
+        <div className={`min-w-0 flex-1 [@container(min-width:560px)]:flex [@container(min-width:560px)]:items-center [@container(min-width:560px)]:gap-2 ${isLandlord ? "basis-[calc(100%-2rem)] [@container(min-width:560px)]:basis-0" : ""}`}>
           <p className="font-semibold truncate [@container(min-width:560px)]:max-w-[45%] [@container(min-width:560px)]:shrink-0">{contactDisplayName(k.name) || k.email}</p>
-          <p className="text-[11px] [@container(min-width:560px)]:text-xs text-muted-foreground truncate [@container(min-width:560px)]:flex-1" title={[k.title, k.email, k.phone || k.mobile, k.ai?.reason].filter(Boolean).join(" · ")}>
+          <p className="text-[11px] [@container(min-width:560px)]:text-xs text-muted-foreground truncate [@container(min-width:560px)]:flex-1" title={[k.title, k.email, k.phone || k.mobile, !isLandlord && k.ai?.reason].filter(Boolean).join(" · ")}>
             {[k.title, k.email].filter(Boolean).join(" · ") || "—"}
           </p>
         </div>
-        {conf != null && (
+        {!isLandlord && conf != null && (
           <Badge variant="outline" className={`hidden md:inline-flex text-[11px] px-1 py-0 shrink-0 tabular-nums ${confCls}`} title={k.ai?.reason || ""}>{conf}</Badge>
         )}
-        <Badge variant="outline" className={`hidden md:inline-flex text-[11px] px-1 py-0 shrink-0 ${src.cls}`}>{src.label}</Badge>
+        {!isLandlord && <Badge variant="outline" className={`hidden md:inline-flex text-[11px] px-1 py-0 shrink-0 ${src.cls}`}>{src.label}</Badge>}
+        {isLandlord && <div className="flex items-center shrink-0">
+          {k.email && <a href={`mailto:${k.email}`} className="p-1.5 text-muted-foreground hover:text-foreground" aria-label={`Email ${k.name || k.email}`} title={k.email}><Mail className="w-4 h-4" /></a>}
+          {(k.phone || k.mobile) && <a href={`tel:${String(k.phone || k.mobile).replace(/[^\d+]/g, "")}`} className="p-1.5 text-muted-foreground hover:text-foreground" aria-label={`Call ${k.name || k.email}`} title={k.phone || k.mobile}><Phone className="w-4 h-4" /></a>}
+          {(k.linkedin_url || k.linkedin) && <a href={k.linkedin_url || k.linkedin} target="_blank" rel="noreferrer" className="p-1.5 text-muted-foreground hover:text-foreground" aria-label={`${k.name || k.email} on LinkedIn`}><Linkedin className="w-4 h-4" /></a>}
+        </div>}
         {added ? (
           <Link href={`/contacts/${added.id}`} className="inline-flex min-h-11 md:min-h-0 items-center text-xs underline shrink-0" data-testid={`contact-cascade-open-${rowKey}`}>In CRM · open</Link>
-        ) : !kcIsClient ? (
+        ) : !kcIsClient ? (<>
           <Button
             size="sm"
             variant="outline"
@@ -570,7 +619,8 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
           >
             {addingEmail === rowKey ? <Loader2 className="w-3 h-3 animate-spin" /> : "Add to CRM"}
           </Button>
-        ) : null}
+          {isLandlord && <Button size="sm" variant="ghost" className="min-h-11 md:min-h-0 md:h-6 px-2 text-xs shrink-0" onClick={() => dismissSuggestion.mutate(k)} disabled={dismissSuggestion.isPending || addingEmail !== null} aria-label={`Dismiss suggestion for ${k.name || k.email}`} data-testid={`contact-suggestion-dismiss-${rowKey}`}>Dismiss</Button>}
+        </>) : null}
       </div>
     );
   };
@@ -647,7 +697,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
         {top.length === 0 ? (
           <p className="text-sm text-muted-foreground italic">
             {scanning
-              ? "Mining BGP email, searching RocketReach + Apollo, AI-checking every candidate — 20-40s on first open…"
+              ? isLandlord ? "Checking contact suggestions…" : "Mining BGP email, searching RocketReach + Apollo, AI-checking every candidate — 20-40s on first open…"
               : totalPeople === 0
                 ? "No contacts yet — Refresh runs discovery again."
                 : "No current key people — Show all below."}
@@ -682,13 +732,13 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
             )}
             {summary && !kcIsClient && (
               <p className="text-[11px] text-muted-foreground mt-1.5">
-                {allContacts.length} in CRM{crmAiChecked > 0 ? ` (${crmAiChecked} AI-verified)` : ""}
-                {discovered.length > 0 ? ` · ${discovered.length} new discovered` : " · no new contacts found"}
-                {summary.revealed ? ` · ${summary.revealed} emails revealed` : ""}
+                {allContacts.length} in CRM{!isLandlord && crmAiChecked > 0 ? ` (${crmAiChecked} AI-verified)` : ""}
+                {discovered.length > 0 ? ` · ${discovered.length} ${isLandlord ? "suggestions" : "new discovered"}` : " · no new contacts found"}
+                {!isLandlord && summary.revealed ? ` · ${summary.revealed} emails revealed` : ""}
                 {scanning ? " · rescanning…" : ""}
               </p>
             )}
-            <PendingSendersList suggestions={inboxSenders} companyId={companyId} />
+            <PendingSendersList suggestions={inboxSenders} companyId={companyId} onDismiss={isLandlord ? candidate => dismissSuggestion.mutate(candidate) : undefined} dismissing={dismissSuggestion.isPending} />
           </>
         )}
         {/* The AI's notes on the list are working notes ("Adrian's email
@@ -733,7 +783,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
               {isOpen && (
                 <div className="space-y-0.5 max-h-[220px] overflow-y-auto pr-1 mt-1">
                   {s.rows.map((row: any) => (
-                    <KeyContactRow key={row.id} contact={row} companyId={companyId} />
+                    <KeyContactRow key={row.id} contact={row} companyId={companyId} companyName={companyName} isLandlord={isLandlord} />
                   ))}
                 </div>
               )}

@@ -3,22 +3,23 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import React from 'react';
+import { landlordActivityPersonQuery } from '../../shared/landlord-activity-person.ts';
 const require = createRequire(import.meta.url);
 const { source, ts } = require('./source-harness.cjs');
 function nodes(node) { return Array.isArray(node) ? node.flatMap(nodes) : React.isValidElement(node) ? [node, ...nodes(node.props.children)] : []; }
 function text(node) { return Array.isArray(node) ? node.map(text).join(' ') : React.isValidElement(node) ? text(node.props.children) : node == null ? '' : String(node); }
 const now = new Date('2026-10-27T11:00:00Z');
 class TestDate extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now.getTime(); } }
-function fixture(data, error = false) {
+function fixture(data, error = false, summaryText = null) {
   const file = 'client/src/components/landlord-meetings-summary.tsx';
   const ast = ts.createSourceFile(file, source(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const script = ast.statements.filter(node => !ts.isImportDeclaration(node)).map(node => node.getText(ast)).join('\n');
   let query, mutation;
   const invalidations = [];
-  const sandbox = { exports: {}, require, Date: TestDate, encodeURIComponent,
+  const sandbox = { exports: {}, require, Date: TestDate, encodeURIComponent, landlordActivityPersonQuery, useEffect() {},
     Calendar: 'Calendar', MapPin: 'MapPin', RefreshCw: 'RefreshCw', Users: 'Users', Sparkles: 'Sparkles', Dialog: 'Dialog', DialogTitle: 'DialogTitle', DialogDescription: 'DialogDescription', DialogContent: 'DialogContent', Input: 'Input', LandlordActivityCard: 'LandlordActivityCard', AiCommentary: 'AiCommentary', Button: 'Button', MeetingViewerDialog: 'MeetingViewerDialog',
     useState: initial => [initial, () => {}], useQueryClient: () => ({ invalidateQueries(options) { invalidations.push(options); } }), getAuthHeaders: () => ({}),
-    useQuery: options => { if (options.queryKey[2] === 'meeting-summary') return { data: {summary: null}, isFetching: false }; query = options; return { data, isLoading: false, isError: error }; },
+    useQuery: options => { if (options.queryKey[2] === 'meeting-summary') return { data: {summary: summaryText ? {text:summaryText} : null}, isFetching: false }; query = options; return { data, isLoading: false, isError: error }; },
     useMutation: options => { mutation = options; return { isPending: false, isError: false }; },
     apiRequest: async () => ({ json: async () => ({ running: true }) }),
   };
@@ -116,4 +117,16 @@ test('AI summary identity changes when any invitation, coverage or meeting phase
   }
   assert.notEqual(app.landlordMeetingSummarySignature(digest, Date.parse('2026-10-27T12:15:00Z')), before);
   assert.equal(app.landlordMeetingSummarySignature(digest, +now), before);
+});
+
+test('recent and next summary paragraphs are visible together without changing the two-row invitation preview', () => {
+  const summary='**Recent:** A leasing catch-up was in the diary on 26 October; notes are not recorded.\n\n**Next:** Ben and Nick have an invitation for 28 October at 09:00.';
+  const app=fixture({meetings:[meeting('past','2026-10-26T09:00:00Z','2026-10-26T10:00:00Z'),
+    meeting('next','2026-10-28T09:00:00Z','2026-10-28T10:00:00Z'),meeting('later','2026-10-29T09:00:00Z','2026-10-29T10:00:00Z')],coverage},false,summary);
+  const tree=app.LandlordMeetingsSummary({companyId:'aew'});
+  const compact=nodes(tree).find(node=>node.props['data-testid']==='landlord-meeting-ai-summary');
+  assert.ok(compact);assert.doesNotMatch(compact.props.className,/line-clamp|truncate|overflow-hidden/);
+  assert.equal(nodes(compact).find(node=>node.type==='AiCommentary').props.text,summary);
+  assert.equal(nodes(tree).filter(node=>node.props['data-testid']==='landlord-meeting-preview').length,2);
+  assert.ok(nodes(tree).some(node=>node.props['data-testid']==='landlord-meetings-dialog'));
 });

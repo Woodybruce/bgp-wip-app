@@ -42,6 +42,7 @@ import { LandlordEmailSummary } from "@/components/landlord-email-summary";
 import { LandlordRelationshipTeam } from "@/components/landlord-relationship-team";
 import { LandlordInterviewNotes } from "@/components/landlord-interview-notes";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
+import { landlordConfirmedCrmAction, landlordCrmActionQueryKeys } from "@/lib/landlord-chat-actions";
 import { LandlordChatBubble } from "@/components/landlord-chat-bubble";
 import { MemberAvatar } from "@/components/ClientTeamOrgChart";
 import { BGP_ACCOUNT_ROLES, canonicalBgpRole } from "@shared/bgp-account-roles";
@@ -68,6 +69,7 @@ import { AccountEntitiesPanel } from "@/components/account-entities-panel";
 
 interface BrandProfile {
   identity?: { status: "verified" | "review"; domain: string | null };
+  dismissedDiscoveries?: string[];
   company: {
     id: string;
     name: string;
@@ -1584,7 +1586,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 <ContactFormDialog open={addContactOpen} onOpenChange={setAddContactOpen} defaultCompanyId={c.id} />
                 <CompanyInvoicingControls companyId={c.id} contactEmails={data.contacts.map(contact => contact.email)} />
               </>}
-              {!isClientViewer && isLandlord && <CompanyInvoicingControls companyId={c.id} mode="billing" landlord />}
               {currentUser?.role !== "Client" && !isLandlord && <>
                 <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)}><Plus />Add to deal</Button>
                 {!isLandlord && !isAgentFirm && !isLender && <Button variant="outline" size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}><Building2 />Pitch property</Button>}
@@ -2005,10 +2006,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 </button>
                 )}
               </div>
+              {isLandlord && <p className="text-xs text-muted-foreground mb-3 leading-relaxed">Changes from news and saved research that may be useful for the relationship. Check the source for context.</p>}
               {addSignalOpen && (
                 <div className="mb-2 p-2 rounded-md border border-dashed border-border bg-muted/30 space-y-1.5">
                   <Input
-                    placeholder="Headline (e.g. H&M opening Oxford Street flagship)"
+                    placeholder={isLandlord ? "Headline (e.g. new acquisition or leasing announcement)" : "Headline (e.g. H&M opening Oxford Street flagship)"}
                     value={newSignal.headline}
                     onChange={e => setNewSignal(v => ({ ...v, headline: e.target.value }))}
                     className="h-7 text-xs"
@@ -2096,7 +2098,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                           ) : (
                             <p className="font-medium line-clamp-2 break-words" title={s.headline}>{sentenceCaseShouting(s.headline)}</p>
                           )}
-                          {s.signal_date && <span className="text-[11px] text-muted-foreground">{ukDate(s.signal_date)}</span>}
+                          {isLandlord ? <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-2">
+                            <span>{s.signal_date ? ukDate(s.signal_date) : s.created_at ? `Logged ${ukDate(s.created_at)}` : "Date not recorded"}</span>
+                            {s.source?.startsWith("http") ? <a href={s.source} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">Source</a> : <span>{s.source || "Source not recorded"}</span>}
+                          </div> : s.signal_date && <span className="text-[11px] text-muted-foreground">{ukDate(s.signal_date)}</span>}
                         </div>
                         {!isClientViewer && (
                         <button
@@ -2245,7 +2250,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // Profile card beside the conversation — the top row of the landlord and
   // agent layouts.
   const profileTopRow = (
-        <div className="[@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4">
+        <div className={`${isLandlord && !isLender ? "flex flex-col-reverse gap-3 " : ""}[@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4`}>
           <div className="min-w-0">
             <div className="rounded-xl border border-card-border bg-card shadow-sm px-3 pb-3" data-testid="brand-profile-card">
               {header}
@@ -2260,7 +2265,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               </>}
             </div>
           </div>
-          {conversationSlot || <div className="pt-3">{conversationBoard}</div>}
+          {conversationSlot || <div className={isLandlord && !isLender ? "min-w-0" : "pt-3"}>{conversationBoard}</div>}
         </div>
   );
 
@@ -2279,7 +2284,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               <LandlordMeetingsSummary key={companyId} companyId={companyId} companyName={c.name} />
               <LandlordEmailSummary key={`emails-${companyId}`} companyId={companyId} companyName={c.name} entities={commentaryEntities} />
             </div>}
-            footer={!isClientViewer && <LandlordRelationshipTeam key={companyId} companyId={companyId} canEdit />} />
+            footer={!isClientViewer && <LandlordRelationshipTeam key={companyId} companyId={companyId} companyName={c.name} canEdit />} />
         </div>
         {!isClientViewer && <LandlordInterviewNotes companyId={companyId} />}
         <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
@@ -2291,15 +2296,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
           {/* Staff see these rows in Team view → Investment already. */}
           {isClientViewer && <InvestmentRequirementsCard companyId={companyId} />}
           <BrandProfileSidebar data={data} companyId={companyId} only={["team"]} />
-          <div className="flex flex-col gap-3">
-            <BrandProfileSidebar data={data} companyId={companyId} only={["compliance"]} />
-            <AccountEntitiesPanel companyId={companyId} />
-          </div>
-          <div className="flex flex-col gap-3">
-            {c.stock_ticker && <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />}
-            <BrandProfileSidebar data={data} companyId={companyId} only={["covenant"]} />
-          </div>
-          <BrandProfileSidebar data={data} companyId={companyId} only={["news"]} />
+          <LandlordCompanyChecksCard key={companyId} companyId={companyId} company={c} isClientViewer={isClientViewer} />
+          {c.stock_ticker && <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />}
+          <BrandProfileSidebar data={data} companyId={companyId} only={["news", "feed"]} />
           {dedupedSignals.length > 0 && <div className="rounded-xl border border-card-border bg-card shadow-sm p-3" data-testid="landlord-signals">{signalsFeed}</div>}
           <div className="flex flex-col gap-3">
             <BrandProfileSidebar data={data} companyId={companyId} only={["files"]} />
@@ -4000,11 +3999,71 @@ const sameEntityName = (a: unknown, b: unknown) => {
   return !!norm(a) && norm(a) === norm(b);
 };
 
+export function LandlordCompanyChecksCard({ companyId, company, isClientViewer }: {
+  companyId: string;
+  company: BrandProfile["company"];
+  isClientViewer: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const companyNumber = company.companies_house_number?.trim();
+  const covenant = useCovenantReport(companyNumber);
+  const runCovenant = useMutation({
+    mutationFn: async () => apiRequest("POST", `/api/brand/${companyId}/credit-check`, {}),
+    onSuccess: () => {
+      void covenant.refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (error: Error) => toast({ title: "Covenant check failed", description: error.message, variant: "destructive" }),
+  });
+  return (
+    <Card data-testid="landlord-company-checks">
+      <CardHeader className="p-3 pb-2">
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+            <ShieldCheck className="w-3.5 h-3.5" /> Company checks
+          </CardTitle>
+          {!isClientViewer && <Link href="/kyc-clouseau" className="text-xs text-primary hover:underline" title="KYC4U — BGP's MLRO">KYC4U</Link>}
+        </div>
+      </CardHeader>
+      <CardContent className="p-3 pt-0 space-y-3">
+        <BrandComplianceCard companyId={companyId} company={company} embedded landlord />
+        {!(isClientViewer && companyNumber && !covenant.data?.grade) && (
+          <section className="border-t border-border pt-3 space-y-2" aria-label="Covenant">
+            <h3 className="text-xs font-semibold flex items-center gap-2">
+              Covenant {companyNumber && <CovenantBadge companyNumber={companyNumber} />}
+            </h3>
+            {companyNumber ? <>
+              {covenant.isLoading ? <p className="text-xs text-muted-foreground" role="status">Loading covenant…</p>
+                : covenant.data?.grade ? <CovenantCommentary companyNumber={companyNumber} className="[&]:border-0 [&]:bg-transparent [&]:p-0" />
+                : <p className="text-xs text-muted-foreground">
+                  {covenant.isError ? "Covenant report unavailable." : "Covenant check not run yet."}
+                  {!isClientViewer && <> {covenant.isError
+                    ? <button type="button" className="underline underline-offset-2" onClick={() => void covenant.refetch()}>Retry</button>
+                    : <button type="button" className="underline underline-offset-2 disabled:opacity-50" disabled={runCovenant.isPending} onClick={() => runCovenant.mutate()}>{runCovenant.isPending ? "Running…" : "Run check"}</button>}
+                  </>}
+                </p>}
+            </> : <p className="text-xs text-muted-foreground">Available once the registered entity has a Companies House match.</p>}
+          </section>
+        )}
+        {!isClientViewer && <div className="border-t border-border pt-3">
+          <AccountEntitiesPanel companyId={companyId} embedded primaryCompanyNumber={companyNumber} />
+        </div>}
+        {!isClientViewer && <section className="border-t border-border pt-3 space-y-2" aria-label="Billing">
+          <h3 className="text-xs font-semibold">Billing</h3>
+          <CompanyInvoicingControls companyId={companyId} mode="billing" landlord />
+        </section>}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function BrandComplianceCard({
   companyId,
   company,
   embedded = false,
   prefix,
+  landlord = false,
 }: {
   companyId: string;
   company: BrandProfile["company"];
@@ -4016,6 +4075,8 @@ export function BrandComplianceCard({
   // trading entity row — used to inject the property's billing
   // entity field above the brand checks.
   prefix?: React.ReactNode;
+  // Only the combined landlord panel owns the separate covenant section.
+  landlord?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -4041,6 +4102,7 @@ export function BrandComplianceCard({
       });
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
+      if (landlord) queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "entities"] });
     },
     onError: (e: any) => toast({ title: "Scrape failed", description: e.message, variant: "destructive" }),
   });
@@ -4054,6 +4116,7 @@ export function BrandComplianceCard({
       toast({ title: "UK trading entity saved" });
       setEditing(false);
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
+      if (landlord) queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "entities"] });
     },
     onError: (e: any) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
@@ -4118,7 +4181,7 @@ export function BrandComplianceCard({
       {!bcIsClient && <Kyc4uStatusStrip companyId={companyId} />}
       <div>
         <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
-          UK trading entity
+          {landlord ? "Registered entity" : "UK trading entity"}
             {hasEntity && !editing && (
               <Pill active={false}>Recorded</Pill>
             )}
@@ -4227,9 +4290,9 @@ export function BrandComplianceCard({
         </div>
 
         <div className="border-t pt-2">
-          <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Downstream checks</div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">{landlord ? "Company records" : "Downstream checks"}</div>
           <div className="space-y-0.5">
-            {downstreamChecks.map((row) => (
+            {downstreamChecks.filter(row => !landlord || row.key !== "covenant").map((row) => (
               <div key={row.key} className="flex items-center gap-1.5 text-[11px]">
                 {row.done ? (
                   <Check className="w-3 h-3 text-foreground shrink-0" />
@@ -4563,7 +4626,13 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
 // one thread per company (linked_id), ChatBGP as a member, so plain message
 // POSTs get a real Fable answer server-side and we just poll the thread.
 export function CompanyMiniChat({ companyId, companyName, fill, title, starters, landlord = false }: { companyId: string; companyName: string; fill?: boolean; title?: string; starters?: AskTopic[]; landlord?: boolean }) {
-  const [threadId, setThreadId] = useState<string | null>(null);
+  const [threadSelection, setThreadSelection] = useState<{ companyId: string; id: string } | null>(null);
+  // The same panel can be reused while navigating between company records.
+  // Hide the old Landlord thread immediately, before effects or polling run.
+  const threadId = threadSelection && (!landlord || threadSelection.companyId === companyId) ? threadSelection.id : null;
+  const setThreadId = (id: string) => setThreadSelection({ companyId, id });
+  const activeCompany = useRef(companyId);
+  activeCompany.current = companyId;
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -4600,6 +4669,21 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
     if (!landlord || !hasLoadedThread) return;
     void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "ai-take"] });
   }, [landlord, companyId, hasLoadedThread, landlordConversationSignature]);
+  const confirmedActions = landlord ? messages.map(message => landlordConfirmedCrmAction(message, companyId)).filter((action): action is NonNullable<typeof action> => !!action) : [];
+  const confirmedActionSignature = JSON.stringify(confirmedActions.map(action => action.key));
+  const appliedActions = useRef<{ scope: string; keys: Set<string> }>({ scope: "", keys: new Set() });
+  useEffect(() => {
+    if (!landlord || !hasLoadedThread) return;
+    const scope = `${companyId}:${threadId || thread?.id || ""}`;
+    if (appliedActions.current.scope !== scope) appliedActions.current = { scope, keys: new Set() };
+    const queryKeys = new Map<string, string[]>();
+    for (const action of confirmedActions) {
+      if (appliedActions.current.keys.has(action.key)) continue;
+      appliedActions.current.keys.add(action.key);
+      for (const key of landlordCrmActionQueryKeys(companyId, action)) queryKeys.set(JSON.stringify(key), key);
+    }
+    for (const queryKey of queryKeys.values()) void queryClient.invalidateQueries({ queryKey });
+  }, [landlord, companyId, threadId, hasLoadedThread, confirmedActionSignature]);
 
   // A starter question waits on ChatBGP's reply in the shared thread — show
   // it's coming until a new assistant message lands (or two minutes pass).
@@ -4666,7 +4750,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
       linkedName: companyName,
     });
     const created = await res.json();
-    setThreadId(created.id);
+    if (!landlord || activeCompany.current === companyId) setThreadId(created.id);
     return created.id;
   };
 
@@ -4674,6 +4758,24 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
   const [editDraft, setEditDraft] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [showEmoji, setShowEmoji] = useState(false);
+
+  const previousCompany = useRef(companyId);
+  useEffect(() => {
+    if (previousCompany.current === companyId) return;
+    previousCompany.current = companyId;
+    if (!landlord) return;
+    setDraft("");
+    setSending(false);
+    setAwaitingAi(null);
+    setEditingMsgId(null);
+    setEditDraft("");
+    setConfirmDeleteId(null);
+    setShowEmoji(false);
+    setMentionQuery(null);
+    setMentionStart(-1);
+    pendingTagsRef.current.clear();
+    setTab("chat");
+  }, [landlord, companyId]);
 
   const deleteMsg = async (messageId: string) => {
     if (!threadId) return;
@@ -4773,11 +4875,11 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
     try {
       const tid = await ensureThread();
       await apiRequest("POST", `/api/chat/threads/${tid}/messages`, { content: body });
-      setDraft("");
+      if (!landlord || activeCompany.current === companyId) setDraft("");
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", tid] });
       if (landlord) void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "ai-take"] });
     } catch { /* surfaced by global toast */ }
-    finally { setSending(false); }
+    finally { if (!landlord || activeCompany.current === companyId) setSending(false); }
   };
 
   // Starters post into the brand's shared thread, so the answer stays on the
@@ -4924,6 +5026,10 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
                   <button className="text-xs px-2 py-1 rounded border bg-card hover:bg-muted" onClick={() => saveEdit(m.id)}>Save</button>
                   <button className="text-xs px-2 py-1 text-muted-foreground" onClick={() => setEditingMsgId(null)}>Cancel</button>
                 </div> : <ChatBGPMarkdown content={String(m.content || "")} />}
+                {(() => {
+                  const action = landlordConfirmedCrmAction(m, companyId);
+                  return action?.href ? <Link href={action.href} className="mt-2 inline-flex text-xs font-medium text-primary underline underline-offset-2" data-testid="landlord-chat-record-link">Open {action.requirementType} requirement</Link> : null;
+                })()}
               </LandlordChatBubble>;
               return (
               <div key={m.id} className={`group/msg relative text-xs rounded-lg px-2.5 py-1.5 whitespace-pre-wrap break-words ${m.role === "assistant" ? "bg-muted/60" : "bg-primary/10 ml-6"}`}>
@@ -5376,7 +5482,7 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
           Best sellers. The chat moved up into the banner's second pane at
           the very top of the profile. */}
       <div className={pairCls}>
-      {show("contacts") && <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} isLandlord={isLandlord}
+      {show("contacts") && <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} dismissedSuggestions={data.dismissedDiscoveries || []} isLandlord={isLandlord}
         filterPropertyTier={!(!isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type))}
         topSlot={isBrand ? <TenantRepsBlock companyId={companyId} reps={data.representedBy || []} />
           : isLandlord && !sbIsClient ? <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} /> : null} />}
@@ -5694,7 +5800,7 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
         );
       })()}
 
-      {show("feed") && !isLandlord && <BrandFeedCard companyId={companyId} canSetUp={!sbIsClient} />}
+      {show("feed") && <BrandFeedCard companyId={companyId} canSetUp={!sbIsClient} landlord={isLandlord} />}
       </div>
 
       {(show("team") || show("gallery")) && <>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Calendar, MapPin, RefreshCw, Users, Sparkles } from "lucide-react";
 import { LandlordActivityCard } from "./landlord-activity-card";
@@ -8,6 +8,7 @@ import { AiCommentary } from "@/components/ai-commentary";
 import { Button } from "@/components/ui/button";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import type { LandlordMeeting, LandlordMeetingCoverage, LandlordMeetingDigest } from "@shared/landlord-meetings";
+import { landlordActivityPersonQuery, type LandlordActivityPerson } from "@shared/landlord-activity-person";
 
 export function upcomingLandlordMeetings(meetings: LandlordMeeting[], now = Date.now()): LandlordMeeting[] {
   return meetings.filter(meeting => {
@@ -41,23 +42,36 @@ export function landlordMeetingSummarySignature(data?: LandlordMeetingDigest, no
       phase: Date.parse(meeting.end) < now ? "past" : Date.parse(meeting.start) <= now ? "in-progress" : "future" })) });
 }
 
-export function LandlordMeetingsSummary({ companyId, companyName = "this landlord", canRefresh = true }: { companyId: string; companyName?: string; canRefresh?: boolean }) {
+type MeetingsProps = { companyId: string; companyName?: string; canRefresh?: boolean; person?: LandlordActivityPerson;
+  open?: boolean; onOpenChange?: (open: boolean) => void; initialPeriod?: "upcoming" | "recent"; historyOnly?: boolean };
+
+export function LandlordMeetingsHistory(props: MeetingsProps & { open: boolean; onOpenChange: (open: boolean) => void }) {
+  return <LandlordMeetingsSummary {...props} historyOnly />;
+}
+
+export function LandlordMeetingsSummary({ companyId, companyName = "this landlord", canRefresh = true, person,
+  open: externalOpen, onOpenChange, initialPeriod = "upcoming", historyOnly = false }: MeetingsProps) {
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = externalOpen ?? internalOpen;
+  const setOpen = onOpenChange || setInternalOpen;
   const [search, setSearch] = useState("");
-  const [period, setPeriod] = useState<"upcoming" | "recent">("upcoming");
+  const [period, setPeriod] = useState<"upcoming" | "recent">(initialPeriod);
   const [refreshRequestedAt, setRefreshRequestedAt] = useState(0);
-  const queryKey = ["/api/crm/landlords", companyId, "meetings"];
+  const personQuery = landlordActivityPersonQuery(person);
+  const queryKey = ["/api/crm/landlords", companyId, "meetings", "private-mail-v1", ...(personQuery ? [personQuery] : [])];
+  useEffect(() => { if (open && historyOnly) { setSearch(""); setPeriod(initialPeriod); } }, [open, personQuery, historyOnly, initialPeriod]);
   const { data, dataUpdatedAt, isLoading, isError, refetch } = useQuery<LandlordMeetingDigest>({
     queryKey,
     queryFn: async ({ signal }) => {
-      const response = await fetch(`/api/crm/landlords/${encodeURIComponent(companyId)}/meetings`, {
+      const response = await fetch(`/api/crm/landlords/${encodeURIComponent(companyId)}/meetings${personQuery}`, {
         credentials: "include", headers: getAuthHeaders(), signal,
       });
       if (!response.ok) throw new Error("Linked diary invitations could not be loaded.");
       return response.json();
     },
     staleTime: 60_000,
+    enabled: !historyOnly || open,
     retry: false,
     refetchInterval: query => query.state.data?.coverage.refreshing || (refreshRequestedAt > 0 && Date.now() - refreshRequestedAt < 90_000) ? 5_000 : 60_000,
   });
@@ -78,9 +92,9 @@ export function LandlordMeetingsSummary({ companyId, companyName = "this landlor
   const recent = (data?.meetings || []).filter(meeting => Number.isFinite(Date.parse(meeting.end)) && Date.parse(meeting.end) < Date.now())
     .sort((a, b) => Date.parse(b.start) - Date.parse(a.start));
   const summary = useQuery<{ summary: { text: string; at: string } | null }>({
-    queryKey: ["/api/crm/landlords", companyId, "meeting-summary", landlordMeetingSummarySignature(data, dataUpdatedAt || Date.now())],
-    queryFn: async () => (await apiRequest("POST", `/api/crm/landlords/${encodeURIComponent(companyId)}/meetings/summary`, {})).json(),
-    enabled: !isError && !!data?.meetings.length,
+    queryKey: ["/api/crm/landlords", companyId, "meeting-summary", "recent-next-v2", personQuery, landlordMeetingSummarySignature(data, dataUpdatedAt || Date.now())],
+    queryFn: async () => (await apiRequest("POST", `/api/crm/landlords/${encodeURIComponent(companyId)}/meetings/summary${personQuery}`, {})).json(),
+    enabled: (!historyOnly || open) && !isError && !!data?.meetings.length,
     staleTime: 5 * 60_000,
     retry: false,
   });
@@ -93,13 +107,13 @@ export function LandlordMeetingsSummary({ companyId, companyName = "this landlor
     : `${data.coverage.mailboxesChecked} diaries checked`;
   const openList = (tab: "upcoming" | "recent" = "upcoming") => { setPeriod(tab); setOpen(true); };
   return <>
-    <LandlordActivityCard title="Meetings" icon={<Calendar className="h-4 w-4 text-muted-foreground" />}
+    {!historyOnly && <LandlordActivityCard title="Meetings" icon={<Calendar className="h-4 w-4 text-muted-foreground" />}
       count={data ? `${upcoming.length} upcoming` : undefined} testId="landlord-upcoming-meetings"
       actionLabel="View meetings" onOpen={() => openList()} footer={<span title={coverageText}>{shortCoverage}</span>}>
       {isLoading ? <p className="text-sm text-muted-foreground animate-pulse">Loading invitations…</p>
         : isError ? <p role="status" className="text-sm text-muted-foreground">Invitations could not be loaded. <button className="underline" onClick={() => refetch()}>Try again</button></p>
         : <>
-          {summary.data?.summary?.text ? <div className="text-sm leading-relaxed line-clamp-3" data-testid="landlord-meeting-ai-summary"><AiCommentary text={summary.data.summary.text} size="sm" /></div>
+          {summary.data?.summary?.text ? <div className="text-sm leading-relaxed" data-testid="landlord-meeting-ai-summary"><AiCommentary text={summary.data.summary.text} size="sm" /></div>
             : <p className="text-sm text-muted-foreground">{summary.isFetching ? "Preparing the meeting summary…" : upcoming.length ? "Upcoming invitations and recent meetings, linked from the team’s diaries." : "No upcoming invitations linked in the checked diaries."}</p>}
           <div className="divide-y divide-border/60">
             {upcoming.slice(0, 2).map(meeting => <button key={meeting.id} onClick={() => openList()} className="block w-full text-left py-2 first:pt-0 hover:text-primary" data-testid="landlord-meeting-preview">
@@ -110,10 +124,10 @@ export function LandlordMeetingsSummary({ companyId, companyName = "this landlor
             {!upcoming.length && !!recent.length && <button className="text-left text-sm py-1 hover:text-primary" onClick={() => openList("recent")}>Last invitation: {recent[0].subject} · {landlordMeetingWhen(recent[0])}</button>}
           </div>
         </>}
-    </LandlordActivityCard>
+    </LandlordActivityCard>}
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" data-testid="landlord-meetings-dialog">
-        <DialogTitle className="flex items-center gap-2"><Calendar className="w-4 h-4" />Meetings with {companyName}</DialogTitle>
+        <DialogTitle className="flex items-center gap-2"><Calendar className="w-4 h-4" />Meetings with {companyName}{person ? ` · ${person.name}` : ""}</DialogTitle>
         <DialogDescription>Linked calendar invitations · London time. Past invitations are not confirmation that a meeting took place.</DialogDescription>
         <section className="rounded-lg border border-border bg-card p-3 space-y-2">
           <h3 className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-primary" />Meeting summary</h3>
