@@ -117,3 +117,24 @@ test('weekly board defaults to six upcoming cards, expands on request, and keeps
   assert.equal(nodes(nodes(expanded).find(node => node.props['data-testid'] === 'landlord-weekly-upcoming')).filter(node => node.type === 'article').length, 8);
   assert.ok(nodes(expanded).some(node => node.type === 'Button' && text(node) === 'Show fewer meetings'));
 });
+
+test('large invitations show six names in the weekly card with every attendee available in collapsed details', () => {
+  const participants = Array.from({ length: 45 }, (_, i) => ({ name: `Invitee ${String(i + 1).padStart(2, '0')}`, email: `invitee${i + 1}@example.com` }));
+  const app = load('client/src/components/landlord-weekly-meetings.tsx', {
+    Link: 'Link', CalendarDays: 'CalendarDays', RefreshCw: 'RefreshCw', Button: 'Button', Skeleton: 'Skeleton',
+    useQuery: () => ({ data: { meetings: [{ id: 'legal', companyId: 'hammerson', companyName: 'Hammerson', subject: 'Legal review', participants, start: '2099-10-28T09:00:00Z', end: '2099-10-28T10:00:00Z' }], week: { start: '2099-10-26T00:00:00Z', end: '2099-11-02T00:00:00Z' }, coverage: { status: 'current', mailboxesChecked: 2, mailboxesExpected: 2, issues: [] } } }),
+    useMutation: () => ({}),
+  });
+  const tree = app.LandlordWeeklyMeetings();
+  const preview = nodes(tree).find(node => node.props['data-testid'] === 'landlord-weekly-attendee-preview');
+  const details = nodes(tree).find(node => node.props['data-testid'] === 'landlord-weekly-attendees');
+  assert.match(text(preview), /Invitee 01/);
+  assert.match(text(preview), /Invitee 06/);
+  assert.doesNotMatch(text(preview), /Invitee 07|Invitee 45/);
+  assert.equal(details.type, 'details');
+  assert.equal(details.props.open, undefined);
+  assert.match(text(nodes(details).find(node => node.type === 'summary')), /Show all\s+45\s+attendees/);
+  assert.equal(nodes(details).filter(node => node.type === 'li').length, 45);
+  assert.match(text(details), /Invitee 45/);
+  assert.match(nodes(details).find(node => node.type === 'ul').props.className, /max-h-40 overflow-y-auto/);
+});

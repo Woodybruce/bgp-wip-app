@@ -33,7 +33,7 @@ interface DiarySnapshot {
   start: string;
   end: string;
   events: DiaryEvent[];
-  revocations?: Array<{ id: string; uid: string; at: string; modifiedAt: string | null; private: boolean }>;
+  revocations?: Array<{ id: string; uid: string; at: string; modifiedAt: string | null; private: boolean; excluded?: boolean }>;
   issue: string | null;
 }
 
@@ -65,6 +65,11 @@ function safeInvitationLink(value: unknown): string | null {
   } catch { return null; }
 }
 
+export function isLandlordDiaryAbsence(subject: unknown): boolean {
+  const text = String(subject || '').replace(/[_–—]/g, ' ');
+  return /\b(?:(?:annual|sick|parental|maternity|paternity|compassionate|unpaid)\s+leave|out[\s-]+of[\s-]+(?:the\s+)?office|ooo|oof|paid\s+time\s+off)\b/i.test(text);
+}
+
 export function normaliseLandlordDiaryEvent(raw: any): DiaryEvent | null {
   // The diary sync is business context, never a way to reveal private events.
   if (!raw.sensitivity) throw new Error('Microsoft did not return the meeting privacy setting');
@@ -94,7 +99,7 @@ export async function captureLandlordDiary(
   const catalogue = options.catalogue || await loadLandlordCatalogue(q);
   const checkedAt = (options.now || new Date()).toISOString();
   const events = rawEvents.map(normaliseLandlordDiaryEvent).filter((event): event is DiaryEvent => !!event)
-    .filter(event => matchLandlordMeeting(event.subject, event.participants, catalogue).length > 0);
+    .filter(event => !isLandlordDiaryAbsence(event.subject) && matchLandlordMeeting(event.subject, event.participants, catalogue).length > 0);
   const previous = (await q.query('SELECT value FROM system_settings WHERE key=$1', [PREFIX + mailbox.toLowerCase()])).rows[0]?.value as DiarySnapshot | undefined;
   const eventKey = (event: { id: string; uid: string }) => event.uid || event.id;
   const currentKeys = new Set(events.map(eventKey));
@@ -105,12 +110,13 @@ export async function captureLandlordDiary(
     }
   }
   for (const event of rawEvents) {
-    if (event.sensitivity === 'normal' || !event.id) continue;
-    // Keep only revocation identifiers, never the private meeting's title,
-    // participants or location. Older shared copies must not reveal it.
+    const excluded = isLandlordDiaryAbsence(event.subject);
+    if ((event.sensitivity === 'normal' && !excluded) || !event.id) continue;
+    // Keep only revocation identifiers, never excluded/private diary details.
+    // Older shared copies must not reintroduce them into landlord meetings.
     revocations.push({ id: String(event.id), uid: String(event.iCalUId || ''), at: checkedAt,
       modifiedAt: event.lastModifiedDateTime && Number.isFinite(Date.parse(event.lastModifiedDateTime)) ? new Date(event.lastModifiedDateTime).toISOString() : null,
-      private: true });
+      private: event.sensitivity !== 'normal', excluded });
   }
   const snapshot: DiarySnapshot = { mailbox: mailbox.toLowerCase(), checkedAt, attemptedAt: checkedAt, scanStartedAt: options.scanStartedAt || checkedAt, ...window, events,
     revocations: [...new Map(revocations.map(revocation => [eventKey(revocation), revocation])).values()], issue: null };
@@ -138,7 +144,7 @@ export function buildLandlordMeetingDigest(
   const issues: string[] = [];
   for (const member of staff) {
     const snapshot = byMailbox.get(member.email);
-    if (!snapshot?.checkedAt) { issues.push(`${member.name}: diary not checked`); continue; }
+    if (!snapshot?.checkedAt) { issues.push(`${member.name}: ${snapshot?.issue || 'diary not checked'}`); continue; }
     if (snapshot.issue) issues.push(`${member.name}: ${snapshot.issue}`);
     else if (now.getTime() - Date.parse(snapshot.checkedAt) > MAX_AGE_MS) issues.push(`${member.name}: diary check is over two hours old`);
     if (!snapshot.start || !snapshot.end || snapshot.start > week.start || snapshot.end < week.end) issues.push(`${member.name}: current week is not fully covered`);
@@ -162,7 +168,8 @@ export function buildLandlordMeetingDigest(
     (snapshot.revocations || []).map(revocation => ({ ...revocation, key: revocation.uid || `${snapshot.mailbox}:${revocation.id}` })));
   for (const [key, { event, snapshot }] of sources) {
     if (event.cancelled) continue;
-    if (revoked.some(revocation => revocation.key === key && (revocation.private
+    if (isLandlordDiaryAbsence(event.subject)) continue;
+    if (revoked.some(revocation => revocation.key === key && (revocation.private || revocation.excluded
       ? (event.modifiedAt || snapshot.checkedAt!) <= (revocation.modifiedAt || revocation.at)
       : snapshot.checkedAt! <= revocation.at))) continue;
     if (options.weekOnly && (event.start < week.start || event.start >= week.end)) continue;
@@ -212,7 +219,8 @@ export async function fetchLandlordCalendar(token: string, mailbox: string, wind
       await new Promise(resolve => setTimeout(resolve, seconds * 1000));
     }
     response = response!;
-    if (!response.ok) throw new Error(response.status === 403 ? 'Microsoft denied access to this diary' : `Microsoft diary unavailable (HTTP ${response.status})`);
+    if (!response.ok) throw new Error(response.status === 403 ? 'Microsoft denied access to this diary'
+      : response.status === 404 ? 'Microsoft could not find an Outlook calendar for this account' : `Microsoft diary unavailable (HTTP ${response.status})`);
     let data: any;
     try { data = await response.json(); } catch { throw new Error('Microsoft returned an incomplete diary response'); }
     if (!Array.isArray(data.value)) throw new Error('Microsoft returned an invalid diary response');
@@ -330,10 +338,10 @@ export async function searchLandlordMeetings(options: LandlordCalendarSearch, de
         if (!token) throw new Error('Microsoft diary connection is unavailable');
         const rawEvents = await (deps.fetchCalendar || fetchLandlordCalendar)(token, member.email, window);
         const events = rawEvents.map(normaliseLandlordDiaryEvent).filter((event): event is DiaryEvent => !!event)
-          .filter(event => event.cancelled || matchLandlordMeeting(event.subject, event.participants, catalogue).some(match => match.company.id === company.id));
+          .filter(event => !isLandlordDiaryAbsence(event.subject) && (event.cancelled || matchLandlordMeeting(event.subject, event.participants, catalogue).some(match => match.company.id === company.id)));
         const checkedAt = (deps.now || new Date()).toISOString();
-        const revocations = rawEvents.filter(event => event.sensitivity !== 'normal' && event.id).map(event => ({
-          id: String(event.id), uid: String(event.iCalUId || ''), at: checkedAt, private: true,
+        const revocations = rawEvents.filter(event => (event.sensitivity !== 'normal' || isLandlordDiaryAbsence(event.subject)) && event.id).map(event => ({
+          id: String(event.id), uid: String(event.iCalUId || ''), at: checkedAt, private: event.sensitivity !== 'normal', excluded: isLandlordDiaryAbsence(event.subject),
           modifiedAt: event.lastModifiedDateTime && Number.isFinite(Date.parse(event.lastModifiedDateTime)) ? new Date(event.lastModifiedDateTime).toISOString() : null,
         }));
         snapshots.push({ mailbox: member.email, checkedAt, attemptedAt: checkedAt, ...window, events, revocations, issue: null });
@@ -342,17 +350,17 @@ export async function searchLandlordMeetings(options: LandlordCalendarSearch, de
         // Do not expose arbitrary provider bodies or fall back to a stale cached
         // event: a failed mailbox is explicit incomplete coverage.
         const message = String(error?.message || '');
-        const issue = /^(Microsoft (?:diary connection is unavailable|denied access to this diary|diary unavailable \(HTTP \d+\)|returned (?:an? )?(?:incomplete|invalid)|did not return)|Diary exceeded|Calendar returned|Invalid calendar continuation)/.test(message)
+        const issue = /^(Microsoft (?:diary connection is unavailable|denied access to this diary|could not find an Outlook calendar for this account|diary unavailable \(HTTP \d+\)|returned (?:an? )?(?:incomplete|invalid)|did not return)|Diary exceeded|Calendar returned|Invalid calendar continuation)/.test(message)
           ? message : 'The diary could not be fully checked';
         mailboxes.push({ mailbox: member.email, status: 'unavailable', checkedAt: null, issue });
       }
     }));
   }
   const digest = buildLandlordMeetingDigest(snapshots, catalogue, staff, { companyId: company.id, now });
-  const privateUids = new Set(snapshots.flatMap(snapshot => (snapshot.revocations || []).map(revocation => revocation.uid).filter(Boolean)));
+  const excludedUids = new Set(snapshots.flatMap(snapshot => (snapshot.revocations || []).map(revocation => revocation.uid).filter(Boolean)));
   const query = String(options.query || '').trim().slice(0, 200).toLowerCase();
   const terms = query.split(/\s+/).filter(Boolean);
-  const matches = digest.meetings.filter(event => !privateUids.has(event.id.slice(company.id.length + 1)) && event.start < window.end && event.end >= window.start).filter(event => {
+  const matches = digest.meetings.filter(event => !excludedUids.has(event.id.slice(company.id.length + 1)) && event.start < window.end && event.end >= window.start).filter(event => {
     const text = [event.companyName, event.subject, event.location, ...event.participants.flatMap(person => [person.name, person.email])].join(' ').toLowerCase();
     return terms.every(term => text.includes(term));
   });

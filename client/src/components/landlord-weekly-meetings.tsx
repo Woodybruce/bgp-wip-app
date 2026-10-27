@@ -44,7 +44,11 @@ export function LandlordWeeklyMeetings() {
     </div>
     <Link href={`/companies/${meeting.companyId}`} className="text-sm font-semibold underline underline-offset-2">{meeting.companyName}</Link>
     <p className="text-sm break-words">{meeting.subject}</p>
-    <p className="text-xs text-muted-foreground break-words">On the invitation: {meeting.participants.map(person => person.name || person.email).join(" · ")}</p>
+    <p className="text-xs text-muted-foreground break-words" data-testid="landlord-weekly-attendee-preview">On the invitation: {meeting.participants.slice(0, 6).map(person => person.name || person.email).join(" · ")}</p>
+    {meeting.participants.length > 6 && <details className="text-xs text-muted-foreground" data-testid="landlord-weekly-attendees">
+      <summary className="cursor-pointer underline underline-offset-2">Show all {meeting.participants.length} attendees</summary>
+      <ul className="mt-2 space-y-1 max-h-40 overflow-y-auto list-disc pl-5">{meeting.participants.map(person => <li key={person.email} className="break-words">{person.name || person.email}</li>)}</ul>
+    </details>}
     {meeting.location && <p className="text-xs text-muted-foreground break-words">{meeting.location}</p>}
     {meeting.webLink && <a href={meeting.webLink} target="_blank" rel="noopener noreferrer" className="inline-block text-xs underline underline-offset-2">Open invitation</a>}
   </article>;

@@ -102,8 +102,12 @@ test('snapshot capture saves domain-linked meetings without creating contacts or
     if(sql.startsWith('SELECT value'))return {rows:[]};
     writes.push(sql); saved=JSON.parse(values![1]); return {rows:[]};
   }};
-  await api.captureLandlordDiary([raw(),raw({id:'private',sensitivity:'private'}),raw({id:'brand',subject:'Brand catch up',organizer:null,attendees:[{emailAddress:{address:'person@brand.example'}}]})],staff[0].email,{start:'2026-10-01',end:'2027-01-01'},{q,catalogue:[aew],now});
+  await api.captureLandlordDiary([raw(),raw({id:'private',sensitivity:'private'}),
+    raw({id:'brand',subject:'Brand catch up',organizer:null,attendees:[{emailAddress:{address:'person@brand.example'}}]}),
+    raw({id:'unrelated-cancellation',subject:'Unrelated cancelled appointment',isCancelled:true,organizer:null,attendees:[]}),
+  ],staff[0].email,{start:'2026-10-01',end:'2027-01-01'},{q,catalogue:[aew],now});
   assert.equal(saved.events.length,1); assert.equal(writes.length,1);
+  assert.doesNotMatch(JSON.stringify(saved),/Unrelated cancelled appointment/);
   assert.match(writes[0],/INSERT INTO system_settings/); assert.doesNotMatch(writes.join(' '),/crm_contacts|crm_interactions|crm_companies/);
 });
 
@@ -235,4 +239,40 @@ test('landlord live search respects me and unique staff names with explicit boun
   const london=await api.searchLandlordMeetings({req:searchRequest,companyId:'aew',startDateTime:'2026-06-01',endDateTime:'2026-06-02'},summer.deps);
   assert.equal(london.window!.start,'2026-05-31T23:00:00.000Z');
   assert.equal(london.window!.end,'2026-06-01T23:00:00.000Z');
+});
+
+test('explicit absence entries never become landlord meetings, while Holiday Inn meetings remain', async () => {
+  const absenceSubjects = ['Jack annual leave x3 days', 'Nick — OUT OF OFFICE', 'OOO - Victoria', 'Ben out-of-office', 'Sick leave'];
+  for (const subject of absenceSubjects) assert.equal(api.isLandlordDiaryAbsence(subject),true);
+  for (const subject of ['Holiday Inn site meeting with AEW', 'AEW office meeting', 'Goodwood visit']) assert.equal(api.isLandlordDiaryAbsence(subject),false);
+  const absences = absenceSubjects.map((subject,i)=>raw({id:`leave-${i}`,iCalUId:`leave-${i}`,subject}));
+  const legitimate = raw({id:'hotel',iCalUId:'hotel',subject:'Holiday Inn site meeting with AEW'});
+  const saved = snapshot(staff[0].email,[...absences,legitimate].map(api.normaliseLandlordDiaryEvent));
+  assert.deepEqual(api.buildLandlordMeetingDigest([saved],[aew],staff,{now,weekOnly:true}).meetings.map(m=>m.subject),[legitimate.subject]);
+  let captured:any;
+  const q={query:async(sql:string,values?:any[])=>{
+    if(sql.startsWith('SELECT lower'))return {rows:staff};
+    if(sql.startsWith('SELECT value'))return {rows:[{value:saved}]};
+    captured=JSON.parse(values![1]);return {rows:[]};
+  }};
+  await api.captureLandlordDiary([...absences,legitimate],staff[0].email,{start:'2026-10-01',end:'2027-01-01'},{q,catalogue:[aew],now});
+  assert.equal(captured.events.length,1);
+  assert.doesNotMatch(JSON.stringify(captured),/annual leave|OUT OF OFFICE|Sick leave/);
+  const {deps}=searchDependencies({[staff[0].email]:[...absences,legitimate]});
+  const live=await api.searchLandlordMeetings({req:searchRequest,companyId:'aew'},deps);
+  assert.deepEqual(live.events!.map(m=>m.subject),[legitimate.subject]);
+});
+
+test('coverage preserves a first-scan error and explains a missing Outlook calendar', async () => {
+  const issue='Microsoft could not find an Outlook calendar for this account';
+  const failed=snapshot(staff[0].email,[],{checkedAt:null,issue});
+  const digest=api.buildLandlordMeetingDigest([failed],[aew],[staff[0]],{now});
+  assert.equal(digest.coverage.status,'not_synced');
+  assert.deepEqual(digest.coverage.issues,[`Nick: ${issue}`]);
+  await assert.rejects(api.fetchLandlordCalendar('test',staff[0].email,{start:now.toISOString(),end:'2026-11-01T00:00:00Z'},
+    (async()=>new Response('',{status:404})) as any),/could not find an Outlook calendar/);
+  const {deps}=searchDependencies({[staff[0].email]:new Error(issue)});
+  const live=await api.searchLandlordMeetings({req:searchRequest,companyId:'aew',mailbox:'me'},deps);
+  assert.equal(live.coverage!.status,'not_synced');
+  assert.match(live.coverage!.issues[0],/could not find an Outlook calendar/);
 });
