@@ -37,6 +37,9 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
+import { LandlordMeetingsSummary } from "@/components/landlord-meetings-summary";
+import { LandlordInterviewNotes } from "@/components/landlord-interview-notes";
+import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
 import { MemberAvatar } from "@/components/ClientTeamOrgChart";
 import { BGP_ACCOUNT_ROLES, canonicalBgpRole } from "@shared/bgp-account-roles";
 import { BrandEmailHistory } from "@/components/brand-email-history";
@@ -1590,10 +1593,57 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             // brand's shared thread, not a second answer panel stacked on top
             // of it (Woody, 2026-09-26).
             <div className="h-96 md:h-auto md:min-h-[24rem] md:flex-1 md:min-w-0" data-testid="brand-conversation">
-              <CompanyMiniChat companyId={companyId} companyName={c.name} fill title={isLender ? "Lender conversation" : isLandlord ? "Landlord conversation" : isAgentFirm ? "Agent conversation" : "Brand conversation"} starters={askTopics(c.name, isLandlord, isAgentFirm, isLender)} />
+              <CompanyMiniChat companyId={companyId} companyName={c.name} key={isLandlord ? companyId : undefined} landlord={isLandlord && !isBrand && !isLender} fill title={isLender ? "Lender conversation" : isLandlord ? "Landlord conversation" : isAgentFirm ? "Agent conversation" : "Brand conversation"} starters={askTopics(c.name, isLandlord, isAgentFirm, isLender)} />
             </div>
   );
   const aboutLen = aboutText(c.description).length;
+  const relationshipSummary = (
+            <div className={`space-y-2 ${!(isLandlord && flat && !isLender) && (aboutLen > 0 || c.backers || c.tiktok_handle || c.dept_store_presence || c.franchise_activity || c.stock_ticker || (c.instagram_handle && !isLandlord) || (isBrand && !isClientViewer)) ? "pt-2 border-t border-border" : ""}`} data-testid="brand-relationship-summary">
+            {/* Coverage sits in the header row; when nobody is set by hand the
+                server falls back to the BGP agents on this brand's deals. */}
+            <div className="space-y-1.5 [container-type:inline-size]">
+              <div className="flex items-center gap-2">
+                <Handshake className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-[11px] font-medium text-muted-foreground mr-1">BGP team</span>
+                {!isClientViewer && <BgpTeamMenu companyId={companyId} coverers={data.coverers || []} />}
+              </div>
+              {(data.coverers || []).length > 0 && (
+                <div className="grid gap-1.5 [@container(min-width:420px)]:grid-cols-2">
+                  {(data.coverers || []).map((cov: any) => (
+                    <CovererChip key={cov.id} cov={cov} companyId={companyId} />
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* One line: lead broker, last touch and email volume — from CRM
+                contacts AND the BGP inbox threads with the brand's people
+                (Honest Greens read "Last touch —" beside 49 inbox threads). */}
+            {(() => {
+              // Staff get the brand's whole email history (relationshipStats);
+              // clients fall back to their visible contacts' last touch.
+              const stats = data.relationshipStats;
+              const touches = [...data.contacts.map((ct: any) => ct.last_interaction_at), stats?.last_touch].filter(Boolean) as string[];
+              const last = touches.sort().reverse()[0];
+              const daysSince = last ? Math.floor((Date.now() - new Date(last).getTime()) / 864e5) : null;
+              const threads = stats?.threads || 0;
+              const active90 = stats ? stats.people_90d : data.contacts.filter((ct: any) => ct.last_interaction_at && Date.now() - new Date(ct.last_interaction_at).getTime() < 90 * 864e5).length;
+              const parts = [
+                c.bgp_contact_crm ? <span key="lead">Lead <span className="font-medium text-foreground">{c.bgp_contact_crm}</span></span> : null,
+                // No touch on record = no "Last touch —" (Woody, 2026-09-28).
+                daysSince == null ? null : <span key="touch">Last touch <span className={`font-medium ${daysSince < 30 ? "text-emerald-700" : daysSince < 90 ? "text-amber-600" : "text-red-600"}`}>{daysSince === 0 ? "today" : daysSince === 1 ? "yesterday" : `${daysSince} days ago`}</span></span>,
+                threads ? (stats
+                  ? <button key="threads" type="button" onClick={() => setEmailsOpen(true)} className="hover:text-foreground underline decoration-dotted underline-offset-2" data-testid="button-brand-emails"><span className="font-mono tabular-nums text-foreground">{threads.toLocaleString("en-GB")}</span> email thread{threads === 1 ? "" : "s"}</button>
+                  : <span key="threads"><span className="font-mono tabular-nums text-foreground">{threads.toLocaleString("en-GB")}</span> email thread{threads === 1 ? "" : "s"}</span>) : null,
+                active90 ? <span key="active"><span className="font-mono tabular-nums text-foreground">{active90}</span> {active90 === 1 ? "person" : "people"} active in 90 days</span> : null,
+              ].filter(Boolean);
+              return <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground empty:hidden" data-testid="brand-relationship-line">{parts}
+                {stats && <BrandEmailHistory companyId={companyId} companyName={c.name} open={emailsOpen} onOpenChange={setEmailsOpen} entities={commentaryEntities} />}
+              </div>;
+            })()}
+
+            <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} liveTenancies={liveLocations} pillsOnly={isLandlord || isAgentFirm} />
+            </div>
+  );
   // About's content on its own, so the company page can put it inside the
   // one profile card (header, website, details, actions, About) — elsewhere
   // it keeps its own card.
@@ -1781,55 +1831,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 </div>
               ) : null}
             </div>
-            {/* BGP team, last touch and portfolio activity sit with About
-                (Woody, 2026-09-24: "include this circled info in the about"). */}
-            {/* Its own rule only under About content — with no About the
-                profile card's rule sat right above this one (a double line). */}
-            <div className={`space-y-2 ${aboutLen > 0 || c.backers || c.tiktok_handle || c.dept_store_presence || c.franchise_activity || c.stock_ticker || (c.instagram_handle && !isLandlord) || (isBrand && !isClientViewer) ? "pt-2 border-t border-border" : ""}`} data-testid="brand-relationship-summary">
-            {/* Coverage sits in the header row; when nobody is set by hand the
-                server falls back to the BGP agents on this brand's deals. */}
-            <div className="space-y-1.5 [container-type:inline-size]">
-              <div className="flex items-center gap-2">
-                <Handshake className="w-3.5 h-3.5 text-muted-foreground" />
-                <span className="text-[11px] font-medium text-muted-foreground mr-1">BGP team</span>
-                {!isClientViewer && <BgpTeamMenu companyId={companyId} coverers={data.coverers || []} />}
-              </div>
-              {(data.coverers || []).length > 0 && (
-                <div className="grid gap-1.5 [@container(min-width:420px)]:grid-cols-2">
-                  {(data.coverers || []).map((cov: any) => (
-                    <CovererChip key={cov.id} cov={cov} companyId={companyId} />
-                  ))}
-                </div>
-              )}
-            </div>
-            {/* One line: lead broker, last touch and email volume — from CRM
-                contacts AND the BGP inbox threads with the brand's people
-                (Honest Greens read "Last touch —" beside 49 inbox threads). */}
-            {(() => {
-              // Staff get the brand's whole email history (relationshipStats);
-              // clients fall back to their visible contacts' last touch.
-              const stats = data.relationshipStats;
-              const touches = [...data.contacts.map((ct: any) => ct.last_interaction_at), stats?.last_touch].filter(Boolean) as string[];
-              const last = touches.sort().reverse()[0];
-              const daysSince = last ? Math.floor((Date.now() - new Date(last).getTime()) / 864e5) : null;
-              const threads = stats?.threads || 0;
-              const active90 = stats ? stats.people_90d : data.contacts.filter((ct: any) => ct.last_interaction_at && Date.now() - new Date(ct.last_interaction_at).getTime() < 90 * 864e5).length;
-              const parts = [
-                c.bgp_contact_crm ? <span key="lead">Lead <span className="font-medium text-foreground">{c.bgp_contact_crm}</span></span> : null,
-                // No touch on record = no "Last touch —" (Woody, 2026-09-28).
-                daysSince == null ? null : <span key="touch">Last touch <span className={`font-medium ${daysSince < 30 ? "text-emerald-700" : daysSince < 90 ? "text-amber-600" : "text-red-600"}`}>{daysSince === 0 ? "today" : daysSince === 1 ? "yesterday" : `${daysSince} days ago`}</span></span>,
-                threads ? (stats
-                  ? <button key="threads" type="button" onClick={() => setEmailsOpen(true)} className="hover:text-foreground underline decoration-dotted underline-offset-2" data-testid="button-brand-emails"><span className="font-mono tabular-nums text-foreground">{threads.toLocaleString("en-GB")}</span> email thread{threads === 1 ? "" : "s"}</button>
-                  : <span key="threads"><span className="font-mono tabular-nums text-foreground">{threads.toLocaleString("en-GB")}</span> email thread{threads === 1 ? "" : "s"}</span>) : null,
-                active90 ? <span key="active"><span className="font-mono tabular-nums text-foreground">{active90}</span> {active90 === 1 ? "person" : "people"} active in 90 days</span> : null,
-              ].filter(Boolean);
-              return <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground empty:hidden" data-testid="brand-relationship-line">{parts}
-                {stats && <BrandEmailHistory companyId={companyId} companyName={c.name} open={emailsOpen} onOpenChange={setEmailsOpen} entities={commentaryEntities} />}
-              </div>;
-            })()}
+            {!(isLandlord && flat && !isLender) && relationshipSummary}
 
-            <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} liveTenancies={liveLocations} pillsOnly={isLandlord || isAgentFirm} />
-            </div>
             </div>
   );
   // Who an agent represents (+ the add-representation picker, which the
@@ -2267,15 +2270,14 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     const masonryCls = "space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense";
     return (
       <div className="flex flex-col gap-3 w-full min-w-0 [container-type:inline-size]" data-testid="landlord-profile">
+        <div data-testid="landlord-relationship-brief" className="[&_[data-testid=ai-commentary]]:text-sm [&_[data-testid=ai-commentary]]:leading-relaxed">
+          <BgpTakeStrip companyId={companyId} tab="activity" entities={commentaryEntities} landlord={!isClientViewer}
+            leading={!isClientViewer && <LandlordMeetingsSummary key={companyId} companyId={companyId} />}
+            footer={relationshipSummary} />
+        </div>
+        {!isClientViewer && <LandlordInterviewNotes companyId={companyId} />}
         {profileTopRow}
         {refreshStatus}
-        {/* No BGP take on landlords: it is a fixed count of the linked
-            records ("30 linked CRM properties shown (up to 30)") that the
-            boards right below show properly — and it disagreed with them
-            (Woody, 2026-09-27). The relationship read stays — it's the
-            team's commentary on the account, not a count (Woody, 2026-09-28:
-            "the AI commentary on the relationship has disappeared"). */}
-        <BgpTakeStrip companyId={companyId} tab="activity" entities={commentaryEntities} />
         <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
         <AccountDealsBoard companyId={companyId} />
         {!isClientViewer && <AccountTeamViewsCard companyId={companyId} />}
@@ -3243,6 +3245,7 @@ export function askTopics(brandName: string, isLandlord = false, isAgentFirm = f
     { label: "Email", question: `Draft a short catch-up email from BGP to our main contact at ${brandName}` },
   ];
   return isLandlord ? [
+    { label: "Meetings", question: `Check the linked calendar invitations for ${brandName}. What is coming up this week, who is attending, and what should BGP prepare? State any gaps in diary coverage.` },
     { label: "Overview", question: `Tell me everything BGP needs to know about ${brandName} as a landlord before a first call` },
     { label: "Portfolio", question: `What does ${brandName} own, where is BGP already active on their estate, and where aren't we?` },
     { label: "Opportunities", question: `Which of ${brandName}'s assets have vacancies, lease events or repositioning going on that BGP could act on?` },
@@ -4555,7 +4558,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
 // conversation doesn't mean losing the page. Reuses the group-chat machinery:
 // one thread per company (linked_id), ChatBGP as a member, so plain message
 // POSTs get a real Fable answer server-side and we just poll the thread.
-export function CompanyMiniChat({ companyId, companyName, fill, title, starters }: { companyId: string; companyName: string; fill?: boolean; title?: string; starters?: AskTopic[] }) {
+export function CompanyMiniChat({ companyId, companyName, fill, title, starters, landlord = false }: { companyId: string; companyName: string; fill?: boolean; title?: string; starters?: AskTopic[]; landlord?: boolean }) {
   const [threadId, setThreadId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -4583,6 +4586,16 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
     refetchInterval: 5000,
   });
   const messages: any[] = thread?.messages || [];
+  // Polling returns fresh objects every five seconds. Only a changed human
+  // message (including edits/deletions) should refresh the landlord brief.
+  const landlordConversationSignature = landlord ? JSON.stringify(messages
+    .filter(message => message.role !== "assistant")
+    .map(message => [message.id, message.content, message.updatedAt || message.updated_at])) : null;
+  const hasLoadedThread = !!thread;
+  useEffect(() => {
+    if (!landlord || !hasLoadedThread) return;
+    void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "ai-take"] });
+  }, [landlord, companyId, hasLoadedThread, landlordConversationSignature]);
 
   // A starter question waits on ChatBGP's reply in the shared thread — show
   // it's coming until a new assistant message lands (or two minutes pass).
@@ -4663,6 +4676,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
     try {
       await apiRequest("DELETE", `/api/chat/threads/${threadId}/messages/${messageId}`);
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
+      if (landlord) void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "ai-take"] });
     } catch (e: any) {
       mcToast({ title: "Couldn't delete message", description: e?.message, variant: "destructive" });
     } finally {
@@ -4683,6 +4697,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
     try {
       await apiRequest("PUT", `/api/chat/threads/${threadId}/messages/${messageId}`, { content: body });
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
+      if (landlord) void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "ai-take"] });
     } catch (e: any) {
       mcToast({ title: "Couldn't edit message", description: e?.message, variant: "destructive" });
     } finally {
@@ -4756,6 +4771,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
       await apiRequest("POST", `/api/chat/threads/${tid}/messages`, { content: body });
       setDraft("");
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", tid] });
+      if (landlord) void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "ai-take"] });
     } catch { /* surfaced by global toast */ }
     finally { setSending(false); }
   };
@@ -4796,7 +4812,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
   const addableUsers = (Array.isArray(mcUsers) ? mcUsers : []).filter(u => !memberIds.has(u.id) && u.id !== mcMe?.id);
 
   return (
-    <Card className={fill ? "h-full flex flex-col overflow-hidden" : undefined}>
+    <Card className={fill ? "h-full flex flex-col overflow-hidden" : undefined} style={landlord ? { fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" } : undefined} data-testid={landlord ? "landlord-conversation" : undefined}>
       <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2 shrink-0">
         <CardTitle className="text-xs flex items-center gap-1 uppercase tracking-wider text-muted-foreground">
           {title && <span className="mr-1.5 flex items-center gap-2 text-sm font-medium normal-case tracking-normal text-foreground"><MessageSquare className="w-4 h-4 text-muted-foreground" />{title}</span>}
@@ -4884,15 +4900,17 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
             </div>
           ) : (
             messages.map((m: any) => {
-              const isOwn = m.role === "user" && mcMe?.id && m.userId === mcMe.id;
+              const authorId = m.userId || (landlord ? m.user_id : undefined);
+              const isOwn = m.role === "user" && mcMe?.id && authorId === mcMe.id;
               return (
-              <div key={m.id} className={`group/msg relative text-xs rounded-lg px-2.5 py-1.5 whitespace-pre-wrap break-words ${
-                m.role === "assistant" ? "bg-muted/60" : "bg-primary/10 ml-6"
-              }`}>
+              <div key={m.id} className={landlord
+                ? `group/msg relative w-fit max-w-[94%] rounded-2xl px-3 py-2 text-sm leading-relaxed break-words ${isOwn ? "ml-auto rounded-br-sm bg-primary/10" : "mr-auto rounded-bl-sm border border-border/60 bg-muted/40"}`
+                : `group/msg relative text-xs rounded-lg px-2.5 py-1.5 whitespace-pre-wrap break-words ${m.role === "assistant" ? "bg-muted/60" : "bg-primary/10 ml-6"}`}
+                data-testid={landlord ? "landlord-chat-message" : undefined}>
                 {/* Every message carries its author — a shared brand chat is
                     useless if you can't tell who said what (Woody, 2026-08-04). */}
                 <span className="font-semibold text-[11px] block text-muted-foreground">
-                  {m.role === "assistant" ? "ChatBGP" : (isOwn ? "You" : (m.userName || "Team"))}
+                  {m.role === "assistant" ? "ChatBGP" : (isOwn ? "You" : (m.userName || (landlord ? mcUsers.find(u => u.id === authorId)?.name || "Team member" : "Team")))}
                   {(() => {
                     const ts = m.createdAt || m.created_at;
                     if (!ts) return null;
@@ -4923,7 +4941,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
                     <button className="text-[11px] px-1 text-muted-foreground" onClick={() => setEditingMsgId(null)}>✕</button>
                   </div>
                 ) : (
-                  renderContent(m.content)
+                  landlord ? <ChatBGPMarkdown content={String(m.content || "")} /> : renderContent(m.content)
                 )}
                 {isOwn && editingMsgId !== m.id && (
                   <span className="absolute top-1 right-1 flex items-center gap-1.5 opacity-0 group-hover/msg:opacity-100 transition-opacity">
@@ -5004,7 +5022,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
           <div className="flex items-center gap-1.5">
             <input
               ref={inputRef}
-              className="flex-1 h-8 rounded-md border bg-background px-2.5 text-xs outline-none focus:ring-1 focus:ring-ring"
+              className={landlord ? "flex-1 min-w-0 h-11 rounded-md border bg-background px-2.5 text-sm outline-none focus:ring-1 focus:ring-ring" : "flex-1 h-8 rounded-md border bg-background px-2.5 text-xs outline-none focus:ring-1 focus:ring-ring"}
               placeholder={`Message about ${companyName} — @ to tag`}
               value={draft}
               onChange={onDraftChange}
@@ -5024,7 +5042,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters 
             >
               😊
             </button>
-            <Button size="sm" className="h-8 px-3 text-xs" onClick={sendWithTags} disabled={sending || !draft.trim()} data-testid="button-minichat-send">
+            <Button size="sm" className={landlord ? "h-11 px-3 text-sm" : "h-8 px-3 text-xs"} onClick={sendWithTags} disabled={sending || !draft.trim()} data-testid="button-minichat-send">
               {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Send"}
             </Button>
           </div>

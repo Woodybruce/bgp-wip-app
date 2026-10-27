@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { CrmMeetingsTab } from "@/components/crm-meetings-tab";
+import { LandlordWeeklyMeetings } from "@/components/landlord-weekly-meetings";
 import { Pill } from "@/components/ui/pill";
 import { countLabel } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -1758,7 +1759,7 @@ function PeopleHub() {
   const effectiveTeam = activeTeam && activeTeam !== "all" ? activeTeam : user?.team;
   const isLandsec = effectiveTeam === "Landsec";
 
-  const [tab, setTab] = useState<PeopleTab>(isLandsec ? "agents" : "landlords");
+  const [tab, setTab] = useState<PeopleTab>(() => isLandsec ? "agents" : new URLSearchParams(window.location.search).get("tab") === "meetings" ? "meetings" : "landlords");
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">("card");
   const [hubAddContactOpen, setHubAddContactOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ type: "company" | "contact"; id: string; name: string } | null>(null);
@@ -1901,6 +1902,8 @@ function PeopleHub() {
       ) : (
         <>
           {tab === "landlords" && (
+            <>
+            <LandlordWeeklyMeetings />
             <LandlordsTab
               companies={companies}
               contacts={contacts}
@@ -1911,6 +1914,7 @@ function PeopleHub() {
               viewMode={viewMode}
               countsLoading={propertiesLoading || dealsLoading}
             />
+            </>
           )}
           {tab === "agents" && (
             <AgentsTab companies={companies} contacts={contacts} defaultTenantRep={isLandsec} onDeleteCompany={onDeleteCompany} />

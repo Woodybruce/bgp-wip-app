@@ -5,6 +5,9 @@ import { BGP_TEAM_NAMES, TEAM_DOT_CLASSES } from "@shared/teams";
 // by its five sections, a response box under every question, autosaving as
 // you type. Rendered as a tab inside the CRM hub (pages/people.tsx).
 import { useState, useEffect, useRef, useCallback } from "react";
+import { Link } from "wouter";
+import { LandlordWeeklyMeetings } from "@/components/landlord-weekly-meetings";
+import type { LandlordInterviewMention } from "../../../server/landlord-interview-links";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { gbDate, toDateInputValue } from "@/lib/format";
@@ -104,8 +107,33 @@ function formatMeetingDate(iso: string | null): string | null {
   return gbDate(date, { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) });
 }
 
+// Resolve saved links again before refreshing briefs: an edit can move a
+// mention between landlords, and the previous landlord must lose it too.
+async function refreshInterviewLandlordBriefs(interviewId: string) {
+  const linksKey = ["/api/crm/landlords/interview-links"];
+  const affectedIds = new Set<string>();
+  const remember = (links: LandlordInterviewMention[] | undefined) => {
+    for (const link of links || []) if (link.interviewId === interviewId) affectedIds.add(link.companyId);
+  };
+  for (const [, links] of queryClient.getQueriesData<LandlordInterviewMention[]>({ queryKey: linksKey })) remember(links);
+  try {
+    await queryClient.invalidateQueries({ queryKey: linksKey });
+    remember(await queryClient.fetchQuery<LandlordInterviewMention[]>({
+      queryKey: linksKey,
+      queryFn: async () => (await apiRequest("GET", "/api/crm/landlords/interview-links")).json(),
+      staleTime: 1_000,
+    }));
+  } catch {
+    // The interview was saved successfully. A delayed link refresh must
+    // not turn that successful write into a failed-save message.
+  }
+  await queryClient.invalidateQueries({ predicate: query =>
+    query.queryKey[0] === "/api/brand" && query.queryKey[2] === "ai-take"
+    && affectedIds.has(String(query.queryKey[1])) });
+}
+
 export function CrmMeetingsTab() {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(() => new URLSearchParams(window.location.search).get("interview"));
   const [addOpen, setAddOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [newTeam, setNewTeam] = useState(TEAMS[0]);
@@ -120,12 +148,18 @@ export function CrmMeetingsTab() {
   });
 
   const selected = interviews?.find((iv) => iv.id === selectedId) || null;
+  const { data: landlordLinks = [] } = useQuery<LandlordInterviewMention[]>({
+    queryKey: ["/api/crm/landlords/interview-links"],
+    queryFn: async () => (await apiRequest("GET", "/api/crm/landlords/interview-links")).json(),
+    staleTime: 30_000,
+  });
 
   // Local drafts per question + name/date, so typing never waits on the
   // network; PATCHes are debounced per question and merged server-side.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [nameDraft, setNameDraft] = useState("");
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const saveFailedRef = useRef(false);
   const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pendingSavesRef = useRef(0);
 
@@ -139,7 +173,7 @@ export function CrmMeetingsTab() {
     // Intentionally keyed on the id only — cache refreshes while typing
     // must not clobber the local drafts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId]);
+  }, [selected?.id]);
 
   useEffect(() => () => {
     Object.values(timersRef.current).forEach(clearTimeout);
@@ -151,6 +185,7 @@ export function CrmMeetingsTab() {
       return res.json() as Promise<CrmInterview>;
     },
     onMutate: () => {
+      if (pendingSavesRef.current === 0) saveFailedRef.current = false;
       pendingSavesRef.current += 1;
       setSaveState("saving");
     },
@@ -158,10 +193,12 @@ export function CrmMeetingsTab() {
       queryClient.setQueryData<CrmInterview[]>(["/api/crm/interviews"], (prev) =>
         prev ? prev.map((iv) => (iv.id === row.id ? row : iv)) : prev,
       );
+      void refreshInterviewLandlordBriefs(row.id);
     },
+    onError: () => { saveFailedRef.current = true; },
     onSettled: () => {
       pendingSavesRef.current -= 1;
-      if (pendingSavesRef.current <= 0) setSaveState("saved");
+      if (pendingSavesRef.current <= 0) setSaveState(saveFailedRef.current ? "error" : "saved");
     },
   });
 
@@ -193,6 +230,7 @@ export function CrmMeetingsTab() {
       );
       setConfirmDelete(false);
       setSelectedId(null);
+      void refreshInterviewLandlordBriefs(id);
     },
   });
 
@@ -216,7 +254,7 @@ export function CrmMeetingsTab() {
           <div className="flex items-center gap-2">
             {saveState !== "idle" && (
               <span className="text-[11px] text-muted-foreground" data-testid="text-save-state">
-                {saveState === "saving" ? "Saving…" : "Saved"}
+                {saveState === "saving" ? "Saving…" : saveState === "error" ? "Not saved — please try again" : "Saved"}
               </span>
             )}
             <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive" onClick={() => setConfirmDelete(true)} data-testid="button-delete-interview">
@@ -260,6 +298,15 @@ export function CrmMeetingsTab() {
           </div>
         </div>
 
+        <div className="rounded-lg border border-border bg-card p-3 space-y-2" data-testid="interview-linked-landlords">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Linked landlords</h3>
+          <p className="text-xs text-muted-foreground">Saved answers mentioning a landlord link to its profile automatically. They are shown as interview notes, with their source.</p>
+          <div className="flex flex-wrap gap-3">
+            {[...new Map(landlordLinks.filter(link => link.interviewId === selected.id).map(link => [link.companyId, link])).values()].map(link => <Link key={link.companyId} href={`/companies/${link.companyId}`} className="text-sm font-medium underline underline-offset-2">{link.companyName}</Link>)}
+            {!landlordLinks.some(link => link.interviewId === selected.id) && <span className="text-xs text-muted-foreground">No unambiguous landlord names matched in saved answers yet.</span>}
+          </div>
+        </div>
+
         {SECTIONS.map((section) => (
           <div key={section.title} className="space-y-2">
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{section.title}</p>
@@ -295,7 +342,7 @@ export function CrmMeetingsTab() {
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteInterview.mutate(selected.id)}>
+              <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => deleteInterview.mutate(selected.id)}>
                 Delete
               </AlertDialogAction>
             </AlertDialogFooter>
@@ -308,6 +355,7 @@ export function CrmMeetingsTab() {
   // ── Card grid ────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4" data-testid="crm-meetings-tab">
+      <LandlordWeeklyMeetings />
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <p className="text-sm text-muted-foreground">
           Phase 1 of the CRM strategy — one discovery interview per Head of Team, responses captured live in the meeting.

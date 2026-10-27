@@ -9,6 +9,7 @@ import { pool } from "./db";
 import { users as usersTable } from "@shared/schema";
 import { parseGraphDateTime } from "./viewing-matching";
 import { newAutoContactRun, resolveAutoContacts, type AutoContactRun } from "./email-auto-contacts";
+import { captureLandlordDiary, recordLandlordDiaryFailure, registerLandlordMeetingRoutes } from "./landlord-meetings";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
@@ -409,11 +410,17 @@ async function syncCalendarForUser(
 ): Promise<number> {
   const start = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
   const end = new Date(Date.now() + daysForward * 24 * 60 * 60 * 1000).toISOString();
+  const scanStartedAt = new Date().toISOString();
   let count = 0;
 
   try {
-    const url = `${GRAPH_BASE}/users/${encodeURIComponent(userEmail)}/calendarView?startDateTime=${start}&endDateTime=${end}&$select=id,iCalUId,subject,start,end,attendees,organizer,bodyPreview,location,categories,isCancelled&$top=100&$orderby=start/dateTime`;
+    const url = `${GRAPH_BASE}/users/${encodeURIComponent(userEmail)}/calendarView?startDateTime=${start}&endDateTime=${end}&$select=id,iCalUId,subject,start,end,attendees,organizer,bodyPreview,location,categories,isCancelled,sensitivity,webLink,type,lastModifiedDateTime&$top=100&$orderby=start/dateTime`;
     const events = await graphGetPaged(token, url, 1000, { requireComplete: true, headers: { Prefer: 'outlook.timezone="UTC"' } });
+
+    // Landlord meeting links do not depend on an attendee already having a
+    // CRM contact. Keep the original contact/brand capture below unchanged.
+    try { await captureLandlordDiary(events, userEmail, { start, end }, { scanStartedAt }); }
+    catch { await recordLandlordDiaryFailure(userEmail, "The landlord diary snapshot could not be updated").catch(() => {}); }
 
     // Diary → Letting Tracker viewings: events that look like a viewing and
     // anchor to a tracker unit become unit_viewings rows. Runs on every
@@ -520,6 +527,7 @@ async function syncCalendarForUser(
       }
     }
   } catch (e: any) {
+    await recordLandlordDiaryFailure(userEmail, "The latest diary scan failed; showing the last successful check").catch(() => {});
     throw new Error(`calendar: ${e.message}`);
   }
 
@@ -1199,6 +1207,7 @@ async function requireAdminCheck(req: Request): Promise<boolean> {
 }
 
 export function registerInteractionRoutes(app: Express) {
+  registerLandlordMeetingRoutes(app);
   startAutoSync();
   // The 150-day backfill only runs when an admin starts it (Woody,
   // 2026-09-29: stopped) — POST /api/interactions/backfill-contacts.

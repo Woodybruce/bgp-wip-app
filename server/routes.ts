@@ -285,7 +285,7 @@ async function buildTaggedEntityContext(messages: Array<{ content: string }>, sc
   return `\n\n## TAGGED IN THIS CONVERSATION\nThese records were tagged with @ in the chat. Questions near a tag are almost certainly about that record — use these ids directly with your tools instead of searching by name:\n${lines.join("\n")}\n`;
 }
 
-async function triggerAiGroupResponse(threadId: string, senderUserId: string, req: Request) {
+async function triggerAiGroupResponse(threadId: string, senderUserId: string, req: Request, triggerMessageId?: string) {
   const startTime = Date.now();
   const groupDeadline = startTime + 10 * 60 * 1000;
 
@@ -298,7 +298,7 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
     "SELECT role, content, user_id FROM chat_messages WHERE thread_id = $1 ORDER BY created_at DESC LIMIT 20",
     [threadId]
   );
-  const recentMessages = recentResult.rows.reverse()
+  let recentMessages = recentResult.rows.reverse()
     .filter((m: any) => m.content && m.content.trim())
     .map((m: any) => ({
       role: m.role === "assistant" ? "assistant" as const : "user" as const,
@@ -332,19 +332,42 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
     const { isToolAllowedForClient } = await import("./chatbgp");
     const groupIsClient = await isClientRequestUser(req).catch(() => true);
     const groupClientScope = groupIsClient ? await resolveGroupScope(req).catch(() => null) : null;
+    const groupViewScope = await resolveGroupScope(req).catch(() => "unverified");
+    const { canReadLandlordMeetings, searchLandlordMeetings } = await import("./landlord-meetings");
+    let landlordEvidence: any = null;
+    let landlordContext = "";
+    if (!groupIsClient && !groupViewScope && await canReadLandlordMeetings(req)) {
+      const linkedThread = await storage.getChatThread(threadId);
+      if (linkedThread?.linkedType === "company" && linkedThread.linkedId) {
+        const { getLandlordRelationshipEvidence, landlordChatEvidencePrompt, landlordChatHistory, isInternalLandlordThread } = await import("./landlord-relationship-brief");
+        if (await isInternalLandlordThread(threadId)) landlordEvidence = await getLandlordRelationshipEvidence(linkedThread.linkedId, {
+          viewerId: req.session?.userId || req.tokenUserId, conversationThreadId: threadId,
+        });
+        if (landlordEvidence) {
+          landlordContext = landlordChatEvidencePrompt(landlordEvidence, senderName);
+          const authored = await pool.query(`SELECT m.role, m.content, m.user_id, m.created_at, u.name AS sender_name
+            FROM chat_messages m LEFT JOIN users u ON u.id=m.user_id
+            WHERE m.thread_id=$1 AND ($2::text IS NULL OR m.created_at <= (SELECT created_at FROM chat_messages WHERE id=$2 AND thread_id=$1))
+            ORDER BY m.created_at DESC LIMIT 20`, [threadId, triggerMessageId || null]);
+          recentMessages = landlordChatHistory(authored.rows.reverse());
+        }
+      }
+    }
     const groupTools = (groupIsClient && !groupClientScope) ? [] : ((allTools as any).tools?.filter((t: any) => {
       const name = t.function?.name;
-      if (!GROUP_CHAT_TOOLS.includes(name)) return false;
+      if (!GROUP_CHAT_TOOLS.includes(name) && !(landlordEvidence && ["search_calendar", "query_calendar"].includes(name))) return false;
       if (groupIsClient && !isToolAllowedForClient(name)) return false;
       return true;
-    }) || []);
+    }) || []).map((tool: any) => landlordEvidence && ["search_calendar", "query_calendar"].includes(tool.function?.name)
+      ? { ...tool, function: { ...tool.function, description: "Check normal-sensitivity calendar invitations linked to this landlord only, across active BGP staff diaries. Private/confidential, cancelled and unrelated meetings are excluded. Search by subject, attendees or location within a bounded date range (default next 30 days, maximum 120 days); use mailbox='all' for the team. Returns checked coverage and source invitations. An incomplete check is not proof that a meeting does not exist." } }
+      : tool);
 
     const lastUserMsg = recentMessages.filter(m => m.role === "user").pop()?.content || "";
     const mentionsChatBGP = AI_MENTION_REGEX.test(lastUserMsg);
     const taggedScope = await resolveCompanyScope(req).catch(() => null);
     const taggedContext = await buildTaggedEntityContext(recentMessages, taggedScope).catch(() => "");
 
-    const groupSystemPrompt = systemPrompt + learnings + calendarContext + taggedContext +
+    const groupSystemPrompt = systemPrompt + learnings + (landlordEvidence ? "" : calendarContext) + taggedContext + landlordContext +
       `\n\nIMPORTANT: You are participating in a GROUP CHAT with multiple team members. ` +
       `The most recent message was sent by ${senderName}. ` +
       `CRITICAL RULES FOR GROUP CHAT:\n` +
@@ -385,12 +408,15 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       tools: groupTools.length > 0 ? groupTools : undefined,
       parallel_tool_calls: false,
     };
+    // Internal loop state, removed before transport by the existing call wrapper.
+    if (landlordEvidence) completionOptions.landlordEvidence = true;
+    const landlordToolOutcomes: any[] = [];
 
     // Astra can spend longer reasoning than the previous one-minute wrapper.
     // Bound individual calls and the full run, cancelling the provider request
     // when that bound is reached instead of leaving it running in the background.
     const callGroupModel = () => withAiRequestDeadline(
-      signal => callClaude({ ...completionOptions, signal }),
+      signal => { const { landlordEvidence: _landlord, ...options } = completionOptions; return callClaude({ ...options, signal }); },
       { deadline: groupDeadline, maxRequestMs: 3 * 60 * 1000 },
     );
     let claudeResponse = await callGroupModel() as any;
@@ -432,7 +458,16 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
           }
           if (!outcome) {
             try {
-              if (fnName === "search_app_guide") {
+              if (completionOptions.landlordEvidence && ["search_calendar", "query_calendar"].includes(fnName)) {
+                outcome = await searchLandlordMeetings({ ...fnArgs, req, companyId: landlordEvidence.company.id });
+                lastHandledReply = outcome?.error ? "The landlord diary check did not complete." : null;
+              } else if (completionOptions.landlordEvidence && ["search_crm", "create_deal", "update_deal", "create_contact", "update_contact", "create_company", "update_company", "create_property", "create_available_unit", "update_available_unit", "create_requirement", "create_task", "create_diary_entry", "create_investment_tracker", "update_investment_tracker", "log_viewing", "log_offer", "delete_record"].includes(fnName)) {
+                const raw = await chatbgp.executeCrmToolRaw(fnName, fnArgs, req);
+                outcome = raw.data;
+                landlordToolOutcomes.push({ ...raw.data, tool: fnName });
+                if (raw.data?.success === true) lastAction = raw.action || lastAction;
+                lastHandledReply = raw.data?.error ? "The requested check or change did not complete. No successful save was confirmed." : null;
+              } else if (fnName === "search_app_guide") {
                 // Evidence for the next model round, never a final chat reply.
                 const guide = await chatbgp.executeCrmToolRaw(fnName, fnArgs, req);
                 outcome = guide.data;
@@ -474,6 +509,11 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
         console.log(`[ai-group] Skipped in ${Date.now() - startTime}ms`);
         return;
       }
+    }
+
+    if (landlordEvidence) {
+      const { guardLandlordSaveClaim } = await import("./landlord-relationship-brief");
+      replyText = guardLandlordSaveClaim(String(replyText), landlordToolOutcomes);
     }
 
     const saved = await storage.createChatMessage({
@@ -2633,7 +2673,7 @@ export async function registerRoutes(
         }
 
         if (thread.hasAiMember && !thread.isAiChat) {
-          triggerAiGroupResponse(thread.id, userId, req).catch(async (err) => {
+          triggerAiGroupResponse(thread.id, userId, req, message.id).catch(async (err) => {
             console.error("[ai-group] Error triggering AI response:", err?.message);
             try {
               const fallback = "Sorry, I'm having a connection issue. Give me a moment and try again.";

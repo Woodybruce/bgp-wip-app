@@ -515,6 +515,16 @@ router.get("/api/brand/:companyId/ai-take/:tab", requireAuth, async (req: Reques
     const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
     const scope = await resolveCompanyScope(req);
     if (scope && !await isClientVisibleBrand(companyId, scope)) return res.status(403).json({ error: "Access denied" });
+    // Staff landlord briefs read the same current meetings and records as the
+    // landlord board. Never put diary/interview evidence into the shared brand cache.
+    const { canReadLandlordMeetings } = await import("./landlord-meetings");
+    if (!scope && (tab === "brand" || tab === "activity") && await canReadLandlordMeetings(req)) {
+      const { getLandlordRelationshipEvidence, renderLandlordRelationshipBrief } = await import("./landlord-relationship-brief");
+      const evidence = await getLandlordRelationshipEvidence(companyId, { viewerId: req.session?.userId || req.tokenUserId });
+      if (evidence) return res.json({ text: renderLandlordRelationshipBrief(evidence), cached: false,
+        generatedAt: Date.now(), relationshipEvidence: evidence,
+        relationshipSummary: renderLandlordRelationshipBrief(evidence, { omitMeetingAndTeam: true }) });
+    }
     const force = req.query.refresh === "1" || req.query.refresh === "true";
     if (force) {
       const job = await startBrandCoreRefresh(companyId, { tab });
