@@ -73,7 +73,7 @@ test('only landlord starters gain the meetings question', () => {
   }
 });
 
-test('meeting and interview boards remain in the landlord-only branch and staff-only', () => {
+test('landlord profile and chat lead the page, with staff meeting/team brief and interview notes immediately below', () => {
   const ast = ts.createSourceFile(panel, source(panel), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   let branch;
   function visit(node) { if (ts.isIfStatement(node) && node.expression.getText(ast) === 'isLandlord && flat && !isLender') branch = node; ts.forEachChild(node, visit); }
@@ -83,7 +83,10 @@ test('meeting and interview boards remain in the landlord-only branch and staff-
   assert.match(code, /leading=\{!isClientViewer && <LandlordMeetingsSummary/);
   assert.match(code, /!isClientViewer && <LandlordInterviewNotes/);
   assert.match(code, /footer=\{relationshipSummary\}/);
-  assert.ok(code.indexOf('landlord-relationship-brief') < code.indexOf('{profileTopRow}'));
+  assert.ok(code.indexOf('{profileTopRow}') < code.indexOf('landlord-relationship-brief'));
+  assert.ok(code.indexOf('landlord-relationship-brief') < code.indexOf('<LandlordInterviewNotes'));
+  assert.ok(code.indexOf('<LandlordInterviewNotes') < code.indexOf('<CompanyPropertiesBoard'));
+  assert.equal((code.match(/\{profileTopRow\}/g) || []).length, 1);
   assert.ok(source(panel).includes('{!(isLandlord && flat && !isLender) && relationshipSummary}'));
 });
 

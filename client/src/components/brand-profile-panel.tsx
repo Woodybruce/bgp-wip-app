@@ -2260,24 +2260,21 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         </div>
   );
 
-  // Landlord page — its own layout, split from the brand page (Woody,
-  // 2026-09-26: "they should be completely split"; portfolio first, the
-  // data check open to everyone). Account summary beside the conversation,
-  // then Portfolio (properties + data check), Deals & instructions, and the
-  // account boards balanced in two columns; Gallery last. Group entities
-  // sit with Compliance & KYC instead of heading the page.
+  // Landlord page — profile beside the conversation at the top, followed
+  // by the combined meeting/relationship/team brief and source-linked
+  // interview notes. This ordering is independent of the Brand layout.
   if (isLandlord && flat && !isLender) {
     const masonryCls = "space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense";
     return (
       <div className="flex flex-col gap-3 w-full min-w-0 [container-type:inline-size]" data-testid="landlord-profile">
+        {profileTopRow}
+        {refreshStatus}
         <div data-testid="landlord-relationship-brief" className="[&_[data-testid=ai-commentary]]:text-sm [&_[data-testid=ai-commentary]]:leading-relaxed">
           <BgpTakeStrip companyId={companyId} tab="activity" entities={commentaryEntities} landlord={!isClientViewer}
             leading={!isClientViewer && <LandlordMeetingsSummary key={companyId} companyId={companyId} />}
             footer={relationshipSummary} />
         </div>
         {!isClientViewer && <LandlordInterviewNotes companyId={companyId} />}
-        {profileTopRow}
-        {refreshStatus}
         <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
         <AccountDealsBoard companyId={companyId} />
         {!isClientViewer && <AccountTeamViewsCard companyId={companyId} />}
