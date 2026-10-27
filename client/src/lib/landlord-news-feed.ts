@@ -68,7 +68,7 @@ function instagramProfile(value?: string | null): string | null {
 function headline(article: LandlordNewsArticle, companyName: string): { title: string; publisher: string | null } {
   let title = String(article.title || "").trim().replace(/^(?:news|latest news|press release)\s*[|:–—-]\s*/i, "");
   const source = String(article.source_name || "").trim();
-  const isSearch = /\(Google News\)\s*$/i.test(source);
+  const isSearch = /\(Google News\)\s*$/i.test(source) || /^(?:news\.)?google\.com$/i.test(safeUrl(article.url)?.hostname || "");
   const tail = title.match(/^(.{20,}?)\s+[-–—|]\s+([^|–—]{2,65})$/);
   let publisher: string | null = isSearch ? null : source || null;
   // Google News appends a publisher. On direct sources only strip a tail
@@ -93,10 +93,20 @@ export function mergeLandlordNewsTabs(
   const officialUrl = safeUrl(/^https?:\/\//i.test(context.domain || "") ? context.domain : context.domain ? `https://${context.domain}` : null);
   const officialHost = officialUrl?.hostname.toLowerCase().replace(/^www\./, "") || null;
   const companyKey = normalName(context.companyName);
+  const relocated: LandlordNewsArticle[] = [];
   const tabs = sourceTabs.map(tab => ({
     ...tab,
     sourceUrl: safeUrl(tab.sourceUrl)?.href || null,
-    items: tab.items.filter(item => safeUrl(item.url) && !isNewsErrorTitle(item.title)).map(item => ({ ...item })),
+    items: tab.items.filter(item => {
+      const url = safeUrl(item.url);
+      if (!url || isNewsErrorTitle(item.title)) return false;
+      const host = url.hostname.toLowerCase().replace(/^www\./, "");
+      if (tab.type === WEBSITE && officialHost && host !== officialHost && !host.endsWith(`.${officialHost}`)) {
+        relocated.push({ ...item, published_at: item.at, source_name: item.publisher || context.companyName });
+        return false;
+      }
+      return true;
+    }).map(item => ({ ...item })),
   }));
   const byType = new Map(tabs.map(tab => [tab.type, tab]));
   const ensure = (type: string, sourceUrl: string | null = null) => {
@@ -112,7 +122,7 @@ export function mergeLandlordNewsTabs(
   // Exact, substantial headlines catch the same story retrieved through
   // Google News and the official website. Short labels are not story IDs.
   const seenTitles = new Set(tabs.flatMap(tab => tab.items.map(item => titleKey(headline({ ...item, source_name: item.publisher }, context.companyName).title))).filter(title => title.length >= 35));
-  for (const article of news || []) {
+  for (const article of [...relocated, ...(news || [])]) {
     const url = safeUrl(article.url);
     if (!url || isNewsErrorTitle(article.title)) continue;
     const parsed = headline(article, context.companyName);
@@ -122,19 +132,22 @@ export function mergeLandlordNewsTabs(
     if (seenUrls.has(canonical) || key.length >= 35 && seenTitles.has(key)) continue;
 
     const host = url.hostname.toLowerCase().replace(/^www\./, "");
-    const source = String(article.source_name || "").trim();
-    const ownSource = !/\(Google News\)\s*$/i.test(source)
-      && !!companyKey && normalName(source.replace(/\s*(?:\((?:website news|openings)\)|[—–-]\s*news)\s*$/i, "")) === companyKey;
     const ownDomain = !!officialHost && (host === officialHost || host.endsWith(`.${officialHost}`));
-    const ownPublisher = !!companyKey && normalName(parsed.publisher || "") === companyKey;
+    // Search feeds may be named after the company being searched. That is
+    // not publisher evidence: only an official destination is Website news.
     const type = /(^|\.)instagram\.com$/.test(host) ? INSTAGRAM
       : /(^|\.)linkedin\.com$/.test(host) ? LINKEDIN
-      : ownDomain || ownSource || ownPublisher ? WEBSITE : MEDIA;
+      : ownDomain ? WEBSITE : MEDIA;
     // Other social platforms stay out of media coverage; their source links
     // belong to their channel, rather than masquerading as news articles.
     if (/(^|\.)(?:facebook|twitter|x|tiktok|youtube)\.com$/.test(host)) continue;
     const tab = ensure(type, type === WEBSITE ? officialUrl?.href || null : type === INSTAGRAM ? profile : null);
     const summary = article.ai_summary || article.summary || null;
+    const claimedOwnPublisher = !!companyKey && normalName(parsed.publisher || "") === companyKey;
+    const publisher = ownDomain ? context.companyName
+      : (!claimedOwnPublisher ? parsed.publisher : null) || (/^(?:news\.)?google\.com$/.test(host) ? null : host);
+    const companyMention = !!context.companyName.trim() && new RegExp(`(?:^|[^a-z0-9])${context.companyName.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|[^a-z0-9])`, "i").test(parsed.title);
+    const coverage = article.coverage || (type === MEDIA && companyMention ? "company" : undefined);
     tab.items.push({
       id: `media-${article.id}`,
       title: parsed.title,
@@ -143,8 +156,8 @@ export function mergeLandlordNewsTabs(
       image_url: safeUrl(article.image_url)?.href || null,
       at: validDate(article.published_at),
       type,
-      ...(article.coverage ? { coverage: article.coverage } : {}),
-      publisher: ownDomain || ownSource || ownPublisher ? context.companyName : parsed.publisher || (/^(?:news\.)?google\.com$/.test(host) ? null : host),
+      ...(coverage ? { coverage } : {}),
+      publisher,
     });
     seenUrls.add(canonical);
     if (key.length >= 35) seenTitles.add(key);

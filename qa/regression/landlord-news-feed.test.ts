@@ -47,8 +47,8 @@ test("does not mistake similar names or attacker-controlled domain suffixes for 
     article({ id: "query", title: "A separately sourced report", url: "https://example.org/news?company=aew.com", source_name: "Property Week" }),
     article({ id: "own", title: "Company announcement", url: "https://news.google.com/articles/own", source_name: "AEW — news" }),
   ], context);
-  assert.equal(result.find(tab => tab.type === "landlord_media")!.items.length, 2);
-  assert.equal(result.find(tab => tab.type === "rssapp_web_news")!.items.length, 1);
+  assert.equal(result.find(tab => tab.type === "landlord_media")!.items.length, 3);
+  assert.equal(result.some(tab => tab.type === "rssapp_web_news"), false, "a source label alone cannot verify the destination");
 });
 
 test("Instagram and LinkedIn stay in their channel tabs, and verified Instagram is available without posts", () => {
@@ -105,4 +105,35 @@ test("industry tab preserves company coverage priority while own channels remain
   ], { companyName: "AEW", domain: "aew.com" });
   assert.deepEqual(tabs.find(tab => tab.type === "landlord_media")?.items.map(item => item.id), ["media-company", "media-industry"]);
   assert.deepEqual(tabs.find(tab => tab.type === "rssapp_web_news")?.items.map(item => item.id), ["media-own-new", "media-own-old"]);
+});
+
+test("Landsec search-feed labels do not turn third-party coverage into official Website news", () => {
+  const result = mergeLandlordNewsTabs([], [
+    { id: "google", title: "Landsec announces its latest retail destination update - Retail Times", url: "https://news.google.com/rss/articles/example", source_name: "Landsec", published_at: "2026-10-27" },
+    { id: "publisher", title: "Landsec announces a new letting at Bluewater", url: "https://365retail.co.uk/landsec-bluewater-letting/", source_name: "Landsec", published_at: "2026-10-26" },
+    { id: "own", title: "Landsec announces its full-year results", url: "https://www.landsec.com/media/news/results", source_name: "Landsec", published_at: "2026-10-25" },
+  ], { companyName: "Landsec", domain: "landsec.com" });
+  const media = result.find(tab => tab.type === "landlord_media")!.items;
+  assert.equal(media.length, 2);
+  assert.equal(media[0].publisher, "Retail Times");
+  assert.equal(media[0].title, "Landsec announces its latest retail destination update");
+  assert.equal(media[1].publisher, "365retail.co.uk");
+  assert.ok(media.every(item => item.coverage === "company"));
+  const own = result.find(tab => tab.type === "rssapp_web_news")!.items;
+  assert.deepEqual(own.map(item => item.id), ["media-own"]);
+  assert.equal(own[0].publisher, "Landsec");
+});
+
+test("an official channel's outgoing press link is moved to Industry news without losing the connection", () => {
+  const tab: FeedTab = { type: "rssapp_web_news", label: "Website news", sourceUrl: "https://www.landsec.com/media/news", items: [{
+    id: "outgoing", title: "Landsec's latest retail update - Retail Times", summary: "A sourced excerpt.", url: "https://news.google.com/rss/articles/coverage", image_url: null, at: "2026-10-27", type: "rssapp_web_news",
+  }] };
+  const result = mergeLandlordNewsTabs([tab], [], { companyName: "Landsec", domain: "landsec.com" });
+  assert.equal(result.find(item => item.type === "rssapp_web_news")?.sourceUrl, tab.sourceUrl);
+  assert.equal(result.find(item => item.type === "rssapp_web_news")?.items.length, 0);
+  const media = result.find(item => item.type === "landlord_media")!.items[0];
+  assert.equal(media.publisher, "Retail Times");
+  assert.equal(media.at, "2026-10-27");
+  assert.equal(media.summary, "A sourced excerpt.");
+  assert.equal(tab.items.length, 1, "cached source data remains unchanged");
 });

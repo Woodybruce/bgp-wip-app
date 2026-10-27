@@ -35,6 +35,11 @@ export function landlordDisplayContacts(rows: ContactRecord[]): ContactRecord[] 
     const name = String(row.name || "").trim();
     return name && !name.includes("@") ? 1 + Number(!/\b[A-Z]{2,}\b/.test(name)) : 0;
   };
+  const latest = (group: ContactRecord[], key: string) => group.map(row => row[key])
+    .filter(value => value && Number.isFinite(Date.parse(String(value))))
+    .sort((a, b) => Date.parse(String(b)) - Date.parse(String(a)))[0] || null;
+  const maximum = (group: ContactRecord[], key: string) => group.some(row => row[key] != null)
+    ? Math.max(...group.map(row => Number(row[key]) || 0)) : undefined;
   return [...groups.values()].map(group => {
     if (group.length === 1) return group[0];
     const ranked = [...group].sort((a, b) => touches(b) - touches(a) || completeness(b) - completeness(a));
@@ -45,7 +50,16 @@ export function landlordDisplayContacts(rows: ContactRecord[]): ContactRecord[] 
       name: named.name || primary.name,
       phone: primary.phone || ranked.find(row => row.phone)?.phone,
       linkedin_url: primary.linkedin_url || ranked.find(row => row.linkedin_url)?.linkedin_url,
-      // Counts are those of the primary record, never a sum of overlapping mail.
+      last_interaction_at: latest(group, "last_interaction_at"),
+      last_email_at: latest(group, "last_email_at"),
+      last_meeting_at: latest(group, "last_meeting_at"),
+      // Same-person addresses can overlap. Use conservative maxima, not sums,
+      // while keeping the newest contact date from any confirmed identity.
+      interaction_count: maximum(group, "interaction_count"),
+      email_count: maximum(group, "email_count"),
+      meeting_count: maximum(group, "meeting_count"),
+      recent_interactions_90d: maximum(group, "recent_interactions_90d"),
+      recent_interactions_30d: maximum(group, "recent_interactions_30d"),
       relatedContactRecords: ranked.slice(1).filter(row => row.id && row.id !== primary.id),
     };
   });

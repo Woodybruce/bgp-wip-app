@@ -143,3 +143,18 @@ test('industry query waits for staff identity, excludes clients and does not req
  const brand=render({landlord:false,viewer:{email:'staff@brucegillinghampollard.com',role:'Staff'}});
  assert.equal(brand.queries.find(query=>query.queryKey[0]==='/api/landlord-relationships').enabled,false);
 });
+
+test('partial Landlord channel connections keep a focused retry control without changing Brand setup',async()=>{
+ const website={type:'rssapp_web_news',label:'Website news',sourceUrl:'https://www.aew.com/news/',items:[]};
+ const linkedin={type:'rssapp_linkedin',label:'LinkedIn',sourceUrl:'https://www.linkedin.com/company/aew-global/',items:[]};
+ for(const [connected,missing] of [[website,'linkedin'],[linkedin,'website']]) {
+  const out=render({landlord:true,canSetUp:true,data:{tabs:[connected],read:null}});
+  assert.match(text(out.tree),/Follow official sources/);
+  await out.mutations.at(-1).mutationFn();
+  assert.deepEqual(Array.from(out.requests[0].body.kinds),[missing]);
+ }
+ const complete=render({landlord:true,canSetUp:true,data:{tabs:[website,linkedin],read:null}});
+ assert.doesNotMatch(text(complete.tree),/Follow official sources/);
+ const brand=render({landlord:false,canSetUp:true,data:{tabs:[website],read:null}});
+ assert.doesNotMatch(text(brand.tree),/Follow brand channels/);
+});

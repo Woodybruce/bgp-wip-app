@@ -65,11 +65,15 @@ test("regular verified records retain the existing assessment and unlinked recor
   const result = interpretLandlordCovenant(company, active, { available: true, cases: [], checkedAt });
   assert.equal(result.interpretation.kind, "standard");
   assert.equal(result.assessment?.grade, "B");
+  assert.equal(result.assessment?.score, 80);
+  assert.equal(result.assessment?.computedAt, active.computedAt);
   const unlinked = interpretLandlordCovenant({ ...company, companies_house_number: null }, oldReport, { available: false, cases: [], checkedAt });
   assert.equal(unlinked.interpretation.kind, "unlinked");
   assert.equal(unlinked.assessment, undefined);
   assert.equal(unlinked.companyNumber, null);
   assert.equal(unlinked.sourceUrl, null);
+  const wrongEntity = interpretLandlordCovenant({ ...company, companies_house_number: "12345678" }, active, { available: true, cases: [], checkedAt });
+  assert.equal(wrongEntity.assessment, undefined);
 });
 
 test("staff and landlord checks precede all external case retrieval, and route retains authentication", async () => {
@@ -163,6 +167,15 @@ test("generic headlines distinguish net liabilities, losses and missing figures 
     assert.match(result.title, expected);
     assert.doesNotMatch(JSON.stringify(result), /"grade"|"score"/);
   }
+});
+
+test("an absent parent link does not imply weaker covenant or unsupported group status", () => {
+  const owner = { name: "Example Group PLC", companies_house_number: "12345678" };
+  const legal = interpretLandlordCovenant(owner, null, { available: true, cases: [], checkedAt });
+  const summary = buildLandlordCovenantOverview(owner, { ...legal, financial: { period: "FY2025", netAssets: "£2m", profitBeforeTax: "£100,000" } });
+  assert.equal(summary.group, undefined);
+  assert.match(summary.company, /Example Group PLC reports/);
+  assert.doesNotMatch(JSON.stringify(summary), /No parent|No.*support|guarantee/);
 });
 
 test("source cache coalesces requests, expires and retries errors without treating API failures as no cases", async () => {

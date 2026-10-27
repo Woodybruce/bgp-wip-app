@@ -124,7 +124,7 @@ export function buildLandlordCovenantOverview(company: LandlordCovenantCompanyCo
       result.evidence.push({ text: `Separate parent-company report for ${parentReport.companyName}; these figures are not added to the landlord’s balance sheet.`, sourceLabel: "Parent company filings", sourceUrl: `https://find-and-update.company-information.service.gov.uk/company/${company.parent_number}/filing-history`, reviewedAt: parentReport.computedAt.slice(0, 10) });
     }
     result.group += " No support commitment or guarantee is recorded.";
-  } else result.group = "No parent or group support is recorded in the CRM.";
+  }
   if (legal.interpretation.kind === "members-voluntary-liquidation") result.entityNote = `${subject} is in a members’ voluntary liquidation, a solvent winding-up procedure. The figures above belong to that entity.`;
   else if (legal.interpretation.kind === "unlinked") result.entityNote = "Confirm the contracting legal entity to complete the financial check.";
   else if (legal.interpretation.kind === "unknown" && !result.warning) result.entityNote = "The current legal-entity check is incomplete.";

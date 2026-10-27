@@ -134,20 +134,34 @@ async function fetchNow(ids: string[]) {
 }
 
 export async function ensureBrandWebFeeds(companyId: string, kinds: BrandWebFeedKind[] = ["locations", "website", "careers", "linkedin"], opts: { dryRun?: boolean } = {}) {
-  const company = (await pool.query(`SELECT * FROM crm_companies WHERE id = $1 AND merged_into_id IS NULL`, [companyId])).rows[0];
+  const company = (await pool.query(`SELECT c.*,(${LANDLORD_CATALOGUE_PREDICATE}) AS is_landlord FROM crm_companies c WHERE c.id = $1 AND c.merged_into_id IS NULL`, [companyId])).rows[0];
   if (!company) throw Object.assign(new Error("Company not found"), { status: 404 });
-  const existing = (await pool.query(`SELECT type, url FROM news_sources WHERE category = $1`, [`brand:${companyId}`])).rows;
+  const existing = (await pool.query(`SELECT id, type, url, feed_url, active FROM news_sources WHERE category = $1`, [`brand:${companyId}`])).rows;
   const have = new Set(existing.map((r: any) => r.type));
   const { domain, pages } = await discoverBrandFeedPages(company);
-  const results: Array<{ kind: BrandWebFeedKind; url?: string; status: "created" | "exists" | "not_found" | "no_items" | "no_room" | "would_create"; items?: number; error?: string }> = [];
+  const results: Array<{ kind: BrandWebFeedKind; url?: string; status: "created" | "reconnected" | "exists" | "not_found" | "no_items" | "no_room" | "would_create"; items?: number; error?: string }> = [];
   const created: string[] = [];
-  let room = opts.dryRun ? null : await planRoom();
+  let room = opts.dryRun || company.is_landlord ? null : await planRoom();
   for (const kind of kinds) {
     const type = BRAND_WEB_FEED_TYPES[kind];
-    if (have.has(type)) { results.push({ kind, status: "exists", url: existing.find((r: any) => r.type === type)?.url }); continue; }
+    if (have.has(type)) {
+      const saved = existing.filter((r: any) => r.type === type);
+      const active = saved.find((r: any) => r.active !== false);
+      if (!company.is_landlord || active) { results.push({ kind, status: "exists", url: (active || saved[0])?.url }); continue; }
+      // Reconnect the existing feed only when discovery still confirms its
+      // destination. Never duplicate an inactive or differently linked row.
+      const confirmed = saved.find((r: any) => r.feed_url && pages[kind] && r.url?.replace(/\/+$/, "") === pages[kind]!.replace(/\/+$/, ""));
+      if (!confirmed) { results.push({ kind, status: "not_found", error: "The saved channel needs its source checked before reconnecting." }); continue; }
+      if (opts.dryRun) { results.push({ kind, status: "would_create", url: confirmed.url }); continue; }
+      await pool.query(`UPDATE news_sources SET active=true WHERE id=$1 AND category=$2`, [confirmed.id, `brand:${companyId}`]);
+      created.push(confirmed.id);
+      results.push({ kind, status: "reconnected", url: confirmed.url });
+      continue;
+    }
     const url = pages[kind];
     if (!url) { results.push({ kind, status: "not_found" }); continue; }
     if (opts.dryRun) { results.push({ kind, url, status: "would_create" }); continue; }
+    if (!room) room = await planRoom();
     if (!room || room.free <= 0) { results.push({ kind, url, status: "no_room" }); continue; }
     try {
       const feed = await createCheckedFeed(url);

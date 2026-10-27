@@ -37,6 +37,8 @@ export type KeyContactSignals = {
   email?: string | null;
   role?: string | null;
   emails?: number | null;
+  recent90d?: number | null;
+  recent30d?: number | null;
   lastAt?: string | number | null;
   leftAt?: string | null;
   inCrm?: boolean;
@@ -84,6 +86,16 @@ export function compareKeyContacts(a: KeyContactSignals, b: KeyContactSignals, o
   const now = opts.now ?? Date.now();
   const recent = (c: KeyContactSignals) => { const t = toMs(c.lastAt); return t && now - t <= YEAR_MS ? 1 : 0; };
   const named = (c: KeyContactSignals) => (String(c.name || "").trim() && !isEmailPlaceholderName(c.name, c.email) ? 1 : 0);
+  // A landlord's working contacts lead with recorded recent activity. A job
+  // title or a large historical mailbox must not outrank an active relationship.
+  if (opts.landlord) return (Number(b.recent90d || 0) - Number(a.recent90d || 0))
+    || (Number(b.recent30d || 0) - Number(a.recent30d || 0))
+    || (toMs(b.lastAt) - toMs(a.lastAt))
+    || (Number(b.emails || 0) - Number(a.emails || 0))
+    || (keyRoleRank(a.role, true) - keyRoleRank(b.role, true))
+    || (named(b) - named(a))
+    || ((b.inCrm ? 1 : 0) - (a.inCrm ? 1 : 0))
+    || String(a.name || "").localeCompare(String(b.name || ""));
   return (keyRoleRank(a.role, opts.landlord) - keyRoleRank(b.role, opts.landlord))
     || (recent(b) - recent(a))
     || (Number(b.emails || 0) - Number(a.emails || 0))

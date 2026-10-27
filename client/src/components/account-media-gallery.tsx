@@ -102,6 +102,10 @@ interface SubFolder {
 
 const PAGE = 24;
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40);
+// Match the neighbouring Files panel. Columns follow the panel's width,
+// rather than the viewport, so half-width desktop cards stay compact.
+const galleryPanel = "[container-type:inline-size] max-h-[420px] overflow-y-auto overscroll-contain pr-1 space-y-2";
+const folderGrid = "grid grid-cols-2 [@container(min-width:360px)]:grid-cols-3 [@container(min-width:520px)]:grid-cols-4 [@container(min-width:700px)]:grid-cols-5 gap-2";
 
 // Approved first (the staff signal), then logos, corporate, and one folder
 // per property with the most photos first — the Image Studio album order.
@@ -160,7 +164,8 @@ function FolderTile({ label, count, cover, logo, onOpen, testId }: {
     <button
       type="button"
       onClick={onOpen}
-      className="group relative aspect-square rounded-lg overflow-hidden border border-border bg-muted text-left"
+      className="group relative aspect-[4/3] min-w-0 rounded-lg overflow-hidden border border-border bg-muted text-left"
+      title={`${label} · ${count} image${count === 1 ? "" : "s"}`}
       data-testid={testId}
     >
       <img
@@ -356,11 +361,11 @@ export function LandlordAccountGallery({
   if (!folder) {
     const shown = uniqueMedia([...data.groups.approved, ...data.groups.properties, ...data.groups.corporate]).length;
     return (
-      <div className="space-y-2" data-testid="account-media-gallery">
+      <div key="folders" className={galleryPanel} role="region" aria-label="Saved image folders" tabIndex={0} data-testid="account-media-gallery">
         <div className="text-[11px] text-muted-foreground">
           <span className="font-mono tabular-nums">{shown}</span> saved image{shown === 1 ? "" : "s"} · <span className="font-mono tabular-nums">{folders.length}</span> folder{folders.length === 1 ? "" : "s"}
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        <div className={folderGrid}>
           {folders.map(f => (
             <FolderTile key={f.key} label={f.label} count={f.images.length} cover={f.cover} logo={f.logos} onOpen={() => go(f.key)} testId={`account-media-folder-${slug(f.key.startsWith("pid:") ? f.label : f.key)}`} />
           ))}
@@ -375,7 +380,7 @@ export function LandlordAccountGallery({
   const testPrefix = `account-media-${slug(sub ? `${folder.label}-${sub.label}` : folder.label)}`;
 
   return (
-    <div className="space-y-2" data-testid="account-media-gallery">
+    <div key={`${folder.key}:${sub?.id || ""}`} className={galleryPanel} role="region" aria-label={`Images in ${sub?.label || folder.label}`} tabIndex={0} data-testid="account-media-gallery">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1 text-xs min-w-0">
           <button type="button" onClick={() => go(null)} className="font-medium text-primary hover:underline" data-testid="account-media-back">
@@ -407,7 +412,7 @@ export function LandlordAccountGallery({
         )}
       </div>
       {!sub && subFolders.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        <div className={folderGrid}>
           {subFolders.map(s => (
             <FolderTile key={s.id} label={s.label} count={s.images.length} cover={s.images[0]} logo={folder.logos} onOpen={() => go(folder.key, s.id)} testId={`account-media-subfolder-${slug(s.label)}`} />
           ))}

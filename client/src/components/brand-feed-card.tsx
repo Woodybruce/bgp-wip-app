@@ -114,6 +114,9 @@ export function BrandFeedCard({ companyId, canSetUp = false, landlord = false, n
   useInstagram(companyId, !landlord);
   const [active, setActive] = useState<string | null>(null);
   const [activeSocial, setActiveSocial] = useState<string | null>(null);
+  const missingOfficialKinds = ([['website', 'rssapp_web_news'], ['linkedin', 'rssapp_linkedin']] as const)
+    .filter(([, type]) => !data?.tabs.some(tab => tab.type === type && (tab.sourceUrl || tab.items.length)))
+    .map(([kind]) => kind);
   useEffect(() => { setActive(null); setActiveSocial(null); }, [companyId]);
   const read = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/brand/${companyId}/feed/read`)).json(),
@@ -126,7 +129,7 @@ export function BrandFeedCard({ companyId, canSetUp = false, landlord = false, n
   const setup = useMutation({
     // Background job: reads the website, then checks each feed (about a minute).
     mutationFn: async () => {
-      await apiRequest("POST", `/api/brand/${companyId}/feed/setup`, landlord ? {kinds:["website","linkedin"]} : {});
+      await apiRequest("POST", `/api/brand/${companyId}/feed/setup`, landlord ? { kinds: missingOfficialKinds } : {});
       for (let i = 0; i < 60; i++) {
         await new Promise(r => setTimeout(r, 4000));
         const job = await (await apiRequest("GET", `/api/brand/${companyId}/feed/setup`)).json();
@@ -136,7 +139,7 @@ export function BrandFeedCard({ companyId, canSetUp = false, landlord = false, n
       throw new Error("Still working — check back in a minute");
     },
     onSuccess: (out: { results: Array<{ kind: string; status: string }> }) => {
-      const made = out.results.filter(r => r.status === "created").map(r => r.kind);
+      const made = out.results.filter(r => r.status === "created" || landlord && r.status === "reconnected").map(r => r.kind);
       toast({ title: made.length ? `Following ${made.join(", ")}` : "Nothing new to follow", description: landlord
         ? made.length ? "Connected sources will appear here as items are retrieved." : "No usable news or LinkedIn feed was found on the confirmed official website."
         : made.length ? "Items appear here now and update as the brand posts." : "No openings, news, jobs or LinkedIn page could be followed on this brand's site." });
@@ -212,9 +215,9 @@ export function BrandFeedCard({ companyId, canSetUp = false, landlord = false, n
         )}
         {!landlord && current && (current.type === "rssapp_instagram" ? <InstagramGrid companyId={companyId} /> : <ItemList items={current.items} />)}
         {landlord && !tabs.length && !isLoading && !isError && <p className="text-sm text-muted-foreground">No news or social feeds are connected yet. Only updates from connected sources will appear here.</p>}
-        {canSetUp && !webTabs.length && (
+        {canSetUp && (landlord ? missingOfficialKinds.length > 0 : !webTabs.length) && (
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2.5">
-            <p className="text-xs text-muted-foreground">{landlord ? "Find news and LinkedIn sources from the confirmed official website." : "Follow this brand's openings page, website news, jobs and LinkedIn."}</p>
+            <p className="text-xs text-muted-foreground">{landlord ? `Connect ${missingOfficialKinds.map(kind => kind === "website" ? "website news" : "LinkedIn").join(" and ")} from the confirmed official website.` : "Follow this brand's openings page, website news, jobs and LinkedIn."}</p>
             <Button size="sm" variant="outline" disabled={setup.isPending} onClick={() => setup.mutate()} data-testid="button-brand-feed-setup">
               {setup.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Rss className="w-3.5 h-3.5" />}{setup.isPending ? "Finding pages…" : landlord ? "Follow official sources" : "Follow brand channels"}
             </Button>

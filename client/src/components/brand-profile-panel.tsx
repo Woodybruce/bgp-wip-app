@@ -706,6 +706,12 @@ export const accountBoardContacts = (ws: NonNullable<ReturnType<typeof useAccoun
   linkedin_url: ct.linkedinUrl,
   interaction_count: ct.interactionCount,
   last_interaction_at: ct.lastInteractionAt,
+  email_count: ct.emailCount,
+  meeting_count: ct.meetingCount,
+  recent_interactions_90d: ct.recentInteractions90d,
+  recent_interactions_30d: ct.recentInteractions30d,
+  last_email_at: ct.lastEmailAt,
+  last_meeting_at: ct.lastMeetingAt,
   via: ct.via,
   employerName: ct.employerName,
   propertyNames: ct.propertyNames,
@@ -4036,7 +4042,7 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer }
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-0 flex flex-col gap-3 flex-1">
-        {!isClientViewer && <LandlordCovenantSummary companyId={companyId} companyName={company.name} companyNumber={companyNumber} />}
+        {!isClientViewer && <LandlordCovenantSummary companyId={companyId} companyName={company.name} companyNumber={companyNumber} covenantComputedAt={covenant.data?.computedAt} />}
         <details className="border-t border-border pt-2 mt-auto" data-testid="landlord-checks-details" onToggle={event => setDetailsOpen(event.currentTarget.open)}>
           <summary className="cursor-pointer text-xs font-medium text-primary py-1.5">{detailsOpen ? "Show less" : "Show more"}</summary>
           <div className="pt-2 space-y-3">

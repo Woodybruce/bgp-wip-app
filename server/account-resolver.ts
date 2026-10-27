@@ -69,6 +69,12 @@ export interface AccountContact {
   via: string[];                              // ["employer","property","property_client"]
   interactionCount: number;
   lastInteractionAt: string | null;
+  emailCount?: number;
+  meetingCount?: number;
+  recentInteractions90d?: number;
+  recentInteractions30d?: number;
+  lastEmailAt?: string | null;
+  lastMeetingAt?: string | null;
 }
 
 export interface AccountTeamMember {
@@ -93,6 +99,38 @@ export interface AccountView {
 
 // Minimal queryable so tests can inject a spy pool without DATABASE_URL.
 export type Querier = { query(sql: string, params?: any[]): Promise<{ rows: any[]; rowCount?: number | null }> };
+
+// The input IDs are the already-authorised account contacts. Count source
+// messages/events once even when filed under several contacts or meeting
+// attendees, and never use the private mailbox (including copied recipients).
+export const ACCOUNT_CONTACT_ACTIVITY_SQL = `
+ WITH cts AS (SELECT id, lower(email) AS e, email AS raw FROM crm_contacts WHERE id = ANY($1::text[])),
+      addrs AS (SELECT COALESCE(array_agg(DISTINCT x), '{}') AS a FROM cts, unnest(ARRAY[raw, e]) AS x WHERE COALESCE(x, '') <> ''),
+      hits AS (
+        SELECT i.id AS iid, i.microsoft_id, i.type, i.interaction_date AS d, i.contact_id AS cid, NULL::text AS e
+          FROM crm_interactions i WHERE i.contact_id = ANY($1::text[]) AND i.interaction_date <= NOW()
+            AND NOT bgp_private_mail_record(i.bgp_user, i.participants)
+        UNION ALL
+        SELECT i.id, i.microsoft_id, i.type, i.interaction_date, NULL, lower(p)
+          FROM crm_interactions i CROSS JOIN LATERAL jsonb_array_elements_text(
+            CASE WHEN jsonb_typeof(i.participants) = 'array' THEN i.participants ELSE '[]'::jsonb END) AS p
+         WHERE i.participants ?| (SELECT a FROM addrs) AND i.interaction_date <= NOW()
+           AND NOT bgp_private_mail_record(i.bgp_user, i.participants)
+           AND lower(p) IN (SELECT e FROM cts WHERE e IS NOT NULL AND e <> '')),
+      events AS (
+        SELECT *, type || ':' || COALESCE(NULLIF(CASE WHEN type = 'meeting'
+          THEN regexp_replace(microsoft_id, '^cal_[^@]+@[^_]+_', 'cal_')
+          WHEN type = 'email' THEN regexp_replace(microsoft_id, '^email_', '')
+          ELSE microsoft_id END, ''), iid) AS event_key FROM hits)
+ SELECT c.id AS contact_id, COUNT(DISTINCT h.event_key)::int AS touches, MAX(h.d) AS last_touch,
+        COUNT(DISTINCT h.event_key) FILTER (WHERE h.type = 'email')::int AS email_count,
+        COUNT(DISTINCT h.event_key) FILTER (WHERE h.type = 'meeting')::int AS meeting_count,
+        COUNT(DISTINCT h.event_key) FILTER (WHERE h.type IN ('email','meeting') AND h.d >= NOW() - INTERVAL '90 days')::int AS recent_90d,
+        COUNT(DISTINCT h.event_key) FILTER (WHERE h.type IN ('email','meeting') AND h.d >= NOW() - INTERVAL '30 days')::int AS recent_30d,
+        MAX(h.d) FILTER (WHERE h.type = 'email') AS last_email,
+        MAX(h.d) FILTER (WHERE h.type = 'meeting') AS last_meeting
+   FROM cts c JOIN events h ON h.cid = c.id OR (h.e IS NOT NULL AND h.e = c.e)
+  GROUP BY c.id`;
 
 async function defaultPool(): Promise<Querier> {
   const { pool } = await import("./db");
@@ -623,29 +661,11 @@ export async function resolveAccountView(
   ).catch(() => ({ rows: [] as any[] }));
 
   const contactIds = contactRows.map((r: any) => r.id);
-  const statsByContact = new Map<string, { touches: number; last_touch: string | null }>();
+  const statsByContact = new Map<string, any>();
   if (!scopeCompanyId && contactIds.length > 0) {
-    // By contact link OR address in the participants — inbox-saved people
-    // ("Mshulman") read 0 emails and sank (Woody, 2026-09-28).
-    const { rows: statRows } = await q.query(
-      `WITH cts AS (SELECT id, lower(email) AS e, email AS raw FROM crm_contacts WHERE id = ANY($1::text[])),
-            -- The GIN index on participants answers ?| — unpacking every
-            -- email's participants took Ardent's page to 34s.
-            addrs AS (SELECT COALESCE(array_agg(DISTINCT x), '{}') AS a FROM cts, unnest(ARRAY[raw, e]) AS x WHERE COALESCE(x, '') <> ''),
-            hits AS (
-              SELECT i.id AS iid, i.interaction_date AS d, i.contact_id AS cid, NULL::text AS e
-                FROM crm_interactions i WHERE i.contact_id = ANY($1::text[]) AND i.interaction_date <= NOW()
-              UNION ALL
-              SELECT i.id, i.interaction_date, NULL, lower(p)
-                FROM crm_interactions i CROSS JOIN LATERAL jsonb_array_elements_text(i.participants) AS p
-               WHERE i.participants ?| (SELECT a FROM addrs) AND jsonb_typeof(i.participants) = 'array' AND i.interaction_date <= NOW()
-                 AND lower(p) IN (SELECT e FROM cts WHERE e IS NOT NULL AND e <> ''))
-       SELECT c.id AS contact_id, COUNT(DISTINCT h.iid)::int AS touches, MAX(h.d) AS last_touch
-         FROM cts c JOIN hits h ON h.cid = c.id OR (h.e IS NOT NULL AND h.e = c.e)
-        GROUP BY c.id`,
-      [contactIds]
-    ).catch(() => ({ rows: [] as any[] }));
-    for (const r of statRows) statsByContact.set(r.contact_id, { touches: r.touches, last_touch: r.last_touch });
+    const { rows: statRows } = await q.query(ACCOUNT_CONTACT_ACTIVITY_SQL, [contactIds])
+      .catch(() => ({ rows: [] as any[] }));
+    for (const row of statRows) statsByContact.set(row.contact_id, row);
   }
   const contacts: AccountContact[] = contactRows.map((r: any) => ({
     contactId: r.id,
@@ -663,6 +683,12 @@ export async function resolveAccountView(
     ].filter(Boolean) as string[],
     interactionCount: statsByContact.get(r.id)?.touches || 0,
     lastInteractionAt: statsByContact.get(r.id)?.last_touch || null,
+    emailCount: Number(statsByContact.get(r.id)?.email_count || 0),
+    meetingCount: Number(statsByContact.get(r.id)?.meeting_count || 0),
+    recentInteractions90d: Number(statsByContact.get(r.id)?.recent_90d || 0),
+    recentInteractions30d: Number(statsByContact.get(r.id)?.recent_30d || 0),
+    lastEmailAt: statsByContact.get(r.id)?.last_email || null,
+    lastMeetingAt: statsByContact.get(r.id)?.last_meeting || null,
   }));
 
   // 5. Team — curated board (across same-named sibling rows, the

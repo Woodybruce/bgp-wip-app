@@ -105,11 +105,13 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
   const hasEmail = !!contact.email;
   const hasLinkedin = !!contact.linkedin_url;
   const hasPhone = !!contact.phone;
-  const touches: number = contact.interaction_count || 0;
-  const lastTouch: string | null = contact.last_interaction_at || null;
+  const hasEmailMetrics = isLandlord && contact.email_count != null;
+  const touches: number = Number(hasEmailMetrics ? contact.email_count : contact.interaction_count || 0);
+  const lastTouch: string | null = (hasEmailMetrics ? contact.last_email_at : contact.last_interaction_at) || null;
   const lastTouchLabel = lastTouch ? formatRelativeShort(lastTouch) : null;
-  const touchText = `${touches.toLocaleString("en-GB")} email${touches === 1 ? "" : "s"}${lastTouchLabel ? ` · ${lastTouchLabel}` : ""}`;
-  const touchTitle = lastTouch ? `${touches} email${touches === 1 ? "" : "s"} with BGP · last ${new Date(lastTouch).toLocaleDateString("en-GB")}` : `${touches} emails with BGP`;
+  const touchKind = isLandlord && !hasEmailMetrics ? "interaction" : "email";
+  const touchText = `${touches.toLocaleString("en-GB")} ${touchKind}${touches === 1 ? "" : "s"}${lastTouchLabel ? ` · ${lastTouchLabel}` : ""}`;
+  const touchTitle = `${touches} ${touchKind}${touches === 1 ? "" : "s"} with BGP${lastTouch ? ` · last ${new Date(lastTouch).toLocaleDateString("en-GB")}` : ""}`;
   const meetingCount = isLandlord ? Number(contact.meeting_count || contact.meetingCount || 0) : 0;
   const canOpenHistory = isLandlord && !rowIsClient && !!contact.id;
   const activityCount = (kind: "email" | "meeting", label: string, className: string, title?: string) => canOpenHistory
@@ -165,7 +167,7 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
               with the note on hover; the full list sits in the AI check
               notes (Woody, 2026-09-27). */}
           {aiFlag && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" title={`${AI_FLAG_LABELS[aiFlag.issue] || "Check"} ${aiFlag.note}`} aria-label={`AI check: ${AI_FLAG_LABELS[aiFlag.issue] || "Check"}`} data-testid="key-contact-ai-flag" />}
-          {!touches && discovery?.bgp?.threadCount ? (
+          {!hasEmailMetrics && !touches && discovery?.bgp?.threadCount ? (
             canOpenHistory ? activityCount("email", `known · ${discovery.bgp.threadCount} threads`, "text-[11px] shrink-0 tabular-nums text-muted-foreground", "BGP has recorded email history with this person") : <Badge variant="outline" className="text-[11px] px-1 py-0 shrink-0 tabular-nums bg-primary/10 text-primary border-primary/30" title="BGP has real email history with this person">
               known · {discovery.bgp.threadCount} threads
             </Badge>
@@ -521,7 +523,11 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   const items: BoardItem[] = [
     ...accountFiltered.map((c: any): BoardItem => {
       const d = discoveryFor(c);
-      const sig = { name: c.name, email: c.email, role: c.role, emails: Number(c.interaction_count || 0) || Number(d?.bgp?.threadCount || 0), lastAt: latest(c.last_interaction_at, d?.bgp?.lastEmailed), leftAt: c.left_at || null, inCrm: true };
+      const sig = { name: c.name, email: c.email, role: c.role,
+        emails: isLandlord ? Number(c.interaction_count || 0) : Number(c.interaction_count || 0) || Number(d?.bgp?.threadCount || 0),
+        lastAt: isLandlord ? c.last_interaction_at : latest(c.last_interaction_at, d?.bgp?.lastEmailed),
+        ...(isLandlord ? { recent90d: Number(c.recent_interactions_90d || 0), recent30d: Number(c.recent_interactions_30d || 0) } : {}),
+        leftAt: c.left_at || null, inCrm: true };
       return { kind: "crm", row: c, sig, hidden: keyContactHiddenReason(sig, now) };
     }),
     ...discovered.map((k: any): BoardItem => {

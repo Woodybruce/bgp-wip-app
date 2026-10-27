@@ -887,9 +887,20 @@ export async function ensureBrandInstagramFeed(companyId: string, options: {allo
     // three-strikes cap, so the brand gets its feed once space is freed.
     if ((health.feedCount ?? 0) >= quota) return { status: "failed", detail: `RSS.app plan is full (${health.feedCount} of ${quota} feeds)` };
     const feed = await createRssAppFeed(url);
-    await db.insert(newsSources).values({ name: `${row.name} (instagram)`, url, feedUrl: feed.rss_feed_url, type: SOCIAL_TYPE.instagram,
-      category: `${BRAND_CATEGORY_PREFIX}${row.id}`, active: true });
+    const [createdSource] = await db.insert(newsSources).values({ name: `${row.name} (instagram)`, url, feedUrl: feed.rss_feed_url, type: SOCIAL_TYPE.instagram,
+      category: `${BRAND_CATEGORY_PREFIX}${row.id}`, active: true }).returning({ id: newsSources.id });
     await pool.query(`DELETE FROM rssapp_feed_failures WHERE url = $1`, [url]).catch(() => {});
+    if (options.allowLandlord === true && row.is_landlord === true && createdSource?.id) {
+      // Staff explicitly opened this landlord channel. Fill the new feed now
+      // instead of leaving its card empty until the next scheduled pass.
+      // A retrieval failure must not turn successful creation into a retry.
+      try {
+        const { fetchNewsSourcesNow } = await import("./news-feeds");
+        await fetchNewsSourcesNow([createdSource.id]);
+      } catch (error: any) {
+        console.warn(`[rssapp] Landlord Instagram feed created; first retrieval remains pending: ${String(error?.message || error).slice(0, 160)}`);
+      }
+    }
     return { status: "created" };
   } catch (err: any) {
     return await fail(String(err?.message || "feed creation failed"));
