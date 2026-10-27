@@ -181,6 +181,36 @@ checklist for every secret: `docs/railway-incident-2026-10-21.md`.
   from `claude/terminal-coding-interface-JOGQK` (the working branch) —
   then every push updates bgp.uk.com automatically like the dashboard.
 
+## The old site, brucegillinghampollard.com (WordPress, until bgp.uk.com launches)
+
+Still the live public site. WordPress 7 on a cPanel host that drops about
+one connection in three, so every request needs retries. Theme is
+`bgp-child` (Bibliothèque, 2020), ACF PRO 5.8 (no ACF REST support), Classic
+Editor. Woody's rule (2026-10-27): **no structural changes**; content only.
+
+- **Access**: REST with an application password for the admin user
+  `CaraMilligan`, kept in the Claude environment settings as
+  `BGP_WP_APP_PASSWORD` (also on Railway for the sync). Never in the repo
+  or chat.
+- **BGP Tracker Bridge plugin** (`docs/wordpress-bgp-tracker-bridge.php`
+  is the copy of record; installed via Plugins → Add New → Upload): exposes
+  `listings`, `project` and their taxonomies over REST, plus
+  `GET/POST /wp-json/bgp/v1/acf/<post_id>` (raw ACF values by field key),
+  `GET /wp-json/bgp/v1/acf-schema/<post_id>` and
+  `GET /wp-json/bgp/v1/acf-bulk/<post_type>`. Edit any ACF content through
+  these rather than the admin forms.
+- **Listings follow the tracker**: `server/wp-listings-sync.ts` reads this
+  app's own `/api/public/leasing-listings` feed hourly and creates /
+  updates / drafts WordPress `listings` posts (meta `bgp_unit_id`), uploads
+  photos and brochures to the media library once (`bgp-unit-<fileId>`), and
+  never touches the team's hand-made listings unless an admin POSTs
+  `/api/admin/wp-listings-sync?retireLegacy=1`. Status at
+  `GET /api/admin/wp-listings-sync`.
+- Header (menu across the top, title hidden on desktop) is Additional CSS
+  in the Customizer, nothing in the theme. Home story blocks, Recent
+  Projects, the Contact team list (from HR) and the meta description were
+  refreshed from the new site's content on 2026-10-27.
+
 ## Checking pages on prod (BGP_QA_TOKEN)
 
 Web sessions test UI changes against the live app with a test login Woody
